@@ -2,6 +2,10 @@ import { test, expect, type APIRequestContext, type Page } from "@playwright/tes
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
+import {
+    createWorkspaceSessionWithPrincipal,
+    provisionWorkspaceAgentPrincipal,
+} from "./helpers/agent-principal";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
@@ -22,7 +26,7 @@ function authHeaders(auth: Auth): Record<string, string> {
     return { Authorization: `Bearer ${auth.accessToken}`, "X-Workspace-Id": auth.workspaceId };
 }
 
-/** 会话由 UI 在空态自动创建；从首个 SSE 请求 URL 解析页面正在使用的 sessionId。 */
+/** 从首个 SSE 请求 URL 解析 UI 显式创建并打开的 Session。 */
 async function waitForSseSessionId(trace: SseTrace): Promise<string> {
     let id = "";
     await expect
@@ -45,7 +49,7 @@ async function sessionExists(request: APIRequestContext, auth: Auth, id: string)
     return (body.sessions ?? []).some((session: { id: string }) => session.id === id);
 }
 
-async function openChat(page: Page, auth: Auth) {
+async function openChat(page: Page, auth: Auth, principalId: string) {
     await page.addInitScript(
         ({ token, workspaceId }) => {
             localStorage.setItem("xihe-token", token);
@@ -58,7 +62,7 @@ async function openChat(page: Page, auth: Auth) {
         { token: auth.accessToken, workspaceId: auth.workspaceId },
     );
     await page.goto("/workspace", { waitUntil: "load" });
-    await expect(page.getByTestId("session-item").first()).toBeVisible({ timeout: 15000 });
+    await createWorkspaceSessionWithPrincipal(page, principalId);
 }
 
 type SseTrace = {
@@ -128,8 +132,11 @@ test.describe("@host PLAN-0352 session delete closes SSE", () => {
     }) => {
         test.setTimeout(60000);
         const auth = await register(request, "v5-active-delete");
+        const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
+            name: "V5 Active Delete Fixture",
+        });
         const trace = installSseTrace(page);
-        await openChat(page, auth);
+        await openChat(page, auth, principalId);
         const sessionId = await waitForSseSessionId(trace);
 
         await expect.poll(() => eventsFor(trace, sessionId).length, { timeout: 10000 }).toBe(1);
@@ -143,6 +150,9 @@ test.describe("@host PLAN-0352 session delete closes SSE", () => {
         const item = page.getByTestId("session-item").first();
         await item.click({ button: "right" });
         await page.getByRole("button", { name: /删除|Delete/ }).click();
+        const deleteDialog = page.getByRole("alertdialog");
+        await expect(deleteDialog).toBeVisible();
+        await deleteDialog.getByRole("button", { name: /删除|Delete/ }).click();
 
         await expect
             .poll(async () => sessionExists(request, auth, sessionId), { timeout: 10000 })
@@ -171,8 +181,11 @@ test.describe("@host PLAN-0352 session delete closes SSE", () => {
     }) => {
         test.setTimeout(60000);
         const auth = await register(request, "v5-passive-close");
+        const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
+            name: "V5 Passive Close Fixture",
+        });
         const trace = installSseTrace(page);
-        await openChat(page, auth);
+        await openChat(page, auth, principalId);
         const sessionId = await waitForSseSessionId(trace);
 
         await expect.poll(() => eventsFor(trace, sessionId).length, { timeout: 10000 }).toBe(1);

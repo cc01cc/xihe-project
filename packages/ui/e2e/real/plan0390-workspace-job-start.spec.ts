@@ -20,8 +20,6 @@ test.describe('@host PLAN-0390 workspace job start', () => {
   let sharedAuth: string
   let sharedWs: string
   let sharedHeaders: Record<string, string>
-  let firstItemId = ''
-  let firstJobId = ''
 
   test.beforeAll(async ({ request }) => {
     const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
@@ -86,8 +84,6 @@ test.describe('@host PLAN-0390 workspace job start', () => {
     expect(first.status(), `start failed: ${first.status()} ${await first.text()}`).toBe(202)
     const created = (await first.json()) as Record<string, unknown>
     const itemId = String(created.operationItemId)
-    firstItemId = itemId
-    firstJobId = String(created.jobId ?? '')
     expect(itemId, 'operationItemId is the canonical Job identity').toBeTruthy()
     expect(created.scope).toBe('workspace')
     expect(created.backendKind).toBe('docker')
@@ -136,7 +132,8 @@ test.describe('@host PLAN-0390 workspace job start', () => {
     const secondary = page.locator('[data-testid="workspace-job-secondary"]').first()
     await expect(secondary).toContainText('workspace', { timeout: 30000 })
     await expect(secondary).toContainText('docker')
-    await expect(page.locator('[data-testid="workspace-job-start-hint"]')).toContainText('Docker')
+    await expect(page.locator('[data-testid="workspace-job-start-hint"]'))
+      .toContainText('CONTAINER_JOBS_SERVED_BY_DOCKER')
     await page.screenshot({ path: path.join(EVIDENCE_DIR, 'workspace-job-list.png'), fullPage: false })
 
     // 6) 整页刷新后 projection 仍在（durable 与 SSE/页面生命周期无关）
@@ -171,7 +168,7 @@ test.describe('@host PLAN-0390 workspace job start', () => {
     )
   })
 
-  test('reports explicit JOB_OUTPUT_LOST when the sandbox is gone, and 404 after destroy', async ({ request }) => {
+  test('reports explicit runtime failure when the sandbox is gone, and 404 after destroy', async ({ request }) => {
     const marker = `xihe0390-destroy-${Date.now()}`
     const started = await startJob(request, `echo ${marker}; sleep 30`, `plan0390-destroy-${Date.now()}`)
     expect(started.status(), `start failed: ${started.status()} ${await started.text()}`).toBe(202)
@@ -205,21 +202,24 @@ test.describe('@host PLAN-0390 workspace job start', () => {
       )
       .toBe('JOB_OUTPUT_LOST')
 
-    // (b) 沙盒容器被移除 → 执行通道不可用，必须是显式失败（502），不得静默成功
+    // (b) Runtime stays reachable but reports its execution backend error after the sandbox is removed.
     execFileSync('docker', ['rm', '-f', containerName], { stdio: 'ignore' })
     const removed = await expect
       .poll(
         async () => {
           const { status, body } = await readOutput(request, itemId)
-          return status === 200 ? 'ok-200' : `http-${status}-${String(body.code ?? '')}`
+          return status === 503 && body.code === 'RUNTIME_ERROR'
+            ? 'http-503-RUNTIME_ERROR'
+            : `http-${status}-${String(body.code ?? '')}`
         },
         { timeout: 90000, message: 'removed sandbox must surface an explicit failure' },
       )
-      .toMatch(/^http-(409|502)-/)
+      .toBe('http-503-RUNTIME_ERROR')
     void removed
 
     const removedBody = await readOutput(request, itemId)
-    expect(removedBody.status, 'removed sandbox must not report success').not.toBe(200)
+    expect(removedBody.status, 'removed sandbox must return the Runtime Problem Details response').toBe(503)
+    expect(removedBody.body.code).toBe('RUNTIME_ERROR')
 
     // Workspace 仍存活时 list 可用（access 边界未被破坏）
     const stillAlive = await listJobs(request)

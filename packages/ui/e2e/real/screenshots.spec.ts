@@ -1,15 +1,15 @@
 import { generateE2EPassword } from './helpers/password'
+import { test, expect } from '@playwright/test'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
-import { test, expect } from '@playwright/test'
-
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
 
 interface Route {
   path: string
   name: string
   requiresAuth: boolean
-  hostOnly?: boolean
+  useRegisteredWorkspace?: boolean
 }
 
 const allRoutes: Route[] = [
@@ -21,11 +21,12 @@ const allRoutes: Route[] = [
   { path: '/settings/knowledge', name: 'real-settings-knowledge', requiresAuth: true },
   { path: '/settings/data', name: 'real-settings-data', requiresAuth: true },
   { path: '/settings/monitoring', name: 'real-settings-monitoring', requiresAuth: true },
-  { path: '/workspace/ws-e2e-1', name: 'real-workspace', requiresAuth: true, hostOnly: true },
+  { path: '/workspace', name: 'real-workspace', requiresAuth: true, useRegisteredWorkspace: true },
 ]
 
 for (const route of allRoutes) {
-  test(`${route.hostOnly ? '@host ' : ''}${route.name} renders and captures screenshot`, async ({ page }) => {
+  test(`${route.name} renders and captures screenshot`, async ({ page }) => {
+    let registeredWorkspaceId: string | undefined
     if (route.requiresAuth) {
       const email = `screenshot-${Date.now()}@test.com`
       const reg = await fetch(`${CP_URL}/api/v1/auth/register`, {
@@ -35,17 +36,24 @@ for (const route of allRoutes) {
       })
       if (reg.ok) {
         const body = await reg.json()
+        registeredWorkspaceId = body.workspaceId
         await page.addInitScript((token: string) => {
           localStorage.setItem('xihe-token', token)
         }, body.accessToken)
       }
     }
 
-    const resp = await page.goto(route.path, { waitUntil: 'load', timeout: 15000 })
+    const routePath = route.useRegisteredWorkspace && registeredWorkspaceId
+      ? `/workspace/${registeredWorkspaceId}`
+      : route.path
+    const resp = await page.goto(routePath, { waitUntil: 'load', timeout: 15000 })
     expect(resp?.status()).toBe(200)
-    await page.waitForTimeout(1000)
+    await expect(page.locator('#app')).toBeVisible()
+    if (route.useRegisteredWorkspace) {
+      await expect(page.getByTestId('workspace-empty-state')).toBeVisible()
+    }
 
-    await expect(page).toHaveScreenshot(route.name + '.png')
+    await expectPlatformScreenshot(page, route.name + '.png')
   })
 }
 

@@ -30,7 +30,8 @@ test.describe('@host PLAN-0359 M1 public Workspace Job', () => {
     request: import('@playwright/test').APIRequestContext,
     tag: string,
     executionMode: 'windows-host' | 'windows-mxc',
-  ) {
+    allowUnavailable = false,
+  ): Promise<{ token: string; workspaceId: string; hostPath: string } | null> {
     const auth = await register(request, tag)
     const headers = { Authorization: `Bearer ${auth.accessToken}`, 'Content-Type': 'application/json' }
     await request.delete(`${CP_URL}/api/v1/workspaces/${auth.defaultWorkspaceId}`, {
@@ -51,7 +52,20 @@ test.describe('@host PLAN-0359 M1 public Workspace Job', () => {
         executionMode,
       },
     })
-    expect(created.ok(), `workspace create failed: ${created.status()} ${await created.text()}`).toBeTruthy()
+    if (!created.ok()) {
+      const failure = await created.text()
+      if (!allowUnavailable) {
+        expect(created.ok(), `workspace create failed: ${created.status()} ${failure}`).toBeTruthy()
+      }
+      expect(created.status(), failure).toBe(503)
+      expect(failure).toContain('DIRECT_ATTACH_UNAVAILABLE')
+      expect(failure).toContain('SANDBOX_PROBE_FAILED')
+      test.info().annotations.push({
+        type: 'host-capability',
+        description: `${executionMode} unavailable; workspace creation failed closed; no host fallback used`,
+      })
+      return null
+    }
     const workspace = await created.json()
     const workspaceId = String(workspace.id)
 
@@ -99,6 +113,7 @@ test.describe('@host PLAN-0359 M1 public Workspace Job', () => {
 
   test('windows-host public Job start, output, cancel, and UI projection', async ({ request, page }) => {
     const workspace = await createBoundWorkspace(request, 'host', 'windows-host')
+    if (!workspace) throw new Error('windows-host capability was expected for this local host test')
     const running = await startJob(
       request,
       workspace.token,
@@ -145,8 +160,9 @@ test.describe('@host PLAN-0359 M1 public Workspace Job', () => {
     await page.screenshot({ path: path.join(EVIDENCE_DIR, 'host-job-cancelled.png'), fullPage: true })
   })
 
-  test('windows-mxc public Job start returns a real result or an explicit fail-closed reason', async ({ request }) => {
-    const workspace = await createBoundWorkspace(request, 'mxc', 'windows-mxc')
+  test('windows-mxc public Job starts when available or fails closed at workspace creation', async ({ request }) => {
+    const workspace = await createBoundWorkspace(request, 'mxc', 'windows-mxc', true)
+    if (!workspace) return
     const started = await startJob(
       request,
       workspace.token,
@@ -204,8 +220,12 @@ test.describe('@host PLAN-0359 M1 public Workspace Job', () => {
     }
   })
 
-  test('windows-mxc public Job rejects an outside write and preserves the failure projection', async ({ request }) => {
-    const workspace = await createBoundWorkspace(request, 'mxc-boundary', 'windows-mxc')
+  test('windows-mxc public Job rejects an outside write when capability is available', async ({ request }) => {
+    const workspace = await createBoundWorkspace(request, 'mxc-boundary', 'windows-mxc', true)
+    if (!workspace) {
+      test.skip(true, 'outside-write behavior requires an MXC-capable host; creation fail-closed behavior is tested separately')
+      return
+    }
     const outside = path.join(path.dirname(workspace.hostPath), `xihe-e2e-0359-outside-${Date.now()}.txt`)
     const node = execFileSync('where.exe', ['node'], { encoding: 'utf8' }).split(/\r?\n/)[0].trim()
     const script = `require('fs').writeFileSync(${JSON.stringify(outside)}, 'outside')`

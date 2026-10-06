@@ -8,6 +8,7 @@ import {
   registerJourneyUser,
   seedPage,
 } from './helpers/journey'
+import { createSessionWithPrincipal, provisionWorkspaceAgentPrincipal } from './helpers/agent-principal'
 
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? 'mock'
 const EVIDENCE_DIR = evidenceDir('journey-d-circuit')
@@ -27,14 +28,9 @@ test.describe('@host Journey D — compaction circuit (U4)', () => {
 
     mkdirSync(EVIDENCE_DIR, { recursive: true })
     const ctx = await registerJourneyUser(request, 'journey-circuit')
-    const create = await request.post(`${CP_URL}/api/v1/sessions`, {
-      headers: ctx.headers,
-      data: { title: 'circuit-host' },
-    })
-    expect([200, 201]).toContain(create.status())
-    const created = (await create.json()) as { id?: string; session?: { id?: string } }
-    const sessionId = created.id ?? created.session?.id
-    if (!sessionId) throw new Error('Session create response did not contain an id')
+    const auth = { accessToken: ctx.authToken, workspaceId: ctx.workspaceId }
+    const principalId = await provisionWorkspaceAgentPrincipal(request, auth, { name: 'Journey Circuit Fixture' })
+    const sessionId = await createSessionWithPrincipal(request, auth, { principalId, title: 'circuit-host' })
     const branchId = await getRootBranchId(request, sessionId, ctx.headers)
 
     const serviceHeaders = {

@@ -1,4 +1,5 @@
-import { test, chromium, expect } from '@playwright/test'
+import { test, chromium } from '@playwright/test'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 const UI_PORT = process.env.XIHE_UI_PORT || '12630'
 
@@ -11,7 +12,7 @@ test('register page 2x visual snapshot', async () => {
   const dpr = await page.evaluate(() => window.devicePixelRatio)
   // eslint-disable-next-line no-console
   console.log('DPR:', dpr)
-  await expect(page).toHaveScreenshot('register-page-2x.png')
+  await expectPlatformScreenshot(page, 'register-page-2x.png')
   await ctx.close()
   await browser.close()
 })

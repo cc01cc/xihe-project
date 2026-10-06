@@ -1,5 +1,4 @@
-import { mkdirSync } from 'node:fs'
-import os from 'node:os'
+import { existsSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { generateE2EPassword } from './helpers/password'
 import { actionableErrors, collectPageErrors } from './helpers/console'
@@ -43,7 +42,10 @@ test.describe('@host PLAN-0384 workspace add flow', () => {
     const defaultWsId = String(regBody.workspaceId ?? '')
     mkdirSync(EVIDENCE_DIR, { recursive: true })
 
-    hostRoot = process.env.XIHE_WORKSPACE_HOST_ROOT || os.tmpdir()
+    const runId = process.env.XIHE_E2E_RUN_ID
+    if (!runId) throw new Error('PLAN-0384 host E2E requires the isolated e2e-host runner')
+    hostRoot = path.resolve(process.cwd(), '../../.tmp/e2e-host', runId)
+    if (!existsSync(hostRoot)) throw new Error(`isolated host root does not exist: ${hostRoot}`)
     addDir = path.join(hostRoot, `xihe-e2e-0384-${Date.now()}`)
     mkdirSync(addDir, { recursive: true })
 
@@ -87,7 +89,7 @@ test.describe('@host PLAN-0384 workspace add flow', () => {
     page.addInitScript((id) => localStorage.setItem('xihe-workspace-id', id), seedWs)
   }
 
-  test('preflight reports real capability for both Windows backends', async ({ request }) => {
+  test('preflight reports detected availability for both Windows backends', async ({ request }) => {
     for (const executionMode of ['windows-mxc', 'windows-host']) {
       const res = await request.post(`${CP_URL}/api/v1/workspaces/capabilities/preflight`, {
         headers: { Authorization: `Bearer ${sharedAuth}`, 'Content-Type': 'application/json' },
@@ -97,12 +99,21 @@ test.describe('@host PLAN-0384 workspace add flow', () => {
       const body = await res.json()
       expect(body.contractVersion).toBe('v1')
       expect(body.executionMode).toBe(executionMode)
-      expect(body.available, JSON.stringify(body)).toBe(true)
+      expect(typeof body.available, JSON.stringify(body)).toBe('boolean')
+      if (body.available) {
+        expect(body.reason ?? '').toBe('')
+      } else {
+        expect(String(body.reason ?? '')).toMatch(/^[A-Z0-9_]+: .+/)
+        test.info().annotations.push({
+          type: 'host-capability',
+          description: `${executionMode} unavailable: ${String(body.reason)}`,
+        })
+      }
       if (executionMode === 'windows-mxc') expect(body.maturity).toBe('experimental')
     }
   })
 
-  test('adds a direct-attach workspace through the source browser and shows real capability', async ({ page }) => {
+  test('adds a direct-attach workspace through an explicit available execution mode', async ({ page, request: apiRequest }) => {
     seedPage(page)
     await page.goto(`/workspace/${seedWs}`)
 
@@ -121,22 +132,54 @@ test.describe('@host PLAN-0384 workspace add flow', () => {
     await page.locator('[data-testid="workspace-source-use"]').click()
 
     // V2: execution-mode cards read the real preflight result.
-    await expect(page.locator('[data-testid="workspace-execution-mxc-status"]')).toContainText('可用', {
-      timeout: 20000,
-    })
+    const mxcStatus = page.locator('[data-testid="workspace-execution-mxc-status"]')
+    const mxcCard = page.getByTestId('workspace-execution-mode-mxc')
+    let expectedExecutionMode: 'windows-mxc' | 'windows-host' = 'windows-mxc'
+    if (await mxcCard.isDisabled()) {
+      const preflightResponse = await apiRequest.post(`${CP_URL}/api/v1/workspaces/capabilities/preflight`, {
+        headers: { Authorization: `Bearer ${sharedAuth}`, 'Content-Type': 'application/json' },
+        data: { storageMode: 'direct_attach', hostPath: addDir, executionMode: 'windows-mxc' },
+      })
+      expect(preflightResponse.ok(), await preflightResponse.text()).toBeTruthy()
+      const mxcPreflight = await preflightResponse.json() as { available: boolean; reason?: string }
+      expect(mxcPreflight.available).toBe(false)
+      const unavailableReason = String(mxcPreflight.reason ?? '')
+      expect(unavailableReason).toMatch(/^[A-Z0-9_]+: .+/)
+      await expect(mxcStatus).toContainText(unavailableReason)
+      await page.getByTestId('workspace-switch-to-host').click()
+      expectedExecutionMode = 'windows-host'
+      const hostCard = page.getByTestId('workspace-execution-mode-host')
+      await expect(hostCard).toBeEnabled()
+      await hostCard.click()
+      await expect(hostCard).toHaveAttribute('aria-pressed', 'true')
+    } else {
+      await expect(mxcCard).toBeEnabled()
+    }
     const dockerCard = page.locator('[data-testid="workspace-execution-mode-docker"]')
     await expect(dockerCard).toBeDisabled()
     await page.screenshot({ path: path.join(EVIDENCE_DIR, 'execution-mode-cards.png'), fullPage: true })
 
-    await page.locator('[data-testid="workspace-execution-next"]').click()
+    const nextStep = page.locator('[data-testid="workspace-execution-next"]')
+    const selectionDebug = {
+      expectedExecutionMode,
+      hostStatus: await page.getByTestId('workspace-execution-host-status').innerText(),
+      hostPressed: await page.getByTestId('workspace-execution-mode-host').getAttribute('aria-pressed'),
+      nextEnabled: await nextStep.isEnabled(),
+    }
+    test.info().annotations.push({ type: 'execution-mode-selection', description: JSON.stringify(selectionDebug) })
+    await expect(nextStep, JSON.stringify(selectionDebug)).toBeEnabled()
+    await nextStep.click()
     await page.locator('[data-testid="workspace-create-name"]').fill(`Plan0384 Direct ${Date.now()}`)
+    if (expectedExecutionMode === 'windows-host') {
+      await page.getByRole('checkbox', { name: /确认使用宿主执行/ }).check()
+    }
     await page.screenshot({ path: path.join(EVIDENCE_DIR, 'confirm-summary.png'), fullPage: true })
     await page.locator('[data-testid="workspace-create-submit"]').click()
 
     const request = await createRequest
     const payload = request.postDataJSON() as Record<string, unknown>
     expect(payload.storageMode).toBe('direct_attach')
-    expect(payload.executionMode).toBe('windows-mxc')
+    expect(payload.executionMode).toBe(expectedExecutionMode)
     expect(payload.hostPath).toBe(addDir)
     expect(request.headers()['idempotency-key']).toBeTruthy()
 
@@ -150,6 +193,32 @@ test.describe('@host PLAN-0384 workspace add flow', () => {
     // Create a dedicated workspace so the switch does not disturb the shared seed.
     const switchDir = path.join(hostRoot, `xihe-e2e-0384-switch-${Date.now()}`)
     mkdirSync(switchDir, { recursive: true })
+    const preflight = await request.post(`${CP_URL}/api/v1/workspaces/capabilities/preflight`, {
+      headers: { Authorization: `Bearer ${sharedAuth}`, 'Content-Type': 'application/json' },
+      data: { storageMode: 'direct_attach', hostPath: switchDir, executionMode: 'windows-mxc' },
+    })
+    expect(preflight.ok(), await preflight.text()).toBeTruthy()
+    const capability = await preflight.json() as { available: boolean; reason?: string }
+    if (!capability.available) {
+      const rejected = await request.post(`${CP_URL}/api/v1/workspaces`, {
+        headers: {
+          Authorization: `Bearer ${sharedAuth}`,
+          'Content-Type': 'application/json',
+          'Idempotency-Key': `plan0384-switch-${Date.now()}`,
+        },
+        data: { name: 'Plan0384 Switch', storageMode: 'direct_attach', hostPath: switchDir, executionMode: 'windows-mxc' },
+      })
+      const failure = await rejected.text()
+      expect(rejected.status(), failure).toBe(503)
+      expect(failure).toContain('DIRECT_ATTACH_UNAVAILABLE')
+      expect(failure).toContain(capability.reason ?? 'SANDBOX_PROBE_FAILED')
+      test.info().annotations.push({
+        type: 'host-capability',
+        description: 'windows-mxc is unavailable; create is fail-closed and mode-switch flow requires an MXC-capable host',
+      })
+      return
+    }
+
     const created = await request.post(`${CP_URL}/api/v1/workspaces`, {
       headers: {
         Authorization: `Bearer ${sharedAuth}`,

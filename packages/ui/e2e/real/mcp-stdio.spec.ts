@@ -16,7 +16,7 @@ const FIXTURE_SCRIPT = [
 ].join('')
 
 test.describe('@host MCP — stdio session (PLAN-0347)', () => {
-  test('stdio server tools/list + tools/call go through an exec-attach session', async ({ request }) => {
+  test('stdio tools/list is visible but public user calls fail closed', async ({ request }) => {
     const register = await request.post(`${CP_URL}/api/v1/auth/register`, {
       data: { email: `mcp-session-${Date.now()}@test.com`, password: SHARED_PASSWORD, name: 'McpSession' },
     })
@@ -75,8 +75,8 @@ test.describe('@host MCP — stdio session (PLAN-0347)', () => {
     const tools = listed?.result?.tools ?? []
     expect(JSON.stringify(tools)).toContain('e2e_echo')
 
-    // 3) tools/call 经同一会话往返；未分类工具由 CP 策略门禁（ASK）时，
-    //    校验 409 审批信封（调用被策略前置拦截属预期，不属会话故障）。
+    // Public user callers may execute only workspace file tools. e2e_echo is
+    // listed for discovery but must be denied before the stdio tool is invoked.
     const call = await request.post(`${CP_URL}/api/v1/mcp`, {
       headers: sessionHeaders,
       data: {
@@ -86,13 +86,10 @@ test.describe('@host MCP — stdio session (PLAN-0347)', () => {
         params: { name: 'e2e_echo', arguments: { text: 'ping' } },
       },
     })
-    if (call.status() === 200) {
-      const called = await call.json()
-      expect(JSON.stringify(called)).toContain('echo:ping')
-    } else {
-      expect(call.status(), `tools/call unexpected status: ${call.status()} ${await call.text()}`).toBe(409)
-      const gatedText = await call.text()
-      expect(gatedText).toContain('APPROVAL_REQUIRED')
-    }
+    const deniedText = await call.text()
+    expect(call.status(), deniedText).toBe(403)
+    const denied = JSON.parse(deniedText) as { code?: string; detail?: string }
+    expect(denied.code).toBe('FORBIDDEN')
+    expect(denied.detail).toBe('Tool execution is not permitted')
   })
 })

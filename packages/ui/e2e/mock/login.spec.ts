@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 test.describe('Authentication', () => {
   test.beforeEach(async ({ page }) => {
@@ -36,12 +37,12 @@ test.describe('Authentication', () => {
   test('login page renders', async ({ page }) => {
     await page.goto('/login')
     await expect(page).toHaveURL(/\/login/)
-    await expect(page).toHaveScreenshot('login-page.png')
+    await expectPlatformScreenshot(page, 'login-page.png')
   })
 
   test('register page renders', async ({ page }) => {
     await page.goto('/register')
     await expect(page).toHaveURL(/\/register/)
-    await expect(page).toHaveScreenshot('register-page.png')
+    await expectPlatformScreenshot(page, 'register-page.png')
   })
 })

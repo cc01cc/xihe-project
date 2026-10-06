@@ -3,6 +3,7 @@ import { gotoWorkspaceWithChat } from './helpers/chat'
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
 import { test, expect } from '@playwright/test'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
 
@@ -39,7 +40,7 @@ test.describe('Mobile Viewport (390x844)', () => {
     await page.goto('/login', { waitUntil: 'load' })
     await page.waitForTimeout(800)
     await assertNoHorizontalOverflow(page)
-    await expect(page).toHaveScreenshot('mobile-login.png')
+    await expectPlatformScreenshot(page, 'mobile-login.png')
   })
 
   test('chat page input area stays on screen on mobile', async ({ page }) => {
@@ -53,7 +54,7 @@ test.describe('Mobile Viewport (390x844)', () => {
     expect(box!.x + box!.width).toBeLessThanOrEqual(392)
 
     await assertNoHorizontalOverflow(page)
-    await expect(page).toHaveScreenshot('mobile-chat.png')
+    await expectPlatformScreenshot(page, 'mobile-chat.png')
   })
 
   test('settings config page renders within mobile viewport', async ({ page }) => {

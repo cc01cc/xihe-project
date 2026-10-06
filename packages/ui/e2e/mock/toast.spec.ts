@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { setupMockAuth } from './helpers/auth'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 test.describe('Toast notifications', () => {
   test.beforeEach(async ({ page }) => {
@@ -26,7 +27,7 @@ test.describe('Toast notifications', () => {
       document.body.appendChild(container)
     })
     await page.waitForTimeout(300)
-    await expect(page).toHaveScreenshot('toast-success.png')
+    await expectPlatformScreenshot(page, 'toast-success.png')
   })
 
   test('displays error toast and captures snapshot', async ({ page }) => {
@@ -41,7 +42,7 @@ test.describe('Toast notifications', () => {
       document.body.appendChild(container)
     })
     await page.waitForTimeout(300)
-    await expect(page).toHaveScreenshot('toast-error.png')
+    await expectPlatformScreenshot(page, 'toast-error.png')
   })
 
   test('displays warning toast and captures snapshot', async ({ page }) => {
@@ -56,6 +57,6 @@ test.describe('Toast notifications', () => {
       document.body.appendChild(container)
     })
     await page.waitForTimeout(300)
-    await expect(page).toHaveScreenshot('toast-warning.png')
+    await expectPlatformScreenshot(page, 'toast-warning.png')
   })
 })

@@ -3,11 +3,12 @@ import { mkdirSync } from 'node:fs'
 import { test, expect } from '@playwright/test'
 import {
   ensureAgentWorkspaceBinding,
-  ensureChatReady,
   evidenceDir,
   registerJourneyUser,
   sendChat,
+  waitForControlPlaneAgentReady,
 } from './helpers/journey'
+import { createWorkspaceSessionWithPrincipal, provisionWorkspaceAgentPrincipal } from './helpers/agent-principal'
 
 const RUNTIME_URL = `http://localhost:${process.env.XIHE_RUNTIME_PORT || '12633'}`
 const SERVICE_TOKEN = process.env.XIHE_CP_API_TOKEN ?? 'dev-token-not-secure'
@@ -50,21 +51,27 @@ test.describe('@host PLAN-0340 U1/U2 context sources', () => {
     request,
   }) => {
     await writeAgents(request, `# Workspace rules\nBe concise.\n`)
+    const principalId = await provisionWorkspaceAgentPrincipal(
+      request,
+      { accessToken: sharedAuth, workspaceId: sharedWs },
+      { name: 'Context Sources Fixture', actions: ['read', 'write'] },
+    )
     // PLAN-0369: rebind the Agent to this spec's workspace before the chat.
     await ensureAgentWorkspaceBinding(sharedWs)
+    await waitForControlPlaneAgentReady(request, { Authorization: `Bearer ${sharedAuth}` })
 
-    page.addInitScript((t) => localStorage.setItem('xihe-token', t), sharedAuth)
-    page.addInitScript(
+    await page.addInitScript((t) => localStorage.setItem('xihe-token', t), sharedAuth)
+    await page.addInitScript(
       (raw) => localStorage.setItem('xihe-user', raw),
       JSON.stringify({ workspaceId: sharedWs }),
     )
-    page.addInitScript(
+    await page.addInitScript(
       (ws) => localStorage.setItem('xihe-workspace', JSON.stringify(ws)),
       { id: sharedWs, name: 'Default Workspace' },
     )
 
     await page.goto('/workspace/' + sharedWs, { waitUntil: 'load' })
-    await ensureChatReady(page)
+    await createWorkspaceSessionWithPrincipal(page, principalId)
 
     // First run: refresh runs before Agent dispatch → U2 toast for created AGENTS.
     await sendChat(page, 'Hello for plan-0340 context sources U1.')

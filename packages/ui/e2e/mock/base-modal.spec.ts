@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { BaseModalPage } from '../page-objects/BaseModalPage'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 test.describe('BaseModal', () => {
   test('opens and closes via backdrop click', async ({ page }) => {
@@ -30,7 +31,7 @@ test.describe('BaseModal', () => {
     })
 
     // Snapshot of modal in open state
-    await expect(page).toHaveScreenshot('base-modal-open.png')
+    await expectPlatformScreenshot(page, 'base-modal-open.png')
 
     // Click backdrop overlay (outside content) to close
     await modal.clickBackdrop()

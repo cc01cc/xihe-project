@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { setupMockAuth } from './helpers/auth'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 test.describe('Keyboard accessibility', () => {
   test.beforeEach(async ({ page }) => {
@@ -28,6 +29,6 @@ test.describe('Keyboard accessibility', () => {
   test('focused button captured in snapshot', async ({ page }) => {
     await page.keyboard.press('Tab')
     await page.waitForTimeout(200)
-    await expect(page).toHaveScreenshot('tab-focus-new-chat.png')
+    await expectPlatformScreenshot(page, 'tab-focus-new-chat.png')
   })
 })

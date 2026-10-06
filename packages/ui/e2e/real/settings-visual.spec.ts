@@ -2,6 +2,7 @@ import { generateE2EPassword } from './helpers/password'
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
 import { test, expect } from '@playwright/test'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
 let authToken = ''
@@ -37,18 +38,18 @@ test('settings config page renders', async ({ page }) => {
 test('settings knowledge page with tab nav', async ({ page }) => {
   await page.locator('[data-testid="settings-nav-settings-knowledge"]').click()
   await expect(page.locator('[data-testid="settings-knowledge-heading"]')).toBeVisible()
-  await expect(page).toHaveScreenshot('settings-knowledge.png')
+  await expectPlatformScreenshot(page, 'settings-knowledge.png')
 })
 
 test('settings data page with tab nav', async ({ page }) => {
   await page.locator('[data-testid="settings-nav-settings-data"]').click()
   await expect(page.locator('[data-testid="settings-data-heading"]')).toBeVisible()
-  await expect(page).toHaveScreenshot('settings-data.png')
+  await expectPlatformScreenshot(page, 'settings-data.png')
 })
 
 test('settings monitoring page with tab nav', async ({ page }) => {
   await page.locator('[data-testid="settings-nav-settings-monitoring"]').click()
   await expect(page.locator('[data-testid="settings-monitoring-heading"]')).toBeVisible()
-  await expect(page).toHaveScreenshot('settings-monitoring.png')
+  await expectPlatformScreenshot(page, 'settings-monitoring.png')
 })
 

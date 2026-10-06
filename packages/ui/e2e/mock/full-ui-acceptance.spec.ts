@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { setupMockAuth, setupMockSessions } from './helpers/auth'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 const providerCatalog = {
   catalogRevision: 'mock-revision',
@@ -113,7 +114,7 @@ test.describe('PLAN-269 full UI acceptance: routes and auth', () => {
       await page.goto(route.path, { waitUntil: 'load' })
       await expect(route.marker).toBeVisible({ timeout: 10000 })
       expect(page.url()).toContain(route.path)
-      await expect(page).toHaveScreenshot(`plan-269-route-${index + 1}.png`)
+      await expectPlatformScreenshot(page, `plan-269-route-${index + 1}.png`)
     }
   })
 
@@ -131,7 +132,7 @@ test.describe('PLAN-269 full UI acceptance: routes and auth', () => {
     await page.getByRole('button', { name: '设置', exact: true }).click()
     await expect(page).toHaveURL(/\/settings\/config$/)
     await expect(page.getByTestId('settings-config-heading')).toBeVisible()
-    await expect(page).toHaveScreenshot('plan-269-sidebar-settings-navigation.png')
+    await expectPlatformScreenshot(page, 'plan-269-sidebar-settings-navigation.png')
   })
 
   test('invalid login keeps the form and renders a user-safe error', async ({ page }) => {
@@ -146,7 +147,7 @@ test.describe('PLAN-269 full UI acceptance: routes and auth', () => {
     await page.getByRole('button', { name: '登录' }).click()
     await expect(page.locator('p.text-destructive')).toBeVisible()
     await expect(page.locator('p.text-destructive')).not.toContainText('[object Object]')
-    await expect(page).toHaveScreenshot('plan-269-login-error.png')
+    await expectPlatformScreenshot(page, 'plan-269-login-error.png')
   })
 
   test('registration mismatch disables submit and shows inline validation', async ({ page }) => {
@@ -156,7 +157,7 @@ test.describe('PLAN-269 full UI acceptance: routes and auth', () => {
     await page.locator('#confirmPassword').fill('different-password')
     await expect(page.getByText('两次输入的密码不一致')).toBeVisible()
     await expect(page.locator('button[type="submit"]')).toBeDisabled()
-    await expect(page).toHaveScreenshot('plan-269-register-mismatch.png')
+    await expectPlatformScreenshot(page, 'plan-269-register-mismatch.png')
   })
 
   test('message search is reachable and filters persisted messages', async ({ page }, testInfo) => {
@@ -243,7 +244,7 @@ test.describe('PLAN-269 full UI acceptance: settings and provider', () => {
     await expect(form).toBeHidden({ timeout: 10000 })
     await expect(hub.getByText('Test OpenAI')).toBeVisible({ timeout: 10000 })
     await expect(hub.getByTestId('provider-connection-openai').getByText('已连接')).toBeVisible()
-    await expect(page).toHaveScreenshot('plan-269-provider-connected.png')
+    await expectPlatformScreenshot(page, 'plan-269-provider-connected.png')
 
     await hub.getByTestId('provider-connection-openai').getByRole('button', { name: '验证', exact: true }).click()
     await expect(hub.getByText('刚刚验证')).toBeVisible({ timeout: 10000 })
@@ -274,7 +275,7 @@ test.describe('PLAN-269 full UI acceptance: settings and provider', () => {
     })
     await expect(page.getByText('import.json')).toBeVisible()
     await expect(page.getByText('聊天会话')).toBeVisible()
-    await expect(page).toHaveScreenshot('plan-269-data-import-preview.png')
+    await expectPlatformScreenshot(page, 'plan-269-data-import-preview.png')
   })
 
   test('Knowledge Base uploads a file and refreshes its document list', async ({ page }) => {
@@ -298,7 +299,7 @@ test.describe('PLAN-269 full UI acceptance: settings and provider', () => {
     })
     await page.getByRole('button', { name: '上传' }).click()
     await expect(page.getByText('guide.md')).toBeVisible({ timeout: 10000 })
-    await expect(page).toHaveScreenshot('plan-269-knowledge-uploaded.png')
+    await expectPlatformScreenshot(page, 'plan-269-knowledge-uploaded.png')
   })
 })
 
@@ -364,7 +365,7 @@ test.describe('PLAN-269 full UI acceptance: workspace and mobile', () => {
     await page.reload()
     await page.getByRole('button', { name: 'Files' }).click()
     await expect(page.getByTestId('mobile-files-sheet')).toBeVisible()
-    await expect(page).toHaveScreenshot('plan-269-mobile-files-sheet.png')
+    await expectPlatformScreenshot(page, 'plan-269-mobile-files-sheet.png')
     await page.getByRole('button', { name: /close/i }).last().click()
     await page.getByRole('button', { name: 'Open chat' }).click()
     await expect(page.getByTestId('mobile-chat-sheet')).toBeVisible()
@@ -506,6 +507,6 @@ test.describe('PLAN-269 full UI acceptance: workspace and mobile', () => {
     await expect(page.locator('textarea')).toBeVisible()
     await page.getByTitle('截取屏幕').click()
     await expect(page.getByTestId('selected-attachment')).toBeVisible({ timeout: 10000 })
-    await expect(page).toHaveScreenshot('plan-269-screen-capture-attachment.png')
+    await expectPlatformScreenshot(page, 'plan-269-screen-capture-attachment.png')
   })
 })

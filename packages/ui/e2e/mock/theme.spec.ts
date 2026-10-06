@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { setupMockAuth } from './helpers/auth'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 test.describe('Theme Switching', () => {
   test.beforeEach(async ({ page }) => {
@@ -15,7 +16,7 @@ test.describe('Theme Switching', () => {
     await page.goto('/workspace/workspace-1/chat/test-session')
     await expect(page.locator('textarea')).toBeVisible({ timeout: 5000 })
     await expect(page.locator('html')).not.toHaveClass(/dark/)
-    await expect(page).toHaveScreenshot('theme-default-light.png')
+    await expectPlatformScreenshot(page, 'theme-default-light.png')
   })
 
   test('dark mode applies correct class to html element', async ({ page }) => {
@@ -45,6 +46,6 @@ test.describe('Theme Switching', () => {
     const theme = await page.evaluate(() => localStorage.getItem('xihe-theme'))
     expect(theme).toBe('dark')
     await expect(page.locator('html')).toHaveClass(/dark/)
-    await expect(page).toHaveScreenshot('theme-dark-persisted-chat.png')
+    await expectPlatformScreenshot(page, 'theme-dark-persisted-chat.png')
   })
 })

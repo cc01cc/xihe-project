@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test'
+import { test } from '@playwright/test'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 test.describe('ConfirmModal', () => {
   test.beforeEach(async ({ page }) => {
@@ -29,6 +30,6 @@ test.describe('ConfirmModal', () => {
       document.body.appendChild(div)
     })
     await page.waitForTimeout(300)
-    await expect(page).toHaveScreenshot('confirm-modal-delete.png')
+    await expectPlatformScreenshot(page, 'confirm-modal-delete.png')
   })
 })

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { generateE2EPassword } from './helpers/password'
 import { ensureAgentWorkspaceBinding, getRootBranchId, waitForControlPlaneAgentReady } from './helpers/journey'
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? 'mock'
@@ -153,7 +154,7 @@ test('@host Chat approval — approve, reject and persistence in one flow', asyn
   await expect(modal).toBeVisible({ timeout: 60000 })
   await expect(modal.locator('text=delete file')).toBeVisible()
   await expect(modal.locator('text=README.md')).toBeVisible()
-  await expect(page).toHaveScreenshot('approval-real-modal.png', {
+  await expectPlatformScreenshot(page, 'approval-real-modal.png', {
     mask: [page.locator('time'), page.getByTestId('workspace-active-agent')],
   })
   await modal.locator('[data-testid="approval-approve"]').click()
