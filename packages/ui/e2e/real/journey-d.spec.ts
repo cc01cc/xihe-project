@@ -250,10 +250,13 @@ test.describe("@host Journey D — context pipeline", () => {
             `${sess.modelProvider ?? ""}/${sess.modelName ?? ""}`,
             "route binding unchanged",
         ).toBe("xiaomi/mimo-v2.5");
-        const branchId = await getRootBranchId(request, sessionId, headers)
-        const messagesRes = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}/messages?branchId=${branchId}`, {
-            headers,
-        });
+        const branchId = await getRootBranchId(request, sessionId, headers);
+        const messagesRes = await request.get(
+            `${CP_URL}/api/v1/sessions/${sessionId}/messages?branchId=${branchId}`,
+            {
+                headers,
+            },
+        );
         const stored = messagesRes.ok() ? await messagesRes.json() : [];
         expect(
             (stored as Array<{ role?: string; content?: string }>).filter(

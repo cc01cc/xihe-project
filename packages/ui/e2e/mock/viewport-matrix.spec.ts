@@ -1,137 +1,151 @@
-import { expect, test, type Page } from '@playwright/test'
-import { setupMockAuth, setupMockSessions } from './helpers/auth'
-import { expectPlatformScreenshot } from '../helpers/visual'
+import { expect, test, type Page } from "@playwright/test";
+import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { expectPlatformScreenshot } from "../helpers/visual";
 
 async function setupViewportFixtures(page: Page) {
-  await setupMockAuth(page)
-  await setupMockSessions(page, { sessions: [{ id: 'session-1', title: 'Viewport Test' }] })
-  await page.addInitScript(() => {
-    localStorage.setItem('xihe-mock-filetree', JSON.stringify([]))
-  })
-  await page.route('**/api/v1/config/**', (route) => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({}),
-  }))
-  await page.route('**/api/v1/provider-catalog', (route) => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({ catalogRevision: 'viewport', providers: [] }),
-  }))
-  await page.route('**/api/v1/provider-connections', (route) => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({ connections: [] }),
-  }))
-  await page.route('**/api/v1/mcp', (route) => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      result: { content: [{ type: 'text', text: JSON.stringify({ entries: [] }) }] },
-    }),
-  }))
-  await page.route('**/api/v1/workspaces/*/environment', (route) => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({
-      workspaceId: 'workspace-1',
-      status: 'ready',
-      storageBackend: 'host_directory',
-      storageRef: 'workspace-1',
-      executionSpec: { status: 'assigned', generation: 1, sandboxSpecHash: 'viewport-spec' },
-      runtime: { status: 'ready', deviceId: 'viewport-device', lastHeartbeatAt: 'now' },
-    }),
-  }))
+    await setupMockAuth(page);
+    await setupMockSessions(page, { sessions: [{ id: "session-1", title: "Viewport Test" }] });
+    await page.addInitScript(() => {
+        localStorage.setItem("xihe-mock-filetree", JSON.stringify([]));
+    });
+    await page.route("**/api/v1/config/**", (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({}),
+        }),
+    );
+    await page.route("**/api/v1/provider-catalog", (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ catalogRevision: "viewport", providers: [] }),
+        }),
+    );
+    await page.route("**/api/v1/provider-connections", (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ connections: [] }),
+        }),
+    );
+    await page.route("**/api/v1/mcp", (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: 1,
+                result: { content: [{ type: "text", text: JSON.stringify({ entries: [] }) }] },
+            }),
+        }),
+    );
+    await page.route("**/api/v1/workspaces/*/environment", (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                workspaceId: "workspace-1",
+                status: "ready",
+                storageBackend: "host_directory",
+                storageRef: "workspace-1",
+                executionSpec: {
+                    status: "assigned",
+                    generation: 1,
+                    sandboxSpecHash: "viewport-spec",
+                },
+                runtime: { status: "ready", deviceId: "viewport-device", lastHeartbeatAt: "now" },
+            }),
+        }),
+    );
 }
 
 async function expectNoHorizontalOverflow(page: Page) {
-  const overflow = await page.evaluate(() => {
-    const doc = document.scrollingElement
-    return doc ? doc.scrollWidth - doc.clientWidth : 0
-  })
-  expect(overflow).toBeLessThanOrEqual(2)
+    const overflow = await page.evaluate(() => {
+        const doc = document.scrollingElement;
+        return doc ? doc.scrollWidth - doc.clientWidth : 0;
+    });
+    expect(overflow).toBeLessThanOrEqual(2);
 }
 
-test.describe('PLAN-269 viewport matrix: desktop-4k', () => {
-  test.use({ viewport: { width: 3840, height: 2160 }, deviceScaleFactor: 1 })
+test.describe("PLAN-269 viewport matrix: desktop-4k", () => {
+    test.use({ viewport: { width: 3840, height: 2160 }, deviceScaleFactor: 1 });
 
-  test('settings shell remains bounded on 4K', async ({ page }) => {
-    await setupViewportFixtures(page)
-    await page.goto('/settings/config')
-    await expect(page.getByTestId('settings-config-heading')).toBeVisible()
-    await expectNoHorizontalOverflow(page)
-    await expectPlatformScreenshot(page, 'plan-269-viewport-desktop-4k-settings.png')
-  })
-})
+    test("settings shell remains bounded on 4K", async ({ page }) => {
+        await setupViewportFixtures(page);
+        await page.goto("/settings/config");
+        await expect(page.getByTestId("settings-config-heading")).toBeVisible();
+        await expectNoHorizontalOverflow(page);
+        await expectPlatformScreenshot(page, "plan-269-viewport-desktop-4k-settings.png");
+    });
+});
 
-test.describe('PLAN-269 viewport matrix: desktop-2k', () => {
-  test.use({ viewport: { width: 2560, height: 1440 }, deviceScaleFactor: 1 })
+test.describe("PLAN-269 viewport matrix: desktop-2k", () => {
+    test.use({ viewport: { width: 2560, height: 1440 }, deviceScaleFactor: 1 });
 
-  test('workspace shell remains bounded on 2K', async ({ page }) => {
-    await setupViewportFixtures(page)
-    await page.goto('/workspace/workspace-1')
-    await expect(page.getByTestId('workspace-toolbar-settings')).toBeVisible()
-    // W4 (PLAN-0328 T3.7) chat-first layout: the FileEditor empty state now lives
-    // in the collapsible code panel, opened explicitly from the toolbar.
-    await page.getByTestId('workspace-toolbar-code').click()
-    await expect(page.getByTestId('workspace-aux-panel')).toBeVisible()
-    await expect(page.getByText('从文件树选择文件')).toBeVisible()
-    await expectNoHorizontalOverflow(page)
-    // Baseline `plan-269-viewport-desktop-2k-workspace.png` still shows the pre-W4
-    // editor-first layout: refresh it in the baseline follow-up (snapshots are not
-    // updated here). The bounded-shell assertions above carry the coverage.
-  })
-})
+    test("workspace shell remains bounded on 2K", async ({ page }) => {
+        await setupViewportFixtures(page);
+        await page.goto("/workspace/workspace-1");
+        await expect(page.getByTestId("workspace-toolbar-settings")).toBeVisible();
+        // W4 (PLAN-0328 T3.7) chat-first layout: the FileEditor empty state now lives
+        // in the collapsible code panel, opened explicitly from the toolbar.
+        await page.getByTestId("workspace-toolbar-code").click();
+        await expect(page.getByTestId("workspace-aux-panel")).toBeVisible();
+        await expect(page.getByText("从文件树选择文件")).toBeVisible();
+        await expectNoHorizontalOverflow(page);
+        // Baseline `plan-269-viewport-desktop-2k-workspace.png` still shows the pre-W4
+        // editor-first layout: refresh it in the baseline follow-up (snapshots are not
+        // updated here). The bounded-shell assertions above carry the coverage.
+    });
+});
 
-test.describe('PLAN-269 viewport matrix: desktop-1080p', () => {
-  test.use({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1 })
+test.describe("PLAN-269 viewport matrix: desktop-1080p", () => {
+    test.use({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1 });
 
-  test('chat composer and sidebar remain usable at 1080p', async ({ page }) => {
-    await setupViewportFixtures(page)
-    await page.goto('/workspace/workspace-1/chat/session-1')
-    await expect(page.getByTestId('chat-input')).toBeVisible()
-    await expect(page.getByTestId('sidebar')).toBeVisible()
-    await expectNoHorizontalOverflow(page)
-    await expectPlatformScreenshot(page, 'plan-269-viewport-desktop-1080p-chat.png')
-  })
-})
+    test("chat composer and sidebar remain usable at 1080p", async ({ page }) => {
+        await setupViewportFixtures(page);
+        await page.goto("/workspace/workspace-1/chat/session-1");
+        await expect(page.getByTestId("chat-input")).toBeVisible();
+        await expect(page.getByTestId("sidebar")).toBeVisible();
+        await expectNoHorizontalOverflow(page);
+        await expectPlatformScreenshot(page, "plan-269-viewport-desktop-1080p-chat.png");
+    });
+});
 
-test.describe('PLAN-269 viewport matrix: desktop-720p', () => {
-  test.use({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 })
+test.describe("PLAN-269 viewport matrix: desktop-720p", () => {
+    test.use({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
 
-  test('workspace toolbar and composer remain usable at 720p', async ({ page }) => {
-    await setupViewportFixtures(page)
-    await page.goto('/workspace/workspace-1')
-    await expect(page.getByTestId('workspace-toolbar-settings')).toBeVisible()
-    await expect(page.getByTestId('chat-input')).toBeVisible()
-    await expectNoHorizontalOverflow(page)
-    // Baseline `plan-269-viewport-desktop-720p-workspace.png` still shows the pre-W4
-    // editor-first layout: refresh it in the baseline follow-up (snapshots are not
-    // updated here). The toolbar/composer assertions above carry the coverage.
-  })
-})
+    test("workspace toolbar and composer remain usable at 720p", async ({ page }) => {
+        await setupViewportFixtures(page);
+        await page.goto("/workspace/workspace-1");
+        await expect(page.getByTestId("workspace-toolbar-settings")).toBeVisible();
+        await expect(page.getByTestId("chat-input")).toBeVisible();
+        await expectNoHorizontalOverflow(page);
+        // Baseline `plan-269-viewport-desktop-720p-workspace.png` still shows the pre-W4
+        // editor-first layout: refresh it in the baseline follow-up (snapshots are not
+        // updated here). The toolbar/composer assertions above carry the coverage.
+    });
+});
 
-test.describe('PLAN-269 viewport matrix: mobile', () => {
-  test.use({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 })
+test.describe("PLAN-269 viewport matrix: mobile", () => {
+    test.use({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
 
-  test('Files and Chat sheets remain bounded on mobile', async ({ page }) => {
-    await setupViewportFixtures(page)
-    await page.goto('/workspace/workspace-1')
-    await page.getByRole('button', { name: 'Files' }).click()
-    const filesSheet = page.getByTestId('mobile-files-sheet')
-    await expect(filesSheet).toBeVisible()
-    await expect(filesSheet.getByTestId('workspace-empty-state')).toBeVisible()
-    await expectPlatformScreenshot(filesSheet, 'plan-269-viewport-mobile-files.png')
-    await page.getByRole('button', { name: /close/i }).last().click()
-    await page.getByRole('button', { name: 'Open chat' }).click()
-    await expect(page.getByTestId('mobile-chat-sheet')).toBeVisible()
-    await expectNoHorizontalOverflow(page)
-    await expect(page.getByTestId('mobile-chat-sheet').getByTestId('chat-input')).toBeVisible()
-    // `plan-269-viewport-mobile-chat.png` is stale: the chat sheet now carries the
-    // policy-mode controls (uncommitted T1.13 UI). Refresh it in the baseline
-    // follow-up (snapshots are not updated here); the bounded-sheet assertions
-    // above carry the coverage.
-  })
-})
+    test("Files and Chat sheets remain bounded on mobile", async ({ page }) => {
+        await setupViewportFixtures(page);
+        await page.goto("/workspace/workspace-1");
+        await page.getByRole("button", { name: "Files" }).click();
+        const filesSheet = page.getByTestId("mobile-files-sheet");
+        await expect(filesSheet).toBeVisible();
+        await expect(filesSheet.getByTestId("workspace-empty-state")).toBeVisible();
+        await expectPlatformScreenshot(filesSheet, "plan-269-viewport-mobile-files.png");
+        await page.getByRole("button", { name: /close/i }).last().click();
+        await page.getByRole("button", { name: "Open chat" }).click();
+        await expect(page.getByTestId("mobile-chat-sheet")).toBeVisible();
+        await expectNoHorizontalOverflow(page);
+        await expect(page.getByTestId("mobile-chat-sheet").getByTestId("chat-input")).toBeVisible();
+        // `plan-269-viewport-mobile-chat.png` is stale: the chat sheet now carries the
+        // policy-mode controls (uncommitted T1.13 UI). Refresh it in the baseline
+        // follow-up (snapshots are not updated here); the bounded-sheet assertions
+        // above carry the coverage.
+    });
+});

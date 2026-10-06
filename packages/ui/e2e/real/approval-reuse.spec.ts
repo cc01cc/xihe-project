@@ -32,7 +32,13 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
-import { CP_URL, ensureAgentWorkspaceBinding, registerJourneyUser, seedPage, type JourneyContext } from "./helpers/journey";
+import {
+    CP_URL,
+    ensureAgentWorkspaceBinding,
+    registerJourneyUser,
+    seedPage,
+    type JourneyContext,
+} from "./helpers/journey";
 
 const RUN_ID = process.env.XIHE_E2E_RUN_ID ?? "";
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "";
@@ -65,10 +71,7 @@ function gateOrSkip(condition: boolean, reason: string) {
     }
     test.skip(true, reason);
 }
-gateOrSkip(
-    !RUN_ID,
-    "需要隔离 host 栈（scripts/e2e-host.mjs --persistent），禁止对 dev 库取证",
-);
+gateOrSkip(!RUN_ID, "需要隔离 host 栈（scripts/e2e-host.mjs --persistent），禁止对 dev 库取证");
 gateOrSkip(
     LLM_MODE !== "write_file",
     "需要以 --llm-mode=write_file 启动的栈（fake LLM 的确定性 write_file tool call）",
@@ -429,7 +432,10 @@ test("@host 审批复用护栏：once 对照组 3/3、session 复用 1 行 + gra
         .toBe(4);
     const relayOwnedRows = approvalRowCountByOrigin(sessionId, "agent_relay");
     expect
-        .soft(relayOwnedRows, "本场景不得出现 Agent 中继来源的审批行（模型未调用 request_approval）")
+        .soft(
+            relayOwnedRows,
+            "本场景不得出现 Agent 中继来源的审批行（模型未调用 request_approval）",
+        )
         .toBe(0);
     const legacyOriginRows = Number(
         psqlValue(

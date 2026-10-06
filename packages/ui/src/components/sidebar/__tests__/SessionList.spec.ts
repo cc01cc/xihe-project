@@ -9,7 +9,10 @@ import { useSessionStore } from "../../../stores/session";
 import SessionItem from "../SessionItem.vue";
 import SessionList from "../SessionList.vue";
 
-const { toastError, toastSuccess } = vi.hoisted(() => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
+const { toastError, toastSuccess } = vi.hoisted(() => ({
+    toastError: vi.fn(),
+    toastSuccess: vi.fn(),
+}));
 vi.mock("vue-sonner", () => ({ toast: { error: toastError, success: toastSuccess } }));
 
 const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -21,10 +24,12 @@ const CHILD_ID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 function createTestRouter() {
     return createRouter({
         history: createMemoryHistory(),
-        routes: [{
-            path: "/workspace/:workspaceId/chat/:sessionId",
-            component: { setup: () => () => null },
-        }],
+        routes: [
+            {
+                path: "/workspace/:workspaceId/chat/:sessionId",
+                component: { setup: () => () => null },
+            },
+        ],
     });
 }
 
@@ -81,24 +86,28 @@ describe("SessionList current-session fork action", () => {
     it("uses the selected server branch and a visible canonical terminal message, reusing its key on retry", async () => {
         setActivePinia(createPinia());
         const sessionStore = useSessionStore();
-        sessionStore.sessions = [{
-            id: SESSION_ID,
-            title: "Source session",
-            createdAt: "2026-09-29T00:00:00Z",
-            updatedAt: "2026-09-29T00:00:00Z",
-            workspaceId: WORKSPACE_ID,
-            context: { agents: [] },
-        }];
+        sessionStore.sessions = [
+            {
+                id: SESSION_ID,
+                title: "Source session",
+                createdAt: "2026-09-29T00:00:00Z",
+                updatedAt: "2026-09-29T00:00:00Z",
+                workspaceId: WORKSPACE_ID,
+                context: { agents: [] },
+            },
+        ];
         sessionStore.selectSession(SESSION_ID);
 
         const chatStore = useChatStore();
-        chatStore.setSessionBranches(SESSION_ID, [{
-            branchId: BRANCH_ID,
-            parentBranchId: null,
-            forkPointMessageId: null,
-            forkPointRunId: null,
-            createdAt: "2026-09-29T00:00:00Z",
-        }]);
+        chatStore.setSessionBranches(SESSION_ID, [
+            {
+                branchId: BRANCH_ID,
+                parentBranchId: null,
+                forkPointMessageId: null,
+                forkPointRunId: null,
+                createdAt: "2026-09-29T00:00:00Z",
+            },
+        ]);
         chatStore.loadMessages(SESSION_ID, [
             {
                 id: ANCHOR_ID,
@@ -147,14 +156,21 @@ describe("SessionList current-session fork action", () => {
                 runStatus: "succeeded",
             },
         ]);
-        const forkSession = vi.spyOn(api, "forkSession")
-            .mockRejectedValueOnce(new ApiError({
-                status: 409,
-                code: "IDEMPOTENCY_REQUEST_IN_PROGRESS",
-                detail: "Retry this request",
-                requestId: "request-1",
-            }))
-            .mockResolvedValueOnce({ id: CHILD_ID, title: "Forked session", workspaceId: WORKSPACE_ID });
+        const forkSession = vi
+            .spyOn(api, "forkSession")
+            .mockRejectedValueOnce(
+                new ApiError({
+                    status: 409,
+                    code: "IDEMPOTENCY_REQUEST_IN_PROGRESS",
+                    detail: "Retry this request",
+                    requestId: "request-1",
+                }),
+            )
+            .mockResolvedValueOnce({
+                id: CHILD_ID,
+                title: "Forked session",
+                workspaceId: WORKSPACE_ID,
+            });
         vi.spyOn(api, "getSessions").mockResolvedValue({
             sessions: [
                 { id: SESSION_ID, title: "Source session", workspaceId: WORKSPACE_ID },
@@ -170,7 +186,9 @@ describe("SessionList current-session fork action", () => {
         };
 
         await clickFork();
-        expect(toastError).toHaveBeenCalledWith("IDEMPOTENCY_REQUEST_IN_PROGRESS: Retry this request");
+        expect(toastError).toHaveBeenCalledWith(
+            "IDEMPOTENCY_REQUEST_IN_PROGRESS: Retry this request",
+        );
         await clickFork();
 
         expect(api.getMessages).toHaveBeenCalledWith(SESSION_ID, BRANCH_ID);

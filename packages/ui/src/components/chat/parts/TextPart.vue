@@ -1,18 +1,18 @@
 <script setup lang="ts">
-import MarkdownRender from 'markstream-vue'
+import MarkdownRender from "markstream-vue";
 
 defineProps<{
-  content: string
-  isStreaming?: boolean
-}>()
+    content: string;
+    isStreaming?: boolean;
+}>();
 </script>
 
 <template>
-  <MarkdownRender
-    class="xihe-chat-markdown"
-    mode="chat"
-    :content="content"
-    :final="!isStreaming"
-    custom-id="xihe"
-  />
+    <MarkdownRender
+        class="xihe-chat-markdown"
+        mode="chat"
+        :content="content"
+        :final="!isStreaming"
+        custom-id="xihe"
+    />
 </template>

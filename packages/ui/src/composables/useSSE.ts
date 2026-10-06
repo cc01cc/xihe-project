@@ -13,12 +13,7 @@ import {
     normalizeWorkspaceCheckpointEvent,
 } from "./api";
 import type { EventSourceMessage } from "@microsoft/fetch-event-source";
-import type {
-    ChatRunResponse,
-    Diagnostic,
-    DiagnosticsBundle,
-    ToolCall,
-} from "../types";
+import type { ChatRunResponse, Diagnostic, DiagnosticsBundle, ToolCall } from "../types";
 
 interface LangChainTextBlock {
     type: string;
@@ -55,7 +50,11 @@ export interface SSECallbacks {
     onStatus?: (status: string) => void;
     onContextSourcesChanged?: (data: { sourceKey?: string; status?: string }) => void;
     /** PLAN-0341 U3: overflow compacted + one retry dispatched. */
-    onContextOverflowRetry?: (data: { runId?: string; requestId?: string; message?: string }) => void;
+    onContextOverflowRetry?: (data: {
+        runId?: string;
+        requestId?: string;
+        message?: string;
+    }) => void;
     /** PLAN-0341 U4: auto-compaction circuit open/closed. */
     onContextCompactionCircuit?: (data: { state?: string; reason?: string }) => void;
     /** PLAN-0343: run-terminal usage snapshot (cost-mapped by CP, once per run). */
@@ -148,9 +147,7 @@ const UNTRUSTED_ENVELOPE_RE = /^<untrusted-tool-output>\n[^\n]*\n/;
  */
 function stripUntrustedEnvelope(result: string): string {
     return result.startsWith("<untrusted-tool-output>")
-        ? result
-              .replace(UNTRUSTED_ENVELOPE_RE, "")
-              .replace(/\n?<\/untrusted-tool-output>\s*$/, "")
+        ? result.replace(UNTRUSTED_ENVELOPE_RE, "").replace(/\n?<\/untrusted-tool-output>\s*$/, "")
         : result;
 }
 
@@ -294,14 +291,17 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                             arguments: args,
                             status: "running",
                         });
-                        getChatStoreOrNull()?.upsertToolCall(activeSessionId ?? toValue(sessionId), {
-                            id,
-                            name,
-                            arguments: args,
-                            status: "running",
-                            startedAt: new Date().toISOString(),
-                            ...(runId ? { runId } : {}),
-                        });
+                        getChatStoreOrNull()?.upsertToolCall(
+                            activeSessionId ?? toValue(sessionId),
+                            {
+                                id,
+                                name,
+                                arguments: args,
+                                status: "running",
+                                startedAt: new Date().toISOString(),
+                                ...(runId ? { runId } : {}),
+                            },
+                        );
                     }
                     currentCallbacks.onToolCall?.(
                         name ?? "",
@@ -510,12 +510,12 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
             .sendMessages(currentSessionId, {
                 url,
                 headers: apiAuthHeaders(undefined, false),
-            onopen: () => {
-                if (generation !== connectionGeneration) return;
-                isConnected.value = true;
-                error.value = null;
-                connectionErrorReported = false;
-                currentCallbacks.onOpen?.();
+                onopen: () => {
+                    if (generation !== connectionGeneration) return;
+                    isConnected.value = true;
+                    error.value = null;
+                    connectionErrorReported = false;
+                    currentCallbacks.onOpen?.();
                 },
                 onmessage: (message) => {
                     if (generation === connectionGeneration) handleMessage(message);

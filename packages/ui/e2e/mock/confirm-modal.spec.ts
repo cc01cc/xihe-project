@@ -1,20 +1,20 @@
-import { test } from '@playwright/test'
-import { expectPlatformScreenshot } from '../helpers/visual'
+import { test } from "@playwright/test";
+import { expectPlatformScreenshot } from "../helpers/visual";
 
-test.describe('ConfirmModal', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => {
-      localStorage.setItem('xihe-token', 'mock-token-for-testing')
-    })
-  })
+test.describe("ConfirmModal", () => {
+    test.beforeEach(async ({ page }) => {
+        await page.addInitScript(() => {
+            localStorage.setItem("xihe-token", "mock-token-for-testing");
+        });
+    });
 
-  test('renders confirm dialog and captures snapshot', async ({ page }) => {
-    await page.goto('/workspace')
-    await page.waitForLoadState('load')
+    test("renders confirm dialog and captures snapshot", async ({ page }) => {
+        await page.goto("/workspace");
+        await page.waitForLoadState("load");
 
-    await page.evaluate(() => {
-      const div = document.createElement('div')
-      div.innerHTML = `
+        await page.evaluate(() => {
+            const div = document.createElement("div");
+            div.innerHTML = `
         <div class="fixed inset-0 z-50 flex items-center justify-center">
           <div class="fixed inset-0 bg-black/50"></div>
           <div class="relative z-10 w-full max-w-md rounded-xl border bg-card p-6 shadow-lg">
@@ -26,10 +26,10 @@ test.describe('ConfirmModal', () => {
             </div>
           </div>
         </div>
-      `
-      document.body.appendChild(div)
-    })
-    await page.waitForTimeout(300)
-    await expectPlatformScreenshot(page, 'confirm-modal-delete.png')
-  })
-})
+      `;
+            document.body.appendChild(div);
+        });
+        await page.waitForTimeout(300);
+        await expectPlatformScreenshot(page, "confirm-modal-delete.png");
+    });
+});

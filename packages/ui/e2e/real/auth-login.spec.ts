@@ -1,53 +1,56 @@
-import { generateE2EPassword } from './helpers/password'
+import { generateE2EPassword } from "./helpers/password";
 
-const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
-import { test, expect } from '@playwright/test'
-import { expectPlatformScreenshot } from '../helpers/visual'
+const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
+import { test, expect } from "@playwright/test";
+import { expectPlatformScreenshot } from "../helpers/visual";
 
-const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
+const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 
-test.describe('Auth — Real Backend', () => {
-  let _authToken = ''
+test.describe("Auth — Real Backend", () => {
+    let _authToken = "";
 
-  test.beforeAll(async ({ request }) => {
-    const r = await request.post(`${CP_URL}/api/v1/auth/register`, {
-      data: { email: `real-auth-${Date.now()}@test.com`, password: SHARED_PASSWORD, name: 'RealAuth' },
-    })
-    if (r.ok()) {
-      const body = await r.json()
-      _authToken = body.accessToken
-    }
-  })
+    test.beforeAll(async ({ request }) => {
+        const r = await request.post(`${CP_URL}/api/v1/auth/register`, {
+            data: {
+                email: `real-auth-${Date.now()}@test.com`,
+                password: SHARED_PASSWORD,
+                name: "RealAuth",
+            },
+        });
+        if (r.ok()) {
+            const body = await r.json();
+            _authToken = body.accessToken;
+        }
+    });
 
-  test('login page loads and shows form', async ({ page }) => {
-    await page.goto('/login')
-    await expect(page.locator('h1')).toBeVisible({ timeout: 8000 })
-    await expectPlatformScreenshot(page, 'real-login-page.png')
-  })
+    test("login page loads and shows form", async ({ page }) => {
+        await page.goto("/login");
+        await expect(page.locator("h1")).toBeVisible({ timeout: 8000 });
+        await expectPlatformScreenshot(page, "real-login-page.png");
+    });
 
-  test('register page loads and shows form', async ({ page }) => {
-    await page.goto('/register')
-    await expect(page.locator('h1')).toBeVisible({ timeout: 8000 })
-    await expectPlatformScreenshot(page, 'real-register-page.png')
-  })
+    test("register page loads and shows form", async ({ page }) => {
+        await page.goto("/register");
+        await expect(page.locator("h1")).toBeVisible({ timeout: 8000 });
+        await expectPlatformScreenshot(page, "real-register-page.png");
+    });
 
-  test('navigates to chat after successful login', async ({ page }) => {
-    const email = `real-login-${Date.now()}@test.com`
-    // Register first
-    const reg = await fetch(`${CP_URL}/api/v1/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password: SHARED_PASSWORD, name: 'LoginTest' }),
-    })
-    expect(reg.ok).toBeTruthy()
+    test("navigates to chat after successful login", async ({ page }) => {
+        const email = `real-login-${Date.now()}@test.com`;
+        // Register first
+        const reg = await fetch(`${CP_URL}/api/v1/auth/register`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email, password: SHARED_PASSWORD, name: "LoginTest" }),
+        });
+        expect(reg.ok).toBeTruthy();
 
-    // Login via UI
-    await page.goto('/login')
-    await page.fill('input[name="email"]', email)
-    await page.fill('input[type="password"]', SHARED_PASSWORD)
-    await page.click('button[type="submit"]')
-    await page.waitForURL(/\/workspace/, { timeout: 10000 })
-    await expect(page.locator('#app')).toBeAttached()
-  })
-})
-
+        // Login via UI
+        await page.goto("/login");
+        await page.fill('input[name="email"]', email);
+        await page.fill('input[type="password"]', SHARED_PASSWORD);
+        await page.click('button[type="submit"]');
+        await page.waitForURL(/\/workspace/, { timeout: 10000 });
+        await expect(page.locator("#app")).toBeAttached();
+    });
+});

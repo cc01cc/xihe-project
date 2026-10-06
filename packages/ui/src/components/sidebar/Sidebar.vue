@@ -1,180 +1,173 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { useI18n } from 'vue-i18n'
-import {
-  CircleUser,
-  FolderTree,
-  LogOut,
-  PanelLeftClose,
-  Plus,
-  Settings,
-} from '@lucide/vue'
-import { useAuthStore } from '../../stores/auth'
-import { toast } from 'vue-sonner'
-import SessionList from './SessionList.vue'
-import { workspacePath } from '../../lib/routes'
+import { computed } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { useI18n } from "vue-i18n";
+import { CircleUser, FolderTree, LogOut, PanelLeftClose, Plus, Settings } from "@lucide/vue";
+import { useAuthStore } from "../../stores/auth";
+import { toast } from "vue-sonner";
+import SessionList from "./SessionList.vue";
+import { workspacePath } from "../../lib/routes";
 
 const props = defineProps<{
-  open: boolean
-  width: number
-  isMobile: boolean
-}>()
+    open: boolean;
+    width: number;
+    isMobile: boolean;
+}>();
 
 const emit = defineEmits<{
-  'update:open': [value: boolean]
-  'update:width': [value: number]
-}>()
+    "update:open": [value: boolean];
+    "update:width": [value: number];
+}>();
 
-const router = useRouter()
-const route = useRoute()
-const { t } = useI18n()
-const auth = useAuthStore()
+const router = useRouter();
+const route = useRoute();
+const { t } = useI18n();
+const auth = useAuthStore();
 
-const isWorkspaceRoute = computed(() => route?.path?.startsWith('/workspace') ?? false)
+const isWorkspaceRoute = computed(() => route?.path?.startsWith("/workspace") ?? false);
 
 const sidebarStyle = computed(() => ({
-  width: props.open ? `min(${props.width}px, calc(100vw - 1rem))` : '0px',
-}))
+    width: props.open ? `min(${props.width}px, calc(100vw - 1rem))` : "0px",
+}));
 
 async function startNewChat() {
-  if (!auth.currentWorkspaceId) {
-    await auth.hydrateWorkspace()
-  }
-  if (!auth.currentWorkspaceId) {
-    toast.error(t('sidebar.noWorkspace'))
-    return
-  }
-  const workspaceId = auth.currentWorkspaceId
-  await router.push({ path: workspacePath(workspaceId), query: { newChat: '1' } })
+    if (!auth.currentWorkspaceId) {
+        await auth.hydrateWorkspace();
+    }
+    if (!auth.currentWorkspaceId) {
+        toast.error(t("sidebar.noWorkspace"));
+        return;
+    }
+    const workspaceId = auth.currentWorkspaceId;
+    await router.push({ path: workspacePath(workspaceId), query: { newChat: "1" } });
 }
 
 function toggleSidebar() {
-  emit('update:open', !props.open)
+    emit("update:open", !props.open);
 }
 
 function handleResizeStart(e: MouseEvent) {
-  e.preventDefault()
-  const startX = e.clientX
-  const startWidth = props.width
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = props.width;
 
-  function onMouseMove(ev: MouseEvent) {
-    const newWidth = Math.min(360, Math.max(220, startWidth + (ev.clientX - startX)))
-    emit('update:width', newWidth)
-  }
+    function onMouseMove(ev: MouseEvent) {
+        const newWidth = Math.min(360, Math.max(220, startWidth + (ev.clientX - startX)));
+        emit("update:width", newWidth);
+    }
 
-  function onMouseUp() {
-    document.removeEventListener('mousemove', onMouseMove)
-    document.removeEventListener('mouseup', onMouseUp)
-  }
+    function onMouseUp() {
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+    }
 
-  document.addEventListener('mousemove', onMouseMove)
-  document.addEventListener('mouseup', onMouseUp)
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
 }
 
 async function navigateToWorkspace() {
-  if (!auth.currentWorkspaceId) {
-    await auth.hydrateWorkspace()
-  }
-  const workspaceId = auth.currentWorkspaceId
-  if (!workspaceId) {
-    toast.error(t('sidebar.noWorkspace'))
-    return
-  }
-  router.push(workspacePath(workspaceId))
+    if (!auth.currentWorkspaceId) {
+        await auth.hydrateWorkspace();
+    }
+    const workspaceId = auth.currentWorkspaceId;
+    if (!workspaceId) {
+        toast.error(t("sidebar.noWorkspace"));
+        return;
+    }
+    router.push(workspacePath(workspaceId));
 }
 
 function navigateSettings() {
-  router.push('/settings/config')
+    router.push("/settings/config");
 }
 
 function handleLogout() {
-  auth.logout()
-  router.push('/login')
+    auth.logout();
+    router.push("/login");
 }
 </script>
 
 <template>
-  <aside
-    data-testid="sidebar"
-    :aria-hidden="!open"
-    :inert="!open"
-    class="fixed left-0 top-0 z-40 flex h-full flex-col overflow-hidden bg-sidebar-background border-r border-sidebar-border transition-[width] duration-300"
-    :class="{ 'shadow-lg': isMobile && open }"
-    :style="sidebarStyle"
-  >
-    <div class="flex items-center justify-between px-4 h-14 shrink-0">
-      <span class="font-semibold text-sidebar-foreground">xihe</span>
-      <button
-        type="button"
-        aria-label="Close navigation"
-        title="Close navigation"
-        class="p-1.5 rounded-md hover:bg-sidebar-accent text-sidebar-foreground transition-colors"
-        @click="toggleSidebar"
-      >
-        <PanelLeftClose class="size-4" />
-      </button>
-    </div>
+    <aside
+        data-testid="sidebar"
+        :aria-hidden="!open"
+        :inert="!open"
+        class="fixed left-0 top-0 z-40 flex h-full flex-col overflow-hidden bg-sidebar-background border-r border-sidebar-border transition-[width] duration-300"
+        :class="{ 'shadow-lg': isMobile && open }"
+        :style="sidebarStyle"
+    >
+        <div class="flex items-center justify-between px-4 h-14 shrink-0">
+            <span class="font-semibold text-sidebar-foreground">xihe</span>
+            <button
+                type="button"
+                aria-label="Close navigation"
+                title="Close navigation"
+                class="p-1.5 rounded-md hover:bg-sidebar-accent text-sidebar-foreground transition-colors"
+                @click="toggleSidebar"
+            >
+                <PanelLeftClose class="size-4" />
+            </button>
+        </div>
 
-    <div class="px-3 pb-2">
-      <button
-        data-testid="sidebar-new-chat"
-        class="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-sidebar-border text-sm text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
-        @click="startNewChat"
-      >
-        <Plus class="size-4" />
-        {{ t('sidebar.newChat') }}
-      </button>
-    </div>
+        <div class="px-3 pb-2">
+            <button
+                data-testid="sidebar-new-chat"
+                class="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-sidebar-border text-sm text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
+                @click="startNewChat"
+            >
+                <Plus class="size-4" />
+                {{ t("sidebar.newChat") }}
+            </button>
+        </div>
 
-    <SessionList />
+        <SessionList />
 
-    <div class="px-3 py-2">
-      <button
-        data-testid="sidebar-workspace"
-        class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
-        :class="{ 'bg-sidebar-accent': isWorkspaceRoute }"
-        :aria-current="isWorkspaceRoute ? 'page' : undefined"
-        @click="navigateToWorkspace"
-      >
-        <FolderTree class="size-4" />
-        {{ t('sidebar.workspace') }}
-      </button>
-    </div>
+        <div class="px-3 py-2">
+            <button
+                data-testid="sidebar-workspace"
+                class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
+                :class="{ 'bg-sidebar-accent': isWorkspaceRoute }"
+                :aria-current="isWorkspaceRoute ? 'page' : undefined"
+                @click="navigateToWorkspace"
+            >
+                <FolderTree class="size-4" />
+                {{ t("sidebar.workspace") }}
+            </button>
+        </div>
 
-    <div class="px-3 py-3 border-t border-sidebar-border space-y-1">
-      <div class="flex items-center gap-2 px-3 py-2 text-sm text-sidebar-foreground/70">
-        <CircleUser class="size-4" />
-        <span class="truncate">{{ auth.userName }}</span>
-      </div>
-      <button
-        class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
-        @click="navigateSettings"
-      >
-        <Settings class="size-4" />
-        {{ t('sidebar.settings') }}
-      </button>
-      <button
-        class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
-        @click="handleLogout"
-      >
-        <LogOut class="size-4" />
-        {{ t('sidebar.logout') }}
-      </button>
-    </div>
+        <div class="px-3 py-3 border-t border-sidebar-border space-y-1">
+            <div class="flex items-center gap-2 px-3 py-2 text-sm text-sidebar-foreground/70">
+                <CircleUser class="size-4" />
+                <span class="truncate">{{ auth.userName }}</span>
+            </div>
+            <button
+                class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
+                @click="navigateSettings"
+            >
+                <Settings class="size-4" />
+                {{ t("sidebar.settings") }}
+            </button>
+            <button
+                class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
+                @click="handleLogout"
+            >
+                <LogOut class="size-4" />
+                {{ t("sidebar.logout") }}
+            </button>
+        </div>
 
-    <div
-      v-if="open"
-      class="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/20 transition-colors"
-      @mousedown="handleResizeStart"
-    />
-  </aside>
+        <div
+            v-if="open"
+            class="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/20 transition-colors"
+            @mousedown="handleResizeStart"
+        />
+    </aside>
 
-  <Teleport to="body">
-    <div
-      v-if="isMobile && open"
-      class="fixed inset-0 z-30 bg-black/50"
-      @click="emit('update:open', false)"
-    />
-  </Teleport>
+    <Teleport to="body">
+        <div
+            v-if="isMobile && open"
+            class="fixed inset-0 z-30 bg-black/50"
+            @click="emit('update:open', false)"
+        />
+    </Teleport>
 </template>

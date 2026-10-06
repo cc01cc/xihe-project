@@ -905,7 +905,11 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         const browserErrorsPath = test.info().outputPath("host-browser-errors.json");
         await writeFile(
             browserErrorsPath,
-            JSON.stringify({ consoleErrorEvents, browserHttpFailures, pageErrors, apiFailures }, null, 2),
+            JSON.stringify(
+                { consoleErrorEvents, browserHttpFailures, pageErrors, apiFailures },
+                null,
+                2,
+            ),
         );
         await test.info().attach("host-browser-errors.json", {
             path: browserErrorsPath,

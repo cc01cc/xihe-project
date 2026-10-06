@@ -1,4 +1,4 @@
-import { type Page } from '@playwright/test'
+import { type Page } from "@playwright/test";
 
 /**
  * Workspace-first landing never auto-creates a Session (PLAN-0328 M3 T3.7).
@@ -11,32 +11,35 @@ import { type Page } from '@playwright/test'
  * unhandled rejections after the race settles.
  */
 export async function ensureWorkspaceChat(page: Page): Promise<void> {
-  const textarea = page.locator('textarea')
-  const emptyStateCta = page.getByTestId('workspace-create-session')
-  const chatFab = page.getByRole('button', { name: 'Open chat' })
-  const sidebarNew = page.getByTestId('sidebar-new-chat')
+    const textarea = page.locator("textarea");
+    const emptyStateCta = page.getByTestId("workspace-create-session");
+    const chatFab = page.getByRole("button", { name: "Open chat" });
+    const sidebarNew = page.getByTestId("sidebar-new-chat");
 
-  const pick = (locator: typeof textarea, tag: string) =>
-    locator.waitFor({ state: 'visible', timeout: 10000 }).then(() => tag).catch(() => null)
-  const ready = await Promise.race([
-    pick(textarea, 'chat'),
-    pick(emptyStateCta, 'cta'),
-    pick(chatFab, 'fab'),
-  ])
+    const pick = (locator: typeof textarea, tag: string) =>
+        locator
+            .waitFor({ state: "visible", timeout: 10000 })
+            .then(() => tag)
+            .catch(() => null);
+    const ready = await Promise.race([
+        pick(textarea, "chat"),
+        pick(emptyStateCta, "cta"),
+        pick(chatFab, "fab"),
+    ]);
 
-  if (ready === 'chat') return
-  if (ready === 'cta') {
-    await emptyStateCta.click()
-  } else if (ready === 'fab') {
-    await chatFab.click()
-  } else {
-    await sidebarNew.waitFor({ state: 'visible', timeout: 5000 })
-    await sidebarNew.click()
-  }
-  await textarea.waitFor({ state: 'visible', timeout: 10000 })
+    if (ready === "chat") return;
+    if (ready === "cta") {
+        await emptyStateCta.click();
+    } else if (ready === "fab") {
+        await chatFab.click();
+    } else {
+        await sidebarNew.waitFor({ state: "visible", timeout: 5000 });
+        await sidebarNew.click();
+    }
+    await textarea.waitFor({ state: "visible", timeout: 10000 });
 }
 
 export async function gotoWorkspaceWithChat(page: Page): Promise<void> {
-  await page.goto('/workspace', { waitUntil: 'load' })
-  await ensureWorkspaceChat(page)
+    await page.goto("/workspace", { waitUntil: "load" });
+    await ensureWorkspaceChat(page);
 }

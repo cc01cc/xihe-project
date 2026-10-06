@@ -55,7 +55,9 @@ const suggestions = computed(() =>
 
 const messages = computed(() => chatStore.getMessages(props.sessionId));
 const isStreaming = computed(() => chatStore.isStreaming(props.sessionId));
-const currentSession = computed(() => sessionStore.sessions.find((session) => session.id === props.sessionId));
+const currentSession = computed(() =>
+    sessionStore.sessions.find((session) => session.id === props.sessionId),
+);
 const sessionBranches = computed(() => chatStore.getSessionBranches(props.sessionId));
 const selectedBranchId = computed(() => chatStore.getSelectedBranchId(props.sessionId) ?? "");
 const branchOptions = computed(() => {
@@ -71,9 +73,11 @@ const branchOptions = computed(() => {
     };
     return sessionBranches.value.map((branch) => ({
         branchId: branch.branchId,
-        label: `${"- ".repeat(depthOf(branch.branchId))}${branch.parentBranchId === null
-            ? t("chat.branchMainPath")
-            : `${t("chat.branchPathOption")} ${branch.branchId.slice(0, 8)}`}`,
+        label: `${"- ".repeat(depthOf(branch.branchId))}${
+            branch.parentBranchId === null
+                ? t("chat.branchMainPath")
+                : `${t("chat.branchPathOption")} ${branch.branchId.slice(0, 8)}`
+        }`,
     }));
 });
 const derivedState = ref<SessionDerivedStateResponse | null>(null);
@@ -99,7 +103,11 @@ const renderedMessages = computed(() =>
 const showPrincipalBinding = ref(false);
 const principalChoices = ref<WorkspaceAgentBinding[]>([]);
 const selectedPrincipalId = ref("");
-const pendingSend = ref<{ content: string; attachments?: AttachmentFile[]; branchId: string } | null>(null);
+const pendingSend = ref<{
+    content: string;
+    attachments?: AttachmentFile[];
+    branchId: string;
+} | null>(null);
 const loadingPrincipalChoices = ref(false);
 const creatingBranchForMessageId = ref<string | null>(null);
 const pendingBranchKeys = new Map<string, string>();
@@ -163,8 +171,12 @@ async function loadSessionMessages(sessionId: string) {
         }
         if (!branchId) return;
         const rawMessages = await api.getMessages(sessionId, branchId);
-        if (props.sessionId !== sessionId || requestId !== messageLoadRequestId
-            || chatStore.getSelectedBranchId(sessionId) !== branchId) return;
+        if (
+            props.sessionId !== sessionId ||
+            requestId !== messageLoadRequestId ||
+            chatStore.getSelectedBranchId(sessionId) !== branchId
+        )
+            return;
         if (!Array.isArray(rawMessages)) return;
         chatStore.loadMessages(
             sessionId,
@@ -200,7 +212,9 @@ async function loadSessionMessages(sessionId: string) {
 }
 
 function isSpawnToolCall(name: string): boolean {
-    return name === "spawn_agent" || name.endsWith("__spawn_agent") || name.endsWith("/spawn_agent");
+    return (
+        name === "spawn_agent" || name.endsWith("__spawn_agent") || name.endsWith("/spawn_agent")
+    );
 }
 
 async function loadWaitingOnProjection(
@@ -239,10 +253,16 @@ async function loadWaitingOnProjection(
             const operationPage = await api.listOperations({ sessionId, page, size: 50 });
             totalPages = operationPage.totalPages;
             const candidates = operationPage.operations.filter(
-                (operation) => operation.runId && parentRunIds.has(operation.runId)
-                    && !resolvedRunIds.has(operation.runId),
+                (operation) =>
+                    operation.runId &&
+                    parentRunIds.has(operation.runId) &&
+                    !resolvedRunIds.has(operation.runId),
             );
-            for (let offset = 0; offset < candidates.length && matchedChildRunIds.size < activeByRunId.size; offset += 8) {
+            for (
+                let offset = 0;
+                offset < candidates.length && matchedChildRunIds.size < activeByRunId.size;
+                offset += 8
+            ) {
                 const traces = await Promise.all(
                     candidates.slice(offset, offset + 8).map(async (operation) => ({
                         runId: operation.runId!,
@@ -290,7 +310,9 @@ async function refreshDerivedState(sessionId: string) {
         derivedState.value = result;
         const activeRunIds = new Set(result.activeChildren.map((child) => child.runId));
         waitingOnByToolCallId.value = Object.fromEntries(
-            Object.entries(waitingOnByToolCallId.value).filter(([, child]) => activeRunIds.has(child.childRunId)),
+            Object.entries(waitingOnByToolCallId.value).filter(([, child]) =>
+                activeRunIds.has(child.childRunId),
+            ),
         );
         await loadWaitingOnProjection(sessionId, result.activeChildren, parentRunIdAtRefresh);
     } catch (cause) {
@@ -348,7 +370,11 @@ watch(isStreaming, (streaming, previous) => {
     }
 });
 
-async function handleSend(content: string, attachments?: AttachmentFile[], branchIdOverride?: string) {
+async function handleSend(
+    content: string,
+    attachments?: AttachmentFile[],
+    branchIdOverride?: string,
+) {
     const id = props.sessionId;
     if (!id) return;
     if (isStreaming.value) return;
@@ -370,7 +396,12 @@ async function handleSend(content: string, attachments?: AttachmentFile[], branc
 
     const selectedPrincipal = currentSession.value?.agentPrincipalId;
     if (selectedPrincipal) {
-        await submitMessage({ content, attachments, agentPrincipalId: selectedPrincipal, branchId });
+        await submitMessage({
+            content,
+            attachments,
+            agentPrincipalId: selectedPrincipal,
+            branchId,
+        });
         return;
     }
 
@@ -468,7 +499,8 @@ function handleBranchSelection(event: Event) {
 async function handleCreateBranch(anchorMessageId: string) {
     const sessionId = props.sessionId;
     const sourceBranchId = selectedBranchId.value;
-    if (!sessionId || !sourceBranchId || isStreaming.value || creatingBranchForMessageId.value) return;
+    if (!sessionId || !sourceBranchId || isStreaming.value || creatingBranchForMessageId.value)
+        return;
 
     const keyScope = `${sessionId}:${sourceBranchId}:${anchorMessageId}`;
     const idempotencyKey = pendingBranchKeys.get(keyScope) ?? crypto.randomUUID();
@@ -486,9 +518,10 @@ async function handleCreateBranch(anchorMessageId: string) {
         pendingBranchKeys.delete(keyScope);
         toast.success(t("chat.branchCreated"));
     } catch (cause) {
-        const message = cause instanceof ApiError
-            ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
-            : t("chat.branchCreateFailed");
+        const message =
+            cause instanceof ApiError
+                ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
+                : t("chat.branchCreateFailed");
         logger.error("Failed to create Session branch", cause);
         toast.error(message);
     } finally {
@@ -665,19 +698,34 @@ watch(
         <SessionPolicyControls :session-id="sessionId" />
         <SessionContextTemplate :session-id="sessionId" />
         <ContextSourcesU1 :session-id="sessionId" />
-        <div class="flex items-center gap-3 border-b px-4 py-2" data-testid="session-branch-selector">
-            <label :for="`session-branch-${sessionId}`" class="text-xs font-medium text-muted-foreground">
+        <div
+            class="flex items-center gap-3 border-b px-4 py-2"
+            data-testid="session-branch-selector"
+        >
+            <label
+                :for="`session-branch-${sessionId}`"
+                class="text-xs font-medium text-muted-foreground"
+            >
                 {{ t("chat.branchSelectorLabel") }}
             </label>
             <select
                 :id="`session-branch-${sessionId}`"
                 :value="selectedBranchId"
-                :disabled="isStreaming || branchOptions.length === 0 || creatingBranchForMessageId !== null || pendingSend !== null"
+                :disabled="
+                    isStreaming ||
+                    branchOptions.length === 0 ||
+                    creatingBranchForMessageId !== null ||
+                    pendingSend !== null
+                "
                 data-testid="session-branch-select"
                 class="min-w-0 rounded-md border bg-background px-2 py-1 text-xs disabled:opacity-50"
                 @change="handleBranchSelection"
             >
-                <option v-for="branch in branchOptions" :key="branch.branchId" :value="branch.branchId">
+                <option
+                    v-for="branch in branchOptions"
+                    :key="branch.branchId"
+                    :value="branch.branchId"
+                >
                     {{ branch.label }}
                 </option>
             </select>
@@ -744,12 +792,8 @@ watch(
             @click="reopenApproval"
         >
             <span class="flex min-w-0 items-center gap-2">
-                <span class="shrink-0 font-medium">{{
-                    t("chat.pendingApprovalReopenLabel")
-                }}</span>
-                <span class="truncate text-muted-foreground">{{
-                    pendingApproval?.tool
-                }}</span>
+                <span class="shrink-0 font-medium">{{ t("chat.pendingApprovalReopenLabel") }}</span>
+                <span class="truncate text-muted-foreground">{{ pendingApproval?.tool }}</span>
             </span>
             <span class="shrink-0 font-medium text-primary">{{
                 t("chat.pendingApprovalReopenAction")
@@ -796,11 +840,14 @@ watch(
         <BaseModal
             :show="showPrincipalBinding"
             :title="t('workspace.chooseAgentTitle')"
-            @close="showPrincipalBinding = false; pendingSend = null"
+            @close="
+                showPrincipalBinding = false;
+                pendingSend = null;
+            "
         >
             <div class="space-y-4">
                 <label for="chat-agent-principal" class="block text-sm text-foreground">
-                    {{ t('workspace.chooseAgentLabel') }}
+                    {{ t("workspace.chooseAgentLabel") }}
                 </label>
                 <select
                     id="chat-agent-principal"
@@ -808,20 +855,35 @@ watch(
                     data-testid="chat-agent-principal-select"
                     class="w-full rounded-md border bg-background px-3 py-2 text-sm"
                 >
-                    <option value="" disabled>{{ t('workspace.chooseAgentPlaceholder') }}</option>
-                    <option v-for="agent in principalChoices" :key="agent.principalId" :value="agent.principalId">
-                        {{ agent.name }}<template v-if="agent.templateName"> · {{ agent.templateName }}</template>
+                    <option value="" disabled>{{ t("workspace.chooseAgentPlaceholder") }}</option>
+                    <option
+                        v-for="agent in principalChoices"
+                        :key="agent.principalId"
+                        :value="agent.principalId"
+                    >
+                        {{ agent.name
+                        }}<template v-if="agent.templateName"> · {{ agent.templateName }}</template>
                     </option>
                 </select>
                 <div class="flex justify-end gap-2">
-                    <button type="button" class="rounded-md border px-3 py-2 text-sm"
-                            @click="showPrincipalBinding = false; pendingSend = null">
-                        {{ t('workspace.cancel') }}
+                    <button
+                        type="button"
+                        class="rounded-md border px-3 py-2 text-sm"
+                        @click="
+                            showPrincipalBinding = false;
+                            pendingSend = null;
+                        "
+                    >
+                        {{ t("workspace.cancel") }}
                     </button>
-                    <button type="button" data-testid="chat-bind-agent-and-send"
-                            class="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
-                            :disabled="!selectedPrincipalId" @click="confirmPrincipalBinding">
-                        {{ t('workspace.bindAgentAndSend') }}
+                    <button
+                        type="button"
+                        data-testid="chat-bind-agent-and-send"
+                        class="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
+                        :disabled="!selectedPrincipalId"
+                        @click="confirmPrincipalBinding"
+                    >
+                        {{ t("workspace.bindAgentAndSend") }}
                     </button>
                 </div>
             </div>

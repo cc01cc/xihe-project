@@ -106,10 +106,13 @@ function handleDelete() {
 
 const canDelete = computed(() => !isMarker.value && props.message.role !== "system");
 const canRetry = computed(() => Boolean(props.message.error && props.message.retryable));
-const canCreateBranch = computed(() =>
-    (props.message.role === "user" || props.message.role === "assistant")
-    && Boolean(props.message.runId)
-    && ["succeeded", "failed", "partial", "ambiguous", "cancelled"].includes(props.message.runStatus ?? ""),
+const canCreateBranch = computed(
+    () =>
+        (props.message.role === "user" || props.message.role === "assistant") &&
+        Boolean(props.message.runId) &&
+        ["succeeded", "failed", "partial", "ambiguous", "cancelled"].includes(
+            props.message.runStatus ?? "",
+        ),
 );
 
 onUnmounted(() => {

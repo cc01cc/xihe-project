@@ -5,7 +5,7 @@ export { default as MessageScrollerContent } from "./MessageScrollerContent.vue"
 export { default as MessageScrollerItem } from "./MessageScrollerItem.vue";
 export { default as MessageScrollerButton } from "./MessageScrollerButton.vue";
 export {
-  useMessageScroller,
-  useMessageScrollerScrollable,
-  useMessageScrollerVisibility,
+    useMessageScroller,
+    useMessageScrollerScrollable,
+    useMessageScrollerVisibility,
 } from "@/composables/messageScroller";

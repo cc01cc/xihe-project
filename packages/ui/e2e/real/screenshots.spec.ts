@@ -1,59 +1,68 @@
-import { generateE2EPassword } from './helpers/password'
-import { test, expect } from '@playwright/test'
-import { expectPlatformScreenshot } from '../helpers/visual'
+import { generateE2EPassword } from "./helpers/password";
+import { test, expect } from "@playwright/test";
+import { expectPlatformScreenshot } from "../helpers/visual";
 
-const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
-const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
+const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
+const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 
 interface Route {
-  path: string
-  name: string
-  requiresAuth: boolean
-  useRegisteredWorkspace?: boolean
+    path: string;
+    name: string;
+    requiresAuth: boolean;
+    useRegisteredWorkspace?: boolean;
 }
 
 const allRoutes: Route[] = [
-  { path: '/login', name: 'real-login', requiresAuth: false },
-  { path: '/register', name: 'real-register', requiresAuth: false },
-  { path: '/workspace', name: 'real-workspace-default', requiresAuth: true },
-  { path: '/workspace/workspace-1/chat/test-session', name: 'real-workspace-chat-session', requiresAuth: true },
-  { path: '/settings/config', name: 'real-settings-config', requiresAuth: true },
-  { path: '/settings/knowledge', name: 'real-settings-knowledge', requiresAuth: true },
-  { path: '/settings/data', name: 'real-settings-data', requiresAuth: true },
-  { path: '/settings/monitoring', name: 'real-settings-monitoring', requiresAuth: true },
-  { path: '/workspace', name: 'real-workspace', requiresAuth: true, useRegisteredWorkspace: true },
-]
+    { path: "/login", name: "real-login", requiresAuth: false },
+    { path: "/register", name: "real-register", requiresAuth: false },
+    { path: "/workspace", name: "real-workspace-default", requiresAuth: true },
+    {
+        path: "/workspace/workspace-1/chat/test-session",
+        name: "real-workspace-chat-session",
+        requiresAuth: true,
+    },
+    { path: "/settings/config", name: "real-settings-config", requiresAuth: true },
+    { path: "/settings/knowledge", name: "real-settings-knowledge", requiresAuth: true },
+    { path: "/settings/data", name: "real-settings-data", requiresAuth: true },
+    { path: "/settings/monitoring", name: "real-settings-monitoring", requiresAuth: true },
+    {
+        path: "/workspace",
+        name: "real-workspace",
+        requiresAuth: true,
+        useRegisteredWorkspace: true,
+    },
+];
 
 for (const route of allRoutes) {
-  test(`${route.name} renders and captures screenshot`, async ({ page }) => {
-    let registeredWorkspaceId: string | undefined
-    if (route.requiresAuth) {
-      const email = `screenshot-${Date.now()}@test.com`
-      const reg = await fetch(`${CP_URL}/api/v1/auth/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password: SHARED_PASSWORD, name: 'Screenshot' }),
-      })
-      if (reg.ok) {
-        const body = await reg.json()
-        registeredWorkspaceId = body.workspaceId
-        await page.addInitScript((token: string) => {
-          localStorage.setItem('xihe-token', token)
-        }, body.accessToken)
-      }
-    }
+    test(`${route.name} renders and captures screenshot`, async ({ page }) => {
+        let registeredWorkspaceId: string | undefined;
+        if (route.requiresAuth) {
+            const email = `screenshot-${Date.now()}@test.com`;
+            const reg = await fetch(`${CP_URL}/api/v1/auth/register`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email, password: SHARED_PASSWORD, name: "Screenshot" }),
+            });
+            if (reg.ok) {
+                const body = await reg.json();
+                registeredWorkspaceId = body.workspaceId;
+                await page.addInitScript((token: string) => {
+                    localStorage.setItem("xihe-token", token);
+                }, body.accessToken);
+            }
+        }
 
-    const routePath = route.useRegisteredWorkspace && registeredWorkspaceId
-      ? `/workspace/${registeredWorkspaceId}`
-      : route.path
-    const resp = await page.goto(routePath, { waitUntil: 'load', timeout: 15000 })
-    expect(resp?.status()).toBe(200)
-    await expect(page.locator('#app')).toBeVisible()
-    if (route.useRegisteredWorkspace) {
-      await expect(page.getByTestId('workspace-empty-state')).toBeVisible()
-    }
+        const routePath =
+            route.useRegisteredWorkspace && registeredWorkspaceId
+                ? `/workspace/${registeredWorkspaceId}`
+                : route.path;
+        const resp = await page.goto(routePath, { waitUntil: "load", timeout: 15000 });
+        expect(resp?.status()).toBe(200);
+        await expect(page.locator("#app")).toBeVisible();
+        if (route.useRegisteredWorkspace) {
+            await expect(page.getByTestId("workspace-empty-state")).toBeVisible();
+        }
 
-    await expectPlatformScreenshot(page, route.name + '.png')
-  })
+        await expectPlatformScreenshot(page, route.name + ".png");
+    });
 }
-

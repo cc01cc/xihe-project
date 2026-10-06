@@ -1,188 +1,205 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useI18n } from 'vue-i18n'
+import { ref } from "vue";
+import { useI18n } from "vue-i18n";
 
-const { t } = useI18n()
+const { t } = useI18n();
 
 export interface DomainField {
-  key: string
-  label: string
-  type: 'text' | 'password' | 'select' | 'number' | 'json' | 'textarea'
-  options?: { label: string; value: string }[]
-  /** Upper bound for `number` fields (e.g. systemToolTimeoutS ≤ 30, PLAN-0308 T3.1). */
-  max?: number
-  /** Written by the instance layer only (e.g. agent-runtime.instructions, decision #17). */
-  instanceOnly?: boolean
+    key: string;
+    label: string;
+    type: "text" | "password" | "select" | "number" | "json" | "textarea";
+    options?: { label: string; value: string }[];
+    /** Upper bound for `number` fields (e.g. systemToolTimeoutS ≤ 30, PLAN-0308 T3.1). */
+    max?: number;
+    /** Written by the instance layer only (e.g. agent-runtime.instructions, decision #17). */
+    instanceOnly?: boolean;
 }
 
 const props = defineProps<{
-  domain: string
-  title: string
-  entries: Record<string, string>
-  readonly?: boolean
-  admin?: boolean
-  summary?: string
-  schema: DomainField[]
-  /** domain key -> env-effective value when an env overlay wins (decision #22). */
-  envLocked?: Record<string, string>
-}>()
+    domain: string;
+    title: string;
+    entries: Record<string, string>;
+    readonly?: boolean;
+    admin?: boolean;
+    summary?: string;
+    schema: DomainField[];
+    /** domain key -> env-effective value when an env overlay wins (decision #22). */
+    envLocked?: Record<string, string>;
+}>();
 
 const emit = defineEmits<{
-  save: [body: Record<string, string>]
-  reset: [key: string]
-}>()
+    save: [body: Record<string, string>];
+    reset: [key: string];
+}>();
 
-const expanded = ref(false)
-const editing = ref<Record<string, string>>({})
+const expanded = ref(false);
+const editing = ref<Record<string, string>>({});
 
 function toggle() {
-  expanded.value = !expanded.value
-  if (expanded.value) {
-    const init: Record<string, string> = {}
-    for (const field of props.schema) {
-      init[field.key] = props.entries[field.key] ?? ''
+    expanded.value = !expanded.value;
+    if (expanded.value) {
+        const init: Record<string, string> = {};
+        for (const field of props.schema) {
+            init[field.key] = props.entries[field.key] ?? "";
+        }
+        editing.value = init;
     }
-    editing.value = init
-  }
 }
 
 function isLocked(key: string): boolean {
-  return !!props.envLocked && key in props.envLocked
+    return !!props.envLocked && key in props.envLocked;
 }
 
 function lockedValue(key: string): string {
-  const value = props.envLocked?.[key] ?? ''
-  if (value && isPasswordKey(key)) {
-    return value.length > 8 ? `${value.substring(0, 3)}****${value.slice(-4)}` : '****'
-  }
-  return value
+    const value = props.envLocked?.[key] ?? "";
+    if (value && isPasswordKey(key)) {
+        return value.length > 8 ? `${value.substring(0, 3)}****${value.slice(-4)}` : "****";
+    }
+    return value;
 }
 
 function isPasswordKey(key: string): boolean {
-  const normalized = key.toLowerCase()
-  return normalized.includes('apikey') || normalized.includes('secret') || normalized.includes('password')
+    const normalized = key.toLowerCase();
+    return (
+        normalized.includes("apikey") ||
+        normalized.includes("secret") ||
+        normalized.includes("password")
+    );
 }
 
-const validationError = ref('')
+const validationError = ref("");
 
 function handleSave() {
-  // T3.1 评审修复：`max` 必须参与保存校验（native max 不影响程序化提交）。
-  const invalid = props.schema.filter((field) => {
-    if (field.type !== 'number' || field.max === undefined) return false
-    const raw = editing.value[field.key]
-    if (raw === undefined || raw === '' || isLocked(field.key)) return false
-    const num = Number(raw)
-    return !Number.isInteger(num) || num < 1 || num > field.max
-  })
-  if (invalid.length > 0) {
-    validationError.value = invalid.map((field) => `${field.label} ≤ ${field.max}`).join('，')
-    return
-  }
-  validationError.value = ''
-  const body = Object.fromEntries(
-    Object.entries(editing.value).filter(([key, value]) => value !== '' && !isLocked(key)),
-  )
-  emit('save', body)
+    // T3.1 评审修复：`max` 必须参与保存校验（native max 不影响程序化提交）。
+    const invalid = props.schema.filter((field) => {
+        if (field.type !== "number" || field.max === undefined) return false;
+        const raw = editing.value[field.key];
+        if (raw === undefined || raw === "" || isLocked(field.key)) return false;
+        const num = Number(raw);
+        return !Number.isInteger(num) || num < 1 || num > field.max;
+    });
+    if (invalid.length > 0) {
+        validationError.value = invalid.map((field) => `${field.label} ≤ ${field.max}`).join("，");
+        return;
+    }
+    validationError.value = "";
+    const body = Object.fromEntries(
+        Object.entries(editing.value).filter(([key, value]) => value !== "" && !isLocked(key)),
+    );
+    emit("save", body);
 }
 
 function handleReset(key: string) {
-  emit('reset', key)
+    emit("reset", key);
 }
 </script>
 
 <template>
-  <div :data-testid="`config-domain-${domain}`" class="border rounded-lg mb-2 overflow-hidden">
-    <button
-      class="w-full flex items-center justify-between px-4 py-3 text-sm font-medium hover:bg-muted/50 transition-colors"
-      @click="toggle"
-    >
-      <span class="truncate">{{ title }}</span>
-      <span class="flex min-w-0 items-center gap-2 shrink-0">
-        <span v-if="!expanded && summary" class="text-xs text-muted-foreground truncate max-w-[200px]">{{ summary }}</span>
-        <span class="text-muted-foreground">{{ expanded ? '▾' : '▸' }}</span>
-      </span>
-    </button>
-    <div v-if="expanded" class="px-4 pb-3 space-y-2">
-      <div
-        v-for="field in schema"
-        :key="field.key"
-        :data-testid="`config-field-${domain}-${field.key}`"
-        class="flex min-w-0 items-center gap-2"
-      >
-        <span class="text-xs text-muted-foreground w-1/3 truncate">{{ field.label }}</span>
-
-        <template v-if="isLocked(field.key)">
-          <span
-            :data-testid="`config-env-lock-${domain}-${field.key}`"
-            class="min-w-0 flex-1 truncate px-2 py-1 text-sm border rounded bg-muted text-muted-foreground"
-            :title="t('settings.envLockedHint')"
-          >
-            {{ lockedValue(field.key) || t('settings.empty') }}
-          </span>
-          <span
-            class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border border-amber-500/60 text-amber-600"
-            :title="t('settings.envLockedHint')"
-          >env</span>
-        </template>
-
-        <select
-          v-else-if="!readonly && field.type === 'select'"
-          v-model="editing[field.key]"
-          class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
-        >
-          <option
-            v-for="opt in field.options ?? []"
-            :key="opt.value"
-            :value="opt.value"
-          >
-            {{ opt.label }}
-          </option>
-        </select>
-
-        <textarea
-          v-else-if="!readonly && (field.type === 'json' || field.type === 'textarea')"
-          v-model="editing[field.key]"
-          rows="3"
-          class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
-          :class="field.type === 'json' ? 'font-mono' : ''"
-          :placeholder="field.type === 'json' ? 'JSON' : ''"
-        />
-
-        <input
-          v-else-if="!readonly"
-          v-model="editing[field.key]"
-          class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
-          :type="field.type === 'password' ? 'password' : field.type === 'number' ? 'number' : 'text'"
-          :max="field.type === 'number' ? field.max : undefined"
-          :title="field.type === 'number' && field.max ? `≤ ${field.max}` : undefined"
-        />
-
-        <span v-else class="min-w-0 flex-1 text-sm truncate">
-          {{ field.type === 'password'
-            ? editing[field.key] ? editing[field.key].substring(0, 3) + '****' + editing[field.key].slice(-4) : t('settings.notSet')
-            : editing[field.key] || t('settings.empty') }}
-        </span>
-
+    <div :data-testid="`config-domain-${domain}`" class="border rounded-lg mb-2 overflow-hidden">
         <button
-          v-if="admin && !readonly && !isLocked(field.key)"
-          class="text-xs text-muted-foreground hover:text-foreground px-1"
-          :title="t('settings.resetToDefault')"
-          @click="handleReset(field.key)"
+            class="w-full flex items-center justify-between px-4 py-3 text-sm font-medium hover:bg-muted/50 transition-colors"
+            @click="toggle"
         >
-          ↺
+            <span class="truncate">{{ title }}</span>
+            <span class="flex min-w-0 items-center gap-2 shrink-0">
+                <span
+                    v-if="!expanded && summary"
+                    class="text-xs text-muted-foreground truncate max-w-[200px]"
+                    >{{ summary }}</span
+                >
+                <span class="text-muted-foreground">{{ expanded ? "▾" : "▸" }}</span>
+            </span>
         </button>
-      </div>
-      <p v-if="validationError" class="text-xs text-destructive px-1 pb-1" role="alert">
-        {{ validationError }}
-      </p>
-      <div v-if="!readonly" class="flex justify-end pt-1">
-        <button
-          class="px-3 py-1 text-xs bg-primary text-primary-foreground rounded hover:opacity-90"
-          @click="handleSave"
-        >
-          {{ t('common.save') }}
-        </button>
-      </div>
+        <div v-if="expanded" class="px-4 pb-3 space-y-2">
+            <div
+                v-for="field in schema"
+                :key="field.key"
+                :data-testid="`config-field-${domain}-${field.key}`"
+                class="flex min-w-0 items-center gap-2"
+            >
+                <span class="text-xs text-muted-foreground w-1/3 truncate">{{ field.label }}</span>
+
+                <template v-if="isLocked(field.key)">
+                    <span
+                        :data-testid="`config-env-lock-${domain}-${field.key}`"
+                        class="min-w-0 flex-1 truncate px-2 py-1 text-sm border rounded bg-muted text-muted-foreground"
+                        :title="t('settings.envLockedHint')"
+                    >
+                        {{ lockedValue(field.key) || t("settings.empty") }}
+                    </span>
+                    <span
+                        class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border border-amber-500/60 text-amber-600"
+                        :title="t('settings.envLockedHint')"
+                        >env</span
+                    >
+                </template>
+
+                <select
+                    v-else-if="!readonly && field.type === 'select'"
+                    v-model="editing[field.key]"
+                    class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
+                >
+                    <option v-for="opt in field.options ?? []" :key="opt.value" :value="opt.value">
+                        {{ opt.label }}
+                    </option>
+                </select>
+
+                <textarea
+                    v-else-if="!readonly && (field.type === 'json' || field.type === 'textarea')"
+                    v-model="editing[field.key]"
+                    rows="3"
+                    class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
+                    :class="field.type === 'json' ? 'font-mono' : ''"
+                    :placeholder="field.type === 'json' ? 'JSON' : ''"
+                />
+
+                <input
+                    v-else-if="!readonly"
+                    v-model="editing[field.key]"
+                    class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
+                    :type="
+                        field.type === 'password'
+                            ? 'password'
+                            : field.type === 'number'
+                              ? 'number'
+                              : 'text'
+                    "
+                    :max="field.type === 'number' ? field.max : undefined"
+                    :title="field.type === 'number' && field.max ? `≤ ${field.max}` : undefined"
+                />
+
+                <span v-else class="min-w-0 flex-1 text-sm truncate">
+                    {{
+                        field.type === "password"
+                            ? editing[field.key]
+                                ? editing[field.key].substring(0, 3) +
+                                  "****" +
+                                  editing[field.key].slice(-4)
+                                : t("settings.notSet")
+                            : editing[field.key] || t("settings.empty")
+                    }}
+                </span>
+
+                <button
+                    v-if="admin && !readonly && !isLocked(field.key)"
+                    class="text-xs text-muted-foreground hover:text-foreground px-1"
+                    :title="t('settings.resetToDefault')"
+                    @click="handleReset(field.key)"
+                >
+                    ↺
+                </button>
+            </div>
+            <p v-if="validationError" class="text-xs text-destructive px-1 pb-1" role="alert">
+                {{ validationError }}
+            </p>
+            <div v-if="!readonly" class="flex justify-end pt-1">
+                <button
+                    class="px-3 py-1 text-xs bg-primary text-primary-foreground rounded hover:opacity-90"
+                    @click="handleSave"
+                >
+                    {{ t("common.save") }}
+                </button>
+            </div>
+        </div>
     </div>
-  </div>
 </template>
