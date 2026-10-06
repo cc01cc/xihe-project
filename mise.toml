@@ -208,7 +208,7 @@ dir = "packages/runtime"
 alias = "lint:runtime"
 
 [tasks."lint:links"]
-run = "C:/Progra~1/Git/bin/bash.exe ../scripts/check-doc-links.sh ."
+run = "C:/Progra~1/Git/bin/bash.exe scripts/check-doc-links-entry.sh ."
 description = "Check documentation links (no escape from docs/)"
 alias = "lint:links"
 
