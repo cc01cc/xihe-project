@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { setupMockAuth, setupMockSessions } from './helpers/auth'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 async function setupViewportFixtures(page: Page) {
   await setupMockAuth(page)
@@ -61,7 +62,7 @@ test.describe('PLAN-269 viewport matrix: desktop-4k', () => {
     await page.goto('/settings/config')
     await expect(page.getByTestId('settings-config-heading')).toBeVisible()
     await expectNoHorizontalOverflow(page)
-    await expect(page).toHaveScreenshot('plan-269-viewport-desktop-4k-settings.png')
+    await expectPlatformScreenshot(page, 'plan-269-viewport-desktop-4k-settings.png')
   })
 })
 
@@ -93,7 +94,7 @@ test.describe('PLAN-269 viewport matrix: desktop-1080p', () => {
     await expect(page.getByTestId('chat-input')).toBeVisible()
     await expect(page.getByTestId('sidebar')).toBeVisible()
     await expectNoHorizontalOverflow(page)
-    await expect(page).toHaveScreenshot('plan-269-viewport-desktop-1080p-chat.png')
+    await expectPlatformScreenshot(page, 'plan-269-viewport-desktop-1080p-chat.png')
   })
 })
 
@@ -122,7 +123,7 @@ test.describe('PLAN-269 viewport matrix: mobile', () => {
     const filesSheet = page.getByTestId('mobile-files-sheet')
     await expect(filesSheet).toBeVisible()
     await expect(filesSheet.getByTestId('workspace-empty-state')).toBeVisible()
-    await expect(filesSheet).toHaveScreenshot('plan-269-viewport-mobile-files.png')
+    await expectPlatformScreenshot(filesSheet, 'plan-269-viewport-mobile-files.png')
     await page.getByRole('button', { name: /close/i }).last().click()
     await page.getByRole('button', { name: 'Open chat' }).click()
     await expect(page.getByTestId('mobile-chat-sheet')).toBeVisible()

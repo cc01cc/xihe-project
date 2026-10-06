@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { setupMockAuth, setupMockSessions } from './helpers/auth'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 const SESSION_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const SECOND_SESSION_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
@@ -190,7 +191,7 @@ test.describe('Chat approval flow', () => {
     await expect(dialog.locator('[data-testid="approval-approve"]')).toBeEnabled()
     await expect(dialog.locator('[data-testid="approval-approve"]')).toBeFocused()
     await expect(dialog.locator('[data-testid="approval-reject"]')).toBeEnabled()
-    await expect(page).toHaveScreenshot('approval-modal-request.png')
+    await expectPlatformScreenshot(page, 'approval-modal-request.png')
   })
 
   test('delete-shaped approvals offer only once and explain the narrowed ceiling', async ({ page }) => {
@@ -229,7 +230,7 @@ test.describe('Chat approval flow', () => {
     await expect(dialog).toBeVisible({ timeout: 5000 })
     await expect(dialog.locator('[data-testid="approval-origin"]')).toHaveText('模型请求')
     await page.screenshot({ path: `test-results/plan0371-approval-origin-agent-relay-${viewportTag(page)}.png` })
-    await expect(page).toHaveScreenshot(`approval-origin-agent-relay-${viewportTag(page)}.png`)
+    await expectPlatformScreenshot(page, `approval-origin-agent-relay-${viewportTag(page)}.png`)
   })
 
   test('labels gate-created approvals with the policy-gate origin', async ({ page }) => {
@@ -240,7 +241,7 @@ test.describe('Chat approval flow', () => {
     await expect(dialog).toBeVisible({ timeout: 5000 })
     await expect(dialog.locator('[data-testid="approval-origin"]')).toHaveText('策略门禁')
     await page.screenshot({ path: `test-results/plan0371-approval-origin-cp-gate-${viewportTag(page)}.png` })
-    await expect(page).toHaveScreenshot(`approval-origin-cp-gate-${viewportTag(page)}.png`)
+    await expectPlatformScreenshot(page, `approval-origin-cp-gate-${viewportTag(page)}.png`)
   })
 
   test('legacy approvals without origin render no origin badge', async ({ page }) => {
@@ -490,7 +491,7 @@ test.describe('Chat approval flow', () => {
     await expect(dialog.locator('[data-testid="approval-error"]')).toBeVisible({ timeout: 5000 })
     await expect(dialog.locator('[data-testid="approval-error"]')).toContainText('APPROVAL_EXPIRED')
     await expect(dialog.locator('[data-testid="approval-approve"]')).toBeEnabled()
-    await expect(page).toHaveScreenshot('approval-modal-expired.png')
+    await expectPlatformScreenshot(page, 'approval-modal-expired.png')
   })
 
   test('late replay after a local decision does not restore the modal', async ({ page }) => {

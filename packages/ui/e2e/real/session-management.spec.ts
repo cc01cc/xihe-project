@@ -2,6 +2,7 @@ import { generateE2EPassword } from './helpers/password'
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
 import { test, expect } from '@playwright/test'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
 
@@ -28,7 +29,7 @@ test.describe('Session Management — Real Backend', () => {
     await page.goto('/workspace')
     await page.waitForLoadState('load')
     await expect(page.locator('[data-testid="sidebar"]')).toBeVisible({ timeout: 8000 })
-    await expect(page).toHaveScreenshot('real-session-list.png')
+    await expectPlatformScreenshot(page, 'real-session-list.png')
   })
 })
 

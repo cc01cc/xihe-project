@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { setupMockAuth, setupMockSessions } from './helpers/auth'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 function markdownResponseTokens(): string[] {
   return [
@@ -29,7 +30,7 @@ test.describe('Chat', () => {
   test('empty chat page renders correctly', async ({ page }) => {
     await page.goto('/workspace/workspace-1/chat/test-session')
     await expect(page.locator('textarea')).toBeVisible({ timeout: 5000 })
-    await expect(page).toHaveScreenshot('chat-empty.png')
+    await expectPlatformScreenshot(page, 'chat-empty.png')
   })
 
   test('renders pre-existing messages from the server projection', async ({ page }) => {
@@ -46,7 +47,7 @@ test.describe('Chat', () => {
     await page.goto('/workspace/workspace-1/chat/test-session')
     await expect(page.locator('text=What is TypeScript?')).toBeVisible({ timeout: 5000 })
     await expect(page.locator('text=TypeScript is a typed superset of JavaScript')).toBeVisible({ timeout: 5000 })
-    await expect(page).toHaveScreenshot('chat-with-messages.png')
+    await expectPlatformScreenshot(page, 'chat-with-messages.png')
   })
 
   test('shows session in sidebar after creating new chat', async ({ page }) => {
@@ -72,7 +73,7 @@ test.describe('Chat', () => {
 
     await expect(page.locator('aside >> text=TypeScript Help')).toBeVisible({ timeout: 5000 })
     await expect(page.locator('aside >> text=Rust Borrow Checker')).toBeVisible({ timeout: 5000 })
-    await expect(page).toHaveScreenshot('chat-with-sessions.png')
+    await expectPlatformScreenshot(page, 'chat-with-sessions.png')
   })
 
   test('empty state in sidebar when no sessions', async ({ page }) => {
@@ -80,7 +81,7 @@ test.describe('Chat', () => {
 
     await page.goto('/workspace')
     await expect(page.locator('text=暂无对话')).toBeVisible({ timeout: 5000 })
-    await expect(page).toHaveScreenshot('chat-sidebar-empty.png')
+    await expectPlatformScreenshot(page, 'chat-sidebar-empty.png')
   })
 
   test('sends message and streams markdown response', async ({ page }) => {
@@ -104,7 +105,7 @@ test.describe('Chat', () => {
     const codeBlock = page.locator('pre:has-text("const x = 1")').first()
     await expect(codeBlock).toBeVisible({ timeout: 10000 })
 
-    await expect(page).toHaveScreenshot('chat-streaming-markdown.png')
+    await expectPlatformScreenshot(page, 'chat-streaming-markdown.png')
   })
 
   test('renders context source metadata without exposing the source body', async ({ page }) => {
@@ -191,7 +192,7 @@ test.describe('Chat', () => {
     await expect(retry).toBeVisible()
     await retry.click()
     await expect(page.getByText('recovered response')).toBeVisible({ timeout: 10000 })
-    await expect(page).toHaveScreenshot('chat-retry-recovered.png')
+    await expectPlatformScreenshot(page, 'chat-retry-recovered.png')
   })
 
   test('voice input appends a final transcript to the composer', async ({ page }) => {
@@ -231,7 +232,7 @@ test.describe('Chat', () => {
       })
     })
     await expect(page.getByTestId('chat-input')).toHaveValue('来自语音')
-    await expect(page).toHaveScreenshot('chat-voice-transcript.png')
+    await expectPlatformScreenshot(page, 'chat-voice-transcript.png')
   })
 
   test('attachment upload failure keeps the draft and shows a toast', async ({ page }, testInfo) => {
@@ -257,7 +258,7 @@ test.describe('Chat', () => {
     await expect(page.getByTestId('attachment-error-remove-button')).toBeVisible()
     await expect(page.locator('[data-sonner-toast]')).toContainText('Attachment service unavailable')
     await page.screenshot({ path: testInfo.outputPath('plan-269-attachment-failure-full.png') })
-    await expect(page).toHaveScreenshot('chat-attachment-upload-failure.png')
+    await expectPlatformScreenshot(page, 'chat-attachment-upload-failure.png')
   })
 
   test('new user message is marked as scroll anchor', async ({ page }) => {

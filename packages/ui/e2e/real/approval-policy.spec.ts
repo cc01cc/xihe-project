@@ -1,5 +1,6 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
 import { generateE2EPassword } from './helpers/password'
+import { createSessionWithPrincipal, provisionWorkspaceAgentPrincipal } from './helpers/agent-principal'
 
 /**
  * PLAN-0337 M1 真实链路验收（@host）：
@@ -41,18 +42,6 @@ async function installAuth(page: Page, auth: Auth) {
     localStorage.setItem('xihe-user', JSON.stringify({ workspaceId }))
     localStorage.setItem('xihe-workspace', JSON.stringify({ id: workspaceId, name: 'Default Workspace' }))
   }, { token: auth.accessToken, workspaceId: auth.workspaceId })
-}
-
-async function createSession(request: APIRequestContext, auth: Auth, title: string): Promise<string> {
-  const response = await request.post(`${CP_URL}/api/v1/sessions`, {
-    headers: authHeaders(auth),
-    data: { title },
-  })
-  expect(response.status(), await response.text()).toBe(201)
-  const body = await response.json() as { id?: string; sessionId?: string }
-  const id = body.id ?? body.sessionId
-  expect(id, 'session id must be returned').toBeTruthy()
-  return id as string
 }
 
 async function setSessionMode(request: APIRequestContext, auth: Auth,
@@ -129,7 +118,8 @@ test('@host PLAN-0337 Workspace approval mode is set in Settings and survives a 
 
 test('@host PLAN-0337 Session approval mode is persisted and reflected by the chat control', async ({ page, request }, testInfo) => {
   const auth = await register(request)
-  const sessionId = await createSession(request, auth, 'Approval Policy Real')
+  const principalId = await provisionWorkspaceAgentPrincipal(request, auth, { name: 'Approval Policy Fixture' })
+  const sessionId = await createSessionWithPrincipal(request, auth, { principalId, title: 'Approval Policy Real' })
   await installAuth(page, auth)
 
   const created = await setSessionMode(request, auth, { sessionId, mode: 'auto' })

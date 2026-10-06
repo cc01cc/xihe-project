@@ -113,29 +113,32 @@ xihe 使用单个浏览器 project（chromium），通过 `XIHE_E2E_PROFILE` 区
 
 ### 2.1 基线追踪
 
-视觉回归使用 Playwright `toHaveScreenshot()`，基线文件存于 `*-snapshots/` 目录。注意两条边界：
+视觉回归使用 Playwright `toHaveScreenshot()`，基线文件存于 `*-snapshots/` 目录。当前 Git index 跟踪 64 个 Linux PNG；`.gitignore` 忽略平台本地快照，并显式放行 `*-linux.png`，以便新 Linux 基线可复现和审查。
 
-- 当前 A03 的 `.gitignore` 将 `**/*-snapshots/*.png` 作为本地生成工件忽略：只能证明当前工作区的视觉回归，不能声称 fresh checkout 可直接复现。
-- 若未来需要仓库级视觉门禁，应另行移除忽略规则并审查二进制基线的提交边界。
+- Linux 是唯一提交级视觉基线平台；启用 Linux workflow 时用锁定的 Playwright/Chromium 版本比较 Linux PNG。
+- Windows/macOS 本地通过 `expectPlatformScreenshot` 跳过视觉 matcher 并记录 annotation；同一 E2E 用例的动作、DOM、网络和持久化断言照常运行。不得跳过整条测试或生成本地平台基线。
+- Linux baseline 缺失时 matcher 必须失败；禁止用 `--update-snapshots` 自动生成并接受差异。
+
+本地候选 Linux 视觉 workflow 配置为只运行 `e2e/mock/screenshots.spec.ts` 与 Compose-compatible `e2e/real/screenshots.spec.ts`（各 9 个路由场景，共消费 18 个 baseline）。按 PLAN-0440 用户决策 #6/#7（2026-10-05/06），远端 workflow 与 Linux 测试不属于 PLAN-0440 的当前任务，仅作未来事实记录；workflow 未触发、未验证。其余 46 个已跟踪 Linux baseline 不在候选范围；不得声称 Linux 视觉回归已通过。原生平台运行这些 spec 时仍执行导航、HTTP、根节点可见性和 console/page-error 断言。
 
 ```
 e2e/mock/login.spec.ts-snapshots/
-├── login-page-linux.png        # 当前平台基线
-├── login-page-darwin.png
-└── login-page-win32.png
+└── login-page-linux.png        # 唯一跟踪的验收基线
 ```
 
-Playwright 自动按 `{snapshotName}-{platform}.png` 命名（单 project，无 browser 段）。
+Playwright 自动按 `{snapshotName}-{platform}.png` 命名（单 project，无 browser 段）；win32/darwin 文件只可能是本地诊断工件。
 
 ### 2.2 更新基线
 
-UI 有意变更且完成 actual/diff、DOM/CSS 和人工视觉复核后：
+只有 UI 有意变更、actual/diff、DOM/CSS 和人工视觉复核通过后，才在 Linux 环境运行目标 spec 的 `--update-snapshots`；Windows/macOS 不生成验收基线。复核只提交实际变更的 `*-linux.png`。
+
+未来获准恢复 Linux 基线更新后，只运行已人工审查的目标 spec（Linux-only，cwd=`packages/ui`）：
 
 ```bash
-npx playwright test e2e/mock/ --update-snapshots
+pnpm exec playwright test e2e/mock/<reviewed-spec>.spec.ts --config e2e/playwright.config.ts --update-snapshots
 ```
 
-更新结果必须记录 viewport、URL、页面数据状态、actual/diff 路径和 reviewer decision。当前 baseline 被忽略时，不执行 `git add`，也不把本地通过结果当作提交级证据。
+更新结果必须记录 viewport、URL、页面数据状态、actual/diff 路径和 reviewer decision；Linux CI 必须通过干净 checkout 复验。
 
 ### 2.3 gitignore 规则
 
@@ -144,41 +147,52 @@ npx playwright test e2e/mock/ --update-snapshots
 playwright-report/    # HTML 报告
 test-results/         # 失败测试截图/diff
 screenshots/          # 手动截图存档（项目未使用，为未来预留）
-**/*-snapshots/*.png  # 当前 A03 本地生成的视觉 baseline
+**/*-snapshots/*.png  # 忽略本地平台快照
+!**/*-snapshots/*-linux.png # 跟踪 Linux 验收基线
 ```
 
-`*-snapshots/` 当前在 A03 的 gitignore 中；mock/real screenshot 测试依赖预先准备的本地 baseline。
+Linux baseline 已跟踪；win32/darwin 生成物保持忽略。
 
 ### 2.4 历史说明
 
-此前 xihe 使用自定义 `expectWithArchive()` 函数实现双写（同时写时间戳存档和 Playwright 基线）。该设计存在冗余（同一截图存两份）；当前实际策略仍是本地 ignored baseline，因此必须显式记录生成命令和可复现性限制。
+此前 xihe 使用自定义 `expectWithArchive()` 函数实现双写（同时写时间戳存档和 Playwright 基线）。该设计存在冗余（同一截图存两份）。
 
 当前统一为纯净的 `toHaveScreenshot()` 方案：
-- baseline、actual/diff 和 trace 按来源分别管理；当前 `*-snapshots/` 为本地 ignored 工件
+- E2E 通过 `expectPlatformScreenshot` 统一断言；Linux 调用原生 `toHaveScreenshot()`，其他本机平台记录 annotation 并保留同一测试内非视觉断言
+- Linux baseline、失败 actual/diff 和 trace 按来源分别管理
 - `screenshots/` 目录仅供手动截图存档使用（gitignore），本项目未使用
-- 所有 spec 文件直接调用 `expect(page).toHaveScreenshot()`
+- baseline 只在 Linux workflow 中比较，不在 Windows 本地更新
 
 ## 3. 运行命令
 
 ```bash
-# Mock E2E（无需后端，自动启动 Vite dev；cwd=e2e/，或从 packages/ui 用 --config e2e/playwright.config.ts）
-npx playwright test e2e/mock/
+# Mock E2E（无需后端，自动启动 Vite dev；cwd=packages/ui）
+pnpm exec playwright test e2e/mock/ --config e2e/playwright.config.ts --workers=1 --retries=0
 
 # 单个测试文件
-npx playwright test e2e/mock/chat.spec.ts
+pnpm exec playwright test e2e/mock/chat.spec.ts --config e2e/playwright.config.ts
 
 # Compose-compatible Real E2E（自动启动/清理 frozen Compose）
-mise run test:e2e
+node scripts/e2e-real.mjs e2e/real --workers=1 --retries=0
 
 # Host-only Real E2E（默认自编排每轮隔离栈）
 mise run test:e2e:host
 
 # 仅本地调试：复用已运行的 dev:host，不作为标准验收证据
-XIHE_E2E_EXTERNAL_SERVER=1 mise run test:e2e:host
+XIHE_E2E_EXTERNAL_SERVER=1 node scripts/e2e-host.mjs --retries=0 <spec>.spec.ts
 
-# 更新视觉基线
-npx playwright test e2e/mock/ --update-snapshots
+# Linux 上经人工视觉审查后，定向更新被接受的 baseline
+pnpm exec playwright test e2e/mock/<reviewed-spec>.spec.ts --config e2e/playwright.config.ts --update-snapshots
 ```
+
+未来另行授权恢复 Linux 验收时，候选 workflow 使用以下命令（各执行 9 个路由截图用例）：
+
+```bash
+pnpm exec playwright test e2e/mock/screenshots.spec.ts --config e2e/playwright.config.ts --workers=1 --retries=0
+node scripts/e2e-real.mjs e2e/real/screenshots.spec.ts --workers=1 --retries=0
+```
+
+Compose 命令由现有 runner 管理隔离服务生命周期；这两个视觉命令不代表全量 Mock/Compose E2E 验收。
 
 `dev:full`/T3 Compose 当前不提供 Runtime 创建 Sandbox 所需的 Docker Engine socket 和宿主 WorkspaceStorage 映射，因此不作为 host-directory、Sandbox recreate 或 Runtime remote MCP 的完成门。Host E2E 不连接长期 dev DB，必须使用每轮隔离数据库和 host root。移动端 screenshot 必须在服务健康且数据加载稳定后复核，不能因 Compose 错误态直接更新基线。
 

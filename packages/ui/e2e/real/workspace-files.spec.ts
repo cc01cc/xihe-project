@@ -2,6 +2,7 @@ import { generateE2EPassword } from './helpers/password'
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
 import { test, expect } from '@playwright/test'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
 
@@ -126,7 +127,7 @@ test.describe('@host Workspace — File Panel & Delete Flow', () => {
       return doc ? doc.scrollWidth - doc.clientWidth : 0
     })
     expect(overflow).toBeLessThanOrEqual(2)
-    await expect(page).toHaveScreenshot('workspace-file-selected.png')
+    await expectPlatformScreenshot(page, 'workspace-file-selected.png')
   })
 
   test('file delete confirm dialog renders destructive action with correct layering', async ({ page }) => {
@@ -152,7 +153,7 @@ test.describe('@host Workspace — File Panel & Delete Flow', () => {
       return top === el || el.contains(top)
     })
     expect(hit).toBe(true)
-    await expect(page).toHaveScreenshot('workspace-delete-dialog.png')
+    await expectPlatformScreenshot(page, 'workspace-delete-dialog.png')
   })
 
   test('renames, duplicates, moves and deletes a file through the UI', async ({ page }) => {
@@ -202,7 +203,7 @@ test.describe('@host Workspace — File Panel & Delete Flow', () => {
     await expect(page.getByRole('button', { name: 'renamed.md', exact: true })).toBeVisible({ timeout: 15000 })
     await page.getByRole('button', { name: /archive$/ }).click()
     await expect(page.getByRole('button', { name: 'renamed-copy.md', exact: true })).not.toBeVisible()
-    await expect(page).toHaveScreenshot('workspace-file-mutations.png')
+    await expectPlatformScreenshot(page, 'workspace-file-mutations.png')
   })
 
   test('workspace empty state is centered and styled', async ({ page, request }) => {
@@ -213,7 +214,7 @@ test.describe('@host Workspace — File Panel & Delete Flow', () => {
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), token)
     await page.goto('/workspace/' + wsId, { waitUntil: 'load' })
     await page.waitForTimeout(1500)
-    await expect(page).toHaveScreenshot('workspace-empty-state.png')
+    await expectPlatformScreenshot(page, 'workspace-empty-state.png')
   })
 })
 

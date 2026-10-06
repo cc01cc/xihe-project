@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 const DOCS = [
   { id: 'doc-1', filename: 'requirements.pdf', chunks: 5 },
@@ -20,7 +21,7 @@ test.describe('Knowledge Base', () => {
     await page.goto('/settings/knowledge', { waitUntil: 'load' })
     await page.waitForTimeout(1500)
     await expect(page.locator('text=暂无文档')).toBeVisible()
-    await expect(page).toHaveScreenshot('knowledge-empty.png')
+    await expectPlatformScreenshot(page, 'knowledge-empty.png')
   })
 
   test('shows error state with retry button', async ({ page }) => {
@@ -30,7 +31,7 @@ test.describe('Knowledge Base', () => {
     await page.goto('/settings/knowledge', { waitUntil: 'load' })
     await page.waitForTimeout(1000)
     await expect(page.locator('text=Retry')).toBeVisible()
-    await expect(page).toHaveScreenshot('knowledge-error.png')
+    await expectPlatformScreenshot(page, 'knowledge-error.png')
   })
 
   test('shows loading state', async ({ page }) => {
@@ -42,7 +43,7 @@ test.describe('Knowledge Base', () => {
     })
     await page.goto('/settings/knowledge', { waitUntil: 'load' })
     await expect(page.locator('text=Loading documents')).toBeVisible()
-    await expect(page).toHaveScreenshot('knowledge-loading.png')
+    await expectPlatformScreenshot(page, 'knowledge-loading.png')
   })
 
   test('lists documents with delete button', async ({ page }) => {
@@ -55,6 +56,6 @@ test.describe('Knowledge Base', () => {
     await expect(page.locator('text=architecture.md')).toBeVisible()
     await expect(page.locator('text=notes.txt')).toBeVisible()
     await expect(page.locator('button:has-text("删除")')).toHaveCount(3)
-    await expect(page).toHaveScreenshot('knowledge-documents.png')
+    await expectPlatformScreenshot(page, 'knowledge-documents.png')
   })
 })

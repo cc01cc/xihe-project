@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 interface Route {
   path: string
@@ -105,9 +106,9 @@ for (const route of allRoutes) {
 
     const resp = await page.goto(route.path, { waitUntil: 'load', timeout: 15000 })
     expect(resp?.status()).toBe(200)
-    await page.waitForTimeout(1000)
-    expect(errors).toEqual([])
+    await expect(page.locator('#app')).toBeVisible()
 
-    await expect(page).toHaveScreenshot(route.name + '.png')
+    await expectPlatformScreenshot(page, route.name + '.png')
+    expect(errors).toEqual([])
   })
 }

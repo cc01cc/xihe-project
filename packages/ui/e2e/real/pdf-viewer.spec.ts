@@ -5,6 +5,7 @@ import { test, expect } from '@playwright/test'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -73,7 +74,7 @@ test.describe('PdfViewer — Real Backend', () => {
 
     await expect(page.locator('#pdf-test-container')).toBeAttached()
     await page.waitForTimeout(1000)
-    await expect(page).toHaveScreenshot('pdf-viewer-rendered.png')
+    await expectPlatformScreenshot(page, 'pdf-viewer-rendered.png')
   })
 })
 

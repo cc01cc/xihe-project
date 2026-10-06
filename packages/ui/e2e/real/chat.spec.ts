@@ -3,6 +3,7 @@ import { gotoWorkspaceWithChat } from './helpers/chat'
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
 import { test, expect } from '@playwright/test'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
 
@@ -28,7 +29,7 @@ test.describe('Chat — Real Backend', () => {
 
   test('chat page renders with sidebar and input area', async ({ page }) => {
     await expect(page.locator('textarea')).toBeVisible({ timeout: 8000 })
-    await expect(page).toHaveScreenshot('real-chat-page.png')
+    await expectPlatformScreenshot(page, 'real-chat-page.png')
   })
 
   test('creates new session and shows in sidebar', async ({ page }) => {
@@ -39,7 +40,7 @@ test.describe('Chat — Real Backend', () => {
     if (await newBtn.count() > 0) {
       await newBtn.click()
       await page.waitForTimeout(500)
-      await expect(page).toHaveScreenshot('real-chat-new-session.png')
+      await expectPlatformScreenshot(page, 'real-chat-new-session.png')
     }
   })
 })

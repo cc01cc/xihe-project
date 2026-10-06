@@ -86,26 +86,29 @@ xihe uses a single Playwright project (chromium). Desktop coverage is complement
 
 ### 2.1 Baseline Tracking
 
-Visual regression uses Playwright `toHaveScreenshot()`. A03 currently ignores `*-snapshots/*.png`; local baselines are diagnostic artifacts and are not fresh-checkout evidence:
+Visual regression uses Playwright `toHaveScreenshot()`. Git currently tracks 64 Linux PNG baselines. Linux is the only commit-level baseline platform; Windows/macOS screenshots are local-only artifacts:
 
 ```
 e2e/mock/login.spec.ts-snapshots/
-├── login-page-linux.png        # Current platform baseline
-├── login-page-darwin.png
-└── login-page-win32.png
+└── login-page-linux.png        # Tracked CI baseline
 ```
 
-Playwright automatically names files as `{snapshotName}-{browser}-{platform}.png`.
+With the current single Chromium project, Playwright names files as `{snapshotName}-{platform}.png`.
+
+On Windows/macOS, `expectPlatformScreenshot` records a `visual-baseline-platform` annotation and skips only the visual matcher; the test's browser actions and non-visual assertions still run. When the Linux workflow is enabled, it compares the tracked baseline. A missing Linux baseline must fail; do not generate/update baselines as part of a normal run.
+
+The local candidate Linux visual workflow is configured to run only `e2e/mock/screenshots.spec.ts` and Compose-compatible `e2e/real/screenshots.spec.ts` (9 route cases each, 18 baselines total). Per PLAN-0440 user decisions #6/#7 (2026-10-05/06), remote workflow execution and Linux testing are not part of PLAN-0440; this is an unexecuted record for possible future work. The remaining 46 tracked Linux baselines are outside the candidate scope. Do not claim that Linux visual regression has passed. Both specs retain their navigation, HTTP, root visibility, and console/page-error assertions when run natively.
 
 ### 2.2 Updating Baselines
 
-After intentional UI changes:
+Only after an intentional UI change and review of actual/diff, DOM/CSS, and the resulting page state, update the selected baseline on Linux. Windows/macOS must not generate acceptance baselines.
 
 ```bash
-npx playwright test e2e/mock/ --update-snapshots
-git add e2e/mock/*-snapshots/ e2e/real/*-snapshots/
-git commit -m "chore: update visual regression baselines"
+pnpm exec playwright test e2e/mock/<reviewed-spec>.spec.ts --config e2e/playwright.config.ts --update-snapshots
+git add e2e/mock/<reviewed-spec>-snapshots/*-linux.png e2e/real/<reviewed-spec>-snapshots/*-linux.png
 ```
+
+Run from `packages/ui` on Linux only. Do not update snapshots on Windows/macOS.
 
 ### 2.3 Gitignore Rules
 
@@ -114,34 +117,45 @@ git commit -m "chore: update visual regression baselines"
 playwright-report/    # HTML reports
 test-results/         # Failed test screenshots/diffs
 screenshots/          # Manual screenshot archive (not used by project, reserved for future)
+**/*-snapshots/*.png  # Ignore local platform snapshots
+!**/*-snapshots/*-linux.png # Track Linux acceptance baselines
 ```
 
-`*-snapshots/` is currently in A03's gitignore. A repository-level baseline gate requires a separate reviewed decision.
+Linux baseline PNGs are re-included by `.gitignore`; other platform-local PNGs remain ignored.
 
 ### 2.4 Historical Notes
 
-Previously xihe used a custom `expectWithArchive()` function for dual-writing (simultaneously writing to timestamped archive and Playwright baseline). This design had redundancy (same screenshot stored twice), and baselines were gitignored making history untraceable.
+Previously xihe used a custom `expectWithArchive()` function for dual-writing (simultaneously writing to timestamped archive and Playwright baseline). This design had redundancy (same screenshot stored twice).
 
 Currently unified to a clean `toHaveScreenshot()` approach:
-- Baselines tracked directly by git, `*-snapshots/` not in gitignore
+- Specs call `expectPlatformScreenshot`; Linux delegates to Playwright `toHaveScreenshot`, other platforms add an annotation and preserve non-visual assertions
+- Linux baselines are tracked; actual/diff/trace remain failure artifacts
 - `screenshots/` directory only for manual screenshot archive (gitignored), not used by this project
-- All spec files directly call `expect(page).toHaveScreenshot()`
 
 ## 3. Run Commands
 
 ```bash
-# Mock E2E (no backend needed, auto-starts Vite dev)
-npx playwright test e2e/mock/
+# Mock E2E (no backend needed, auto-starts Vite dev; cwd=packages/ui)
+pnpm exec playwright test e2e/mock/ --config e2e/playwright.config.ts --workers=1 --retries=0
 
 # Single test file
-npx playwright test e2e/mock/chat.spec.ts
+pnpm exec playwright test e2e/mock/chat.spec.ts --config e2e/playwright.config.ts
 
-# Real E2E (requires Docker Compose full stack running)
-docker compose up -d
-npx playwright test e2e/real/
+# Compose-compatible real E2E (runner manages isolated Compose lifecycle; XH root)
+node scripts/e2e-real.mjs e2e/real --workers=1 --retries=0
 
-# Update visual baselines
-npx playwright test e2e/mock/ --update-snapshots
+# Update one reviewed visual baseline on Linux only (cwd=packages/ui)
+pnpm exec playwright test e2e/mock/<reviewed-spec>.spec.ts --config e2e/playwright.config.ts --update-snapshots
+```
+
+If Linux validation is authorized in future work, the local candidate workflow uses these two screenshot specs:
+
+```bash
+# cwd=packages/ui
+pnpm exec playwright test e2e/mock/screenshots.spec.ts --config e2e/playwright.config.ts --workers=1 --retries=0
+
+# XH root; the existing runner manages the Compose lifecycle
+node scripts/e2e-real.mjs e2e/real/screenshots.spec.ts --workers=1 --retries=0
 ```
 
 ### 3.1 PLAN-247 Fake LLM Host Matrix

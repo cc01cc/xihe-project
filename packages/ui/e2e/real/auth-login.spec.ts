@@ -2,6 +2,7 @@ import { generateE2EPassword } from './helpers/password'
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
 import { test, expect } from '@playwright/test'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
 
@@ -21,13 +22,13 @@ test.describe('Auth — Real Backend', () => {
   test('login page loads and shows form', async ({ page }) => {
     await page.goto('/login')
     await expect(page.locator('h1')).toBeVisible({ timeout: 8000 })
-    await expect(page).toHaveScreenshot('real-login-page.png')
+    await expectPlatformScreenshot(page, 'real-login-page.png')
   })
 
   test('register page loads and shows form', async ({ page }) => {
     await page.goto('/register')
     await expect(page.locator('h1')).toBeVisible({ timeout: 8000 })
-    await expect(page).toHaveScreenshot('real-register-page.png')
+    await expectPlatformScreenshot(page, 'real-register-page.png')
   })
 
   test('navigates to chat after successful login', async ({ page }) => {

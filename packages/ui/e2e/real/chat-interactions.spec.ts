@@ -3,6 +3,7 @@ import { gotoWorkspaceWithChat } from './helpers/chat'
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
 import { test, expect } from '@playwright/test'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
 
@@ -37,7 +38,7 @@ test.describe('Chat — Interaction & UI States', () => {
     await textarea.fill(`State capture ${Date.now()}`)
     await page.keyboard.press('Enter')
     await page.waitForTimeout(800)
-    await expect(page).toHaveScreenshot('chat-after-send.png')
+    await expectPlatformScreenshot(page, 'chat-after-send.png')
   })
 
   test('scroll-up reveals back-to-bottom anchor and click returns to bottom', async ({ page }) => {
@@ -68,7 +69,7 @@ test.describe('Chat — Interaction & UI States', () => {
     ).toBe('true')
     await expect(anchorBtn).toBeVisible({ timeout: 5000 })
     await page.waitForTimeout(500)
-    await expect(page).toHaveScreenshot('chat-scroll-anchor.png')
+    await expectPlatformScreenshot(page, 'chat-scroll-anchor.png')
 
     await anchorBtn.click()
     await page.waitForTimeout(800)
@@ -88,12 +89,12 @@ test.describe('Chat — Interaction & UI States', () => {
       return doc ? doc.scrollWidth - doc.clientWidth : 0
     })
     expect(overflow).toBeLessThanOrEqual(2)
-    await expect(page).toHaveScreenshot('chat-markdown-mix.png')
+    await expectPlatformScreenshot(page, 'chat-markdown-mix.png')
   })
 
   test('empty chat state renders without browser-default artifacts', async ({ page }) => {
     await page.waitForTimeout(1000)
-    await expect(page).toHaveScreenshot('chat-empty-state.png')
+    await expectPlatformScreenshot(page, 'chat-empty-state.png')
   })
 })
 

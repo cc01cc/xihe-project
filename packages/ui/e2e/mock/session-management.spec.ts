@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { setupMockAuth, setupMockSessions } from './helpers/auth'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 test.describe('Session Management', () => {
   test.beforeEach(async ({ page }) => {
@@ -19,7 +20,7 @@ test.describe('Session Management', () => {
     await expect(page.locator('aside >> text=Alpha')).toBeVisible({ timeout: 5000 })
     await expect(page.locator('aside >> text=Beta')).toBeVisible()
     await expect(page.locator('aside >> text=Gamma')).toBeVisible()
-    await expect(page).toHaveScreenshot('session-list-all.png')
+    await expectPlatformScreenshot(page, 'session-list-all.png')
   })
 
   test('clicking a session selects it as active', async ({ page }) => {
@@ -34,7 +35,7 @@ test.describe('Session Management', () => {
     await page.goto('/workspace/workspace-1/chat/sid-1')
 
     await expect(page.locator('aside >> text=今天').first()).toBeVisible({ timeout: 5000 })
-    await expect(page).toHaveScreenshot('session-time-groups.png')
+    await expectPlatformScreenshot(page, 'session-time-groups.png')
   })
 
   test('sidebar toggle hides sidebar', async ({ page }) => {

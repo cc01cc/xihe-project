@@ -1,6 +1,7 @@
 import { generateE2EPassword } from './helpers/password'
 import { ensureWorkspaceChat } from './helpers/chat'
 import { test, expect } from '@playwright/test'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
@@ -45,7 +46,7 @@ test.describe('Auth — UI Flows & Error States', () => {
     const errorText = await errorEl.innerText()
     expect(errorText).not.toMatch(/\[object Object\]/)
     expect(errorText).not.toMatch(/ProblemDetails|com\.cc01cc/)
-    await expect(page).toHaveScreenshot('auth-login-error.png')
+    await expectPlatformScreenshot(page, 'auth-login-error.png')
   })
 
   test('authenticated user visiting /login does not flash login form', async ({ page, request }) => {

@@ -1,5 +1,7 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
 import { generateE2EPassword } from './helpers/password'
+import { ensureAgentWorkspaceBinding, sendChat, waitForControlPlaneAgentReady } from './helpers/journey'
+import { createSessionWithPrincipal, provisionWorkspaceAgentPrincipal } from './helpers/agent-principal'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
 
@@ -71,12 +73,19 @@ test.describe.configure({ retries: 0 })
 test('@host PLAN-281 User Audit persists Chat operation trace', async ({ page, request }, testInfo) => {
   test.setTimeout(180000)
   const auth = await register(request)
+  const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
+    name: 'Audit Trace Fixture',
+    actions: ['read', 'write'],
+  })
+  const sessionId = await createSessionWithPrincipal(request, auth, { principalId, title: 'Audit Trace Session' })
+  await ensureAgentWorkspaceBinding(auth.workspaceId)
+  await waitForControlPlaneAgentReady(request, { Authorization: `Bearer ${auth.accessToken}` })
   await installAuth(page, auth)
 
   const pageErrors: string[] = []
   page.on('pageerror', (error) => pageErrors.push(error.message))
 
-  await page.goto('/workspace', { waitUntil: 'load' })
+  await page.goto(`/workspace/${auth.workspaceId}/chat/${sessionId}`, { waitUntil: 'load' })
   const textarea = page.locator('textarea')
   await expect(textarea).toBeVisible({ timeout: 20000 })
   await expect.poll(() => agentLlmReadiness(request, auth), { timeout: 60000 }).toBe('ready')
@@ -87,11 +96,10 @@ test('@host PLAN-281 User Audit persists Chat operation trace', async ({ page, r
       && url.pathname === '/api/v1/chat'
       && response.status() === 202
   })
-  await page.getByRole('button', { name: '今天天气怎么样？', exact: true }).click()
+  await sendChat(page, '今天天气怎么样？')
   await chatResponse
 
-  await expect.poll(() => findSessionId(request, auth), { timeout: 20000 }).not.toBe('')
-  const sessionId = await findSessionId(request, auth)
+  await expect.poll(() => findSessionId(request, auth), { timeout: 20000 }).toBe(sessionId)
   await expect.poll(() => findOperation(request, auth, sessionId), { timeout: 20000 }).not.toBeNull()
   const operation = await findOperation(request, auth, sessionId)
   const operationId = (operation as OperationSummary).id

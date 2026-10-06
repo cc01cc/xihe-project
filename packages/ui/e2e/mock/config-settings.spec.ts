@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 const CONFIG_DOMAINS: Record<string, Record<string, string>> = {
   'llm-provider': { defaultProvider: 'deepseek', defaultModel: 'deepseek-chat' },
@@ -59,7 +60,7 @@ test.describe('Config Settings (three layers)', () => {
     await expect(page.getByTestId('config-import-export')).toBeVisible()
     await expect(page.getByTestId('config-domain-logging')).toBeVisible()
     await expect(page.getByTestId('config-domain-agent-runtime')).toBeVisible()
-    await expect(page).toHaveScreenshot('config-instance-tab.png')
+    await expectPlatformScreenshot(page, 'config-instance-tab.png')
   })
 
   test('instance tab keeps the instance-only instructions field', async ({ page }) => {
@@ -80,7 +81,7 @@ test.describe('Config Settings (three layers)', () => {
     await expect(page.getByTestId('config-domain-user-preference')).toHaveCount(0)
     await expect(page.getByTestId('config-domain-logging')).toHaveCount(0)
     await expect(page.getByTestId('mcp-config-textarea')).toBeVisible()
-    await expect(page).toHaveScreenshot('config-workspace-tab.png')
+    await expectPlatformScreenshot(page, 'config-workspace-tab.png')
   })
 
   test('approval-policy is instance-writable, workspace-overridable and user-hidden', async ({ page }) => {
@@ -145,7 +146,7 @@ test.describe('Config Settings (three layers)', () => {
     await expect(lock).toBeVisible()
     await expect(lock).toHaveText('env-embedding-model')
     await expect(page.getByTestId('config-field-embedding-model').locator('input')).toHaveCount(0)
-    await expect(page).toHaveScreenshot('config-env-lock.png')
+    await expectPlatformScreenshot(page, 'config-env-lock.png')
   })
 
   test('saving a value goes through the layer endpoint', async ({ page }) => {

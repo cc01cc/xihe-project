@@ -1,5 +1,8 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
 import { generateE2EPassword } from './helpers/password'
+import { expectPlatformScreenshot } from '../helpers/visual'
+import { createSessionWithPrincipal, provisionWorkspaceAgentPrincipal } from './helpers/agent-principal'
+
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
@@ -56,6 +59,8 @@ async function callMcp(request: APIRequestContext, auth: Auth, name: string, arg
 test.describe('@host PLAN-269 full UI acceptance: real core flows', () => {
   test('real session rename and delete are visible in the sidebar', async ({ page, request }) => {
     const auth = await register(request, 'session-lifecycle')
+    const principalId = await provisionWorkspaceAgentPrincipal(request, auth, { name: 'Session Lifecycle Fixture' })
+    await createSessionWithPrincipal(request, auth, { principalId, title: 'Session Lifecycle Initial' })
     await installAuth(page, auth)
     await page.goto('/workspace')
 
@@ -70,8 +75,11 @@ test.describe('@host PLAN-269 full UI acceptance: real core flows', () => {
 
     await page.getByTestId('session-item').filter({ hasText: '真实流程会话' }).click({ button: 'right' })
     await page.getByRole('button', { name: '删除' }).click()
+    const deleteDialog = page.getByRole('alertdialog')
+    await expect(deleteDialog).toBeVisible()
+    await deleteDialog.getByRole('button', { name: '删除' }).click()
     await expect(page.getByTestId('session-item').filter({ hasText: '真实流程会话' })).not.toBeVisible({ timeout: 10000 })
-    await expect(page).toHaveScreenshot('plan-269-real-session-deleted-current.png')
+    await expectPlatformScreenshot(page, 'plan-269-real-session-deleted-current.png')
   })
 
   test('real workspace editor saves content through the UI path', async ({ page, request }) => {
@@ -117,7 +125,7 @@ test.describe('@host PLAN-269 full UI acceptance: real core flows', () => {
     await expect(page.getByTestId('workspace-environment-status')).toContainText('unbound', { timeout: 15000 })
     await page.getByTestId('workspace-prepare-button').click()
     await expect(page.getByTestId('workspace-environment-status')).toContainText('ready', { timeout: 90000 })
-    await expect(page).toHaveScreenshot('plan-269-real-environment-ready-current.png')
+    await expectPlatformScreenshot(page, 'plan-269-real-environment-ready-current.png')
   })
 
   test('real workspace upload makes a file visible in the tree', async ({ page, request }) => {
@@ -151,7 +159,7 @@ test.describe('@host PLAN-269 full UI acceptance: real core flows', () => {
     await expect(page.getByTestId('provider-picker-search')).toBeVisible()
     await page.getByTestId('provider-picker-search').fill('open')
     await expect(page.locator('button[data-testid^="provider-picker-"]').first()).toBeVisible()
-    await expect(page).toHaveScreenshot('plan-269-real-provider-picker-current.png')
+    await expectPlatformScreenshot(page, 'plan-269-real-provider-picker-current.png')
     await page.getByRole('button', { name: '取消' }).click()
     await expect(page.getByTestId('provider-picker-modal')).not.toBeVisible()
   })
@@ -162,8 +170,10 @@ test.describe('@host PLAN-269 full UI acceptance: real mobile flows', () => {
 
   test('real mobile Files and Chat Sheets open and close without overflow', async ({ page, request }, testInfo) => {
     const auth = await register(request, 'mobile-sheets')
+    const principalId = await provisionWorkspaceAgentPrincipal(request, auth, { name: 'Mobile Sheets Fixture' })
+    const sessionId = await createSessionWithPrincipal(request, auth, { principalId, title: 'Mobile Sheets Session' })
     await installAuth(page, auth)
-    await page.goto(`/workspace/${auth.workspaceId}`)
+    await page.goto(`/workspace/${auth.workspaceId}/chat/${sessionId}`)
     await page.reload()
 
     await page.getByRole('button', { name: 'Files' }).click()
@@ -172,7 +182,7 @@ test.describe('@host PLAN-269 full UI acceptance: real mobile flows', () => {
     await expect(filesSheet.getByTestId('workspace-empty-state')).toBeVisible({ timeout: 15000 })
     await expect(filesSheet.getByText('工作区暂无文件')).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('plan-269-real-mobile-files-full.png') })
-    await expect(filesSheet).toHaveScreenshot('plan-269-real-mobile-files-sheet-empty.png')
+    await expectPlatformScreenshot(filesSheet, 'plan-269-real-mobile-files-sheet-empty.png')
     await page.getByRole('button', { name: /close/i }).last().click()
     await page.getByRole('button', { name: 'Open chat' }).click()
     await expect(page.getByTestId('mobile-chat-sheet')).toBeVisible()

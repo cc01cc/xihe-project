@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { expectPlatformScreenshot } from '../helpers/visual'
 
 test.describe('Data Controls', () => {
   test.beforeEach(async ({ page }) => {
@@ -16,6 +17,6 @@ test.describe('Data Controls', () => {
     await expect(page.locator('button:has-text("导出设置")')).toBeVisible()
     await expect(page.locator('button:has-text("导出聊天")')).toBeVisible()
     await expect(page.locator('button:has-text("导入")')).toBeVisible()
-    await expect(page).toHaveScreenshot('data-controls-buttons.png')
+    await expectPlatformScreenshot(page, 'data-controls-buttons.png')
   })
 })

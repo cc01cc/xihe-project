@@ -89,5 +89,8 @@ packages/ui/journey-a-*.png
 # PLAN-0343 usage-line spec screenshot dump at package root (evidence copy lives in one/plans)
 packages/ui/usage-line-*.png
 
+# PLAN-0440 isolated implementation worktrees
+/.worktrees/
+
 # PLAN-0417: keep the deployable Runtime resolver state reproducible
 !packages/runtime/Cargo.lock
