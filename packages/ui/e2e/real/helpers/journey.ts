@@ -296,6 +296,11 @@ export async function sendChat(page: import("@playwright/test").Page, text: stri
         await page.waitForTimeout(1000);
     }
     await expect(send).toBeEnabled({ timeout: 15000 });
+    await page
+        .locator("[data-sonner-toast]")
+        .first()
+        .waitFor({ state: "detached", timeout: 8000 })
+        .catch(() => {});
     for (let i = 0; i < 10; i++) {
         await send.click();
         try {

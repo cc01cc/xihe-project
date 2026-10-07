@@ -76,7 +76,19 @@ test.describe("@host Journey D — compaction circuit (U4)", () => {
             workspaceId: ctx.workspaceId,
             headers: ctx.headers,
         });
+        const sseReady = page.waitForResponse(
+            (resp) => {
+                const url = new URL(resp.url());
+                return (
+                    resp.request().method() === "GET" &&
+                    url.pathname === "/api/v1/events" &&
+                    url.searchParams.get("sessionId") === sessionId
+                );
+            },
+            { timeout: 15000 },
+        );
         await page.goto(`/workspace/${ctx.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+        await sseReady;
 
         // Public compact triggers applyRecoveryBand → SSE circuit open → U4 toast.
         const compact = await request.post(`${CP_URL}/api/v1/sessions/${sessionId}/compact`, {
