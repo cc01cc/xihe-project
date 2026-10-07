@@ -140,6 +140,9 @@ class ForkPropagationTest extends AbstractIntegrationTest {
     @Autowired
     private MessageController messageController;
 
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.McpInvocationRepository mcpInvocationRepository;
+
     private String userId;
     private String workspaceId;
     private UUID principalId;
@@ -147,6 +150,7 @@ class ForkPropagationTest extends AbstractIntegrationTest {
     @AfterEach
     void cleanFixtures() {
         if (workspaceId != null) {
+            SpawnTestSupport.clearForWorkspace(mcpInvocationRepository, jdbcTemplate, workspaceId);
             deleteWorkspaceSessions();
         }
         if (principalId != null && workspaceId != null
@@ -461,6 +465,9 @@ class ForkPropagationTest extends AbstractIntegrationTest {
         String toolCallId = UUID.randomUUID().toString();
         OperationItem item = operationService.appendItem(operation.operationId(), toolCallId, null,
                 "tool_call", toolName, "agent", argumentsPreview, null, null);
+        SpawnTestSupport.seedAgentInvocation(mcpInvocationRepository,
+                parentSession.getId().toString(), parentRunId, workspaceId, userId,
+                item.getToolCallId(), toolName, argumentsPreview);
         return new ParentFixture(parentSession.getId().toString(), parentRunId,
                 operation.operationId().toString(), item.getToolCallId(), item.getId().toString());
     }

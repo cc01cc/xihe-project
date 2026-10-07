@@ -70,9 +70,9 @@ public class ChatRunReconciliationService {
                                 target, userCancelled ? null : "CP_RECONCILED",
                                 userCancelled ? null : "Control plane reconciled a stale run without an active lease",
                                 run.getTokenCount(), run.getAssistantChars(),
-                                userCancelled ? ChatRunTerminalService.LedgerMode.CANCELLATION
-                                        : ChatRunTerminalService.LedgerMode.RECONCILIATION,
-                                List.of()));
+                                userCancelled ? ChatRunTerminalService.TerminalSource.CANCELLATION
+                                        : ChatRunTerminalService.TerminalSource.RECONCILIATION,
+                                null));
                 if (result.committed() && userCancelled) {
                     cancelled++;
                 } else if (result.committed()) {

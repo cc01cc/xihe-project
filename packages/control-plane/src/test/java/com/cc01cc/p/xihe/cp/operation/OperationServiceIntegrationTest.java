@@ -488,7 +488,7 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
                 "sessionId", sessionId,
                 "workspaceId", workspaceId,
                 "runId", runId,
-                "kind", "chat",
+                "kind", "tool_call",
                 "source", "agent",
                 "actorType", "agent",
                 "idempotencyKey", "internal-idem-" + UUID.randomUUID(),
@@ -496,6 +496,17 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
         ResponseEntity<Map> created = restTemplate.postForEntity(
                 baseUrl + "/internal/v1/operations", new HttpEntity<>(startBody, serviceHeaders), Map.class);
         assertEquals(HttpStatus.CREATED, created.getStatusCode());
+
+        // PLAN-0464 V1: the internal route can no longer mint a kind=chat root —
+        // the Chat lifecycle root is chat_runs.
+        ResponseEntity<Map> chatRoot = restTemplate.postForEntity(
+                baseUrl + "/internal/v1/operations",
+                new HttpEntity<>(new java.util.HashMap<>(startBody) {{
+                    put("kind", "chat");
+                    put("idempotencyKey", "internal-idem-" + UUID.randomUUID());
+                }}, serviceHeaders), Map.class);
+        assertEquals(HttpStatus.CONFLICT, chatRoot.getStatusCode());
+        assertEquals("CHAT_OPERATION_ROOT_RETIRED", chatRoot.getBody().get("code"));
         String operationId = created.getBody().get("operationId").toString();
 
         // idempotent replay returns 200 with the same operationId

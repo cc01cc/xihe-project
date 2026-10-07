@@ -50,6 +50,15 @@ public class OperationController {
         this.runtimeJobClient = runtimeJobClient;
     }
 
+    /**
+     * Owner-scoped ledger list.
+     *
+     * @deprecated PLAN-0466 T1.3 — replaced by {@code GET /api/v1/audit/entries}
+     *     (the four-domain {@code v_audit_entries} view); this route keeps serving
+     *     legacy ledger rows until PLAN-0467 removes it (OpenAPI marks it
+     *     {@code deprecated: true}).
+     */
+    @Deprecated
     @GetMapping
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
     public ResponseEntity<?> list(
@@ -81,6 +90,15 @@ public class OperationController {
         }
     }
 
+    /**
+     * Owner-scoped ledger trace.
+     *
+     * @deprecated PLAN-0466 T1.3 — replaced by
+     *     {@code GET /api/v1/audit/entries/{type}/{id}} (domain detail + history
+     *     timeline); removal tracked by PLAN-0467 (OpenAPI marks it
+     *     {@code deprecated: true}).
+     */
+    @Deprecated
     @GetMapping("/{operationId}")
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
     public ResponseEntity<?> get(@PathVariable String operationId) {

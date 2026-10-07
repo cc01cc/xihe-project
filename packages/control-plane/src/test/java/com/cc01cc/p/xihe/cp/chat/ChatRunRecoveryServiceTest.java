@@ -48,6 +48,7 @@ class ChatRunRecoveryServiceTest {
     private OperationService operationService;
     private ChatRunTerminalService terminalService;
     private RunCheckpointService runCheckpointService;
+    private ChatRunHistoryWriter historyWriter;
     private ChatRunRecoveryService service;
 
     @BeforeEach
@@ -58,6 +59,7 @@ class ChatRunRecoveryServiceTest {
         operationService = mock(OperationService.class);
         terminalService = mock(ChatRunTerminalService.class);
         runCheckpointService = mock(RunCheckpointService.class);
+        historyWriter = mock(ChatRunHistoryWriter.class);
         when(terminalService.terminalize(any())).thenAnswer(invocation -> {
             ChatRunTerminalService.TerminalRequest request = invocation.getArgument(0);
             return new ChatRunTerminalService.TerminalResult(
@@ -67,7 +69,7 @@ class ChatRunRecoveryServiceTest {
         when(chatRunRepository.findRecoverableRuns(any())).thenReturn(List.of());
         when(chatRunRepository.findTerminalRunsWithoutCheckpoint(any(), any())).thenReturn(List.of());
         service = new ChatRunRecoveryService(chatRunRepository, approvalRepository, chatController,
-                terminalService, runCheckpointService);
+                terminalService, historyWriter, runCheckpointService);
     }
 
     private ChatRun runWithStatus(String status) {
@@ -86,7 +88,7 @@ class ChatRunRecoveryServiceTest {
                 && request.expectedStatuses().contains("running")
                 && "ambiguous".equals(request.status())
                 && "CP_RESTARTED".equals(request.errorCode())
-                && request.ledgerMode() == ChatRunTerminalService.LedgerMode.RECONCILIATION));
+                && request.source() == ChatRunTerminalService.TerminalSource.RECONCILIATION));
 
         service.captureRecoveredRuns();
         verify(runCheckpointService).captureTerminalRuns();
@@ -155,7 +157,7 @@ class ChatRunRecoveryServiceTest {
                 operationService, chatRunRepository, new ObjectMapper(),
                 mock(com.cc01cc.p.xihe.cp.chat.SseEmitterManager.class));
         ChatRunRecoveryService recovery = new ChatRunRecoveryService(chatRunRepository,
-                approvalRepository, chatController, terminalService, realService);
+                approvalRepository, chatController, terminalService, historyWriter, realService);
         try {
             recovery.captureRecoveredRuns();
             recovery.captureRecoveredRuns();

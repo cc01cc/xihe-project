@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.operation;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
+import com.cc01cc.p.xihe.cp.runtime.RuntimeJobClient;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -22,17 +23,20 @@ import static org.mockito.Mockito.when;
 
 class WorkspaceJobControllerTest {
 
-    private OperationService operationService;
+    private JobStateService jobStateService;
     private WorkspaceJobStartService workspaceJobStartService;
     private WorkspaceService workspaceService;
+    private OperationService operationService;
     private WorkspaceJobController controller;
 
     @BeforeEach
     void setUp() {
-        operationService = Mockito.mock(OperationService.class);
+        jobStateService = Mockito.mock(JobStateService.class);
         workspaceJobStartService = Mockito.mock(WorkspaceJobStartService.class);
         workspaceService = Mockito.mock(WorkspaceService.class);
-        controller = new WorkspaceJobController(operationService, workspaceJobStartService, workspaceService);
+        operationService = Mockito.mock(OperationService.class);
+        controller = new WorkspaceJobController(jobStateService, workspaceJobStartService,
+                workspaceService, Mockito.mock(RuntimeJobClient.class), operationService);
         TenantContext.setUserId("user-1");
     }
 
@@ -44,18 +48,18 @@ class WorkspaceJobControllerTest {
     @Test
     void listsJobsAfterWorkspaceAccessCheck() {
         List<Map<String, Object>> jobs = List.of(Map.of(
-                "operationItemId", "item-1",
+                "jobId", "f3b6f0c1-0000-4000-8000-000000000001",
                 "workspaceId", "workspace-1",
                 "scope", "workspace",
                 "status", "running"));
-        when(operationService.listWorkspaceJobs("workspace-1")).thenReturn(jobs);
+        when(jobStateService.listView("workspace-1")).thenReturn(jobs);
 
         ResponseEntity<?> response = controller.list("workspace-1");
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(jobs, response.getBody());
         verify(workspaceService).requireAccessibleWorkspace("workspace-1", "user-1");
-        verify(operationService).listWorkspaceJobs("workspace-1");
+        verify(jobStateService).listView("workspace-1");
     }
 
     @Test
@@ -67,7 +71,7 @@ class WorkspaceJobControllerTest {
 
         assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
         assertNotNull(response.getBody());
-        verify(operationService, Mockito.never()).listWorkspaceJobs("workspace-1");
+        verify(jobStateService, Mockito.never()).listView("workspace-1");
     }
 
     @Test
@@ -82,7 +86,8 @@ class WorkspaceJobControllerTest {
 
     @Test
     void startReturnsAcceptedForNewJob() {
-        Map<String, Object> job = Map.of("operationItemId", "item-1", "status", "running");
+        Map<String, Object> job = Map.of("jobId", "f3b6f0c1-0000-4000-8000-000000000002",
+                "status", "running");
         when(workspaceJobStartService.start(eq("workspace-1"), eq("user-1"), any(), eq("key-1")))
                 .thenReturn(new WorkspaceJobStartService.StartOutcome(job, false));
 
@@ -96,7 +101,8 @@ class WorkspaceJobControllerTest {
 
     @Test
     void startReturnsOkForIdempotentReplay() {
-        Map<String, Object> job = Map.of("operationItemId", "item-1", "status", "running");
+        Map<String, Object> job = Map.of("jobId", "f3b6f0c1-0000-4000-8000-000000000003",
+                "status", "running");
         when(workspaceJobStartService.start(eq("workspace-1"), eq("user-1"), any(), eq("key-1")))
                 .thenReturn(new WorkspaceJobStartService.StartOutcome(job, true));
 

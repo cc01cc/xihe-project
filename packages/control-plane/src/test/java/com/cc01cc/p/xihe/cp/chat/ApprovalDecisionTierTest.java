@@ -7,7 +7,6 @@ import com.cc01cc.p.xihe.cp.policy.PolicyContext;
 import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
 import com.cc01cc.p.xihe.cp.policy.BuiltinPolicyContextProvider;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -44,7 +43,7 @@ class ApprovalDecisionTierTest {
     private final ChatApprovalRepository approvals = mock(ChatApprovalRepository.class);
     private final ChatRunRepository runs = mock(ChatRunRepository.class);
     private final ApprovalAgentClient agent = mock(ApprovalAgentClient.class);
-    private final OperationService operationService = mock(OperationService.class);
+    private final ApprovalHistoryWriter historyWriter = mock(ApprovalHistoryWriter.class);
     private final ApprovalGrantWriter grantWriter = mock(ApprovalGrantWriter.class);
     private final AuditLogger audit = mock(AuditLogger.class);
     private final com.cc01cc.p.xihe.cp.policy.PolicyRevision policyRevision =
@@ -60,7 +59,7 @@ class ApprovalDecisionTierTest {
     private final com.cc01cc.p.xihe.cp.policy.SessionApprovalMode sessionApprovalMode =
             mock(com.cc01cc.p.xihe.cp.policy.SessionApprovalMode.class);
     private final ApprovalService service = new ApprovalService(approvals, runs, agent, new ObjectMapper(),
-            operationService, grantWriter, audit, policySummary, pendingStore, sessionPolicyState,
+            historyWriter, grantWriter, audit, policySummary, pendingStore, sessionPolicyState,
             sessionApprovalMode, policyRevision, workspaceRepository,
             new AnswererChain(List.of(new UserAnswerer(), new AutoReviewAnswerer())));
 
@@ -110,7 +109,8 @@ class ApprovalDecisionTierTest {
         assertEquals(0, response.get("propagated"));
         verifyNoInteractions(grantWriter);
         verify(agent).respond(TEST_REQUEST_ID, true, "once", null);
-        verify(operationService).resolveApprovalItem(TEST_REQUEST_ID, true);
+        verify(historyWriter).append(eq(UUID.fromString(TEST_REQUEST_ID)), any(), any(),
+                eq("decided"), any(), eq("approved"), eq(true), any(), any(), any());
     }
 
     @Test
@@ -195,7 +195,8 @@ class ApprovalDecisionTierTest {
         verify(grantWriter).wouldAllow("write_file", context, TEST_SESSION);
         verify(grantWriter).wouldAllow("execute_command", context, TEST_SESSION);
         verify(agent).respond(releasedId, true, "propagated_allow", null);
-        verify(operationService).resolveApprovalItem(releasedId, true);
+        verify(historyWriter).append(eq(UUID.fromString(releasedId)), any(), any(),
+                eq("decided"), any(), eq("approved"), eq(true), any(), any(), any());
         verify(approvals, never()).markDispatching(eq(UUID.fromString(keptId)), anyBoolean(), anyString(), any(), any(), any(), any(Instant.class));
         verify(agent, never()).respond(eq(keptId), anyBoolean(), any(), any());
     }
@@ -298,7 +299,8 @@ class ApprovalDecisionTierTest {
         assertEquals(1, response.get("propagated"));
         verify(agent).respond(TEST_REQUEST_ID, false, "reject", "请改用追加写入");
         verify(agent).respond(otherId, false, "propagated_reject", null);
-        verify(operationService).resolveApprovalItem(otherId, false);
+        verify(historyWriter).append(eq(UUID.fromString(otherId)), any(), any(),
+                eq("decided"), any(), eq("rejected"), eq(false), any(), any(), any());
         verifyNoInteractions(grantWriter);
     }
 
@@ -333,7 +335,8 @@ class ApprovalDecisionTierTest {
         assertEquals("TOOL_UNCLASSIFIED", error.getCode());
         verify(approvals, never()).markDispatching(any(), anyBoolean(), anyString(), any(), any(), any(), any(Instant.class));
         verify(agent, never()).respond(any(), anyBoolean(), any(), any());
-        verify(operationService, never()).resolveApprovalItem(any(), anyBoolean());
+        verify(historyWriter, never()).append(any(), any(), any(),
+                eq("decided"), any(), any(), any(), any(), any(), any());
     }
 
     @Test

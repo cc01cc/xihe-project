@@ -71,8 +71,15 @@ public class McpProxyController {
     private static final Set<String> USER_WORKSPACE_FILE_TOOLS = Set.of(
             "list_directory", "read_file", "read_file_range", "write_file", "delete_file",
             "move_file", "copy_file", "mkdir");
+    /**
+     * PLAN-0463 wire contract R5: carrying any of these marks the call as an
+     * Agent execution context — a user-direct caller never sends them, and the
+     * new {@code X-Tool-Call-Id} must not slip past this check during the
+     * header migration.
+     */
     private static final Set<String> AGENT_EXECUTION_CONTEXT_HEADERS = Set.of(
-            "X-Chat-Run-Id", "X-Operation-Id", "X-Operation-Item-Id");
+            "X-Chat-Run-Id", "X-Operation-Id", "X-Operation-Item-Id", "X-Tool-Call-Id",
+            "X-Mcp-Invocation-Id");
 
     @Value("${cp.mcp.session-id.hmac-secret}")
     private String sessionIdHmacSecret;
@@ -163,6 +170,7 @@ public class McpProxyController {
     private final OperationService operationService;
     private final JobStateService jobStateService;
     private final AgentSpawnExecutionService agentSpawnExecutionService;
+    private final McpInvocationService mcpInvocationService;
 
     public McpProxyController(
             RequestRewriter rewriter,
@@ -181,7 +189,8 @@ public class McpProxyController {
             ConfigService configService,
             ToolTimeoutPolicy toolTimeoutPolicy,
             org.springframework.core.env.Environment environment,
-            AgentSpawnExecutionService agentSpawnExecutionService) {
+            AgentSpawnExecutionService agentSpawnExecutionService,
+            McpInvocationService mcpInvocationService) {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
@@ -202,6 +211,7 @@ public class McpProxyController {
         this.toolTimeoutPolicy = toolTimeoutPolicy;
         this.environment = environment;
         this.agentSpawnExecutionService = agentSpawnExecutionService;
+        this.mcpInvocationService = mcpInvocationService;
     }
 
     @PostMapping("/api/v1/mcp")
@@ -520,12 +530,28 @@ public class McpProxyController {
         if (serverId == null) {
             return problem(HttpStatus.BAD_REQUEST, "UNKNOWN_TOOL", "Requested tool is unavailable");
         }
+        // PLAN-0463 T1.2/T1.3 (gate order): the agent-source invocation must exist
+        // BEFORE grant context validation, so the new ChatRun+invocation verdict
+        // never depends on an operation/item row. Creation is idempotent on
+        // (runId, toolCallId); the SSE relay may win the same key earlier.
+        // Without a caller-supplied tool-call key there is nothing stable to key
+        // on (a body-derived id would not match the relay's derivation), so the
+        // invocation is skipped and validation keeps the legacy path.
+        String gateToolCallId = canonicalToolCallIdFromHeader(headers);
+        if (access.internalService() && gateToolCallId != null) {
+            mcpInvocationService.openAgentInvocation(
+                    headers.getFirst("X-Chat-Run-Id"),
+                    gateToolCallId,
+                    toolName,
+                    headers.getFirst("X-Request-Id"),
+                    safeLedgerPreview(body));
+        }
         if (access.internalService() && !policy.hasCurrentAgentToolCall(
                 access.userId(), wsId, access.applicationSessionId(),
-                headers.getFirst("X-Chat-Run-Id"), headers.getFirst("X-Operation-Id"),
-                headers.getFirst("X-Operation-Item-Id"), toolName)) {
+                headers.getFirst("X-Chat-Run-Id"),
+                canonicalToolCallId(headers, body), toolName)) {
             audit.record(sessionId, toolName, "agent_tool_call_context_rejected",
-                    "durable Session/Run/Operation/ToolCall mismatch");
+                    "durable Session/Run/Invocation/ToolCall mismatch");
             return problem(HttpStatus.FORBIDDEN, "FORBIDDEN", "Tool execution is not permitted");
         }
         boolean cpOwnedSpawn = CP_MCP_SERVER_ID.equals(serverId) && SPAWN_AGENT_TOOL.equals(toolName);
@@ -633,7 +659,7 @@ public class McpProxyController {
         // callback run_id；Agent 经 X-Operation-Item-Id 透传，CP durable/SSE item 使用同值。
         ForwardWait forwardWait = forwardWaitFor(waits, perCallSeconds);
         forwardWait = forwardWait.withIdentity(
-                toolName, headers.getFirst("X-Operation-Item-Id"), headers.getFirst("X-Chat-Run-Id"));
+                toolName, canonicalToolCallId(headers, body), headers.getFirst("X-Chat-Run-Id"));
         logger.info(
                 "[LIFECYCLE] service=cp event=tool_timeout_budget tool={} toolCallId={} runId={}"
                         + " budget={}s valueOrigin={} cpWait={}s cpWaitSource={} cpOverriddenValue={} agentWait={}s outputLimit={} sessionId={}",
@@ -658,7 +684,7 @@ public class McpProxyController {
             logger.info(
                     "[LIFECYCLE] service=cp event=job_timeout_clamp tool={} toolCallId={} runId={}"
                             + " param={} value={} valueOrigin={} max={} maxOrigin={} sessionId={}",
-                    toolName, idOrDash(headers.getFirst("X-Operation-Item-Id")),
+                    toolName, idOrDash(canonicalToolCallId(headers, body)),
                     idOrDash(headers.getFirst("X-Chat-Run-Id")),
                     jobParam == null ? "absent" : jobParam, jobEffective, jobTimeout.defaultOrigin(),
                     jobTimeout.maxSecs(), jobTimeout.maxOrigin(), sessionId);
@@ -705,8 +731,8 @@ public class McpProxyController {
             responseBody = cpToolResult(body, null, e.getCode());
             audit.record(sessionId, SPAWN_AGENT_TOOL, "tool_error", e.getCode());
         } catch (RuntimeException e) {
-            logger.error("[LIFECYCLE] service=cp event=spawn_mcp_dispatch_failed sessionId={} runId={} itemId={} failureType={}",
-                    sessionId, invocation.parentRunId(), invocation.operationItemId(),
+            logger.error("[LIFECYCLE] service=cp event=spawn_mcp_dispatch_failed sessionId={} runId={} invocationId={} failureType={}",
+                    sessionId, invocation.parentRunId(), invocation.mcpInvocationId(),
                     e.getClass().getSimpleName(), e);
             responseBody = cpToolResult(body, null, "SPAWN_EXECUTION_FAILED");
             audit.record(sessionId, SPAWN_AGENT_TOOL, "tool_error", "SPAWN_EXECUTION_FAILED");
@@ -1187,10 +1213,21 @@ public class McpProxyController {
             // 去查就查不到——2026-09-13 宿主 E2E 实测 404）。
             String outboundItemId = ledgerAttempt != null ? ledgerAttempt.toolCallId() : null;
             if (outboundItemId == null) {
-                outboundItemId = canonicalOperationItemId(headers.getFirst("X-Operation-Item-Id"), body);
+                outboundItemId = canonicalToolCallId(headers, body);
             }
             if (outboundItemId != null) {
                 requestBuilder.setHeader("X-Operation-Item-Id", outboundItemId);
+                // PLAN-0463 wire contract R1/R4: new primary key carries the same
+                // value, so the Runtime in-flight/cancel key does not change while
+                // the legacy header stays for the 0464 transition.
+                requestBuilder.setHeader("X-Tool-Call-Id", outboundItemId);
+            }
+            if (ledgerAttempt != null && ledgerAttempt.invocationId() != null) {
+                requestBuilder.setHeader("X-Mcp-Invocation-Id", ledgerAttempt.invocationId().toString());
+            }
+            String jobId = headers.getFirst("X-Job-Id");
+            if (jobId != null && !jobId.isBlank()) {
+                requestBuilder.setHeader("X-Job-Id", jobId);
             }
 
             String requestMethod = extractMethod(body);
@@ -1218,7 +1255,7 @@ public class McpProxyController {
             finishLedgerAttempt(ledgerAttempt, response.statusCode(), null, responseBody);
             appendMcpExtension(ledgerAttempt, serverId, body, response.statusCode(), responseBody, null,
                     STATELESS_PROTOCOL_VERSION);
-            recordJobState(ledgerAttempt, wsId, body, responseBody);
+            recordJobState(ledgerAttempt, wsId, headers, sessionId, access, body, responseBody);
 
             audit.record(sessionId, extractMethod(body), "allow", responseBody);
 
@@ -1268,16 +1305,28 @@ public class McpProxyController {
      * PLAN-0344 T1.2 来源①②：把 start/get/cancel 的工具结果同步到 job_state 档案。
      * best-effort（JobStateService 内部兜底异常），不影响工具派发链路。
      */
-    private void recordJobState(LedgerAttempt ledgerAttempt, String wsId, String requestBody,
+    private void recordJobState(LedgerAttempt ledgerAttempt, String wsId, HttpHeaders headers,
+                                String sessionId, AccessContext access, String requestBody,
                                 String responseBody) {
-        if (ledgerAttempt == null || responseBody == null) {
+        if (responseBody == null) {
             return;
         }
         String toolName = extractToolName(requestBody);
         if (toolName == null || !JOB_TOOLS.contains(toolName)) {
             return;
         }
-        jobStateService.applyToolResult(ledgerAttempt.itemId(), wsId, toolName, responseBody);
+        // PLAN-0465（A类适配）：PLAN-0464 R3 后 chat-run 工具调用不再有 ledger
+        // item（Agent 停发 X-Operation-Id），行物化 provenance 改由 dispatch 上下文
+        // 提供：session（端点参数）、run（X-Chat-Run-Id）、canonical tool-call id、
+        // AccessContext userId；ledger 锚点仅在双写路径存在。
+        String runId = headers == null ? null : headers.getFirst("X-Chat-Run-Id");
+        String toolCallId = canonicalToolCallId(headers, requestBody);
+        UUID itemId = ledgerAttempt == null ? null : ledgerAttempt.itemId();
+        jobStateService.applyToolResult(
+                new JobStateService.ToolJobProvenance(itemId, wsId,
+                        access == null ? null : access.userId(),
+                        sessionId, runId, toolCallId),
+                toolName, responseBody);
     }
 
     private static boolean isUserDirectMutation(HttpHeaders headers, AccessContext access) {
@@ -1445,7 +1494,16 @@ public class McpProxyController {
             operationService.transitionItem(item.getId(), "running", "allow", null, null, null);
             var attempt = operationService.startAttempt(
                     item.getId(), "cp_forward", null, "cp", headers.getFirst("X-Request-Id"));
-            return new LedgerAttempt(item.getId(), attempt.getId(), toolCallId);
+            // PLAN-0463 T1.2 (design key 3): direct-user mutations also get an
+            // invocation row; creation failure is best-effort and logged inside
+            // the service, never blocking the mutation.
+            UUID directInvocationId = mcpInvocationService.openDirectUserInvocation(
+                    ledgerSessionId, workspaceId, userId, toolCallId, toolName,
+                    headers.getFirst("X-Request-Id"), safeLedgerPreview(body)).orElse(null);
+            UUID directDispatchAttemptId = startDirectDispatchAttempt(directInvocationId,
+                    headers.getFirst("X-Request-Id"));
+            return new LedgerAttempt(item.getId(), attempt.getId(), toolCallId,
+                    directInvocationId, directDispatchAttemptId);
         } catch (RuntimeException e) {
             logger.error("[LIFECYCLE] service=cp event=operation_user_mutation_ledger_failed tool={} error={}",
                     toolName, e.getMessage());
@@ -1472,16 +1530,7 @@ public class McpProxyController {
             if (toolName == null || toolName.isBlank()) {
                 return null;
             }
-            String toolCallId = headers.getFirst("X-Operation-Item-Id");
-            if (toolCallId == null || toolCallId.isBlank()) {
-                toolCallId = UUID.nameUUIDFromBytes(body.getBytes(StandardCharsets.UTF_8)).toString();
-            } else {
-                try {
-                    toolCallId = UUID.fromString(toolCallId).toString();
-                } catch (IllegalArgumentException e) {
-                    toolCallId = UUID.nameUUIDFromBytes(toolCallId.getBytes(StandardCharsets.UTF_8)).toString();
-                }
-            }
+            String toolCallId = canonicalToolCallId(headers, body);
             // PLAN-0326 决策 #9：网关自建 source=mcp 的派发事实行，不再复用中继的
             // agent 行（0317 #18 的跨源复用否决）。同键同源的重放由 appendItem 的
             // 同源幂等收敛（0317 幂等语义保留）；同键异源两行并存 = 各通道事实。
@@ -1505,7 +1554,16 @@ public class McpProxyController {
             String requestId = headers.getFirst("X-Request-Id");
             OperationAttempt attempt = operationService.startAttempt(
                     item.getId(), "cp_forward", null, "cp", requestId);
-            return new LedgerAttempt(item.getId(), attempt.getId(), effectiveToolCallId);
+            // PLAN-0463 T1.2: the dispatch attempt is also recorded in the MCP
+            // execution domain (stage=cp_forward) on the invocation opened at the
+            // gate. Both new-table writes are best-effort: a bookkeeping failure
+            // is logged and never aborts the dispatch.
+            UUID invocationId = mcpInvocationService
+                    .findAgentInvocation(headers.getFirst("X-Chat-Run-Id"), toolCallId)
+                    .orElse(null);
+            UUID dispatchAttemptId = startAgentDispatchAttempt(invocationId, requestId);
+            return new LedgerAttempt(item.getId(), attempt.getId(), effectiveToolCallId,
+                    invocationId, dispatchAttemptId);
         } catch (RuntimeException e) {
             logger.error("[LIFECYCLE] service=cp event=operation_mcp_attempt_start_failed sessionId={}", sessionId, e);
             throw e;
@@ -1528,6 +1586,10 @@ public class McpProxyController {
         if (ledgerAttempt == null) {
             return;
         }
+        // PLAN-0463 T1.2: settle the MCP execution-domain attempt first so an
+        // unknown/decidable dispatch is recorded even if the legacy write below
+        // hits a state conflict. Best-effort: never changes the dispatch answer.
+        finishMcpDispatchAttempt(ledgerAttempt, httpStatus, errorCode, responseBody);
         try {
             boolean succeeded = httpStatus >= 200 && httpStatus < 300 && errorCode == null;
             boolean unknown = errorCode != null && errorCode.endsWith("_UNKNOWN");
@@ -1561,6 +1623,30 @@ public class McpProxyController {
         } catch (RuntimeException e) {
             logger.error("[LIFECYCLE] service=cp event=operation_mcp_attempt_finish_failed attemptId={}",
                     ledgerAttempt.attemptId(), e);
+        }
+    }
+
+    /** Best-effort settlement of the execution-domain attempt (PLAN-0463 T1.2). */
+    private void finishMcpDispatchAttempt(LedgerAttempt ledgerAttempt, int httpStatus,
+                                          String errorCode, String responseBody) {
+        if (ledgerAttempt.invocationId() == null || ledgerAttempt.dispatchAttemptId() == null) {
+            return;
+        }
+        McpResult mcpResult = parseMcpResult(responseBody);
+        McpInvocationService.McpDispatchVerdict verdict =
+                mcpResult == null ? McpInvocationService.McpDispatchVerdict.UNDECIDABLE
+                        : switch (mcpResult.kind()) {
+                            case TOOL_ERROR -> McpInvocationService.McpDispatchVerdict.TOOL_ERROR;
+                            case PROTOCOL_ERROR -> McpInvocationService.McpDispatchVerdict.PROTOCOL_ERROR;
+                            case COMPLETED -> McpInvocationService.McpDispatchVerdict.COMPLETED;
+                        };
+        try {
+            mcpInvocationService.finishDispatchAttempt(ledgerAttempt.invocationId(),
+                    ledgerAttempt.dispatchAttemptId(), httpStatus, errorCode, verdict);
+        } catch (RuntimeException e) {
+            logger.error("[LIFECYCLE] service=cp event=mcp_dispatch_attempt_finish_failed invocationId={} attemptId={} failureType={}",
+                    ledgerAttempt.invocationId(), ledgerAttempt.dispatchAttemptId(),
+                    e.getClass().getName(), e);
         }
     }
 
@@ -1646,6 +1732,14 @@ public class McpProxyController {
             logger.warn("[LIFECYCLE] service=cp event=operation_policy_summary_failed itemId={} failureType={}",
                     ledgerAttempt.itemId(), e.getClass().getName());
         }
+        if (ledgerAttempt.invocationId() != null) {
+            try {
+                mcpInvocationService.attachPolicySummary(ledgerAttempt.invocationId(), policySummary);
+            } catch (RuntimeException e) {
+                logger.warn("[LIFECYCLE] service=cp event=mcp_invocation_policy_summary_failed invocationId={} failureType={}",
+                        ledgerAttempt.invocationId(), e.getClass().getName());
+            }
+        }
     }
 
     private String sha256(String value) {
@@ -1678,11 +1772,37 @@ public class McpProxyController {
         }
     }
 
+    /**
+     * PLAN-0463 wire contract R2: {@code X-Tool-Call-Id} is the new primary
+     * correlation key, the legacy {@code X-Operation-Item-Id} is the fallback,
+     * and both canonicalize through the single existing rule (so the key value
+     * does not change during the header migration).
+     */
+    private String canonicalToolCallIdFromHeader(HttpHeaders headers) {
+        String raw = headers.getFirst("X-Tool-Call-Id");
+        if (raw == null || raw.isBlank()) {
+            raw = headers.getFirst("X-Operation-Item-Id");
+        }
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        return canonicalOperationItemId(raw.trim(), null);
+    }
+
+    /** Header-first key; falls back to the body-derived id (legacy behavior). */
+    private String canonicalToolCallId(HttpHeaders headers, String body) {
+        String fromHeader = canonicalToolCallIdFromHeader(headers);
+        return fromHeader != null ? fromHeader
+                : UUID.nameUUIDFromBytes(body.getBytes(StandardCharsets.UTF_8)).toString();
+    }
+
     private void copyOperationHeaders(HttpHeaders headers, HttpRequest.Builder builder) {
         // PLAN-0308 M1（spec S5.1）：关联键随请求透传到 Runtime（同一 toolCallId 串起三层日志）。
+        // PLAN-0464 T2.2: `X-Tool-Call-Id` is the primary key and is copied too, so a
+        // caller that no longer sends the legacy keys still delivers the correlation id.
         for (String headerName : List.of(
-                "X-Operation-Id", "X-Operation-Item-Id", "X-Operation-Attempt-Id",
-                "X-Request-Id", "X-Chat-Run-Id")) {
+                "X-Tool-Call-Id", "X-Operation-Id", "X-Operation-Item-Id",
+                "X-Operation-Attempt-Id", "X-Request-Id", "X-Chat-Run-Id")) {
             String value = headers.getFirst(headerName);
             if (value != null && !value.isBlank()) {
                 builder.header(headerName, value);
@@ -1690,7 +1810,30 @@ public class McpProxyController {
         }
     }
 
-    private record LedgerAttempt(UUID itemId, UUID attemptId, String toolCallId) {}
+    private UUID startAgentDispatchAttempt(UUID invocationId, String requestId) {
+        if (invocationId == null) {
+            return null;
+        }
+        try {
+            return mcpInvocationService.startDispatchAttempt(invocationId, requestId).orElse(null);
+        } catch (RuntimeException e) {
+            logger.error("[LIFECYCLE] service=cp event=mcp_dispatch_attempt_start_failed invocationId={} failureType={}",
+                    invocationId, e.getClass().getName(), e);
+            return null;
+        }
+    }
+
+    private UUID startDirectDispatchAttempt(UUID invocationId, String requestId) {
+        return startAgentDispatchAttempt(invocationId, requestId);
+    }
+
+    /**
+     * PLAN-0463: one dispatch = legacy ledger attempt + MCP execution-domain
+     * attempt. {@code invocationId}/{@code dispatchAttemptId} are null when no
+     * execution-domain row exists (legacy-only caller or best-effort write gap).
+     */
+    private record LedgerAttempt(UUID itemId, UUID attemptId, String toolCallId,
+                                 UUID invocationId, UUID dispatchAttemptId) {}
 
     private long nextGeneration(String wsId) {
         return toolGenerations.computeIfAbsent(wsId, key -> new AtomicLong()).incrementAndGet();
@@ -1789,6 +1932,21 @@ public class McpProxyController {
                     .header("X-Workspace-Id", wsId);
             copyOperationHeaders(headers, forwardBuilder);
             copyOutboundPolicyHeaders(headers, forwardBuilder);
+            // PLAN-0463 wire contract R1/R4: canonical key on both header names,
+            // plus the invocation id for the late-termination target.
+            String remoteToolCallId = ledgerAttempt != null ? ledgerAttempt.toolCallId()
+                    : canonicalToolCallId(headers, body);
+            if (remoteToolCallId != null) {
+                forwardBuilder.setHeader("X-Tool-Call-Id", remoteToolCallId);
+                forwardBuilder.setHeader("X-Operation-Item-Id", remoteToolCallId);
+            }
+            if (ledgerAttempt != null && ledgerAttempt.invocationId() != null) {
+                forwardBuilder.setHeader("X-Mcp-Invocation-Id", ledgerAttempt.invocationId().toString());
+            }
+            String remoteJobId = headers.getFirst("X-Job-Id");
+            if (remoteJobId != null && !remoteJobId.isBlank()) {
+                forwardBuilder.setHeader("X-Job-Id", remoteJobId);
+            }
             HttpRequest forwardRequest = forwardBuilder
                     .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(request)))
                     .timeout(Duration.ofSeconds(waitSeconds > 0 ? waitSeconds : 30))

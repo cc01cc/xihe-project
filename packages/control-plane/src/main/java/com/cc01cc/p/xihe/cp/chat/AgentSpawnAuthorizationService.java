@@ -84,8 +84,8 @@ public class AgentSpawnAuthorizationService {
                     Instant.now().plusSeconds(ApprovalService.DEFAULT_GATE_TTL_SECONDS))
                     .orElse(null);
         } catch (RuntimeException e) {
-            logger.warn("[LIFECYCLE] service=cp event=spawn_approval_persist_failed parentRunId={} itemId={} failureType={}",
-                    invocation.parentRunId(), invocation.operationItemId(), e.getClass().getSimpleName(), e);
+            logger.warn("[LIFECYCLE] service=cp event=spawn_approval_persist_failed parentRunId={} invocationId={} failureType={}",
+                    invocation.parentRunId(), invocation.mcpInvocationId(), e.getClass().getSimpleName(), e);
             throw new CpApiException(HttpStatus.SERVICE_UNAVAILABLE, "APPROVAL_UNAVAILABLE",
                     "Unable to persist spawn approval request");
         }

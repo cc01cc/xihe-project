@@ -4,7 +4,7 @@ import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.entity.OperationItem;
-import com.cc01cc.p.xihe.cp.entity.OperationExtension;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceJob;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
@@ -51,8 +51,15 @@ class JobStateServiceIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private OperationExtensionRepository operationExtensions;
 
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.WorkspaceJobRepository workspaceJobs;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.ChatRunRepository chatRunRepository;
+
     private String userId;
     private String workspaceId;
+    private String sessionId;
     private UUID operationId;
 
     @BeforeEach
@@ -68,7 +75,7 @@ class JobStateServiceIntegrationTest extends AbstractIntegrationTest {
 
         Session session = new Session(workspaceId, userId, "Job State Session");
         session.setId(UUID.randomUUID());
-        String sessionId = sessionRepository.save(session).getId().toString();
+        sessionId = sessionRepository.save(session).getId().toString();
 
         operationId = operationService.startOperation(userId, sessionId, workspaceId, null, null,
                 "chat", "ui", "user", userId,
@@ -151,10 +158,14 @@ class JobStateServiceIntegrationTest extends AbstractIntegrationTest {
         startJob(item, jobId);
         jobStateService.upsert(item, Map.of("scope", JobStateService.SCOPE_WORKSPACE));
 
-        JobStateService.JobArchive archive = jobStateService.find(item).orElseThrow();
-        assertEquals("workspace", archive.scope());
-        assertEquals(1, operationExtensions.findByItemId(item.toString()).stream()
-                .map(OperationExtension::getSchemaVersion).max(Integer::compareTo).orElseThrow());
+        // PLAN-0465：state 落 `workspace_jobs.state`（唯一 schema，无版本演进），
+        // `job_state` extension 不再写入。
+        WorkspaceJob row = workspaceJobs.findByOperationItemId(item).orElseThrow();
+        assertEquals("workspace", row.getScope());
+        // jsonb 回读会归一化空白（`{"scope": "workspace"}`），比较前去空格。
+        assertTrue(row.getState().replace(" ", "").contains("\"scope\":\"workspace\""));
+        assertTrue(operationExtensions.findByItemId(item.toString()).isEmpty(),
+                "PLAN-0465 后 job 状态不再写 operation_extensions");
     }
 
     @Test
@@ -171,10 +182,12 @@ class JobStateServiceIntegrationTest extends AbstractIntegrationTest {
                 "workspaceId", workspaceId,
                 "scope", JobStateService.SCOPE_WORKSPACE));
 
-        List<Map<String, Object>> jobs = operationService.listWorkspaceJobs(workspaceId);
+        List<Map<String, Object>> jobs = jobStateService.listView(workspaceId);
 
-        assertTrue(jobs.stream().anyMatch(job -> item.getId().toString().equals(job.get("operationItemId"))
-                && "workspace".equals(job.get("scope"))));
+        assertTrue(jobs.stream().anyMatch(job -> job.get("jobId") != null
+                        && workspaceId.equals(job.get("workspaceId"))
+                        && "workspace".equals(job.get("scope"))),
+                "PLAN-0465 wire 以 domain jobId 为身份（不再出现 operationItemId）");
     }
 
     @Test
@@ -306,5 +319,43 @@ class JobStateServiceIntegrationTest extends AbstractIntegrationTest {
         JobStateService.JobArchive archive = jobStateService.find(item).orElseThrow();
         assertEquals("timeout", archive.status());
         assertEquals(60L, archive.timeoutSecs());
+    }
+    /**
+     * PLAN-0465 A类适配：post-0464 chat-run 的 MCP 工具调用没有 ledger item
+     *（Agent 停发 X-Operation-Id）——行由 dispatch provenance 物化，
+     * 以 run/toolCall 关联进 jobSummary 面；legacy item 锚点为 null。
+     */
+    @Test
+    void mcpToolWithoutLedgerItemMaterializesRowFromProvenance() throws Exception {
+        // run_id 是 FK（chat_runs）：provenance 的 X-Chat-Run-Id 在真实链路里
+        // 必然指向既有 run，测试同样先落 run 行。
+        String runId = UUID.randomUUID().toString();
+        chatRunRepository.save(new com.cc01cc.p.xihe.cp.entity.ChatRun(runId, sessionId, userId,
+                workspaceId, "idem-" + UUID.randomUUID(), "hash", "openai", "gpt-test",
+                "none", "running"));
+        String toolCallId = UUID.randomUUID().toString();
+        JobStateService.ToolJobProvenance provenance = new JobStateService.ToolJobProvenance(
+                null, workspaceId, userId, sessionId, runId, toolCallId);
+
+        jobStateService.applyToolResult(provenance, "start_background_process",
+                toolResult("prov-job-1", false));
+
+        List<com.cc01cc.p.xihe.cp.entity.WorkspaceJob> rows = jobStateService.listByRun(runId);
+        assertEquals(1, rows.size(), "provenance row must land on the run");
+        com.cc01cc.p.xihe.cp.entity.WorkspaceJob row = rows.get(0);
+        assertNull(row.getOperationItemId(), "no ledger item for post-0464 chat-run tools");
+        assertEquals(toolCallId, row.getToolCallId().toString());
+        assertEquals(workspaceId, row.getWorkspaceId().toString());
+        assertEquals(sessionId, row.getSessionId().toString());
+        assertEquals(JobStateService.STATUS_RUNNING, row.getStatus());
+        assertEquals("prov-job-1",
+                jobStateService.findByJobId(row.getId()).orElseThrow().jobId());
+
+        // 同 tool call 的后续 get 结果回写同一行（tool_call_id 物化键）。
+        jobStateService.applyToolResult(provenance, "get_background_process",
+                toolResult(jobInfoJson("prov-job-1", "succeeded", 0, 30L), false));
+        assertEquals(1, jobStateService.listByRun(runId).size());
+        assertEquals("succeeded",
+                jobStateService.findByJobId(row.getId()).orElseThrow().status());
     }
 }

@@ -7,6 +7,7 @@ import com.cc01cc.p.xihe.cp.chat.ApprovalAgentClient;
 import com.cc01cc.p.xihe.cp.chat.ApprovalGrantWriter;
 import com.cc01cc.p.xihe.cp.chat.ApprovalPendingStore;
 import com.cc01cc.p.xihe.cp.chat.ApprovalPolicySummary;
+import com.cc01cc.p.xihe.cp.chat.ApprovalHistoryWriter;
 import com.cc01cc.p.xihe.cp.chat.ApprovalService;
 import com.cc01cc.p.xihe.cp.chat.AutoReviewAnswerer;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
@@ -18,6 +19,8 @@ import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.logging.LogRedactor;
 import com.cc01cc.p.xihe.cp.mcp.McpProxyController;
+import com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder;
+import com.cc01cc.p.xihe.cp.mcp.McpInvocationService;
 import com.cc01cc.p.xihe.cp.mcp.RequestRewriter;
 import com.cc01cc.p.xihe.cp.policy.BuiltinPolicyContextProvider;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
@@ -109,8 +112,10 @@ class PreviewProjectionTest {
     private final PolicyRevision policyRevision = mock(PolicyRevision.class);
     private final WorkspaceRepository workspaceRepository = mock(WorkspaceRepository.class);
     private final AuditLogger auditLogger = mock(AuditLogger.class);
+    private final McpInvocationService mcpInvocationService = mock(McpInvocationService.class);
+    private final ApprovalHistoryWriter historyWriter = mock(ApprovalHistoryWriter.class);
 
-    private LedgerToolRecorder recorder;
+    private McpRelayToolRecorder recorder;
     private ApprovalService approvalService;
     private McpProxyController mcpController;
     private WorkspaceJobStartService workspaceJobStartService;
@@ -123,13 +128,13 @@ class PreviewProjectionTest {
         when(workspaceRepository.findById(UUID.fromString(WORKSPACE_ID)))
                 .thenReturn(Optional.of(generationZero));
 
-        recorder = new LedgerToolRecorder(operationService, chatRunRepository, mapper);
+        recorder = new McpRelayToolRecorder(chatRunRepository, mcpInvocationService, mapper);
 
         ApprovalPolicySummary policySummary = new ApprovalPolicySummary(
                 new PolicyEngine(auditLogger, new BuiltinPolicyContextProvider()));
         approvalService = new ApprovalService(
                 approvals, chatRunRepository, mock(ApprovalAgentClient.class), mapper,
-                operationService, mock(ApprovalGrantWriter.class), auditLogger, policySummary,
+                historyWriter, mock(ApprovalGrantWriter.class), auditLogger, policySummary,
                 new ApprovalPendingStore(approvals, mapper, policySummary),
                 new SessionPolicyState(), mock(SessionApprovalMode.class), policyRevision,
                 workspaceRepository,
@@ -142,10 +147,15 @@ class PreviewProjectionTest {
                 mock(McpToolAliasRepository.class), workspaceService,
                 mock(SessionRepository.class), operationService, jobStateService,
                 mock(ConfigService.class), new ToolTimeoutPolicy(), new MockEnvironment(),
-                mock(AgentSpawnExecutionService.class));
+                mock(AgentSpawnExecutionService.class), mock(com.cc01cc.p.xihe.cp.mcp.McpInvocationService.class));
 
+        // PLAN-0465：insertJob 走 REQUIRES_NEW 自调用，self() 依赖 ApplicationContext。
+        org.springframework.context.ApplicationContext appContext =
+                mock(org.springframework.context.ApplicationContext.class);
         workspaceJobStartService = new WorkspaceJobStartService(
-                operationService, jobStateService, workspaceService, runtimeJobClient);
+                operationService, jobStateService, workspaceService, runtimeJobClient, appContext);
+        when(appContext.getBean(WorkspaceJobStartService.class))
+                .thenReturn(workspaceJobStartService);
     }
 
     @Test
@@ -237,7 +247,7 @@ class PreviewProjectionTest {
     @Test
     void workspaceJobBaselinePreviewKeepsOriginalUntruncatedJson() throws Exception {
         String longArg = "a".repeat(5000);
-        stubReplayedWorkspaceJobStart();
+        stubWorkspaceJobInsert();
         WorkspaceJobStartService.StartRequest request = new WorkspaceJobStartService.StartRequest(
                 "deploy", List.of(BUSINESS_NOTE, longArg), null, 0L,
                 "workspace", null, null, "ui", null);
@@ -245,9 +255,10 @@ class PreviewProjectionTest {
         WorkspaceJobStartService.StartOutcome outcome =
                 workspaceJobStartService.start(WORKSPACE_ID, USER_ID, request, "key-1");
 
-        assertTrue(outcome.replayed());
+        // PLAN-0465：preview 在原子双写（persistLegacyJobRoot）时生成；新建 Job 非重放。
+        assertFalse(outcome.replayed());
         ArgumentCaptor<String> preview = ArgumentCaptor.forClass(String.class);
-        verify(operationService).startWorkspaceJob(eq(USER_ID), eq(WORKSPACE_ID), isNull(), isNull(),
+        verify(operationService).persistLegacyJobRoot(eq(USER_ID), eq(WORKSPACE_ID), isNull(), isNull(),
                 eq("ui"), eq("user"), eq("key-1"), anyString(), eq("job:deploy"), preview.capture());
 
         JsonNode node = mapper.readTree(preview.getValue());
@@ -266,13 +277,6 @@ class PreviewProjectionTest {
     private String captureAgentRelayPreview(Map<String, Object> arguments) {
         when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
                 .thenReturn(Optional.of(runningRun()));
-        when(operationService.findOperationIdByRunId(RUN_ID))
-                .thenReturn(UUID.fromString(OPERATION_ID));
-        when(operationService.appendItem(any(), anyString(), isNull(), eq("tool_call"),
-                eq("write_file"), eq("agent"), anyString(), isNull(), isNull()))
-                .thenReturn(newItem("agent"));
-        when(operationService.startAttempt(any(), anyString(), any(), anyString(), any()))
-                .thenReturn(new OperationAttempt());
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("tool", "write_file");
@@ -280,11 +284,11 @@ class PreviewProjectionTest {
         payload.put("type", "tool_call");
         payload.put("run_id", RUN_ID);
         payload.put("toolCallId", "tc-1");
-        recorder.record("tool_call", payload, RUN_ID, null, LedgerToolRecorder.RunLedger.create());
+        recorder.record("tool_call", payload, RUN_ID, null, McpRelayToolRecorder.RunState.create());
 
         ArgumentCaptor<String> preview = ArgumentCaptor.forClass(String.class);
-        verify(operationService).appendItem(any(), anyString(), isNull(), eq("tool_call"),
-                eq("write_file"), eq("agent"), preview.capture(), isNull(), isNull());
+        verify(mcpInvocationService).openAgentInvocation(eq(RUN_ID), anyString(), eq("write_file"),
+                any(), preview.capture());
         return preview.getValue();
     }
 
@@ -292,14 +296,12 @@ class PreviewProjectionTest {
         when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
                 .thenReturn(Optional.of(runningRun()));
         when(approvals.findById(UUID.fromString(REQUEST_ID))).thenReturn(Optional.empty());
-        when(operationService.findOperationIdByRunId(RUN_ID))
-                .thenReturn(UUID.fromString(OPERATION_ID));
 
         approvalService.recordPending(payload, SESSION_ID, RUN_ID, USER_ID, WORKSPACE_ID);
 
         ArgumentCaptor<String> preview = ArgumentCaptor.forClass(String.class);
-        verify(operationService).appendApprovalItem(eq(UUID.fromString(OPERATION_ID)),
-                eq(REQUEST_ID), eq("request_approval"), preview.capture());
+        verify(historyWriter).append(eq(UUID.fromString(REQUEST_ID)), any(), any(),
+                eq("requested"), any(), eq("pending"), any(), any(), any(), preview.capture());
         return preview.getValue();
     }
 
@@ -326,17 +328,24 @@ class PreviewProjectionTest {
         return preview.getValue();
     }
 
-    private void stubReplayedWorkspaceJobStart() {
+    private void stubWorkspaceJobInsert() {
         Workspace workspace = new Workspace();
         workspace.setExecutionMode("docker");
         when(workspaceService.requireAccessibleWorkspace(WORKSPACE_ID, USER_ID))
                 .thenReturn(workspace);
-        when(operationService.startWorkspaceJob(any(), any(), any(), any(), any(), any(),
+        // 0465 新流程：域内幂等未命中 → legacy 幂等未命中 → 原子双写 → 派发成功。
+        when(jobStateService.findForReplay(any(), any(), any(), any()))
+                .thenReturn(Optional.empty());
+        when(operationService.findWorkspaceJobForReplay(any(), any(), any(), any(), any()))
+                .thenReturn(null);
+        when(operationService.persistLegacyJobRoot(any(), any(), any(), any(), any(), any(),
                 any(), any(), any(), any()))
                 .thenReturn(new OperationService.WorkspaceJobStart(
-                        UUID.fromString(OPERATION_ID), UUID.fromString(JOB_ITEM_ID), true));
-        when(operationService.jobView(UUID.fromString(JOB_ITEM_ID)))
-                .thenReturn(Map.of("status", "pending"));
+                        UUID.fromString(OPERATION_ID), UUID.fromString(JOB_ITEM_ID), false));
+        when(runtimeJobClient.startJob(any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new RuntimeJobClient.JobStartResult(true, true, false, "job-1", null));
+        when(jobStateService.wireViewById(any()))
+                .thenReturn(Optional.of(Map.of("jobId", JOB_ITEM_ID, "status", "running")));
     }
 
     private static ChatRun runningRun() {

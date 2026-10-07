@@ -63,7 +63,7 @@ class CapabilityEnvelopeRefusalTest extends AbstractIntegrationTest {
     private RuntimeJobClient runtimeJobClient;
 
     @Autowired
-    private OperationService operationService;
+    private JobStateService jobStateService;
 
     @Autowired
     private GrantAuthorizationService grantAuthorizationService;
@@ -109,7 +109,7 @@ class CapabilityEnvelopeRefusalTest extends AbstractIntegrationTest {
         assertEquals(HttpStatus.NOT_IMPLEMENTED, error.getStatusCode());
         assertTrue(error.getResponseBodyAsString().contains("JOB_BACKEND_LAUNCH_PENDING"),
                 "the envelope refuses with its own error code, not an authorization/approval answer");
-        assertEquals("interrupted", operationService.listWorkspaceJobs(workspaceId).get(0).get("status"));
+        assertEquals("interrupted", jobStateService.listView(workspaceId).get(0).get("status"));
         verify(runtimeJobClient, times(1))
                 .startJob(eq(workspaceId), anyString(), anyString(), any(), any(), any(), any());
         assertZeroPendingApprovals("envelope refusal must not create a pending approval");
@@ -127,7 +127,7 @@ class CapabilityEnvelopeRefusalTest extends AbstractIntegrationTest {
 
         assertEquals(HttpStatus.BAD_GATEWAY, error.getStatusCode());
         assertTrue(error.getResponseBodyAsString().contains("RUNTIME_UNAVAILABLE"));
-        assertEquals("interrupted", operationService.listWorkspaceJobs(workspaceId).get(0).get("status"));
+        assertEquals("interrupted", jobStateService.listView(workspaceId).get(0).get("status"));
         assertZeroPendingApprovals("an unreachable Runtime refuses physically, never via approval");
     }
 

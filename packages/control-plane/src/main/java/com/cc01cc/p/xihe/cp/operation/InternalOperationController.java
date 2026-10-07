@@ -36,6 +36,14 @@ public class InternalOperationController {
 
     @PostMapping
     public ResponseEntity<?> start(@RequestBody StartOperationRequest request) {
+        // PLAN-0464 V1: the Chat lifecycle root is chat_runs. This route must
+        // never mint a new kind=chat LedgerOperation again.
+        if (request != null && "chat".equalsIgnoreCase(request.kind())) {
+            logger.warn("Internal operation start rejected: kind=chat roots are retired (PLAN-0464)");
+            return ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT,
+                    "CHAT_OPERATION_ROOT_RETIRED",
+                    "kind=chat roots are owned by chat_runs since PLAN-0464");
+        }
         try {
             OperationService.OperationStartResult result = operationService.startOperation(
                     request.userId(), request.sessionId(), request.workspaceId(),
@@ -57,6 +65,15 @@ public class InternalOperationController {
         }
     }
 
+    /**
+     * Service-Bearer ledger trace.
+     *
+     * @deprecated PLAN-0466 T1.3 — replaced by
+     *     {@code GET /internal/v1/audit/entries/{type}/{id}} (domain detail +
+     *     history timeline with the internal field tier); removal tracked by
+     *     PLAN-0467 (OpenAPI marks it {@code deprecated: true}).
+     */
+    @Deprecated
     @GetMapping("/{operationId}/trace")
     public ResponseEntity<?> trace(@PathVariable String operationId) {
         UUID id;
@@ -82,7 +99,13 @@ public class InternalOperationController {
     /**
      * PLAN-0317 T2.9（决策 #14）：Runtime 追偿成功后的迟到终止事件入口。
      * 只追加事件、不改 item 终态（账本保留"当时未确认"的事实）。
+     *
+     * @deprecated PLAN-0463 T2.2 — prefer
+     *     {@code POST /internal/v1/mcp/invocations/{invocationId}/late-termination};
+     *     this item target stays for callers without an invocation id and is
+     *     removed by PLAN-0467 (OpenAPI marks it {@code deprecated: true}).
      */
+    @Deprecated
     @PostMapping("/items/{itemId}/late-termination")
     public ResponseEntity<?> lateTermination(@PathVariable String itemId,
                                              @RequestBody(required = false) LateTerminationRequest request) {

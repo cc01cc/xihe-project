@@ -277,8 +277,9 @@ class TestMCPAgentToolApproval:
         assert headers == {
             "X-Session-Id": "session-1",
             "X-Chat-Run-Id": "run-1",
-            "X-Operation-Id": "operation-1",
-            "X-Operation-Item-Id": "item-1",
+            # PLAN-0464 R3: the legacy operation keys are gone; X-Tool-Call-Id
+            # is the only durable tool-call correlation header.
+            "X-Tool-Call-Id": "item-1",
         }
         assert APPROVAL_GRANT_HEADER not in headers
 
@@ -323,8 +324,35 @@ class TestMCPAgentToolApproval:
         assert headers == {
             "X-Session-Id": "session-1",
             "X-Chat-Run-Id": "run-1",
-            "X-Operation-Id": "operation-1",
         }
+
+    @pytest.mark.asyncio
+    async def test_job_scoped_tool_dispatch_sends_x_job_id(self, context):
+        """PLAN-0465（0463 gap 4 生产方收口）：job-scoped dispatch 携带 X-Job-头。
+
+        `get/cancel_background_process` 的实参已知 jobId（Runtime handle）时发送；
+        `start_background_process` 尚无 jobId，不发送；CP 侧仅转发（0463）。
+        """
+        manager = _fake_manager(
+            approval_tool=MagicMock(spec=ApprovalAgentTool),
+            result=_tool_result("running"),
+        )
+        get_tool = MCPAgentTool(_stub_tool("get_background_process"), manager)
+
+        await get_tool.execute({"jobId": "runtime-job-1"}, context)
+
+        headers = manager.call_tool.await_args.args[2]
+        assert headers["X-Job-Id"] == "runtime-job-1"
+
+        manager_start = _fake_manager(
+            approval_tool=MagicMock(spec=ApprovalAgentTool),
+            result=_tool_result("new-job"),
+        )
+        start_tool = MCPAgentTool(_stub_tool("start_background_process"), manager_start)
+
+        await start_tool.execute({"command": "echo"}, context)
+
+        assert "X-Job-Id" not in manager_start.call_tool.await_args.args[2]
 
     @pytest.mark.asyncio
     async def test_spawn_agent_uses_cp_mcp_context_and_existing_approval_retry(self, context):
@@ -356,8 +384,7 @@ class TestMCPAgentToolApproval:
             {
                 "X-Session-Id": "session-1",
                 "X-Chat-Run-Id": "run-1",
-                "X-Operation-Id": "operation-1",
-                "X-Operation-Item-Id": "spawn-item-1",
+                "X-Tool-Call-Id": "spawn-item-1",
             },
         )
         assert calls[1][0] == calls[0][0], "approval retry must retain identical spawn arguments"

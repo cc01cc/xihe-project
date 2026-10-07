@@ -15,7 +15,6 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
@@ -69,7 +68,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private ChatRunRepository chatRunRepository;
 
-    @Autowired
+    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
     private MessageRepository messageRepository;
 
     @Autowired
@@ -102,11 +101,9 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
-    @MockitoBean
-    private OperationService operationService;
 
     @Test
-    void operationFailureRollsBackChatRunAndUserMessage() {
+    void messageWriteFailureRollsBackChatRunAndSessionBinding() {
         User user = userRepository.save(new User(
                 "chat-submit-" + UUID.randomUUID() + "@test.com", "hash", UserRole.USER, "Chat Submit"));
         Workspace workspace = workspaceRepository.save(new Workspace("Chat Submit Workspace", user.getId().toString()));
@@ -115,9 +112,11 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         Session persistedSession = sessionRepository.save(session);
 
         String runId = UUID.randomUUID().toString();
-        doThrow(new IllegalStateException("forced Ledger failure"))
-                .when(operationService)
-                .startOperation(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        // PLAN-0464 T1.1: startOperation is gone; the failure point after the
+        // ChatRun insert is now the user-message write in the same transaction.
+        doThrow(new IllegalStateException("forced message failure"))
+                .when(messageRepository)
+                .save(any(Message.class));
 
         AgentPrincipal principal = savePrincipal(user);
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
@@ -161,7 +160,6 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         agentPrincipalRepository.saveAndFlush(principal);
         String disabledPrincipalRunId = UUID.randomUUID().toString();
         assertRejectedWithoutWrites(disabledPrincipalRunId, persistedSession, user, workspace);
-        verifyNoInteractions(operationService);
     }
 
     @Test
@@ -337,7 +335,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
 
         assertTrue(terminalService.terminalize(new ChatRunTerminalService.TerminalRequest(
                 firstRunId, List.of("accepted"), "succeeded", "success", null, null,
-                0, 0, ChatRunTerminalService.LedgerMode.STREAM, List.of())).committed());
+                0, 0, ChatRunTerminalService.TerminalSource.STREAM, List.of())).committed());
         String laterRunId = UUID.randomUUID().toString();
         submit(laterRunId, fixture.session(), fixture.user(), fixture.workspace(),
                 "later parent run", fixture.principal().getId().toString());

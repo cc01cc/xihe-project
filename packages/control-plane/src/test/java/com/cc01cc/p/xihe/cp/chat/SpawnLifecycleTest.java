@@ -113,12 +113,18 @@ class SpawnLifecycleTest extends AbstractIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.McpInvocationRepository mcpInvocationRepository;
+
     private String userId;
     private String workspaceId;
     private UUID principalId;
 
     @AfterEach
     void cleanFixtures() {
+        if (workspaceId != null) {
+            SpawnTestSupport.clearForWorkspace(mcpInvocationRepository, jdbcTemplate, workspaceId);
+        }
         dropSpawnRunFailureTrigger();
         if (workspaceId != null) {
             deleteWorkspaceSessions();
@@ -159,7 +165,8 @@ class SpawnLifecycleTest extends AbstractIntegrationTest {
         assertNull(operationItemRepository.findById(UUID.fromString(parent.itemPk))
                 .orElseThrow().getWaitingOnRunId(), "fixture parent item starts without a waiting link");
 
-        installSpawnRunFailureTrigger(parent.itemPk);
+        // PLAN-0464 T2.1: the spawn idempotency key is now the canonical toolCallId.
+        installSpawnRunFailureTrigger(parent.toolCallId);
         RuntimeException failure = assertThrows(RuntimeException.class,
                 () -> spawnDirect(parent.parentRunId, parent.toolCallId));
         dropSpawnRunFailureTrigger();
@@ -171,17 +178,17 @@ class SpawnLifecycleTest extends AbstractIntegrationTest {
         assertEquals(runsBefore, runCount(), "the child ChatRun must roll back with the transaction");
         assertEquals(spawnAuditsBefore, agentSpawnAuditCount(), "the spawn audit row must roll back");
         assertEquals(0, jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM chat_runs WHERE idempotency_key = ?", Integer.class, parent.itemPk),
+                "SELECT count(*) FROM chat_runs WHERE idempotency_key = ?", Integer.class, parent.toolCallId),
                 "no ChatRun row may survive for the failed spawn key");
-        assertNull(operationItemRepository.findById(UUID.fromString(parent.itemPk))
-                .orElseThrow().getWaitingOnRunId(), "the parent waiting link must roll back");
 
         ChatSubmissionService.SpawnResult retried = spawnDirect(parent.parentRunId, parent.toolCallId);
         assertNotNull(retried.runId(), "after rollback the same parent item must be spawnable again");
         assertEquals(sessionsBefore + 1, sessionCount(), "the retry commits exactly one child Session");
         assertEquals(runsBefore + 1, runCount(), "the retry commits exactly one child ChatRun");
-        assertNotNull(operationItemRepository.findById(UUID.fromString(parent.itemPk))
-                .orElseThrow().getWaitingOnRunId(), "the retry writes the parent waiting link");
+        ChatRun retriedChild = chatRunRepository.findById(UUID.fromString(retried.runId())).orElseThrow();
+        assertEquals(parent.parentRunId, retriedChild.getWaitingOnRunId(),
+                "the retry writes the child waiting link");
+        assertEquals(parent.toolCallId, retriedChild.getWaitingToolCallId());
     }
 
     /**
@@ -338,6 +345,9 @@ class SpawnLifecycleTest extends AbstractIntegrationTest {
         String toolCallId = UUID.randomUUID().toString();
         OperationItem item = operationService.appendItem(operation.operationId(), toolCallId, null,
                 "tool_call", toolName, "agent", argumentsPreview, null, null);
+        SpawnTestSupport.seedAgentInvocation(mcpInvocationRepository,
+                parentSession.getId().toString(), parentRunId, workspaceId, userId,
+                item.getToolCallId(), toolName, argumentsPreview);
         return new ParentFixture(parentSession.getId().toString(), parentRunId,
                 operation.operationId().toString(), item.getToolCallId(), item.getId().toString());
     }

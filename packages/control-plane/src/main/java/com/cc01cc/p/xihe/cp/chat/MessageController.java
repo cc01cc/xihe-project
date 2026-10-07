@@ -10,6 +10,7 @@ import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.operation.JobStateService;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
 import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
@@ -44,6 +45,7 @@ public class MessageController {
     private final ObjectMapper objectMapper;
     private final LedgerOperationRepository ledgerOperationRepository;
     private final OperationItemRepository operationItemRepository;
+    private final McpInvocationRepository mcpInvocationRepository;
     private final JobStateService jobStateService;
     private final BranchPathService branchPathService;
 
@@ -54,6 +56,7 @@ public class MessageController {
                              ObjectMapper objectMapper,
                              LedgerOperationRepository ledgerOperationRepository,
                              OperationItemRepository operationItemRepository,
+                             McpInvocationRepository mcpInvocationRepository,
                              JobStateService jobStateService,
                              BranchPathService branchPathService) {
         this.messageRepository = messageRepository;
@@ -63,6 +66,7 @@ public class MessageController {
         this.objectMapper = objectMapper;
         this.ledgerOperationRepository = ledgerOperationRepository;
         this.operationItemRepository = operationItemRepository;
+        this.mcpInvocationRepository = mcpInvocationRepository;
         this.jobStateService = jobStateService;
         this.branchPathService = branchPathService;
     }
@@ -213,34 +217,53 @@ public class MessageController {
     }
 
     /**
-     * PLAN-0344 T1.4：run 的 operation → job 工具 items → job_state 档案，
-     * 给出可重建 job 卡片的摘要（toolCallId 为 UI 关联键，itemId 为续看键）。
+     * PLAN-0465 T2.2：jobSummary 改读 `workspace_jobs`（按 run 关联列，
+     * decision #5 provenance），不再逐 item 回扫 operation tree。
+     * `jobId` = domain 身份（decision #7，`itemId` 不再出现在 jobSummary）；
+     * `toolName` 过渡期经 `operation_item_id` 锚点回读 legacy item（至 0467）。
+     * 本方法只读：失败返回空列表，不写 operation。
      */
     private List<Map<String, Object>> jobSummariesForRun(String runId) {
         List<Map<String, Object>> summaries = new ArrayList<>();
-        var operation = ledgerOperationRepository.findByRunId(runId).orElse(null);
-        if (operation == null) {
-            return summaries;
-        }
-        List<OperationItem> items =
-                operationItemRepository.findByOperationIdOrderBySequenceAsc(operation.getId().toString());
-        for (OperationItem item : items) {
-            if (!JobStateService.isJobTool(item.getToolName())) {
-                continue;
+        try {
+            // PLAN-0465 A类适配：post-0464 chat MCP 行无 ledger item，toolName
+            // 真源 = `mcp_invocations`（tool_call_id 关联；0463 域表）；legacy
+            // 双写行（workspace start / user-direct mutation）回读 item 锚点兜底。
+            Map<String, String> toolNamesByCall = new LinkedHashMap<>();
+            for (var invocation : mcpInvocationRepository.findByRunIdOrderByCreatedAtAsc(runId)) {
+                if (invocation.getToolCallId() != null && invocation.getToolName() != null) {
+                    toolNamesByCall.putIfAbsent(
+                            invocation.getToolCallId().toLowerCase(java.util.Locale.ROOT),
+                            invocation.getToolName());
+                }
             }
-            jobStateService.find(item.getId()).ifPresent(archive -> {
+            for (com.cc01cc.p.xihe.cp.entity.WorkspaceJob row : jobStateService.listByRun(runId)) {
                 Map<String, Object> summary = new LinkedHashMap<>();
-                summary.put("itemId", item.getId());
-                summary.put("toolCallId", item.getToolCallId());
-                summary.put("toolName", item.getToolName());
-                summary.put("jobId", archive.jobId());
-                summary.put("status", archive.status());
-                summary.put("scope", archive.scope());
-                summary.put("startedAt", archive.startedAt());
-                summary.put("endedAt", archive.endedAt());
+                summary.put("jobId", row.getId().toString());
+                summary.put("workspaceId", row.getWorkspaceId().toString());
+                String toolCallId =
+                        row.getToolCallId() == null ? null : row.getToolCallId().toString();
+                summary.put("toolCallId", toolCallId);
+                String toolName = toolCallId == null ? null
+                        : toolNamesByCall.get(toolCallId.toLowerCase(java.util.Locale.ROOT));
+                if (toolName == null && row.getOperationItemId() != null) {
+                    toolName = operationItemRepository.findById(row.getOperationItemId())
+                            .map(OperationItem::getToolName).orElse(null);
+                }
+                summary.put("toolName", toolName);
+                summary.put("status", row.getStatus());
+                summary.put("scope", row.getScope());
+                summary.put("startedAt",
+                        row.getStartedAt() == null ? null : row.getStartedAt().toString());
+                summary.put("endedAt", row.getEndedAt() == null ? null : row.getEndedAt().toString());
                 summaries.add(summary);
-            });
+            }
+        } catch (RuntimeException e) {
+            logger.warn("[LIFECYCLE] service=cp event=job_summary_projection_failed runId={} error={}",
+                    runId, e.getMessage());
         }
+        logger.info("[LIFECYCLE] service=cp event=job_summary_loaded runId={} count={}",
+                runId, summaries.size());
         return summaries;
     }
 }

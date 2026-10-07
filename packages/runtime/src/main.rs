@@ -3505,15 +3505,33 @@ const JOB_CLEANUP_EVERY_TICKS: u64 = 5;
 
 /// PLAN-0317 T2.9（决策 #14）：把追偿确认的迟到终止回报给 CP——CP 只追加
 /// `item.terminated.late` 事件，不回改 item 终态。
+/// PLAN-0463 wire contract §3：迟到终止目标解析——有 invocation id 走新路由，
+/// 缺失时回落已标 deprecated 的旧 itemId 路由（0463 迁移期兼容）。
+fn late_termination_url(cp_url: &str, late: &xihe_runtime::executor::LateTermination) -> String {
+    match late.invocation_id.as_deref() {
+        Some(invocation_id) => {
+            format!("{cp_url}/internal/v1/mcp/invocations/{invocation_id}/late-termination")
+        }
+        None => format!(
+            "{cp_url}/internal/v1/operations/items/{}/late-termination",
+            late.item_id
+        ),
+    }
+}
+
 async fn report_late_termination(
     cp_url: &str,
     api_token: &str,
     late: &xihe_runtime::executor::LateTermination,
 ) {
-    let url = format!(
-        "{cp_url}/internal/v1/operations/items/{}/late-termination",
-        late.item_id
-    );
+    // PLAN-0463 wire contract §3: prefer the new MCP invocation target; the
+    // legacy item route stays available (deprecated) for callers without an
+    // invocation id. CP records both as an append-only history event.
+    let url = late_termination_url(cp_url, late);
+    let target = late
+        .invocation_id
+        .clone()
+        .unwrap_or_else(|| late.item_id.clone());
     let Ok(client) = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
@@ -3530,21 +3548,21 @@ async fn report_late_termination(
     {
         Ok(response) if response.status().is_success() => {
             tracing::info!(
-                item_id = %late.item_id,
+                target = %target,
                 workspace_id = %late.workspace_id,
                 "late-termination reported to CP"
             );
         }
         Ok(response) => {
             tracing::warn!(
-                item_id = %late.item_id,
+                target = %target,
                 status = %response.status(),
                 "late-termination report rejected by CP"
             );
         }
         Err(error) => {
             tracing::warn!(
-                item_id = %late.item_id,
+                target = %target,
                 error = %error,
                 "late-termination report failed"
             );
@@ -3875,6 +3893,35 @@ mod cancel_endpoint_tests {
         )
         .await;
         assert_eq!(cross.status(), StatusCode::NOT_FOUND);
+    }
+}
+
+#[cfg(test)]
+mod late_termination_route_tests {
+    use super::late_termination_url;
+    use xihe_runtime::executor::LateTermination;
+
+    fn late(invocation_id: Option<&str>) -> LateTermination {
+        LateTermination {
+            item_id: "item-1".to_string(),
+            workspace_id: "ws-1".to_string(),
+            confirmed: true,
+            invocation_id: invocation_id.map(str::to_string),
+        }
+    }
+
+    /// PLAN-0463 wire contract §3：新 target 优先，旧 itemId 路由保留为兼容回退。
+    #[test]
+    fn late_termination_prefers_invocation_target_and_keeps_legacy_fallback() {
+        assert_eq!(
+            late_termination_url("http://cp", &late(Some("inv-1"))),
+            "http://cp/internal/v1/mcp/invocations/inv-1/late-termination"
+        );
+        assert_eq!(
+            late_termination_url("http://cp", &late(None)),
+            "http://cp/internal/v1/operations/items/item-1/late-termination",
+            "without an invocation id the deprecated item route must still work"
+        );
     }
 }
 

@@ -110,7 +110,7 @@ class McpProxyTest {
                 + "\"params\":{\"name\":\"spawn_agent\",\"arguments\":{\"prompt\":\""
                 + prompt + "\"}}}";
         ChatSubmissionService.SpawnInvocation invocation = new ChatSubmissionService.SpawnInvocation(
-                runId, toolCallId, sessionId, operationId, java.util.UUID.randomUUID(), "user-1",
+                runId, toolCallId, sessionId, java.util.UUID.randomUUID(), "user-1",
                 TEST_WS_UUID, "agent-1", "canonical-body");
         ChatSubmissionService.SpawnResult child = new ChatSubmissionService.SpawnResult(
                 "66666666-6666-6666-6666-666666666666", "77777777-7777-7777-7777-777777777777",
@@ -153,7 +153,7 @@ class McpProxyTest {
     void setUp() {
         requestRewriter = mock(RequestRewriter.class);
         policyEngine = mock(PolicyEngine.class);
-        when(policyEngine.hasCurrentAgentToolCall(any(), any(), any(), any(), any(), any(), any()))
+        when(policyEngine.hasCurrentAgentToolCall(any(), any(), any(), any(), any(), any()))
                 .thenReturn(true);
         auditLogger = mock(AuditLogger.class);
         approvalService = mock(ApprovalService.class);
@@ -177,7 +177,8 @@ class McpProxyTest {
                 mock(com.cc01cc.p.xihe.cp.config.ConfigService.class),
                 new com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy(),
                 environment,
-                agentSpawnExecutionService
+                agentSpawnExecutionService,
+                mock(com.cc01cc.p.xihe.cp.mcp.McpInvocationService.class)
         );
         ReflectionTestUtils.setField(controller, "sessionIdHmacSecret", "test-only-key");
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
@@ -284,7 +285,7 @@ class McpProxyTest {
         String operationId = "22222222-2222-2222-2222-222222222222";
         String toolCallId = "33333333-3333-3333-3333-333333333333";
         when(policyEngine.hasCurrentAgentToolCall("u-1", TEST_WS_UUID, "sess-1",
-                runId, operationId, toolCallId, "read_file")).thenReturn(false);
+                runId, toolCallId, "read_file")).thenReturn(false);
         HttpHeaders headers = new HttpHeaders();
         headers.set("X-Chat-Run-Id", runId);
         headers.set("X-Operation-Id", operationId);

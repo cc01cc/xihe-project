@@ -283,7 +283,7 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
 
     private ChatRunRecoveryService reconciliationService() {
         return new ChatRunRecoveryService(chatRunRepository, approvalRepository, chatController,
-                chatRunTerminalService, runCheckpointService);
+                chatRunTerminalService, historyWriter, runCheckpointService);
     }
 
     // ── PLAN-0317 T2.7：周期对账（grace=-1 让所有测试 run 立即进入候选） ──────
@@ -387,6 +387,9 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
         operationService.transitionItem(item.getId(), "running", "allow", null, null, null);
         operationService.startAttempt(item.getId(), "cp_forward", null, "cp",
                 UUID.randomUUID().toString());
+        // PLAN-0464: the execution-domain row is what carries the cancel outcome now.
+        SpawnTestSupport.seedAgentInvocation(mcpInvocationRepository, sessionId,
+                run.getId().toString(), workspaceId, userId, item.getToolCallId(), "shell", "{}");
 
         com.cc01cc.p.xihe.cp.config.TenantContext.setUserId(userId);
         com.cc01cc.p.xihe.cp.config.TenantContext.setWorkspaceId(workspaceId);
@@ -406,8 +409,14 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
         ChatRun after = chatRunRepository.findById(run.getId()).orElseThrow();
         assertEquals("cancelled", after.getStatus(), "cancel must converge without an Agent echo");
         assertEquals("cancelled", after.getTerminalOutcome());
-        assertEquals("aborted", operationService.findItem(item.getId().toString()).getStatus(),
-                "an unreachable/unconfirmed termination must land as aborted");
+        // PLAN-0464 T1.2: cancel no longer settles Ledger items (0467 drops them);
+        // the unconfirmed termination lands on the execution-domain row instead.
+        assertEquals("running", operationService.findItem(item.getId().toString()).getStatus(),
+                "PLAN-0464: the cancel path no longer settles Ledger items");
+        assertEquals("cancelled", jdbcTemplate.queryForObject(
+                "SELECT status FROM mcp_invocations WHERE run_id = CAST(? AS UUID)",
+                String.class, run.getId().toString()),
+                "an unreachable/unconfirmed termination must land as cancelled in mcp_invocations");
     }
 
     /**
@@ -617,15 +626,15 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
         operationService.transitionItem(item.getId(), "running", "allow", null, null, null);
 
         Object target = org.springframework.test.util.AopTestUtils.getUltimateTargetObject(chatController);
-        // PLAN-0326：记账已抽 LedgerToolRecorder（决策 #8），直接以其 record() 驱动。
-        com.cc01cc.p.xihe.cp.operation.LedgerToolRecorder recorder =
-                (com.cc01cc.p.xihe.cp.operation.LedgerToolRecorder) org.springframework.test.util.ReflectionTestUtils
-                        .getField(target, "ledgerToolRecorder");
+        // PLAN-0464 T2.2：记账组件只剩执行域 McpRelayToolRecorder，直接以其 record() 驱动。
+        com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder recorder =
+                (com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder) org.springframework.test.util.ReflectionTestUtils
+                        .getField(target, "mcpRelayToolRecorder");
         recorder.record("tool_result",
                 java.util.Map.of("tool", "shell", "result", "Tool error: cancelled",
                         "toolCallId", item.getToolCallId()),
                 run.getId().toString(), null,
-                com.cc01cc.p.xihe.cp.operation.LedgerToolRecorder.RunLedger.create());
+                com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder.RunState.create());
 
         assertEquals("running", operationService.findItem(item.getId().toString()).getStatus(),
                 "tool results after cancellation must not write terminal item facts");
@@ -658,6 +667,15 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private com.cc01cc.p.xihe.cp.service.RunCheckpointService runCheckpointService;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.McpInvocationRepository mcpInvocationRepository;
+
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.chat.ChatRunHistoryWriter historyWriter;
 
     @Autowired
     private com.cc01cc.p.xihe.cp.repository.OperationEventRepository operationEventRepository;

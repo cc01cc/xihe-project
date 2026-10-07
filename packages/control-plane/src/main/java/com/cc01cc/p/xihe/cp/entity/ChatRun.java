@@ -111,6 +111,19 @@ public class ChatRun {
     @Column(name = "lease_expires_at")
     private Instant leaseExpiresAt;
 
+    /**
+     * PLAN-0464 T2.1 (V50): the spawn waiting link lives on the child run row —
+     * which parent run it waits for and which parent tool call the wait belongs
+     * to. Nullable: pre-V50 rows are never backfilled (design 风险画像).
+     */
+    @Column(name = "waiting_on_run_id", columnDefinition = "uuid")
+    @Convert(converter = UuidStringConverter.class)
+    private String waitingOnRunId;
+
+    @Column(name = "waiting_tool_call_id", columnDefinition = "uuid")
+    @Convert(converter = UuidStringConverter.class)
+    private String waitingToolCallId;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -213,6 +226,10 @@ public class ChatRun {
     public void setLeaseOwner(String leaseOwner) { this.leaseOwner = leaseOwner; }
     public Instant getLeaseExpiresAt() { return leaseExpiresAt; }
     public void setLeaseExpiresAt(Instant leaseExpiresAt) { this.leaseExpiresAt = leaseExpiresAt; }
+    public String getWaitingOnRunId() { return waitingOnRunId; }
+    public void setWaitingOnRunId(String waitingOnRunId) { this.waitingOnRunId = waitingOnRunId; }
+    public String getWaitingToolCallId() { return waitingToolCallId; }
+    public void setWaitingToolCallId(String waitingToolCallId) { this.waitingToolCallId = waitingToolCallId; }
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }

@@ -64,7 +64,8 @@ public class JobReconciliationService {
         int orphaned = 0;
         int unreachable = 0;
         for (JobStateService.JobStateRef ref : candidates) {
-            if (ref.itemId() == null || ref.jobId() == null) {
+            // PLAN-0465：写入键 = domain jobId；post-0464 chat MCP 行 itemId 为 null 不再跳过。
+            if (ref.workspaceJobId() == null || ref.jobId() == null) {
                 continue;
             }
             RuntimeJobClient.JobStatusResult result =
@@ -77,11 +78,11 @@ public class JobReconciliationService {
                 Map<String, Object> incoming = new LinkedHashMap<>();
                 incoming.put("status", "orphaned");
                 incoming.put("cancelReason", "destroy_orphan");
-                jobStateService.upsert(ref.itemId(), incoming);
+                jobStateService.upsertById(ref.workspaceJobId(), incoming);
                 orphaned++;
                 continue;
             }
-            jobStateService.syncJobInfo(ref.itemId(), ref.workspaceId(), result.job());
+            jobStateService.syncJobInfoById(ref.workspaceJobId(), ref.workspaceId(), result.job());
             synced++;
         }
         logger.info("[LIFECYCLE] service=cp event=job_reconcile_completed candidates={} synced={} orphaned={} unreachable={} interrupted={}",

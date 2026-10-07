@@ -86,7 +86,6 @@ public class OperationService {
     private final OperationAttemptRepository attempts;
     private final OperationEventRepository events;
     private final OperationExtensionRepository extensions;
-    private final JobStateService jobStateService;
     private final WorkspaceService workspaceService;
     // PLAN-0346 T1.8: bounds FOR UPDATE / conditional UPDATE / unique-index
     // INSERT waits so a stuck writer cannot pin Hikari connections forever.
@@ -103,7 +102,6 @@ public class OperationService {
                             OperationEventRepository events,
                             OperationExtensionRepository extensions,
                             DbLockTimeout dbLockTimeout,
-                            JobStateService jobStateService,
                             WorkspaceService workspaceService) {
         this.operations = operations;
         this.items = items;
@@ -111,7 +109,6 @@ public class OperationService {
         this.events = events;
         this.extensions = extensions;
         this.dbLockTimeout = dbLockTimeout;
-        this.jobStateService = jobStateService;
         this.workspaceService = workspaceService;
     }
 
@@ -273,71 +270,12 @@ public class OperationService {
         return items.findById(UUID.fromString(itemId)).orElse(null);
     }
 
-    @Transactional(readOnly = true)
-    public List<Map<String, Object>> listWorkspaceJobs(String workspaceId) {
-        List<Map<String, Object>> result = new ArrayList<>();
-        for (LedgerOperation operation : operations
-                .findByWorkspaceIdAndKindOrderByCreatedAtDesc(workspaceId, "job")) {
-            for (OperationItem item : items.findByOperationIdOrderBySequenceAsc(operation.getId().toString())) {
-                if (!"job".equals(item.getKind())) {
-                    continue;
-                }
-                JobStateService.JobArchive archive = jobStateService.find(item.getId()).orElse(null);
-                if (archive == null) {
-                    continue;
-                }
-                result.add(buildJobView(operation, item, archive));
-            }
-        }
-        return result;
-    }
-
-    /** PLAN-0390：单个 Job projection（start 响应与 list 同形）。 */
-    @Transactional(readOnly = true)
-    public Map<String, Object> jobView(UUID itemId) {
-        if (itemId == null) {
-            return null;
-        }
-        OperationItem item = items.findById(itemId).orElse(null);
-        if (item == null) {
-            return null;
-        }
-        LedgerOperation operation = operations.findById(UUID.fromString(item.getOperationId())).orElse(null);
-        if (operation == null) {
-            return null;
-        }
-        JobStateService.JobArchive archive = jobStateService.find(itemId).orElse(null);
-        if (archive == null) {
-            return null;
-        }
-        return buildJobView(operation, item, archive);
-    }
-
-    private static Map<String, Object> buildJobView(LedgerOperation operation, OperationItem item,
-                                                    JobStateService.JobArchive archive) {
-        Map<String, Object> view = new LinkedHashMap<>();
-        view.put("operationId", operation.getId().toString());
-        view.put("operationItemId", item.getId().toString());
-        view.put("workspaceId", operation.getWorkspaceId());
-        view.put("sessionId", operation.getSessionId());
-        view.put("runId", operation.getRunId());
-        view.put("source", operation.getSource());
-        view.put("scope", archive.scope());
-        view.put("status", archive.status());
-        view.put("jobId", archive.jobId());
-        view.put("startedAt", archive.startedAt());
-        view.put("endedAt", archive.endedAt());
-        view.put("exitCode", archive.exitCode());
-        view.put("timeoutSecs", archive.timeoutSecs());
-        view.put("cancelReason", archive.cancelReason());
-        view.put("backendKind", archive.backendKind());
-        view.put("executionMode", archive.executionMode());
-        view.put("actorType", archive.actorType());
-        view.put("createdAt", archive.createdAt());
-        view.put("cleanupStatus", archive.cleanupStatus());
-        view.put("errorCode", archive.errorCode());
-        return view;
-    }
+    /**
+     * PLAN-0465 T1.2：Workspace Job 读投影迁至 `workspace_jobs`
+     * （`JobStateService.listView` / `wireView`）；listWorkspaceJobs / jobView
+     * / buildJobView 随之删除。旧 `/operations/items/{itemId}/job-*` 路由改由
+     * OperationController 直连 JobStateService 双读（至 0467）。
+     */
 
     /**
      * PLAN-0317 T2.9（决策 #14）：Runtime 追偿成功后记录的迟到终止事件。
@@ -568,53 +506,20 @@ public class OperationService {
     }
 
     /**
-     * PLAN-0390 M2：Workspace Job 的 durable root/item 创建（幂等）。
+     * PLAN-0465 T1.1/T2.1：legacy job root/item 的双写入口（供
+     * {@code WorkspaceJobStartService.insertJob} 调用；至 PLAN-0467 删除）。
      *
-     * <p>复用既有 `ledger_operations(kind=job)` → `operation_items(kind=job)`，
-     * 不新建平行 Job 表。`operationItemId` 即 canonical Job identity。
-     * 幂等键：session 绑定走既有 `(user, session, key)`；session-less
-     * （scope=run|workspace）走 V36 的 `(user, workspace, kind, key)` 部分唯一索引。
-     * 同 key 但 `inputHash` 不同 → 409 `JOB_IDEMPOTENCY_CONFLICT`。
+     * <p>**无独立事务**：由调用方（insertJob 的 REQUIRES_NEW）提供事务边界，
+     * legacy root/item 与 `workspace_jobs` 行原子提交——这是 0467 要观察的双写
+     * 一致性锚点。幂等不再在此处理：`workspace_jobs` 唯一索引是第一身份，
+     * legacy 唯一索引作第二道防线在同一事务内抛 {@code DataIntegrityViolation}，
+     * 由调用方整体回滚后重读赢家。写入保持 `kind=job`（V36 session-less 部分
+     * 唯一索引的既有约束域）。</p>
      */
-    public WorkspaceJobStart startWorkspaceJob(String userId, String workspaceId, String sessionId,
-                                               String runId, String source, String actorType,
-                                               String idempotencyKey, String inputHash,
-                                               String summary, String argumentsPreview) {
-        if (idempotencyKey == null || idempotencyKey.isBlank()) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "IDEMPOTENCY_KEY_REQUIRED",
-                    "Idempotency-Key is required to start a Workspace job");
-        }
-        // Fast path: a committed root with the same key is an idempotent replay.
-        WorkspaceJobStart replay = self().findWorkspaceJobForReplay(
-                userId, workspaceId, sessionId, idempotencyKey, inputHash);
-        if (replay != null) {
-            return replay;
-        }
-        try {
-            return self().insertWorkspaceJob(userId, workspaceId, sessionId, runId, source, actorType,
-                    idempotencyKey, inputHash, summary, argumentsPreview);
-        } catch (DataIntegrityViolationException e) {
-            // PLAN-0390：并发同 key 时唯一索引只允许一个赢家。这里**不在**失败的
-            // 事务里继续工作（返回会触发 UnexpectedRollbackException），而是让
-            // REQUIRES_NEW 的插入事务自行回滚后在本方法（无事务）重读赢家。
-            logger.warn("[LIFECYCLE] service=cp event=job_start_conflict workspaceId={} reason={}",
-                    workspaceId, e.getMessage());
-            WorkspaceJobStart winner = self().findWorkspaceJobForReplay(
-                    userId, workspaceId, sessionId, idempotencyKey, inputHash);
-            if (winner != null) {
-                return winner;
-            }
-            throw new CpApiException(HttpStatus.CONFLICT, "JOB_IDEMPOTENCY_CONFLICT",
-                    "A job with the same idempotency key already exists");
-        }
-    }
-
-    /** PLAN-0390：durable Job root/item 的实际插入（独立事务，冲突只回滚本事务）。 */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public WorkspaceJobStart insertWorkspaceJob(String userId, String workspaceId, String sessionId,
-                                                String runId, String source, String actorType,
-                                                String idempotencyKey, String inputHash,
-                                                String summary, String argumentsPreview) {
+    public WorkspaceJobStart persistLegacyJobRoot(String userId, String workspaceId, String sessionId,
+                                                   String runId, String source, String actorType,
+                                                   String idempotencyKey, String inputHash,
+                                                   String summary, String argumentsPreview) {
         dbLockTimeout.apply();
         LedgerOperation operation = new LedgerOperation();
         operation.setId(UUID.randomUUID());

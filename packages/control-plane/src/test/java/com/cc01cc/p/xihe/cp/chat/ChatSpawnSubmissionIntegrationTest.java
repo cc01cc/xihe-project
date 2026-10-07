@@ -171,16 +171,17 @@ class ChatSpawnSubmissionIntegrationTest extends AbstractIntegrationTest {
             executor.shutdownNow();
         }
 
+        // PLAN-0464 T1.1: the ChatRun row is the only durable root — the duplicate
+        // event replays onto the same Run (and the same user message) instead of
+        // racing a second operation root for `alreadyRecorded` XOR.
         assertEquals(first.run().getId(), second.run().getId());
-        assertEquals(first.operation().operationId(), second.operation().operationId());
-        assertTrue(first.operation().alreadyRecorded() ^ second.operation().alreadyRecorded());
-        ChatSubmissionService.Submission created = first.operation().alreadyRecorded() ? second : first;
+        assertEquals(first.userMessage().getId(), second.userMessage().getId());
+        ChatSubmissionService.Submission created = first;
         assertEquals(ChatRun.ORIGIN_SPAWN, created.run().getOrigin());
         assertEquals(spawnEvent.getId().toString(), created.run().getIdempotencyKey());
         assertTrue(List.of(childSession.getId().toString(), competingChildSession.getId().toString())
                 .contains(created.run().getSessionId()));
         assertEquals("child instruction", created.userMessage().getContent());
-        assertFalse(created.operation().alreadyRecorded());
 
         assertThrows(CpApiException.class, () -> submissionService.createSpawn(
                 spawnRequest(childSession, parentSession, parentRun, spawnEvent, "different child instruction")));

@@ -5,7 +5,6 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -44,7 +43,7 @@ class ApprovalServiceTest {
     private final ChatApprovalRepository approvals = mock(ChatApprovalRepository.class);
     private final ChatRunRepository runs = mock(ChatRunRepository.class);
     private final ApprovalAgentClient agent = mock(ApprovalAgentClient.class);
-    private final OperationService operationService = mock(OperationService.class);
+    private final ApprovalHistoryWriter historyWriter = mock(ApprovalHistoryWriter.class);
     private final ApprovalGrantWriter grantWriter = mock(ApprovalGrantWriter.class);
     private final AuditLogger audit = mock(AuditLogger.class);
     private final PolicyRevision policyRevision = mock(PolicyRevision.class);
@@ -58,7 +57,7 @@ class ApprovalServiceTest {
     private final AnswererChain answererChain = new AnswererChain(
             List.of(new UserAnswerer(), new AutoReviewAnswerer()));
     private final ApprovalService service = new ApprovalService(approvals, runs, agent, new ObjectMapper(),
-            operationService, grantWriter, audit, policySummary, pendingStore, sessionPolicyState,
+            historyWriter, grantWriter, audit, policySummary, pendingStore, sessionPolicyState,
             sessionApprovalMode, policyRevision, workspaceRepository, answererChain);
 
     private static final String TEST_RUN_ID = "11111111-1111-1111-1111-111111111111";
@@ -104,14 +103,14 @@ class ApprovalServiceTest {
 
     private ApprovalService serviceWith(ApprovalPolicySummary summary) {
         return new ApprovalService(approvals, runs, agent, new ObjectMapper(),
-                operationService, grantWriter, audit, summary,
+                historyWriter, grantWriter, audit, summary,
                 new ApprovalPendingStore(approvals, new ObjectMapper(), summary), sessionPolicyState,
                 sessionApprovalMode, policyRevision, workspaceRepository, answererChain);
     }
 
     private ApprovalService serviceWithAnswerers(ApprovalAnswerer... answerers) {
         return new ApprovalService(approvals, runs, agent, new ObjectMapper(),
-                operationService, grantWriter, audit, policySummary, pendingStore, sessionPolicyState,
+                historyWriter, grantWriter, audit, policySummary, pendingStore, sessionPolicyState,
                 sessionApprovalMode, policyRevision, workspaceRepository, new AnswererChain(List.of(answerers)));
     }
 
@@ -120,8 +119,6 @@ class ApprovalServiceTest {
         ChatRun run = runningRun();
         when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(run));
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.empty());
-        UUID operationId = UUID.randomUUID();
-        when(operationService.findOperationIdByRunId(TEST_RUN_ID)).thenReturn(operationId);
 
         service.recordPending(approvalPayload(TEST_SESSION),
                 TEST_SESSION, TEST_RUN_ID, TEST_USER, TEST_WORKSPACE);
@@ -131,8 +128,8 @@ class ApprovalServiceTest {
         assertEquals(TEST_REQUEST_ID, captor.getValue().getRequestId().toString());
         assertEquals("pending", captor.getValue().getState());
         assertEquals(TEST_USER, captor.getValue().getUserId());
-        verify(operationService).appendApprovalItem(eq(operationId), eq(TEST_REQUEST_ID),
-                eq("request_approval"), any());
+        verify(historyWriter).append(eq(UUID.fromString(TEST_REQUEST_ID)), any(), any(),
+                eq("requested"), any(), eq("pending"), any(), any(), any(), any());
     }
 
     @Test
@@ -152,7 +149,6 @@ class ApprovalServiceTest {
         when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(runningRun()));
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.empty());
         when(approvals.updatePolicySummary(any(), any(), any())).thenReturn(1);
-        when(operationService.findOperationIdByRunId(TEST_RUN_ID)).thenReturn(null);
         HashMap<String, Object> payload = new HashMap<>(approvalPayload(TEST_SESSION));
         payload.put("tool", "write_file");
         payload.put("details", "{\"tool\":\"write_file\",\"arguments\":{\"path\":\"secret.md\"}}");
@@ -241,7 +237,8 @@ class ApprovalServiceTest {
 
         assertEquals("accepted", response.get("status"));
         verify(approvals).markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), eq("once"), any());
-        verify(operationService).resolveApprovalItem(TEST_REQUEST_ID, true);
+        verify(historyWriter).append(eq(UUID.fromString(TEST_REQUEST_ID)), any(), any(),
+                eq("decided"), any(), eq("approved"), eq(true), any(), any(), any());
         verify(approvals, never()).saveAndFlush(any());
     }
 
@@ -298,7 +295,6 @@ class ApprovalServiceTest {
         assertEquals("accepted", response.get("status"));
         verify(runs).transition(eq(UUID.fromString(TEST_RUN_ID)), eq(List.of("awaiting_approval")),
                 eq("running"), any(), any(), any(), eq(0), eq(0));
-        verify(operationService).transitionOperationForRun(TEST_RUN_ID, "running", null, null);
     }
 
     @Test
@@ -319,7 +315,6 @@ class ApprovalServiceTest {
         assertEquals("accepted", response.get("status"));
         verify(runs).transition(eq(UUID.fromString(TEST_RUN_ID)), eq(List.of("awaiting_approval")),
                 eq("running"), any(), any(), any(), eq(0), eq(0));
-        verify(operationService).transitionOperationForRun(TEST_RUN_ID, "running", null, null);
     }
 
     @Test
@@ -334,7 +329,6 @@ class ApprovalServiceTest {
         assertEquals("APPROVAL_EXPIRED", error.getCode());
         verify(runs).transition(eq(UUID.fromString(TEST_RUN_ID)), eq(List.of("awaiting_approval")),
                 eq("running"), any(), any(), any(), eq(0), eq(0));
-        verify(operationService).transitionOperationForRun(TEST_RUN_ID, "running", null, null);
     }
 
     @Test
@@ -724,7 +718,6 @@ class ApprovalServiceTest {
         verify(approvals, never()).save(any());
         verify(runs).transition(eq(UUID.fromString(TEST_RUN_ID)), any(), eq("awaiting_approval"),
                 any(), any(), any(), eq(0), eq(0));
-        verify(operationService).transitionOperationForRun(TEST_RUN_ID, "waiting_for_approval", null, null);
     }
 
     @Test
@@ -733,7 +726,6 @@ class ApprovalServiceTest {
                 TEST_SESSION, "write_file", CANONICAL_VECTOR_HASH,
                 List.of("pending", "dispatching", "dispatch_unknown"))).thenReturn(List.of());
         when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(runningRun()));
-        when(operationService.findOperationIdByRunId(TEST_RUN_ID)).thenReturn(null);
 
         Optional<ApprovalService.GateApprovalOutcome> outcome = service.recordGatePending(
                 TEST_SESSION, TEST_RUN_ID, TEST_USER, TEST_WORKSPACE, "write_file", vectorMcpBody(),
@@ -752,7 +744,6 @@ class ApprovalServiceTest {
     void recordPendingStoresAgentArgumentsHash() {
         when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(runningRun()));
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.empty());
-        when(operationService.findOperationIdByRunId(TEST_RUN_ID)).thenReturn(null);
         HashMap<String, Object> payload = new HashMap<>(approvalPayload(TEST_SESSION));
         payload.put("argumentsHash", CANONICAL_VECTOR_HASH);
 
@@ -802,7 +793,8 @@ class ApprovalServiceTest {
         verify(approvals).markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), any(),
                 any(), any(), any(), any(Instant.class));
         verify(approvals).markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), eq("once"), any());
-        verify(operationService).resolveApprovalItem(TEST_REQUEST_ID, true);
+        verify(historyWriter).append(eq(UUID.fromString(TEST_REQUEST_ID)), any(), any(),
+                eq("decided"), any(), eq("approved"), eq(true), any(), any(), any());
     }
 
     @Test
@@ -846,7 +838,6 @@ class ApprovalServiceTest {
     void recordPendingAcceptsDetailsAtAgentPreviewBound() {
         when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(runningRun()));
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.empty());
-        when(operationService.findOperationIdByRunId(TEST_RUN_ID)).thenReturn(null);
         HashMap<String, Object> payload = new HashMap<>(approvalPayload(TEST_SESSION));
         payload.put("details", "x".repeat(512));
 
@@ -859,16 +850,14 @@ class ApprovalServiceTest {
     void recordPendingLedgerPreviewPreservesOriginalPayloadText() {
         when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(runningRun()));
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.empty());
-        UUID operationId = UUID.randomUUID();
-        when(operationService.findOperationIdByRunId(TEST_RUN_ID)).thenReturn(operationId);
         HashMap<String, Object> payload = new HashMap<>(approvalPayload(TEST_SESSION));
         payload.put("details", "Authorization: Bearer abc123tokenvalue");
 
         service.recordPending(payload, TEST_SESSION, TEST_RUN_ID, TEST_USER, TEST_WORKSPACE);
 
         ArgumentCaptor<String> preview = ArgumentCaptor.forClass(String.class);
-        verify(operationService).appendApprovalItem(eq(operationId), eq(TEST_REQUEST_ID),
-                eq("request_approval"), preview.capture());
+        verify(historyWriter).append(eq(UUID.fromString(TEST_REQUEST_ID)), any(), any(),
+                eq("requested"), any(), eq("pending"), any(), any(), any(), preview.capture());
         assertTrue(preview.getValue().contains("abc123tokenvalue"));
         assertFalse(preview.getValue().contains("***redacted***"));
     }
@@ -927,7 +916,6 @@ class ApprovalServiceTest {
     void recordPendingKeepsTheHumanPathAndAuditsTheUserAnswerer() {
         when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(runningRun()));
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.empty());
-        when(operationService.findOperationIdByRunId(TEST_RUN_ID)).thenReturn(null);
 
         ChatApproval row = service.recordPending(approvalPayload(TEST_SESSION),
                 TEST_SESSION, TEST_RUN_ID, TEST_USER, TEST_WORKSPACE);
@@ -943,7 +931,6 @@ class ApprovalServiceTest {
         ApprovalService noAnswererService = serviceWithAnswerers(new AutoReviewAnswerer());
         when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(runningRun()));
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.empty());
-        when(operationService.findOperationIdByRunId(TEST_RUN_ID)).thenReturn(null);
 
         ChatApproval row = noAnswererService.recordPending(approvalPayload(TEST_SESSION),
                 TEST_SESSION, TEST_RUN_ID, TEST_USER, TEST_WORKSPACE);
@@ -957,7 +944,8 @@ class ApprovalServiceTest {
         assertEquals("rejected", captor.getValue().getState());
         verify(audit).record(eq(TEST_SESSION), eq("request_approval"), eq("approval_answerer"),
                 eq("answerer=none outcome=unavailable decision=reject"));
-        verify(operationService).resolveApprovalItem(TEST_REQUEST_ID, false);
+        verify(historyWriter).append(eq(UUID.fromString(TEST_REQUEST_ID)), any(), any(),
+                eq("decided"), any(), eq("rejected"), eq(false), any(), any(), any());
         // T1.9: the blocked Agent waiter is notified exactly like a user rejection.
         verify(agent).respond(TEST_REQUEST_ID, false, "reject", "no answerer is available");
 
@@ -973,7 +961,6 @@ class ApprovalServiceTest {
         ApprovalService noAnswererService = serviceWithAnswerers(new AutoReviewAnswerer());
         when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(runningRun()));
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.empty());
-        when(operationService.findOperationIdByRunId(TEST_RUN_ID)).thenReturn(null);
         when(agent.respond(TEST_REQUEST_ID, false, "reject", "no answerer is available"))
                 .thenThrow(new CpApiException(HttpStatus.BAD_GATEWAY, "AGENT_UNAVAILABLE",
                         "Agent approval service is unavailable"));
@@ -995,7 +982,8 @@ class ApprovalServiceTest {
         assertEquals("rejected", row.getState());
         assertEquals("reject", row.getDecisionKind());
         assertEquals(Boolean.FALSE, row.getApproved());
-        verify(operationService).resolveApprovalItem(TEST_REQUEST_ID, false);
+        verify(historyWriter).append(eq(UUID.fromString(TEST_REQUEST_ID)), any(), any(),
+                eq("decided"), any(), eq("rejected"), eq(false), any(), any(), any());
         assertTrue(appender.list.stream()
                         .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
                         .anyMatch(message -> message.contains("approval_answerer_respond_failed")),
@@ -1008,7 +996,6 @@ class ApprovalServiceTest {
                 TEST_SESSION, "write_file", CANONICAL_VECTOR_HASH,
                 List.of("pending", "dispatching", "dispatch_unknown"))).thenReturn(List.of());
         when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(runningRun()));
-        when(operationService.findOperationIdByRunId(TEST_RUN_ID)).thenReturn(null);
 
         Optional<ApprovalService.GateApprovalOutcome> outcome = service.recordGatePending(
                 TEST_SESSION, TEST_RUN_ID, TEST_USER, TEST_WORKSPACE, "write_file", vectorMcpBody(),
@@ -1031,7 +1018,6 @@ class ApprovalServiceTest {
                 TEST_SESSION, "write_file", CANONICAL_VECTOR_HASH,
                 List.of("pending", "dispatching", "dispatch_unknown"))).thenReturn(List.of());
         when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(runningRun()));
-        when(operationService.findOperationIdByRunId(TEST_RUN_ID)).thenReturn(null);
 
         Optional<ApprovalService.GateApprovalOutcome> outcome = noAnswererService.recordGatePending(
                 TEST_SESSION, TEST_RUN_ID, TEST_USER, TEST_WORKSPACE, "write_file", vectorMcpBody(),
@@ -1041,7 +1027,6 @@ class ApprovalServiceTest {
         assertEquals("rejected", outcome.orElseThrow().row().getState());
         assertEquals("reject", outcome.orElseThrow().row().getDecisionKind());
         verify(runs, never()).transition(any(), any(), any(), any(), any(), any(), anyInt(), anyInt());
-        verify(operationService, never()).transitionOperationForRun(any(), any(), any(), any());
         verify(audit).record(eq(TEST_SESSION), eq("write_file"), eq("approval_answerer"),
                 eq("answerer=none outcome=unavailable decision=reject"));
         // T1.9: no card can ever be answered, so the gate reports a terminal rejection instead.

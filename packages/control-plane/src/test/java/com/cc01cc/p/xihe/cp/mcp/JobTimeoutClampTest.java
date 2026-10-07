@@ -93,7 +93,8 @@ class JobTimeoutClampTest {
                 configService,
                 new ToolTimeoutPolicy(),
                 new org.springframework.mock.env.MockEnvironment(),
-                agentSpawnExecutionService
+                agentSpawnExecutionService,
+                mock(com.cc01cc.p.xihe.cp.mcp.McpInvocationService.class)
         );
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 
@@ -104,7 +105,7 @@ class JobTimeoutClampTest {
                 anyString(), any(), any(), any()))
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ALLOW, null, PolicyLayer.BUILTIN,
                         "manual", "auto_allow"));
-        when(policyEngine.hasCurrentAgentToolCall(any(), any(), any(), any(), any(), any(), any())).thenReturn(true);
+        when(policyEngine.hasCurrentAgentToolCall(any(), any(), any(), any(), any(), any())).thenReturn(true);
         when(policyEngine.faceOf(any(PolicyContext.class), anyString()))
                 .thenReturn(new ToolFaceRegistry.Face("exec", ToolShape.STRUCTURED));
         when(requestRewriter.rewrite(anyString(), anyString(), anyString()))

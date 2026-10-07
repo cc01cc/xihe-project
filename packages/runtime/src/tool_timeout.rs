@@ -18,7 +18,16 @@ pub const HEADER_ORIGIN: &str = "x-xihe-tool-timeout-origin";
 /// 本模块 ENV 覆盖键（部署者本地上限）。
 pub const ENV_KEY: &str = "XIHE_EXEC_COLLECT_TIMEOUT_S";
 /// 关联键（spec S5.1）：CP 透传的 toolCallId / runId / requestId（同一工具调用跨三层可检索）。
-pub const HEADER_TOOL_CALL_ID: &str = "x-operation-item-id";
+///
+/// PLAN-0463 wire contract R2：`X-Tool-Call-Id` 是新的主关联键，`X-Operation-Item-Id`
+/// 是 0463 期间的兼容回退（两者取值相同，见 R1），0464 移除旧键。
+pub const HEADER_TOOL_CALL_ID: &str = "x-tool-call-id";
+/// Legacy correlation key kept until PLAN-0464 removes the `X-Operation-*` headers.
+pub const HEADER_TOOL_CALL_ID_LEGACY: &str = "x-operation-item-id";
+/// PLAN-0463：CP 在 gate 分配的 `mcp_invocations.id`，供迟到终止回报定位。
+pub const HEADER_INVOCATION_ID: &str = "x-mcp-invocation-id";
+/// PLAN-0463：Job 场景可选关联键（0463 仅透传解析，producer 随 0465 落地）。
+pub const HEADER_JOB_ID: &str = "x-job-id";
 pub const HEADER_RUN_ID: &str = "x-chat-run-id";
 pub const HEADER_REQUEST_ID: &str = "x-request-id";
 /// 出站头：CP 下发的单次工具返回字节上限（授权值；只由 CP 设置，见决策 #31 ②）。
@@ -64,6 +73,10 @@ pub struct Correlation {
     pub tool_call_id: Option<String>,
     pub run_id: Option<String>,
     pub request_id: Option<String>,
+    /// PLAN-0463：`X-Mcp-Invocation-Id`（迟到终止新 target）；无 gate 行时为空。
+    pub invocation_id: Option<String>,
+    /// PLAN-0463：`X-Job-Id`（job 场景关联，0463 无生产方）。
+    pub job_id: Option<String>,
 }
 
 impl Correlation {
@@ -79,11 +92,20 @@ impl Correlation {
         if let Some(id) = &self.request_id {
             out.push_str(&format!(" requestId={id}"));
         }
+        if let Some(id) = &self.invocation_id {
+            out.push_str(&format!(" invocationId={id}"));
+        }
+        if let Some(id) = &self.job_id {
+            out.push_str(&format!(" jobId={id}"));
+        }
         out
     }
 }
 
 /// 从请求头解析关联键（HTTP transport 经 Parts 注入；直连/单测缺失时全空）。
+///
+/// PLAN-0463 wire contract R2：`tool_call_id` 优先取 `X-Tool-Call-Id`，缺失时回退
+/// 旧键 `X-Operation-Item-Id`（0463 期间两键取值相同，取消链路键值不变）。
 pub fn correlation_from_headers(headers: &HeaderMap) -> Correlation {
     let value = |name: &str| {
         headers
@@ -94,9 +116,11 @@ pub fn correlation_from_headers(headers: &HeaderMap) -> Correlation {
             .map(str::to_string)
     };
     Correlation {
-        tool_call_id: value(HEADER_TOOL_CALL_ID),
+        tool_call_id: value(HEADER_TOOL_CALL_ID).or_else(|| value(HEADER_TOOL_CALL_ID_LEGACY)),
         run_id: value(HEADER_RUN_ID),
         request_id: value(HEADER_REQUEST_ID),
+        invocation_id: value(HEADER_INVOCATION_ID),
+        job_id: value(HEADER_JOB_ID),
     }
 }
 
@@ -402,14 +426,35 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(HEADER_TOOL_CALL_ID, "call-abc-123".parse().unwrap());
         headers.insert(HEADER_RUN_ID, "run-1".parse().unwrap());
+        headers.insert(HEADER_INVOCATION_ID, "inv-1".parse().unwrap());
+        headers.insert(HEADER_JOB_ID, "job-1".parse().unwrap());
         let correlation = correlation_from_headers(&headers);
         assert_eq!(correlation.tool_call_id.as_deref(), Some("call-abc-123"));
         assert_eq!(correlation.run_id.as_deref(), Some("run-1"));
         assert_eq!(correlation.request_id, None);
+        assert_eq!(correlation.invocation_id.as_deref(), Some("inv-1"));
+        assert_eq!(correlation.job_id.as_deref(), Some("job-1"));
         let rendered = correlation.render();
         assert!(rendered.contains("toolCallId=call-abc-123"), "{rendered}");
         assert!(rendered.contains("runId=run-1"), "{rendered}");
         assert!(!rendered.contains("requestId="), "{rendered}");
+        assert!(rendered.contains("invocationId=inv-1"), "{rendered}");
+        assert!(rendered.contains("jobId=job-1"), "{rendered}");
+    }
+
+    /// PLAN-0463 wire contract R2：新键缺失时回退旧键（0463 迁移期兼容）。
+    #[test]
+    fn correlation_falls_back_to_legacy_operation_item_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(HEADER_TOOL_CALL_ID_LEGACY, "call-legacy".parse().unwrap());
+        let correlation = correlation_from_headers(&headers);
+        assert_eq!(correlation.tool_call_id.as_deref(), Some("call-legacy"));
+        assert_eq!(correlation.invocation_id, None);
+
+        // 两键同时存在时新键优先（R2）。
+        headers.insert(HEADER_TOOL_CALL_ID, "call-new".parse().unwrap());
+        let both = correlation_from_headers(&headers);
+        assert_eq!(both.tool_call_id.as_deref(), Some("call-new"));
     }
 
     #[test]

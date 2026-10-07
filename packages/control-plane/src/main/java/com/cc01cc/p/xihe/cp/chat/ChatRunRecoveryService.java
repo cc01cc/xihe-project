@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
+import com.cc01cc.p.xihe.cp.entity.ChatRunHistory;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.service.RunCheckpointService;
@@ -14,6 +15,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Reconciles chat runs that were left in an active status when the previous CP
@@ -33,17 +35,20 @@ public class ChatRunRecoveryService {
     private final ChatApprovalRepository approvalRepository;
     private final ChatController chatController;
     private final ChatRunTerminalService terminalService;
+    private final ChatRunHistoryWriter historyWriter;
     private final RunCheckpointService runCheckpointService;
 
     public ChatRunRecoveryService(ChatRunRepository chatRunRepository,
                                   ChatApprovalRepository approvalRepository,
                                   ChatController chatController,
                                   ChatRunTerminalService terminalService,
+                                  ChatRunHistoryWriter historyWriter,
                                   RunCheckpointService runCheckpointService) {
         this.chatRunRepository = chatRunRepository;
         this.approvalRepository = approvalRepository;
         this.chatController = chatController;
         this.terminalService = terminalService;
+        this.historyWriter = historyWriter;
         this.runCheckpointService = runCheckpointService;
     }
 
@@ -62,8 +67,15 @@ public class ChatRunRecoveryService {
         for (ChatRun run : recoverable) {
             try {
                 if (hasLiveApproval(run)) {
+                    String fromStatus = run.getStatus();
                     run.setStatus("awaiting_approval");
                     chatRunRepository.save(run);
+                    // PLAN-0464 T1.3: the live-approval restore branch is one of
+                    // the four history writers (restore, not a terminal event).
+                    historyWriter.append(ChatRunHistory.EVENT_RESTORE,
+                            ChatRunHistory.SOURCE_RECOVERY, "system",
+                            run.getId(), UUID.fromString(run.getSessionId()), fromStatus,
+                            "awaiting_approval", null, null, null);
                     chatController.restoreActiveRun(run.getSessionId(), run.getId().toString());
                     restored++;
                     logger.info("[LIFECYCLE] service=cp event=chat_run_recovered runId={} sessionId={} status=awaiting_approval reason=live_approval",
@@ -74,7 +86,7 @@ public class ChatRunRecoveryService {
                                     List.of(run.getStatus()), "ambiguous", "ambiguous", "CP_RESTARTED",
                                     "Control plane restarted while the chat run was active",
                                     run.getTokenCount(), run.getAssistantChars(),
-                                    ChatRunTerminalService.LedgerMode.RECONCILIATION, List.of()));
+                                    ChatRunTerminalService.TerminalSource.RECONCILIATION, null));
                     if (result.committed()) {
                         ambiguous++;
                         logger.info("[LIFECYCLE] service=cp event=chat_run_recovered runId={} sessionId={} status=ambiguous errorCode=CP_RESTARTED",
@@ -119,7 +131,7 @@ public class ChatRunRecoveryService {
                         new ChatRunTerminalService.TerminalRequest(run.getId().toString(),
                                 List.of("cancelling"), "cancelled", "cancelled", null, null,
                                 run.getTokenCount(), run.getAssistantChars(),
-                                ChatRunTerminalService.LedgerMode.CANCELLATION, List.of()));
+                                ChatRunTerminalService.TerminalSource.CANCELLATION, null));
                 if (result.committed()) {
                     cancelled++;
                     logger.info("[LIFECYCLE] service=cp event=chat_run_recovered runId={} sessionId={} status=cancelled reason=restart_during_cancel",

@@ -25,6 +25,7 @@ class JobScopeClosureServiceTest {
     private JobScopeClosureService service;
 
     private final UUID itemId = UUID.randomUUID();
+    private final UUID rowId = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
@@ -41,7 +42,7 @@ class JobScopeClosureServiceTest {
 
     private void givenActive(String scope, String key, String jobId, String status) {
         when(jobStateService.findActiveForScope(scope, key))
-                .thenReturn(List.of(new JobStateService.ActiveJob(itemId, archive(jobId, scope, status))));
+                .thenReturn(List.of(new JobStateService.ActiveJob(rowId, itemId, archive(jobId, scope, status))));
     }
 
     @Test
@@ -54,7 +55,7 @@ class JobScopeClosureServiceTest {
 
         assertEquals(1, closed);
         ArgumentCaptor<Map> captor = ArgumentCaptor.forClass(Map.class);
-        verify(jobStateService).upsert(eq(itemId), captor.capture());
+        verify(jobStateService).upsertById(eq(rowId), captor.capture());
         assertEquals("cancelled", captor.getValue().get("status"));
         assertEquals(JobStateService.REASON_SCOPE_RUN_END, captor.getValue().get("cancelReason"));
         assertEquals("completed", captor.getValue().get("cleanupStatus"));
@@ -69,7 +70,7 @@ class JobScopeClosureServiceTest {
         assertEquals(1, service.closeSessionScope("session-1"));
 
         ArgumentCaptor<Map> captor = ArgumentCaptor.forClass(Map.class);
-        verify(jobStateService).upsert(eq(itemId), captor.capture());
+        verify(jobStateService).upsertById(eq(rowId), captor.capture());
         assertEquals("orphaned", captor.getValue().get("status"));
         assertEquals(JobStateService.REASON_JOB_MISSING, captor.getValue().get("cancelReason"));
     }
@@ -81,7 +82,7 @@ class JobScopeClosureServiceTest {
                 .thenReturn(new RuntimeJobClient.JobCancelResult(false, false, null));
 
         assertEquals(0, service.closeRunScope("run-2"));
-        verify(jobStateService, never()).upsert(eq(itemId), Mockito.anyMap());
+        verify(jobStateService, never()).upsertById(eq(rowId), Mockito.anyMap());
     }
 
     @Test
@@ -91,7 +92,7 @@ class JobScopeClosureServiceTest {
                 .thenReturn(new RuntimeJobClient.JobCancelResult(true, true, "failed"));
 
         assertEquals(0, service.closeRunScope("run-3"));
-        verify(jobStateService, never()).upsert(eq(itemId), Mockito.anyMap());
+        verify(jobStateService, never()).upsertById(eq(rowId), Mockito.anyMap());
     }
 
     @Test
@@ -101,7 +102,7 @@ class JobScopeClosureServiceTest {
         assertEquals(1, service.closeRunScope("run-4"));
         verify(runtimeJobClient, never()).cancelJob(Mockito.anyString(), Mockito.anyString());
         ArgumentCaptor<Map> captor = ArgumentCaptor.forClass(Map.class);
-        verify(jobStateService).upsert(eq(itemId), captor.capture());
+        verify(jobStateService).upsertById(eq(rowId), captor.capture());
         assertEquals("cancelled", captor.getValue().get("status"));
     }
 

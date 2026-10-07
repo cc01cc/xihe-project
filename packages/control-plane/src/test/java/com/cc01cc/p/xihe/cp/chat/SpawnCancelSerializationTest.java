@@ -55,6 +55,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -114,6 +115,9 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.repository.McpInvocationRepository mcpInvocationRepository;
+
+    @Autowired
     private PlatformTransactionManager transactionManager;
 
     private String userId;
@@ -122,6 +126,9 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
 
     @AfterEach
     void cleanFixtures() {
+        if (workspaceId != null) {
+            SpawnTestSupport.clearForWorkspace(mcpInvocationRepository, jdbcTemplate, workspaceId);
+        }
         TenantContext.clear();
         if (workspaceId != null) {
             deleteWorkspaceSessions();
@@ -173,11 +180,12 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
                 spawnDirect(parent.parentRunId, parent.toolCallId);
         assertNotNull(child.runId());
 
-        UUID childOperationId = operationService.findOperationIdByRunId(child.runId());
-        assertNotNull(childOperationId, "spawn run must have a durable operation");
+        // PLAN-0464 T1.1: the child run has no operation root any more.
+        assertNull(operationService.findOperationIdByRunId(child.runId()));
         String grandChildToolCallId = UUID.randomUUID().toString();
-        operationService.appendItem(childOperationId, grandChildToolCallId, null,
-                "tool_call", "spawn_agent", "agent", "{\"prompt\":\"grandchild\"}", null, null);
+        SpawnTestSupport.seedAgentInvocation(mcpInvocationRepository, child.sessionId(), child.runId(),
+                workspaceId, userId, grandChildToolCallId, "spawn_agent",
+                "{\"prompt\":\"grandchild\"}");
         ChatSubmissionService.SpawnResult grandChild =
                 spawnDirect(child.runId(), grandChildToolCallId);
         assertNotNull(grandChild.runId());
@@ -574,6 +582,9 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
         String toolCallId = UUID.randomUUID().toString();
         OperationItem item = operationService.appendItem(operation.operationId(), toolCallId, null,
                 "tool_call", toolName, "agent", argumentsPreview, null, null);
+        SpawnTestSupport.seedAgentInvocation(mcpInvocationRepository,
+                parentSession.getId().toString(), parentRunId, workspaceId, userId,
+                item.getToolCallId(), toolName, argumentsPreview);
         return new ParentFixture(parentSession.getId().toString(), parentRunId,
                 operation.operationId().toString(), item.getToolCallId());
     }

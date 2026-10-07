@@ -3,15 +3,18 @@ package com.cc01cc.p.xihe.cp.operation;
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
+import com.cc01cc.p.xihe.cp.chat.ChatRunTerminalService;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceJobHistory;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceJobHistoryRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeJobClient;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,6 +40,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -49,8 +53,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * PLAN-0390 M2 T2.2/T1.3/T2.3：Workspace Job start 的 durable 契约、幂等
- * （含并发同 key）、scope 收口触发与 Runtime 重启 interrupted 收口。
+ * PLAN-0390 M2 T2.2/T1.3/T2.3 + PLAN-0465 T1.1–T1.4：Workspace Job start 的 durable
+ * 契约（`workspace_jobs` 域）、幂等（含并发同 key）、scope 收口触发与 Runtime
+ * 重启 interrupted 收口；wire 以 domain jobId 为身份（decision #7）。
  */
 class WorkspaceJobStartIntegrationTest extends AbstractIntegrationTest {
 
@@ -62,6 +67,9 @@ class WorkspaceJobStartIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private JobStateService jobStateService;
+
+    @Autowired
+    private ChatRunTerminalService chatRunTerminalService;
 
     @Autowired
     private SessionRepository sessionRepository;
@@ -77,6 +85,9 @@ class WorkspaceJobStartIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private OperationItemRepository operationItems;
+
+    @Autowired
+    private WorkspaceJobHistoryRepository jobHistory;
 
     private String authToken;
     private String userId;
@@ -127,9 +138,9 @@ class WorkspaceJobStartIntegrationTest extends AbstractIntegrationTest {
                 HttpMethod.POST, new HttpEntity<>(body, headers(idempotencyKey)), Map.class);
     }
 
-    private void stubDispatch(String jobId) {
+    private void stubDispatch(String runtimeJobHandle) {
         when(runtimeJobClient.startJob(eq(workspaceId), anyString(), anyString(), any(), any(), any(), any()))
-                .thenReturn(new RuntimeJobClient.JobStartResult(true, true, false, jobId, null));
+                .thenReturn(new RuntimeJobClient.JobStartResult(true, true, false, runtimeJobHandle, null));
         when(runtimeJobClient.runtimeBootId()).thenReturn("boot-1");
     }
 
@@ -142,16 +153,19 @@ class WorkspaceJobStartIntegrationTest extends AbstractIntegrationTest {
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
         Map<?, ?> job = response.getBody();
         assertNotNull(job);
-        String itemId = (String) job.get("operationItemId");
-        assertNotNull(itemId);
+        // PLAN-0465 decision #7：wire 身份 = domain jobId；Runtime handle 落 runtimeJobId。
+        String jobId = (String) job.get("jobId");
+        assertNotNull(jobId);
         assertEquals("workspace", job.get("scope"));
         assertEquals("docker", job.get("backendKind"));
         assertEquals("docker", job.get("executionMode"));
         assertEquals("running", job.get("status"));
-        assertEquals("job-1", job.get("jobId"));
+        assertEquals("job-1", job.get("runtimeJobId"));
         assertNull(job.get("sessionId"));
+        assertNull(job.get("operationItemId"), "decision #7：响应不再出现 operationItemId");
 
-        JobStateService.JobArchive archive = jobStateService.find(UUID.fromString(itemId)).orElseThrow();
+        JobStateService.JobArchive archive =
+                jobStateService.findByJobId(UUID.fromString(jobId)).orElseThrow();
         assertEquals("running", archive.status());
         assertEquals("workspace", archive.scope());
         assertEquals("docker", archive.backendKind());
@@ -162,9 +176,10 @@ class WorkspaceJobStartIntegrationTest extends AbstractIntegrationTest {
         assertEquals("boot-1", archive.runtimeBootId());
         assertNotNull(archive.createdAt());
         assertEquals("job-1", archive.jobId());
+        assertNotNull(archive.itemId(), "dual-write 锚点必须存在（0467 前旧路由可寻址）");
 
-        List<Map<String, Object>> listed = operationService.listWorkspaceJobs(workspaceId);
-        assertTrue(listed.stream().anyMatch(row -> itemId.equals(row.get("operationItemId"))));
+        List<Map<String, Object>> listed = jobStateService.listView(workspaceId);
+        assertTrue(listed.stream().anyMatch(row -> jobId.equals(row.get("jobId"))));
     }
 
     @Test
@@ -176,8 +191,8 @@ class WorkspaceJobStartIntegrationTest extends AbstractIntegrationTest {
 
         assertEquals(HttpStatus.ACCEPTED, first.getStatusCode());
         assertEquals(HttpStatus.OK, second.getStatusCode());
-        assertEquals(first.getBody().get("operationItemId"), second.getBody().get("operationItemId"));
-        assertEquals("job-2", second.getBody().get("jobId"));
+        assertEquals(first.getBody().get("jobId"), second.getBody().get("jobId"));
+        assertEquals("job-2", second.getBody().get("runtimeJobId"));
         verify(runtimeJobClient, times(1))
                 .startJob(eq(workspaceId), anyString(), anyString(), any(), any(), any(), any());
     }
@@ -214,7 +229,7 @@ class WorkspaceJobStartIntegrationTest extends AbstractIntegrationTest {
         ResponseEntity<Map> response = postStart("key-5", body("echo", "workspace"));
 
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
-        assertEquals("host-job", response.getBody().get("jobId"));
+        assertEquals("host-job", response.getBody().get("runtimeJobId"));
         verify(runtimeJobClient).startJob(eq(workspaceId), anyString(), anyString(), any(), any(), any(), any());
     }
 
@@ -228,7 +243,7 @@ class WorkspaceJobStartIntegrationTest extends AbstractIntegrationTest {
         ResponseEntity<Map> response = postStart("key-5-mxc", body("echo", "workspace"));
 
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
-        assertEquals("mxc-job", response.getBody().get("jobId"));
+        assertEquals("mxc-job", response.getBody().get("runtimeJobId"));
         verify(runtimeJobClient).startJob(eq(workspaceId), anyString(), anyString(), any(), any(), any(), any());
     }
 
@@ -248,7 +263,7 @@ class WorkspaceJobStartIntegrationTest extends AbstractIntegrationTest {
         assertEquals(HttpStatus.NOT_IMPLEMENTED, error.getStatusCode());
         assertTrue(error.getResponseBodyAsString().contains("JOB_BACKEND_LAUNCH_PENDING"));
         verify(runtimeJobClient, times(1)).startJob(any(), any(), any(), any(), any(), any(), any());
-        assertEquals("interrupted", operationService.listWorkspaceJobs(workspaceId).get(0).get("status"));
+        assertEquals("interrupted", jobStateService.listView(workspaceId).get(0).get("status"));
     }
 
     @Test
@@ -262,7 +277,7 @@ class WorkspaceJobStartIntegrationTest extends AbstractIntegrationTest {
 
         assertEquals(HttpStatus.BAD_GATEWAY, error.getStatusCode());
         assertTrue(error.getResponseBodyAsString().contains("RUNTIME_UNAVAILABLE"));
-        List<Map<String, Object>> listed = operationService.listWorkspaceJobs(workspaceId);
+        List<Map<String, Object>> listed = jobStateService.listView(workspaceId);
         assertEquals(1, listed.size());
         assertEquals("interrupted", listed.get(0).get("status"));
         assertEquals("RUNTIME_UNAVAILABLE", listed.get(0).get("errorCode"));
@@ -286,12 +301,31 @@ class WorkspaceJobStartIntegrationTest extends AbstractIntegrationTest {
             ResponseEntity<Map> first = a.get(30, TimeUnit.SECONDS);
             ResponseEntity<Map> second = b.get(30, TimeUnit.SECONDS);
 
-            assertEquals(first.getBody().get("operationItemId"), second.getBody().get("operationItemId"));
-            List<Map<String, Object>> listed = operationService.listWorkspaceJobs(workspaceId);
+            assertEquals(first.getBody().get("jobId"), second.getBody().get("jobId"));
+            List<Map<String, Object>> listed = jobStateService.listView(workspaceId);
             assertEquals(1, listed.size(), "concurrent same-key start must yield one durable Job");
         } finally {
             pool.shutdownNow();
         }
+    }
+
+    @Test
+    void startWritesDomainHistoryStartAndRunning() {
+        stubDispatch("job-hist");
+
+        ResponseEntity<Map> response = postStart("key-hist", body("echo", "workspace"));
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        UUID jobId = UUID.fromString((String) response.getBody().get("jobId"));
+
+        List<WorkspaceJobHistory> history = jobHistory.findByJobIdOrderBySequenceAsc(jobId);
+        assertEquals(2, history.size(), "start + running 两条 transition history");
+        assertEquals(WorkspaceJobHistory.EVENT_START, history.get(0).getEventType());
+        assertNull(history.get(0).getFromStatus());
+        assertEquals(JobStateService.STATUS_PENDING, history.get(0).getToStatus());
+        assertEquals(WorkspaceJobHistory.EVENT_RUNNING, history.get(1).getEventType());
+        assertEquals(JobStateService.STATUS_PENDING, history.get(1).getFromStatus());
+        assertEquals(JobStateService.STATUS_RUNNING, history.get(1).getToStatus());
+        assertEquals(2L, history.get(1).getSequence());
     }
 
     @Test
@@ -321,6 +355,52 @@ class WorkspaceJobStartIntegrationTest extends AbstractIntegrationTest {
         assertEquals(JobStateService.REASON_SCOPE_RUN_END, archive.cancelReason());
     }
 
+    /**
+     * PLAN-0465 T1.4（0464 review P0 回归断言）：ChatRun 终态的 after-commit 触发器
+     * 必须把本 Run 的 active Job 收口在 **`workspace_jobs`** 上，且收口后
+     * `hasRunningForWorkspace` 门（WORKSPACE_BUSY / 删除阻塞）解除。
+     */
+    @Test
+    void chatRunTerminalClosesRunScopedJobOnWorkspaceJobsAndUnblocksWorkspace() throws Exception {
+        String runId = UUID.randomUUID().toString();
+        chatRunRepository.save(new ChatRun(runId, sessionId, userId, workspaceId,
+                "idem-" + UUID.randomUUID(), "hash", "openai", "gpt-test", "none", "running"));
+        UUID operationId = operationService.startOperation(userId, sessionId, workspaceId, runId, null,
+                "chat", "ui", "user", userId, "run-term-" + UUID.randomUUID(), "run terminal").operationId();
+        OperationItem item = operationService.appendItem(operationId, UUID.randomUUID().toString(),
+                null, "job", null, "system", null, null, null);
+        Map<String, Object> incoming = new LinkedHashMap<>();
+        incoming.put("workspaceId", workspaceId);
+        incoming.put("scope", "run");
+        incoming.put("runId", runId);
+        incoming.put("sessionId", sessionId);
+        incoming.put("jobId", "job-run-term-1");
+        incoming.put("status", "running");
+        jobStateService.upsert(item.getId(), incoming);
+        when(runtimeJobClient.cancelJob(workspaceId, "job-run-term-1"))
+                .thenReturn(new RuntimeJobClient.JobCancelResult(true, true, "cancelled"));
+
+        assertTrue(jobStateService.hasRunningForWorkspace(workspaceId),
+                "run-scope active Job 先占住 workspace 保护门");
+
+        ChatRunTerminalService.TerminalResult result = chatRunTerminalService.terminalize(
+                new ChatRunTerminalService.TerminalRequest(runId, List.of("running"),
+                        "succeeded", "success", null, null, 0, 0,
+                        ChatRunTerminalService.TerminalSource.STREAM, null));
+        assertTrue(result.committed());
+
+        JobStateService.JobArchive archive = jobStateService.find(item.getId()).orElseThrow();
+        assertEquals("cancelled", archive.status(), "Run 终态必须收口本 Run 的 run-scope Job");
+        assertEquals(JobStateService.REASON_SCOPE_RUN_END, archive.cancelReason());
+        // 收口落在新表上（触发器行为回归断言，0464 接线 + 0465 换表）。
+        List<Map<String, Object>> listed = jobStateService.listView(workspaceId);
+        assertEquals(1, listed.size());
+        assertEquals("cancelled", listed.get(0).get("status"));
+        assertFalse(jobStateService.hasRunningForWorkspace(workspaceId),
+                "收口后 Workspace 不再被 active Job 阻塞（hasRunningForWorkspace 门解除）");
+        verify(runtimeJobClient).cancelJob(workspaceId, "job-run-term-1");
+    }
+
     @Test
     void sessionDeleteClosesSessionScopedJobBeforeCascade() throws Exception {
         UUID operationId = operationService.startOperation(userId, sessionId, workspaceId, null, null,
@@ -342,7 +422,8 @@ class WorkspaceJobStartIntegrationTest extends AbstractIntegrationTest {
                 new HttpEntity<>(headers(null)), Void.class);
 
         verify(runtimeJobClient).cancelJob(workspaceId, "job-session-1");
-        // session 级联删除后 durable 行随之消失：会话级 Job 不得跨 Session 存活。
+        // session 级联删除后 durable 行随之消失：会话级 Job 不得跨 Session 存活
+        // （workspace_jobs.session_id FK ON DELETE CASCADE）。
         assertTrue(jobStateService.find(item.getId()).isEmpty());
     }
 

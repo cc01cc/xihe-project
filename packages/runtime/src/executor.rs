@@ -41,6 +41,8 @@ struct InFlightEntry {
     /// PLAN-0317 T2.9: 未确认终止的条目保留在注册表，供追偿重试；上限后放弃。
     retain_unconfirmed: bool,
     retry_attempts: u32,
+    /// PLAN-0463：CP 在 gate 分配的 invocation id（迟到终止新 target）；可空。
+    invocation_id: Option<String>,
 }
 
 /// PLAN-0317 T2.9（决策 #14）：追偿成功（或确认执行已结束）的迟到终止，
@@ -50,6 +52,9 @@ pub struct LateTermination {
     pub item_id: String,
     pub workspace_id: String,
     pub confirmed: bool,
+    /// PLAN-0463：优先走 `/internal/v1/mcp/invocations/{id}/late-termination`；
+    /// 缺失（调用方未携带 `X-Mcp-Invocation-Id`）时回落旧 itemId 路由。
+    pub invocation_id: Option<String>,
 }
 
 /// 追偿重试上限：超过后放弃并告警（交由容器生命周期兜底）。
@@ -83,6 +88,17 @@ impl InFlightExecutions {
     /// cancel request arrives for the same `item_id`; the exec task reports its
     /// outcome through the returned watch sender.
     pub fn register(&self, workspace_id: &str, item_id: &str) -> ExecutionRegistration {
+        self.register_with_invocation(workspace_id, item_id, None)
+    }
+
+    /// PLAN-0463: same registration plus the CP-assigned invocation id, carried
+    /// into the late-termination report so CP can resolve the new target.
+    pub fn register_with_invocation(
+        &self,
+        workspace_id: &str,
+        item_id: &str,
+        invocation_id: Option<String>,
+    ) -> ExecutionRegistration {
         let token = CancellationToken::new();
         let (outcome, _rx) = tokio::sync::watch::channel(None);
         let mut map = self.inner.lock().expect("in-flight registry poisoned");
@@ -99,6 +115,7 @@ impl InFlightExecutions {
                 outcome: outcome.clone(),
                 retain_unconfirmed: false,
                 retry_attempts: 0,
+                invocation_id,
             },
         ) {
             previous.token.cancel();
@@ -191,12 +208,22 @@ impl InFlightExecutions {
             .count()
     }
 
+    /// PLAN-0463：注册条目携带的 invocation id（迟到终止新 target 的来源）。
+    /// 纯读取，不做容器探测。
+    pub fn invocation_id_for(&self, item_id: &str) -> Option<String> {
+        self.inner
+            .lock()
+            .expect("in-flight registry poisoned")
+            .get(item_id)
+            .and_then(|entry| entry.invocation_id.clone())
+    }
+
     /// PLAN-0317 T2.9（决策 #14）：对未确认终止的保留条目做追偿——通过
     /// `inspect_exec` 判定原执行是否仍在运行：
     ///   * 已结束（或 exec 已消失）→ 视为迟到终止成功，回调 CP；
     ///   * 仍运行 → 计数重试；超过上限则放弃并告警（交由容器生命周期兜底）。
     pub async fn retry_unconfirmed(&self, docker: &Docker) -> Vec<LateTermination> {
-        let candidates: Vec<(String, String, String, u32)> = {
+        let candidates: Vec<(String, String, String, u32, Option<String>)> = {
             let map = self.inner.lock().expect("in-flight registry poisoned");
             map.iter()
                 .filter(|(_, entry)| entry.retain_unconfirmed)
@@ -207,13 +234,14 @@ impl InFlightExecutions {
                             entry.workspace_id.clone(),
                             exec_id.clone(),
                             entry.retry_attempts,
+                            entry.invocation_id.clone(),
                         )
                     })
                 })
                 .collect()
         };
         let mut late = Vec::new();
-        for (item_id, workspace_id, exec_id, attempts) in candidates {
+        for (item_id, workspace_id, exec_id, attempts, invocation_id) in candidates {
             let still_running = match docker.inspect_exec(&exec_id).await {
                 Ok(info) => info.running.unwrap_or(false),
                 Err(error) => {
@@ -264,6 +292,7 @@ impl InFlightExecutions {
                 item_id,
                 workspace_id,
                 confirmed: true,
+                invocation_id,
             });
         }
         late
@@ -1046,12 +1075,18 @@ impl WorkspaceExecutionRouter {
     ) -> Result<Value> {
         let container_name = Self::container_name(workspace_id);
         let request_id = uuid::Uuid::new_v4().to_string();
-        // PLAN-0317 T2.1/T2.2: register the execution under the CP-provided
-        // operationItemId so a cancel request can address this exact run. The
-        // guard removes the entry on every exit path.
+        // PLAN-0317 T2.1/T2.2 + PLAN-0463 wire contract: register the execution
+        // under the CP-provided tool-call correlation key (now `X-Tool-Call-Id`,
+        // falling back to `X-Operation-Item-Id` — same value during 0463) so a
+        // cancel request can address this exact run. The guard removes the
+        // entry on every exit path.
         let correlation = tool_timeout::current_correlation();
         let in_flight_state = correlation.tool_call_id.as_deref().map(|item_id| {
-            let registration = self.in_flight.register(workspace_id, item_id);
+            let registration = self.in_flight.register_with_invocation(
+                workspace_id,
+                item_id,
+                correlation.invocation_id.clone(),
+            );
             InFlightState {
                 item_id: item_id.to_string(),
                 token: registration.token.clone(),
@@ -1800,6 +1835,36 @@ mod in_flight_tests {
             "another workspace must not be able to cancel this execution"
         );
         assert!(!registration.token.is_cancelled());
+    }
+
+    /// PLAN-0463 T2.3：取消键值不变（toolCallId），条目额外携带 invocation id
+    /// 作为迟到终止新 target；`register` 旧签名保持兼容（0463 迁移期）。
+    #[test]
+    fn in_flight_key_stays_tool_call_id_and_carries_invocation_id() {
+        let registry = InFlightExecutions::new();
+        let registration =
+            registry.register_with_invocation("ws-1", "tool-call-1", Some("inv-1".to_string()));
+
+        assert_eq!(
+            registry.invocation_id_for("tool-call-1").as_deref(),
+            Some("inv-1")
+        );
+        assert!(
+            registry
+                .request_termination("ws-1", "tool-call-1")
+                .is_some(),
+            "the cancel key is still the canonical toolCallId"
+        );
+        assert!(registration.token.is_cancelled());
+        assert_eq!(
+            registry.invocation_id_for("missing"),
+            None,
+            "unknown keys carry no invocation id"
+        );
+
+        // 旧签名注册的条目没有 invocation id（兼容回退路径）。
+        registry.register("ws-1", "legacy-tool-call");
+        assert_eq!(registry.invocation_id_for("legacy-tool-call"), None);
     }
 
     /// PLAN-0379 T3.5：模式切换按 Workspace 取消全部在飞执行；其它

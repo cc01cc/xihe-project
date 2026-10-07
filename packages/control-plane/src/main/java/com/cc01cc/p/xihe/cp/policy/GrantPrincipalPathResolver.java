@@ -1,22 +1,16 @@
 package com.cc01cc.p.xihe.cp.policy;
 
-import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
-import com.cc01cc.p.xihe.cp.entity.LedgerOperation;
-import com.cc01cc.p.xihe.cp.entity.OperationItem;
+import com.cc01cc.p.xihe.cp.entity.McpInvocation;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
-import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
-import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
+import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import org.springframework.stereotype.Component;
-import org.springframework.dao.PessimisticLockingFailureException;
-import org.springframework.dao.QueryTimeoutException;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -24,7 +18,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.locks.LockSupport;
 
 /** Resolves stable principal identities for one tool-call authorization snapshot. */
 @Component
@@ -32,25 +25,17 @@ public class GrantPrincipalPathResolver {
 
     public static final String USER = "user";
     public static final String AGENT_PRINCIPAL = "agent_principal";
-    private static final Duration TOOL_CALL_ITEM_WAIT_LIMIT = Duration.ofSeconds(1);
-    private static final Duration TOOL_CALL_ITEM_POLL_INTERVAL = Duration.ofMillis(20);
 
     private final SessionRepository sessionRepository;
     private final ChatRunRepository chatRunRepository;
-    private final LedgerOperationRepository operationRepository;
-    private final OperationItemRepository operationItemRepository;
-    private final DbLockTimeout dbLockTimeout;
+    private final McpInvocationRepository mcpInvocationRepository;
 
     public GrantPrincipalPathResolver(SessionRepository sessionRepository,
                                       ChatRunRepository chatRunRepository,
-                                      LedgerOperationRepository operationRepository,
-                                      OperationItemRepository operationItemRepository,
-                                      DbLockTimeout dbLockTimeout) {
+                                      McpInvocationRepository mcpInvocationRepository) {
         this.sessionRepository = sessionRepository;
         this.chatRunRepository = chatRunRepository;
-        this.operationRepository = operationRepository;
-        this.operationItemRepository = operationItemRepository;
-        this.dbLockTimeout = dbLockTimeout;
+        this.mcpInvocationRepository = mcpInvocationRepository;
     }
 
     public AgentPath resolveAgent(String userId, String workspaceId, String sessionId) {
@@ -128,17 +113,33 @@ public class GrantPrincipalPathResolver {
         return new AgentPath(agentPrincipalId, List.copyOf(reverseSessionPath));
     }
 
-    /** Revalidates the existing Agent correlation keys against the current durable tool call. */
+    /**
+     * PLAN-0463 T1.3 → PLAN-0464 T2.2 (sole path): validate one Agent tool call
+     * against the MCP execution domain — {@code ChatRun lease + invocation
+     * active + scope}. Empty means no invocation row governs this
+     * {@code (runId, toolCallId)} yet and the caller fails closed; when an
+     * invocation <em>does</em> exist its verdict is final.
+     */
     @Transactional(readOnly = true, isolation = Isolation.READ_COMMITTED, propagation = Propagation.REQUIRES_NEW)
-    public void validateAgentToolCallContext(String userId, String workspaceId, String sessionId,
-                                             String runId, String operationId, String toolCallId,
-                                             String toolName) {
+    public Optional<Boolean> validateAgentInvocationContext(String userId, String workspaceId,
+                                                            String sessionId, String runId,
+                                                            String toolCallId, String toolName) {
+        UUID runUuid = parseOptionalUuid(runId);
+        UUID toolCallUuid = parseOptionalUuid(toolCallId);
+        if (runUuid == null || toolCallUuid == null) {
+            return Optional.empty();
+        }
+        McpInvocation invocation = mcpInvocationRepository
+                .findByRunIdAndToolCallIdAndSource(runUuid.toString(), toolCallUuid.toString(),
+                        McpInvocation.SOURCE_AGENT)
+                .orElse(null);
+        if (invocation == null) {
+            return Optional.empty();
+        }
+
         UUID userUuid = parseUuid(userId);
         UUID workspaceUuid = parseUuid(workspaceId);
         UUID sessionUuid = parseUuid(sessionId);
-        UUID runUuid = parseUuid(runId);
-        UUID operationUuid = parseUuid(operationId);
-        UUID toolCallUuid = parseUuid(toolCallId);
 
         ChatRun run = chatRunRepository.findById(runUuid)
                 .orElseThrow(GrantPrincipalPathResolver::invalidPath);
@@ -148,61 +149,17 @@ public class GrantPrincipalPathResolver {
                 || !workspaceUuid.equals(parseUuid(run.getWorkspaceId()))) {
             throw invalidPath();
         }
-
-        LedgerOperation operation = operationRepository.findById(operationUuid)
-                .orElseThrow(GrantPrincipalPathResolver::invalidPath);
-        if (!runUuid.equals(parseUuid(operation.getRunId()))
-                || !sessionUuid.equals(parseUuid(operation.getSessionId()))
-                || !userUuid.equals(parseUuid(operation.getUserId()))
-                || !workspaceUuid.equals(parseUuid(operation.getWorkspaceId()))
-                || operation.getFinishedAt() != null) {
-            throw invalidPath();
-        }
-
-        OperationItem item = findAgentToolCallItem(operationUuid, toolCallUuid);
-        if (!"tool_call".equals(item.getKind())
-                || !toolName.equals(item.getToolName())
-                || item.getFinishedAt() != null
-                || !Set.of("pending", "running", "waiting_for_approval", "resolving")
-                        .contains(item.getStatus())) {
+        if (!McpInvocation.STATUS_ACTIVE.equals(invocation.getStatus())
+                || !sessionUuid.equals(parseUuid(invocation.getSessionId()))
+                || !userUuid.equals(parseUuid(invocation.getUserId()))
+                || !workspaceUuid.equals(parseUuid(invocation.getWorkspaceId()))
+                || !runUuid.equals(parseUuid(invocation.getRunId()))
+                || (toolName != null && !toolName.equals(invocation.getToolName()))) {
             throw invalidPath();
         }
 
         resolveAgent(userId, workspaceId, sessionId);
-    }
-
-    private OperationItem findAgentToolCallItem(UUID operationId, UUID toolCallId) {
-        long deadline = System.nanoTime() + TOOL_CALL_ITEM_WAIT_LIMIT.toNanos();
-        while (true) {
-            long remaining = deadline - System.nanoTime();
-            if (remaining <= 0 || Thread.currentThread().isInterrupted()) {
-                throw invalidToolCallDeadline();
-            }
-            long queryTimeoutMs = Math.max(1, (remaining + 999_999L) / 1_000_000L);
-            Optional<OperationItem> item;
-            try {
-                dbLockTimeout.applyBounded(queryTimeoutMs);
-                item = operationItemRepository.findByOperationIdAndSourceAndToolCallId(
-                        operationId.toString(), "agent", toolCallId.toString());
-            } catch (PessimisticLockingFailureException | QueryTimeoutException e) {
-                throw invalidToolCallDeadline();
-            }
-            if (System.nanoTime() >= deadline || Thread.currentThread().isInterrupted()) {
-                throw invalidToolCallDeadline();
-            }
-            if (item.isPresent()) {
-                return item.get();
-            }
-            remaining = deadline - System.nanoTime();
-            if (remaining <= 0) {
-                throw invalidToolCallDeadline();
-            }
-            LockSupport.parkNanos(Math.min(TOOL_CALL_ITEM_POLL_INTERVAL.toNanos(), remaining));
-        }
-    }
-
-    private static IllegalArgumentException invalidToolCallDeadline() {
-        return new IllegalArgumentException("Agent ToolCall was not persisted before the bounded CP deadline");
+        return Optional.of(Boolean.TRUE);
     }
 
     private static UUID parseUuid(String value) {
@@ -210,6 +167,18 @@ public class GrantPrincipalPathResolver {
             return UUID.fromString(value);
         } catch (RuntimeException e) {
             throw invalidPath();
+        }
+    }
+
+    /** Absent/unparsable correlation key ⇒ {@code null} (no invocation context). */
+    private static UUID parseOptionalUuid(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value.trim());
+        } catch (RuntimeException e) {
+            return null;
         }
     }
 

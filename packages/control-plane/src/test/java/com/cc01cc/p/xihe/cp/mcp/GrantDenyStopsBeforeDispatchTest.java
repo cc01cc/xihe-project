@@ -84,7 +84,8 @@ class GrantDenyStopsBeforeDispatchTest {
                 mock(com.cc01cc.p.xihe.cp.config.ConfigService.class),
                 new ToolTimeoutPolicy(),
                 new org.springframework.mock.env.MockEnvironment(),
-                mock(AgentSpawnExecutionService.class));
+                mock(AgentSpawnExecutionService.class),
+                mock(com.cc01cc.p.xihe.cp.mcp.McpInvocationService.class));
         ReflectionTestUtils.setField(controller, "sessionIdHmacSecret", "test-only-key");
 
         runtimeStub = com.sun.net.httpserver.HttpServer.create(
