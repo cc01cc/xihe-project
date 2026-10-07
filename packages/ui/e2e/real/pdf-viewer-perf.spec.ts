@@ -1,44 +1,48 @@
-import { generateE2EPassword } from './helpers/password'
+import { generateE2EPassword } from "./helpers/password";
 
-const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
-import { test, expect } from '@playwright/test'
-import fs from 'fs'
-import path from 'path'
-import { fileURLToPath } from 'url'
+const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
+import { test, expect } from "@playwright/test";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
-const REAL_PDF = path.resolve(__dirname, '../assets/sample.pdf')
+const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
+const REAL_PDF = path.resolve(__dirname, "../assets/sample.pdf");
 
-test.describe.configure({ retries: 2 })
+test.describe.configure({ retries: 2 });
 
-test.describe('PdfViewer — Performance Benchmark', () => {
-  let authToken = ''
+test.describe("PdfViewer — Performance Benchmark", () => {
+    let authToken = "";
 
-  test.beforeAll(async ({ request }) => {
-    expect(fs.existsSync(REAL_PDF)).toBeTruthy()
-    const r = await request.post(`${CP_URL}/api/v1/auth/register`, {
-      data: { email: `perf-${Date.now()}@test.com`, password: SHARED_PASSWORD, name: 'PerfTest' },
-    })
-    expect(r.ok()).toBeTruthy()
-    const body = await r.json()
-    authToken = body.accessToken
-  })
+    test.beforeAll(async ({ request }) => {
+        expect(fs.existsSync(REAL_PDF)).toBeTruthy();
+        const r = await request.post(`${CP_URL}/api/v1/auth/register`, {
+            data: {
+                email: `perf-${Date.now()}@test.com`,
+                password: SHARED_PASSWORD,
+                name: "PerfTest",
+            },
+        });
+        expect(r.ok()).toBeTruthy();
+        const body = await r.json();
+        authToken = body.accessToken;
+    });
 
-  test.beforeEach(async ({ page }) => {
-    await page.addInitScript((t) => {
-      localStorage.setItem('xihe-token', t)
-    }, authToken)
-    await page.goto('/workspace')
-    await page.waitForLoadState('load')
-  })
+    test.beforeEach(async ({ page }) => {
+        await page.addInitScript((t) => {
+            localStorage.setItem("xihe-token", t);
+        }, authToken);
+        await page.goto("/workspace");
+        await page.waitForLoadState("load");
+    });
 
-  test('首页渲染 < 750ms (500ms × 1.5 tolerance)', async ({ page }) => {
-    const b64 = fs.readFileSync(REAL_PDF).toString('base64')
+    test("首页渲染 < 750ms (500ms × 1.5 tolerance)", async ({ page }) => {
+        const b64 = fs.readFileSync(REAL_PDF).toString("base64");
 
-    const renderTime = await page.evaluate(`(async () => {
+        const renderTime = await page.evaluate(`(async () => {
       const pdfjsLib = await import('/node_modules/pdfjs-dist/build/pdf.min.mjs')
       pdfjsLib.GlobalWorkerOptions.workerSrc = '/node_modules/pdfjs-dist/build/pdf.worker.min.mjs'
       const base64Data = ${JSON.stringify(b64)}
@@ -59,19 +63,19 @@ test.describe('PdfViewer — Performance Benchmark', () => {
 
       const measure = performance.measure('pdf-render', 'pdf-render-start', 'pdf-render-end')
       return measure.duration
-    })()`)
+    })()`);
 
-    test.info().annotations.push({
-      type: 'benchmark',
-      description: `首页渲染耗时: ${renderTime.toFixed(1)}ms`,
-    })
-    expect(renderTime).toBeLessThan(750)
-  })
+        test.info().annotations.push({
+            type: "benchmark",
+            description: `首页渲染耗时: ${renderTime.toFixed(1)}ms`,
+        });
+        expect(renderTime).toBeLessThan(750);
+    });
 
-  test('翻页延迟 < 300ms (200ms × 1.5 tolerance)', async ({ page }) => {
-    const b64 = fs.readFileSync(REAL_PDF).toString('base64')
+    test("翻页延迟 < 300ms (200ms × 1.5 tolerance)", async ({ page }) => {
+        const b64 = fs.readFileSync(REAL_PDF).toString("base64");
 
-    const turnTime = await page.evaluate(`(async () => {
+        const turnTime = await page.evaluate(`(async () => {
       const pdfjsLib = await import('/node_modules/pdfjs-dist/build/pdf.min.mjs')
       pdfjsLib.GlobalWorkerOptions.workerSrc = '/node_modules/pdfjs-dist/build/pdf.worker.min.mjs'
       const base64Data = ${JSON.stringify(b64)}
@@ -98,13 +102,12 @@ test.describe('PdfViewer — Performance Benchmark', () => {
 
       const measure = performance.measure('page-turn', 'page-turn-start', 'page-turn-end')
       return measure.duration
-    })()`)
+    })()`);
 
-    test.info().annotations.push({
-      type: 'benchmark',
-      description: `翻页延迟: ${turnTime.toFixed(1)}ms`,
-    })
-    expect(turnTime).toBeLessThan(300)
-  })
-})
-
+        test.info().annotations.push({
+            type: "benchmark",
+            description: `翻页延迟: ${turnTime.toFixed(1)}ms`,
+        });
+        expect(turnTime).toBeLessThan(300);
+    });
+});

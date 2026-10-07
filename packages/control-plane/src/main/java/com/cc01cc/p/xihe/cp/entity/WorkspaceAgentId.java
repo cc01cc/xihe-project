@@ -35,8 +35,12 @@ public class WorkspaceAgentId implements Serializable {
 
     @Override
     public boolean equals(Object other) {
-        if (this == other) return true;
-        if (!(other instanceof WorkspaceAgentId that)) return false;
+        if (this == other) {
+            return true;
+        }
+        if (!(other instanceof WorkspaceAgentId that)) {
+            return false;
+        }
         return Objects.equals(principalId, that.principalId) && Objects.equals(workspaceId, that.workspaceId);
     }
 

@@ -118,7 +118,7 @@ flowchart LR
 
 ## 8. workspace 复杂 UI 基座（PLAN-262 决策 14）
 
-workspace 文件管理 UI 基于 reka-ui 无头原语 + `shadcn-vue add` 拷贝式封装（`components/ui/context-menu/`、`components/ui/tree/`），**零新增运行时依赖**：
+workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式封装（`components/ui/context-menu/`、`components/ui/tree/`）；组件源码按 shadcn-vue 设计约定维护，不依赖 shadcn-vue CLI 包：
 
 - **ContextMenu**（`ContextMenu/ContextMenuTrigger/Content/Item/Separator`）：键盘导航/焦点管理/ARIA/子菜单内置；`@select` 为选择事件（`preventDefault` 可阻止关闭）；长按=移动端右键。
 - **Tree**（`TreeRoot/TreeItem`，受控 `v-model:expanded`）：`getKey=node.path`、`getChildren=node.children`；`expandedPaths`（store `Set`）↔ 数组双向映射；`update:expanded` 在搜索态下不回写（搜索展开为临时并集）。

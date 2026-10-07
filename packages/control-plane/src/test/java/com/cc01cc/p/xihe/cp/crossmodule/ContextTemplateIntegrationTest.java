@@ -1,7 +1,11 @@
 package com.cc01cc.p.xihe.cp.crossmodule;
 
-import static com.github.tomakehurst.wiremock.client.WireMock.*;
-import static org.junit.jupiter.api.Assertions.*;
+import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.created;
+import static com.github.tomakehurst.wiremock.client.WireMock.get;
+import static com.github.tomakehurst.wiremock.client.WireMock.post;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
@@ -437,8 +441,12 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
         Map<String, Object> body = new java.util.HashMap<>();
         body.put("title", title);
         body.put("agentPrincipalId", principalId);
-        if (provider != null) body.put("modelProvider", provider);
-        if (model != null) body.put("modelName", model);
+        if (provider != null) {
+            body.put("modelProvider", provider);
+        }
+        if (model != null) {
+            body.put("modelName", model);
+        }
         ResponseEntity<Map> response = restTemplate.exchange(
                 url("/api/v1/sessions"), HttpMethod.POST,
                 new HttpEntity<>(body, bearerJson(token)),
@@ -451,8 +459,12 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
             String templatesJson, String userDefaultJson, String providerDefaultsJson) {
         Map<String, String> body = new java.util.HashMap<>();
         body.put("templates", templatesJson);
-        if (userDefaultJson != null) body.put("userDefault", userDefaultJson);
-        if (providerDefaultsJson != null) body.put("providerModelDefaults", providerDefaultsJson);
+        if (userDefaultJson != null) {
+            body.put("userDefault", userDefaultJson);
+        }
+        if (providerDefaultsJson != null) {
+            body.put("providerModelDefaults", providerDefaultsJson);
+        }
         return restTemplate.exchange(
                 url("/api/v1/config/user/context-templates"),
                 HttpMethod.PUT, new HttpEntity<>(body, bearerJson(token)), Map.class);

@@ -1,15 +1,15 @@
-import { inject, provide, type InjectionKey } from 'vue'
+import { inject, provide, type InjectionKey } from "vue";
 
 export interface MarkdownRenderContext {
-  isStreaming: boolean
+    isStreaming: boolean;
 }
 
-export const markdownContextKey: InjectionKey<MarkdownRenderContext> = Symbol('markdownContext')
+export const markdownContextKey: InjectionKey<MarkdownRenderContext> = Symbol("markdownContext");
 
 export function provideMarkdownContext(context: MarkdownRenderContext): void {
-  provide(markdownContextKey, context)
+    provide(markdownContextKey, context);
 }
 
 export function useMarkdownContext(): { isStreaming: boolean } {
-  return inject(markdownContextKey, { isStreaming: false })
+    return inject(markdownContextKey, { isStreaming: false });
 }

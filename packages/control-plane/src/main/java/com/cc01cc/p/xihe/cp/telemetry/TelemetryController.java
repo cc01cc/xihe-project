@@ -9,10 +9,12 @@ import ch.qos.logback.core.util.FileSize;
 import com.cc01cc.p.xihe.cp.logging.RedactingLogstashEncoder;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
 import java.util.Map;
@@ -65,7 +67,9 @@ public class TelemetryController {
     }
 
     private void writeEntries(TelemetryEntry.BatchRequest request, String source) {
-        if (request.getEntries() == null || request.getEntries().isEmpty()) return;
+        if (request.getEntries() == null || request.getEntries().isEmpty()) {
+            return;
+        }
         String deviceId = request.getDevice_id() != null ? request.getDevice_id() : "unknown";
         for (TelemetryEntry entry : request.getEntries()) {
             String msg = String.format(

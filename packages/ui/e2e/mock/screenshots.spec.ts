@@ -1,113 +1,129 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from "@playwright/test";
+import { expectPlatformScreenshot } from "../helpers/visual";
 
 interface Route {
-  path: string
-  name: string
-  requiresAuth: boolean
+    path: string;
+    name: string;
+    requiresAuth: boolean;
 }
 
 const allRoutes: Route[] = [
-  { path: '/login', name: 'login', requiresAuth: false },
-  { path: '/register', name: 'register', requiresAuth: false },
-  { path: '/workspace', name: 'workspace-default', requiresAuth: true },
-  { path: '/workspace/workspace-1/chat/test-session', name: 'workspace-chat-session', requiresAuth: true },
-  { path: '/settings/config', name: 'settings-config', requiresAuth: true },
-  { path: '/settings/knowledge', name: 'settings-knowledge', requiresAuth: true },
-  { path: '/settings/data', name: 'settings-data', requiresAuth: true },
-  { path: '/settings/monitoring', name: 'settings-monitoring', requiresAuth: true },
-  { path: '/workspace/ws-e2e-1', name: 'workspace', requiresAuth: true },
-]
+    { path: "/login", name: "login", requiresAuth: false },
+    { path: "/register", name: "register", requiresAuth: false },
+    { path: "/workspace", name: "workspace-default", requiresAuth: true },
+    {
+        path: "/workspace/workspace-1/chat/test-session",
+        name: "workspace-chat-session",
+        requiresAuth: true,
+    },
+    { path: "/settings/config", name: "settings-config", requiresAuth: true },
+    { path: "/settings/knowledge", name: "settings-knowledge", requiresAuth: true },
+    { path: "/settings/data", name: "settings-data", requiresAuth: true },
+    { path: "/settings/monitoring", name: "settings-monitoring", requiresAuth: true },
+    { path: "/workspace/ws-e2e-1", name: "workspace", requiresAuth: true },
+];
 
 for (const route of allRoutes) {
-  test(`${route.name} renders with 0 console errors`, async ({ page }) => {
-    const errors: string[] = []
-    page.on('console', (msg) => {
-      if (msg.type() === 'error') errors.push(msg.text())
-    })
-    page.on('pageerror', (err) => errors.push(err.message))
+    test(`${route.name} renders with 0 console errors`, async ({ page }) => {
+        const errors: string[] = [];
+        page.on("console", (msg) => {
+            if (msg.type() === "error") errors.push(msg.text());
+        });
+        page.on("pageerror", (err) => errors.push(err.message));
 
-    if (route.requiresAuth) {
-      await page.addInitScript(() => {
-        localStorage.setItem('xihe-token', 'mock-token-for-screenshot')
-      })
-    }
+        if (route.requiresAuth) {
+            await page.addInitScript(() => {
+                localStorage.setItem("xihe-token", "mock-token-for-screenshot");
+            });
+        }
 
-    if (route.path === '/workspace/workspace-1/chat/test-session') {
-      await page.addInitScript(() => {
-        localStorage.setItem('xihe-sessions', JSON.stringify([
-          { id: 'test-session', title: 'Test Session', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-        ]))
-      })
-    }
+        if (route.path === "/workspace/workspace-1/chat/test-session") {
+            await page.addInitScript(() => {
+                localStorage.setItem(
+                    "xihe-sessions",
+                    JSON.stringify([
+                        {
+                            id: "test-session",
+                            title: "Test Session",
+                            createdAt: new Date().toISOString(),
+                            updatedAt: new Date().toISOString(),
+                        },
+                    ]),
+                );
+            });
+        }
 
-    await page.route('**/api/v1/events**', async (route2) => {
-      await route2.fulfill({
-        status: 200,
-        headers: { 'Content-Type': 'text/event-stream' },
-        body: new ReadableStream({
-          start(controller) {
-            controller.enqueue(new TextEncoder().encode('retry: 5000\n\n'))
-          },
-        }),
-      })
-    })
+        await page.route("**/api/v1/events**", async (route2) => {
+            await route2.fulfill({
+                status: 200,
+                headers: { "Content-Type": "text/event-stream" },
+                body: new ReadableStream({
+                    start(controller) {
+                        controller.enqueue(new TextEncoder().encode("retry: 5000\n\n"));
+                    },
+                }),
+            });
+        });
 
+        await page.route("**/api/v1/**", async (route2) => {
+            const requestUrl = new URL(route2.request().url());
+            const workspaceMatch = requestUrl.pathname.match(/\/api\/v1\/workspaces\/([^/]+)$/);
+            if (workspaceMatch) {
+                await route2.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({ id: workspaceMatch[1], name: "Screenshot Workspace" }),
+                });
+                return;
+            }
+            if (requestUrl.pathname.endsWith("/sessions")) {
+                await route2.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({ sessions: [] }),
+                });
+                return;
+            }
+            const sessionMatch = requestUrl.pathname.match(/\/api\/v1\/sessions\/([^/]+)$/);
+            if (sessionMatch) {
+                await route2.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({
+                        id: sessionMatch[1],
+                        title: "Screenshot Session",
+                        workspaceId: "workspace-1",
+                        createdAt: new Date().toISOString(),
+                        updatedAt: new Date().toISOString(),
+                        archived: false,
+                    }),
+                });
+                return;
+            }
+            if (requestUrl.pathname.endsWith("/policy/mode")) {
+                await route2.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({
+                        sessionId: "test-session",
+                        mode: "manual",
+                        sessionRules: 0,
+                    }),
+                });
+                return;
+            }
+            await route2.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({}),
+            });
+        });
 
-    await page.route('**/api/v1/**', async (route2) => {
-      const requestUrl = new URL(route2.request().url())
-      const workspaceMatch = requestUrl.pathname.match(/\/api\/v1\/workspaces\/([^/]+)$/)
-      if (workspaceMatch) {
-        await route2.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ id: workspaceMatch[1], name: 'Screenshot Workspace' }),
-        })
-        return
-      }
-      if (requestUrl.pathname.endsWith('/sessions')) {
-        await route2.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ sessions: [] }),
-        })
-        return
-      }
-      const sessionMatch = requestUrl.pathname.match(/\/api\/v1\/sessions\/([^/]+)$/)
-      if (sessionMatch) {
-        await route2.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({
-            id: sessionMatch[1],
-            title: 'Screenshot Session',
-            workspaceId: 'workspace-1',
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            archived: false,
-          }),
-        })
-        return
-      }
-      if (requestUrl.pathname.endsWith('/policy/mode')) {
-        await route2.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ sessionId: 'test-session', mode: 'manual', sessionRules: 0 }),
-        })
-        return
-      }
-      await route2.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({}),
-      })
-    })
+        const resp = await page.goto(route.path, { waitUntil: "load", timeout: 15000 });
+        expect(resp?.status()).toBe(200);
+        await expect(page.locator("#app")).toBeVisible();
 
-    const resp = await page.goto(route.path, { waitUntil: 'load', timeout: 15000 })
-    expect(resp?.status()).toBe(200)
-    await page.waitForTimeout(1000)
-    expect(errors).toEqual([])
-
-    await expect(page).toHaveScreenshot(route.name + '.png')
-  })
+        await expectPlatformScreenshot(page, route.name + ".png");
+        expect(errors).toEqual([]);
+    });
 }

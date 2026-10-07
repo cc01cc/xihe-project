@@ -1,17 +1,21 @@
-import { test, chromium, expect } from '@playwright/test'
+import { test, chromium } from "@playwright/test";
+import { expectPlatformScreenshot } from "../helpers/visual";
 
-const UI_PORT = process.env.XIHE_UI_PORT || '12630'
+const UI_PORT = process.env.XIHE_UI_PORT || "12630";
 
-test('register page 2x visual snapshot', async () => {
-  const browser = await chromium.launch()
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 2 })
-  const page = await ctx.newPage()
-  await page.goto(`http://localhost:${UI_PORT}/register`, { waitUntil: 'load' })
-  await page.waitForSelector('h1', { timeout: 10000 })
-  const dpr = await page.evaluate(() => window.devicePixelRatio)
-  // eslint-disable-next-line no-console
-  console.log('DPR:', dpr)
-  await expect(page).toHaveScreenshot('register-page-2x.png')
-  await ctx.close()
-  await browser.close()
-})
+test("register page 2x visual snapshot", async () => {
+    const browser = await chromium.launch();
+    const ctx = await browser.newContext({
+        viewport: { width: 1280, height: 720 },
+        deviceScaleFactor: 2,
+    });
+    const page = await ctx.newPage();
+    await page.goto(`http://localhost:${UI_PORT}/register`, { waitUntil: "load" });
+    await page.waitForSelector("h1", { timeout: 10000 });
+    const dpr = await page.evaluate(() => window.devicePixelRatio);
+    // eslint-disable-next-line no-console
+    console.log("DPR:", dpr);
+    await expectPlatformScreenshot(page, "register-page-2x.png");
+    await ctx.close();
+    await browser.close();
+});

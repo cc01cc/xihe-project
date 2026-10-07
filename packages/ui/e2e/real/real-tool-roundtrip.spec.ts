@@ -62,9 +62,9 @@ function seedUserGrant(userId: string, workspaceId: string) {
             "-d",
             database,
             "-c",
-            `INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions, source, read_state) `
-                + `VALUES (gen_random_uuid(), 'user', '${userId}'::uuid, 'user', '${userId}'::uuid, `
-                + `'${permissions}'::jsonb, 'direct', 'read')`,
+            `INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions, source, read_state) ` +
+                `VALUES (gen_random_uuid(), 'user', '${userId}'::uuid, 'user', '${userId}'::uuid, ` +
+                `'${permissions}'::jsonb, 'direct', 'read')`,
         ],
         { encoding: "utf8", timeout: 15_000, windowsHide: true },
     );
@@ -103,7 +103,7 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
         // binding and create the Session through the API (session-branch pattern).
         const meRes = await request.get(`${CP_URL}/api/v1/auth/me`, { headers });
         expect(meRes.ok(), await meRes.text()).toBeTruthy();
-        const userId = (await meRes.json() as { id: string }).id;
+        const userId = ((await meRes.json()) as { id: string }).id;
         seedUserGrant(userId, wsId);
         const setupHeaders = { ...headers, "X-Workspace-Id": wsId };
         const roleId = randomUUID();
@@ -138,7 +138,7 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
             data: { name: "Real Compat Agent", templateId },
         });
         expect(principalRes.status(), await principalRes.text()).toBe(201);
-        const principalId = (await principalRes.json() as { principalId: string }).principalId;
+        const principalId = ((await principalRes.json()) as { principalId: string }).principalId;
         const bindRes = await request.put(
             `${CP_URL}/api/v1/workspaces/${wsId}/agents/${principalId}`,
             {
@@ -152,7 +152,7 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
             data: { title: "Real compat round trip", agentPrincipalId: principalId },
         });
         expect(sessionRes.status(), await sessionRes.text()).toBe(201);
-        const seededSessionId = (await sessionRes.json() as { id: string }).id;
+        const seededSessionId = ((await sessionRes.json()) as { id: string }).id;
 
         seedPage(page, { authToken: ctx.authToken, workspaceId: wsId, headers });
         await page.goto("/workspace/" + wsId + "/chat/" + seededSessionId, {
@@ -239,13 +239,10 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
             }
             try {
                 await expect
-                    .poll(
-                        async () => readHostFile(),
-                        {
-                            message: `expected ${fileName} under ${path.join(HOST_ROOT, wsId)} to contain the requested content`,
-                            timeout: approved ? 60000 : 15000,
-                        },
-                    )
+                    .poll(async () => readHostFile(), {
+                        message: `expected ${fileName} under ${path.join(HOST_ROOT, wsId)} to contain the requested content`,
+                        timeout: approved ? 60000 : 15000,
+                    })
                     .toContain(content);
                 landed = true;
             } catch (error) {
@@ -275,9 +272,12 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
         // operation parking at awaiting_approval/waiting_for_approval after a
         // successful post-approval completion (CP lifecycle gap, out of this
         // harness-only PLAN's scope — see evidence/m2-real-ab.md).
-        const messagesRes = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}/messages?branchId=${branchId}`, {
-            headers,
-        });
+        const messagesRes = await request.get(
+            `${CP_URL}/api/v1/sessions/${sessionId}/messages?branchId=${branchId}`,
+            {
+                headers,
+            },
+        );
         expect(messagesRes.ok(), `messages list ${messagesRes.status()}`).toBeTruthy();
         let assistant:
             | {
@@ -316,8 +316,9 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
 
         const opsRes = await request.get(`${CP_URL}/api/v1/operations?size=1`, { headers });
         expect(opsRes.ok(), `operations list ${opsRes.status()}`).toBeTruthy();
-        const op = ((await opsRes.json()) as { operations?: Array<{ id?: string; status?: string }> })
-            .operations?.[0];
+        const op = (
+            (await opsRes.json()) as { operations?: Array<{ id?: string; status?: string }> }
+        ).operations?.[0];
         expect(op?.id, "operation id resolvable").toBeTruthy();
         const traceRes = await request.get(`${CP_URL}/api/v1/operations/${op?.id}`, { headers });
         const trace = (await traceRes.json()) as {

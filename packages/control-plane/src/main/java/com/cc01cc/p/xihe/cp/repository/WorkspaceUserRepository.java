@@ -7,7 +7,6 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceUserId;
 import java.util.List;
 import java.util.UUID;
 import java.util.Optional;
-import java.util.UUID;
 
 public interface WorkspaceUserRepository extends JpaRepository<WorkspaceUser, WorkspaceUserId> {
     List<WorkspaceUser> findByIdWorkspaceId(UUID workspaceId);

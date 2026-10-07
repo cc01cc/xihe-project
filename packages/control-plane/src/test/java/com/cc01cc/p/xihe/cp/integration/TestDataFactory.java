@@ -8,6 +8,8 @@ import java.util.Base64;
 
 public class TestDataFactory {
 
+    private TestDataFactory() {}
+
     public static final String SECRET = "test-jwt-secret-key-for-testing-purposes";
 
     private static final int PASSWORD_BYTES = 24;

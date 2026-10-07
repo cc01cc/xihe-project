@@ -391,10 +391,16 @@ public class AgentTemplateService {
             if (!Objects.equals(oldPermissions, newPermissions)) {
                 ObjectNode diff = differences.addObject();
                 diff.put("roleId", roleId);
-                if (oldPermissions == null) diff.putNull("before");
-                else diff.set("before", oldPermissions.deepCopy());
-                if (newPermissions == null) diff.putNull("after");
-                else diff.set("after", newPermissions.deepCopy());
+                if (oldPermissions == null) {
+                    diff.putNull("before");
+                } else {
+                    diff.set("before", oldPermissions.deepCopy());
+                }
+                if (newPermissions == null) {
+                    diff.putNull("after");
+                } else {
+                    diff.set("after", newPermissions.deepCopy());
+                }
             }
         });
         return differences;

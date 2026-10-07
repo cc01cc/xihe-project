@@ -13,7 +13,7 @@ from xihe_agent.interfaces.chat_run_context import (
     ComponentResult,
     ContextBuildError,
 )
-from xihe_agent.interfaces.message import Message, TextMessage
+from xihe_agent.interfaces.message import TextMessage
 
 _MARKER = re.compile(r"\{\{component:([^{}]+)\}\}")
 _STATUSES = {"ready", "empty", "missing", "unavailable", "unknown", "truncated", "failed"}
@@ -36,7 +36,7 @@ def _safe_utf8(text: str, limit: int) -> tuple[str, bool]:
     return raw[:limit].decode("utf-8", errors="ignore"), True
 
 
-def _tokens(messages: list[Message], counter: Any) -> int:
+def _tokens(messages: list[TextMessage], counter: Any) -> int:
     payload = []
     for message in messages:
         body = message.content
@@ -49,8 +49,8 @@ def _tokens(messages: list[Message], counter: Any) -> int:
     return counter.estimate_messages(payload) if counter is not None else sum(len(item["content"]) // 4 for item in payload)
 
 
-def _take_newest(groups: list[list[Message]], budget: int, counter: Any) -> tuple[list[Message], bool]:
-    chosen: list[list[Message]] = []
+def _take_newest(groups: list[list[TextMessage]], budget: int, counter: Any) -> tuple[list[TextMessage], bool]:
+    chosen: list[list[TextMessage]] = []
     for group in reversed(groups):
         candidate = [*group, *(message for selected in chosen for message in selected)]
         if _tokens(candidate, counter) > max(0, budget):
@@ -59,12 +59,12 @@ def _take_newest(groups: list[list[Message]], budget: int, counter: Any) -> tupl
     return [message for group in chosen for message in group], len(chosen) != len(groups)
 
 
-def _render(component: dict[str, Any], run: ChatRunContext, tools: list[Any], token_counter: Any) -> tuple[ComponentResult, list[Message]]:
+def _render(component: dict[str, Any], run: ChatRunContext, tools: list[Any], token_counter: Any) -> tuple[ComponentResult, list[TextMessage]]:
     kind, iid = component["type"], component["instanceId"]
     if component.get("enabled", True) is False:
         return ComponentResult(iid, kind, "empty"), []
     cfg = component["config"]
-    messages: list[Message] = []
+    messages: list[TextMessage] = []
     content: str | None = None
     items: tuple[Any, ...] = ()
     source: Any = {"kind": "context_projection"}
@@ -132,8 +132,8 @@ def _render(component: dict[str, Any], run: ChatRunContext, tools: list[Any], to
             raise ContextBuildError("root AGENTS.md source status is invalid")
     elif kind == "conversation_history":
         cfg = _config(component, ("selection", "maxTokens", "includeCompaction"), {"selection": {"recent", "all_within_budget"}})
-        groups: list[list[Message]] = []
-        pending: list[Message] = []
+        groups: list[list[TextMessage]] = []
+        pending: list[TextMessage] = []
         for message in run.agent_context.messages:
             if message.role == "human":
                 if pending:
@@ -358,7 +358,7 @@ def build_context(run: ChatRunContext, tools: list[Any], current_prompt: str, to
         raise ContextBuildError("malformed or unsupported template marker")
     if last < len(document):
         nodes.append(("text", document[last:]))
-    messages: list[Message] = []
+    messages: list[TextMessage] = []
     results: list[ComponentResult] = []
     for node_type, value in nodes:
         if node_type == "text":

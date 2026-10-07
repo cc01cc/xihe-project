@@ -12,6 +12,8 @@ package com.cc01cc.p.xihe.cp.policy;
  */
 public class LayeredPolicyResolver {
 
+    private LayeredPolicyResolver() {}
+
     public static final String MODE_MANUAL = "manual";
     public static final String MODE_AUTO = "auto";
 

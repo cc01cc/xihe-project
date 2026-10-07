@@ -61,7 +61,7 @@ class LangGraphEventAdapter(EventAdapter):
                 # calibration ground truth ("real" source). Emitted on every
                 # model end so multi-turn tool loops aggregate; the runner's
                 # RunUsage sums the deltas.
-                meta = output.usage_metadata or {}
+                meta = getattr(output, "usage_metadata", None) or {}
                 events.append(
                     AgentEvent(
                         type="llm_usage",
@@ -132,7 +132,7 @@ class LangGraphEventAdapter(EventAdapter):
             else:
                 formatted = str(tool_output or "")
                 tool_call_id = run_id
-            event_data: dict[str, Any] = {
+            tool_event_data: dict[str, Any] = {
                 "tool": name,
                 "result": formatted,
                 "type": "tool_result",
@@ -141,8 +141,8 @@ class LangGraphEventAdapter(EventAdapter):
                 "origin": self._origin(name),
             }
             if diagnostics is not None:
-                event_data["diagnostics"] = diagnostics
-            return AgentEvent(type="tool_result", data=event_data)
+                tool_event_data["diagnostics"] = diagnostics
+            return AgentEvent(type="tool_result", data=tool_event_data)
 
         if event_type == "on_llm_error":
             error = data.get("error", str(data))

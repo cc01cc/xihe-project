@@ -16,10 +16,17 @@ MessageRole = Literal["system", "human", "ai", "tool"]
 
 
 class Message(Protocol):
-    """Minimal message abstraction used by AgentRunner."""
+    """Minimal message abstraction used by AgentRunner.
 
-    role: MessageRole
-    content: str
+    Members are read-only so both mutable implementations and frozen
+    dataclasses like :class:`TextMessage` satisfy the protocol.
+    """
+
+    @property
+    def role(self) -> MessageRole: ...
+
+    @property
+    def content(self) -> str: ...
 
 
 @dataclass(frozen=True)

@@ -269,7 +269,9 @@ public class WorkspaceEnvironmentController {
                     new HttpEntity<>(headers),
                     Map.class);
             Map<String, Object> body = response.getBody();
-            if (body == null) return Map.of("status", "unbound");
+            if (body == null) {
+                return Map.of("status", "unbound");
+            }
             Map<String, Object> result = new LinkedHashMap<>(body);
             result.put("status", mapRuntimeState(body.get("state")));
             return result;

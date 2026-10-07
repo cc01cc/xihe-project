@@ -6,21 +6,13 @@ import java.util.UUID;
 import jakarta.persistence.Column;
 import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
-import jakarta.persistence.Convert;
 import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.Convert;
 import jakarta.persistence.GenerationType;
-import jakarta.persistence.Convert;
 import jakarta.persistence.Id;
-import jakarta.persistence.Convert;
 import jakarta.persistence.PrePersist;
-import jakarta.persistence.Convert;
 import jakarta.persistence.PreUpdate;
-import jakarta.persistence.Convert;
 import jakarta.persistence.Table;
-import jakarta.persistence.Convert;
 import jakarta.persistence.UniqueConstraint;
-import jakarta.persistence.Convert;
 
 @Entity
 @Table(name = "oauth_credentials", uniqueConstraints = @UniqueConstraint(
@@ -78,7 +70,9 @@ public class OAuthCredential {
         Instant now = Instant.now();
         createdAt = now;
         updatedAt = now;
-        if (status == null) status = "AUTHORIZED";
+        if (status == null) {
+            status = "AUTHORIZED";
+        }
     }
 
     @PreUpdate

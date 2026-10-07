@@ -103,7 +103,9 @@ class ConfigClient:
                 if revision:
                     revisions.append(revision)
 
-        required_statuses = [domain_results.get(domain, {}).get("status", "missing") for domain in REQUIRED_DOMAINS]
+        required_statuses = [
+            domain_results[domain]["status"] if domain in domain_results else "missing" for domain in REQUIRED_DOMAINS
+        ]
         transport_failure = any(
             status in {"unreachable", "unauthorized", "invalid_response"} for status in required_statuses
         )
@@ -254,10 +256,11 @@ class ConfigClient:
                 )
             if attempt < max_retries - 1:
                 await asyncio.sleep(2**attempt)
+        last_llm_domain = last_report["domains"].get("llm-provider")
         logger.error(
             "ConfigClient: failed to sync after {} retries status={}",
             max_retries,
-            last_report["domains"].get("llm-provider", {}).get("status", "unknown"),
+            last_llm_domain["status"] if last_llm_domain else "unknown",
         )
         return last_report
 

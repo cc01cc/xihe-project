@@ -45,7 +45,13 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
-import { CP_URL, ensureAgentWorkspaceBinding, registerJourneyUser, seedPage, type JourneyContext } from "./helpers/journey";
+import {
+    CP_URL,
+    ensureAgentWorkspaceBinding,
+    registerJourneyUser,
+    seedPage,
+    type JourneyContext,
+} from "./helpers/journey";
 
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 const RUN_ID = process.env.XIHE_E2E_RUN_ID ?? "";

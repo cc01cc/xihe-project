@@ -8,7 +8,6 @@ import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.File;
 import com.cc01cc.p.xihe.cp.entity.Message;
-import com.cc01cc.p.xihe.cp.entity.MessageRole;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.SessionForkRequest;
 import com.cc01cc.p.xihe.cp.files.ChatAttachmentService;

@@ -63,7 +63,7 @@ class TokenCounter:
             return litellm.token_counter(model=self._model, text=text)
         except Exception as e:
             logger.debug("token_counter failed ({}); o200k estimate", e)
-            return len(_O200K().encode(text))
+            return len(_o200k_encoding().encode(text))
 
     def estimate_messages(self, messages: list[dict[str, Any]]) -> int:
         """Estimate the provider-visible payload size for a message array."""

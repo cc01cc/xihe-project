@@ -1,215 +1,234 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
-import { useSessionStore } from '../../stores/session'
-import { useChatStore } from '../../stores/chat'
-import { useAgentStore } from '../../stores/agent'
-import { useAuthStore } from '../../stores/auth'
-import { ApiError, api } from '../../composables/api'
-import { logger } from '../../lib/logger'
-import { toast } from 'vue-sonner'
-import SessionItem from './SessionItem.vue'
-import { workspaceChatPath } from '../../lib/routes'
-import BaseModal from '../shared/BaseModal.vue'
+import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
+import { useRouter } from "vue-router";
+import { useSessionStore } from "../../stores/session";
+import { useChatStore } from "../../stores/chat";
+import { useAgentStore } from "../../stores/agent";
+import { useAuthStore } from "../../stores/auth";
+import { ApiError, api } from "../../composables/api";
+import { logger } from "../../lib/logger";
+import { toast } from "vue-sonner";
+import SessionItem from "./SessionItem.vue";
+import { workspaceChatPath } from "../../lib/routes";
+import BaseModal from "../shared/BaseModal.vue";
 
-const { t } = useI18n()
-const router = useRouter()
-const sessionStore = useSessionStore()
-const chatStore = useChatStore()
-const agentStore = useAgentStore()
-const auth = useAuthStore()
-const pendingDeleteSessionId = ref<string | null>(null)
-const deleteLoading = ref(false)
-const forkingSessionId = ref<string | null>(null)
-const pendingForkKeys = new Map<string, string>()
-const pendingDeleteSession = computed(() =>
-  sessionStore.sessions.find((session) => session.id === pendingDeleteSessionId.value) ?? null,
-)
+const { t } = useI18n();
+const router = useRouter();
+const sessionStore = useSessionStore();
+const chatStore = useChatStore();
+const agentStore = useAgentStore();
+const auth = useAuthStore();
+const pendingDeleteSessionId = ref<string | null>(null);
+const deleteLoading = ref(false);
+const forkingSessionId = ref<string | null>(null);
+const pendingForkKeys = new Map<string, string>();
+const pendingDeleteSession = computed(
+    () =>
+        sessionStore.sessions.find((session) => session.id === pendingDeleteSessionId.value) ??
+        null,
+);
 
 const timeGroupLabels: Record<string, string> = {
-  today: 'sidebar.today',
-  yesterday: 'sidebar.yesterday',
-  earlier: 'sidebar.earlier',
-}
+    today: "sidebar.today",
+    yesterday: "sidebar.yesterday",
+    earlier: "sidebar.earlier",
+};
 
 function handleSelect(id: string) {
-  sessionStore.selectSession(id)
-  const session = sessionStore.sessions.find((item) => item.id === id)
-  const workspaceId = session?.workspaceId ?? auth.currentWorkspaceId
-  if (workspaceId) router.push(workspaceChatPath(workspaceId, id))
+    sessionStore.selectSession(id);
+    const session = sessionStore.sessions.find((item) => item.id === id);
+    const workspaceId = session?.workspaceId ?? auth.currentWorkspaceId;
+    if (workspaceId) router.push(workspaceChatPath(workspaceId, id));
 }
 
 function handleRename(id: string, title: string) {
-  sessionStore.renameSession(id, title).catch((cause) => {
-    const message = cause instanceof ApiError ? cause.message : 'Failed to rename session'
-    logger.error('Rename session failed', cause)
-    toast.error(message)
-  })
+    sessionStore.renameSession(id, title).catch((cause) => {
+        const message = cause instanceof ApiError ? cause.message : "Failed to rename session";
+        logger.error("Rename session failed", cause);
+        toast.error(message);
+    });
 }
 
 function handleDelete(id: string) {
-  pendingDeleteSessionId.value = id
+    pendingDeleteSessionId.value = id;
 }
 
-const terminalRunStatuses = new Set(['succeeded', 'failed', 'partial', 'ambiguous', 'cancelled'])
+const terminalRunStatuses = new Set(["succeeded", "failed", "partial", "ambiguous", "cancelled"]);
 
 async function handleFork(id: string) {
-  const session = sessionStore.sessions.find((item) => item.id === id)
-  if (!session || sessionStore.currentSessionId !== id || forkingSessionId.value) return
+    const session = sessionStore.sessions.find((item) => item.id === id);
+    if (!session || sessionStore.currentSessionId !== id || forkingSessionId.value) return;
 
-  forkingSessionId.value = id
-  try {
-    let sourceBranchId = chatStore.getSelectedBranchId(id)
-    if (!sourceBranchId || !chatStore.getSessionBranches(id).some((branch) => branch.branchId === sourceBranchId)) {
-      await chatStore.loadSessionBranches(id)
-      sourceBranchId = chatStore.getSelectedBranchId(id)
+    forkingSessionId.value = id;
+    try {
+        let sourceBranchId = chatStore.getSelectedBranchId(id);
+        if (
+            !sourceBranchId ||
+            !chatStore.getSessionBranches(id).some((branch) => branch.branchId === sourceBranchId)
+        ) {
+            await chatStore.loadSessionBranches(id);
+            sourceBranchId = chatStore.getSelectedBranchId(id);
+        }
+        if (
+            !sourceBranchId ||
+            !chatStore.getSessionBranches(id).some((branch) => branch.branchId === sourceBranchId)
+        ) {
+            toast.error(t("sidebar.forkBranchUnavailable"));
+            return;
+        }
+
+        const visibleRoles = new Map(
+            chatStore.getMessages(id).map((message) => [message.id, message.role]),
+        );
+        const serverMessages = await api.getMessages(id, sourceBranchId);
+        let anchorMessageId: string | undefined;
+        for (let index = serverMessages.length - 1; index >= 0; index -= 1) {
+            const message = serverMessages[index]!;
+            const role = message.role.toLowerCase();
+            if (
+                visibleRoles.get(message.id) === role &&
+                (role === "user" || role === "assistant") &&
+                message.runId &&
+                terminalRunStatuses.has(message.runStatus ?? "")
+            ) {
+                anchorMessageId = message.id;
+                break;
+            }
+        }
+        if (!anchorMessageId) {
+            toast.error(t("sidebar.forkAnchorUnavailable"));
+            return;
+        }
+
+        const keyScope = `${id}:${sourceBranchId}:${anchorMessageId}`;
+        const idempotencyKey = pendingForkKeys.get(keyScope) ?? globalThis.crypto.randomUUID();
+        pendingForkKeys.set(keyScope, idempotencyKey);
+        const forked = await api.forkSession(
+            id,
+            { sourceBranchId, anchorMessageId },
+            idempotencyKey,
+        );
+
+        const refreshedSessions = await sessionStore.loadSessions();
+        const child =
+            refreshedSessions.find((item) => item.id === forked.id) ??
+            (await sessionStore.loadSession(forked.id));
+        const workspaceId =
+            child.workspaceId ??
+            forked.workspaceId ??
+            session.workspaceId ??
+            auth.currentWorkspaceId;
+        if (!workspaceId) throw new Error("Forked Session is missing its Workspace");
+
+        sessionStore.selectSession(child.id);
+        await router.push(workspaceChatPath(workspaceId, child.id));
+        pendingForkKeys.delete(keyScope);
+        toast.success(t("sidebar.forkCreated"));
+    } catch (cause) {
+        const message =
+            cause instanceof ApiError
+                ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
+                : cause instanceof Error
+                  ? cause.message
+                  : t("sidebar.forkFailed");
+        logger.error("Fork Session failed", cause);
+        toast.error(message);
+    } finally {
+        forkingSessionId.value = null;
     }
-    if (!sourceBranchId || !chatStore.getSessionBranches(id).some((branch) => branch.branchId === sourceBranchId)) {
-      toast.error(t('sidebar.forkBranchUnavailable'))
-      return
-    }
-
-    const visibleRoles = new Map(chatStore.getMessages(id).map((message) => [message.id, message.role]))
-    const serverMessages = await api.getMessages(id, sourceBranchId)
-    let anchorMessageId: string | undefined
-    for (let index = serverMessages.length - 1; index >= 0; index -= 1) {
-      const message = serverMessages[index]!
-      const role = message.role.toLowerCase()
-      if (
-        visibleRoles.get(message.id) === role
-        && (role === 'user' || role === 'assistant')
-        && message.runId
-        && terminalRunStatuses.has(message.runStatus ?? '')
-      ) {
-        anchorMessageId = message.id
-        break
-      }
-    }
-    if (!anchorMessageId) {
-      toast.error(t('sidebar.forkAnchorUnavailable'))
-      return
-    }
-
-    const keyScope = `${id}:${sourceBranchId}:${anchorMessageId}`
-    const idempotencyKey = pendingForkKeys.get(keyScope) ?? globalThis.crypto.randomUUID()
-    pendingForkKeys.set(keyScope, idempotencyKey)
-    const forked = await api.forkSession(
-      id,
-      { sourceBranchId, anchorMessageId },
-      idempotencyKey,
-    )
-
-    const refreshedSessions = await sessionStore.loadSessions()
-    const child = refreshedSessions.find((item) => item.id === forked.id)
-      ?? await sessionStore.loadSession(forked.id)
-    const workspaceId = child.workspaceId ?? forked.workspaceId ?? session.workspaceId ?? auth.currentWorkspaceId
-    if (!workspaceId) throw new Error('Forked Session is missing its Workspace')
-
-    sessionStore.selectSession(child.id)
-    await router.push(workspaceChatPath(workspaceId, child.id))
-    pendingForkKeys.delete(keyScope)
-    toast.success(t('sidebar.forkCreated'))
-  } catch (cause) {
-    const message = cause instanceof ApiError
-      ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
-      : cause instanceof Error ? cause.message : t('sidebar.forkFailed')
-    logger.error('Fork Session failed', cause)
-    toast.error(message)
-  } finally {
-    forkingSessionId.value = null
-  }
 }
 
 function closeDeleteWarning() {
-  if (!deleteLoading.value) pendingDeleteSessionId.value = null
+    if (!deleteLoading.value) pendingDeleteSessionId.value = null;
 }
 
 async function confirmDelete() {
-  const session = pendingDeleteSession.value
-  if (!session || deleteLoading.value) return
-  deleteLoading.value = true
-  const id = session.id
-  try {
-    await sessionStore.deleteSession(id)
-    chatStore.clearSession(id)
-    pendingDeleteSessionId.value = null
-  } catch (cause) {
-    const message = cause instanceof ApiError ? cause.message : t('sidebar.deleteFailed')
-    logger.error('Delete session failed', cause)
-    toast.error(message)
-  } finally {
-    deleteLoading.value = false
-  }
+    const session = pendingDeleteSession.value;
+    if (!session || deleteLoading.value) return;
+    deleteLoading.value = true;
+    const id = session.id;
+    try {
+        await sessionStore.deleteSession(id);
+        chatStore.clearSession(id);
+        pendingDeleteSessionId.value = null;
+    } catch (cause) {
+        const message = cause instanceof ApiError ? cause.message : t("sidebar.deleteFailed");
+        logger.error("Delete session failed", cause);
+        toast.error(message);
+    } finally {
+        deleteLoading.value = false;
+    }
 }
-
 </script>
 
 <template>
-  <div data-testid="sidebar-session-list" class="flex-1 overflow-y-auto px-2 py-2 space-y-1">
-    <div v-for="(sessions, group) in sessionStore.groupedSessions" :key="group">
-      <div v-if="sessions.length" class="px-1 py-2">
-        <span class="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-          {{ t(timeGroupLabels[group]) }}
-        </span>
-      </div>
-      <SessionItem
-        v-for="session in sessions"
-        :key="session.id"
-        :session="session"
-        :is-active="session.id === sessionStore.currentSessionId"
-        :pending-count="agentStore.pendingApprovalCount(session.id)"
-        :fork-busy="forkingSessionId === session.id"
-        @select="handleSelect"
-        @rename="handleRename"
-        @delete="handleDelete"
-        @fork="handleFork"
-      />
+    <div data-testid="sidebar-session-list" class="flex-1 overflow-y-auto px-2 py-2 space-y-1">
+        <div v-for="(sessions, group) in sessionStore.groupedSessions" :key="group">
+            <div v-if="sessions.length" class="px-1 py-2">
+                <span class="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                    {{ t(timeGroupLabels[group]) }}
+                </span>
+            </div>
+            <SessionItem
+                v-for="session in sessions"
+                :key="session.id"
+                :session="session"
+                :is-active="session.id === sessionStore.currentSessionId"
+                :pending-count="agentStore.pendingApprovalCount(session.id)"
+                :fork-busy="forkingSessionId === session.id"
+                @select="handleSelect"
+                @rename="handleRename"
+                @delete="handleDelete"
+                @fork="handleFork"
+            />
+        </div>
+        <div
+            v-if="sessionStore.filteredSessions.length === 0"
+            class="px-3 py-8 text-center text-sm text-muted-foreground"
+        >
+            {{ t("sidebar.empty") }}
+        </div>
     </div>
-    <div
-      v-if="sessionStore.filteredSessions.length === 0"
-      class="px-3 py-8 text-center text-sm text-muted-foreground"
-    >
-      {{ t('sidebar.empty') }}
-    </div>
-  </div>
 
-  <BaseModal :show="pendingDeleteSession !== null" @close="closeDeleteWarning">
-    <div
-      v-if="pendingDeleteSession"
-      role="alertdialog"
-      aria-modal="true"
-      aria-labelledby="session-delete-title"
-      aria-describedby="session-delete-child-warning"
-      data-testid="session-delete-warning"
-    >
-      <h2 id="session-delete-title" class="text-base font-semibold">{{ t('sidebar.deleteConfirmTitle') }}</h2>
-      <p class="mt-2 text-sm text-muted-foreground" id="session-delete-child-warning">
-        {{ t('sidebar.deleteChildWarning') }}
-      </p>
-      <p class="mt-3 truncate rounded-md bg-muted/50 px-2 py-1 text-sm text-foreground">
-        {{ pendingDeleteSession.title }}
-      </p>
-      <div class="mt-5 flex justify-end gap-2">
-        <button
-          type="button"
-          class="rounded-md border px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-50"
-          :disabled="deleteLoading"
-          data-testid="session-delete-cancel"
-          @click="closeDeleteWarning"
+    <BaseModal :show="pendingDeleteSession !== null" @close="closeDeleteWarning">
+        <div
+            v-if="pendingDeleteSession"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="session-delete-title"
+            aria-describedby="session-delete-child-warning"
+            data-testid="session-delete-warning"
         >
-          {{ t('common.cancel') }}
-        </button>
-        <button
-          type="button"
-          class="rounded-md bg-destructive px-3 py-1.5 text-sm text-destructive-foreground hover:opacity-90 disabled:opacity-50"
-          :disabled="deleteLoading"
-          data-testid="session-delete-confirm"
-          @click="confirmDelete"
-        >
-          {{ deleteLoading ? t('sidebar.deletePending') : t('sidebar.delete') }}
-        </button>
-      </div>
-    </div>
-  </BaseModal>
+            <h2 id="session-delete-title" class="text-base font-semibold">
+                {{ t("sidebar.deleteConfirmTitle") }}
+            </h2>
+            <p class="mt-2 text-sm text-muted-foreground" id="session-delete-child-warning">
+                {{ t("sidebar.deleteChildWarning") }}
+            </p>
+            <p class="mt-3 truncate rounded-md bg-muted/50 px-2 py-1 text-sm text-foreground">
+                {{ pendingDeleteSession.title }}
+            </p>
+            <div class="mt-5 flex justify-end gap-2">
+                <button
+                    type="button"
+                    class="rounded-md border px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-50"
+                    :disabled="deleteLoading"
+                    data-testid="session-delete-cancel"
+                    @click="closeDeleteWarning"
+                >
+                    {{ t("common.cancel") }}
+                </button>
+                <button
+                    type="button"
+                    class="rounded-md bg-destructive px-3 py-1.5 text-sm text-destructive-foreground hover:opacity-90 disabled:opacity-50"
+                    :disabled="deleteLoading"
+                    data-testid="session-delete-confirm"
+                    @click="confirmDelete"
+                >
+                    {{ deleteLoading ? t("sidebar.deletePending") : t("sidebar.delete") }}
+                </button>
+            </div>
+        </div>
+    </BaseModal>
 </template>

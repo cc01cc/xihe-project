@@ -1,6 +1,12 @@
 package com.cc01cc.p.xihe.cp.entity;
 
-import jakarta.persistence.*;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.IdClass;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
+import jakarta.persistence.Table;
 import java.io.Serializable;
 import java.time.Instant;
 import java.util.Objects;
@@ -90,8 +96,12 @@ public class McpToolAlias {
 
         @Override
         public boolean equals(Object other) {
-            if (this == other) return true;
-            if (!(other instanceof McpToolAliasId that)) return false;
+            if (this == other) {
+                return true;
+            }
+            if (!(other instanceof McpToolAliasId that)) {
+                return false;
+            }
             return Objects.equals(workspaceId, that.workspaceId)
                     && Objects.equals(issuedName, that.issuedName);
         }

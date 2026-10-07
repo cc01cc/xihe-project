@@ -45,7 +45,12 @@ export type SessionDerivedActiveStatus =
     | "dispatching"
     | "cancelling";
 
-export type SessionDerivedTerminalState = "success" | "error" | "partial" | "ambiguous" | "cancelled";
+export type SessionDerivedTerminalState =
+    | "success"
+    | "error"
+    | "partial"
+    | "ambiguous"
+    | "cancelled";
 
 export interface SessionDerivedActiveChild {
     childSessionId: string;

@@ -38,7 +38,9 @@ public class WorkspaceImportService {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "IMPORT_IDEMPOTENCY_REQUIRED", "idempotencyKey is required");
         }
         OptionalExisting existing = findExisting(ownerId, idempotencyKey);
-        if (existing.value != null) return existing.value;
+        if (existing.value != null) {
+            return existing.value;
+        }
         UUID workspaceUuid = UUID.fromString(workspaceId);
         if (repository.existsActiveByWorkspaceId(workspaceUuid)) {
             throw new CpApiException(HttpStatus.CONFLICT, "IMPORT_ALREADY_ACTIVE", "An import is already active for this workspace");
@@ -72,7 +74,9 @@ public class WorkspaceImportService {
     @Transactional
     public WorkspaceImport cancel(String importId, String ownerId) {
         WorkspaceImport record = get(importId, ownerId);
-        if ("completed".equals(record.getStatus()) || "failed".equals(record.getStatus())) return record;
+        if ("completed".equals(record.getStatus()) || "failed".equals(record.getStatus())) {
+            return record;
+        }
         runtimeClient.cancel(record.getWorkspaceId().toString(), importId);
         record.cancel();
         return repository.save(record);

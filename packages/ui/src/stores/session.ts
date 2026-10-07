@@ -239,9 +239,9 @@ export const useSessionStore = defineStore("session", () => {
     }
 
     function setSessionAgentPrincipal(id: string, agentPrincipalId: string) {
-        sessions.value = sessions.value.map((session) => session.id === id
-            ? { ...session, agentPrincipalId }
-            : session);
+        sessions.value = sessions.value.map((session) =>
+            session.id === id ? { ...session, agentPrincipalId } : session,
+        );
     }
 
     function clearCurrentSession() {

@@ -14,7 +14,7 @@ lang: zh-Hans
 
 - **Vue 3** + Composition API
 - **Vite** — 构建工具
-- **shadcn-vue** — UI 组件库
+- **shadcn-vue** — UI 组件样式与交互来源（源码本地封装，不作为 UI 包依赖）
 - **Tailwind CSS** — 样式
 
 ## 开发

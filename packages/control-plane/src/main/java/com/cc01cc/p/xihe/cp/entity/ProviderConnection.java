@@ -89,9 +89,15 @@ public class ProviderConnection {
         Instant now = Instant.now();
         createdAt = now;
         updatedAt = now;
-        if (revision < 1) revision = 1;
-        if (status == null) status = STATUS_UNVERIFIED;
-        if (modelDiscovery == null) modelDiscovery = "remote-models";
+        if (revision < 1) {
+            revision = 1;
+        }
+        if (status == null) {
+            status = STATUS_UNVERIFIED;
+        }
+        if (modelDiscovery == null) {
+            modelDiscovery = "remote-models";
+        }
     }
 
     @PreUpdate

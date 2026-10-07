@@ -1,14 +1,11 @@
 <script setup lang="ts">
-import { TreeVirtualizer, type TreeVirtualizerProps } from "reka-ui"
+import { TreeVirtualizer, type TreeVirtualizerProps } from "reka-ui";
 
-defineProps<TreeVirtualizerProps>()
+defineProps<TreeVirtualizerProps>();
 </script>
 
 <template>
-  <TreeVirtualizer
-    v-slot="slotProps"
-    data-slot="tree-virtualizer"
-  >
-    <slot v-bind="slotProps" />
-  </TreeVirtualizer>
+    <TreeVirtualizer v-slot="slotProps" data-slot="tree-virtualizer">
+        <slot v-bind="slotProps" />
+    </TreeVirtualizer>
 </template>

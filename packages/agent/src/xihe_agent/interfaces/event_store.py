@@ -25,12 +25,16 @@ class EventStore(ABC):
         ...
 
     @abstractmethod
-    async def read(
+    def read(
         self,
         aggregate_id: str,
         after_sequence: int = 0,
     ) -> AsyncIterator[Event]:
-        """Read events for an aggregate after the given sequence."""
+        """Read events for an aggregate after the given sequence.
+
+        Implementations are async generators; callers iterate directly with
+        ``async for`` (no ``await``).
+        """
         ...
 
     @abstractmethod

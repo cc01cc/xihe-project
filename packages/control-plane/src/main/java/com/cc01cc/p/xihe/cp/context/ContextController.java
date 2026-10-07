@@ -7,7 +7,6 @@ import com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,14 +14,17 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.UUID;
 import java.util.Map;
-import java.util.UUID;
-import java.util.Optional;
-import java.util.UUID;
 
 @RestController
     @RequestMapping("/internal/v1/context")
@@ -248,7 +250,9 @@ public class ContextController {
 
     private String resolveUserId(String sessionId) {
         String tokenUserId = TenantContext.getUserId();
-        if (tokenUserId != null) return tokenUserId;
+        if (tokenUserId != null) {
+            return tokenUserId;
+        }
         // Internal service calls carry no JWT; resolve from the Session row.
         // No implicit default: unknown session means no user context.
         return sessionRepository.findById(UUID.fromString(sessionId)).map(s -> s.getUserId()).orElse(null);
@@ -256,7 +260,9 @@ public class ContextController {
 
     private String resolveWorkspaceId(String sessionId) {
         String tokenWorkspaceId = TenantContext.getWorkspaceId();
-        if (tokenWorkspaceId != null) return tokenWorkspaceId;
+        if (tokenWorkspaceId != null) {
+            return tokenWorkspaceId;
+        }
         // No silent "default" workspace fallback; unknown session fails access check.
         return sessionRepository.findById(UUID.fromString(sessionId)).map(s -> s.getWorkspaceId()).orElse(null);
     }

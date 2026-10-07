@@ -226,8 +226,8 @@
                 <version>3.6.0</version>
                 <configuration>
                     <configLocation>checkstyle.xml</configLocation>
-                    <violationSeverity>warning</violationSeverity>
-                    <failOnViolation>false</failOnViolation>
+                    <violationSeverity>error</violationSeverity>
+                    <failOnViolation>true</failOnViolation>
                     <includeTestSourceDirectory>true</includeTestSourceDirectory>
                 </configuration>
                 <executions>

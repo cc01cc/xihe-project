@@ -117,7 +117,9 @@ public class ProviderConnectionService {
     public ProviderConnection update(String id, ConnectionInput input) {
         ProviderConnection connection = requireVisible(id);
         ensureCanManage(connection);
-        if (input.label() != null) connection.setLabel(requireLabel(input.label()));
+        if (input.label() != null) {
+            connection.setLabel(requireLabel(input.label()));
+        }
         if (input.baseUrl() != null) {
             String baseUrl = normalizeBaseUrl(input.baseUrl(), catalog.require(connection.getProviderId()));
             validateBaseUrl(baseUrl);
@@ -126,7 +128,9 @@ public class ProviderConnectionService {
         if (input.modelDiscovery() != null && !input.modelDiscovery().isBlank()) {
             connection.setModelDiscovery(input.modelDiscovery());
         }
-        if (input.manualModels() != null) connection.setManualModels(serializeModels(input.manualModels()));
+        if (input.manualModels() != null) {
+            connection.setManualModels(serializeModels(input.manualModels()));
+        }
         String apiKey = blankToNull(input.apiKey());
         if (apiKey != null) {
             connection.setCredentialCiphertext(encryptCredential(connection, apiKey));
@@ -178,7 +182,9 @@ public class ProviderConnectionService {
                     .timeout(VERIFY_TIMEOUT)
                     .header("Accept", "application/json")
                     .GET();
-            if (apiKey != null) builder.header("Authorization", "Bearer " + apiKey);
+            if (apiKey != null) {
+                builder.header("Authorization", "Bearer " + apiKey);
+            }
             HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() == 401 || response.statusCode() == 403) {
                 return markVerificationFailure(connection, "LLM_CREDENTIALS_INVALID", previousStatus);
@@ -214,8 +220,12 @@ public class ProviderConnectionService {
         Instant now = Instant.now();
         List<ProviderCredentialLease> leases =
                 leaseRepository.findByProviderConnectionIdAndRedeemedAtIsNullAndRevokedAtIsNull(connectionId);
-        for (ProviderCredentialLease lease : leases) lease.setRevokedAt(now);
-        if (!leases.isEmpty()) leaseRepository.saveAll(leases);
+        for (ProviderCredentialLease lease : leases) {
+            lease.setRevokedAt(now);
+        }
+        if (!leases.isEmpty()) {
+            leaseRepository.saveAll(leases);
+        }
     }
 
     public ProviderConnection requireVisible(String id) {
@@ -223,9 +233,13 @@ public class ProviderConnectionService {
                 .orElseThrow(() -> new IllegalArgumentException("Provider connection not found"));
         String userId = requireUserId();
         if (ProviderConnection.OWNER_USER.equals(connection.getOwnerType())
-                && userId.equals(connection.getOwnerId())) return connection;
+                && userId.equals(connection.getOwnerId())) {
+            return connection;
+        }
         if (ProviderConnection.OWNER_WORKSPACE.equals(connection.getOwnerType())
-                && connection.getOwnerId().equals(TenantContext.getWorkspaceId())) return connection;
+                && connection.getOwnerId().equals(TenantContext.getWorkspaceId())) {
+            return connection;
+        }
         throw new IllegalArgumentException("Provider connection is not accessible");
     }
 
@@ -274,7 +288,9 @@ public class ProviderConnectionService {
     }
 
     private String resolveOwnerId(String scope, String userId) {
-        if (ProviderConnection.OWNER_USER.equals(scope)) return userId;
+        if (ProviderConnection.OWNER_USER.equals(scope)) {
+            return userId;
+        }
         if (ProviderConnection.OWNER_WORKSPACE.equals(scope)) {
             String workspaceId = TenantContext.getWorkspaceId();
             String role = TenantContext.getWorkspaceRole();
@@ -298,13 +314,17 @@ public class ProviderConnectionService {
     }
 
     private String normalizeBaseUrl(String input, JsonNode definition) {
-        if (input != null && !input.isBlank()) return input.trim().replaceAll("/$", "");
+        if (input != null && !input.isBlank()) {
+            return input.trim().replaceAll("/$", "");
+        }
         JsonNode value = definition.get("defaultBaseUrl");
         return value == null || value.isNull() ? null : value.asText().replaceAll("/$", "");
     }
 
     private void validateBaseUrl(String value) {
-        if (value == null || value.isBlank()) return;
+        if (value == null || value.isBlank()) {
+            return;
+        }
         try {
             URI uri = URI.create(value);
             if (!("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))) {
@@ -313,19 +333,25 @@ public class ProviderConnectionService {
             if (uri.getUserInfo() != null || uri.getQuery() != null || uri.getFragment() != null) {
                 throw new IllegalArgumentException("Base URL must not contain credentials, query or fragment");
             }
-            if (value.length() > 2048) throw new IllegalArgumentException("Base URL is too long");
+            if (value.length() > 2048) {
+                throw new IllegalArgumentException("Base URL is too long");
+            }
         } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException("Invalid provider Base URL", e);
         }
     }
 
     private String encryptCredential(ProviderConnection connection, String apiKey) {
-        if (apiKey == null || apiKey.isBlank()) return null;
+        if (apiKey == null || apiKey.isBlank()) {
+            return null;
+        }
         return encryption.encrypt(apiKey, aad(connection));
     }
 
     private String decryptCredential(ProviderConnection connection) {
-        if (connection.getCredentialCiphertext() == null || connection.getCredentialCiphertext().isBlank()) return null;
+        if (connection.getCredentialCiphertext() == null || connection.getCredentialCiphertext().isBlank()) {
+            return null;
+        }
         return encryption.decrypt(connection.getCredentialCiphertext(), aad(connection));
     }
 
@@ -384,7 +410,9 @@ public class ProviderConnectionService {
     }
 
     private String serializeModels(List<String> models) {
-        if (models == null) return null;
+        if (models == null) {
+            return null;
+        }
         try {
             return objectMapper.writeValueAsString(models);
         } catch (Exception e) {
@@ -401,7 +429,9 @@ public class ProviderConnectionService {
 
     private String requireUserId() {
         String userId = TenantContext.getUserId();
-        if (userId == null || userId.isBlank()) throw new IllegalArgumentException("Authentication required");
+        if (userId == null || userId.isBlank()) {
+            throw new IllegalArgumentException("Authentication required");
+        }
         return userId;
     }
 

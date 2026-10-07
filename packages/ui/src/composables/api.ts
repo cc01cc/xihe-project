@@ -929,10 +929,11 @@ function normalizeWorkspace(value: unknown): ApiWorkspace | undefined {
                 : record.hostPath === null
                   ? null
                   : undefined,
-        executionMode: isEnumValue(
-            record.executionMode,
-            ["docker", "windows-mxc", "windows-host"] as const,
-        )
+        executionMode: isEnumValue(record.executionMode, [
+            "docker",
+            "windows-mxc",
+            "windows-host",
+        ] as const)
             ? record.executionMode
             : undefined,
         createdAt: typeof record.createdAt === "string" ? record.createdAt : undefined,
@@ -977,7 +978,9 @@ const WORKSPACE_JOB_ERROR_REASONS: Record<WorkspaceJobErrorCode, string> = {
 };
 
 function isWorkspaceJobErrorCode(code: string | null | undefined): code is WorkspaceJobErrorCode {
-    return typeof code === "string" && (WORKSPACE_JOB_ERROR_CODES as readonly string[]).includes(code);
+    return (
+        typeof code === "string" && (WORKSPACE_JOB_ERROR_CODES as readonly string[]).includes(code)
+    );
 }
 
 /**
@@ -1016,8 +1019,10 @@ export const EXECUTION_MODE_SWITCH_PROBE_CODES = [
 ] as const;
 
 export function isExecutionModeSwitchProbeFailure(code: string | null | undefined): boolean {
-    return typeof code === "string"
-        && (EXECUTION_MODE_SWITCH_PROBE_CODES as readonly string[]).includes(code);
+    return (
+        typeof code === "string" &&
+        (EXECUTION_MODE_SWITCH_PROBE_CODES as readonly string[]).includes(code)
+    );
 }
 
 function normalizeSession(value: unknown): SessionResponse {
@@ -1032,7 +1037,8 @@ function normalizeSession(value: unknown): SessionResponse {
         title:
             typeof record.title === "string" && record.title.length > 0 ? record.title : "Untitled",
         workspaceId: typeof record.workspaceId === "string" ? record.workspaceId : workspace?.id,
-        agentPrincipalId: typeof record.agentPrincipalId === "string" ? record.agentPrincipalId : null,
+        agentPrincipalId:
+            typeof record.agentPrincipalId === "string" ? record.agentPrincipalId : null,
         createdAt: typeof record.createdAt === "string" ? record.createdAt : undefined,
         updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : undefined,
         modelProvider: typeof record.modelProvider === "string" ? record.modelProvider : undefined,
@@ -1063,7 +1069,11 @@ export function normalizeWorkspaceEvent(
     fallbackKind?: string,
 ): WorkspaceEvent | null {
     const record = asRecord(value);
-    if (!record || typeof record.workspaceId !== "string" || record.workspaceId !== fallbackWorkspaceId) {
+    if (
+        !record ||
+        typeof record.workspaceId !== "string" ||
+        record.workspaceId !== fallbackWorkspaceId
+    ) {
         return null;
     }
     const kind = typeof record.kind === "string" ? record.kind : fallbackKind;
@@ -1071,16 +1081,21 @@ export function normalizeWorkspaceEvent(
         return null;
     }
     const sequence = asNonNegativeInteger(record.sequence);
-    const source = typeof record.source === "string"
-        ? record.source
-        : kind === "heartbeat"
-            ? "control-plane"
-            : "";
+    const source =
+        typeof record.source === "string"
+            ? record.source
+            : kind === "heartbeat"
+              ? "control-plane"
+              : "";
     if (sequence === null || source.length === 0) return null;
     const path = typeof record.path === "string" ? record.path : undefined;
     if (
         path !== undefined &&
-        (path.length === 0 || path.startsWith("/") || path.includes("\\") || path.includes(":") || path.split("/").includes(".."))
+        (path.length === 0 ||
+            path.startsWith("/") ||
+            path.includes("\\") ||
+            path.includes(":") ||
+            path.split("/").includes(".."))
     ) {
         return null;
     }
@@ -1327,11 +1342,13 @@ export const api = {
         body: { sourceBranchId: string; anchorMessageId: string },
         idempotencyKey: string,
     ): Promise<SessionResponse> {
-        return normalizeSession(await request<unknown>(`/sessions/${encodeURIComponent(sessionId)}/fork`, {
-            method: "POST",
-            headers: { "Idempotency-Key": idempotencyKey },
-            body: JSON.stringify(body),
-        }));
+        return normalizeSession(
+            await request<unknown>(`/sessions/${encodeURIComponent(sessionId)}/fork`, {
+                method: "POST",
+                headers: { "Idempotency-Key": idempotencyKey },
+                body: JSON.stringify(body),
+            }),
+        );
     },
     getSessionDerivedState(sessionId: string): Promise<SessionDerivedStateResponse> {
         return request<SessionDerivedStateResponse>(
@@ -1358,9 +1375,14 @@ export const api = {
         );
     },
     getWorkspaceAgents(workspaceId: string): Promise<WorkspaceAgentBinding[]> {
-        return request<WorkspaceAgentBinding[]>(`/workspaces/${encodeURIComponent(workspaceId)}/agents`);
+        return request<WorkspaceAgentBinding[]>(
+            `/workspaces/${encodeURIComponent(workspaceId)}/agents`,
+        );
     },
-    getAgentTemplates(layer: AgentTemplateLayerResponse["layer"], workspaceId?: string): Promise<AgentTemplateLayerResponse> {
+    getAgentTemplates(
+        layer: AgentTemplateLayerResponse["layer"],
+        workspaceId?: string,
+    ): Promise<AgentTemplateLayerResponse> {
         const query = new URLSearchParams({ layer });
         if (layer === "workspace" && workspaceId) query.set("workspaceId", workspaceId);
         return request<AgentTemplateLayerResponse>(`/agent-templates?${query.toString()}`);
@@ -1416,11 +1438,14 @@ export const api = {
         body: { sourceBranchId: string; anchorMessageId: string },
         idempotencyKey: string,
     ) {
-        return request<SessionBranchCreateResponse>(`/sessions/${encodeURIComponent(sessionId)}/branches`, {
-            method: "POST",
-            headers: { "Idempotency-Key": idempotencyKey },
-            body: JSON.stringify(body),
-        });
+        return request<SessionBranchCreateResponse>(
+            `/sessions/${encodeURIComponent(sessionId)}/branches`,
+            {
+                method: "POST",
+                headers: { "Idempotency-Key": idempotencyKey },
+                body: JSON.stringify(body),
+            },
+        );
     },
     getFollowUpQueue(sessionId: string): Promise<ApiFollowUpQueueSnapshot> {
         return request<ApiFollowUpQueueSnapshot>(
@@ -1479,7 +1504,9 @@ export const api = {
                     endedAt?: string | null;
                 }>;
             }>
-        >(`/sessions/${encodeURIComponent(sessionId)}/messages?branchId=${encodeURIComponent(branchId)}`);
+        >(
+            `/sessions/${encodeURIComponent(sessionId)}/messages?branchId=${encodeURIComponent(branchId)}`,
+        );
     },
     getJobOutput(
         itemId: string,
@@ -1823,13 +1850,16 @@ export const api = {
             }),
         });
     },
-    async startWorkspaceImport(workspaceId: string, input: {
-        sourcePath: string;
-        excludeRules?: string[];
-        idempotencyKey: string;
-    }): Promise<Record<string, unknown>> {
+    async startWorkspaceImport(
+        workspaceId: string,
+        input: {
+            sourcePath: string;
+            excludeRules?: string[];
+            idempotencyKey: string;
+        },
+    ): Promise<Record<string, unknown>> {
         return request(`/workspaces/${encodeURIComponent(workspaceId)}/imports`, {
-            method: 'POST',
+            method: "POST",
             headers: workspaceHeaders(workspaceId),
             body: JSON.stringify(input),
         });
@@ -1839,13 +1869,18 @@ export const api = {
     },
     /** PLAN-0384 V5: durable import records for a workspace, used to recover an in-flight import. */
     async listWorkspaceImports(workspaceId: string): Promise<Array<Record<string, unknown>>> {
-        const result = await request<unknown>(`/workspaces/${encodeURIComponent(workspaceId)}/imports`, {
-            headers: workspaceHeaders(workspaceId),
-        });
-        return Array.isArray(result) ? result as Array<Record<string, unknown>> : [];
+        const result = await request<unknown>(
+            `/workspaces/${encodeURIComponent(workspaceId)}/imports`,
+            {
+                headers: workspaceHeaders(workspaceId),
+            },
+        );
+        return Array.isArray(result) ? (result as Array<Record<string, unknown>>) : [];
     },
     async cancelWorkspaceImport(importId: string): Promise<Record<string, unknown>> {
-        return request(`/workspace-imports/${encodeURIComponent(importId)}/cancel`, { method: 'POST' });
+        return request(`/workspace-imports/${encodeURIComponent(importId)}/cancel`, {
+            method: "POST",
+        });
     },
     async createWorkspace(input: {
         name?: string;
@@ -1893,9 +1928,12 @@ export const api = {
         });
     },
     getWorkspaceEnvironment(wsId: string) {
-        return request<WorkspaceEnvironment>(`/workspaces/${encodeURIComponent(wsId)}/environment`, {
-            headers: workspaceHeaders(wsId),
-        });
+        return request<WorkspaceEnvironment>(
+            `/workspaces/${encodeURIComponent(wsId)}/environment`,
+            {
+                headers: workspaceHeaders(wsId),
+            },
+        );
     },
     getWorkspaceJobs(wsId: string) {
         return request<WorkspaceJob[]>(`/workspaces/${encodeURIComponent(wsId)}/jobs`, {

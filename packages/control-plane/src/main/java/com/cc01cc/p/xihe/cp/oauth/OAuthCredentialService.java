@@ -97,7 +97,9 @@ public class OAuthCredentialService {
 
     @Transactional
     public AccessGrant complete(String state, String code) {
-        if (code == null || code.isBlank()) throw new IllegalArgumentException("OAuth code is required");
+        if (code == null || code.isBlank()) {
+            throw new IllegalArgumentException("OAuth code is required");
+        }
         PkceSessionService.PendingSession session = pkce.consume(state);
         TokenPayload token = exchangeCode(session, code);
         if (token.refreshToken() == null || token.refreshToken().isBlank()) {
@@ -317,7 +319,9 @@ public class OAuthCredentialService {
     private static String form(String... values) {
         StringBuilder body = new StringBuilder();
         for (int i = 0; i < values.length; i += 2) {
-            if (i > 0) body.append('&');
+            if (i > 0) {
+                body.append('&');
+            }
             body.append(encode(values[i])).append('=').append(encode(values[i + 1]));
         }
         return body.toString();
@@ -343,11 +347,15 @@ public class OAuthCredentialService {
                 .orElseThrow(() -> new IllegalArgumentException("workspace_not_found"));
         boolean owner = userId.equals(workspace.getOwnerId());
         boolean member = workspaceUserRepository.existsById(new WorkspaceUserId(workspaceId, userId));
-        if (!owner && !member) throw new IllegalArgumentException("workspace_forbidden");
+        if (!owner && !member) {
+            throw new IllegalArgumentException("workspace_forbidden");
+        }
     }
 
     private void registerOrValidateServer(StartRequest request) {
-        if (request.serverId().length() > 36) throw new IllegalArgumentException("serverId is too long");
+        if (request.serverId().length() > 36) {
+            throw new IllegalArgumentException("serverId is too long");
+        }
         if (request.remoteEndpoint() == null || request.remoteEndpoint().isBlank()) {
             throw new IllegalArgumentException("remoteEndpoint must not be blank");
         }
@@ -355,7 +363,9 @@ public class OAuthCredentialService {
             if (!request.workspaceId().equals(server.getWorkspaceId())) {
                 throw new IllegalArgumentException("mcp_server_forbidden");
             }
-            if (!server.isEnabled()) throw new IllegalArgumentException("mcp_server_disabled");
+            if (!server.isEnabled()) {
+                throw new IllegalArgumentException("mcp_server_disabled");
+            }
             server.setEndpoint(request.remoteEndpoint());
             mcpServerRepository.save(server);
         }, () -> {
@@ -406,7 +416,9 @@ public class OAuthCredentialService {
         if (!localHost) {
             try {
                 for (InetAddress address : InetAddress.getAllByName(uri.getHost())) {
-                    if (isPrivate(address)) throw new IllegalArgumentException(kind + " endpoint resolves to a private address");
+                    if (isPrivate(address)) {
+                        throw new IllegalArgumentException(kind + " endpoint resolves to a private address");
+                    }
                 }
             } catch (UnknownHostException e) {
                 throw new IllegalArgumentException(kind + " endpoint DNS lookup failed", e);
@@ -415,7 +427,9 @@ public class OAuthCredentialService {
     }
 
     private boolean isAllowedHost(String host) {
-        if (allowedEndpointHosts == null || allowedEndpointHosts.isBlank()) return true;
+        if (allowedEndpointHosts == null || allowedEndpointHosts.isBlank()) {
+            return true;
+        }
         String normalized = host.toLowerCase();
         for (String configured : allowedEndpointHosts.split(",")) {
             String allowed = configured.trim().toLowerCase();
@@ -429,7 +443,9 @@ public class OAuthCredentialService {
 
     private static URI parseUri(String value, String name) {
         try {
-            if (value == null || value.isBlank()) throw new IllegalArgumentException(name + " must not be blank");
+            if (value == null || value.isBlank()) {
+                throw new IllegalArgumentException(name + " must not be blank");
+            }
             return URI.create(value);
         } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException(name + " is invalid", e);

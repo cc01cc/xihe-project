@@ -6,7 +6,6 @@ import com.cc01cc.p.xihe.cp.policy.PolicyContext;
 import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
 import com.cc01cc.p.xihe.cp.policy.PolicyLayer;
-import com.cc01cc.p.xihe.cp.policy.PolicyRule;
 import com.cc01cc.p.xihe.cp.policy.PolicyRuleService;
 import com.cc01cc.p.xihe.cp.policy.ReusePolicy;
 import com.cc01cc.p.xihe.cp.policy.SessionPolicyState;

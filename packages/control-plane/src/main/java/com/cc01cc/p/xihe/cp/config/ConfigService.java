@@ -24,7 +24,21 @@ import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.HexFormat;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 
 /**
  * PLAN-0307: three-tier config resolution (workspace > user > instance) with
@@ -130,7 +144,9 @@ public class ConfigService {
                 sb.append(line).append('\n');
             }
         }
-        if (sb.length() > 0) sb.setLength(sb.length() - 1);
+        if (sb.length() > 0) {
+            sb.setLength(sb.length() - 1);
+        }
         return sb.toString();
     }
 
@@ -148,15 +164,23 @@ public class ConfigService {
         // PLAN-0307 T2.14 (P1-1): the single-key channel merges env first, so
         // env-locked keys cannot silently fall back to a DB value.
         String envValue = envOverlay.activeOverrides(domain).get(key);
-        if (envValue != null) return envValue;
+        if (envValue != null) {
+            return envValue;
+        }
         String workspaceValue = workspaceId == null ? null
             : keyOf(repo.findByWorkspaceIdAndDomainAndConfigKey(workspaceId, domain, key));
-        if (workspaceValue != null) return workspaceValue;
+        if (workspaceValue != null) {
+            return workspaceValue;
+        }
         String userValue = userId == null ? null
             : keyOf(repo.findByUserIdAndDomainAndConfigKey(userId, domain, key));
-        if (userValue != null) return userValue;
+        if (userValue != null) {
+            return userValue;
+        }
         String instanceValue = keyOf(repo.findByLayerAndDomainAndConfigKey("instance", domain, key));
-        if (instanceValue != null) return instanceValue;
+        if (instanceValue != null) {
+            return instanceValue;
+        }
         Map<String, String> defaults = CODE_DEFAULTS.getOrDefault(domain, Map.of());
         return defaults.get(key);
     }
@@ -217,17 +241,23 @@ public class ConfigService {
         List<ConfigEntity> instanceRows = rowsForLayer("instance", domain, null, null);
         rows.addAll(instanceRows);
         instanceRows.forEach(e -> merged.put(e.getConfigKey(), e.getConfigValue()));
-        if (!instanceRows.isEmpty()) source = "instance";
+        if (!instanceRows.isEmpty()) {
+            source = "instance";
+        }
 
         List<ConfigEntity> userRows = rowsForLayer("user", domain, userId, null);
         rows.addAll(userRows);
         userRows.forEach(e -> merged.put(e.getConfigKey(), e.getConfigValue()));
-        if (!userRows.isEmpty()) source = "user";
+        if (!userRows.isEmpty()) {
+            source = "user";
+        }
 
         List<ConfigEntity> workspaceRows = rowsForLayer("workspace", domain, null, workspaceId);
         rows.addAll(workspaceRows);
         workspaceRows.forEach(e -> merged.put(e.getConfigKey(), e.getConfigValue()));
-        if (!workspaceRows.isEmpty()) source = "workspace";
+        if (!workspaceRows.isEmpty()) {
+            source = "workspace";
+        }
 
         if (applyEnvOverlay(domain, merged)) {
             source = "env";
@@ -399,7 +429,9 @@ public class ConfigService {
     }
 
     private JsonNode parseJsonValue(String value, String key) {
-        if (value == null) return objectMapper.createArrayNode();
+        if (value == null) {
+            return objectMapper.createArrayNode();
+        }
         try {
             return objectMapper.readTree(value);
         } catch (JsonProcessingException e) {

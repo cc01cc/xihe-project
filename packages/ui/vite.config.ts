@@ -56,25 +56,27 @@ export default defineConfig(({ mode }) => {
     return {
         logLevel: uiLogLevel,
         define: {
-            'import.meta.env.VITE_XIHE_LOG_LEVEL': JSON.stringify(uiLogLevel === 'silent' ? 'error' : uiLogLevel === 'warn' ? 'warn' : 'info'),
-            'import.meta.env.VITE_XIHE_CP_BASE_URL': JSON.stringify(cpBaseUrl),
+            "import.meta.env.VITE_XIHE_LOG_LEVEL": JSON.stringify(
+                uiLogLevel === "silent" ? "error" : uiLogLevel === "warn" ? "warn" : "info",
+            ),
+            "import.meta.env.VITE_XIHE_CP_BASE_URL": JSON.stringify(cpBaseUrl),
         },
         plugins: [vue(), tailwindcss()],
         test: {
             globals: true,
-            environment: 'jsdom',
-            setupFiles: ['src/tests/setup.ts'],
-            include: ['src/**/*.spec.ts'],
-            exclude: ['e2e/**', 'node_modules/**'],
+            environment: "jsdom",
+            setupFiles: ["src/tests/setup.ts"],
+            include: ["src/**/*.spec.ts"],
+            exclude: ["e2e/**", "node_modules/**"],
             testTimeout: 5000,
-            pool: 'forks',
+            pool: "forks",
             fileParallelism: false,
             maxWorkers: 1,
             minWorkers: 1,
         },
         resolve: {
             alias: {
-                '@': path.resolve(__dirname, 'src'),
+                "@": path.resolve(__dirname, "src"),
             },
         },
         server: {
@@ -82,7 +84,7 @@ export default defineConfig(({ mode }) => {
             strictPort: false,
             fs: {
                 // pdfjs-dist is hoisted to the workspace root by pnpm.
-                allow: [path.resolve(__dirname, '../..'), path.resolve(__dirname, '../../..')],
+                allow: [path.resolve(__dirname, "../.."), path.resolve(__dirname, "../../..")],
             },
             proxy: {
                 "/api": {

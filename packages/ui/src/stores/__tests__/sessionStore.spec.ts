@@ -1,282 +1,280 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { setActivePinia, createPinia } from 'pinia'
-import { useSessionStore } from '../session'
-import { useAuthStore } from '../auth'
-import { useAgentStore } from '../agent'
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { setActivePinia, createPinia } from "pinia";
+import { useSessionStore } from "../session";
+import { useAuthStore } from "../auth";
+import { useAgentStore } from "../agent";
 
-const originalFetch = globalThis.fetch
-const REQUEST_ID = '11111111-1111-4111-8111-111111111111'
-const RUN_ID = '22222222-2222-4222-8222-222222222222'
-const SESSION_ID = '33333333-3333-4333-8333-333333333333'
-const WORKSPACE_ID = '44444444-4444-4444-8444-444444444444'
+const originalFetch = globalThis.fetch;
+const REQUEST_ID = "11111111-1111-4111-8111-111111111111";
+const RUN_ID = "22222222-2222-4222-8222-222222222222";
+const SESSION_ID = "33333333-3333-4333-8333-333333333333";
+const WORKSPACE_ID = "44444444-4444-4444-8444-444444444444";
 
 function mockAuth(workspaceId = WORKSPACE_ID) {
-  const auth = useAuthStore()
-  auth.$patch({
-    token: 'mock-token',
-    user: { id: 'u-1', email: 'tester@xihe.local' },
-    workspace: { id: workspaceId, name: 'Default Workspace' },
-  })
-  return auth
+    const auth = useAuthStore();
+    auth.$patch({
+        token: "mock-token",
+        user: { id: "u-1", email: "tester@xihe.local" },
+        workspace: { id: workspaceId, name: "Default Workspace" },
+    });
+    return auth;
 }
 
-function mockSessionResponse(record: { id: string; title?: string; createdAt?: string; updatedAt?: string }) {
-  return {
-    id: record.id,
-    title: record.title ?? 'New Chat',
-    workspaceId: 'ws-test',
-    createdAt: record.createdAt ?? new Date().toISOString(),
-    updatedAt: record.updatedAt ?? new Date().toISOString(),
-  }
+function mockSessionResponse(record: {
+    id: string;
+    title?: string;
+    createdAt?: string;
+    updatedAt?: string;
+}) {
+    return {
+        id: record.id,
+        title: record.title ?? "New Chat",
+        workspaceId: "ws-test",
+        createdAt: record.createdAt ?? new Date().toISOString(),
+        updatedAt: record.updatedAt ?? new Date().toISOString(),
+    };
 }
 
 beforeEach(() => {
-  setActivePinia(createPinia())
-  localStorage.clear()
-})
+    setActivePinia(createPinia());
+    localStorage.clear();
+});
 
-describe('useSessionStore (server canonical)', () => {
-  it('createSession POSTs to /sessions and stores the server response', async () => {
-    mockAuth()
-    const store = useSessionStore()
-    const fetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 201,
-        json: () => Promise.resolve(mockSessionResponse({ id: 'remote-1', title: 'Plan' })),
-      } as Response)
+describe("useSessionStore (server canonical)", () => {
+    it("createSession POSTs to /sessions and stores the server response", async () => {
+        mockAuth();
+        const store = useSessionStore();
+        const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+            ok: true,
+            status: 201,
+            json: () => Promise.resolve(mockSessionResponse({ id: "remote-1", title: "Plan" })),
+        } as Response);
 
-    const session = await store.createSession('principal-test', 'Plan')
+        const session = await store.createSession("principal-test", "Plan");
 
-    expect(session.id).toBe('remote-1')
-    expect(session.title).toBe('Plan')
-    expect(store.sessions.length).toBe(1)
-    expect(store.sessions[0].id).toBe('remote-1')
-    expect(store.currentSessionId).toBe('remote-1')
-    expect(fetchSpy).toHaveBeenCalledWith(
-      '/api/v1/sessions',
-      expect.objectContaining({ method: 'POST' }),
-    )
+        expect(session.id).toBe("remote-1");
+        expect(session.title).toBe("Plan");
+        expect(store.sessions.length).toBe(1);
+        expect(store.sessions[0].id).toBe("remote-1");
+        expect(store.currentSessionId).toBe("remote-1");
+        expect(fetchSpy).toHaveBeenCalledWith(
+            "/api/v1/sessions",
+            expect.objectContaining({ method: "POST" }),
+        );
 
-    fetchSpy.mockRestore()
-  })
+        fetchSpy.mockRestore();
+    });
 
-  it('createSession prepends to the beginning of the list', async () => {
-    mockAuth()
-    const store = useSessionStore()
-    const spy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 201,
-        json: () => Promise.resolve(mockSessionResponse({ id: 's2' })),
-      } as Response)
-    const s1 = await store.createSession('principal-test', 'First')
-    spy.mockResolvedValueOnce({
-      ok: true,
-      status: 201,
-      json: () => Promise.resolve(mockSessionResponse({ id: 's3' })),
-    } as Response)
-    await store.createSession('principal-test', 'Second')
+    it("createSession prepends to the beginning of the list", async () => {
+        mockAuth();
+        const store = useSessionStore();
+        const spy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+            ok: true,
+            status: 201,
+            json: () => Promise.resolve(mockSessionResponse({ id: "s2" })),
+        } as Response);
+        const s1 = await store.createSession("principal-test", "First");
+        spy.mockResolvedValueOnce({
+            ok: true,
+            status: 201,
+            json: () => Promise.resolve(mockSessionResponse({ id: "s3" })),
+        } as Response);
+        await store.createSession("principal-test", "Second");
 
-    expect(store.sessions[0].id).toBe('s3')
-    expect(store.sessions[1].id).toBe(s1.id)
-    spy.mockRestore()
-  })
+        expect(store.sessions[0].id).toBe("s3");
+        expect(store.sessions[1].id).toBe(s1.id);
+        spy.mockRestore();
+    });
 
-  it('deleteSession calls DELETE and removes the row from list', async () => {
-    mockAuth()
-    const store = useSessionStore()
-    const spy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce({ ok: true, status: 201, json: () => Promise.resolve(mockSessionResponse({ id: 's1' })) } as Response)
-    const s1 = await store.createSession('principal-test', 'S1')
-    spy.mockResolvedValueOnce({ ok: true, status: 201, json: () => Promise.resolve(mockSessionResponse({ id: 's2' })) } as Response)
-    const s2 = await store.createSession('principal-test', 'S2')
-    spy.mockReset()
-    spy.mockResolvedValueOnce({ ok: true, status: 204 } as Response)
+    it("deleteSession calls DELETE and removes the row from list", async () => {
+        mockAuth();
+        const store = useSessionStore();
+        const spy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+            ok: true,
+            status: 201,
+            json: () => Promise.resolve(mockSessionResponse({ id: "s1" })),
+        } as Response);
+        await store.createSession("principal-test", "S1");
+        spy.mockResolvedValueOnce({
+            ok: true,
+            status: 201,
+            json: () => Promise.resolve(mockSessionResponse({ id: "s2" })),
+        } as Response);
+        const s2 = await store.createSession("principal-test", "S2");
+        spy.mockReset();
+        spy.mockResolvedValueOnce({ ok: true, status: 204 } as Response);
 
-    await store.deleteSession(s2.id)
+        await store.deleteSession(s2.id);
 
-    expect(store.sessions.length).toBe(1)
-    expect(store.sessions.find((s) => s.id === s2.id)).toBeUndefined()
-    expect(spy).toHaveBeenCalledWith(
-      `/api/v1/sessions/${s2.id}`,
-      expect.objectContaining({ method: 'DELETE' }),
-    )
-    spy.mockRestore()
-  })
+        expect(store.sessions.length).toBe(1);
+        expect(store.sessions.find((s) => s.id === s2.id)).toBeUndefined();
+        expect(spy).toHaveBeenCalledWith(
+            `/api/v1/sessions/${s2.id}`,
+            expect.objectContaining({ method: "DELETE" }),
+        );
+        spy.mockRestore();
+    });
 
-  it('deleteSession clears approval state for the removed session', async () => {
-    mockAuth()
-    const store = useSessionStore()
-    const agent = useAgentStore()
-    const spy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce({ ok: true, status: 204 } as Response)
+    it("deleteSession clears approval state for the removed session", async () => {
+        mockAuth();
+        const store = useSessionStore();
+        const agent = useAgentStore();
+        const spy = vi
+            .spyOn(globalThis, "fetch")
+            .mockResolvedValueOnce({ ok: true, status: 204 } as Response);
 
-     agent.addApprovalRequest({
-       requestId: REQUEST_ID,
-       runId: RUN_ID,
-       sessionId: SESSION_ID,
-       workspaceId: WORKSPACE_ID,
-      tool: 'write_file',
-      action: 'write',
-      details: '/README.md',
-    })
-    agent.pendingApprovalSummaries = [{
-       sessionId: SESSION_ID,
-       workspaceId: WORKSPACE_ID,
-      count: 1,
-      oldestRequestedAt: new Date().toISOString(),
-    }]
+        agent.addApprovalRequest({
+            requestId: REQUEST_ID,
+            runId: RUN_ID,
+            sessionId: SESSION_ID,
+            workspaceId: WORKSPACE_ID,
+            tool: "write_file",
+            action: "write",
+            details: "/README.md",
+        });
+        agent.pendingApprovalSummaries = [
+            {
+                sessionId: SESSION_ID,
+                workspaceId: WORKSPACE_ID,
+                count: 1,
+                oldestRequestedAt: new Date().toISOString(),
+            },
+        ];
 
-     await store.deleteSession(SESSION_ID)
+        await store.deleteSession(SESSION_ID);
 
-    expect(agent.agentState.pendingApprovals).toEqual([])
-    expect(agent.pendingApprovalSummaries).toEqual([])
-    spy.mockRestore()
-  })
+        expect(agent.agentState.pendingApprovals).toEqual([]);
+        expect(agent.pendingApprovalSummaries).toEqual([]);
+        spy.mockRestore();
+    });
 
-  it('selectSession sets currentSessionId and does not call server', () => {
-    mockAuth()
-    const store = useSessionStore()
-    const spy = vi.spyOn(globalThis, 'fetch')
+    it("selectSession sets currentSessionId and does not call server", () => {
+        mockAuth();
+        const store = useSessionStore();
+        const spy = vi.spyOn(globalThis, "fetch");
 
-    store.sessions.push({
-      id: 's-1',
-      title: 'Sample',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    } as never)
-    store.selectSession('s-1')
+        store.sessions.push({
+            id: "s-1",
+            title: "Sample",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+        } as never);
+        store.selectSession("s-1");
 
-    expect(store.currentSessionId).toBe('s-1')
-    expect(spy).not.toHaveBeenCalled()
-    spy.mockRestore()
-  })
+        expect(store.currentSessionId).toBe("s-1");
+        expect(spy).not.toHaveBeenCalled();
+        spy.mockRestore();
+    });
 
-  it('renameSession calls PATCH and refreshes the row', async () => {
-    mockAuth()
-    const store = useSessionStore()
-    const fetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: () => Promise.resolve(mockSessionResponse({ id: 's1', title: 'Renamed' })),
-      } as Response)
+    it("renameSession calls PATCH and refreshes the row", async () => {
+        mockAuth();
+        const store = useSessionStore();
+        const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve(mockSessionResponse({ id: "s1", title: "Renamed" })),
+        } as Response);
 
-    await store.updateSession('s1', { title: 'Renamed' })
+        await store.updateSession("s1", { title: "Renamed" });
 
-    expect(fetchSpy).toHaveBeenCalledWith(
-      '/api/v1/sessions/s1',
-      expect.objectContaining({ method: 'PATCH' }),
-    )
-    expect(store.sessions[0]?.title).toBe('Renamed')
-    fetchSpy.mockRestore()
-  })
+        expect(fetchSpy).toHaveBeenCalledWith(
+            "/api/v1/sessions/s1",
+            expect.objectContaining({ method: "PATCH" }),
+        );
+        expect(store.sessions[0]?.title).toBe("Renamed");
+        fetchSpy.mockRestore();
+    });
 
-  it('groupedSessions groups sessions by time', async () => {
-    mockAuth()
-    const store = useSessionStore()
-    const fetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 201,
-        json: () => Promise.resolve(mockSessionResponse({ id: 's1' })),
-      } as Response)
-    await store.createSession('principal-test', 'Group me')
-    fetchSpy.mockRestore()
+    it("groupedSessions groups sessions by time", async () => {
+        mockAuth();
+        const store = useSessionStore();
+        const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+            ok: true,
+            status: 201,
+            json: () => Promise.resolve(mockSessionResponse({ id: "s1" })),
+        } as Response);
+        await store.createSession("principal-test", "Group me");
+        fetchSpy.mockRestore();
 
-    expect(store.groupedSessions.today.length).toBeGreaterThanOrEqual(1)
-    expect(store.groupedSessions.today.some((s) => s.id === 's1')).toBe(true)
-  })
+        expect(store.groupedSessions.today.length).toBeGreaterThanOrEqual(1);
+        expect(store.groupedSessions.today.some((s) => s.id === "s1")).toBe(true);
+    });
 
-  it('searchQuery filters sessions by title', async () => {
-    mockAuth()
-    const store = useSessionStore()
-    const fetchSpy = vi.spyOn(globalThis, 'fetch')
-    fetchSpy
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 201,
-        json: () => Promise.resolve(mockSessionResponse({ id: 'a1', title: 'Alpha' })),
-      } as Response)
-    await store.createSession('principal-test', 'Alpha')
-    fetchSpy.mockResolvedValueOnce({
-      ok: true,
-      status: 201,
-      json: () => Promise.resolve(mockSessionResponse({ id: 'b1', title: 'Beta' })),
-    } as Response)
-    await store.createSession('principal-test', 'Beta')
-    fetchSpy.mockRestore()
+    it("searchQuery filters sessions by title", async () => {
+        mockAuth();
+        const store = useSessionStore();
+        const fetchSpy = vi.spyOn(globalThis, "fetch");
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            status: 201,
+            json: () => Promise.resolve(mockSessionResponse({ id: "a1", title: "Alpha" })),
+        } as Response);
+        await store.createSession("principal-test", "Alpha");
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            status: 201,
+            json: () => Promise.resolve(mockSessionResponse({ id: "b1", title: "Beta" })),
+        } as Response);
+        await store.createSession("principal-test", "Beta");
+        fetchSpy.mockRestore();
 
-    store.searchQuery = 'alpha'
-    expect(store.filteredSessions.length).toBe(1)
-    expect(store.filteredSessions[0].title).toBe('Alpha')
-  })
+        store.searchQuery = "alpha";
+        expect(store.filteredSessions.length).toBe(1);
+        expect(store.filteredSessions[0].title).toBe("Alpha");
+    });
 
-  it('loadSessions replaces list with server response', async () => {
-    mockAuth()
-    const store = useSessionStore()
-    const fetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: () =>
-          Promise.resolve({
-            sessions: [mockSessionResponse({ id: 'srv-1', title: 'Server' })],
-            workspace: { id: 'ws-test', name: 'Default Workspace' },
-          }),
-      } as Response)
+    it("loadSessions replaces list with server response", async () => {
+        mockAuth();
+        const store = useSessionStore();
+        const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: () =>
+                Promise.resolve({
+                    sessions: [mockSessionResponse({ id: "srv-1", title: "Server" })],
+                    workspace: { id: "ws-test", name: "Default Workspace" },
+                }),
+        } as Response);
 
-    await store.loadSessions()
+        await store.loadSessions();
 
-    expect(store.sessions.length).toBe(1)
-    expect(store.sessions[0].id).toBe('srv-1')
-    fetchSpy.mockRestore()
-  })
+        expect(store.sessions.length).toBe(1);
+        expect(store.sessions[0].id).toBe("srv-1");
+        fetchSpy.mockRestore();
+    });
 
-  it('resetForUserSwitch clears sessions and currentSessionId', async () => {
-    mockAuth()
-    const store = useSessionStore()
-    const fetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 201,
-        json: () => Promise.resolve(mockSessionResponse({ id: 'temp' })),
-      } as Response)
-    await store.createSession('principal-test', 'Temp')
-    fetchSpy.mockRestore()
+    it("resetForUserSwitch clears sessions and currentSessionId", async () => {
+        mockAuth();
+        const store = useSessionStore();
+        const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+            ok: true,
+            status: 201,
+            json: () => Promise.resolve(mockSessionResponse({ id: "temp" })),
+        } as Response);
+        await store.createSession("principal-test", "Temp");
+        fetchSpy.mockRestore();
 
-    store.resetForUserSwitch()
+        store.resetForUserSwitch();
 
-    expect(store.sessions.length).toBe(0)
-    expect(store.currentSessionId).toBeNull()
-  })
+        expect(store.sessions.length).toBe(0);
+        expect(store.currentSessionId).toBeNull();
+    });
 
-  it('does not persist sessions to localStorage', async () => {
-    mockAuth()
-    const store = useSessionStore()
-    const fetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 201,
-        json: () => Promise.resolve(mockSessionResponse({ id: 'no-persist' })),
-      } as Response)
-    await store.createSession('principal-test', 'No persist')
-    fetchSpy.mockRestore()
+    it("does not persist sessions to localStorage", async () => {
+        mockAuth();
+        const store = useSessionStore();
+        const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+            ok: true,
+            status: 201,
+            json: () => Promise.resolve(mockSessionResponse({ id: "no-persist" })),
+        } as Response);
+        await store.createSession("principal-test", "No persist");
+        fetchSpy.mockRestore();
 
-    expect(localStorage.getItem('xihe-sessions')).toBeNull()
-  })
-})
+        expect(localStorage.getItem("xihe-sessions")).toBeNull();
+    });
+});
 
 afterEach(() => {
-  globalThis.fetch = originalFetch
-})
+    globalThis.fetch = originalFetch;
+});

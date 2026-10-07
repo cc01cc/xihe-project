@@ -1,76 +1,97 @@
-import { generateE2EPassword } from './helpers/password'
-import { ensureWorkspaceChat } from './helpers/chat'
-import { test, expect } from '@playwright/test'
+import { generateE2EPassword } from "./helpers/password";
+import { ensureWorkspaceChat } from "./helpers/chat";
+import { test, expect } from "@playwright/test";
+import { expectPlatformScreenshot } from "../helpers/visual";
 
-const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
-const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
+const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
+const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 
-test.describe('Auth — UI Flows & Error States', () => {
-  test('register → logout → login full UI flow', async ({ page }) => {
-    const email = `flow-${Date.now()}@test.com`
+test.describe("Auth — UI Flows & Error States", () => {
+    test("register → logout → login full UI flow", async ({ page }) => {
+        const email = `flow-${Date.now()}@test.com`;
 
-    await page.goto('/register')
-    await page.locator('input[type="text"]').first().fill(email)
-    await page.locator('input[type="password"]').nth(0).fill(SHARED_PASSWORD)
-    await page.locator('input[type="password"]').nth(1).fill(SHARED_PASSWORD)
-    await page.locator('button[type="submit"]').click()
-    await page.waitForURL(/\/workspace/, { timeout: 15000 })
+        await page.goto("/register");
+        await page.locator('input[type="text"]').first().fill(email);
+        await page.locator('input[type="password"]').nth(0).fill(SHARED_PASSWORD);
+        await page.locator('input[type="password"]').nth(1).fill(SHARED_PASSWORD);
+        await page.locator('button[type="submit"]').click();
+        await page.waitForURL(/\/workspace/, { timeout: 15000 });
 
-    const logoutBtn = page.locator('[data-testid="sidebar"] button').filter({ hasText: /logout|退出/i }).first()
-    await expect(logoutBtn).toBeVisible({ timeout: 8000 })
-    await logoutBtn.click()
-    await page.waitForURL(/\/login/, { timeout: 10000 })
+        const logoutBtn = page
+            .locator('[data-testid="sidebar"] button')
+            .filter({ hasText: /logout|退出/i })
+            .first();
+        await expect(logoutBtn).toBeVisible({ timeout: 8000 });
+        await logoutBtn.click();
+        await page.waitForURL(/\/login/, { timeout: 10000 });
 
-    await page.locator('input[type="text"]').first().fill(email)
-    await page.locator('input[type="password"]').first().fill(SHARED_PASSWORD)
-    await page.locator('button[type="submit"]').click()
-    await page.waitForURL(/\/workspace/, { timeout: 15000 })
-    await ensureWorkspaceChat(page)
-  })
+        await page.locator('input[type="text"]').first().fill(email);
+        await page.locator('input[type="password"]').first().fill(SHARED_PASSWORD);
+        await page.locator('button[type="submit"]').click();
+        await page.waitForURL(/\/workspace/, { timeout: 15000 });
+        await ensureWorkspaceChat(page);
+    });
 
-  test('wrong password shows Problem Details error without layout breakage', async ({ page, request }) => {
-    const email = `wrongpw-${Date.now()}@test.com`
-    const reg = await request.post(`${CP_URL}/api/v1/auth/register`, {
-      data: { email, password: SHARED_PASSWORD, name: 'WrongPw' },
-    })
-    expect(reg.ok()).toBe(true)
+    test("wrong password shows Problem Details error without layout breakage", async ({
+        page,
+        request,
+    }) => {
+        const email = `wrongpw-${Date.now()}@test.com`;
+        const reg = await request.post(`${CP_URL}/api/v1/auth/register`, {
+            data: { email, password: SHARED_PASSWORD, name: "WrongPw" },
+        });
+        expect(reg.ok()).toBe(true);
 
-    await page.goto('/login')
-    await page.locator('input[type="text"]').first().fill(email)
-    await page.locator('input[type="password"]').first().fill(generateE2EPassword())
-    await page.locator('button[type="submit"]').click()
+        await page.goto("/login");
+        await page.locator('input[type="text"]').first().fill(email);
+        await page.locator('input[type="password"]').first().fill(generateE2EPassword());
+        await page.locator('button[type="submit"]').click();
 
-    const errorEl = page.locator('p.text-destructive').first()
-    await expect(errorEl).toBeVisible({ timeout: 10000 })
-    const errorText = await errorEl.innerText()
-    expect(errorText).not.toMatch(/\[object Object\]/)
-    expect(errorText).not.toMatch(/ProblemDetails|com\.cc01cc/)
-    await expect(page).toHaveScreenshot('auth-login-error.png')
-  })
+        const errorEl = page.locator("p.text-destructive").first();
+        await expect(errorEl).toBeVisible({ timeout: 10000 });
+        const errorText = await errorEl.innerText();
+        expect(errorText).not.toMatch(/\[object Object\]/);
+        expect(errorText).not.toMatch(/ProblemDetails|com\.cc01cc/);
+        await expectPlatformScreenshot(page, "auth-login-error.png");
+    });
 
-  test('authenticated user visiting /login does not flash login form', async ({ page, request }) => {
-    const reg = await request.post(`${CP_URL}/api/v1/auth/register`, {
-      data: { email: `redir-${Date.now()}@test.com`, password: SHARED_PASSWORD, name: 'Redir' },
-    })
-    const body = await reg.json()
-    await page.addInitScript((t) => localStorage.setItem('xihe-token', t), body.accessToken)
+    test("authenticated user visiting /login does not flash login form", async ({
+        page,
+        request,
+    }) => {
+        const reg = await request.post(`${CP_URL}/api/v1/auth/register`, {
+            data: {
+                email: `redir-${Date.now()}@test.com`,
+                password: SHARED_PASSWORD,
+                name: "Redir",
+            },
+        });
+        const body = await reg.json();
+        await page.addInitScript((t) => localStorage.setItem("xihe-token", t), body.accessToken);
 
-    await page.goto('/login')
-    await page.waitForURL(/\/workspace/, { timeout: 10000 })
-    expect(page.url()).toContain('/workspace')
-  })
+        await page.goto("/login");
+        await page.waitForURL(/\/workspace/, { timeout: 10000 });
+        expect(page.url()).toContain("/workspace");
+    });
 
-  test('session persists across page refresh without sidebar flicker', async ({ page, request }) => {
-    const reg = await request.post(`${CP_URL}/api/v1/auth/register`, {
-      data: { email: `refresh-${Date.now()}@test.com`, password: SHARED_PASSWORD, name: 'Refresh' },
-    })
-    const body = await reg.json()
-    await page.addInitScript((t) => localStorage.setItem('xihe-token', t), body.accessToken)
+    test("session persists across page refresh without sidebar flicker", async ({
+        page,
+        request,
+    }) => {
+        const reg = await request.post(`${CP_URL}/api/v1/auth/register`, {
+            data: {
+                email: `refresh-${Date.now()}@test.com`,
+                password: SHARED_PASSWORD,
+                name: "Refresh",
+            },
+        });
+        const body = await reg.json();
+        await page.addInitScript((t) => localStorage.setItem("xihe-token", t), body.accessToken);
 
-    await page.goto('/workspace')
-    await expect(page.locator('[data-testid="sidebar"]')).toBeVisible({ timeout: 10000 })
-    await page.reload()
-    await expect(page.locator('[data-testid="sidebar"]')).toBeVisible({ timeout: 10000 })
-    expect(page.url()).toContain('/workspace')
-  })
-})
+        await page.goto("/workspace");
+        await expect(page.locator('[data-testid="sidebar"]')).toBeVisible({ timeout: 10000 });
+        await page.reload();
+        await expect(page.locator('[data-testid="sidebar"]')).toBeVisible({ timeout: 10000 });
+        expect(page.url()).toContain("/workspace");
+    });
+});

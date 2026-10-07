@@ -28,6 +28,8 @@ pnpm run lint
 pnpm run build
 ```
 
+`pnpm run lint` = `oxfmt --check . && oxlint .`：格式与语法/correctness、unused变量、`prefer-const` 和重复导入一并阻断；其他存量 style warning 仍需看完整输出，不等同于零告警。全包格式已在 formatter 波次全量应用（419 个历史漂移文件清零），新增/修改文件必须保持已格式化，禁止整包随意 `--write` 后不经 diff 复核入库。
+
 `test:unit -- ...` 后接实际测试文件或 Vitest 参数。完整 `pnpm run test:unit` 与全量 E2E 只在测试波次或里程碑执行；不要把全套验证当作每次小改默认动作。
 
 ## 跨层与交互规则

@@ -4,31 +4,77 @@
   "https://checkstyle.org/dtds/configuration_1_3.dtd">
 <module name="Checker">
   <property name="charset" value="UTF-8"/>
-  <property name="severity" value="warning"/>
+  <!-- All rules are error-severity as of the BL-79 style wave: the 1,716
+       baseline warnings were classified, convention mismatches were aligned
+       in rule config, and genuine findings were fixed in source. POM
+       violationSeverity=error + failOnViolation=true makes every finding
+       block `mvn checkstyle:check`. -->
+  <property name="severity" value="error"/>
   <property name="fileExtensions" value="java"/>
 
   <module name="TreeWalker">
     <module name="UnusedImports"/>
-    <module name="RedundantImport"/>
+    <module name="RedundantImport">
+      <property name="severity" value="error"/>
+    </module>
     <module name="AvoidStarImport"/>
 
-    <module name="EmptyBlock"/>
-    <module name="LeftCurly"/>
+    <module name="EmptyBlock">
+      <!-- Intentionally-empty branches may be documented with a comment
+           (option=text); truly empty braces are still violations. -->
+      <property name="option" value="text"/>
+    </module>
+    <!-- Brace position is enforced for control structures only. Single-line
+         getter/setter/method bodies are an established project convention
+         (979 findings at baseline); method/ctor/record braces are exempt. -->
+    <module name="LeftCurly">
+      <property name="tokens" value="LITERAL_ELSE, LITERAL_CATCH, LITERAL_FINALLY, LITERAL_DO, LITERAL_FOR, LITERAL_IF, LITERAL_SWITCH, LITERAL_SYNCHRONIZED, LITERAL_TRY, LITERAL_WHILE, STATIC_INIT"/>
+    </module>
     <module name="NeedBraces"/>
-    <module name="RightCurly"/>
+    <module name="RightCurly">
+      <property name="severity" value="error"/>
+    </module>
 
-    <module name="OneTopLevelClass"/>
+    <module name="OneTopLevelClass">
+      <property name="severity" value="error"/>
+    </module>
     <module name="HideUtilityClassConstructor"/>
-    <module name="InterfaceIsType"/>
+    <module name="InterfaceIsType">
+      <property name="severity" value="error"/>
+    </module>
 
-    <module name="ConstantName"/>
-    <module name="LocalFinalVariableName"/>
-    <module name="LocalVariableName"/>
-    <module name="MemberName"/>
-    <module name="MethodName"/>
-    <module name="PackageName"/>
-    <module name="ParameterName"/>
-    <module name="StaticVariableName"/>
-    <module name="TypeName"/>
+    <!-- Conventional logger names plus the remaining deliberate lowercase
+         constants are allow-listed exactly; every other constant must stay
+         UPPER_SNAKE (108 baseline findings: 101 loggers + 7 named below). -->
+    <module name="ConstantName">
+      <property name="format" value="^([A-Z][A-Z0-9_]*|logger|log|telemetryLogger|auditLog|wireMock|currentUserId|currentWorkspaceId|currentWorkspacePath|currentUserRole|currentWorkspaceRole)$"/>
+    </module>
+    <module name="LocalFinalVariableName">
+      <property name="severity" value="error"/>
+    </module>
+    <module name="LocalVariableName">
+      <property name="severity" value="error"/>
+    </module>
+    <module name="MemberName">
+      <property name="format" value="^[a-z][a-zA-Z0-9_]*$"/>
+    </module>
+    <!-- Project convention: test method names use method_behavior segments
+         (325 of 327 baseline findings) and JSON-bound accessors keep snake
+         components (getDevice_id). Lowercase-start is still required. -->
+    <module name="MethodName">
+      <property name="format" value="^[a-z][a-zA-Z0-9_]*$"/>
+    </module>
+    <module name="PackageName">
+      <property name="severity" value="error"/>
+    </module>
+    <module name="ParameterName">
+      <property name="format" value="^[a-z][a-zA-Z0-9_]*$"/>
+    </module>
+    <module name="StaticVariableName">
+      <property name="severity" value="error"/>
+    </module>
+    <module name="TypeName">
+      <property name="severity" value="error"/>
+    </module>
   </module>
 </module>

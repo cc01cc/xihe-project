@@ -1,111 +1,114 @@
-import { createServer } from 'node:http'
+import { createServer } from "node:http";
 
-const port = Number(process.env.XIHE_FAKE_LLM_PORT ?? '13642')
-const mode = process.env.XIHE_FAKE_LLM_MODE ?? 'success'
-const pendingSpawnResponses = new Set()
+const port = Number(process.env.XIHE_FAKE_LLM_PORT ?? "13642");
+const mode = process.env.XIHE_FAKE_LLM_MODE ?? "success";
+const pendingSpawnResponses = new Set();
 
 const providers = {
-  openai: {
-    key: 'sk-fake-openai-key',
-    models: ['fake-openai', 'fake-openai-asr'],
-  },
-  deepseek: {
-    key: 'fake-deepseek-key',
-    models: ['fake-deepseek'],
-  },
-}
+    openai: {
+        key: "sk-fake-openai-key",
+        models: ["fake-openai", "fake-openai-asr"],
+    },
+    deepseek: {
+        key: "fake-deepseek-key",
+        models: ["fake-deepseek"],
+    },
+};
 
 function providerFor(pathname) {
-  if (pathname.startsWith('/openai/')) return 'openai'
-  if (pathname.startsWith('/deepseek/')) return 'deepseek'
-  return null
+    if (pathname.startsWith("/openai/")) return "openai";
+    if (pathname.startsWith("/deepseek/")) return "deepseek";
+    return null;
 }
 
 function json(response, status, body) {
-  response.writeHead(status, { 'Content-Type': 'application/json' })
-  response.end(JSON.stringify(body))
+    response.writeHead(status, { "Content-Type": "application/json" });
+    response.end(JSON.stringify(body));
 }
 
 function authorized(request, provider) {
-  if (mode === 'invalid') return false
-  return request.headers.authorization === `Bearer ${providers[provider].key}`
+    if (mode === "invalid") return false;
+    return request.headers.authorization === `Bearer ${providers[provider].key}`;
 }
 
 async function readBody(request) {
-  const chunks = []
-  for await (const chunk of request) chunks.push(chunk)
-  return Buffer.concat(chunks).toString('utf8')
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    return Buffer.concat(chunks).toString("utf8");
 }
 
 async function sendCompletion(response, provider, requestBody) {
-  // PLAN-0341 T2.2 (mode: overflow): must decide BEFORE the SSE preamble —
-  // first attempt returns HTTP 400 context_length_exceeded (maps to Agent
-  // CONTEXT_OVERFLOW); the post-compact retry (SUM present) streams success.
-  if (mode === 'overflow') {
-    sendOverflowCompletion(response, requestBody)
-    return
-  }
-
-  response.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-  })
-
-  if (mode === 'spawn_agent') {
-    sendSpawnAgentCompletion(response, requestBody)
-    return
-  }
-
-  if (mode === 'approval') {
-    sendApprovalCompletion(response, requestBody)
-    return
-  }
-
-  if (mode === 'write_file') {
-    sendWriteFileCompletion(response, requestBody)
-    return
-  }
-
-  if (mode === 'exec_command') {
-    sendExecCommandCompletion(response, requestBody)
-    return
-  }
-
-  if (mode === 'read_file') {
-    sendReadFileCompletion(response, requestBody)
-    return
-  }
-
-  if (mode === 'job') {
-    sendJobCompletion(response, requestBody)
-    return
-  }
-
-  if (mode === 'job-cancel') {
-    sendJobCancelCompletion(response, requestBody)
-    return
-  }
-
-  if (mode === 'history-marker') {
-    sendHistoryMarkerCompletion(response, requestBody)
-    return
-  }
-
-  const lastMessage = requestBody.messages?.at(-1)?.content ?? 'empty'
-  // PLAN-0307 T2.17 (V17): echo the model so a spec can prove that the
-  // UI-saved config actually reached the LLM call.
-  const modelEcho = requestBody.model ? ` model=${requestBody.model}` : ''
-  const chunks = [`${provider} fake${modelEcho}`, ` response to: ${String(lastMessage).slice(0, 40)}`]
-  for (const content of chunks) {
-    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
-    if (mode === 'disconnect') {
-      response.destroy()
-      return
+    // PLAN-0341 T2.2 (mode: overflow): must decide BEFORE the SSE preamble —
+    // first attempt returns HTTP 400 context_length_exceeded (maps to Agent
+    // CONTEXT_OVERFLOW); the post-compact retry (SUM present) streams success.
+    if (mode === "overflow") {
+        sendOverflowCompletion(response, requestBody);
+        return;
     }
-    await new Promise((resolve) => setTimeout(resolve, 30))
-  }
-  response.end('data: [DONE]\n\n')
+
+    response.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+    });
+
+    if (mode === "spawn_agent") {
+        sendSpawnAgentCompletion(response, requestBody);
+        return;
+    }
+
+    if (mode === "approval") {
+        sendApprovalCompletion(response, requestBody);
+        return;
+    }
+
+    if (mode === "write_file") {
+        sendWriteFileCompletion(response, requestBody);
+        return;
+    }
+
+    if (mode === "exec_command") {
+        sendExecCommandCompletion(response, requestBody);
+        return;
+    }
+
+    if (mode === "read_file") {
+        sendReadFileCompletion(response, requestBody);
+        return;
+    }
+
+    if (mode === "job") {
+        sendJobCompletion(response, requestBody);
+        return;
+    }
+
+    if (mode === "job-cancel") {
+        sendJobCancelCompletion(response, requestBody);
+        return;
+    }
+
+    if (mode === "history-marker") {
+        sendHistoryMarkerCompletion(response, requestBody);
+        return;
+    }
+
+    const lastMessage = requestBody.messages?.at(-1)?.content ?? "empty";
+    // PLAN-0307 T2.17 (V17): echo the model so a spec can prove that the
+    // UI-saved config actually reached the LLM call.
+    const modelEcho = requestBody.model ? ` model=${requestBody.model}` : "";
+    const chunks = [
+        `${provider} fake${modelEcho}`,
+        ` response to: ${String(lastMessage).slice(0, 40)}`,
+    ];
+    for (const content of chunks) {
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
+        if (mode === "disconnect") {
+            response.destroy();
+            return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 30));
+    }
+    response.end("data: [DONE]\n\n");
 }
 
 // Deterministic approval flow: each new user turn requests the request_approval
@@ -113,43 +116,46 @@ async function sendCompletion(response, provider, requestBody) {
 // reach done(success). Earlier tool results in chat history do not suppress a
 // fresh approval request on a later user turn.
 function sendApprovalCompletion(response, requestBody) {
-  const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
-  const last = messages.at(-1) ?? {}
-  const followUp = last.role === 'tool'
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
+    const last = messages.at(-1) ?? {};
+    const followUp = last.role === "tool";
 
-  if (!followUp) {
-    const toolCallDelta = {
-      choices: [
-        {
-          delta: {
-            tool_calls: [
-              {
-                index: 0,
-                id: 'call-approval-e2e-1',
-                type: 'function',
-                function: {
-                  name: 'request_approval',
-                  arguments: JSON.stringify({ action: 'delete file', details: 'README.md' }),
+    if (!followUp) {
+        const toolCallDelta = {
+            choices: [
+                {
+                    delta: {
+                        tool_calls: [
+                            {
+                                index: 0,
+                                id: "call-approval-e2e-1",
+                                type: "function",
+                                function: {
+                                    name: "request_approval",
+                                    arguments: JSON.stringify({
+                                        action: "delete file",
+                                        details: "README.md",
+                                    }),
+                                },
+                            },
+                        ],
+                    },
+                    finish_reason: null,
                 },
-              },
             ],
-          },
-          finish_reason: null,
-        },
-      ],
+        };
+        const finishDelta = { choices: [{ delta: {}, finish_reason: "tool_calls" }] };
+        response.write(`data: ${JSON.stringify(toolCallDelta)}\n\n`);
+        response.write(`data: ${JSON.stringify(finishDelta)}\n\n`);
+        response.end("data: [DONE]\n\n");
+        return;
     }
-    const finishDelta = { choices: [{ delta: {}, finish_reason: 'tool_calls' }] }
-    response.write(`data: ${JSON.stringify(toolCallDelta)}\n\n`)
-    response.write(`data: ${JSON.stringify(finishDelta)}\n\n`)
-    response.end('data: [DONE]\n\n')
-    return
-  }
 
-  const chunks = ['Approval received. ', 'The requested action was approved by the user.']
-  for (const content of chunks) {
-    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
-  }
-  response.end('data: [DONE]\n\n')
+    const chunks = ["Approval received. ", "The requested action was approved by the user."];
+    for (const content of chunks) {
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
+    }
+    response.end("data: [DONE]\n\n");
 }
 
 // PLAN-292 M1/M3 (mode: write_file): deterministic write_file tool call for
@@ -157,60 +163,61 @@ function sendApprovalCompletion(response, requestBody) {
 // message: XIHE-E2E-WRITE <path> <content...>. The content is emitted verbatim
 // so the approval preview exceeds the 500-char truncation bound and the
 // post-approve FS readback can assert the FULL payload survived grant matching.
-function sendWriteFileCompletion(response, requestBody) {  const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
-  const last = messages.at(-1) ?? {}
-  // PLAN-294 M1 made conversation history (including old tool results) part
-  // of every request, so "any tool result present" no longer identifies the
-  // follow-up phase. The user's marker is the phase signal instead: a fresh
-  // write_file request carries a marker in the LAST user message.
-  const lastUser = [...messages].reverse().find((m) => m.role === 'user')
-  const lastUserHasMarker =
-    typeof lastUser?.content === 'string' && lastUser.content.includes('XIHE-E2E-WRITE ')
-  const followUp = last.role === 'tool' || (last.role === 'user' && !lastUserHasMarker)
+function sendWriteFileCompletion(response, requestBody) {
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
+    const last = messages.at(-1) ?? {};
+    // PLAN-294 M1 made conversation history (including old tool results) part
+    // of every request, so "any tool result present" no longer identifies the
+    // follow-up phase. The user's marker is the phase signal instead: a fresh
+    // write_file request carries a marker in the LAST user message.
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    const lastUserHasMarker =
+        typeof lastUser?.content === "string" && lastUser.content.includes("XIHE-E2E-WRITE ");
+    const followUp = last.role === "tool" || (last.role === "user" && !lastUserHasMarker);
 
-  if (!followUp) {
-    const text = typeof last.content === 'string' ? last.content : ''
-    const marker = text.indexOf('XIHE-E2E-WRITE ')
-    if (marker < 0) {
-      sendApprovalCompletion(response, requestBody)
-      return
-    }
-    const rest = text.slice(marker + 'XIHE-E2E-WRITE '.length)
-    const sep = rest.indexOf(' ')
-    const path = sep > 0 ? rest.slice(0, sep) : rest.trim()
-    const content = sep > 0 ? rest.slice(sep + 1) : ''
-    const toolCallDelta = {
-      choices: [
-        {
-          delta: {
-            tool_calls: [
-              {
-                index: 0,
-                id: 'call-write-file-e2e-1',
-                type: 'function',
-                function: {
-                  name: 'write_file',
-                  arguments: JSON.stringify({ path, content }),
+    if (!followUp) {
+        const text = typeof last.content === "string" ? last.content : "";
+        const marker = text.indexOf("XIHE-E2E-WRITE ");
+        if (marker < 0) {
+            sendApprovalCompletion(response, requestBody);
+            return;
+        }
+        const rest = text.slice(marker + "XIHE-E2E-WRITE ".length);
+        const sep = rest.indexOf(" ");
+        const path = sep > 0 ? rest.slice(0, sep) : rest.trim();
+        const content = sep > 0 ? rest.slice(sep + 1) : "";
+        const toolCallDelta = {
+            choices: [
+                {
+                    delta: {
+                        tool_calls: [
+                            {
+                                index: 0,
+                                id: "call-write-file-e2e-1",
+                                type: "function",
+                                function: {
+                                    name: "write_file",
+                                    arguments: JSON.stringify({ path, content }),
+                                },
+                            },
+                        ],
+                    },
+                    finish_reason: null,
                 },
-              },
             ],
-          },
-          finish_reason: null,
-        },
-      ],
+        };
+        const finishDelta = { choices: [{ delta: {}, finish_reason: "tool_calls" }] };
+        response.write(`data: ${JSON.stringify(toolCallDelta)}\n\n`);
+        response.write(`data: ${JSON.stringify(finishDelta)}\n\n`);
+        response.end("data: [DONE]\n\n");
+        return;
     }
-    const finishDelta = { choices: [{ delta: {}, finish_reason: 'tool_calls' }] }
-    response.write(`data: ${JSON.stringify(toolCallDelta)}\n\n`)
-    response.write(`data: ${JSON.stringify(finishDelta)}\n\n`)
-    response.end('data: [DONE]\n\n')
-    return
-  }
 
-  const chunks = ['Write completed. ', 'The file was written after approval.']
-  for (const content of chunks) {
-    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
-  }
-  response.end('data: [DONE]\n\n')
+    const chunks = ["Write completed. ", "The file was written after approval."];
+    for (const content of chunks) {
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
+    }
+    response.end("data: [DONE]\n\n");
 }
 
 // PLAN-294 M0 (mode: history-marker): pins the "no conversation memory" gap.
@@ -222,27 +229,27 @@ function sendWriteFileCompletion(response, requestBody) {  const messages = Arra
 // into the LLM input), only the current turn's marker is ever visible and the
 // spec's turn-2 expectation fails, which is precisely the M0 pin.
 function sendHistoryMarkerCompletion(response, requestBody) {
-  const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
-  const seen = []
-  const current = []
-  for (const m of messages) {
-    const text = typeof m.content === 'string' ? m.content : ''
-    const matches = text.matchAll(/XIHE-E2E-HIST ([A-Za-z0-9]+)/g)
-    for (const match of matches) {
-      // The last message is the current turn; everything before it is history.
-      if (m === messages.at(-1)) current.push(match[1])
-      else seen.push(match[1])
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
+    const seen = [];
+    const current = [];
+    for (const m of messages) {
+        const text = typeof m.content === "string" ? m.content : "";
+        const matches = text.matchAll(/XIHE-E2E-HIST ([A-Za-z0-9]+)/g);
+        for (const match of matches) {
+            // The last message is the current turn; everything before it is history.
+            if (m === messages.at(-1)) current.push(match[1]);
+            else seen.push(match[1]);
+        }
     }
-  }
-  const parts = []
-  if (seen.length === 0) parts.push('XIHE-HIST-SEEN: none')
-  else parts.push(`XIHE-HIST-SEEN: ${seen.join(',')}`)
-  if (current.length > 0) parts.push(`XIHE-HIST-CURRENT: ${current.join(',')}`)
-  const chunks = [parts.join(' | ')]
-  for (const content of chunks) {
-    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
-  }
-  response.end('data: [DONE]\n\n')
+    const parts = [];
+    if (seen.length === 0) parts.push("XIHE-HIST-SEEN: none");
+    else parts.push(`XIHE-HIST-SEEN: ${seen.join(",")}`);
+    if (current.length > 0) parts.push(`XIHE-HIST-CURRENT: ${current.join(",")}`);
+    const chunks = [parts.join(" | ")];
+    for (const content of chunks) {
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
+    }
+    response.end("data: [DONE]\n\n");
 }
 
 // PLAN-0341 T2.2 (mode: overflow): deterministic CONTEXT_OVERFLOW probe.
@@ -250,157 +257,204 @@ function sendHistoryMarkerCompletion(response, requestBody) {
 // message the fake provider refuses with context_length_exceeded; after CP
 // force-compact + retry the SUM marker is present and the run succeeds.
 function sendOverflowCompletion(response, requestBody) {
-  const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
-  const lastUser = [...messages].reverse().find((m) => m.role === 'user')
-  const text = typeof lastUser?.content === 'string' ? lastUser.content : ''
-  if (!text.includes('XIHE-E2E-OVERFLOW')) {
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    const text = typeof lastUser?.content === "string" ? lastUser.content : "";
+    if (!text.includes("XIHE-E2E-OVERFLOW")) {
+        response.writeHead(200, {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive",
+        });
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "ok" } }] })}\n\n`);
+        response.end("data: [DONE]\n\n");
+        return;
+    }
+    const hasCompactedSum = messages.some(
+        (m) =>
+            typeof m.content === "string" &&
+            m.content.includes("Conversation summary of compacted history"),
+    );
+    if (!hasCompactedSum) {
+        json(response, 400, {
+            error: {
+                message: `This model's maximum context length is 8192 tokens, however your messages resulted in ${messages.length * 1200} tokens.`,
+                type: "invalid_request_error",
+                param: "messages",
+                code: "context_length_exceeded",
+            },
+        });
+        return;
+    }
     response.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-    })
-    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'ok' } }] })}\n\n`)
-    response.end('data: [DONE]\n\n')
-    return
-  }
-  const hasCompactedSum = messages.some(
-    (m) => typeof m.content === 'string' && m.content.includes('Conversation summary of compacted history'),
-  )
-  if (!hasCompactedSum) {
-    json(response, 400, {
-      error: {
-        message:
-          `This model's maximum context length is 8192 tokens, however your messages resulted in ${messages.length * 1200} tokens.`,
-        type: 'invalid_request_error',
-        param: 'messages',
-        code: 'context_length_exceeded',
-      },
-    })
-    return
-  }
-  response.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-  })
-  const content = 'OVERFLOW-RETRY-OK after compact SUM present'
-  response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
-  response.end('data: [DONE]\n\n')
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+    });
+    const content = "OVERFLOW-RETRY-OK after compact SUM present";
+    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
+    response.end("data: [DONE]\n\n");
 }
 
 const server = createServer(async (request, response) => {
-  const url = new URL(request.url ?? '/', `http://${request.headers.host}`)
-  if (url.pathname === '/health') {
-    json(response, 200, { status: 'ok', mode })
-    return
-  }
-
-  if (mode === 'spawn_agent' && url.pathname === '/__test/spawn-child-state' && request.method === 'GET') {
-    json(response, 200, { pending: pendingSpawnResponses.size })
-    return
-  }
-  if (mode === 'spawn_agent' && url.pathname === '/__test/release-spawn-child' && request.method === 'POST') {
-    const pending = [...pendingSpawnResponses]
-    for (const childResponse of pending) {
-      pendingSpawnResponses.delete(childResponse)
-      if (childResponse.destroyed || childResponse.writableEnded) continue
-      childResponse.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'SPAWN_CHILD_DONE' } }] })}\n\n`)
-      childResponse.end('data: [DONE]\n\n')
+    const url = new URL(request.url ?? "/", `http://${request.headers.host}`);
+    if (url.pathname === "/health") {
+        json(response, 200, { status: "ok", mode });
+        return;
     }
-    json(response, 200, { released: pending.length })
-    return
-  }
 
-  const provider = providerFor(url.pathname)
-  if (!provider) {
-    json(response, 404, { error: 'not found' })
-    return
-  }
-
-  if (!authorized(request, provider)) {
-    json(response, 401, { error: { message: 'invalid fake credentials', type: 'invalid_request_error' } })
-    return
-  }
-
-  if (url.pathname.endsWith('/models') && request.method === 'GET') {
-    json(response, 200, { object: 'list', data: providers[provider].models.map((id) => ({ id, object: 'model' })) })
-    return
-  }
-
-  if ((url.pathname.endsWith('/chat/completions') || url.pathname.endsWith('/v1')) && request.method === 'POST') {
-    let body
-    try {
-      body = JSON.parse(await readBody(request))
-    } catch {
-      json(response, 400, { error: { message: 'invalid JSON' } })
-      return
+    if (
+        mode === "spawn_agent" &&
+        url.pathname === "/__test/spawn-child-state" &&
+        request.method === "GET"
+    ) {
+        json(response, 200, { pending: pendingSpawnResponses.size });
+        return;
     }
-    console.log(`[fake-llm] provider=${provider} endpoint=chat/completions model=${body.model ?? 'unknown'}`)
-    await sendCompletion(response, provider, body)
-    return
-  }
+    if (
+        mode === "spawn_agent" &&
+        url.pathname === "/__test/release-spawn-child" &&
+        request.method === "POST"
+    ) {
+        const pending = [...pendingSpawnResponses];
+        for (const childResponse of pending) {
+            pendingSpawnResponses.delete(childResponse);
+            if (childResponse.destroyed || childResponse.writableEnded) continue;
+            childResponse.write(
+                `data: ${JSON.stringify({ choices: [{ delta: { content: "SPAWN_CHILD_DONE" } }] })}\n\n`,
+            );
+            childResponse.end("data: [DONE]\n\n");
+        }
+        json(response, 200, { released: pending.length });
+        return;
+    }
 
-  json(response, 404, { error: 'not found' })
-})
+    const provider = providerFor(url.pathname);
+    if (!provider) {
+        json(response, 404, { error: "not found" });
+        return;
+    }
 
-server.listen(port, '127.0.0.1', () => {
-  console.log(`[fake-llm] ready port=${port} mode=${mode}`)
-})
+    if (!authorized(request, provider)) {
+        json(response, 401, {
+            error: { message: "invalid fake credentials", type: "invalid_request_error" },
+        });
+        return;
+    }
+
+    if (url.pathname.endsWith("/models") && request.method === "GET") {
+        json(response, 200, {
+            object: "list",
+            data: providers[provider].models.map((id) => ({ id, object: "model" })),
+        });
+        return;
+    }
+
+    if (
+        (url.pathname.endsWith("/chat/completions") || url.pathname.endsWith("/v1")) &&
+        request.method === "POST"
+    ) {
+        let body;
+        try {
+            body = JSON.parse(await readBody(request));
+        } catch {
+            json(response, 400, { error: { message: "invalid JSON" } });
+            return;
+        }
+        console.log(
+            `[fake-llm] provider=${provider} endpoint=chat/completions model=${body.model ?? "unknown"}`,
+        );
+        await sendCompletion(response, provider, body);
+        return;
+    }
+
+    json(response, 404, { error: "not found" });
+});
+
+server.listen(port, "127.0.0.1", () => {
+    console.log(`[fake-llm] ready port=${port} mode=${mode}`);
+});
 
 function shutdown() {
-  for (const childResponse of pendingSpawnResponses) childResponse.destroy()
-  pendingSpawnResponses.clear()
-  server.close(() => process.exit(0))
+    for (const childResponse of pendingSpawnResponses) childResponse.destroy();
+    pendingSpawnResponses.clear();
+    server.close(() => process.exit(0));
 }
 
 function sendSpawnAgentCompletion(response, requestBody) {
-  const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
-  const last = messages.at(-1) ?? {}
-  const lastUser = [...messages].reverse().find((message) => message.role === 'user')
-  const lastUserContent = typeof lastUser?.content === 'string' ? lastUser.content : ''
-  const childMatch = lastUserContent.match(/XIHE-E2E-SPAWN-CHILD\s+([A-Za-z0-9_-]+)/)
-  if (childMatch) {
-    pendingSpawnResponses.add(response)
-    response.once('close', () => pendingSpawnResponses.delete(response))
-    return
-  }
-
-  const spawnMarker = 'XIHE-E2E-SPAWN '
-  if (last.role !== 'tool' && lastUserContent.includes(spawnMarker)) {
-    const hasSpawnTool = (Array.isArray(requestBody.tools) ? requestBody.tools : []).some((tool) =>
-      tool.name === 'spawn_agent' || tool.function?.name === 'spawn_agent')
-    if (!hasSpawnTool) {
-      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'SPAWN_TOOL_MISSING' } }] })}\n\n`)
-      response.end('data: [DONE]\n\n')
-      return
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
+    const last = messages.at(-1) ?? {};
+    const lastUser = [...messages].reverse().find((message) => message.role === "user");
+    const lastUserContent = typeof lastUser?.content === "string" ? lastUser.content : "";
+    const childMatch = lastUserContent.match(/XIHE-E2E-SPAWN-CHILD\s+([A-Za-z0-9_-]+)/);
+    if (childMatch) {
+        pendingSpawnResponses.add(response);
+        response.once("close", () => pendingSpawnResponses.delete(response));
+        return;
     }
-    const token = lastUserContent.slice(lastUserContent.indexOf(spawnMarker) + spawnMarker.length)
-      .trim().split(/\s/, 1)[0]
-    const toolCallDelta = {
-      choices: [{ delta: { tool_calls: [{
-        index: 0,
-        id: 'call-spawn-agent-e2e-1',
-        type: 'function',
-        function: { name: 'spawn_agent', arguments: JSON.stringify({ prompt: `XIHE-E2E-SPAWN-CHILD ${token}` }) },
-      }] }, finish_reason: null }],
+
+    const spawnMarker = "XIHE-E2E-SPAWN ";
+    if (last.role !== "tool" && lastUserContent.includes(spawnMarker)) {
+        const hasSpawnTool = (Array.isArray(requestBody.tools) ? requestBody.tools : []).some(
+            (tool) => tool.name === "spawn_agent" || tool.function?.name === "spawn_agent",
+        );
+        if (!hasSpawnTool) {
+            response.write(
+                `data: ${JSON.stringify({ choices: [{ delta: { content: "SPAWN_TOOL_MISSING" } }] })}\n\n`,
+            );
+            response.end("data: [DONE]\n\n");
+            return;
+        }
+        const token = lastUserContent
+            .slice(lastUserContent.indexOf(spawnMarker) + spawnMarker.length)
+            .trim()
+            .split(/\s/, 1)[0];
+        const toolCallDelta = {
+            choices: [
+                {
+                    delta: {
+                        tool_calls: [
+                            {
+                                index: 0,
+                                id: "call-spawn-agent-e2e-1",
+                                type: "function",
+                                function: {
+                                    name: "spawn_agent",
+                                    arguments: JSON.stringify({
+                                        prompt: `XIHE-E2E-SPAWN-CHILD ${token}`,
+                                    }),
+                                },
+                            },
+                        ],
+                    },
+                    finish_reason: null,
+                },
+            ],
+        };
+        response.write(`data: ${JSON.stringify(toolCallDelta)}\n\n`);
+        response.write(
+            `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "tool_calls" }] })}\n\n`,
+        );
+        response.end("data: [DONE]\n\n");
+        return;
     }
-    response.write(`data: ${JSON.stringify(toolCallDelta)}\n\n`)
-    response.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] })}\n\n`)
-    response.end('data: [DONE]\n\n')
-    return
-  }
 
-  if (last.role === 'tool') {
-    const toolResult = typeof last.content === 'string' ? last.content : JSON.stringify(last.content)
-    const childDispatched = toolResult.includes('sessionId') && toolResult.includes('runId')
-    const summary = childDispatched ? 'child dispatched' : 'child dispatch failed'
-    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: `SPAWN_PARENT_DONE ${summary}` } }] })}\n\n`)
-    response.end('data: [DONE]\n\n')
-    return
-  }
+    if (last.role === "tool") {
+        const toolResult =
+            typeof last.content === "string" ? last.content : JSON.stringify(last.content);
+        const childDispatched = toolResult.includes("sessionId") && toolResult.includes("runId");
+        const summary = childDispatched ? "child dispatched" : "child dispatch failed";
+        response.write(
+            `data: ${JSON.stringify({ choices: [{ delta: { content: `SPAWN_PARENT_DONE ${summary}` } }] })}\n\n`,
+        );
+        response.end("data: [DONE]\n\n");
+        return;
+    }
 
-  response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'SPAWN_CHILD_READY' } }] })}\n\n`)
-  response.end('data: [DONE]\n\n')
+    response.write(
+        `data: ${JSON.stringify({ choices: [{ delta: { content: "SPAWN_CHILD_READY" } }] })}\n\n`,
+    );
+    response.end("data: [DONE]\n\n");
 }
 
 // PLAN-0308 M1 收尾（mode: exec_command）：确定性的长命令 execute_command 工具调用，
@@ -409,62 +463,65 @@ function sendSpawnAgentCompletion(response, requestBody) {
 // `--timeout` 透传给沙盒自身的单命令界（不传则用容器默认 30s —— 那是沙盒内层界，
 // 不属于 PLAN-0308 的三跳预算模型；冒烟必须显式给出更长的界才能验证外层预算）。
 function sendExecCommandCompletion(response, requestBody) {
-  const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
-  const last = messages.at(-1) ?? {}
-  const lastUser = [...messages].reverse().find((m) => m.role === 'user')
-  const lastUserHasMarker =
-    typeof lastUser?.content === 'string' && lastUser.content.includes('XIHE-E2E-EXEC ')
-  const followUp = last.role === 'tool' || (last.role === 'user' && !lastUserHasMarker)
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
+    const last = messages.at(-1) ?? {};
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    const lastUserHasMarker =
+        typeof lastUser?.content === "string" && lastUser.content.includes("XIHE-E2E-EXEC ");
+    const followUp = last.role === "tool" || (last.role === "user" && !lastUserHasMarker);
 
-  if (!followUp) {
-    const text = typeof last.content === 'string' ? last.content : ''
-    const marker = text.indexOf('XIHE-E2E-EXEC ')
-    if (marker < 0) {
-      sendApprovalCompletion(response, requestBody)
-      return
-    }
-    const rest = text.slice(marker + 'XIHE-E2E-EXEC '.length).trim()
-    const timeoutMatch = rest.match(/--timeout\s+(\d+)\s*$/)
-    const command = (timeoutMatch ? rest.slice(0, timeoutMatch.index) : rest).trim()
-    const args = { command }
-    if (timeoutMatch) args.timeout = Number(timeoutMatch[1])
-    const toolCallDelta = {
-      choices: [
-        {
-          delta: {
-            tool_calls: [
-              {
-                index: 0,
-                id: 'call-exec-e2e-1',
-                type: 'function',
-                function: {
-                  name: 'execute_command',
-                  arguments: JSON.stringify(args),
+    if (!followUp) {
+        const text = typeof last.content === "string" ? last.content : "";
+        const marker = text.indexOf("XIHE-E2E-EXEC ");
+        if (marker < 0) {
+            sendApprovalCompletion(response, requestBody);
+            return;
+        }
+        const rest = text.slice(marker + "XIHE-E2E-EXEC ".length).trim();
+        const timeoutMatch = rest.match(/--timeout\s+(\d+)\s*$/);
+        const command = (timeoutMatch ? rest.slice(0, timeoutMatch.index) : rest).trim();
+        const args = { command };
+        if (timeoutMatch) args.timeout = Number(timeoutMatch[1]);
+        const toolCallDelta = {
+            choices: [
+                {
+                    delta: {
+                        tool_calls: [
+                            {
+                                index: 0,
+                                id: "call-exec-e2e-1",
+                                type: "function",
+                                function: {
+                                    name: "execute_command",
+                                    arguments: JSON.stringify(args),
+                                },
+                            },
+                        ],
+                    },
+                    finish_reason: null,
                 },
-              },
             ],
-          },
-          finish_reason: null,
-        },
-      ],
+        };
+        const finishDelta = { choices: [{ delta: {}, finish_reason: "tool_calls" }] };
+        response.write(`data: ${JSON.stringify(toolCallDelta)}\n\n`);
+        response.write(`data: ${JSON.stringify(finishDelta)}\n\n`);
+        response.end("data: [DONE]\n\n");
+        return;
     }
-    const finishDelta = { choices: [{ delta: {}, finish_reason: 'tool_calls' }] }
-    response.write(`data: ${JSON.stringify(toolCallDelta)}\n\n`)
-    response.write(`data: ${JSON.stringify(finishDelta)}\n\n`)
-    response.end('data: [DONE]\n\n')
-    return
-  }
 
-  // PLAN-0342 T2.2: echo whether the tool message carried the injected
-  // diagnostics block so the spec can prove the model-visible channel.
-  const diagSeen = messages.some(
-    (m) => m?.role === 'tool' && typeof m.content === 'string' && m.content.includes('<diagnostics>'),
-  )
-  const chunks = ['Command completed. ', diagSeen ? 'DIAG-VISIBLE' : 'DIAG-ABSENT']
-  for (const content of chunks) {
-    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
-  }
-  response.end('data: [DONE]\n\n')
+    // PLAN-0342 T2.2: echo whether the tool message carried the injected
+    // diagnostics block so the spec can prove the model-visible channel.
+    const diagSeen = messages.some(
+        (m) =>
+            m?.role === "tool" &&
+            typeof m.content === "string" &&
+            m.content.includes("<diagnostics>"),
+    );
+    const chunks = ["Command completed. ", diagSeen ? "DIAG-VISIBLE" : "DIAG-ABSENT"];
+    for (const content of chunks) {
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
+    }
+    response.end("data: [DONE]\n\n");
 }
 
 // PLAN-0344 (mode: job): deterministic durable-job flow. The user message
@@ -473,49 +530,49 @@ function sendExecCommandCompletion(response, requestBody) {
 // and the follow-up streams a plain answer so the run reaches done(success).
 // The job card therefore survives the run and can be resumed/destroy-tested.
 function sendJobCompletion(response, requestBody) {
-  const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
-  const last = messages.at(-1) ?? {}
-  const lastUser = [...messages].reverse().find((m) => m.role === 'user')
-  const lastUserHasMarker =
-    typeof lastUser?.content === 'string' && lastUser.content.includes('XIHE-E2E-JOB')
-  const followUp = last.role === 'tool' || (last.role === 'user' && !lastUserHasMarker)
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
+    const last = messages.at(-1) ?? {};
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    const lastUserHasMarker =
+        typeof lastUser?.content === "string" && lastUser.content.includes("XIHE-E2E-JOB");
+    const followUp = last.role === "tool" || (last.role === "user" && !lastUserHasMarker);
 
-  if (!followUp) {
-    const toolCallDelta = {
-      choices: [
-        {
-          delta: {
-            tool_calls: [
-              {
-                index: 0,
-                id: 'call-job-e2e-1',
-                type: 'function',
-                function: {
-                  name: 'start_background_process',
-                  arguments: JSON.stringify({
-                    command: 'echo job-line-1; echo job-line-2; sleep 120',
-                    timeout: 600,
-                  }),
+    if (!followUp) {
+        const toolCallDelta = {
+            choices: [
+                {
+                    delta: {
+                        tool_calls: [
+                            {
+                                index: 0,
+                                id: "call-job-e2e-1",
+                                type: "function",
+                                function: {
+                                    name: "start_background_process",
+                                    arguments: JSON.stringify({
+                                        command: "echo job-line-1; echo job-line-2; sleep 120",
+                                        timeout: 600,
+                                    }),
+                                },
+                            },
+                        ],
+                    },
+                    finish_reason: null,
                 },
-              },
             ],
-          },
-          finish_reason: null,
-        },
-      ],
+        };
+        const finishDelta = { choices: [{ delta: {}, finish_reason: "tool_calls" }] };
+        response.write(`data: ${JSON.stringify(toolCallDelta)}\n\n`);
+        response.write(`data: ${JSON.stringify(finishDelta)}\n\n`);
+        response.end("data: [DONE]\n\n");
+        return;
     }
-    const finishDelta = { choices: [{ delta: {}, finish_reason: 'tool_calls' }] }
-    response.write(`data: ${JSON.stringify(toolCallDelta)}\n\n`)
-    response.write(`data: ${JSON.stringify(finishDelta)}\n\n`)
-    response.end('data: [DONE]\n\n')
-    return
-  }
 
-  const chunks = ['Background job started. ', 'Resume its output from the job card.']
-  for (const content of chunks) {
-    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
-  }
-  response.end('data: [DONE]\n\n')
+    const chunks = ["Background job started. ", "Resume its output from the job card."];
+    for (const content of chunks) {
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
+    }
+    response.end("data: [DONE]\n\n");
 }
 
 // PLAN-0366 (mode: job-cancel): deterministic two-job flow for single-job cancel.
@@ -525,111 +582,118 @@ function sendJobCompletion(response, requestBody) {
 // without the marker streams a plain answer, proving the session continues
 // after the cancel; the still-running B job must be unaffected.
 function sendJobCancelCompletion(response, requestBody) {
-  const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
-  const last = messages.at(-1) ?? {}
-  const lastUser = [...messages].reverse().find((m) => m.role === 'user')
-  const lastUserHasMarker =
-    typeof lastUser?.content === 'string' && lastUser.content.includes('XIHE-E2E-JOB-CANCEL')
-  const followUp = last.role === 'tool'
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
+    const last = messages.at(-1) ?? {};
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    const lastUserHasMarker =
+        typeof lastUser?.content === "string" && lastUser.content.includes("XIHE-E2E-JOB-CANCEL");
+    const followUp = last.role === "tool";
 
-  if (!lastUserHasMarker) {
-    const chunks = ['Session continues after cancel. ', 'The other job is still running.']
-    for (const content of chunks) {
-      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
+    if (!lastUserHasMarker) {
+        const chunks = ["Session continues after cancel. ", "The other job is still running."];
+        for (const content of chunks) {
+            response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
+        }
+        response.end("data: [DONE]\n\n");
+        return;
     }
-    response.end('data: [DONE]\n\n')
-    return
-  }
 
-  if (!followUp) {
-    const toolCalls = [
-      {
-        index: 0,
-        id: 'call-job-cancel-a',
-        type: 'function',
-        function: {
-          name: 'start_background_process',
-          arguments: JSON.stringify({
-            command: 'echo cancel-target-a; sleep 300',
-            timeout: 600,
-          }),
-        },
-      },
-      {
-        index: 1,
-        id: 'call-job-cancel-b',
-        type: 'function',
-        function: {
-          name: 'start_background_process',
-          arguments: JSON.stringify({
-            command: 'echo keep-running-b; sleep 300',
-            timeout: 600,
-          }),
-        },
-      },
-    ]
-    response.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: toolCalls }, finish_reason: null }] })}\n\n`)
-    response.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] })}\n\n`)
-    response.end('data: [DONE]\n\n')
-    return
-  }
+    if (!followUp) {
+        const toolCalls = [
+            {
+                index: 0,
+                id: "call-job-cancel-a",
+                type: "function",
+                function: {
+                    name: "start_background_process",
+                    arguments: JSON.stringify({
+                        command: "echo cancel-target-a; sleep 300",
+                        timeout: 600,
+                    }),
+                },
+            },
+            {
+                index: 1,
+                id: "call-job-cancel-b",
+                type: "function",
+                function: {
+                    name: "start_background_process",
+                    arguments: JSON.stringify({
+                        command: "echo keep-running-b; sleep 300",
+                        timeout: 600,
+                    }),
+                },
+            },
+        ];
+        response.write(
+            `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: toolCalls }, finish_reason: null }] })}\n\n`,
+        );
+        response.write(
+            `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "tool_calls" }] })}\n\n`,
+        );
+        response.end("data: [DONE]\n\n");
+        return;
+    }
 
-  const chunks = ['Two jobs started. ', 'Cancel one from its job card.']
-  for (const content of chunks) {
-    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
-  }
-  response.end('data: [DONE]\n\n')
+    const chunks = ["Two jobs started. ", "Cancel one from its job card."];
+    for (const content of chunks) {
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
+    }
+    response.end("data: [DONE]\n\n");
 }
 
 // PLAN-0308 M1 收尾（mode: read_file）：非审批工具调用的最小确定性驱动。
 // 用于隔离「审批后挂起」与「所有 MCP 工具调用都挂起」两类故障：
 //   XIHE-E2E-READ <path>
 function sendReadFileCompletion(response, requestBody) {
-  const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
-  const last = messages.at(-1) ?? {}
-  const lastUser = [...messages].reverse().find((m) => m.role === 'user')
-  const lastUserHasMarker =
-    typeof lastUser?.content === 'string' && lastUser.content.includes('XIHE-E2E-READ ')
-  const followUp = last.role === 'tool' || (last.role === 'user' && !lastUserHasMarker)
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
+    const last = messages.at(-1) ?? {};
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    const lastUserHasMarker =
+        typeof lastUser?.content === "string" && lastUser.content.includes("XIHE-E2E-READ ");
+    const followUp = last.role === "tool" || (last.role === "user" && !lastUserHasMarker);
 
-  if (!followUp) {
-    const text = typeof last.content === 'string' ? last.content : ''
-    const marker = text.indexOf('XIHE-E2E-READ ')
-    if (marker < 0) {
-      sendApprovalCompletion(response, requestBody)
-      return
-    }
-    const path = text.slice(marker + 'XIHE-E2E-READ '.length).trim()
-    const toolCallDelta = {
-      choices: [
-        {
-          delta: {
-            tool_calls: [
-              {
-                index: 0,
-                id: 'call-read-e2e-1',
-                type: 'function',
-                function: { name: 'read_file', arguments: JSON.stringify({ path }) },
-              },
+    if (!followUp) {
+        const text = typeof last.content === "string" ? last.content : "";
+        const marker = text.indexOf("XIHE-E2E-READ ");
+        if (marker < 0) {
+            sendApprovalCompletion(response, requestBody);
+            return;
+        }
+        const path = text.slice(marker + "XIHE-E2E-READ ".length).trim();
+        const toolCallDelta = {
+            choices: [
+                {
+                    delta: {
+                        tool_calls: [
+                            {
+                                index: 0,
+                                id: "call-read-e2e-1",
+                                type: "function",
+                                function: {
+                                    name: "read_file",
+                                    arguments: JSON.stringify({ path }),
+                                },
+                            },
+                        ],
+                    },
+                    finish_reason: null,
+                },
             ],
-          },
-          finish_reason: null,
-        },
-      ],
+        };
+        const finishDelta = { choices: [{ delta: {}, finish_reason: "tool_calls" }] };
+        response.write(`data: ${JSON.stringify(toolCallDelta)}\n\n`);
+        response.write(`data: ${JSON.stringify(finishDelta)}\n\n`);
+        response.end("data: [DONE]\n\n");
+        return;
     }
-    const finishDelta = { choices: [{ delta: {}, finish_reason: 'tool_calls' }] }
-    response.write(`data: ${JSON.stringify(toolCallDelta)}\n\n`)
-    response.write(`data: ${JSON.stringify(finishDelta)}\n\n`)
-    response.end('data: [DONE]\n\n')
-    return
-  }
 
-  const chunks = ['Read completed. ', 'The file content was returned.']
-  for (const content of chunks) {
-    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
-  }
-  response.end('data: [DONE]\n\n')
+    const chunks = ["Read completed. ", "The file content was returned."];
+    for (const content of chunks) {
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
+    }
+    response.end("data: [DONE]\n\n");
 }
 
-process.once('SIGINT', shutdown)
-process.once('SIGTERM', shutdown)
+process.once("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);
