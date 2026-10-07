@@ -78,7 +78,7 @@ e2e/
 | 层 | 外部依赖 | 启动方式 | 用例数 |
 |----|---------|---------|--------|
 | mock | 无 | `webServer` 自动启动 Vite dev | 数量随用例扩展变化 |
-| real / compose | Docker Compose 的 CP/Agent/Runtime/PG + host UI | `mise run test:e2e` 自动管理 Compose | 默认排除 `@host` 用例 |
+| real / compose | Docker Compose 的 CP/Agent/Runtime/PG + host UI | `mise run test:e2e:compose` 自动管理 Compose | 默认排除 `@host` 用例 |
 | real / host | Windows native CP/Agent/Runtime/UI + 每轮隔离 PostgreSQL/host root/Sandbox | Host E2E runner 按每轮 `e2eRunId` 编排隔离环境 | 执行 `@host` 用例；禁止连接长期 dev DB |
 
 ### 1.2 Playwright 配置
@@ -99,7 +99,7 @@ deviceScaleFactor: 2            // Retina 级别截图
 
 xihe 使用单个浏览器 project（chromium），通过 `XIHE_E2E_PROFILE` 区分运行拓扑：
 
-- `compose`：由 `scripts/e2e-real.mjs` 启动 frozen Compose，只执行 Compose 可支持用例，排除 `@host`。
+- `compose`：由 `scripts/e2e-compose.mjs`（任务 `test:e2e:compose`，旧名 `test:e2e`/`e2e-real.mjs`）启动 frozen Compose，只执行 Compose 可支持用例，排除 `@host`。
 - `host`：以每轮隔离的 host 环境执行 `@host` 用例，覆盖 Runtime-created Sandbox 和 WorkspaceStorage；成功、失败和中断都必须 teardown 并反向断言无残留。
 - 未设置 profile：不做过滤，供人工诊断使用；不能将该结果作为标准 Compose 或 host 门禁。
 
@@ -173,7 +173,7 @@ pnpm exec playwright test e2e/mock/ --config e2e/playwright.config.ts --workers=
 pnpm exec playwright test e2e/mock/chat.spec.ts --config e2e/playwright.config.ts
 
 # Compose-compatible Real E2E（自动启动/清理 frozen Compose）
-node scripts/e2e-real.mjs e2e/real --workers=1 --retries=0
+node scripts/e2e-compose.mjs e2e/real --workers=1 --retries=0
 
 # Host-only Real E2E（默认自编排每轮隔离栈）
 mise run test:e2e:host
@@ -189,7 +189,7 @@ pnpm exec playwright test e2e/mock/<reviewed-spec>.spec.ts --config e2e/playwrig
 
 ```bash
 pnpm exec playwright test e2e/mock/screenshots.spec.ts --config e2e/playwright.config.ts --workers=1 --retries=0
-node scripts/e2e-real.mjs e2e/real/screenshots.spec.ts --workers=1 --retries=0
+node scripts/e2e-compose.mjs e2e/real/screenshots.spec.ts --workers=1 --retries=0
 ```
 
 Compose 命令由现有 runner 管理隔离服务生命周期；这两个视觉命令不代表全量 Mock/Compose E2E 验收。

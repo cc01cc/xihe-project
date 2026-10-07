@@ -142,7 +142,7 @@ pnpm exec playwright test e2e/mock/ --config e2e/playwright.config.ts --workers=
 pnpm exec playwright test e2e/mock/chat.spec.ts --config e2e/playwright.config.ts
 
 # Compose-compatible real E2E (runner manages isolated Compose lifecycle; XH root)
-node scripts/e2e-real.mjs e2e/real --workers=1 --retries=0
+node scripts/e2e-compose.mjs e2e/real --workers=1 --retries=0
 
 # Update one reviewed visual baseline on Linux only (cwd=packages/ui)
 pnpm exec playwright test e2e/mock/<reviewed-spec>.spec.ts --config e2e/playwright.config.ts --update-snapshots
@@ -155,7 +155,7 @@ If Linux validation is authorized in future work, the local candidate workflow u
 pnpm exec playwright test e2e/mock/screenshots.spec.ts --config e2e/playwright.config.ts --workers=1 --retries=0
 
 # XH root; the existing runner manages the Compose lifecycle
-node scripts/e2e-real.mjs e2e/real/screenshots.spec.ts --workers=1 --retries=0
+node scripts/e2e-compose.mjs e2e/real/screenshots.spec.ts --workers=1 --retries=0
 ```
 
 ### 3.1 PLAN-247 Fake LLM Host Matrix
