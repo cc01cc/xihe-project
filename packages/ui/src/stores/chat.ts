@@ -516,6 +516,9 @@ export const useChatStore = defineStore("chat", () => {
                         ? "expired"
                         : "dispatch_unknown",
                 );
+                if (res.status === "cancelling" || res.status === "cancelled") {
+                    await agentStore.refreshPendingApprovals();
+                }
                 setSessionRunState(sessionId, "idle");
                 runRecovery.value[sessionId] = {
                     state: "cancelled",

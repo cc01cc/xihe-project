@@ -198,6 +198,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
 
         await expect(modal).toBeHidden({ timeout: 15000 });
         await expect(page.getByTestId("pending-approval-reopen-pill")).toHaveCount(0);
+        await expect(page.getByTestId("session-pending-badge")).toHaveCount(0);
         await expect(page.getByTestId("chat-send-button")).toBeVisible();
         await expect(page.getByTestId("chat-stop-button")).toHaveCount(0);
 

@@ -74,6 +74,7 @@ i18n.global.mergeLocaleMessage("en", {
         waitingOnChild: "Waiting for child task",
         derivedStateUnnamedChild: "Child session",
         derivedStateStatus: { running: "Running" },
+        toolStatus: { cancelled: "Cancelled" },
     },
 });
 
@@ -138,6 +139,13 @@ describe("ToolCallCard", () => {
             toolCall: makeToolCall({ status: "completed", startedAt, completedAt }),
         });
         expect(wrapper.text()).toMatch(/\d+\.?\d*s/);
+    });
+
+    it("renders a cancelled tool call as terminal rather than running", () => {
+        const wrapper = mountCard({ toolCall: makeToolCall({ status: "cancelled" }) });
+
+        expect(wrapper.text()).toContain("Cancelled");
+        expect(wrapper.find(".animate-spin").exists()).toBe(false);
     });
 
     it("emits approve when approve button clicked", async () => {
