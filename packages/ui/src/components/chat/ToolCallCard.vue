@@ -109,8 +109,9 @@ const jobLoading = ref(false);
 const jobError = ref<string | null>(null);
 const jobHasMore = computed(() => jobLoaded.value && jobNextOffset.value < jobSizeBytes.value);
 
-// PLAN-0366 T2.2：单 job 取消（owner-only；二次确认；pending 防重复提交；
-// 失败不改卡片状态、可重试）。成功/失联后就地更新徽章，不改 run 状态区。
+// PLAN-0366 T2.2：单 job 取消（**Workspace access**——按控制器实际行为，
+// 非 owner-only；二次确认；pending 防重复提交；失败不改卡片状态、可重试）。
+// PLAN-0465 T2.1：canonical 路径 /workspaces/{workspaceId}/jobs/{jobId}/cancel。
 const cancelConfirming = ref(false);
 const cancelPending = ref(false);
 const cancelError = ref<string | null>(null);
@@ -120,17 +121,19 @@ const canCancelJob = computed(
     () =>
         isJobCard.value &&
         jobSummary.value?.status === "running" &&
-        !!jobSummary.value?.itemId &&
+        !!jobSummary.value?.jobId &&
+        !!jobSummary.value?.workspaceId &&
         !cancelOutcome.value,
 );
 
 async function submitJobCancel() {
-    const itemId = jobSummary.value?.itemId;
-    if (!itemId || cancelPending.value) return;
+    const workspaceId = jobSummary.value?.workspaceId;
+    const jobId = jobSummary.value?.jobId;
+    if (!workspaceId || !jobId || cancelPending.value) return;
     cancelPending.value = true;
     cancelError.value = null;
     try {
-        const result = await api.cancelJob(itemId);
+        const result = await api.cancelJob(workspaceId, jobId);
         cancelOutcome.value = result.status === "orphaned" ? "orphaned" : "cancelled";
         cancelConfirming.value = false;
     } catch (err) {
@@ -162,12 +165,13 @@ function jobStatusClass(status?: string): string {
 }
 
 async function loadJobOutput(reset: boolean) {
-    const itemId = jobSummary.value?.itemId;
-    if (!itemId || jobLoading.value) return;
+    const workspaceId = jobSummary.value?.workspaceId;
+    const jobId = jobSummary.value?.jobId;
+    if (!workspaceId || !jobId || jobLoading.value) return;
     jobLoading.value = true;
     jobError.value = null;
     try {
-        const chunk = await api.getJobOutput(itemId, {
+        const chunk = await api.getJobOutput(workspaceId, jobId, {
             stream: "stdout",
             offset: reset ? 0 : jobNextOffset.value,
             limit: 64 * 1024,

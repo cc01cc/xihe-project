@@ -1309,8 +1309,8 @@ describe("api.startWorkspaceJob (PLAN-0390)", () => {
             status: 202,
             json: () =>
                 Promise.resolve({
-                    operationId: OPERATION_ID,
-                    operationItemId: "item-1",
+                    jobId: "job-1",
+                    runtimeJobId: null,
                     workspaceId: WORKSPACE_ID,
                     scope: "session",
                     status: "pending",
@@ -1343,8 +1343,8 @@ describe("api.startWorkspaceJob (PLAN-0390)", () => {
             status: 200,
             json: () =>
                 Promise.resolve({
-                    operationId: OPERATION_ID,
-                    operationItemId: "item-existing",
+                    jobId: "job-existing",
+                    runtimeJobId: "runtime-existing",
                     workspaceId: WORKSPACE_ID,
                     scope: "session",
                     status: "running",
@@ -1357,7 +1357,8 @@ describe("api.startWorkspaceJob (PLAN-0390)", () => {
             "idem-key-123",
         );
 
-        expect(result.operationItemId).toBe("item-existing");
+        // PLAN-0465 decision #7：身份字段 = domain jobId（无 operationItemId 别名）。
+        expect(result.jobId).toBe("job-existing");
         expect(result.status).toBe("running");
     });
 
@@ -1372,14 +1373,13 @@ describe("api.startWorkspaceJob (PLAN-0390)", () => {
                 status: 202,
                 json: () =>
                     Promise.resolve({
-                        operationId: OPERATION_ID,
-                        operationItemId: `${backendKind}-item`,
+                        jobId,
+                        runtimeJobId: `${backendKind}-runtime`,
                         workspaceId: WORKSPACE_ID,
                         scope: "workspace",
                         status: "pending",
                         backendKind,
                         executionMode: backendKind,
-                        jobId,
                     }),
             } as Response);
 
@@ -1468,5 +1468,133 @@ describe("workspaceJobErrorReason", () => {
     it("falls back to the server detail for unknown codes and to the message otherwise", () => {
         expect(workspaceJobErrorReason(apiError(500, "SOMETHING_ELSE", "boom"))).toBe("boom");
         expect(workspaceJobErrorReason(new Error("network down"))).toBe("network down");
+    });
+});
+
+describe("api audit entries (PLAN-0466 T2.1)", () => {
+    it("lists audit entries with the type/status/paging query", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    entries: [
+                        {
+                            type: "chat_run",
+                            id: "77777777-7777-4777-8777-777777777777",
+                            status: "succeeded",
+                            createdAt: "2026-10-07T12:00:00Z",
+                        },
+                    ],
+                    page: 1,
+                    size: 20,
+                    totalElements: 3,
+                    totalPages: 1,
+                }),
+        } as Response);
+
+        const page = await api.listAuditEntries({
+            type: "chat_run",
+            status: "failed",
+            page: 1,
+            size: 20,
+        });
+
+        expect(fetchSpy).toHaveBeenCalledWith(
+            "/api/v1/audit/entries?type=chat_run&status=failed&page=1&size=20",
+            expect.any(Object),
+        );
+        expect(page.entries).toHaveLength(1);
+        expect(page.page).toBe(1);
+        expect(page.totalElements).toBe(3);
+        expect(page.totalPages).toBe(1);
+    });
+
+    it("drops malformed audit entries instead of rendering them", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    entries: [
+                        null,
+                        "not-an-entry",
+                        { status: "running" },
+                        { type: "workspace_job", id: "job-1", status: "running" },
+                    ],
+                    page: 0,
+                    size: 20,
+                    totalElements: 4,
+                    totalPages: 1,
+                }),
+        } as Response);
+
+        const page = await api.listAuditEntries();
+
+        expect(page.entries.map((auditEntry) => auditEntry.id)).toEqual(["job-1"]);
+    });
+
+    it("reads one audit entry from the typed detail route and normalizes its policy", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    entry: {
+                        type: "mcp_invocation",
+                        id: "88888888-8888-4888-8888-888888888888",
+                        toolCallId: "call-auto-1",
+                        status: "completed",
+                        summary: "write_file",
+                        policy: { ...OPERATION_POLICY, arguments: "raw" },
+                    },
+                    timeline: [null, { sequence: 1, eventType: "invocation.opened" }],
+                    attempts: [null, { id: "attempt-1", stage: "cp_forward" }],
+                }),
+        } as Response);
+
+        const detail = await api.getAuditEntry(
+            "mcp_invocation",
+            "88888888-8888-4888-8888-888888888888",
+        );
+
+        expect(fetchSpy).toHaveBeenCalledWith(
+            "/api/v1/audit/entries/mcp_invocation/88888888-8888-4888-8888-888888888888",
+            expect.any(Object),
+        );
+        expect(detail.entry.policy).toEqual(OPERATION_POLICY);
+        expect(detail.timeline).toHaveLength(1);
+        expect(detail.timeline[0]?.eventType).toBe("invocation.opened");
+        expect(detail.attempts).toHaveLength(1);
+        expect(detail.attempts[0]?.stage).toBe("cp_forward");
+    });
+
+    it("omits an unreadable policy instead of fabricating one", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    entry: {
+                        type: "approval",
+                        id: APPROVAL_ID,
+                        status: "approved",
+                        policy: { effect: "ask" },
+                    },
+                    timeline: [],
+                    attempts: [],
+                }),
+        } as Response);
+
+        const detail = await api.getAuditEntry("approval", APPROVAL_ID);
+
+        expect(detail.entry.policy).toBeUndefined();
+    });
+
+    it("leaves a body without an entry untouched (lenient like the ledger trace)", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve("not-an-object"),
+        } as Response);
+
+        const detail = await api.getAuditEntry("chat_run", RUN_ID);
+
+        expect(detail).toBe("not-an-object");
     });
 });

@@ -59,7 +59,7 @@ ChatRun 通过 `runId` 关联 Message，服务端返回的 `runStatus`、`termin
 
 - `sessions.agent_principal_id` 与 `agent_permissions_snapshot` 是 Agent 身份与 instance cap 的唯一来源；交互式 `POST /api/v1/sessions` 必须显式携带 `agentPrincipalId`，Chat admission 只接受已绑定 Session，无 lazy-create。
 - `sessions.context_template_layer/id/version`（V48，PLAN-0414）是上下文模板的 Session 级钉住绑定：创建时解析或显式选择，`PATCH /api/v1/sessions/{sessionId}/context-template` 只改后续 Run；模型/Agent 字段更新不得扰动该绑定；admission 时整修订复制进 `chat_runs.context_template_snapshot`（在途不变）。配置域与解析优先级见 [DEV-014 §8f](DEV-014-control-plane-architecture.md)。
-- principal-null 空 Session（附件占位/导入历史）首次 Chat 必须显式提交 principal：无 ChatRun、message、user-direct Operation 或 tool ContextEvent 时由 row CAS 与 ChatRun/Message/Operation 同事务绑定；缺省 403、异 principal 409。
+- principal-null 空 Session（附件占位/导入历史）首次 Chat 必须显式提交 principal：无 ChatRun、message、user-direct Operation 或 tool ContextEvent 时由 row CAS 与 ChatRun/Message 同事务绑定（PLAN-0464 T1.1 后不再有 child `kind=chat` Operation）；缺省 403、异 principal 409。
 - `user_id` 仅表达 owner/visibility，不参与 Agent 授权；binding 缺失/撤销时 Agent 动作 fail-closed，历史 Session 保留。契约见 [`spec/agent/principal-workspace-binding.md`](../../../spec/agent/principal-workspace-binding.md)，wire 以 OpenAPI 为准。
 
 ### 1.2 Session 分支（PLAN-0410 / V43）

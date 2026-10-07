@@ -7,11 +7,13 @@ import { test, expect } from "@playwright/test";
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan0390-workspace-job");
 
-// PLAN-0390 M2 T2.2 / V10：Workspace Job 的真实 host 证据（无需 Chat 会话）。
-// 链路：CP `POST /api/v1/workspaces/{ws}/jobs`（Idempotency-Key）→ Runtime internal
-// `jobs/start` → 真实 Docker 后台 job → CP durable projection（scope/backendKind）→
-// 重复 start 幂等 → 字节游标续看/游标单调 → 刷新后 projection 仍在 → 显式取消落终态
-// → destroy 后输出显式 409 JOB_OUTPUT_LOST（不复活）。
+// PLAN-0390 M2 T2.2 / V10 + PLAN-0465 T2.1/T3.2：Workspace Job 的真实 host 证据
+// （无需 Chat 会话）。链路：CP `POST /api/v1/workspaces/{ws}/jobs`（Idempotency-Key）
+// → Runtime internal `jobs/start` → 真实 Docker 后台 job → `workspace_jobs`
+// durable projection（scope/backendKind）→ 重复 start 幂等 → canonical 路径字节游标
+// 续看/游标单调 → 刷新后 projection 仍在 → 显式取消落终态 → destroy 后 list 404。
+// PLAN-0465 decision #7：wire `jobId` = domain 身份；`runtimeJobId` = Runtime
+// backend handle（容器输出目录键）。
 //   node scripts/e2e-host-detached.mjs e2e/real/plan0390-workspace-job-start.spec.ts --llm-mode=mock
 test.describe("@host PLAN-0390 workspace job start", () => {
     test.describe.configure({ mode: "serial" });
@@ -70,16 +72,24 @@ test.describe("@host PLAN-0390 workspace job start", () => {
         });
     }
 
+    // PLAN-0465 T2.1：canonical 输出路径（decision #7 键位 = domain jobId）。
     async function readOutput(
         request: import("@playwright/test").APIRequestContext,
-        itemId: string,
+        jobId: string,
         offset = 0,
     ) {
         const res = await request.get(
-            `${CP_URL}/api/v1/operations/items/${itemId}/job-output?stream=stdout&offset=${offset}&limit=65536`,
+            `${CP_URL}/api/v1/workspaces/${sharedWs}/jobs/${jobId}/output?stream=stdout&offset=${offset}&limit=65536`,
             { headers: sharedHeaders },
         );
         return { status: res.status(), body: (await res.json()) as Record<string, unknown> };
+    }
+
+    async function cancelJob(request: import("@playwright/test").APIRequestContext, jobId: string) {
+        return request.post(`${CP_URL}/api/v1/workspaces/${sharedWs}/jobs/${jobId}/cancel`, {
+            headers: sharedHeaders,
+            data: {},
+        });
     }
 
     test("start is idempotent, runs a real container job, streams output, and cancels", async ({
@@ -96,23 +106,30 @@ test.describe("@host PLAN-0390 workspace job start", () => {
         const first = await startJob(request, command, key);
         expect(first.status(), `start failed: ${first.status()} ${await first.text()}`).toBe(202);
         const created = (await first.json()) as Record<string, unknown>;
-        const itemId = String(created.operationItemId);
-        expect(itemId, "operationItemId is the canonical Job identity").toBeTruthy();
+        // PLAN-0465 decision #7：jobId = workspace_jobs.id（canonical Job identity）。
+        const jobId = String(created.jobId);
+        expect(jobId, "jobId is the canonical Job identity").toBeTruthy();
+        // runtimeJobId = Runtime backend handle（jobs/start 返回，容器输出目录键）。
+        const runtimeJobId = String(created.runtimeJobId);
+        expect(runtimeJobId, "runtimeJobId returned by jobs/start").toBeTruthy();
         expect(created.scope).toBe("workspace");
         expect(created.backendKind).toBe("docker");
         expect(created.status).toBe("running");
-        expect(created.jobId, "runtime jobId returned by jobs/start").toBeTruthy();
         expect(created.sessionId).toBeNull();
+        expect(
+            created.operationItemId,
+            "decision #7：响应不再出现 operationItemId",
+        ).toBeUndefined();
 
         // 2) 同 key 重复 start → 200 复用同一 Job，不产生第二个进程/档案
         const replay = await startJob(request, command, key);
         expect(replay.status(), "idempotent replay must return 200").toBe(200);
         const replayed = (await replay.json()) as Record<string, unknown>;
-        expect(replayed.operationItemId).toBe(itemId);
-        expect(replayed.jobId).toBe(created.jobId);
+        expect(replayed.jobId).toBe(jobId);
+        expect(replayed.runtimeJobId).toBe(runtimeJobId);
 
         const jobs = await listJobs(request);
-        expect(jobs.filter((job) => job.operationItemId === itemId)).toHaveLength(1);
+        expect(jobs.filter((job) => job.jobId === jobId)).toHaveLength(1);
         expect(jobs).toHaveLength(1);
 
         // 3) 真实容器输出：按字节游标续看，拿到命令 stdout 标记
@@ -120,7 +137,7 @@ test.describe("@host PLAN-0390 workspace job start", () => {
         await expect
             .poll(
                 async () => {
-                    const { status, body } = await readOutput(request, itemId);
+                    const { status, body } = await readOutput(request, jobId);
                     if (status !== 200) return `http-${status}`;
                     nextOffset = Number(body.nextOffset ?? 0);
                     return String(body.data ?? "");
@@ -130,11 +147,11 @@ test.describe("@host PLAN-0390 workspace job start", () => {
             .toContain(marker);
 
         // 4) 游标单调：从 nextOffset 续读不回退；重复读同一 offset 得到同一前缀
-        const tail = await readOutput(request, itemId, nextOffset);
+        const tail = await readOutput(request, jobId, nextOffset);
         expect(tail.status).toBe(200);
         expect(Number(tail.body.offset)).toBeGreaterThanOrEqual(nextOffset);
         expect(Number(tail.body.nextOffset)).toBeGreaterThanOrEqual(Number(tail.body.offset));
-        const again = await readOutput(request, itemId, 0);
+        const again = await readOutput(request, jobId, 0);
         expect(String(again.body.data ?? "")).toContain(marker);
 
         // 5) 浏览器消费：Environment 面板显示该 Job 的 scope/backendKind
@@ -163,33 +180,32 @@ test.describe("@host PLAN-0390 workspace job start", () => {
         );
 
         // 7) 显式取消 → 真实四阶段终止 + durable 终态；刷新后仍是终态（不复活）
-        const cancel = await request.post(`${CP_URL}/api/v1/operations/items/${itemId}/cancel`, {
-            headers: sharedHeaders,
-            data: {},
-        });
+        const cancel = await cancelJob(request, jobId);
         expect([200, 502], `cancel status ${cancel.status()}`).toContain(cancel.status());
         await expect
             .poll(
                 async () => {
                     const rows = await listJobs(request);
-                    return String(
-                        rows.find((job) => job.operationItemId === itemId)?.status ?? "missing",
-                    );
+                    return String(rows.find((job) => job.jobId === jobId)?.status ?? "missing");
                 },
                 { timeout: 60000, message: "durable Job must reach a terminal status" },
             )
             .toMatch(/cancelled|succeeded|failed/);
 
-        const terminal = (await listJobs(request)).find((job) => job.operationItemId === itemId);
+        const terminal = (await listJobs(request)).find((job) => job.jobId === jobId);
         await page.reload({ waitUntil: "load" });
-        const afterReload = (await listJobs(request)).find((job) => job.operationItemId === itemId);
+        const afterReload = (await listJobs(request)).find((job) => job.jobId === jobId);
         expect(afterReload?.status, "terminal status must not resurrect after reload").toBe(
             terminal?.status,
         );
 
         writeFileSync(
             path.join(EVIDENCE_DIR, "workspace-job-start.json"),
-            JSON.stringify({ itemId, created, replayed, terminal, nextOffset }, null, 2),
+            JSON.stringify(
+                { jobId, runtimeJobId, created, replayed, terminal, nextOffset },
+                null,
+                2,
+            ),
         );
     });
 
@@ -206,12 +222,15 @@ test.describe("@host PLAN-0390 workspace job start", () => {
             202,
         );
         const job = (await started.json()) as Record<string, unknown>;
-        const itemId = String(job.operationItemId);
+        const jobId = String(job.jobId);
+        // 容器输出目录键 = Runtime backend handle（direct-attach 下等于 domain jobId，
+        // Docker 容器后端由容器侧生成——本 spec 默认 Docker 后端）。
+        const runtimeJobId = String(job.runtimeJobId);
 
         await expect
             .poll(
                 async () => {
-                    const { status, body } = await readOutput(request, itemId);
+                    const { status, body } = await readOutput(request, jobId);
                     return status === 200 ? String(body.data ?? "") : `http-${status}`;
                 },
                 {
@@ -222,11 +241,10 @@ test.describe("@host PLAN-0390 workspace job start", () => {
             .toContain(marker);
 
         // (a) 沙盒存活、job 目录缺失 → 续看必须显式 409 JOB_OUTPUT_LOST
-        const jobId = String(job.jobId);
         const containerName = `xihe-workspace-ws_${sharedWs}`;
         execFileSync(
             "docker",
-            ["exec", containerName, "sh", "-c", `rm -rf /tmp/xihe-jobs/${jobId}`],
+            ["exec", containerName, "sh", "-c", `rm -rf /tmp/xihe-jobs/${runtimeJobId}`],
             {
                 stdio: "ignore",
             },
@@ -235,7 +253,7 @@ test.describe("@host PLAN-0390 workspace job start", () => {
         await expect
             .poll(
                 async () => {
-                    const { status, body } = await readOutput(request, itemId);
+                    const { status, body } = await readOutput(request, jobId);
                     return status === 409
                         ? String(body.code ?? "")
                         : `http-${status}-${String(body.code ?? "")}`;
@@ -252,7 +270,7 @@ test.describe("@host PLAN-0390 workspace job start", () => {
         const removed = await expect
             .poll(
                 async () => {
-                    const { status, body } = await readOutput(request, itemId);
+                    const { status, body } = await readOutput(request, jobId);
                     return status === 503 && body.code === "RUNTIME_ERROR"
                         ? "http-503-RUNTIME_ERROR"
                         : `http-${status}-${String(body.code ?? "")}`;
@@ -262,7 +280,7 @@ test.describe("@host PLAN-0390 workspace job start", () => {
             .toBe("http-503-RUNTIME_ERROR");
         void removed;
 
-        const removedBody = await readOutput(request, itemId);
+        const removedBody = await readOutput(request, jobId);
         expect(
             removedBody.status,
             "removed sandbox must return the Runtime Problem Details response",
@@ -271,7 +289,7 @@ test.describe("@host PLAN-0390 workspace job start", () => {
 
         // Workspace 仍存活时 list 可用（access 边界未被破坏）
         const stillAlive = await listJobs(request);
-        expect(stillAlive.some((row) => row.operationItemId === itemId)).toBe(true);
+        expect(stillAlive.some((row) => row.jobId === jobId)).toBe(true);
 
         // destroy 后按 Workspace access 先判存在性：404，且不出现任何“重启恢复”的 Job
         const del = await request.delete(`${CP_URL}/api/v1/workspaces/${sharedWs}`, {
@@ -291,8 +309,8 @@ test.describe("@host PLAN-0390 workspace job start", () => {
             path.join(EVIDENCE_DIR, "workspace-job-destroy.json"),
             JSON.stringify(
                 {
-                    itemId,
                     jobId,
+                    runtimeJobId,
                     missingJobDir: "JOB_OUTPUT_LOST (409)",
                     removedSandbox: `${removedBody.status} ${String(removedBody.body.code ?? "")}`,
                     destroyedStatus: del.status(),

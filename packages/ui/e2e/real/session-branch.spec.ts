@@ -347,14 +347,16 @@ test.describe("@host Session branch path", () => {
             messageCount: branchMessages.length,
             fileCount: 1,
             chatRunCount: 0,
-            operationCount: 0,
+            historyCount: 0,
         });
         expect(childDb.agentPermissionsSnapshot).toEqual(sourceDb.agentPermissionsSnapshot);
         if (!childDb.seedPayload)
             throw new Error("Forked Session did not persist its summary seed event");
         expect(childDb.seedPayload.summary_seed.messages).toHaveLength(branchMessages.length);
         expect(sourceDb.chatRunCount).toBeGreaterThan(0);
-        expect(sourceDb.operationCount).toBeGreaterThan(0);
+        // PLAN-0464: a ChatRun has no Operation root any more; its durable
+        // transition record is the chat_run_history row.
+        expect(sourceDb.historyCount).toBeGreaterThan(0);
         expect(sourceDb.files).toHaveLength(1);
         expect(childDb.files).toHaveLength(1);
         expect(childDb.files[0].id).not.toBe(sourceDb.files[0].id);
@@ -674,7 +676,7 @@ function readSessionSnapshot(sessionId: string): {
     messageCount: number;
     fileCount: number;
     chatRunCount: number;
-    operationCount: number;
+    historyCount: number;
     files: Array<{ id: string; messageId: string }>;
     seedPayload: { summary_seed: { messages: unknown[] } } | null;
 } {
@@ -696,7 +698,7 @@ function readSessionSnapshot(sessionId: string): {
         `'messageCount', (SELECT count(*) FROM messages WHERE session_id = s.id), ` +
         `'fileCount', (SELECT count(*) FROM files WHERE session_id = s.id), ` +
         `'chatRunCount', (SELECT count(*) FROM chat_runs WHERE session_id = s.id), ` +
-        `'operationCount', (SELECT count(*) FROM ledger_operations WHERE session_id = s.id), ` +
+        `'historyCount', (SELECT count(*) FROM chat_run_history h JOIN chat_runs r ON r.id = h.run_id WHERE r.session_id = s.id), ` +
         `'files', COALESCE((SELECT jsonb_agg(jsonb_build_object('id', f.id, 'messageId', f.message_id) ` +
         `ORDER BY f.created_at) FROM files f WHERE f.session_id = s.id), '[]'::jsonb), ` +
         `'seedPayload', (SELECT payload FROM context_events WHERE session_id = s.id ` +

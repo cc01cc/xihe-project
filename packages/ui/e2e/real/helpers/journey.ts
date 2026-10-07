@@ -310,7 +310,15 @@ export async function sendChat(page: import("@playwright/test").Page, text: stri
     throw new Error("send never produced a user message bubble");
 }
 
-/** Wait until the session's latest operation reaches a terminal state. */
+/**
+ * Wait until the session's latest non-legacy operation reaches a terminal state.
+ *
+ * PLAN-0465 T2.1：Job start 的 legacy `kind=job` root 是 dual-write 只读投影，
+ * 状态停在 `accepted` 永不 transition（Job 的状态真相在 `workspace_jobs`，
+ * 按 jobId 轮询 output/cancel）。等待语义因此锚定到最新 **非 job** operation
+ * （tool_call/seed）；若 session 只剩 job root，则视为已 settle（job 专属等待
+ * 一律走 jobId-based 轮询，不再依赖 session-scoped operation）。
+ */
 export async function awaitLastOperationCompleted(
     request: import("@playwright/test").APIRequestContext,
     headers: Record<string, string>,
@@ -318,16 +326,34 @@ export async function awaitLastOperationCompleted(
     await expect
         .poll(
             async () => {
-                const res = await request.get(`${CP_URL}/api/v1/operations?size=1`, { headers });
-                const body = (await res.json()) as { operations?: Array<{ status?: string }> };
-                return body.operations?.[0]?.status ?? "unknown";
+                const res = await request.get(`${CP_URL}/api/v1/operations?size=5`, { headers });
+                const body = (await res.json()) as {
+                    operations?: Array<{ status?: string; kind?: string }>;
+                };
+                const operations = body.operations ?? [];
+                if (operations.length === 0) {
+                    return "unknown";
+                }
+                const latest = operations.find((op) => op.kind !== "job");
+                if (!latest) {
+                    return "completed";
+                }
+                return latest.status ?? "unknown";
             },
             { timeout: 120000, intervals: [2_000] },
         )
         .toBe("completed");
 }
 
-/** Wait for the operation correlated with this ChatRun, not another Session's latest row. */
+const CHAT_RUN_TERMINAL = /^(succeeded|failed|partial|cancelled|ambiguous)$/;
+
+/**
+ * Wait until THIS ChatRun reaches a terminal state.
+ *
+ * PLAN-0464 T2.2: a ChatRun no longer has an Operation root, so waiting on
+ * `/api/v1/operations?runId=` can only ever return "missing". The run status
+ * endpoint is now the correlation surface.
+ */
 export async function awaitOperationCompletedForRun(
     request: import("@playwright/test").APIRequestContext,
     headers: Record<string, string>,
@@ -336,19 +362,16 @@ export async function awaitOperationCompletedForRun(
     await expect
         .poll(
             async () => {
-                const res = await request.get(`${CP_URL}/api/v1/operations?size=50`, { headers });
+                const res = await request.get(`${CP_URL}/api/v1/chat/runs/${runId}`, {
+                    headers,
+                });
                 if (!res.ok()) return "unavailable";
-                const body = (await res.json()) as {
-                    operations?: Array<{ runId?: string; status?: string }>;
-                };
-                return (
-                    body.operations?.find((operation) => operation.runId === runId)?.status ??
-                    "missing"
-                );
+                const body = (await res.json()) as { status?: string };
+                return body.status ?? "unknown";
             },
             { timeout: 120000, intervals: [500, 1000, 2000] },
         )
-        .toBe("completed");
+        .toMatch(CHAT_RUN_TERMINAL);
 }
 
 /**

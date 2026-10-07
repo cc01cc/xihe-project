@@ -1,79 +1,90 @@
-import { defineStore } from "pinia";
 import { ref } from "vue";
-import { api } from "../composables/api";
-import type {
-    OperationListResponse,
-    OperationStatus,
-    OperationSummary,
-    OperationTrace,
-} from "../types";
+import { defineStore } from "pinia";
+import { api } from "@/composables/api";
+import type { AuditEntry, AuditEntryDetail, AuditEntryType, AuditListFilters } from "@/types";
 
+/**
+ * PLAN-0466 T2.1: audit read state.
+ *
+ * Reads the four-domain audit surface (`/api/v1/audit/entries*`) instead of the
+ * legacy ledger routes; `load` owns the list (entries/paging/error), `loadDetail`
+ * owns one entry's timeline. Responses of a superseded request are dropped so a
+ * slow older call can never overwrite a newer filter result.
+ */
 export const useOperationStore = defineStore("operations", () => {
-    const operations = ref<OperationSummary[]>([]);
-    const selectedTrace = ref<OperationTrace | null>(null);
+    const entries = ref<AuditEntry[]>([]);
+    const selectedDetail = ref<AuditEntryDetail | null>(null);
     const page = ref(0);
-    const totalPages = ref(0);
+    const size = ref(20);
     const totalElements = ref(0);
+    const totalPages = ref(0);
     const loading = ref(false);
-    const traceLoading = ref(false);
-    const error = ref<string | null>(null);
+    const detailLoading = ref(false);
+    const error = ref<Error | null>(null);
 
-    async function load(
-        filters: {
-            sessionId?: string;
-            workspaceId?: string;
-            status?: OperationStatus | string;
-            page?: number;
-            size?: number;
-        } = {},
-    ): Promise<OperationListResponse> {
+    let requestToken = 0;
+    let detailToken = 0;
+
+    async function load(filters: AuditListFilters = {}) {
+        const token = ++requestToken;
         loading.value = true;
         error.value = null;
         try {
-            const result = await api.listOperations(filters);
-            operations.value = result.operations;
+            const result = await api.listAuditEntries({
+                page: page.value,
+                size: size.value,
+                ...filters,
+            });
+            if (token !== requestToken) return;
+            entries.value = result.entries;
             page.value = result.page;
-            totalPages.value = result.totalPages;
+            size.value = result.size;
             totalElements.value = result.totalElements;
-            return result;
-        } catch (cause) {
-            error.value = cause instanceof Error ? cause.message : String(cause);
-            throw cause;
+            totalPages.value = result.totalPages;
+        } catch (e) {
+            if (token !== requestToken) return;
+            entries.value = [];
+            error.value = new Error(e instanceof Error ? e.message : String(e));
         } finally {
-            loading.value = false;
+            if (token === requestToken) loading.value = false;
         }
     }
 
-    async function loadTrace(operationId: string): Promise<OperationTrace> {
-        traceLoading.value = true;
+    async function loadDetail(type: AuditEntryType, id: string) {
+        const token = ++detailToken;
+        detailLoading.value = true;
         error.value = null;
         try {
-            const trace = await api.getOperationTrace(operationId);
-            selectedTrace.value = trace;
-            return trace;
-        } catch (cause) {
-            error.value = cause instanceof Error ? cause.message : String(cause);
-            throw cause;
+            const detail = await api.getAuditEntry(type, id);
+            if (token !== detailToken) return;
+            selectedDetail.value = detail;
+        } catch (e) {
+            if (token !== detailToken) return;
+            selectedDetail.value = null;
+            error.value = new Error(e instanceof Error ? e.message : String(e));
         } finally {
-            traceLoading.value = false;
+            if (token === detailToken) detailLoading.value = false;
         }
     }
 
-    function clearTrace() {
-        selectedTrace.value = null;
+    function clearDetail() {
+        detailToken++;
+        selectedDetail.value = null;
+        detailLoading.value = false;
     }
 
     return {
-        operations,
-        selectedTrace,
+        entries,
+        selectedDetail,
         page,
-        totalPages,
+        size,
         totalElements,
+        totalPages,
         loading,
-        traceLoading,
+        detailLoading,
         error,
         load,
-        loadTrace,
-        clearTrace,
+        loadDetail,
+        clearDetail,
     };
 });

@@ -87,6 +87,29 @@ sequenceDiagram
   CP-->>Agent: 透传结果
 ```
 
+### 3.3. 关联头与执行域记账（PLAN-0463 冻结契约）
+
+一次 `tools/call` 的跨服务关联 header（完整契约见
+`plans/PLAN-0463-xh-mcp-execution-domain/evidence/wire-contract.md`）：
+
+| Header | 方向 | 语义 | 0463 状态 |
+|---|---|---|---|
+| `X-Chat-Run-Id` | Agent→CP→Runtime | ChatRun 主键（租约校验 + 日志关联） | 不变 |
+| `X-Tool-Call-Id` | Agent→CP→Runtime | **新主键**：canonical `toolCallId`（非 UUID 由 CP `nameUUIDFromBytes` 规范化） | 新增 |
+| `X-Mcp-Invocation-Id` | CP→Runtime | gate 创建的 `mcp_invocations.id`（迟到终止新 target） | 新增 |
+| `X-Job-Id` | CP→Runtime | job 场景可选关联 | 新增（0463 仅透传解析，producer 随 0465） |
+| `X-Operation-Id` / `X-Operation-Item-Id` / `X-Operation-Attempt-Id` | Agent→CP→Runtime | 旧 operation 关联 | **兼容保留，0464 移除** |
+
+- **同值规则**：`X-Tool-Call-Id` 与 `X-Operation-Item-Id` 在 0463 期间取同一 canonical 值，
+  因此 Runtime in-flight / cancel key 的**取值不变**，取消链路零回归。
+- **写路径**：gate 在 grant 校验前建 `mcp_invocations`（`source=agent`）；SSE relay 的
+  `agent_tool` attempt 与 Proxy 的 `cp_forward` attempt 落 `mcp_attempts`，流转追加
+  `mcp_dispatch_history`；dispatch 网络不确定记 `unknown`，迟到确认 `unknown → late_confirmed`。
+- **Grant 校验**：主路径 = `ChatRun lease + invocation active + scope`；operation/item
+  校验保留为 0464 前的过渡回退（删除挂 0464 T2.2）。
+- **迟到终止**：`POST /internal/v1/mcp/invocations/{invocationId}/late-termination`（新），
+  旧 `POST /internal/v1/operations/items/{itemId}/late-termination` 标 `deprecated`（下线 0467）。
+
 ## 4. 关键技术决策
 
 | 决策 | 选择 | 理由 |

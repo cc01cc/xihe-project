@@ -1,6 +1,6 @@
 # XH 审批契约
 
-> 契约状态：`proposed`；实现状态：`partial`；Profile：`security`；Owner：CP/Security；来源：PLAN-0386、DEV-014、PLAN-0407 spec §9（ask 清单补录）；更新：2026-09-27。
+> 契约状态：`proposed`；实现状态：`partial`；Profile：`security`；Owner：CP/Security；来源：PLAN-0386、DEV-014、PLAN-0407 spec §9（ask 清单补录）、PLAN-0464 T1.5；更新：2026-10-06。
 > 消费者：CP approval gate、Agent approval relay、UI approval modal、Audit
 
 ## 1. 请求身份
@@ -8,6 +8,8 @@
 Approval request 绑定 `requestId`、`runId`、`sessionId`、`userId`、`workspaceId`、tool、受限长度的 action/details、可选 arguments hash、origin 和 expiry。CP **MUST** 在创建或 replay row 前拒绝身份不匹配。
 
 Origins are `cp_gate` and `agent_relay`; they are not interchangeable audit labels.
+
+审批状态流转的事实源是 `approval_requests` 行；`approval_history`（V51）是 append-only 的 `requested → dispatching → decided / expired / dispatch_unknown` 历史，由 `ApprovalService` 在同一审批域事务内写入。`ApprovalPendingStore` 的隔离事务已改为与调用方同事务（PLAN-0464 T1.5）：approval row、policy summary 与 history 必须一起提交或一起回滚。八处旧 Operation-ledger 写点已全部退役。
 
 ## 2. 状态与决策
 

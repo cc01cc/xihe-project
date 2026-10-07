@@ -9,6 +9,7 @@ import { useCheckpointStore } from "../../stores/checkpoint";
 import { useSessionStore } from "../../stores/session";
 import { ApiError, api, type WorkspaceAgentBinding } from "../../composables/api";
 import { parseRawToParts } from "../../composables/useStreamParser";
+import { jobSummariesToToolCalls } from "./jobSummaryToolCalls";
 import { logger } from "../../lib/logger";
 import type {
     ApprovalDecisionEnvelope,
@@ -196,14 +197,15 @@ async function loadSessionMessages(sessionId: string) {
                 errorCode: message.errorCode,
                 error: message.error,
                 retryable: message.retryable,
+                // PLAN-0344 T1.4 / PLAN-0465 T2.2：刷新后 job 卡片唯一重建源
+                //（messages DTO 的 jobSummary ← workspace_jobs 投影）。
+                toolCalls: message.jobSummary?.length
+                    ? jobSummariesToToolCalls(message.jobSummary)
+                    : undefined,
             })),
         );
         if (derivedState.value?.sessionId === sessionId) {
-            void loadWaitingOnProjection(
-                sessionId,
-                derivedState.value.activeChildren,
-                chatStore.getSessionRunId(sessionId),
-            );
+            void loadWaitingOnProjection(sessionId, derivedState.value.activeChildren);
         }
     } catch (cause) {
         if (cause instanceof ApiError && cause.problem.code === "MESSAGE_NOT_FOUND") return;
@@ -211,16 +213,14 @@ async function loadSessionMessages(sessionId: string) {
     }
 }
 
-function isSpawnToolCall(name: string): boolean {
-    return (
-        name === "spawn_agent" || name.endsWith("__spawn_agent") || name.endsWith("/spawn_agent")
-    );
-}
-
+/**
+ * PLAN-0464 T2.1: the waiting link lives on the child ChatRun row, so the
+ * projection reads `GET /chat/sessions/{childSessionId}/runs` once per child
+ * session instead of paging Operations and fetching every trace.
+ */
 async function loadWaitingOnProjection(
     sessionId: string,
     activeChildren: SessionDerivedStateResponse["activeChildren"],
-    preferredParentRunId?: string,
 ) {
     const requestId = ++waitingOnRequestId;
     const activeByRunId = new Map(activeChildren.map((child) => [child.runId, child]));
@@ -229,62 +229,20 @@ async function loadWaitingOnProjection(
         return;
     }
 
-    const parentRunIds = new Set<string>();
-    if (preferredParentRunId) parentRunIds.add(preferredParentRunId);
-    for (const message of chatStore.getMessages(sessionId)) {
-        if (message.runId) parentRunIds.add(message.runId);
-        for (const toolCall of message.toolCalls ?? []) {
-            if (!isSpawnToolCall(toolCall.name)) continue;
-            if (toolCall.runId) parentRunIds.add(toolCall.runId);
-        }
-    }
-    if (parentRunIds.size === 0) {
-        waitingOnByToolCallId.value = {};
-        return;
-    }
-
     try {
         const waitingOn: Record<string, ToolCallWaitingOn> = {};
-        const resolvedRunIds = new Set<string>();
-        const matchedChildRunIds = new Set<string>();
-        let page = 0;
-        let totalPages = 1;
-        while (page < totalPages && matchedChildRunIds.size < activeByRunId.size) {
-            const operationPage = await api.listOperations({ sessionId, page, size: 50 });
-            totalPages = operationPage.totalPages;
-            const candidates = operationPage.operations.filter(
-                (operation) =>
-                    operation.runId &&
-                    parentRunIds.has(operation.runId) &&
-                    !resolvedRunIds.has(operation.runId),
-            );
-            for (
-                let offset = 0;
-                offset < candidates.length && matchedChildRunIds.size < activeByRunId.size;
-                offset += 8
-            ) {
-                const traces = await Promise.all(
-                    candidates.slice(offset, offset + 8).map(async (operation) => ({
-                        runId: operation.runId!,
-                        trace: await api.getOperationTrace(operation.id),
-                    })),
-                );
-                for (const { runId, trace } of traces) {
-                    resolvedRunIds.add(runId);
-                    for (const item of trace.items) {
-                        if (!item.toolCallId || !item.waitingOnRunId) continue;
-                        const child = activeByRunId.get(item.waitingOnRunId);
-                        if (!child) continue;
-                        waitingOn[item.toolCallId] = {
-                            childRunId: child.runId,
-                            name: child.name,
-                            status: child.status,
-                        };
-                        matchedChildRunIds.add(child.runId);
-                    }
-                }
+        const childSessionIds = [...new Set(activeChildren.map((child) => child.childSessionId))];
+        for (const childSessionId of childSessionIds) {
+            const runs = await api.listSessionRuns(childSessionId, { page: 0, size: 200 });
+            for (const run of runs.runs) {
+                const child = activeByRunId.get(run.runId);
+                if (!child || !run.waitingToolCallId) continue;
+                waitingOn[run.waitingToolCallId] = {
+                    childRunId: child.runId,
+                    name: child.name,
+                    status: child.status,
+                };
             }
-            page += 1;
         }
 
         if (props.sessionId === sessionId && requestId === waitingOnRequestId) {
@@ -301,7 +259,6 @@ async function loadWaitingOnProjection(
 async function refreshDerivedState(sessionId: string) {
     if (!sessionId) return;
     const requestId = ++derivedStateRequestId;
-    const parentRunIdAtRefresh = chatStore.getSessionRunId(sessionId);
     derivedStateLoading.value = true;
     derivedStateError.value = false;
     try {
@@ -314,7 +271,7 @@ async function refreshDerivedState(sessionId: string) {
                 activeRunIds.has(child.childRunId),
             ),
         );
-        await loadWaitingOnProjection(sessionId, result.activeChildren, parentRunIdAtRefresh);
+        await loadWaitingOnProjection(sessionId, result.activeChildren);
     } catch (cause) {
         if (props.sessionId === sessionId && requestId === derivedStateRequestId) {
             derivedStateError.value = true;

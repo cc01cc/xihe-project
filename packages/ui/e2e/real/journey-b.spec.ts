@@ -282,12 +282,43 @@ test.describe("@host Journey B — manual workspace mutations (PLAN-0353 D1)", (
         const toolNames = (trace.items ?? []).map((item) => item.toolName);
         expect(toolNames, `trace items: ${JSON.stringify(toolNames)}`).toContain("write_file");
 
-        // UI audit view (PLAN-290 B2: visible non-Agent provenance).
+        // UI audit view (PLAN-290 B2 + PLAN-0466 T2.1: visible non-Agent provenance on the
+        // four-domain audit read model; the ledger probe above stays the PLAN-0353
+        // actorType=user proof until PLAN-0467 removes the operations routes).
+        let auditEntryId = "";
+        await expect
+            .poll(
+                async () => {
+                    const res = await request.get(
+                        `${CP_URL}/api/v1/audit/entries?type=mcp_invocation&size=10`,
+                        { headers: ctx.headers },
+                    );
+                    if (!res.ok()) return "http";
+                    const body = (await res.json()) as {
+                        entries?: Array<{ id: string; summary?: string }>;
+                    };
+                    const entry = (body.entries ?? []).find(
+                        (candidate) => candidate.summary === "write_file",
+                    );
+                    if (entry) {
+                        auditEntryId = entry.id;
+                        return "ok";
+                    }
+                    return "pending";
+                },
+                {
+                    message: "a write_file mcp_invocation audit entry must exist",
+                    timeout: 30000,
+                    intervals: [1000, 2000],
+                },
+            )
+            .toBe("ok");
+
         await page.goto("/settings/audit", { waitUntil: "load" });
         await expect(page.getByTestId("settings-audit-heading")).toBeVisible({ timeout: 20000 });
-        const operationRow = page.getByTestId(`settings-audit-operation-${operationId}`);
-        await expect(operationRow).toBeVisible({ timeout: 20000 });
-        await operationRow.click();
+        const entryRow = page.getByTestId(`settings-audit-entry-${auditEntryId}`);
+        await expect(entryRow).toBeVisible({ timeout: 20000 });
+        await entryRow.click();
         await expect(page.getByTestId("settings-audit-items")).toContainText("write_file", {
             timeout: 15000,
         });

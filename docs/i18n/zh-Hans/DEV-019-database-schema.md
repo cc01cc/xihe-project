@@ -907,7 +907,48 @@ erDiagram
 
 > 索引：`idx_task_items_plan (task_plan_id)`；`idx_task_items_status (status)`
 
-## 4. 迁移对照（当前 active 链 V1~V48；V42–V47 行由各自计划补登）
+### 3.9 Workspace Job（workspace_jobs / workspace_job_history）
+
+**workspace_jobs**（`V52`，Entity `entity/WorkspaceJob.java`）：Workspace Job 领域表（PLAN-0465 T1.1，PLAN-0462 decision #5/#7）。`id` 即 domain `jobId`（wire 唯一身份）；`state` JSONB 保留原 `job_state` extension payload（行锁 + 单调前进语义不变），`status`/`scope` 为同步查询列；`operation_item_id` 为到 legacy job item 的 dual-write 锚点（至 0467）。不回填旧行（decision #9）。
+
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| id | UUID | PK | domain `jobId` |
+| workspace_id | UUID | NOT NULL FK `workspaces(id) ON DELETE CASCADE` | 归属 |
+| user_id | UUID | NOT NULL FK `users(id)` | 启动者（幂等键成员） |
+| session_id | UUID | nullable FK `sessions(id) ON DELETE CASCADE` | session-less Job 为 NULL |
+| run_id | UUID | nullable FK `chat_runs(id) ON DELETE SET NULL` | run-scope 归属/收口键 |
+| tool_call_id | UUID | nullable | MCP 工具调用关联（decision #5 provenance） |
+| operation_item_id | UUID | NOT NULL UNIQUE FK `operation_items(id) ON DELETE CASCADE` | legacy 锚点（0467 drop） |
+| source | VARCHAR(32) | NOT NULL，`ui/agent/runtime/system/mcp` | — |
+| scope | VARCHAR(16) | NOT NULL，`ck_workspace_jobs_scope` | `run/session/workspace`（存活边界） |
+| idempotency_key | VARCHAR(128) | nullable | V36 语义迁入 |
+| input_hash | VARCHAR(64) | nullable | 同 key 异 hash → 409 |
+| status | VARCHAR(24) | NOT NULL，`ck_workspace_jobs_status` | `pending/running/succeeded/cancelled/timeout/orphaned/interrupted` |
+| state | JSONB | NOT NULL | 原 `job_state` payload（含 runtime handle `jobId`） |
+| cancel_reason / error_code | VARCHAR(64) | nullable | 冻结词汇见 DEV-014 §9 |
+| runtime_job_id | VARCHAR(128) | nullable | Runtime backend handle（`state->>'jobId'` 镜像，output/status/cancel 目标） |
+| started_at / ended_at | TIMESTAMPTZ | nullable | `state` 时间列镜像 |
+| created_at / updated_at | TIMESTAMPTZ | NOT NULL DEFAULT `now()` | 时间索引面 |
+
+> 索引/唯一：`uq_workspace_jobs_session_idempotency (user_id, session_id, idempotency_key) WHERE session_id IS NOT NULL AND idempotency_key IS NOT NULL`；`uq_workspace_jobs_workspace_idempotency (user_id, workspace_id, idempotency_key) WHERE session_id IS NULL AND idempotency_key IS NOT NULL`（V36 语义）；`uq_workspace_jobs_operation_item (operation_item_id)`；`idx_workspace_jobs_workspace_created_at (workspace_id, created_at DESC)`（list + 0466 审计 VIEW 分页）；`idx_workspace_jobs_created_at (created_at)`（对账 sweep）；`idx_workspace_jobs_run_id` / `idx_workspace_jobs_session_id`（scope 收口等值探针）。
+
+**workspace_job_history**（`V53`，Entity `entity/WorkspaceJobHistory.java`）：单 Job append-only transition history（PLAN-0465 T1.3，PLAN-0462 decision #8）。只插入不更新；`sequence` 在 `workspace_jobs` 行锁内 max+1 分配；`job_id` FK `ON DELETE CASCADE`。
+
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|---|
+| id | UUID | PK | — |
+| job_id | UUID | NOT NULL FK `workspace_jobs(id) ON DELETE CASCADE` | 归属 Job |
+| sequence | BIGINT | NOT NULL，`UNIQUE (job_id, sequence)` | per-job 单调序号 |
+| event_type | VARCHAR(24) | NOT NULL，`ck_workspace_job_history_event` | `start/running/settle/cancel/orphaned/interrupted` |
+| from_status / to_status | VARCHAR(24) | from nullable、to NOT NULL | 状态迁移两端 |
+| cancel_reason / error_code | VARCHAR(64) | nullable | 与行镜像 |
+| payload | TEXT | nullable | 安全字段（ids/flags），不落命令/env/secret |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT `now()` | — |
+
+> 索引：`uq_workspace_job_history_job_sequence (job_id, sequence)`；`idx_workspace_job_history_job_created (job_id, created_at)`。
+
+## 4. 迁移对照（当前 active 链 V1~V53；V42–V47 与 V49–V51 行由各自计划补登）
 
 > PLAN-280 destructive rebaseline 取代了当时的历史链（旧 V2~V22/U6 移出 active classpath，仅 Git 历史可追溯）；V15 起的 V15~V41 均为当前 active 链的 post-rebaseline migrations。本节保留历史编号解释，不把两套编号混用；表内 V2/V3/V4/V30 的旧名属于历史迁移文件名与原表名（V33 改名后保留）。
 
@@ -955,6 +996,8 @@ erDiagram
 | V40 | `V40__session_derivation_kind.sql` | `sessions.kind` 区分 `spawn/fork`；root provenance 全 NULL、派生四元组全 NOT NULL 的 CHECK；既有 V37 provenance 行在无 fork creator 的前置阶段回填为 spawn（PLAN-0407 T2.2） | `sessions` |
 | V41 | `V41__default_grant_bootstrap.sql` | 对既有 users 与 root Agent Sessions 补 source=default grant（USER/ADMIN 矩阵），自动默认 read_state=read，并为回填 grant 写 audit row（PLAN-0407 T2.4） | `grants` |
 | V48 | `V48__context_template_session_binding.sql` | **纯 schema（不含数据清理）**：`sessions` 增 `context_template_layer/id/version` 三列（NOT NULL DEFAULT 钉内置模板）与 CHECK（PLAN-0414 T1.1/T1.3），`chat_runs` 增 `context_template_snapshot` JSONB 对象 DEFAULT（T1.4 admission 原子快照）；存量清库是迁移前置运维动作 `dev:reset`（用户 2026-10-03 裁定「先清库，迁移里不该清」，V14 dev-state 可弃先例），迁移不携带 DELETE/拦截 | `sessions/chat_runs` |
+| V52 | `V52__workspace_jobs.sql` | Workspace Job 领域表（PLAN-0465 T1.1 / PLAN-0462 decision #5/#7）：domain `jobId` PK、V36 幂等唯一索引迁入、`operation_item_id` dual-write 锚点（UNIQUE）、`status/scope` 查询列、`(workspace_id, created_at)` 时间索引；不回填旧行（decision #9） | `workspace_jobs` |
+| V53 | `V53__workspace_job_history.sql` | 单 Job append-only transition history（PLAN-0465 T1.3 / decision #8）：六事件 `start/running/settle/cancel/orphaned/interrupted`，per-job `sequence` 唯一，FK 级联 | `workspace_job_history` |
 
 ## 5. 本地查看与运维
 

@@ -7,6 +7,13 @@ import type {
     ApprovalPolicyShape,
     ApprovalPolicySourceLayer,
     ApprovalRequest,
+    AuditEntry,
+    AuditEntryDetail,
+    AuditEntryType,
+    AuditListFilters,
+    AuditListResponse,
+    AuditTimelineEvent,
+    AuditAttemptView,
     CheckpointCleanupResult,
     CheckpointPreview,
     CheckpointPreviewAction,
@@ -30,6 +37,7 @@ import type {
     PolicyToolFaceView,
     PendingApprovalSummary,
     SessionDerivedStateResponse,
+    SessionRunsResponse,
     SessionPolicyMode,
     SessionPolicyModeState,
     WorkspaceGitStatus,
@@ -295,6 +303,66 @@ function normalizeOperationTrace(value: unknown): OperationTrace {
             .map(normalizeOperationItem)
             .filter((item): item is OperationItemView => item !== null),
     } as unknown as OperationTrace;
+}
+
+/**
+ * PLAN-0466 T2.1: normalize an audit detail body — safe `policy` verdicts only
+ * (same OperationPolicySummary rules as the ledger trace) plus array-shaped
+ * timeline/attempts; anything malformed is dropped rather than guessed at.
+ */
+function normalizeAuditDetail(value: unknown): AuditEntryDetail {
+    const record = asRecord(value);
+    const entry = asRecord(record?.entry);
+    if (!record || !entry) {
+        return value as AuditEntryDetail;
+    }
+    const { policy, ...rest } = entry;
+    const normalizedPolicy = normalizeOperationPolicy(policy);
+    return {
+        ...record,
+        entry: normalizedPolicy ? { ...rest, policy: normalizedPolicy } : rest,
+        timeline: normalizeAuditTimeline(record.timeline),
+        attempts: normalizeAuditAttempts(record.attempts),
+    } as unknown as AuditEntryDetail;
+}
+
+function normalizeAuditTimeline(timeline: unknown): AuditTimelineEvent[] {
+    if (!Array.isArray(timeline)) {
+        return [];
+    }
+    return timeline.filter((event): event is AuditTimelineEvent => {
+        const record = asRecord(event);
+        return record !== null && typeof record.eventType === "string";
+    });
+}
+
+function normalizeAuditAttempts(attempts: unknown): AuditAttemptView[] {
+    if (!Array.isArray(attempts)) {
+        return [];
+    }
+    return attempts.filter((attempt): attempt is AuditAttemptView => {
+        const record = asRecord(attempt);
+        return record !== null && typeof record.id === "string" && typeof record.stage === "string";
+    });
+}
+
+/** PLAN-0466 T2.1: keeps well-formed entries only (mirrors normalizeOperationList). */
+function normalizeAuditList(value: unknown): AuditListResponse {
+    const record = asRecord(value);
+    if (!record) {
+        return value as AuditListResponse;
+    }
+    const entries = Array.isArray(record.entries)
+        ? record.entries.filter((item): item is AuditEntry => {
+              const entryRecord = asRecord(item);
+              return (
+                  entryRecord !== null &&
+                  typeof entryRecord.id === "string" &&
+                  typeof entryRecord.type === "string"
+              );
+          })
+        : [];
+    return { ...record, entries } as unknown as AuditListResponse;
 }
 
 const approvalStates = [
@@ -1313,6 +1381,22 @@ export const api = {
             `/sessions/${encodeURIComponent(sessionId)}/derived-state`,
         );
     },
+    /**
+     * PLAN-0464 T2.1: runs of one session with status + spawn waiting link.
+     * Replaces `listOperations` as the ChatPanel refresh-recovery source — the
+     * child ChatRun row carries `waitingOnRunId`/`waitingToolCallId`.
+     */
+    listSessionRuns(
+        sessionId: string,
+        options: { page?: number; size?: number } = {},
+    ): Promise<SessionRunsResponse> {
+        const params = new URLSearchParams();
+        params.set("page", String(options.page ?? 0));
+        params.set("size", String(options.size ?? 100));
+        return request<SessionRunsResponse>(
+            `/chat/sessions/${encodeURIComponent(sessionId)}/runs?${params.toString()}`,
+        );
+    },
     /** PLAN-0340 U1: source summary metadata only (no body). */
     getContextSources(sessionId: string) {
         return request<{
@@ -1421,10 +1505,10 @@ export const api = {
                 retryable?: boolean;
                 attachments?: Array<{ fileId: string; name: string; type: string; size: number }>;
                 jobSummary?: Array<{
-                    itemId: string;
+                    jobId: string;
+                    workspaceId: string;
                     toolCallId?: string;
                     toolName?: string;
-                    jobId?: string;
                     status: string;
                     scope?: string;
                     startedAt?: string | null;
@@ -1435,11 +1519,19 @@ export const api = {
             `/sessions/${encodeURIComponent(sessionId)}/messages?branchId=${encodeURIComponent(branchId)}`,
         );
     },
+    /**
+     * PLAN-0465 T2.1：durable job 输出续看（canonical 路径
+     * `GET /api/v1/workspaces/{workspaceId}/jobs/{jobId}/output`，offset 字节游标，
+     * Workspace access）。旧 `/operations/items/{itemId}/job-output` 保留至 0467，
+     * UI 自 0465 起只用 canonical 路径。
+     */
     getJobOutput(
-        itemId: string,
+        workspaceId: string,
+        jobId: string,
         options?: { stream?: "stdout" | "stderr"; offset?: number; limit?: number },
     ): Promise<{
         jobId: string;
+        runtimeJobId?: string;
         stream: string;
         offset: number;
         nextOffset: number;
@@ -1454,7 +1546,7 @@ export const api = {
         if (options?.limit !== undefined) params.set("limit", String(options.limit));
         const query = params.toString();
         return request(
-            `/operations/items/${encodeURIComponent(itemId)}/job-output${query ? `?${query}` : ""}`,
+            `/workspaces/${encodeURIComponent(workspaceId)}/jobs/${encodeURIComponent(jobId)}/output${query ? `?${query}` : ""}`,
         );
     },
     deleteMessage(sessionId: string, messageId: string) {
@@ -1484,10 +1576,15 @@ export const api = {
             count: number;
         }>(`/workspaces/${encodeURIComponent(wsId)}/mcp/servers`);
     },
-    /** PLAN-0366：取消单个 durable job（owner-only；幂等；不改 run/对话终态）。 */
-    cancelJob(itemId: string) {
-        return apiPost<{ itemId: string; jobId: string; status: string; changed: boolean }>(
-            `/operations/items/${encodeURIComponent(itemId)}/cancel`,
+    /**
+     * PLAN-0465 T2.1：取消 durable job（canonical 路径 `POST
+     * /api/v1/workspaces/{workspaceId}/jobs/{jobId}/cancel`，**Workspace access**
+     * ——按控制器实际行为，非 owner-only；幂等；不改 run/对话终态）。
+     * 响应 `jobId` = domain 身份（decision #7，无 `itemId`）。
+     */
+    cancelJob(workspaceId: string, jobId: string) {
+        return apiPost<{ jobId: string; status: string; changed: boolean }>(
+            `/workspaces/${encodeURIComponent(workspaceId)}/jobs/${encodeURIComponent(jobId)}/cancel`,
         );
     },
     decideChatApproval(
@@ -1652,6 +1749,12 @@ export const api = {
             }>;
         }>("/status");
     },
+    /**
+     * Legacy ledger list.
+     *
+     * @deprecated PLAN-0466 — use {@link listAuditEntries}; this keeps calling
+     *   `GET /api/v1/operations` until PLAN-0467 removes the route.
+     */
     listOperations(
         filters: {
             sessionId?: string;
@@ -1670,9 +1773,39 @@ export const api = {
         const query = params.toString();
         return request<OperationListResponse>(`/operations${query ? `?${query}` : ""}`);
     },
+    /**
+     * Legacy ledger trace.
+     *
+     * @deprecated PLAN-0466 — use {@link getAuditEntry}; removal tracked by PLAN-0467.
+     */
     async getOperationTrace(operationId: string): Promise<OperationTrace> {
         return normalizeOperationTrace(
             await request<unknown>(`/operations/${encodeURIComponent(operationId)}`),
+        );
+    },
+    /**
+     * PLAN-0466 T2.1: one page of `GET /api/v1/audit/entries` — the four-domain
+     * audit view (chat_run | workspace_job | mcp_invocation | approval), user tier.
+     */
+    async listAuditEntries(filters: AuditListFilters = {}): Promise<AuditListResponse> {
+        const params = new URLSearchParams();
+        if (filters.sessionId) params.set("sessionId", filters.sessionId);
+        if (filters.workspaceId) params.set("workspaceId", filters.workspaceId);
+        if (filters.type) params.set("type", filters.type);
+        if (filters.status) params.set("status", filters.status);
+        if (filters.page !== undefined) params.set("page", String(filters.page));
+        if (filters.size !== undefined) params.set("size", String(filters.size));
+        const query = params.toString();
+        return normalizeAuditList(
+            await request<unknown>(`/audit/entries${query ? `?${query}` : ""}`),
+        );
+    },
+    /** PLAN-0466 T2.1: one entry + that domain's history timeline (`GET /api/v1/audit/entries/{type}/{id}`). */
+    async getAuditEntry(type: AuditEntryType, id: string): Promise<AuditEntryDetail> {
+        return normalizeAuditDetail(
+            await request<unknown>(
+                `/audit/entries/${encodeURIComponent(type)}/${encodeURIComponent(id)}`,
+            ),
         );
     },
     async listDirectory(path: string, workspaceId: string) {

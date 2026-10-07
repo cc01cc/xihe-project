@@ -58,8 +58,7 @@ function setPrincipal(user: { id: string; role?: string }, ownerId: string) {
 
 function job(overrides: Record<string, unknown>) {
     return {
-        operationId: "op-1",
-        operationItemId: "item-1",
+        runtimeJobId: null,
         workspaceId: "workspace-1",
         sessionId: null,
         runId: null,
@@ -102,14 +101,14 @@ describe("WorkspaceEnvironmentView job projection", () => {
     it("renders scope, backend kind, status label and the terminal / cleanup detail per job", async () => {
         mockedApi.getWorkspaceJobs.mockResolvedValue([
             job({
-                operationItemId: "item-run",
+                jobId: "job-run",
                 status: "running",
                 scope: "workspace",
                 backendKind: "windows-host",
                 cleanupStatus: "running",
             }),
             job({
-                operationItemId: "item-done",
+                jobId: "job-done",
                 status: "cancelled",
                 scope: "run",
                 backendKind: "docker",
@@ -147,7 +146,7 @@ describe("WorkspaceEnvironmentView job projection", () => {
     it("does not surface a not_started cleanup status as job detail", async () => {
         mockedApi.getWorkspaceJobs.mockResolvedValue([
             job({
-                operationItemId: "item-pending",
+                jobId: "job-pending",
                 status: "pending",
                 cleanupStatus: "not_started",
             }),

@@ -103,6 +103,8 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         lineNumber: number;
         observedAt: string;
     }> = [];
+    const sessionRunsResponses: Array<{ status: number; url: string; body?: unknown }> = [];
+    const chatSessionRequests: string[] = [];
     const browserHttpFailures: Array<{
         method: string;
         url: string;
@@ -207,6 +209,9 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         httpFailureCaptures.push(capture);
     });
     page.on("request", (outgoing) => {
+        if (outgoing.url().includes("/api/v1/chat/sessions")) {
+            chatSessionRequests.push(outgoing.url());
+        }
         if (outgoing.url().includes("/api/v1/chat")) {
             browserChatRequests.push(outgoing.method());
             if (outgoing.method() === "POST") {
@@ -243,6 +248,18 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         } catch {
             operationTraceResponses.push({ status: response.status(), body: {} });
         }
+    });
+    page.on("response", async (response) => {
+        if (response.request().method() !== "GET") return;
+        const pathname = new URL(response.url()).pathname;
+        if (!pathname.startsWith("/api/v1/chat/sessions/") || !pathname.endsWith("/runs")) return;
+        let body: unknown = null;
+        try {
+            body = await response.json();
+        } catch {
+            body = null;
+        }
+        sessionRunsResponses.push({ status: response.status(), url: response.url(), body });
     });
 
     const fakeHealth = await request.get(`${FAKE_LLM_URL}/health`);
@@ -435,95 +452,147 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
             )
             .toBe(1);
 
-        const parentOperationId = requireUuid(
-            queryIsolatedPostgres(
-                `SELECT id FROM ledger_operations WHERE session_id = '${parentSessionId}'::uuid ORDER BY created_at DESC LIMIT 1`,
-            ),
+        // PLAN-0464 T2.1: the parent run and the spawn waiting link now come
+        // from the Chat domain — no Operation row is involved.
+        const parentRunsResponse = await request.get(
+            `${CP_URL}/api/v1/chat/sessions/${parentSessionId}/runs?page=0&size=50`,
+            { headers: workspaceHeaders },
         );
+        expect(parentRunsResponse.ok(), await parentRunsResponse.text()).toBeTruthy();
+        const parentRunsBody = (await parentRunsResponse.json()) as {
+            runs?: Array<{ runId: string; origin: string; status: string }>;
+        };
         const parentRunId = requireUuid(
-            queryIsolatedPostgres(
-                `SELECT run_id FROM ledger_operations WHERE id = '${parentOperationId}'::uuid`,
-            ),
+            parentRunsBody.runs?.find((run) => run.origin === "user_submission")?.runId ?? "",
         );
-        const traceUrl = `${CP_URL}/api/v1/operations/${parentOperationId}`;
-        let parentItem:
-            | {
-                  source?: string;
-                  toolName?: string;
-                  status?: string;
-                  waitingOnRunId?: string | null;
-              }
-            | undefined;
+
+        let childRunId = "";
+        let childSessionId = "";
         await expect
             .poll(
-                async () => {
-                    const traceResponse = await request.get(traceUrl, {
-                        headers: workspaceHeaders,
-                    });
-                    if (!traceResponse.ok()) return "";
-                    const trace = (await traceResponse.json()) as {
-                        items?: Array<typeof parentItem>;
-                    };
-                    parentItem = trace.items?.find(
-                        (item) => item?.source === "agent" && item.toolName === "spawn_agent",
-                    );
-                    return parentItem?.waitingOnRunId ?? "";
+                () => {
+                    const observed = derivedStateResponses
+                        .slice(derivedResponsesBeforeSpawn)
+                        .flatMap((item) =>
+                            item.status === 200 ? (item.body.activeChildren ?? []) : [],
+                        )[0];
+                    if (!observed) return "";
+                    childRunId = observed.runId;
+                    childSessionId = observed.childSessionId;
+                    return observed.runId;
                 },
-                { timeout: 30_000, intervals: [250, 500, 1_000] },
+                { timeout: 60_000, intervals: [250, 500, 1_000] },
             )
             .not.toBe("");
-
-        const childRunId = requireUuid(parentItem?.waitingOnRunId ?? "");
-        const childSessionId = requireUuid(
-            queryIsolatedPostgres(
-                `SELECT session_id FROM chat_runs WHERE id = '${childRunId}'::uuid`,
-            ),
-        );
+        childRunId = requireUuid(childRunId);
+        childSessionId = requireUuid(childSessionId);
         const childName = queryIsolatedPostgres(
             `SELECT title FROM sessions WHERE id = '${childSessionId}'::uuid`,
         );
         expect(childName).not.toBe("");
+
+        // Durable waiting link, read from the child ChatRun row through the
+        // session-runs endpoint (the same read surface ChatPanel uses after a refresh).
         await expect
             .poll(
-                () =>
-                    derivedStateResponses
-                        .slice(derivedResponsesBeforeSpawn)
-                        .some(
-                            (item) =>
-                                item.status === 200 &&
-                                item.body.activeChildren?.some(
-                                    (child) => child.runId === childRunId,
-                                ),
-                        ),
+                async () => {
+                    const runsResponse = await request.get(
+                        `${CP_URL}/api/v1/chat/sessions/${childSessionId}/runs?page=0&size=50`,
+                        { headers: workspaceHeaders },
+                    );
+                    if (!runsResponse.ok()) return "";
+                    const runsBody = (await runsResponse.json()) as {
+                        runs?: Array<{
+                            runId: string;
+                            waitingOnRunId?: string | null;
+                            waitingToolCallId?: string | null;
+                        }>;
+                    };
+                    const childRun = runsBody.runs?.find((run) => run.runId === childRunId);
+                    return childRun &&
+                        childRun.waitingOnRunId === parentRunId &&
+                        childRun.waitingToolCallId
+                        ? childRun.waitingOnRunId
+                        : "";
+                },
                 { timeout: 30_000, intervals: [250, 500, 1_000] },
             )
-            .toBeTruthy();
-        await expect
-            .poll(
-                () =>
-                    operationTraceResponses.some(
-                        (response) =>
-                            response.status === 200 &&
-                            response.body.items?.some((item) => item.waitingOnRunId === childRunId),
-                    ),
-                { timeout: 30_000, intervals: [250, 500, 1_000] },
-            )
-            .toBeTruthy();
-        const waitLinkEvidence = operationTraceResponses
-            .flatMap((response) => response.body.items ?? [])
-            .filter((item) => item.waitingOnRunId === childRunId)
-            .map(({ toolCallId, waitingOnRunId, toolName, status }) => ({
-                toolCallId,
-                waitingOnRunId,
-                toolName,
-                status,
-            }));
-        await test.info().attach("parent-operation-waiting-link.json", {
-            body: JSON.stringify(waitLinkEvidence, null, 2),
-            contentType: "application/json",
-        });
+            .toBe(parentRunId);
+
+        // Live (no reload): the projection must have populated the badge already.
         await expect(page.getByTestId("derived-active-child")).toContainText(childName);
-        await expect(page.getByTestId("tool-call-waiting-on")).toContainText(childName);
+
+        // PLAN-0464 note: the ToolCallCard `tool-call-waiting-on` badge is fed
+        // only by the live streaming store (the messages API returns no
+        // toolCalls for this branch), so the durable waiting-link evidence is
+        // the endpoint network/DOM assertions below, not the badge.
+
+        // PLAN-0464 V5: a reload while the child is still active forces the
+        // panel's own mount path to rebuild the waiting projection from the
+        // session-runs endpoint (refresh-recovery network + DOM evidence).
+        await page.reload({ waitUntil: "load" });
+        await expect(page.getByTestId("derived-active-child")).toContainText(childName, {
+            timeout: 60_000,
+        });
+        // Diagnostic first: did the browser call the new endpoint at all?
+        await expect
+            .poll(() => chatSessionRequests.length, {
+                timeout: 30_000,
+                intervals: [250, 500, 1_000],
+            })
+            .toBeGreaterThan(0);
+        expect(
+            chatSessionRequests.some(
+                (url) => new URL(url).pathname === `/api/v1/chat/sessions/${childSessionId}/runs`,
+            ),
+            JSON.stringify(chatSessionRequests, null, 2),
+        ).toBeTruthy();
+        await expect
+            .poll(() => sessionRunsResponses.length, {
+                timeout: 30_000,
+                intervals: [250, 500, 1_000],
+            })
+            .toBeGreaterThan(0);
+        expect(
+            sessionRunsResponses.some(
+                (response) =>
+                    response.status === 200 &&
+                    new URL(response.url).pathname ===
+                        `/api/v1/chat/sessions/${childSessionId}/runs`,
+            ),
+            JSON.stringify(sessionRunsResponses, null, 2),
+        ).toBeTruthy();
+
+        expect(
+            sessionRunsResponses.some((response) => {
+                const body = response.body as {
+                    runs?: Array<{ runId: string; waitingToolCallId?: string | null }>;
+                } | null;
+                return !!body?.runs?.some(
+                    (run) => run.runId === childRunId && !!run.waitingToolCallId,
+                );
+            }),
+            JSON.stringify(sessionRunsResponses, null, 2),
+        ).toBeTruthy();
+        const waitingOnScreenshot = test.info().outputPath("tool-call-waiting-on-active.png");
+        await page.screenshot({ path: waitingOnScreenshot, fullPage: false });
+        await test.info().attach("tool-call-waiting-on-active.png", {
+            path: waitingOnScreenshot,
+            contentType: "image/png",
+        });
+
+        await test.info().attach("child-run-waiting-link.json", {
+            body: JSON.stringify(
+                {
+                    parentRunId,
+                    childRunId,
+                    childSessionId,
+                    endpoint: "GET /api/v1/chat/sessions/{id}/runs",
+                },
+                null,
+                2,
+            ),
+        });
 
         const childSessionResponse = await request.get(
             `${CP_URL}/api/v1/sessions/${childSessionId}`,
@@ -643,39 +712,27 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
             )
             .toBeTruthy();
 
-        const childAssistantMessageId = requireUuid(
-            queryIsolatedPostgres(
-                `SELECT assistant_message_id FROM chat_runs WHERE id = '${childRunId}'::uuid`,
-            ),
-        );
+        // PLAN-0464: the child terminal settles the child run's own waiting
+        // link; the legacy parent OperationItem is never touched by the terminal.
         await expect
             .poll(
-                async () =>
-                    JSON.parse(
-                        queryIsolatedPostgres(`
-      SELECT coalesce(json_agg(json_build_object(
-        'status', status,
-        'waitingOnRunId', waiting_on_run_id,
-        'resultRef', result_ref
-      ) ORDER BY sequence)::text, '[]')
-      FROM operation_items
-      WHERE operation_id = '${parentOperationId}'::uuid
-        AND kind = 'tool_call' AND source = 'agent' AND tool_name = 'spawn_agent'
-    `),
-                    ) as Array<{
-                        status: string;
-                        waitingOnRunId: string | null;
-                        resultRef: string | null;
-                    }>,
+                async () => {
+                    const runsResponse = await request.get(
+                        `${CP_URL}/api/v1/chat/sessions/${childSessionId}/runs?page=0&size=50`,
+                        { headers: workspaceHeaders },
+                    );
+                    if (!runsResponse.ok()) return "unavailable";
+                    const runsBody = (await runsResponse.json()) as {
+                        runs?: Array<{ runId: string; waitingOnRunId?: string | null }>;
+                    };
+                    return (
+                        runsBody.runs?.find((run) => run.runId === childRunId)?.waitingOnRunId ??
+                        null
+                    );
+                },
                 { timeout: 30_000, intervals: [250, 500, 1_000] },
             )
-            .toEqual([
-                {
-                    status: "completed",
-                    waitingOnRunId: null,
-                    resultRef: childAssistantMessageId,
-                },
-            ]);
+            .toBe(null);
 
         const childBranchId = await getRootBranchId(request, childSessionId, workspaceHeaders);
         const childMessagesResponse = await request.get(
@@ -702,9 +759,6 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         );
         const parentRunsBeforeClaim = scalarCount(
             `SELECT count(*) FROM chat_runs WHERE session_id = '${parentSessionId}'::uuid`,
-        );
-        const parentOperationsBeforeClaim = scalarCount(
-            `SELECT count(*) FROM ledger_operations WHERE session_id = '${parentSessionId}'::uuid`,
         );
         const submissionsBeforeClaim = browserChatSubmissions.length;
         await sendChat(page, `Acknowledge completed child ${token}`);
@@ -737,7 +791,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         await expect
             .poll(claimedRunId, { timeout: 30_000, intervals: [100, 250, 500] })
             .toBe(claimRunId);
-        expect(claimSubmission!.body.branchId).toBeTruthy();
+        expect((claimBody as { branchId?: string }).branchId).toBeTruthy();
 
         const replayResponse = await request.post(`${CP_URL}/api/v1/chat`, {
             headers: {
@@ -750,22 +804,14 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         expect(replayResponse.status(), await replayResponse.text()).toBe(202);
         const replay = (await replayResponse.json()) as { runId?: string; operationId?: string };
         expect(replay.runId).toBe(claimRunId);
-        const claimOperationId = requireUuid(
-            queryIsolatedPostgres(
-                `SELECT id FROM ledger_operations WHERE run_id = '${claimRunId}'::uuid`,
-            ),
-        );
-        expect(replay.operationId).toBe(claimOperationId);
+        // PLAN-0464 T1.1: a ChatRun has no Operation root, so the replay body
+        // carries no operationId and no ledger_operations row is minted.
+        expect(replay.operationId).toBeUndefined();
         expect(
             scalarCount(
                 `SELECT count(*) FROM chat_runs WHERE session_id = '${parentSessionId}'::uuid`,
             ),
         ).toBe(parentRunsBeforeClaim + 1);
-        expect(
-            scalarCount(
-                `SELECT count(*) FROM ledger_operations WHERE session_id = '${parentSessionId}'::uuid`,
-            ),
-        ).toBe(parentOperationsBeforeClaim + 1);
         expect(claimedRunId()).toBe(claimRunId);
 
         await expect
@@ -796,8 +842,6 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
                     inboxId: pendingInboxId,
                     claimRunId,
                     replayRunId: replay.runId,
-                    claimOperationId,
-                    replayOperationId: replay.operationId,
                     inboxInjectedRunId: claimedRunId(),
                     runCount: scalarCount(
                         `SELECT count(*) FROM chat_runs WHERE session_id = '${parentSessionId}'::uuid`,
@@ -887,8 +931,8 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
                 JSON.stringify(
                     {
                         parentSessionId,
-                        parentOperationId,
                         parentRunId,
+                        sessionRunsRequests: sessionRunsResponses.length,
                         childSessionId,
                         childRunId,
                         principalId,

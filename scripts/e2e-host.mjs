@@ -141,7 +141,9 @@ const realOpenAiBase = process.env.XIHE_E2E_REAL_OPENAI_BASE ?? 'https://api.xia
 const fakeMcpAccessToken = randomPassword(24)
 const e2eAdminPassword = randomPassword(24)
 
-const pgDatabase = `xihe_e2e_${e2eRunId.replace(/[^a-z0-9]/gi, '_')}`
+// PLAN-0465: reuse 模式下按栈 runId 恢复（与 pgProjectName 同批）——DB 名由栈
+// runId 派生，调用方 runId 派生的名字在持久栈上不存在。
+let pgDatabase = `xihe_e2e_${e2eRunId.replace(/[^a-z0-9]/gi, '_')}`
 const pgUser = 'xihe'
 const pgPassword = randomPassword(18)
 const hostRoot = join(projectDir, '.tmp', 'e2e-host', e2eRunId)
@@ -174,7 +176,8 @@ async function pruneStaleRunDirs() {
     }
   }
 }
-const pgProjectName = `xihe-e2e-host-${e2eRunId.replace(/[^a-z0-9]/gi, '')}`
+// PLAN-0465: reuse 模式下必须恢复为栈的 pg project（见 reuse block）。
+let pgProjectName = `xihe-e2e-host-${e2eRunId.replace(/[^a-z0-9]/gi, '')}`
 const serviceToken = randomPassword(24)
 const nativeNoProxy = [
   process.env.NO_PROXY,
@@ -1190,6 +1193,12 @@ async function main() {
     if (state.ports.fakeMcp) fakeMcpPort = state.ports.fakeMcp
     if (state.ports.fakeLlm) fakeLlmPort = state.ports.fakeLlm
     runIdForTests = state.runId
+    // PLAN-0465: PG fixture 元数据同样由栈 runId 派生——端口/fixture 已恢复
+    // （PLAN-0365 root cause A）但 pg project/DB 名仍取本进程 runId，导致
+    // reuse 模式下 docker exec 指向不存在的容器（session-branch 授权种子、
+    // plan0366 S5 域表断言都会命中此坑）。
+    if (state.pgProjectName) pgProjectName = state.pgProjectName
+    pgDatabase = `xihe_e2e_${state.runId.replace(/[^a-z0-9]/gi, '_')}`
     reuseOwnPorts = [uiPort, cpPort, agentPort, runtimePort, pgPort, fakeOAuthPort, fakeMcpPort, fakeLlmPort]
     reuseOwnRunId = state.runId
     console.log(`[e2e-host] persistent stack ${state.runId}: ui=${uiPort} cp=${cpPort} agent=${agentPort} runtime=${runtimePort}`)

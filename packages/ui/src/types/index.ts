@@ -73,7 +73,32 @@ export interface SessionDerivedStateResponse {
     terminalNotices: SessionDerivedTerminalNotice[];
 }
 
-/** Ephemeral UI join of a 0407 durable OperationItem link and derived child projection. */
+/**
+ * PLAN-0464 T2.1: ChatRun projection behind `GET /chat/sessions/{id}/runs`.
+ * `waitingOnRunId`/`waitingToolCallId` is the spawn waiting link that moved off
+ * the parent OperationItem onto the child run row.
+ */
+export interface SessionRunSummary {
+    runId: string;
+    sessionId: string;
+    origin: string;
+    status: string;
+    terminalOutcome: string | null;
+    errorCode: string | null;
+    createdAt: string | null;
+    terminalAt: string | null;
+    waitingOnRunId: string | null;
+    waitingToolCallId: string | null;
+}
+
+export interface SessionRunsResponse {
+    sessionId: string;
+    page: number;
+    size: number;
+    runs: SessionRunSummary[];
+}
+
+/** UI join of the PLAN-0464 waiting link and the derived child projection. */
 export interface ToolCallWaitingOn {
     childRunId: string;
     name: string | null;
@@ -106,11 +131,12 @@ export interface DiagnosticsBundle {
 }
 
 export interface JobSummary {
-    /** Operation ledger item id; resume key for the job-output endpoint. */
-    itemId: string;
+    /** PLAN-0465 decision #7：domain jobId（`workspace_jobs.id`）——续看/取消唯一键。 */
+    jobId: string;
+    /** 所属 Workspace（canonical output/cancel 路径的 `{workspaceId}` 段）。 */
+    workspaceId: string;
     toolCallId?: string;
     toolName?: string;
-    jobId?: string;
     status: string;
     scope?: string;
     startedAt?: string | null;
@@ -513,11 +539,110 @@ export interface OperationListResponse {
     totalPages: number;
 }
 
+/** Read-only pairing of the agent row and the mcp row of one tool call (PLAN-0346 Q2). */
+export interface OperationToolCallPair {
+    toolCallId: string;
+    agentItemId?: string | null;
+    mcpItemId?: string | null;
+}
+
 export interface OperationTrace {
     operation: OperationSummary;
     items: OperationItemView[];
     attempts: OperationAttemptView[];
     events: OperationEventView[];
+    toolCallPairs?: OperationToolCallPair[];
+}
+
+/**
+ * PLAN-0466: the audit read model — one row of the CP `v_audit_entries` view.
+ *
+ * The user tier never carries `userId` / `idempotencyKey` / `requestId` /
+ * `runtimeJobId` / raw arguments; those exist only on the internal service surface.
+ */
+export type AuditEntryType = "chat_run" | "workspace_job" | "mcp_invocation" | "approval";
+
+export interface AuditEntry {
+    /** Four-domain type tag of the entry. */
+    type: AuditEntryType;
+    /** Domain primary key (chat_runs.id / workspace_jobs.id / mcp_invocations.id / approval_requests.request_id). */
+    id: string;
+    sessionId?: string | null;
+    workspaceId?: string | null;
+    runId?: string | null;
+    /** Native domain status/state vocabulary (displayed as recorded). */
+    status: string;
+    /** Non-sensitive list title: chat_run → model, mcp_invocation/approval → tool name. */
+    summary?: string | null;
+    source?: string | null;
+    errorCode?: string | null;
+    scope?: string | null;
+    cancelReason?: string | null;
+    toolCallId?: string | null;
+    approvalRequestId?: string | null;
+    terminalOutcome?: string | null;
+    createdAt?: string | null;
+    startedAt?: string | null;
+    finishedAt?: string | null;
+    /** Safe verdict snapshot on mcp_invocation/approval details; absent when unreadable. */
+    policy?: OperationPolicyView;
+    approved?: boolean | null;
+    decisionKind?: string | null;
+}
+
+/** One row of the four append-only history tables; `payload` text is never projected. */
+export interface AuditTimelineEvent {
+    sequence: number;
+    eventType: string;
+    fromStatus?: string | null;
+    toStatus?: string | null;
+    actorType?: string | null;
+    terminalOutcome?: string | null;
+    cancelReason?: string | null;
+    errorCode?: string | null;
+    attemptId?: string | null;
+    approved?: boolean | null;
+    decisionKind?: string | null;
+    createdAt?: string | null;
+}
+
+/** User-tier mcp attempt view (no httpStatus, no resultRef). */
+export interface AuditAttemptView {
+    id: string;
+    invocationId?: string | null;
+    stage: string;
+    retryNo?: number | null;
+    module?: string | null;
+    status: string;
+    errorCode?: string | null;
+    durationMs?: number | null;
+    startedAt?: string | null;
+    finishedAt?: string | null;
+}
+
+/** Owner-facing detail: entry + that domain's history timeline (+ attempts for mcp). */
+export interface AuditEntryDetail {
+    entry: AuditEntry;
+    timeline: AuditTimelineEvent[];
+    attempts: AuditAttemptView[];
+}
+
+export interface AuditListResponse {
+    entries: AuditEntry[];
+    page: number;
+    size: number;
+    totalElements: number;
+    totalPages: number;
+}
+
+/** Query parameters of `GET /api/v1/audit/entries`. */
+export interface AuditListFilters {
+    sessionId?: string;
+    workspaceId?: string;
+    type?: AuditEntryType | "";
+    status?: string;
+    page?: number;
+    size?: number;
 }
 
 export interface AgentState {
@@ -772,18 +897,20 @@ export type WorkspaceJobCleanupStatus = "not_started" | "running" | "completed" 
 
 /**
  * Workspace Job projection (`GET/POST /api/v1/workspaces/{workspaceId}/jobs`).
+ * PLAN-0465 decision #7：身份字段是 domain `jobId`（`workspace_jobs.id`），
+ * `runtimeJobId` 是 Runtime backend handle（诊断/输出目录操作用）；
+ * `operationId`/`operationItemId` 不再出现在 wire（0467 legacy drop 前旧路由仍存在）。
  * Every projection key is present; nullable value fields use `null` rather than omission.
  */
 export interface WorkspaceJob {
-    operationId: string;
-    operationItemId: string;
+    jobId: string;
+    runtimeJobId: string | null;
     workspaceId: string;
     sessionId: string | null;
     runId: string | null;
     source: string;
     scope: WorkspaceJobScope;
     status: WorkspaceJobStatus;
-    jobId: string | null;
     startedAt: string | null;
     endedAt: string | null;
     exitCode: number | null;

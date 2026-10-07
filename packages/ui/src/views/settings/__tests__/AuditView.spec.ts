@@ -4,7 +4,12 @@ import { createPinia, setActivePinia } from "pinia";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 import { i18n } from "../../../i18n";
 import { api } from "../../../composables/api";
-import type { OperationItemView, OperationPolicyView, OperationTrace } from "../../../types";
+import type {
+    AuditEntry,
+    AuditEntryDetail,
+    AuditListResponse,
+    OperationPolicyView,
+} from "../../../types";
 
 vi.mock("vue-router", () => ({
     useRoute: () =>
@@ -29,8 +34,8 @@ vi.mock("../../../composables/api", async (importOriginal) => {
         ...actual,
         api: {
             ...actual.api,
-            listOperations: vi.fn(),
-            getOperationTrace: vi.fn(),
+            listAuditEntries: vi.fn(),
+            getAuditEntry: vi.fn(),
         },
     };
 });
@@ -48,20 +53,117 @@ const POLICY: OperationPolicyView = {
     shape: "structured",
 };
 
-function traceWith(items: OperationItemView[]): OperationTrace {
+function auditEntry(overrides: Partial<AuditEntry> = {}): AuditEntry {
     return {
-        operation: {
-            id: "op-1",
-            kind: "chat",
-            source: "agent",
-            actorType: "agent",
-            status: "completed",
+        type: "mcp_invocation",
+        id: "inv-1",
+        toolCallId: "call-auto-1",
+        status: "completed",
+        summary: "write_file",
+        source: "agent",
+        createdAt: "2026-10-07T12:00:00Z",
+        startedAt: "2026-10-07T11:59:00Z",
+        finishedAt: "2026-10-07T12:00:10Z",
+        policy: POLICY,
+        ...overrides,
+    };
+}
+
+const LIST: AuditEntry[] = [
+    auditEntry(),
+    auditEntry({
+        id: "inv-ask",
+        toolCallId: "call-ask-2",
+        policy: {
+            ...POLICY,
+            effect: "ask",
+            mode: "manual",
+            allowedBy: null,
+            matchedRule: '{ exec, "*", ask }',
         },
-        items,
+    }),
+    auditEntry({
+        id: "inv-deny",
+        toolCallId: "call-deny-2",
+        policy: {
+            ...POLICY,
+            effect: "deny",
+            matchedRule: null,
+            mode: null,
+            allowedBy: null,
+        },
+    }),
+    auditEntry({ id: "inv-legacy", toolCallId: "call-legacy-3", policy: undefined }),
+    auditEntry({
+        id: "inv-reuse-4",
+        toolCallId: "call-reuse-4",
+        policy: {
+            ...POLICY,
+            effect: "ask",
+            mode: "manual",
+            allowedBy: null,
+            reused: true,
+        },
+    }),
+    auditEntry({
+        id: "inv-reuse-null-5",
+        toolCallId: "call-reuse-null-5",
+        policy: { ...POLICY, reused: null },
+    }),
+    auditEntry({
+        id: "inv-reuse-false-6",
+        toolCallId: "call-reuse-false-6",
+        policy: { ...POLICY, reused: false },
+    }),
+    auditEntry({
+        id: "inv-reuse-absent-7",
+        toolCallId: "call-reuse-absent-7",
+        policy: { ...POLICY },
+    }),
+    auditEntry({
+        id: "inv-active",
+        toolCallId: "call-active",
+        status: "active",
+        policy: undefined,
+    }),
+];
+
+function listResponse(overrides: Partial<AuditListResponse> = {}): AuditListResponse {
+    return {
+        entries: LIST,
+        page: 0,
+        size: 20,
+        totalElements: LIST.length,
+        totalPages: 1,
+        ...overrides,
+    };
+}
+
+function detailFor(id: string): AuditEntryDetail {
+    const found = LIST.find((item) => item.id === id) ?? LIST[0];
+    if (!found) throw new Error(`unknown audit fixture: ${id}`);
+    return {
+        entry: found,
+        timeline: [
+            {
+                sequence: 1,
+                eventType: "invocation.opened",
+                fromStatus: null,
+                toStatus: "active",
+                createdAt: "2026-10-07T11:59:00Z",
+            },
+            {
+                sequence: 2,
+                eventType: "attempt.succeeded",
+                fromStatus: "started",
+                toStatus: "succeeded",
+                actorType: "cp",
+                createdAt: "2026-10-07T12:00:05Z",
+            },
+        ],
         attempts: [
             {
                 id: "attempt-1",
-                itemId: items[0]?.id ?? "item-1",
                 stage: "agent_dispatch",
                 retryNo: 0,
                 module: "agent",
@@ -69,41 +171,19 @@ function traceWith(items: OperationItemView[]): OperationTrace {
                 durationMs: 125,
             },
         ],
-        events: [
-            {
-                id: "event-1",
-                operationId: "op-1",
-                sequence: 1,
-                eventType: "operation.started",
-                state: "running",
-                actor: "agent",
-            },
-        ],
     };
 }
 
-function policyItem(overrides: Partial<OperationItemView> = {}): OperationItemView {
-    return {
-        id: "item-1",
-        operationId: "op-1",
-        toolCallId: "call-auto-1",
-        sequence: 1,
-        kind: "tool_call",
-        toolName: "write_file",
-        source: "mcp",
-        policyDecision: "allow",
-        waitingOnRunId: null,
-        status: "completed",
-        policy: POLICY,
-        ...overrides,
-    };
-}
-
-async function mountView() {
+async function mountOnly() {
     const { default: AuditView } = await import("../AuditView.vue");
     const wrapper = mount(AuditView, { global: { plugins: [i18n] } });
     await flushPromises();
-    await wrapper.find('[data-testid="settings-audit-operation-op-1"]').trigger("click");
+    return wrapper;
+}
+
+async function mountView(entryId = "inv-1") {
+    const wrapper = await mountOnly();
+    await wrapper.find(`[data-testid="settings-audit-entry-${entryId}"]`).trigger("click");
     await flushPromises();
     return wrapper;
 }
@@ -111,36 +191,13 @@ async function mountView() {
 beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
-    vi.mocked(api.listOperations).mockResolvedValue({
-        operations: [
-            { id: "op-1", kind: "chat", source: "agent", actorType: "agent", status: "completed" },
-        ],
-        page: 0,
-        size: 20,
-        totalElements: 1,
-        totalPages: 1,
-    });
+    vi.mocked(api.listAuditEntries).mockResolvedValue(listResponse());
+    vi.mocked(api.getAuditEntry).mockImplementation(async (_type, id) => detailFor(id));
 });
 
 describe("AuditView policy verdict (PLAN-0328 T1.15)", () => {
     it("renders the server projection verbatim, keyed by toolCallId", async () => {
-        vi.mocked(api.getOperationTrace).mockResolvedValue(
-            traceWith([
-                policyItem(),
-                policyItem({
-                    id: "item-ask",
-                    toolCallId: "call-ask-2",
-                    policy: {
-                        ...POLICY,
-                        effect: "ask",
-                        mode: "manual",
-                        allowedBy: null,
-                        matchedRule: '{ exec, "*", ask }',
-                    },
-                }),
-            ]),
-        );
-        const wrapper = await mountView();
+        const wrapper = await mountView("inv-1");
 
         const block = wrapper.find('[data-testid="settings-audit-policy-call-auto-1"]');
         expect(block.exists()).toBe(true);
@@ -158,8 +215,11 @@ describe("AuditView policy verdict (PLAN-0328 T1.15)", () => {
             "自动放行",
         );
         expect(block.text()).toContain("工具调用: call-auto-1");
+    });
 
-        // A plain ask verdict (no allowedBy) keeps the ask rendering.
+    it("keeps a plain ask verdict on the ask rendering", async () => {
+        const wrapper = await mountView("inv-ask");
+
         const ask = wrapper.find('[data-testid="settings-audit-policy-call-ask-2"]');
         expect(ask.exists()).toBe(true);
         expect(wrapper.find('[data-testid="settings-audit-policy-call-ask-2-effect"]').text()).toBe(
@@ -180,8 +240,7 @@ describe("AuditView policy verdict (PLAN-0328 T1.15)", () => {
     });
 
     it("highlights a mode-based allowance with the exact allowedBy value", async () => {
-        vi.mocked(api.getOperationTrace).mockResolvedValue(traceWith([policyItem()]));
-        const wrapper = await mountView();
+        const wrapper = await mountView("inv-1");
 
         const allowedBy = wrapper.find(
             '[data-testid="settings-audit-policy-call-auto-1-allowed-by"]',
@@ -192,21 +251,7 @@ describe("AuditView policy verdict (PLAN-0328 T1.15)", () => {
     });
 
     it("preserves nullable matchedRule, mode and allowedBy without fabricating verdict defaults", async () => {
-        vi.mocked(api.getOperationTrace).mockResolvedValue(
-            traceWith([
-                policyItem({
-                    toolCallId: "call-deny-2",
-                    policy: {
-                        ...POLICY,
-                        effect: "deny",
-                        matchedRule: null,
-                        mode: null,
-                        allowedBy: null,
-                    },
-                }),
-            ]),
-        );
-        const wrapper = await mountView();
+        const wrapper = await mountView("inv-deny");
 
         expect(
             wrapper.find('[data-testid="settings-audit-policy-call-deny-2-effect"]').text(),
@@ -223,18 +268,9 @@ describe("AuditView policy verdict (PLAN-0328 T1.15)", () => {
     });
 
     it("renders an explicit no-verdict state for legacy rows instead of a fake verdict", async () => {
-        vi.mocked(api.getOperationTrace).mockResolvedValue(
-            traceWith([
-                policyItem({
-                    id: "item-legacy",
-                    toolCallId: "call-legacy-3",
-                    policy: undefined,
-                }),
-            ]),
-        );
-        const wrapper = await mountView();
+        const wrapper = await mountView("inv-legacy");
 
-        const absent = wrapper.find('[data-testid="settings-audit-policy-absent-item-legacy"]');
+        const absent = wrapper.find('[data-testid="settings-audit-policy-absent-inv-legacy"]');
         expect(absent.exists()).toBe(true);
         expect(absent.text()).toBe("无判定记录（旧记录或非 MCP 路径）");
         expect(wrapper.find('[data-testid="settings-audit-policy-call-legacy-3"]').exists()).toBe(
@@ -243,37 +279,7 @@ describe("AuditView policy verdict (PLAN-0328 T1.15)", () => {
     });
 
     it("marks a session-reuse dispatch with an icon and text, and never for null/absent/false", async () => {
-        vi.mocked(api.getOperationTrace).mockResolvedValue(
-            traceWith([
-                policyItem({
-                    id: "item-reuse",
-                    toolCallId: "call-reuse-4",
-                    policy: {
-                        ...POLICY,
-                        effect: "ask",
-                        mode: "manual",
-                        allowedBy: null,
-                        reused: true,
-                    },
-                }),
-                policyItem({
-                    id: "item-reuse-null",
-                    toolCallId: "call-reuse-null-5",
-                    policy: { ...POLICY, reused: null },
-                }),
-                policyItem({
-                    id: "item-reuse-false",
-                    toolCallId: "call-reuse-false-6",
-                    policy: { ...POLICY, reused: false },
-                }),
-                policyItem({
-                    id: "item-reuse-absent",
-                    toolCallId: "call-reuse-absent-7",
-                    policy: { ...POLICY },
-                }),
-            ]),
-        );
-        const wrapper = await mountView();
+        const wrapper = await mountView("inv-reuse-4");
 
         const reuse = wrapper.find('[data-testid="settings-audit-policy-call-reuse-4-reused"]');
         expect(reuse.exists()).toBe(true);
@@ -284,24 +290,17 @@ describe("AuditView policy verdict (PLAN-0328 T1.15)", () => {
             wrapper.find('[data-testid="settings-audit-policy-call-reuse-4-effect"]').text(),
         ).toBe("询问");
 
-        expect(
-            wrapper.find('[data-testid="settings-audit-policy-call-reuse-null-5-reused"]').exists(),
-        ).toBe(false);
-        expect(
-            wrapper
-                .find('[data-testid="settings-audit-policy-call-reuse-false-6-reused"]')
-                .exists(),
-        ).toBe(false);
-        expect(
-            wrapper
-                .find('[data-testid="settings-audit-policy-call-reuse-absent-7-reused"]')
-                .exists(),
-        ).toBe(false);
+        for (const entryId of ["inv-reuse-null-5", "inv-reuse-false-6", "inv-reuse-absent-7"]) {
+            const other = await mountView(entryId);
+            const toolCallId = LIST.find((item) => item.id === entryId)?.toolCallId ?? "";
+            expect(
+                other.find(`[data-testid="settings-audit-policy-${toolCallId}-reused"]`).exists(),
+            ).toBe(false);
+        }
     });
 
     it("keeps reason, actionClass and shape inside the expandable detail", async () => {
-        vi.mocked(api.getOperationTrace).mockResolvedValue(traceWith([policyItem()]));
-        const wrapper = await mountView();
+        const wrapper = await mountView("inv-1");
 
         const block = wrapper.find('[data-testid="settings-audit-policy-call-auto-1"]');
         expect(block.find("details").exists()).toBe(true);
@@ -316,15 +315,129 @@ describe("AuditView policy verdict (PLAN-0328 T1.15)", () => {
             "结构化",
         );
     });
+});
 
-    it("keeps the existing attempts and events sections unchanged", async () => {
-        vi.mocked(api.getOperationTrace).mockResolvedValue(traceWith([policyItem()]));
-        const wrapper = await mountView();
+describe("AuditView audit read surface (PLAN-0466)", () => {
+    it("renders an active MCP invocation as in progress, not successful", async () => {
+        const wrapper = await mountOnly();
+        const activeRow = wrapper.find('[data-testid="settings-audit-entry-inv-active"]');
+        const status = activeRow.findAll("span").find((item) => item.text() === "active");
+
+        expect(status).toBeDefined();
+        expect(status?.classes()).toContain("text-amber-600");
+        expect(status?.classes()).not.toContain("text-emerald-600");
+    });
+
+    it("lists audit entries and routes detail reads through the audit API", async () => {
+        const wrapper = await mountOnly();
+
+        expect(api.listAuditEntries).toHaveBeenCalledWith({
+            page: 0,
+            size: 20,
+            status: undefined,
+            type: undefined,
+        });
+        expect(wrapper.find('[data-testid="settings-audit-entry-inv-1"]').exists()).toBe(true);
+        expect(wrapper.text()).toContain("write_file");
+        expect(wrapper.find('[data-testid="settings-audit-empty"]').exists()).toBe(false);
+
+        await wrapper.find('[data-testid="settings-audit-entry-inv-1"]').trigger("click");
+        await flushPromises();
+
+        expect(api.getAuditEntry).toHaveBeenCalledWith("mcp_invocation", "inv-1");
+        expect(wrapper.find('[data-testid="settings-audit-items"]').text()).toContain("write_file");
+    });
+
+    it("keeps the attempts and timeline sections fed by the domain history", async () => {
+        const wrapper = await mountView("inv-1");
 
         expect(wrapper.find('[data-testid="settings-audit-events"]').text()).toContain(
-            "operation.started",
+            "invocation.opened",
         );
+        expect(wrapper.find('[data-testid="settings-audit-events"]').text()).toContain("active");
         expect(wrapper.text()).toContain("agent_dispatch");
         expect(wrapper.text()).toContain("125ms");
+    });
+
+    it("applies the status and type filters to the list request", async () => {
+        const wrapper = await mountOnly();
+
+        await wrapper.find('[data-testid="settings-audit-status"]').setValue("failed");
+        await flushPromises();
+        expect(api.listAuditEntries).toHaveBeenLastCalledWith({
+            status: "failed",
+            type: undefined,
+            page: 0,
+            size: 20,
+        });
+
+        await wrapper.find('[data-testid="settings-audit-type"]').setValue("chat_run");
+        await flushPromises();
+        expect(api.listAuditEntries).toHaveBeenLastCalledWith({
+            status: "failed",
+            type: "chat_run",
+            page: 0,
+            size: 20,
+        });
+    });
+
+    it("paginates audit entries and keeps navigation within the returned bounds", async () => {
+        vi.mocked(api.listAuditEntries)
+            .mockResolvedValueOnce(listResponse({ entries: LIST.slice(0, 1), totalPages: 2 }))
+            .mockResolvedValueOnce(
+                listResponse({ entries: LIST.slice(1, 2), page: 1, totalPages: 2 }),
+            )
+            .mockResolvedValueOnce(listResponse({ entries: LIST.slice(0, 1), totalPages: 2 }));
+        const wrapper = await mountOnly(),
+            [previous, next] = wrapper
+                .findAll("button")
+                .filter((button) => ["上一页", "下一页"].includes(button.text()));
+
+        expect(previous).toBeDefined();
+        expect(next).toBeDefined();
+        expect(previous?.attributes("disabled")).toBeDefined();
+        expect(wrapper.text()).toContain("1 / 2");
+
+        await next?.trigger("click");
+        await flushPromises();
+
+        expect(api.listAuditEntries).toHaveBeenLastCalledWith({
+            page: 1,
+            size: 20,
+            status: undefined,
+            type: undefined,
+        });
+        expect(wrapper.text()).toContain("2 / 2");
+        expect(wrapper.find('[data-testid="settings-audit-entry-inv-ask"]').exists()).toBe(true);
+        expect(previous?.attributes("disabled")).toBeUndefined();
+
+        await previous?.trigger("click");
+        await flushPromises();
+
+        expect(api.listAuditEntries).toHaveBeenLastCalledWith({
+            page: 0,
+            size: 20,
+            status: undefined,
+            type: undefined,
+        });
+        expect(wrapper.text()).toContain("1 / 2");
+    });
+
+    it("surfaces list errors and keeps the empty detail state", async () => {
+        vi.mocked(api.listAuditEntries).mockRejectedValue(new Error("503 unavailable"));
+        const wrapper = await mountOnly();
+
+        expect(wrapper.text()).toContain("503 unavailable");
+        expect(wrapper.find('[data-testid="settings-audit-no-selection"]').exists()).toBe(true);
+    });
+
+    it("shows the empty state when the filtered set is empty", async () => {
+        vi.mocked(api.listAuditEntries).mockResolvedValue(
+            listResponse({ entries: [], totalElements: 0, totalPages: 0 }),
+        );
+        const wrapper = await mountOnly();
+
+        expect(wrapper.find('[data-testid="settings-audit-empty"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="settings-audit-no-selection"]').exists()).toBe(true);
     });
 });

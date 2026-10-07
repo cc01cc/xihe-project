@@ -25,8 +25,7 @@ vi.mock("../../../composables/api", async (importOriginal) => {
             getSessionBranches: vi.fn(),
             createSessionBranch: vi.fn(),
             getSessionDerivedState: vi.fn(),
-            listOperations: vi.fn(),
-            getOperationTrace: vi.fn(),
+            listSessionRuns: vi.fn(),
         },
     };
 });
@@ -99,15 +98,13 @@ beforeEach(() => {
         activeChildren: [],
         terminalNotices: [],
     });
-    vi.mocked(api.listOperations).mockReset();
-    vi.mocked(api.listOperations).mockResolvedValue({
-        operations: [],
+    vi.mocked(api.listSessionRuns).mockReset();
+    vi.mocked(api.listSessionRuns).mockResolvedValue({
+        sessionId: SESSION_ID,
         page: 0,
-        size: 50,
-        totalElements: 0,
-        totalPages: 0,
+        size: 100,
+        runs: [],
     });
-    vi.mocked(api.getOperationTrace).mockReset();
 });
 
 describe("ChatPanel approval decision correlation (PLAN-0328 T1.14)", () => {
@@ -415,50 +412,27 @@ describe("ChatPanel derived child state (PLAN-0408 M3)", () => {
                 },
             ],
         });
-        vi.mocked(api.listOperations).mockResolvedValue({
-            operations: [
-                {
-                    id: "operation-1",
-                    sessionId: SESSION_ID,
-                    workspaceId: "66666666-6666-4666-8666-666666666666",
-                    runId: RUN_ID,
-                    kind: "chat",
-                    source: "ui",
-                    actorType: "user",
-                    status: "completed",
-                },
-            ],
+        // PLAN-0464 T2.1: the waiting link lives on the child ChatRun row, so
+        // the panel reads the child Session's run page instead of paging
+        // Operations and fetching every trace.
+        vi.mocked(api.listSessionRuns).mockResolvedValue({
+            sessionId: derivedState.activeChildren[0].childSessionId,
             page: 0,
-            size: 50,
-            totalElements: 1,
-            totalPages: 1,
-        });
-        vi.mocked(api.getOperationTrace).mockResolvedValue({
-            operation: {
-                id: "operation-1",
-                sessionId: SESSION_ID,
-                workspaceId: "66666666-6666-4666-8666-666666666666",
-                runId: RUN_ID,
-                kind: "chat",
-                source: "ui",
-                actorType: "user",
-                status: "completed",
-            },
-            items: [
+            size: 200,
+            runs: [
                 {
-                    id: "item-1",
-                    operationId: "operation-1",
-                    toolCallId: "spawn-tool-call",
-                    sequence: 1,
-                    kind: "tool_call",
-                    toolName: "spawn_agent",
-                    source: "agent",
-                    waitingOnRunId: derivedState.activeChildren[0].runId,
+                    runId: derivedState.activeChildren[0].runId,
+                    sessionId: derivedState.activeChildren[0].childSessionId,
+                    origin: "spawn",
                     status: "running",
+                    terminalOutcome: null,
+                    errorCode: null,
+                    createdAt: "2026-09-27T00:00:00Z",
+                    terminalAt: null,
+                    waitingOnRunId: RUN_ID,
+                    waitingToolCallId: "spawn-tool-call",
                 },
             ],
-            attempts: [],
-            events: [],
         });
 
         const stream = wrapper.findComponent(SSEStream);
@@ -466,11 +440,10 @@ describe("ChatPanel derived child state (PLAN-0408 M3)", () => {
         await flushPromises();
 
         expect(response).toHaveBeenCalledTimes(2);
-        expect(api.listOperations).toHaveBeenCalledWith({
-            sessionId: SESSION_ID,
-            page: 0,
-            size: 50,
-        });
+        expect(api.listSessionRuns).toHaveBeenCalledWith(
+            derivedState.activeChildren[0].childSessionId,
+            { page: 0, size: 200 },
+        );
         const rendered = wrapper.findComponent(MessageList).props("messages") as Array<{
             id: string;
             toolCalls?: Array<{
