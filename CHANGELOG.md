@@ -40,6 +40,8 @@
 
 ### Changed
 
+- **Compose E2E 车道命名修正（BL-79 残项）**：`scripts/e2e-real.mjs` → `scripts/e2e-compose.mjs`（原名带 "real" 实为 compose 拓扑 runner，与 host real E2E `e2e-host.mjs` 长期混淆）；mise 新增规范任务 `test:e2e:compose`，旧任务名 `test:e2e` 保留为 deprecated 别名（`validate:full` depends 改指规范名）。同步 AGENTS、DEV-002 中英、DEV-020 中英、spec 头注释（顺带修正不存在的 `test:e2e-host` → `test:e2e:host`）；workspace 侧 `xh-host-e2e-pitfalls` SKILL §0、`xh-e2e-evidence-matrix`、`DEV-016` quickref 同批更新。compose 车道冻结裁定（2026-10-07）不受重命名影响，遇跳过不变。
+
 - workspace 沙盒镜像构建基线（PLAN-0344 收尾配套）：builder `rust:1.88-slim` → `rust:1.97.1-slim-bookworm`（与 `rust-toolchain.toml` pin 对齐，消除每次源码变更重建时重下 rustup 工具链）；runtime `node:22-slim` → `node:24-bookworm-slim`（对齐 workspace Node 24 标准；bookworm 与 builder 同族，修复 trixie 新 glibc 2.38/2.39 不兼容——曾实证二进制在运行镜像无法启动）；BuildKit cache mounts（cargo registry + target，target 使用 bookworm 专用 cache id）复用依赖与增量编译——无变更重建 3.6s、仅改 Dockerfile 重编 77s、改 runtime 源码仅增量重编。
 
 - MiMo 按配置调用（PLAN-0364 M3）：移除 Agent `bind_tools` 在 `provider=xiaomi` 且带工具时自动切 `openai/mimo-v2.5` 的隐式行为；native `xiaomi_mimo` 的工具请求由 litellm 报错并映射为 `LLM_TOOL_ROUTE_UNSUPPORTED`；OpenAI wire 路由（`openai`/`custom_openai`/`openai_like`）缺 `baseUrl` 时 fail-fast（`LLM_BASE_URL_MISSING`），不再回落到 OpenAI 默认端点；catalog native `xiaomi` 标 `supports.tools=false`；UI `errorMessages` 增两条文案。

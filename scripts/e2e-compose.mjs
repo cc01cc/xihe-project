@@ -21,7 +21,7 @@ process.env.XIHE_AGENT_API_TOKEN = process.env.XIHE_CP_API_TOKEN
 process.env.XIHE_E2E_EXTERNAL_SERVER = 'true'
 const e2eProfile = process.env.XIHE_E2E_PROFILE ?? 'compose'
 if (e2eProfile !== 'compose') {
-  throw new Error('scripts/e2e-real.mjs only supports the compose profile; run host E2E against an active dev:host stack')
+  throw new Error('scripts/e2e-compose.mjs only supports the compose profile; run host E2E against an active dev:host stack')
 }
 // Export resolved isolated ports so docker-compose port bindings use them too
 process.env.XIHE_UI_PORT = uiPort

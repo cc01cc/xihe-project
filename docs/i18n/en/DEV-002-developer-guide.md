@@ -153,7 +153,7 @@ mise run test:cp
 mise run dev:runtime
 mise run test:runtime
 
-mise run test:e2e
+mise run test:e2e:compose
 mise run validate:full
 ```
 

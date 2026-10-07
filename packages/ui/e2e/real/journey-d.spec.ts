@@ -29,7 +29,7 @@ const EVIDENCE_DIR = evidenceDir("journey-d");
 //   D1 — multi-turn memory: turn-2 LLM response must reference turn-1's marker
 //   (M2/M3 tests will extend this spec with compaction assertions.)
 // D1 needs the deterministic fake LLM marker mode:
-//   XIHE_E2E_LLM_MODE=history-marker mise run test:e2e-host -- e2e/real/journey-d.spec.ts
+//   XIHE_E2E_LLM_MODE=history-marker mise run test:e2e:host -- e2e/real/journey-d.spec.ts
 // The fake LLM scans the full messages array it receives and echoes:
 //   XIHE-HIST-SEEN: <prior markers> | XIHE-HIST-CURRENT: <current marker>
 // M0 intentionally pins the CURRENT broken behavior: turn-2 sees no history,
