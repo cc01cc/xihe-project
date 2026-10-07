@@ -307,6 +307,78 @@ class ChatControllerTest extends AbstractH2Test {
     }
 
     @Test
+    void followUpQueueRoutesEnforceIdempotencyCapacityAndNormalChatGate() {
+        String parentRunId = UUID.randomUUID().toString();
+        chatRunRepository.saveAndFlush(new ChatRun(parentRunId, sessionId, userId, workspaceId,
+                "follow-up-parent-" + UUID.randomUUID(), "a".repeat(64), "test-provider", "test-model",
+                "none", "running"));
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("Idempotency-Key", "follow-up-key-1");
+        Map<String, Object> request = new LinkedHashMap<>();
+        request.put("content", "continue the active task");
+        request.put("branchId", branchId);
+        request.put("toolMode", "none");
+        request.put("provider", "test-provider");
+        request.put("model", "test-model");
+
+        String queueUrl = baseUrl + "/api/v1/sessions/" + sessionId + "/follow-ups";
+        ResponseEntity<Map> created = restTemplate.exchange(
+                queueUrl, HttpMethod.POST, new HttpEntity<>(request, headers), Map.class);
+        assertEquals(HttpStatus.ACCEPTED, created.getStatusCode());
+        assertEquals(1, ((Number) created.getBody().get("outstandingCount")).intValue());
+
+        ResponseEntity<Map> replay = restTemplate.exchange(
+                queueUrl, HttpMethod.POST, new HttpEntity<>(request, headers), Map.class);
+        assertEquals(HttpStatus.OK, replay.getStatusCode());
+        assertEquals(1, ((Number) replay.getBody().get("outstandingCount")).intValue());
+
+        Map<String, Object> changedModel = new LinkedHashMap<>(request);
+        changedModel.put("model", "other-model");
+        ResponseEntity<Map> reusedKey = restTemplate.exchange(
+                queueUrl, HttpMethod.POST, new HttpEntity<>(changedModel, headers), Map.class);
+        assertEquals(HttpStatus.CONFLICT, reusedKey.getStatusCode());
+        assertEquals("IDEMPOTENCY_KEY_REUSED", reusedKey.getBody().get("code"));
+
+        for (int sequence = 2; sequence <= 5; sequence++) {
+            headers.set("Idempotency-Key", "follow-up-key-" + sequence);
+            ResponseEntity<Map> queued = restTemplate.exchange(
+                    queueUrl, HttpMethod.POST, new HttpEntity<>(request, headers), Map.class);
+            assertEquals(HttpStatus.ACCEPTED, queued.getStatusCode());
+        }
+        headers.set("Idempotency-Key", "follow-up-over-capacity");
+        ResponseEntity<Map> full = restTemplate.exchange(
+                queueUrl, HttpMethod.POST, new HttpEntity<>(request, headers), Map.class);
+        assertEquals(HttpStatus.CONFLICT, full.getStatusCode());
+        assertEquals("FOLLOW_UP_QUEUE_FULL", full.getBody().get("code"));
+
+        Map<String, Object> normalChat = Map.of(
+                "sessionId", sessionId,
+                "branchId", branchId,
+                "content", "must wait until Follow-up queue drains");
+        ResponseEntity<Map> blockedChat = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST, chatEntity(normalChat, headers), Map.class);
+        assertEquals(HttpStatus.CONFLICT, blockedChat.getStatusCode());
+        assertEquals("FOLLOW_UP_QUEUE_NOT_EMPTY", blockedChat.getBody().get("code"));
+
+        ResponseEntity<Map> snapshot = restTemplate.exchange(
+                queueUrl, HttpMethod.GET, new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.OK, snapshot.getStatusCode());
+        List<?> items = (List<?>) snapshot.getBody().get("items");
+        String firstItemId = (String) ((Map<?, ?>) items.get(0)).get("queueItemId");
+        ResponseEntity<Map> withdrawn = restTemplate.exchange(
+                queueUrl + "/" + firstItemId, HttpMethod.DELETE, new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.OK, withdrawn.getStatusCode());
+        assertEquals(4, ((Number) withdrawn.getBody().get("outstandingCount")).intValue());
+
+        ResponseEntity<Map> unchanged = restTemplate.exchange(
+                queueUrl + "/continue", HttpMethod.POST, new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.OK, unchanged.getStatusCode());
+    }
+
+    @Test
     void chat_withAttachments_persistsMessageAndUpdatesFiles() throws IOException {
         java.io.File tempFile = java.io.File.createTempFile("chat", ".txt");
         Files.write(tempFile.toPath(), "attachment content".getBytes());

@@ -6,8 +6,14 @@ import { useChatStore } from "../../stores/chat";
 import { useAgentStore } from "../../stores/agent";
 import { useAuthStore } from "../../stores/auth";
 import { useCheckpointStore } from "../../stores/checkpoint";
+import { useConfigStore } from "../../stores/config";
 import { useSessionStore } from "../../stores/session";
-import { ApiError, api, type WorkspaceAgentBinding } from "../../composables/api";
+import {
+    ApiError,
+    api,
+    type ApiFollowUpQueueSnapshot,
+    type WorkspaceAgentBinding,
+} from "../../composables/api";
 import { parseRawToParts } from "../../composables/useStreamParser";
 import { logger } from "../../lib/logger";
 import type {
@@ -26,6 +32,7 @@ import SessionPolicyControls from "./SessionPolicyControls.vue";
 import SessionContextTemplate from "./SessionContextTemplate.vue";
 import ContextSourcesU1 from "./ContextSourcesU1.vue";
 import SessionDerivedStatePanel from "./SessionDerivedStatePanel.vue";
+import FollowUpQueuePanel from "./FollowUpQueuePanel.vue";
 import RevertPreviewDialog from "./RevertPreviewDialog.vue";
 import RevertResultDialog from "./RevertResultDialog.vue";
 import BaseModal from "../shared/BaseModal.vue";
@@ -45,6 +52,7 @@ const chatStore = useChatStore();
 const agentStore = useAgentStore();
 const authStore = useAuthStore();
 const checkpointStore = useCheckpointStore();
+const configStore = useConfigStore();
 const sessionStore = useSessionStore();
 
 const suggestions = computed(() =>
@@ -58,6 +66,15 @@ const isStreaming = computed(() => chatStore.isStreaming(props.sessionId));
 const currentSession = computed(() => sessionStore.sessions.find((session) => session.id === props.sessionId));
 const sessionBranches = computed(() => chatStore.getSessionBranches(props.sessionId));
 const selectedBranchId = computed(() => chatStore.getSelectedBranchId(props.sessionId) ?? "");
+const followUpQueue = ref<ApiFollowUpQueueSnapshot | null>(null);
+const followUpQueueError = ref<string | null>(null);
+const followUpQueueSubmitting = ref(false);
+const followUpQueueContinuing = ref(false);
+const followUpQueueBusyItemId = ref<string | null>(null);
+const pendingFollowUpKeys = new Map<string, Map<string, string>>();
+let followUpQueueRequestId = 0;
+let followUpQueueSubmitGeneration = 0;
+let followUpQueueActionGeneration = 0;
 const branchOptions = computed(() => {
     const byId = new Map(sessionBranches.value.map((branch) => [branch.branchId, branch]));
     const depthOf = (branchId: string) => {
@@ -76,6 +93,14 @@ const branchOptions = computed(() => {
             : `${t("chat.branchPathOption")} ${branch.branchId.slice(0, 8)}`}`,
     }));
 });
+const branchLabels = computed(() => Object.fromEntries(
+    branchOptions.value.map((branch) => [branch.branchId, branch.label] as const),
+));
+const followUpQueueMode = computed(() => isStreaming.value
+    || (followUpQueue.value?.outstandingCount ?? 0) > 0
+    || followUpQueue.value?.queueState === "paused");
+const followUpQueueFull = computed(() => Boolean(followUpQueue.value
+    && followUpQueue.value.outstandingCount >= followUpQueue.value.capacityLimit));
 const derivedState = ref<SessionDerivedStateResponse | null>(null);
 const derivedStateLoading = ref(false);
 const derivedStateError = ref(false);
@@ -184,6 +209,15 @@ async function loadSessionMessages(sessionId: string) {
                 errorCode: message.errorCode,
                 error: message.error,
                 retryable: message.retryable,
+                attachments: message.attachments?.map((attachment) => ({
+                    id: attachment.fileId,
+                    fileId: attachment.fileId,
+                    name: attachment.name,
+                    type: attachment.type,
+                    size: attachment.size,
+                    url: `/api/v1/files/${encodeURIComponent(attachment.fileId)}`,
+                    state: "done" as const,
+                })),
             })),
         );
         if (derivedState.value?.sessionId === sessionId) {
@@ -196,6 +230,22 @@ async function loadSessionMessages(sessionId: string) {
     } catch (cause) {
         if (cause instanceof ApiError && cause.problem.code === "MESSAGE_NOT_FOUND") return;
         logger.error("Failed to load session messages", cause);
+    }
+}
+
+async function refreshFollowUpQueue(sessionId: string) {
+    const requestId = ++followUpQueueRequestId;
+    try {
+        const snapshot = await api.getFollowUpQueue(sessionId);
+        if (props.sessionId !== sessionId || requestId !== followUpQueueRequestId) return;
+        followUpQueue.value = snapshot;
+        followUpQueueError.value = null;
+    } catch (cause) {
+        if (props.sessionId !== sessionId || requestId !== followUpQueueRequestId) return;
+        followUpQueueError.value = cause instanceof ApiError
+            ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
+            : t("chat.followUpQueueLoadFailed");
+        logger.error("Failed to load Session Follow-up queue", cause);
     }
 }
 
@@ -324,6 +374,14 @@ watch(
         derivedStateError.value = false;
         derivedStateLoading.value = Boolean(sessionId);
         waitingOnByToolCallId.value = {};
+        followUpQueueRequestId += 1;
+        followUpQueueSubmitGeneration += 1;
+        followUpQueueActionGeneration += 1;
+        followUpQueue.value = null;
+        followUpQueueError.value = null;
+        followUpQueueSubmitting.value = false;
+        followUpQueueContinuing.value = false;
+        followUpQueueBusyItemId.value = null;
         if (previousSessionId && previousSessionId !== sessionId) {
             chatStore.detachLiveSession(previousSessionId);
         }
@@ -331,6 +389,7 @@ watch(
         if (sessionId) {
             void loadSessionMessages(sessionId);
             void refreshDerivedState(sessionId);
+            void refreshFollowUpQueue(sessionId);
         }
     },
     { immediate: true },
@@ -343,8 +402,9 @@ watch(selectedBranchId, (branchId, previousBranchId) => {
 });
 
 watch(isStreaming, (streaming, previous) => {
-    if (previous && !streaming && props.sessionId) {
-        void loadSessionMessages(props.sessionId);
+    if (streaming !== previous && props.sessionId) {
+        if (previous && !streaming) void loadSessionMessages(props.sessionId);
+        void refreshFollowUpQueue(props.sessionId);
     }
 });
 
@@ -385,13 +445,133 @@ async function handleSend(content: string, attachments?: AttachmentFile[], branc
         }
         pendingSend.value = { content, attachments, branchId };
         selectedPrincipalId.value = "";
-        showPrincipalBinding.value = true;
+    showPrincipalBinding.value = true;
     } catch (cause) {
         const message = cause instanceof ApiError ? cause.message : t("workspace.agentLoadFailed");
         logger.error("Failed to load Workspace Agents for Session binding", cause);
         toast.error(message);
     } finally {
         loadingPrincipalChoices.value = false;
+    }
+}
+
+async function handleFollowUpQueue(content: string, attachments?: AttachmentFile[]) {
+    const sessionId = props.sessionId;
+    if (!sessionId || followUpQueueSubmitting.value || followUpQueueFull.value
+        || followUpQueueBusyItemId.value || followUpQueueContinuing.value) return;
+    let branchId = selectedBranchId.value;
+    if (!branchId) {
+        try {
+            await chatStore.loadSessionBranches(sessionId);
+            branchId = chatStore.getSelectedBranchId(sessionId) ?? "";
+        } catch (cause) {
+            logger.error("Failed to load branch selector before Follow-up enqueue", cause);
+            toast.error(t("chat.branchLoadFailed"));
+            return;
+        }
+    }
+    if (props.sessionId !== sessionId) return;
+    if (!branchId) {
+        toast.error(t("chat.branchLoadFailed"));
+        return;
+    }
+
+    const fileIds = (attachments ?? [])
+        .map((attachment) => attachment.fileId)
+        .filter((fileId): fileId is string => Boolean(fileId));
+    const binding = configStore.getEffectiveModel(sessionId);
+    const signature = JSON.stringify([
+        branchId, content, fileIds, props.toolMode, binding?.provider ?? null, binding?.model ?? null,
+    ]);
+    const sessionKeys = pendingFollowUpKeys.get(sessionId) ?? new Map<string, string>();
+    const idempotencyKey = sessionKeys.get(signature) ?? crypto.randomUUID();
+    sessionKeys.set(signature, idempotencyKey);
+    pendingFollowUpKeys.set(sessionId, sessionKeys);
+    const requestGeneration = ++followUpQueueSubmitGeneration;
+
+    followUpQueueSubmitting.value = true;
+    followUpQueueError.value = null;
+    try {
+        const snapshot = await api.enqueueFollowUp(sessionId, {
+            content,
+            ...(fileIds.length > 0 ? { attachments: fileIds } : {}),
+            branchId,
+            toolMode: props.toolMode,
+            ...(binding?.provider ? { provider: binding.provider } : {}),
+            ...(binding?.model ? { model: binding.model } : {}),
+        }, idempotencyKey);
+        if (props.sessionId !== sessionId || requestGeneration !== followUpQueueSubmitGeneration) return;
+        followUpQueue.value = snapshot;
+        followUpQueueError.value = null;
+        if (sessionKeys.get(signature) === idempotencyKey) {
+            sessionKeys.delete(signature);
+            if (sessionKeys.size === 0) pendingFollowUpKeys.delete(sessionId);
+        }
+        inputComponent.value?.clearDraft?.();
+        toast.success(t("chat.followUpQueued"));
+        void refreshFollowUpQueue(sessionId);
+    } catch (cause) {
+        if (props.sessionId !== sessionId || requestGeneration !== followUpQueueSubmitGeneration) return;
+        const message = cause instanceof ApiError
+            ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
+            : t("chat.followUpQueueFailed");
+        followUpQueueError.value = message;
+        logger.error("Failed to enqueue Session Follow-up", cause);
+        toast.error(message);
+        void refreshFollowUpQueue(sessionId);
+    } finally {
+        if (requestGeneration === followUpQueueSubmitGeneration) {
+            followUpQueueSubmitting.value = false;
+        }
+    }
+}
+
+async function withdrawFollowUp(queueItemId: string) {
+    const sessionId = props.sessionId;
+    if (!sessionId || followUpQueueBusyItemId.value || followUpQueueContinuing.value) return;
+    const requestGeneration = ++followUpQueueActionGeneration;
+    followUpQueueBusyItemId.value = queueItemId;
+    followUpQueueError.value = null;
+    try {
+        const snapshot = await api.withdrawFollowUp(sessionId, queueItemId);
+        if (props.sessionId !== sessionId || requestGeneration !== followUpQueueActionGeneration) return;
+        followUpQueue.value = snapshot;
+        toast.success(t("chat.followUpWithdrawn"));
+    } catch (cause) {
+        if (props.sessionId !== sessionId || requestGeneration !== followUpQueueActionGeneration) return;
+        const message = cause instanceof ApiError
+            ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
+            : t("chat.followUpQueueFailed");
+        followUpQueueError.value = message;
+        logger.error("Failed to withdraw Session Follow-up", cause);
+        toast.error(message);
+    } finally {
+        if (requestGeneration === followUpQueueActionGeneration) followUpQueueBusyItemId.value = null;
+    }
+}
+
+async function continueFollowUpQueue() {
+    const sessionId = props.sessionId;
+    if (!sessionId || followUpQueueContinuing.value || followUpQueueBusyItemId.value) return;
+    const requestGeneration = ++followUpQueueActionGeneration;
+    followUpQueueContinuing.value = true;
+    followUpQueueError.value = null;
+    try {
+        const snapshot = await api.continueFollowUpQueue(sessionId);
+        if (props.sessionId !== sessionId || requestGeneration !== followUpQueueActionGeneration) return;
+        followUpQueue.value = snapshot;
+        toast.success(t("chat.followUpContinued"));
+        void refreshFollowUpQueue(sessionId);
+    } catch (cause) {
+        if (props.sessionId !== sessionId || requestGeneration !== followUpQueueActionGeneration) return;
+        const message = cause instanceof ApiError
+            ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
+            : t("chat.followUpQueueFailed");
+        followUpQueueError.value = message;
+        logger.error("Failed to continue Session Follow-up queue", cause);
+        toast.error(message);
+    } finally {
+        if (requestGeneration === followUpQueueActionGeneration) followUpQueueContinuing.value = false;
     }
 }
 
@@ -736,6 +916,18 @@ watch(
             </div>
         </div>
 
+        <FollowUpQueuePanel
+            v-if="followUpQueue && followUpQueue.outstandingCount > 0"
+            :snapshot="followUpQueue"
+            :messages="messages"
+            :branch-labels="branchLabels"
+            :busy-item-id="followUpQueueBusyItemId"
+            :continuing="followUpQueueContinuing"
+            :error="followUpQueueError"
+            @withdraw="withdrawFollowUp"
+            @continue="continueFollowUpQueue"
+        />
+
         <button
             v-if="showReopenPill"
             type="button"
@@ -760,7 +952,13 @@ watch(
             ref="inputComponent"
             :session-id="sessionId"
             :is-streaming="isStreaming"
+            :queue-mode="followUpQueueMode"
+            :queue-full="followUpQueueFull"
+            :queue-paused="followUpQueue?.queueState === 'paused'"
+            :queue-submitting="followUpQueueSubmitting"
+            :queue-action-busy="followUpQueueBusyItemId !== null || followUpQueueContinuing"
             @send="handleSend"
+            @queue="handleFollowUpQueue"
             @stop="stopStreaming"
         />
 

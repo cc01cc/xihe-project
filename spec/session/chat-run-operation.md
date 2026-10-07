@@ -5,8 +5,8 @@
 > Profile：`lifecycle`  
 > Owner：CP Chat/Operation owners  
 > 消费者：Agent、Runtime、UI、Audit  
-> 来源：PLAN-0385、PLAN-0387、DEV-014、DEV-017  
-> 更新日期：2026-09-20
+> 来源：PLAN-0385、PLAN-0387、PLAN-0442、DEV-014、DEV-017
+> 更新日期：2026-10-06
 
 ## 三类对象
 
@@ -38,6 +38,16 @@ ChatRun 当前可经过 `accepted`、`queued`、`running`、`streaming`、`await
 3. 取消路径 MUST 让位于结算路径；取消窗口中的晚到副作用不能抢写已收口 item/run 终态。
 4. 审批等待是 ChatRun/Operation 的中间状态，不是 authorization decision；拒绝/过期必须进入明确终态。
 5. Operation audit MUST 保留 source、toolCallId、attempt 和错误/策略摘要，但不得持久化原始 secret/arguments。
+
+## Follow-up 队列（PLAN-0442）
+
+- 队列是 CP-owned 的 durable 投影（V49 `session_follow_up_items`），不是 ChatRun；item 行是队列事实源，SSE/snapshot 只作刷新提示。
+- 入队（`POST /api/v1/sessions/{sessionId}/follow-ups`，`Idempotency-Key` 必带）返回 202 = durable 入队，不代表 child Run 已创建；普通 `POST /api/v1/chat` 在队列未清空时 MUST 409 `FOLLOW_UP_QUEUE_NOT_EMPTY`，Run 中排队必须走显式 Queue 动作。
+- 每 Session 至多一个 active child：`admitHead` 先锁 Session 行再锁 item 行，QueueItem 状态转换与 child ChatRun/Message/Operation 在同一 REQUIRES_NEW 事务写入，失败整体回滚；claim 与 withdraw 并发时至多一方转换成功，已 claim 后撤回返回 409 `FOLLOW_UP_ALREADY_ADMITTED`。
+- 父/child Run 进入终态由既有 settlement 路径同事务推进队列：succeeded/partial/failed → consumed child `completed` 并推进下一项；cancelled/ambiguous → 整队 `paused`（`parent_cancelled`/`child_cancelled`/`child_ambiguous`）。已 admission 的 cancelled/ambiguous child MUST NOT 重放；继续（`POST .../continue`）把已消耗 child 收敛为 `completed`，只放行其后项目。
+- admission 前重验附件所有权、branch 可见性与 binding，失败置 `paused`（如 `attachment_unavailable`）而非切换分支或放行。
+- Session 删除意图期间队列变更与普通 Chat 均 MUST 409 `SESSION_DELETING`；CP 启动恢复暂停 admitted-without-child 项并唤醒 queued head（幂等）。
+- PLAN-0442 V1 runtime constraint: deployments using Follow-up MUST run exactly one active CP instance. The after-commit wake is process-local and startup recovery only runs on application startup; this is not cross-instance durable delivery. Multi-instance Follow-up support requires a separately approved design and verification before scaling CP.
 
 ## 恢复
 

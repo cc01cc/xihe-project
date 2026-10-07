@@ -29,6 +29,7 @@ flowchart LR
 ## 1. 三通道
 
 - **聊天通道**：`POST /api/v1/chat`（必填 `sessionId`/`branchId`/`content`，`202` + `runId`，指令发送）+ `GET /api/v1/events?sessionId=`（会话级持久 SSE，流接收）。CP 中转 UI↔Agent，流式分发到 UI。**注意**：CP 只转运聊天流量（租约/透传/审计），不组装 LLM 请求、不代理模型调用——模型调用由 Agent 直调 provider（见 DEV-013 §2.3）。
+- **Follow-up Queue（PLAN-0442）**：`/api/v1/sessions/{sessionId}/follow-ups` 是 CP durable FIFO；每 Session 最多 5 条 outstanding。此版本要求部署保持**单个活跃 CP 实例**；多实例 CP 不在支持范围，因为 terminal handoff 使用进程内 after-commit wake，启动扫描只在实例启动时执行，不构成跨实例持久投递。入队/读取/撤回/继续不依赖浏览器 SSE；普通 Chat 在同一 Session admission 锁内要求队列为空。QueueItem 只在 CP 原子 admission child ChatRun 时物化为 Message，附件/branch 在 admission 时重验。终态事务先结算队列，dispatcher wake 等 `releaseRun` 释放本进程 single-flight 与 DB lease 后触发；启动扫描补偿本实例内丢失的 wake。多实例唤醒/恢复需独立设计与验收后才能启用。
 - **MCP 反向代理通道**（`POST /api/v1/mcp`，另有同前缀 GET/DELETE）：JSON-RPC 解析 → 工具名提取 → 权限检查 → 请求改写 → 三层路由转发（详见 DEV-016）。CP 为纯 HTTP 反代，不依赖 MCP SDK。
 - **状态分发通道**：Runtime/Workspace storage watcher → CP Workspace event ingress → UI Workspace SSE；ChatRun 仍独立使用 Session SSE，不把无 Session 文件事件塞入 Chat。
 
@@ -73,6 +74,7 @@ flowchart LR
 ## 6. ChatRun 与错误终态（PLAN-247）
 
 - 公开 `POST /api/v1/chat` 的 readiness gate、SSE subscription 和 single-flight 通过后，CP 才创建 `origin=user_submission` 的 `ChatRun` 与 user `Message`；gate 前失败不产生历史消息。`origin` 不接受请求方设置。
+- `POST /api/v1/chat` 在 Session 锁内拒绝 outstanding Follow-up QueueItem（409 `FOLLOW_UP_QUEUE_NOT_EMPTY`）；Follow-up child 使用同一 admission path 和 `origin=user_submission`，但不会因自身 QueueItem 被普通提交护栏拦截。terminal + QueueItem 状态同事务提交；child dispatch 只在父 Run lease/single-flight 释放后进行。
 - `ChatRun.origin ∈ {user_submission, spawn}`；公开提交固定为前者。CP 内部 `ChatSubmissionService.createSpawn` 只接受父 Agent `spawn_agent` tool_call 的 durable OperationItem，校验父 run/item 与 child Session provenance，并绕过浏览器 SSE gate。T1.4 已提供 CP persistence service contract。PLAN-0407 T2.10 将 `spawn_agent` 暴露为 CP-owned logical MCP tool；Agent 经 MCPProxy 现有 grant/approval gate，CP local dispatch 执行 child transaction 并在 commit 后 handoff worker。`POST /internal/v1/agents/spawn` 保留为 CP internal service surface，不由 Agent 调用。
 - user submission 以 `(userId, sessionId, Idempotency-Key)` 唯一约束；spawn 另以 `(userId, idempotencyKey) WHERE origin='spawn'` 部分唯一索引防跨 child-session 并发重复。同事件同 request hash 返回既有 run，不同 hash 返回 `IDEMPOTENCY_KEY_CONFLICT`。
 - Agent provider failure 进入 `failed`/`partial`，流断开或缺少终态进入 `ambiguous`；`ambiguous` 不自动 retry，人工确认后使用新的幂等键。

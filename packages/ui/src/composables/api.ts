@@ -101,6 +101,48 @@ export interface ApiSessionBranch {
     createdAt: string;
 }
 
+export interface ApiFollowUpAttachment {
+    id: string;
+    name: string;
+    type: string | null;
+    size: number;
+    url?: string | null;
+}
+
+export interface ApiFollowUpItem {
+    queueItemId: string;
+    queueSequence: number;
+    status: "queued" | "paused" | "admitted" | "completed" | "withdrawn";
+    content: string | null;
+    attachments: ApiFollowUpAttachment[];
+    branchId: string;
+    anchorRunId: string | null;
+    pauseReason: string | null;
+    childRunId: string | null;
+    childMessageId: string | null;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface ApiFollowUpQueueSnapshot {
+    sessionId: string;
+    queueState: "empty" | "queued" | "paused";
+    outstandingCount: number;
+    capacityLimit: number;
+    pauseReason: string | null;
+    items: ApiFollowUpItem[];
+}
+
+export interface ApiFollowUpCreateRequest {
+    content: string;
+    attachments?: string[];
+    branchId: string;
+    toolMode?: "none" | "workspace";
+    toolTimeouts?: Record<string, number>;
+    provider?: string;
+    model?: string;
+}
+
 export interface SessionBranchCreateResponse {
     branchId: string;
     parentBranchId: string;
@@ -1379,6 +1421,37 @@ export const api = {
             headers: { "Idempotency-Key": idempotencyKey },
             body: JSON.stringify(body),
         });
+    },
+    getFollowUpQueue(sessionId: string): Promise<ApiFollowUpQueueSnapshot> {
+        return request<ApiFollowUpQueueSnapshot>(
+            `/sessions/${encodeURIComponent(sessionId)}/follow-ups`,
+        );
+    },
+    enqueueFollowUp(
+        sessionId: string,
+        body: ApiFollowUpCreateRequest,
+        idempotencyKey: string,
+    ): Promise<ApiFollowUpQueueSnapshot> {
+        return request<ApiFollowUpQueueSnapshot>(
+            `/sessions/${encodeURIComponent(sessionId)}/follow-ups`,
+            {
+                method: "POST",
+                headers: { "Idempotency-Key": idempotencyKey },
+                body: JSON.stringify(body),
+            },
+        );
+    },
+    withdrawFollowUp(sessionId: string, itemId: string): Promise<ApiFollowUpQueueSnapshot> {
+        return request<ApiFollowUpQueueSnapshot>(
+            `/sessions/${encodeURIComponent(sessionId)}/follow-ups/${encodeURIComponent(itemId)}`,
+            { method: "DELETE" },
+        );
+    },
+    continueFollowUpQueue(sessionId: string): Promise<ApiFollowUpQueueSnapshot> {
+        return request<ApiFollowUpQueueSnapshot>(
+            `/sessions/${encodeURIComponent(sessionId)}/follow-ups/continue`,
+            { method: "POST" },
+        );
     },
     getMessages(sessionId: string, branchId: string) {
         return request<

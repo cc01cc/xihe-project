@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 status: active
 sidebar_order: 17
 created: 2026-09-03
-updated: 2026-09-29
+updated: 2026-10-06
 ---
 
 # DEV-017: Session 架构
@@ -68,6 +68,13 @@ ChatRun 通过 `runId` 关联 Message，服务端返回的 `runStatus`、`termin
 - 每个 ChatRun/Message 创建时由 CP 固化 branchId 且 Run 分支不可变；可见集 = Session/global 事件 ∪ 每层祖先段至 child `fork_point_sequence` ∪ 当前分支（cursor 仍是 Session 全局 sequence，不引入 per-branch 计数）。
 - anchor 必须属于 terminal Run：`'USER'` 锚取该 Run 唯一 `prompt.admitted` sequence、`'ASSISTANT'` 锚取 Run 最大 correlated sequence；不可锚定（legacy 无 correlation/无 cursor）一律 409 fail-closed，不用 wall-clock 猜测。
 - 同 Session 单飞不变（`409 CHAT_IN_PROGRESS`）；公开 `GET/POST /api/v1/sessions/{sessionId}/branches`、`GET /messages?branchId=`、`ChatRequest.branchId`、manual compact `branchId` 与 `409 BRANCH_LOCK` 归 **PLAN-0409**。UI path 选择按 Session 隔离；服务器仍按 V43/0410 可见性解析，不信任客户端 parent/anchor 推断。契约见 [`spec/session/branch-context-isolation.md`](../../../spec/session/branch-context-isolation.md)，内部 API 见 DEV-014 §8d。
+
+### 1.3 Session Follow-up 队列（PLAN-0442 / V49）
+
+- 队列是 Session 级 CP-owned durable 投影（V49 `session_follow_up_items`，FIFO 硬上限 5、计入 queued/paused/admitted 全部未结束项），item 行为唯一事实源；入队 API 返回 202 仅表示 durable 入队，child Run 在父 Run 终态后才 admission。
+- 队列未清空时普通 `POST /api/v1/chat` 一律 `409 FOLLOW_UP_QUEUE_NOT_EMPTY`；Run 中排队必须走 UI 显式 Queue 动作，`CHAT_IN_PROGRESS` 不再是唯一出口。Session 删除意图期间队列变更与普通 Chat 均 `409 SESSION_DELETING`。
+- 每 Session 至多一个 active child：admission 与 QueueItem 状态转换同事务原子落库；父/child Run 终态由 settlement 同事务推进（succeeded/partial/failed → 下一项自动接续，cancelled/ambiguous → 整队 `paused`），已 admission 的 cancelled/ambiguous child 不重放，`continue` 只放行其后项目。
+- admission 前重验附件所有权、branch 可见性与 binding，失败即 `paused`（fail-closed）；CP 启动恢复暂停 admitted-without-child 并唤醒 queued head（幂等）。API/OpenAPI 见 DEV-014 与 `docs/api/openapi.yaml`；UI 面板见 [DEV-010](DEV-010-ui-architecture.md)。
 
 ## 2. Store 职责边界（选项 B：共享 + 视图分离）
 

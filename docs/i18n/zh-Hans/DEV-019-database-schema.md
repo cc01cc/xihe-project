@@ -6,8 +6,8 @@ sidebar_group: "开发指南"
 sidebar_order: 19
 status: active
 created: 2026-09-07
-updated: 2026-09-27
-description: XH PostgreSQL 全量表结构速查：业务表按域分组、ER 关系、字段约束与索引、当前 V1~V41 迁移对照（PLAN-280 rebaseline 后）与本地查看方法
+updated: 2026-10-06
+description: XH PostgreSQL 全量表结构速查：业务表按域分组、ER 关系、字段约束与索引、当前 V1~V49 迁移对照（PLAN-280 rebaseline 后）与本地查看方法
 tags:
   - postgres
   - flyway
@@ -38,7 +38,7 @@ tags:
 | Compose PG 定义 | `docker-compose.yml`（`postgres` 服务，`./postgres-init:/docker-entrypoint-initdb.d:ro`） |
 | 扩展初始化 | `postgres-init/01-enable-pgvector.sql` |
 | 连接配置 | `packages/control-plane/src/main/resources/application.properties:12-24`（`datasource.url`、`flyway.locations=classpath:db/migration`） |
-| 迁移链 | `packages/control-plane/src/main/resources/db/migration/V1__init_schema.sql` 至 `V48__context_template_session_binding.sql`（当前 active chain；V1 基线，V2–V48 增量迁移；V42–V47 行由各自计划补登） |
+| 迁移链 | `packages/control-plane/src/main/resources/db/migration/V1__init_schema.sql` 至 `V49__session_follow_up_items.sql`（当前 active chain；V1 基线，V2–V49 增量迁移；V42–V47 行由各自计划补登） |
 | Entity 镜像 | `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/entity/`（32 个）+ `context/entity/`（3 个） |
 | Seed | `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/config/DataSeeder.java`（仅 seed `admin@xihe.local`，密码随机不落日志） |
 
@@ -62,6 +62,7 @@ erDiagram
     users ||--o{ sessions : creates
     sessions ||--o{ messages : contains
     sessions ||--o{ chat_runs : runs
+    sessions ||--o{ session_follow_up_items : queues
     chat_runs ||--o{ messages : produces
     chat_runs ||--o{ approval_requests : requires
 ```
@@ -70,6 +71,7 @@ erDiagram
 - `workspace_users`：联合 PK `(workspace_id, user_id)`，多对多关联表
 - `chat_runs → messages`：经 `user_message_id`/`assistant_message_id` 逻辑关联（无 FK 约束）
 - `chat_runs → approval_requests`：`run_id` FK
+- `sessions → session_follow_up_items`：`ON DELETE CASCADE`（Session 删除零孤儿）；item 对 child Run/Message 为 `SET NULL`（PLAN-0442，见 §3.2）
 
 ### 2.2 Workspace 执行
 
@@ -200,7 +202,7 @@ erDiagram
 
 > 索引：`idx_users_email (email)`
 
-### 3.2 协作（workspaces / workspace_users / sessions / messages / chat_runs / run_checkpoints / approval_requests）
+### 3.2 协作（workspaces / workspace_users / sessions / messages / chat_runs / run_checkpoints / approval_requests / session_follow_up_items）
 
 **workspaces**（`V1` + `V2/V11/V14`，Entity `entity/Workspace.java`）：`owner_id` 拥有者，`deleted_at` 软删后同 owner 可重建。
 
@@ -390,6 +392,34 @@ erDiagram
 > 索引：
 > - `idx_approval_requests_session_state (session_id, user_id, workspace_id, state, created_at)`
 > - `idx_approval_requests_run_state (run_id, state)`
+
+**session_follow_up_items**（`V49`，Entity `entity/SessionFollowUpItem.java`；PLAN-0442）：CP-owned per-Session durable Follow-up FIFO——admission 前入队 payload 的唯一事实源；child Run 创建后 item 只作队列投影，执行事实仍归 ChatRun。
+
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| id | UUID | PK | — |
+| session_id | UUID | NOT NULL FK `sessions(id)` `ON DELETE CASCADE` | 归属 Session；Session 删除零孤儿 |
+| queue_sequence | BIGINT | NOT NULL，`ck_..._queue_sequence > 0`，`(session_id, queue_sequence)` 唯一 | Session 内 FIFO 序号 |
+| idempotency_key | VARCHAR(128) | NOT NULL，`(session_id, idempotency_key)` 唯一 | 入队幂等键（Header `Idempotency-Key`；同键同 hash 幂等命中） |
+| request_hash | VARCHAR(64) | NOT NULL | 规范化请求 hash，同键异 payload 冲突检测 |
+| content | TEXT | nullable | 入队正文；admission 转交 child user Message 后清空 |
+| attachment_refs | JSONB | NOT NULL DEFAULT `[]`，`ck_..._attachment_refs_array` | File UUID 数组；admission 重验所有权 |
+| branch_id | UUID | NOT NULL | 入队时钉住的逻辑分支；admission 只重验存在性/可见性，不切换分支 |
+| tool_mode | VARCHAR(20) | NOT NULL DEFAULT `none`，`ck_..._tool_mode` | `none` / `workspace` |
+| tool_timeouts | JSONB | NOT NULL DEFAULT `{}`，`ck_..._tool_timeouts_object` | per-tool 覆盖超时 |
+| provider / model | VARCHAR(50/100) | `ck_..._provider_model_pair` 成对 NULL | per-入队覆盖，成对出现 |
+| status | VARCHAR(16) | NOT NULL DEFAULT `queued`，`ck_..._status` 五态 | `queued/paused/admitted/completed/withdrawn`；仅 `FollowUpQueueService` 写 |
+| pause_reason | VARCHAR(64) | nullable | `parent_cancelled/child_cancelled/child_ambiguous/child_missing/attachment_unavailable/branch_unavailable/session_binding_stale/continued_after_terminal` 等 |
+| anchor_run_id | UUID | FK `chat_runs(id)` `ON DELETE SET NULL` | 资格锚（terminal gate）；anchor 行删除置空 → admission 视为 stale 并暂停 |
+| pause_run_id | UUID | FK `chat_runs(id)` `ON DELETE SET NULL` | 触发暂停的 Run |
+| child_run_id | UUID | FK `chat_runs(id)` `ON DELETE SET NULL`，`uq_..._child_run_id` 部分唯一 | admission 后的 child Run（每 Session 至多一个 active child）；`SET NULL` 即 admitted-without-child 可达态，启动恢复暂停为 `child_missing` |
+| child_message_id | UUID | FK `messages(id)` `ON DELETE SET NULL` | child user Message 回链 |
+| created_at / updated_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | — |
+| admitted_at / completed_at / withdrawn_at | TIMESTAMPTZ | nullable | 生命周期时间戳 |
+
+> 索引：`uq_session_follow_up_items_child_run_id`（child 单飞，部分唯一）；`idx_session_follow_up_items_session_active_sequence (session_id, queue_sequence) WHERE status IN ('queued','paused','admitted')`（活跃队列扫描）。
+>
+> 语义注记：硬上限 5 统计全部未结束项（queued/paused/admitted），完成/撤回后释放；QueueItem 状态转换与 child ChatRun/Message/Operation 在同一事务原子写入；claim/withdraw 以 Session 行锁 + item 行锁串行（并发至多一方成功）。API 与状态机见 [`spec/session/chat-run-operation.md`](../../../spec/session/chat-run-operation.md) §Follow-up 队列 与 DEV-017 §1.3。
 
 ### 3.3 Workspace 执行（workspace_execution_specs）
 
@@ -907,7 +937,7 @@ erDiagram
 
 > 索引：`idx_task_items_plan (task_plan_id)`；`idx_task_items_status (status)`
 
-## 4. 迁移对照（当前 active 链 V1~V48；V42–V47 行由各自计划补登）
+## 4. 迁移对照（当前 active 链 V1~V49；V42–V47 行由各自计划补登）
 
 > PLAN-280 destructive rebaseline 取代了当时的历史链（旧 V2~V22/U6 移出 active classpath，仅 Git 历史可追溯）；V15 起的 V15~V41 均为当前 active 链的 post-rebaseline migrations。本节保留历史编号解释，不把两套编号混用；表内 V2/V3/V4/V30 的旧名属于历史迁移文件名与原表名（V33 改名后保留）。
 
@@ -955,6 +985,7 @@ erDiagram
 | V40 | `V40__session_derivation_kind.sql` | `sessions.kind` 区分 `spawn/fork`；root provenance 全 NULL、派生四元组全 NOT NULL 的 CHECK；既有 V37 provenance 行在无 fork creator 的前置阶段回填为 spawn（PLAN-0407 T2.2） | `sessions` |
 | V41 | `V41__default_grant_bootstrap.sql` | 对既有 users 与 root Agent Sessions 补 source=default grant（USER/ADMIN 矩阵），自动默认 read_state=read，并为回填 grant 写 audit row（PLAN-0407 T2.4） | `grants` |
 | V48 | `V48__context_template_session_binding.sql` | **纯 schema（不含数据清理）**：`sessions` 增 `context_template_layer/id/version` 三列（NOT NULL DEFAULT 钉内置模板）与 CHECK（PLAN-0414 T1.1/T1.3），`chat_runs` 增 `context_template_snapshot` JSONB 对象 DEFAULT（T1.4 admission 原子快照）；存量清库是迁移前置运维动作 `dev:reset`（用户 2026-10-03 裁定「先清库，迁移里不该清」，V14 dev-state 可弃先例），迁移不携带 DELETE/拦截 | `sessions/chat_runs` |
+| V49 | `V49__session_follow_up_items.sql` | 新增 per-Session durable Follow-up FIFO 表：五态/工具模式/JSON 形态 CHECK、`(session_id, queue_sequence)` 与 `(session_id, idempotency_key)` 双唯一、`child_run_id` 部分唯一（active child 单飞）、四条 FK（session CASCADE；anchor/pause/child_run/child_message SET NULL）与活跃队列部分索引；无历史回填，既有 Session 起始空队列（PLAN-0442 T1.1） | `session_follow_up_items` |
 
 ## 5. 本地查看与运维
 
@@ -970,11 +1001,11 @@ erDiagram
 | 重置 admin | `mise run reset-admin`（`scripts/reset-admin.ps1 -Password <pw>`，免重启，不删数据） |
 | 重建 dev 库 | `mise run dev:reset`（默认 dry-run，显式 `-Reset` 才执行，先备份） |
 
-> **当前链备注**：V21 的 `policy_revision` 是审批 grant 失效判断的 durable counter；V22/V23/V26 是 checkpoint 切片语义落地前的历史增量；V27 按 PLAN-0339 物理清空旧 `run_checkpoints` 行并重建 workspace 切片记录行，不做旧格式数据迁移；V28 按 PLAN-0357 删除 V4/V5 legacy snapshot 对象（空表纯清理，V4/V5 原文保留为不可变历史）；V29 清空遗留单键源哈希（无 schema 变更）；V30–V33 为 PLAN-0351 的 schema 清理与 `ledger_operations` 改名（V33，见 §4）；V34 为 PLAN-0367 的 `operation_extensions` 目标 FK CASCADE 修复（读路径无改动）；V35 为 PLAN-0376 的 Workspace 导入 durable 记录表；V36 为 PLAN-0390 的 Workspace Job 幂等部分唯一索引（无 Session root，见 §3.7 `job_state`）；V37–V41 为 PLAN-0407 的会话 provenance/kind、授权 grants、ChatRun origin/幂等约束与 default grant backfill。具体约束以对应 SQL 文件为准，禁止通过手工 DROP 表回滚 active 链。
+> **当前链备注**：V21 的 `policy_revision` 是审批 grant 失效判断的 durable counter；V22/V23/V26 是 checkpoint 切片语义落地前的历史增量；V27 按 PLAN-0339 物理清空旧 `run_checkpoints` 行并重建 workspace 切片记录行，不做旧格式数据迁移；V28 按 PLAN-0357 删除 V4/V5 legacy snapshot 对象（空表纯清理，V4/V5 原文保留为不可变历史）；V29 清空遗留单键源哈希（无 schema 变更）；V30–V33 为 PLAN-0351 的 schema 清理与 `ledger_operations` 改名（V33，见 §4）；V34 为 PLAN-0367 的 `operation_extensions` 目标 FK CASCADE 修复（读路径无改动）；V35 为 PLAN-0376 的 Workspace 导入 durable 记录表；V36 为 PLAN-0390 的 Workspace Job 幂等部分唯一索引（无 Session root，见 §3.7 `job_state`）；V37–V41 为 PLAN-0407 的会话 provenance/kind、授权 grants、ChatRun origin/幂等约束与 default grant backfill；V49 为 PLAN-0442 的 Session Follow-up durable 队列表（见 §3.2）。具体约束以对应 SQL 文件为准，禁止通过手工 DROP 表回滚 active 链。
 
 ## 附录 A：表—Entity—迁移三向对照
 
-> 「active 首次迁移」指当前 V1~V41 链中的出处；rebaseline 前的旧链编号仅作溯源备注，编号与 active 链不通用（见 §1 版本标注约定）。
+> 「active 首次迁移」指当前 V1~V49 链中的出处；rebaseline 前的旧链编号仅作溯源备注，编号与 active 链不通用（见 §1 版本标注约定）。
 
 | 表 | Entity | active 首次迁移 |
 |----|--------|-----------------|
@@ -985,6 +1016,7 @@ erDiagram
 | messages | `entity/Message.java` + `MessageRole.java` | V1 |
 | files | `entity/File.java` | V1 |
 | chat_runs | `entity/ChatRun.java` | V1 |
+| session_follow_up_items | `entity/SessionFollowUpItem.java` | V49 |
 | grants | `entity/AuthorizationGrant.java` | V38 |
 | run_checkpoints | `entity/RunCheckpoint.java` | V27（V22/V23/V26 仅为历史增量） |
 | approval_requests | `entity/ChatApproval.java` | V1 |

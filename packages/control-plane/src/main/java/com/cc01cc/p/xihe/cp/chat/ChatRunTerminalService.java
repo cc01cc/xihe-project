@@ -92,6 +92,7 @@ public class ChatRunTerminalService {
     private final RunCheckpointService checkpoints;
     private final InboxRepository inboxes;
     private final SseEmitterManager sseEmitters;
+    private final FollowUpQueueService followUpQueueService;
 
     public ChatRunTerminalService(
             DbLockTimeout dbLockTimeout,
@@ -104,7 +105,8 @@ public class ChatRunTerminalService {
             OperationService operationService,
             RunCheckpointService checkpoints,
             InboxRepository inboxes,
-            SseEmitterManager sseEmitters) {
+            SseEmitterManager sseEmitters,
+            FollowUpQueueService followUpQueueService) {
         this.dbLockTimeout = dbLockTimeout;
         this.datasourceUrl = datasourceUrl;
         this.entityManager = entityManager;
@@ -116,6 +118,7 @@ public class ChatRunTerminalService {
         this.checkpoints = checkpoints;
         this.inboxes = inboxes;
         this.sseEmitters = sseEmitters;
+        this.followUpQueueService = followUpQueueService;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -203,6 +206,7 @@ public class ChatRunTerminalService {
                     runId, parentLink.sessionId(), parentLink.runId());
         }
 
+        followUpQueueService.settleTerminal(sessionId.toString(), runId.toString(), request.status());
         requestCheckpointAfterCommit(runId.toString());
         return new TerminalResult(Outcome.COMMITTED, request.status());
     }

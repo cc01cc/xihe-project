@@ -6,7 +6,17 @@ import InputArea from '../../components/chat/InputArea.vue'
 
 const messages = {
   'zh-CN': {
-    chat: { placeholder: '输入消息...', send: '发送' },
+    chat: {
+      placeholder: '输入消息...',
+      send: '发送',
+      stop: '停止',
+      followUpEnqueue: '排队发送',
+      followUpEnqueuing: '加入中…',
+      followUpPlaceholder: '添加后续任务…',
+      followUpComposerNotice: '当前任务之后执行',
+      followUpPausedNotice: '追加到暂停队列末尾',
+      followUpFullNotice: '队列已满，草稿保留',
+    },
     multimodal: { image: '图片', screenshot: '截图', voice: '语音' },
     common: { cancel: '取消' },
   },
@@ -59,5 +69,24 @@ describe('InputArea', () => {
   it('renders send button', () => {
     const wrapper = mountInputArea()
     expect(wrapper.find('button').exists()).toBe(true)
+  })
+
+  it('queues with Enter while a Run is streaming and keeps a separate Stop action', async () => {
+    const wrapper = mountInputArea({ isStreaming: true, queueMode: true })
+    const textarea = wrapper.find('[data-testid="chat-input"]')
+    await textarea.setValue('run this after the active task')
+    await textarea.trigger('keydown', { key: 'Enter', shiftKey: false, isComposing: false })
+
+    expect(wrapper.emitted('queue')?.[0]?.[0]).toBe('run this after the active task')
+    expect(wrapper.emitted('send')).toBeUndefined()
+    expect(wrapper.find('[data-testid="chat-stop-button"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="chat-queue-button"]').exists()).toBe(true)
+  })
+
+  it('keeps the draft disabled when the Follow-up queue is full', async () => {
+    const wrapper = mountInputArea({ queueMode: true, queueFull: true })
+    await wrapper.find('[data-testid="chat-input"]').setValue('keep this draft')
+
+    expect(wrapper.find('[data-testid="chat-queue-button"]').attributes('disabled')).toBeDefined()
   })
 })

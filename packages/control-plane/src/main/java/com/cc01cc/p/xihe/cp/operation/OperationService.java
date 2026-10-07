@@ -54,7 +54,11 @@ public class OperationService {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final int SCHEMA_VERSION = 1;
     private static final Map<String, List<String>> OPERATION_TRANSITIONS = Map.of(
-            "accepted", List.of("running", "completed", "failed", "cancelled"),
+            // PLAN-0442 A类修复：child 在 dispatch 前失败（contract「child commit后、
+            // Agent dispatch前→收敛 ambiguous、queue 暂停、不重放」）时 Operation 仍处
+            // accepted/waiting_for_approval，terminalize(reconcile) 必须允许收敛到
+            // ambiguous，否则 terminalize 整体回滚、child 永久停在 accepted。
+            "accepted", List.of("running", "completed", "failed", "cancelled", "ambiguous"),
             "running", List.of("waiting_for_approval", "completed", "failed", "cancelled",
                     "interrupted", "ambiguous"),
             // Rejection terminates while waiting; forcing a synthetic
@@ -64,7 +68,8 @@ public class OperationService {
             // the run's own terminal event is the authoritative transition
             // (PLAN-292 C1: otherwise the operation sticks at
             // waiting_for_approval forever after a successful approval).
-            "waiting_for_approval", List.of("running", "completed", "failed", "cancelled"));
+            "waiting_for_approval", List.of("running", "completed", "failed", "cancelled",
+                    "ambiguous"));
     private static final Map<String, List<String>> ITEM_TRANSITIONS = Map.of(
             // 2026-09-13 E2E（V11）：pending → completed 用于"写完即完成"的记录型
             // 条目（llm_usage），避免为它伪造 running 生命周期或残留 pending。

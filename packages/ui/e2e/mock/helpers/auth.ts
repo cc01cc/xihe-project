@@ -16,6 +16,7 @@ export interface MockSSEStream {
     retryable?: boolean
   }
   delayMs?: number
+  holdOpen?: boolean
 }
 
 export interface MockAuthOptions {
@@ -63,7 +64,7 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
   })
 
   if (options.sse) {
-    await page.addInitScript(({ tokens, retryTokens, errorAfterTokens, delayMs, optionsUsage }) => {
+    await page.addInitScript(({ tokens, retryTokens, errorAfterTokens, delayMs, optionsUsage, holdOpen }) => {
       const originalFetch = window.fetch.bind(window)
       let streamController: ReadableStreamDefaultController<Uint8Array> | null = null
       let streamClosed = false
@@ -94,6 +95,7 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
           if (!streamClosed && optionsUsage) {
             streamController.enqueue(encode(event('usage', optionsUsage)))
           }
+          if (holdOpen) return
           if (!streamClosed) {
             streamController.enqueue(encode(event('done', {})))
             streamController.close()
@@ -142,6 +144,7 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
       retryTokens: options.sse.retryTokens,
       errorAfterTokens: options.sse.errorAfterTokens,
       delayMs: options.sse.delayMs ?? 0,
+      holdOpen: options.sse.holdOpen ?? false,
     })
   }
 

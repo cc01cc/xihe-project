@@ -24,10 +24,16 @@ const URL = window.URL
 const props = defineProps<{
   sessionId: string
   isStreaming?: boolean
+  queueMode?: boolean
+  queueFull?: boolean
+  queuePaused?: boolean
+  queueSubmitting?: boolean
+  queueActionBusy?: boolean
 }>()
 
 const emit = defineEmits<{
   send: [content: string, attachments?: AttachmentFile[]]
+  queue: [content: string, attachments?: AttachmentFile[]]
   stop: []
 }>()
 
@@ -35,6 +41,7 @@ const { t } = useI18n()
 const input = ref('')
 const isComposing = ref(false)
 const attachments = ref<File[]>([])
+let uploadedByFile = new WeakMap<File, Map<string, AttachmentFile>>()
 const attachmentErrors = ref<Record<string, string>>({})
 const showSlashMenu = ref(false)
 const slashFilter = ref('')
@@ -54,6 +61,12 @@ const filteredCommands = computed(() => {
 })
 
 const sendDisabled = computed(() => {
+  if (props.queueMode) {
+    return !input.value.trim()
+      || Boolean(props.queueFull)
+      || Boolean(props.queueSubmitting)
+      || Boolean(props.queueActionBusy)
+  }
   return !input.value.trim() && attachments.value.length === 0
 })
 
@@ -99,35 +112,56 @@ const toolbarActions = computed<ToolbarAction[]>(() => [
       onClick: props.isStreaming ? stopInput : handleSend,
     },
     icon: markRaw(props.isStreaming ? Square : Send),
+    visible: props.isStreaming || !props.queueMode,
   },
 ])
 
 async function handleSend() {
   const text = input.value.trim()
-  if (!text && attachments.value.length === 0) return
+  if (sendDisabled.value || isUploading.value || props.queueSubmitting || props.queueActionBusy) return
+  const uploadSessionId = props.sessionId
 
   if (attachments.value.length > 0) {
-    isUploading.value = true
-    attachmentErrors.value = {}
-    try {
-      const { success, failed } = await uploadAttachments(props.sessionId, attachments.value)
-      if (failed.length > 0) {
-        for (const item of failed) {
-          attachmentErrors.value[item.name] = item.reason
-          toast.error(`${item.name}: ${item.reason}`)
+    const filesToUpload = attachments.value.filter((file) => !uploadedByFile.get(file)?.has(uploadSessionId))
+    if (filesToUpload.length > 0) {
+      isUploading.value = true
+      attachmentErrors.value = {}
+      try {
+        const { success, failed } = await uploadAttachments(uploadSessionId, filesToUpload)
+        if (props.sessionId !== uploadSessionId) return
+        if (failed.length > 0) {
+          for (const item of failed) {
+            attachmentErrors.value[item.name] = item.reason
+            toast.error(`${item.name}: ${item.reason}`)
+          }
         }
+        const matchedFiles = new Set<File>()
+        for (const uploaded of success) {
+          const file = filesToUpload.find((candidate) =>
+            !matchedFiles.has(candidate)
+            && candidate.name === uploaded.name
+            && candidate.size === uploaded.size
+            && candidate.type === uploaded.type)
+            ?? filesToUpload.find((candidate) => !matchedFiles.has(candidate) && candidate.name === uploaded.name)
+          if (file) {
+            const bySession = uploadedByFile.get(file) ?? new Map<string, AttachmentFile>()
+            bySession.set(uploadSessionId, uploaded)
+            uploadedByFile.set(file, bySession)
+            matchedFiles.add(file)
+          }
+        }
+      } finally {
+        isUploading.value = false
       }
-      if (success.length === 0) {
-        return
-      }
-      emit('send', text, success)
-    } finally {
-      isUploading.value = false
     }
-  } else {
-    emit('send', text)
   }
 
+  const uploaded = attachments.value
+    .map((file) => uploadedByFile.get(file)?.get(uploadSessionId))
+    .filter((attachment): attachment is AttachmentFile => attachment !== undefined)
+  if (attachments.value.length > 0 && uploaded.length === 0) return
+  if (props.queueMode) emit('queue', text, uploaded.length > 0 ? uploaded : undefined)
+  else emit('send', text, uploaded.length > 0 ? uploaded : undefined)
 }
 
 function stopInput() {
@@ -138,13 +172,18 @@ function executeSlash(cmd: SlashCommand) {
   const result = cmd.action()
   showSlashMenu.value = false
   if (result) {
-    emit('send', result)
+    handleSendText(result)
     return
   }
   if (cmd.key === '/clear') {
     input.value = ''
     showSlashMenu.value = false
   }
+}
+
+function handleSendText(text: string) {
+  if (props.queueMode) emit('queue', text)
+  else emit('send', text)
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -176,7 +215,9 @@ function handleKeydown(e: KeyboardEvent) {
 
   if (e.key === 'Enter' && !e.shiftKey && !isComposing.value) {
     e.preventDefault()
-    if (props.isStreaming) {
+    if (props.queueMode) {
+      handleSend()
+    } else if (props.isStreaming) {
       stopInput()
     } else {
       handleSend()
@@ -238,6 +279,7 @@ function attachmentObjectUrl(file: File): string {
 function clearDraft() {
   input.value = ''
   attachments.value = []
+  uploadedByFile = new WeakMap<File, Map<string, AttachmentFile>>()
   attachmentErrors.value = {}
 }
 
@@ -247,6 +289,14 @@ defineExpose({ clearDraft })
 <template>
   <div class="min-w-0 border-t bg-background px-4 py-3">
     <div class="mx-auto w-full max-w-4xl space-y-2">
+      <p
+        v-if="queueMode"
+        class="px-2 text-[11px] text-muted-foreground"
+        role="status"
+        data-testid="follow-up-composer-notice"
+      >
+        {{ queueFull ? t('chat.followUpFullNotice') : queuePaused ? t('chat.followUpPausedNotice') : t('chat.followUpComposerNotice') }}
+      </p>
       <div
         v-if="attachments.length"
         class="flex gap-2 flex-wrap"
@@ -330,7 +380,7 @@ defineExpose({ clearDraft })
           v-model="input"
           data-testid="chat-input"
           class="w-full min-h-[44px] max-h-[200px] px-2 py-2 bg-transparent resize-none text-sm placeholder:text-muted-foreground focus:outline-none field-sizing-content"
-          :placeholder="t('chat.placeholder')"
+          :placeholder="queueMode ? t('chat.followUpPlaceholder') : t('chat.placeholder')"
           rows="1"
           :style="{ fieldSizing: 'content' }"
           @compositionstart="isComposing = true"
@@ -338,13 +388,27 @@ defineExpose({ clearDraft })
           @keydown="handleKeydown"
           @input="handleInput"
         />
-        <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
           <InputToolbar :actions="toolbarActions" />
           <LoaderCircle
             v-if="isUploading"
             data-testid="attachment-uploading-indicator"
-            class="size-4 animate-spin text-muted-foreground"
+            class="size-4 shrink-0 animate-spin text-muted-foreground"
           />
+          <button
+            v-if="queueMode"
+            type="button"
+            data-testid="chat-queue-button"
+            :aria-label="t('chat.followUpEnqueue')"
+            :disabled="sendDisabled || isUploading || queueSubmitting || queueActionBusy"
+            class="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-lg px-3 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            :class="queuePaused ? 'border border-border bg-background text-foreground hover:bg-accent' : 'bg-primary text-primary-foreground hover:opacity-90'"
+            @click="handleSend"
+          >
+            <LoaderCircle v-if="queueSubmitting" class="size-3.5 animate-spin" />
+            <Send v-else class="size-3.5" />
+            <span>{{ queueSubmitting ? t('chat.followUpEnqueuing') : t('chat.followUpEnqueue') }}</span>
+          </button>
         </div>
       </div>
     </div>
