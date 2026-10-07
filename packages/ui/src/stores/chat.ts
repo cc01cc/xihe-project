@@ -332,6 +332,36 @@ export const useChatStore = defineStore("chat", () => {
         setSessionRunState(sessionId, "idle");
     }
 
+    function cancelStreaming(sessionId: string, runId: string) {
+        const messageId = streamingMessageId.value[sessionId];
+        const message = messages.value[sessionId]?.find((msg) => msg.id === messageId);
+        if (message && message.runId && message.runId !== runId) return;
+        if (message) {
+            if (!messageHasRenderableContent(message)) {
+                messages.value[sessionId] = messages.value[sessionId].filter(
+                    (msg) => msg.id !== messageId,
+                );
+            } else {
+                message.isStreaming = false;
+                message.runStatus = "cancelled";
+                message.terminalOutcome = "cancelled";
+                message.toolCalls = message.toolCalls?.map((toolCall) =>
+                    toolCall.status === "running" || toolCall.status === "pending"
+                        ? { ...toolCall, status: "cancelled" }
+                        : toolCall,
+                );
+                if (message.parts) {
+                    message.content = message.parts
+                        .filter((part) => part.type === "text")
+                        .map((part) => part.content)
+                        .join("");
+                }
+            }
+        }
+        streamingMessageId.value[sessionId] = null;
+        setSessionRunState(sessionId, "idle");
+    }
+
     /**
      * PLAN-0341 U3 case B: overflow retry keeps prior visible content but marks
      * it interrupted so the retry's new reply is the official answer.
@@ -476,7 +506,16 @@ export const useChatStore = defineStore("chat", () => {
             } else if (
                 ["cancelling", "cancelled", "failed", "ambiguous", "completed"].includes(res.status)
             ) {
-                agentStore.resolveApprovalsForRun(sessionId, runId);
+                if (res.status === "cancelling" || res.status === "cancelled") {
+                    cancelStreaming(sessionId, runId);
+                }
+                agentStore.resolveApprovalsForRun(
+                    sessionId,
+                    runId,
+                    res.status === "cancelling" || res.status === "cancelled"
+                        ? "expired"
+                        : "dispatch_unknown",
+                );
                 setSessionRunState(sessionId, "idle");
                 runRecovery.value[sessionId] = {
                     state: "cancelled",

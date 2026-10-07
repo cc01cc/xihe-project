@@ -379,6 +379,10 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
     @Test
     void cancelConvergesWithoutAgentEchoAndFallsBackToAborted() {
         ChatRun run = runWithLease("running", OWNER_A, Instant.now().plusSeconds(600));
+        String approvalId = UUID.randomUUID().toString();
+        approvalRepository.saveAndFlush(new ChatApproval(approvalId, run.getId().toString(), sessionId,
+                userId, workspaceId, "shell", "start background process", "{}", "pending",
+                Instant.now().plusSeconds(600)));
         var started = operationService.startOperation(userId, sessionId, workspaceId,
                 run.getId().toString(), UUID.randomUUID().toString(), "tool_call", "agent",
                 "agent", "agent-1", null, "test");
@@ -399,12 +403,18 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
                         userId, null,
                         java.util.List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_USER"))));
         ResponseEntity<java.util.Map<String, Object>> response;
+        ResponseEntity<java.util.Map<String, Object>> runStatus;
         try {
             response = chatController.cancelRun(run.getId().toString(), java.util.Map.of("reason", "user"));
+            runStatus = chatController.getRunStatus(run.getId().toString());
         } finally {
             org.springframework.security.core.context.SecurityContextHolder.clearContext();
+            com.cc01cc.p.xihe.cp.config.TenantContext.clear();
         }
         assertEquals(200, response.getStatusCode().value());
+        assertEquals(200, runStatus.getStatusCode().value());
+        assertTrue(((java.util.List<?>) runStatus.getBody().get("pendingApprovals")).isEmpty(),
+                "cancelled ChatRuns must not surface approvals that can no longer be acted on");
 
         ChatRun after = chatRunRepository.findById(run.getId()).orElseThrow();
         assertEquals("cancelled", after.getStatus(), "cancel must converge without an Agent echo");
@@ -417,6 +427,13 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
                 "SELECT status FROM mcp_invocations WHERE run_id = CAST(? AS UUID)",
                 String.class, run.getId().toString()),
                 "an unreachable/unconfirmed termination must land as cancelled in mcp_invocations");
+        assertEquals("expired", approvalRepository.findById(UUID.fromString(approvalId)).orElseThrow().getState(),
+                "a cancelled ChatRun must not leave a pending approval actionable");
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM approval_history WHERE request_id = CAST(? AS UUID) "
+                        + "AND event_type = 'expired' AND from_state = 'pending' AND to_state = 'expired'",
+                Integer.class, approvalId),
+                "run cancellation must retain approval expiry in its durable history");
     }
 
     /**

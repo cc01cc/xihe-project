@@ -67,6 +67,7 @@ const statusIcons: Record<string, typeof LoaderCircle> = {
     running: LoaderCircle,
     completed: CheckCircle,
     failed: XCircle,
+    cancelled: XCircle,
     approved: CheckCircle,
     rejected: XCircle,
 };
@@ -76,6 +77,7 @@ const statusColors: Record<string, string> = {
     running: "text-blue-500",
     completed: "text-green-500",
     failed: "text-red-500",
+    cancelled: "text-muted-foreground",
     approved: "text-green-500",
     rejected: "text-red-500",
 };

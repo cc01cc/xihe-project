@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { api } from "../../../composables/api";
 import { i18n } from "../../../i18n";
+import { useChatStore } from "../../../stores/chat";
 import SSEStream from "../SSEStream.vue";
 
 vi.mock("@/services/chatTransport", () => ({
@@ -55,6 +56,40 @@ describe("SSEStream session ownership", () => {
         await (wrapper.vm as unknown as { stopStreaming: () => void }).stopStreaming();
 
         expect(cancel).not.toHaveBeenCalled();
+        wrapper.unmount();
+    });
+
+    it("refreshes authoritative run state after cancelling from the stream", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockResolvedValue({
+                ok: true,
+                status: 202,
+                json: async () => ({ status: "accepted", sessionId: "session-a", runId: "run-a" }),
+            }),
+        );
+        const chatStore = useChatStore();
+        const refreshRunRecovery = vi
+            .spyOn(chatStore, "refreshRunRecovery")
+            .mockResolvedValue(undefined);
+        const cancel = vi
+            .spyOn(api, "cancelChatRun")
+            .mockResolvedValue({ status: "cancel_accepted", runId: "run-a" });
+        const wrapper = mount(SSEStream, {
+            props: { sessionId: "session-a", active: true },
+            global: { plugins: [i18n] },
+        });
+
+        await (
+            wrapper.vm as unknown as {
+                sendMessage: (content: string, options: { branchId: string }) => Promise<unknown>;
+            }
+        ).sendMessage("run", { branchId: "branch-a" });
+        (wrapper.vm as unknown as { stopStreaming: () => void }).stopStreaming();
+        await flushPromises();
+
+        expect(cancel).toHaveBeenCalledWith("run-a");
+        expect(refreshRunRecovery).toHaveBeenCalledWith("session-a", "run-a");
         wrapper.unmount();
     });
 });

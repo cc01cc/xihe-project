@@ -4,11 +4,45 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
 import { ensureAgentWorkspaceBinding, getRootBranchId } from "./helpers/journey";
-import { test, expect } from "@playwright/test";
+import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/job-resume");
+
+function waitForChatEventStream(page: Page, sessionId: string) {
+    return page.waitForResponse(
+        (response) => {
+            const url = new URL(response.url());
+            return (
+                url.pathname === "/api/v1/events" &&
+                url.searchParams.get("sessionId") === sessionId &&
+                response.status() === 200
+            );
+        },
+        { timeout: 30000 },
+    );
+}
+
+async function waitForControlPlaneAgentReady(
+    request: APIRequestContext,
+    headers: Record<string, string>,
+) {
+    await expect
+        .poll(
+            async () => {
+                const response = await request.get(`${CP_URL}/api/v1/status`, { headers });
+                if (!response.ok()) return `HTTP ${response.status()}`;
+                const body = (await response.json()) as {
+                    services?: Array<{ key: string; status?: string; llmReady?: string }>;
+                };
+                const agent = body.services?.find((service) => service.key === "agent");
+                return agent ? `${agent.status}/${agent.llmReady}` : "agent-status-missing";
+            },
+            { timeout: 30000, intervals: [250, 500, 1000] },
+        )
+        .toBe("up/ready");
+}
 
 // PLAN-0344 T1.4c：durable job 的真实 host 证据。
 // 链路：workspace 会话发起 start_background_process（审批）→ 刷新后 job 卡片
@@ -114,19 +148,102 @@ test.describe("@host PLAN-0344 durable job resume", () => {
         });
     }
 
+    test("@host PLAN-0464 stops a pending-approval ChatRun from the browser", async ({
+        page,
+        request,
+    }) => {
+        test.skip(LLM_MODE !== "job", "requires XIHE_E2E_LLM_MODE=job fake LLM marker mode");
+        await ensureAgentWorkspaceBinding(sharedWs);
+        await waitForControlPlaneAgentReady(request, sharedHeaders);
+        seedPage(page, sharedAuth, sharedWs);
+        const eventStream = waitForChatEventStream(page, suiteSessionId);
+        await page.goto("/workspace/" + sharedWs + "/chat/" + suiteSessionId, {
+            waitUntil: "load",
+        });
+        expect((await eventStream).status()).toBe(200);
+
+        const chatInput = page.locator('[data-testid="chat-input"]');
+        const modal = page.locator('[data-testid="modal-content"]');
+        await expect(chatInput).toBeVisible({ timeout: 20000 });
+
+        const submission = page.waitForResponse((response) => {
+            const url = new URL(response.url());
+            return url.pathname === "/api/v1/chat" && response.request().method() === "POST";
+        });
+        await chatInput.fill("XIHE-E2E-JOB cancel while approval is pending");
+        await page.getByTestId("chat-send-button").click();
+        const submitResponse = await submission;
+        expect(submitResponse.status()).toBe(202);
+        const runId = ((await submitResponse.json()) as { runId: string }).runId;
+
+        await expect(modal, "the fake job tool must reach its user approval gate").toBeVisible({
+            timeout: 120000,
+        });
+        await expect(page.getByTestId("chat-stop-button")).toBeVisible();
+        await page.getByTestId("modal-content").getByRole("button", { name: "Close" }).click();
+        await expect(modal).toBeHidden();
+        await expect(page.getByTestId("pending-approval-reopen-pill")).toBeVisible();
+
+        const cancelResponse = page.waitForResponse((response) => {
+            const url = new URL(response.url());
+            return (
+                url.pathname === `/api/v1/chat/runs/${runId}/cancel` &&
+                response.request().method() === "POST"
+            );
+        });
+        await page.getByTestId("chat-stop-button").click();
+        const response = await cancelResponse;
+        expect(response.status()).toBe(200);
+        expect(await response.json()).toMatchObject({ status: "cancel_accepted", runId });
+
+        await expect(modal).toBeHidden({ timeout: 15000 });
+        await expect(page.getByTestId("pending-approval-reopen-pill")).toHaveCount(0);
+        await expect(page.getByTestId("chat-send-button")).toBeVisible();
+        await expect(page.getByTestId("chat-stop-button")).toHaveCount(0);
+
+        await expect
+            .poll(
+                async () => {
+                    const result = await page.request.get(`${CP_URL}/api/v1/chat/runs/${runId}`, {
+                        headers: sharedHeaders,
+                    });
+                    if (!result.ok()) return `HTTP ${result.status()}`;
+                    const body = (await result.json()) as { status: string };
+                    return body.status;
+                },
+                { timeout: 15000, intervals: [200, 500, 1000] },
+            )
+            .toBe("cancelled");
+        const finalRun = await page.request.get(`${CP_URL}/api/v1/chat/runs/${runId}`, {
+            headers: sharedHeaders,
+        });
+        expect(finalRun.ok()).toBeTruthy();
+        expect(await finalRun.json()).toMatchObject({ status: "cancelled", pendingApprovals: [] });
+
+        mkdirSync(EVIDENCE_DIR, { recursive: true });
+        await page.screenshot({
+            path: path.join(EVIDENCE_DIR, "chat-run-cancelled-from-browser.png"),
+            fullPage: false,
+        });
+    });
+
     test("job card survives refresh, resumes output, and denies access after destroy", async ({
         page,
+        request,
     }) => {
         test.skip(LLM_MODE !== "job", "requires XIHE_E2E_LLM_MODE=job fake LLM marker mode");
         // PLAN-0369: single-binding Agent — rebind before the workspace-tool chat.
         await ensureAgentWorkspaceBinding(sharedWs);
+        await waitForControlPlaneAgentReady(request, sharedHeaders);
         mkdirSync(EVIDENCE_DIR, { recursive: true });
         seedPage(page, sharedAuth, sharedWs);
+        const eventStream = waitForChatEventStream(page, suiteSessionId);
         // cad8e727/0401 后 fresh workspace 无零会话 composer；直接进 beforeAll
         // bootstrap 出的会话路由（session-branch 同路径）。
         await page.goto("/workspace/" + sharedWs + "/chat/" + suiteSessionId, {
             waitUntil: "load",
         });
+        expect((await eventStream).status()).toBe(200);
 
         const chatInput = page.locator('[data-testid="chat-input"]');
         await expect(chatInput).toBeVisible({ timeout: 20000 });

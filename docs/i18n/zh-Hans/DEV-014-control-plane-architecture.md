@@ -107,6 +107,7 @@ flowchart LR
 - **执行域记账（PLAN-0463 T1.2）**：gate 在 grant 校验**之前**建 `mcp_invocations`（`source=agent`，幂等键 `(run_id, tool_call_id)`）；SSE relay 的 `agent_tool` attempt 与 MCP Proxy 的 `cp_forward` attempt 同步落 `mcp_attempts`，流转事件追加 `mcp_dispatch_history`；用户直连 mutation 建 `source=direct_user` invocation（**best-effort**：建行失败只记日志、不阻断执行）。Grant 工具上下文校验主路径 = `ChatRun lease + invocation active + scope`；**PLAN-0464 T2.2 后这是唯一路径**（operation/item 校验分支与 `X-Operation-Id` 已删除）。run 终态对账仍滞留 `active` 的 `source=agent` invocation（gate 建行、relay 丢失）。
 - **Runtime 不可达/未确认** → 账本落 `aborted` 并保留追偿：Runtime 复核结束后优先回调 `POST /internal/v1/mcp/invocations/{invocationId}/late-termination`（新增，append `mcp_dispatch_history`，`unknown → late_confirmed`），无 invocation id 时回退 `POST /internal/v1/operations/items/{itemId}/late-termination`（已标 deprecated，下线挂 0467）；两者都不回改已终态。
 - **恢复与对账**：启动恢复把崩溃遗留的 `cancelling` 收敛为 `cancelled`；`ChatRunReconciliationService` 周期（默认 5 分钟，宽限 10 分钟）收敛无 lease 且超宽限的非终态 run（`cancelling → cancelled`，其余 `ambiguous(CP_RECONCILED)`），并收口 operation 与在途 item/attempt；**本进程活跃 run 一律跳过**（防误伤）。
+- **审批随 Run 终态收口**：`ChatRunTerminalService` 在同一终态事务中过期仍为 `pending`/`dispatch_unknown` 的 `approval_requests` 并追加 `approval_history(expired)`；`dispatching` 决策不被并发取消强行改写。UI Stop 在 CP cancel 返回后刷新权威 ChatRun 状态，避免已取消 run 的待审批重开条残留。
 - 账本写路径约束：批量状态转换显式刷新 `updated_at`（`CURRENT_INSTANT`）；`appendItem` 先对 operation 行加悲观锁再分配序号，`appendEvent` 用聚合 `max`。
 
 ## 8. 当前事实：PLAN-0328 审批与 workspace checkpoint 切片

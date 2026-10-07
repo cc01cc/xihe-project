@@ -148,7 +148,7 @@ export interface ToolCall {
     runId?: string;
     name: string;
     arguments: string;
-    status: "running" | "completed" | "failed" | "pending";
+    status: "running" | "completed" | "failed" | "pending" | "cancelled";
     result?: string;
     error?: string;
     startedAt?: string;
@@ -351,7 +351,7 @@ export interface Message {
     runId?: string;
     operationId?: string;
     runStatus?: ChatRunResponse["status"] | "interrupted";
-    terminalOutcome?: "success" | "error" | "partial" | "ambiguous";
+    terminalOutcome?: "success" | "error" | "partial" | "ambiguous" | "cancelled";
     errorCode?: string;
     error?: string;
     retryable?: boolean;

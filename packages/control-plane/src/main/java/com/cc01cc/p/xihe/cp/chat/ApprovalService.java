@@ -46,6 +46,7 @@ public class ApprovalService {
     private static final Logger logger = LoggerFactory.getLogger(ApprovalService.class);
     private static final List<String> REPLAYABLE_STATES = List.of("pending", "dispatching", "dispatch_unknown");
     private static final List<String> ACTIONABLE_SUMMARY_STATES = List.of("pending", "dispatch_unknown");
+    private static final List<String> TERMINAL_EXPIRABLE_STATES = List.of("pending", "dispatch_unknown");
     private static final int MAX_ACTION_LENGTH = 512;
     private static final int MAX_DETAILS_LENGTH = 512;
     private static final int MAX_ARGUMENTS_HASH_LENGTH = 96;
@@ -303,6 +304,32 @@ public class ApprovalService {
                         && approval.getExpiresAt().isAfter(Instant.now()))
                 .map(approval -> payloadFor(approval, true))
                 .toList();
+    }
+
+    /** Terminal ChatRuns cannot leave an unanswered approval that can be replayed or granted later. */
+    @Transactional
+    public int expirePendingForTerminalRun(String runId, String terminalStatus) {
+        if (runId == null || runId.isBlank()) {
+            return 0;
+        }
+        Instant now = Instant.now();
+        int expired = 0;
+        for (ChatApproval approval : approvalRepository.findByRunIdAndStateIn(
+                runId, TERMINAL_EXPIRABLE_STATES)) {
+            int changed = approvalRepository.expireUnresolvedForRunTerminal(approval.getRequestId(), now);
+            if (changed != 1) {
+                continue;
+            }
+            appendApprovalHistory(approval, ApprovalHistory.EVENT_EXPIRED, approval.getState(), "expired",
+                    null, null, "system",
+                    "{\"reason\":\"chat_run_terminal\",\"terminalStatus\":\"" + terminalStatus + "\"}");
+            expired++;
+        }
+        if (expired > 0) {
+            logger.info("[LIFECYCLE] service=cp event=run_pending_approvals_expired runId={} terminalStatus={} count={}",
+                    runId, terminalStatus, expired);
+        }
+        return expired;
     }
 
     /**

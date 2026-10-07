@@ -112,6 +112,7 @@ public class ChatRunTerminalService {
     private final EntityManager entityManager;
     private final ChatRunRepository chatRuns;
     private final SessionRepository sessions;
+    private final ApprovalService approvalService;
     private final ChatRunHistoryWriter historyWriter;
     private final EventStoreService eventStoreService;
     private final McpInvocationService mcpInvocationService;
@@ -126,6 +127,7 @@ public class ChatRunTerminalService {
             EntityManager entityManager,
             ChatRunRepository chatRuns,
             SessionRepository sessions,
+            ApprovalService approvalService,
             ChatRunHistoryWriter historyWriter,
             EventStoreService eventStoreService,
             McpInvocationService mcpInvocationService,
@@ -138,6 +140,7 @@ public class ChatRunTerminalService {
         this.entityManager = entityManager;
         this.chatRuns = chatRuns;
         this.sessions = sessions;
+        this.approvalService = approvalService;
         this.historyWriter = historyWriter;
         this.eventStoreService = eventStoreService;
         this.mcpInvocationService = mcpInvocationService;
@@ -206,6 +209,8 @@ public class ChatRunTerminalService {
             return new TerminalResult(Outcome.LOST, run.getStatus());
         }
         entityManager.refresh(run);
+
+        approvalService.expirePendingForTerminalRun(runId.toString(), request.status());
 
         historyWriter.append(request.source().eventType(), request.source().source(), "system",
                 runId, sessionId, fromStatus, request.status(), request.terminalOutcome(),
