@@ -89,7 +89,7 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
         mkdirSync(EVIDENCE_DIR, { recursive: true });
         const ctx = await registerJourneyUser(request, "real-compat");
         const wsId = ctx.workspaceId;
-        const headers = ctx.headers;
+        const headers = { ...ctx.headers, "X-Workspace-Id": wsId };
         // PLAN-0372 (BL-28): per-run workspace binding; the restart contract in
         // this mode carries XIHE_OPENAI_API_KEY (same real key, never printed).
         await ensureAgentWorkspaceBinding(wsId);
@@ -251,27 +251,26 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
                 await expect
                     .poll(
                         async () => {
-                            const res = await request.get(`${CP_URL}/api/v1/operations?size=1`, {
-                                headers,
-                            });
+                            const res = await request.get(
+                                `${CP_URL}/api/v1/chat/sessions/${sessionId}/runs?page=0&size=1`,
+                                {
+                                    headers,
+                                },
+                            );
                             const body = (await res.json()) as {
-                                operations?: Array<{ status?: string }>;
+                                runs?: Array<{ status?: string }>;
                             };
-                            return body.operations?.[0]?.status ?? "unknown";
+                            return body.runs?.[0]?.status ?? "unknown";
                         },
                         { timeout: 120000, intervals: [2_000] },
                     )
-                    .toBe("completed");
+                    .toBe("succeeded");
             }
         }
 
-        // Round-trip facts are the success criteria: the file landed, the ledger
-        // recorded a completed write_file item, and the assistant reply was
-        // persisted. The durable ROOT status is recorded (`b-observed.json`) for
-        // the PLAN evidence: 2026-09-19 real-run observation shows the run and
-        // operation parking at awaiting_approval/waiting_for_approval after a
-        // successful post-approval completion (CP lifecycle gap, out of this
-        // harness-only PLAN's scope — see evidence/m2-real-ab.md).
+        // Round-trip facts are the success criteria: the file landed, the
+        // canonical MCP invocation/attempt reached success, and the assistant
+        // reply plus terminal ChatRun outcome were persisted.
         const messagesRes = await request.get(
             `${CP_URL}/api/v1/sessions/${sessionId}/messages?branchId=${branchId}`,
             {
@@ -314,26 +313,40 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
             )
             .toBeGreaterThan(0);
 
-        const opsRes = await request.get(`${CP_URL}/api/v1/operations?size=1`, { headers });
-        expect(opsRes.ok(), `operations list ${opsRes.status()}`).toBeTruthy();
-        const op = (
-            (await opsRes.json()) as { operations?: Array<{ id?: string; status?: string }> }
-        ).operations?.[0];
-        expect(op?.id, "operation id resolvable").toBeTruthy();
-        const traceRes = await request.get(`${CP_URL}/api/v1/operations/${op?.id}`, { headers });
-        const trace = (await traceRes.json()) as {
-            items?: Array<{ toolName?: string; status?: string }>;
+        expect(assistant?.runStatus).toBe("succeeded");
+        expect(assistant?.terminalOutcome).toBe("success");
+
+        const auditRes = await request.get(
+            `${CP_URL}/api/v1/audit/entries?sessionId=${sessionId}&type=mcp_invocation&page=0&size=50`,
+            { headers },
+        );
+        expect(auditRes.ok(), `audit entries ${auditRes.status()}`).toBeTruthy();
+        const auditPage = (await auditRes.json()) as {
+            entries?: Array<{ id?: string; type?: string; summary?: string; status?: string }>;
         };
-        // The approval gate creates several ledger rows for the same tool call
-        // (agent attempt + gate + approved re-dispatch); the completed one is the
-        // real execution — assert at least one reached `completed`.
-        const writeFileItems = (trace.items ?? []).filter((item) => item.toolName === "write_file");
-        expect(
-            writeFileItems.some((item) => item.status === "completed"),
-            `write_file must complete through the real tool chain (statuses: ${writeFileItems
-                .map((item) => item.status)
-                .join(",")})`,
-        ).toBe(true);
+        const invocation = auditPage.entries?.find(
+            (entry) =>
+                entry.type === "mcp_invocation" &&
+                entry.summary === "write_file" &&
+                entry.status === "completed",
+        );
+        expect(invocation?.id, "completed write_file MCP invocation is visible").toBeTruthy();
+
+        const detailRes = await request.get(
+            `${CP_URL}/api/v1/audit/entries/mcp_invocation/${invocation?.id}`,
+            { headers },
+        );
+        expect(detailRes.ok(), `MCP invocation detail ${detailRes.status()}`).toBeTruthy();
+        const detail = (await detailRes.json()) as {
+            entry?: { status?: string; summary?: string };
+            timeline?: Array<{ eventType?: string }>;
+            attempts?: Array<{ stage?: string; status?: string }>;
+        };
+        expect(detail.entry).toMatchObject({ status: "completed", summary: "write_file" });
+        expect(detail.timeline?.some((event) => event.eventType === "invocation.opened")).toBe(
+            true,
+        );
+        expect(detail.attempts?.some((attempt) => attempt.status === "succeeded")).toBe(true);
         writeFileSync(
             path.join(EVIDENCE_DIR, "b-observed.json"),
             JSON.stringify(
@@ -343,9 +356,11 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
                     runStatus: assistant?.runStatus ?? null,
                     terminalOutcome: assistant?.terminalOutcome ?? null,
                     errorCode: assistant?.errorCode ?? null,
-                    operationId: op?.id ?? null,
-                    operationStatus: op?.status ?? null,
-                    writeFileItemStatuses: writeFileItems.map((item) => item.status ?? null),
+                    mcpInvocationId: invocation?.id ?? null,
+                    mcpInvocationStatus: detail.entry?.status ?? null,
+                    mcpAttemptStages: detail.attempts?.map((attempt) => attempt.stage ?? null),
+                    mcpAttemptStatuses: detail.attempts?.map((attempt) => attempt.status ?? null),
+                    mcpTimelineTypes: detail.timeline?.map((event) => event.eventType ?? null),
                     assistantChars: (assistant?.content ?? "").length,
                     observedAt: new Date().toISOString(),
                 },

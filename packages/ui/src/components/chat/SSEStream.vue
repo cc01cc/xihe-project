@@ -180,7 +180,7 @@ function connectSession(id: string) {
         onUsage: (data) => {
             if (!isCurrentSession()) return;
             // PLAN-0343: keep the latest run-terminal usage snapshot for the
-            // session-header usage line (live-run visibility; ledger is durable).
+            // session-header usage line.
             chatStore.setSessionLastUsage(id, data as ChatRunUsage);
         },
         onToolCall: (name: string, args: Record<string, unknown>) => {
@@ -259,9 +259,11 @@ function stopStreaming() {
     const runId = activeRunId ?? chatStore.getSessionRunId(sessionId);
     activeRunId = undefined;
     if (runId && sessionId === props.sessionId) {
-        api.cancelChatRun(runId).catch((err) => {
-            logger.warn("Failed to cancel chat run:", err);
-        });
+        void api
+            .cancelChatRun(runId)
+            .catch((error) => logger.warn("Failed to cancel chat run:", error))
+            .then(() => chatStore.refreshRunRecovery(sessionId, runId))
+            .catch((error) => logger.warn("Failed to reconcile cancelled chat run:", error));
     }
     disconnect();
     chatStore.setSessionRunState(sessionId, "idle");

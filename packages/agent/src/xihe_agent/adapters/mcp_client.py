@@ -116,10 +116,10 @@ class ToolWait(NamedTuple):
 
 
 def _resolve_tool_wait(tool_name: str, context: "AgentContext | None") -> ToolWait:
-    # 关联键（spec S5.1）：与 CP/Runtime 共用的 toolCallId（= 随请求透传的 operationItemId）。
+    # Correlation key shared with CP/Runtime for this tool invocation.
     tool_call_id: str | None = None
     if context is not None:
-        raw_id = context.metadata.get("operationItemId")
+        raw_id = context.metadata.get("toolCallId")
         if raw_id:
             tool_call_id = str(raw_id)
     delivered: float | None = None
@@ -168,23 +168,34 @@ def _per_call_timeout_header(context: AgentContext | None, tool_name: str) -> di
     return {}
 
 
-def _context_headers(context: AgentContext | None, tool_name: str) -> dict[str, str]:
+_JOB_SCOPED_TOOLS = frozenset({"get_background_process", "cancel_background_process"})
+
+
+def _context_headers(
+    context: AgentContext | None, tool_name: str, arguments: dict[str, Any] | None = None
+) -> dict[str, str]:
     """上下文动态头（原 ApprovalMCPInterceptor 职责，决策 #34 迁移后由本模块直接构造）。"""
     headers: dict[str, str] = {}
     if context is not None:
         metadata = context.metadata
         session_id = metadata.get("sessionId")
         run_id = metadata.get("runId")
-        operation_id = metadata.get("operationId")
         if session_id:
             headers["X-Session-Id"] = str(session_id)
         if run_id:
             headers["X-Chat-Run-Id"] = str(run_id)
-        if operation_id:
-            headers["X-Operation-Id"] = str(operation_id)
-        operation_item_id = metadata.get("operationItemId")
-        if operation_item_id:
-            headers["X-Operation-Item-Id"] = str(operation_item_id)
+        tool_call_id = metadata.get("toolCallId")
+        if tool_call_id:
+            headers["X-Tool-Call-Id"] = str(tool_call_id)
+    # PLAN-0465（0463 gap 4 生产方收口）：job-scoped dispatch 携带 X-Job-Id——
+    # 工具实参已知 jobId（get/cancel_background_process）时发送该 Runtime handle，
+    # CP 转发后 Runtime 侧 `Correlation.job_id` 才能对上日志时间线；值 = Agent
+    # 持有的 Runtime handle（0465 不改 Agent 侧 jobId 语义，见
+    # plans/PLAN-0465-xh-workspace-job-store/evidence/m0-baseline.md T0.2 表 #8）。
+    if tool_name in _JOB_SCOPED_TOOLS and isinstance(arguments, dict):
+        job_id = arguments.get("jobId")
+        if isinstance(job_id, str) and job_id.strip():
+            headers["X-Job-Id"] = job_id.strip()
     # T1.9：per-call 值随工具调用单独携带（CP 校验后采纳为最高优先输入）。
     headers.update(_per_call_timeout_header(context, tool_name))
     return headers
@@ -335,7 +346,7 @@ class MCPAgentTool(BaseAgentTool):
                 val = payload.get(key)
                 if isinstance(val, str) and val.startswith("/") and not val.startswith("//") and ".." not in val:
                     payload[key] = val[1:]
-            headers = _context_headers(context, self._tool.name)
+            headers = _context_headers(context, self._tool.name, payload)
             # PLAN-0337 M2：单一派发路径。是否弹窗由 CP 闸门判定；本模块不预判、不预取 grant，
             # 仅在闸门返回 409 APPROVAL_REQUIRED 时等待决定并携 grant 重试一次（_retry_after_gate）。
             # PLAN-0308 M1：等待值由 CP 计算（含余量与冷启动增量），本模块只执行；
@@ -429,7 +440,7 @@ class MCPAgentTool(BaseAgentTool):
         if approval_tool is None:
             raise ApprovalProtocolError("CP gate approval requires a local approval coordinator")
         tool_call_id = ""
-        raw_id = context.metadata.get("operationItemId") if context is not None else None
+        raw_id = context.metadata.get("toolCallId") if context is not None else None
         if raw_id:
             tool_call_id = str(raw_id)
         logger.info(

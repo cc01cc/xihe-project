@@ -69,11 +69,11 @@ public class PolicyEngine {
     }
 
     public boolean hasCurrentAgentToolCall(String userId, String workspaceId, String sessionId,
-                                           String runId, String operationId, String toolCallId,
+                                           String runId, String toolCallId,
                                            String toolName) {
         return grantAuthorizationService != null
                 && grantAuthorizationService.hasCurrentAgentToolCall(
-                        userId, workspaceId, sessionId, runId, operationId, toolCallId, toolName);
+                        userId, workspaceId, sessionId, runId, toolCallId, toolName);
     }
 
     public static class PolicyDecision {

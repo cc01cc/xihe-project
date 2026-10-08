@@ -244,7 +244,6 @@ def test_tool_result_event_written_by_gate_default_is_legacy(monkeypatch):
     monkeypatch.delenv(EVENT_WRITER_V2_ENV, raising=False)
     assert langgraph_runner_module.event_writer_v2_enabled() is False
     payload = langgraph_runner_module._tool_event_payload(
-        {"operation_id": "op-1", "operation_item_id": "c1"},
         call_id="c1",
         tool_name="read_file",
         run_id="run-1",
@@ -252,7 +251,7 @@ def test_tool_result_event_written_by_gate_default_is_legacy(monkeypatch):
         result=None,
         include_status=False,
     )
-    assert list(payload) == ["call_id", "tool_name", "tool_input", "operation_id", "operation_item_id"]
+    assert list(payload) == ["call_id", "tool_name", "tool_input"]
     assert payload["call_id"] == "c1"
     assert "schemaVersion" not in payload
 
@@ -421,7 +420,7 @@ async def test_writer_gate_off_emits_legacy_payload(monkeypatch):
     events = [call.args[0] for call in event_store.append.await_args_list]
     called = next(e for e in events if e.type == "tool.called")
     result = next(e for e in events if e.type == "tool.result")
-    assert list(called.payload) == ["call_id", "tool_name", "tool_input", "operation_id", "operation_item_id"]
+    assert list(called.payload) == ["call_id", "tool_name", "tool_input"]
     assert list(result.payload)[:3] == ["call_id", "tool_name", "result"]
     assert "schemaVersion" not in called.payload
     assert "status" not in result.payload

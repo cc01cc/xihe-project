@@ -28,8 +28,8 @@ import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
+import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
-import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -94,6 +94,9 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
     private MessageRepository messageRepository;
 
     @Autowired
+    private McpInvocationRepository mcpInvocationRepository;
+
+    @Autowired
     private ChatRunRepository chatRunRepository;
 
     @Autowired
@@ -102,8 +105,6 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
-    @Autowired
-    private LedgerOperationRepository ledgerOperationRepository;
 
     @Autowired
     private SessionRepository sessionRepository;
@@ -295,7 +296,7 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
         assertEquals(0, jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ?", Integer.class, sessionId));
         assertTrue(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).isEmpty());
-        assertTrue(ledgerOperationRepository.findBySessionIdOrderByCreatedAtDesc(sessionId).isEmpty());
+        assertFalse(mcpInvocationRepository.existsBySessionId(sessionId));
     }
 
     @Test

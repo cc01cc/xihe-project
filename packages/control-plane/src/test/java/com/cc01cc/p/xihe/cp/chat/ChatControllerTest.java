@@ -20,6 +20,7 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.TaskScheduler;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -48,9 +49,8 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
-import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
 import com.cc01cc.p.xihe.cp.status.HealthMonitor;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
+import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.cc01cc.p.xihe.cp.service.AgentTemplateService;
 import com.cc01cc.p.xihe.cp.service.BranchPathService;
@@ -65,6 +65,7 @@ import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -74,6 +75,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
@@ -118,19 +120,10 @@ class ChatControllerTest extends AbstractH2Test {
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
-    private LedgerOperationRepository ledgerOperationRepository;
-
-    @Autowired
-    private com.cc01cc.p.xihe.cp.repository.OperationItemRepository operationItemRepository;
-
-    @Autowired
-    private com.cc01cc.p.xihe.cp.repository.OperationExtensionRepository operationExtensionRepository;
-
-    @Autowired
     private com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository configJpaRepository;
 
     @Autowired
-    private OperationService operationService;
+    private McpInvocationRepository mcpInvocationRepository;
 
     @Autowired
     private AgentPrincipalService agentPrincipalService;
@@ -146,6 +139,15 @@ class ChatControllerTest extends AbstractH2Test {
 
     @Autowired
     private SseEmitterManager sseEmitterManager;
+
+    @Autowired
+    private ChatController chatController;
+
+    @MockitoSpyBean
+    private FollowUpQueueService followUpQueueService;
+
+    @MockitoSpyBean
+    private TaskScheduler taskScheduler;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -298,7 +300,7 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(0, jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ?", Integer.class, sessionId));
         assertTrue(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).isEmpty());
-        assertTrue(ledgerOperationRepository.findBySessionIdOrderByCreatedAtDesc(sessionId).isEmpty());
+        assertFalse(mcpInvocationRepository.existsBySessionId(sessionId));
     }
 
     @Test
@@ -314,6 +316,50 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals("INVALID_REQUEST", response.getBody().get("code"));
         assertEquals(0, jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ?", Integer.class, sessionId));
+    }
+
+    @Test
+    void transientFollowUpAdmissionFailureSchedulesOneBoundedRetry() {
+        AtomicReference<Runnable> retryCallback = new AtomicReference<>();
+        ScheduledFuture<?> scheduled = Mockito.mock(ScheduledFuture.class);
+        Mockito.doAnswer(invocation -> {
+            retryCallback.set(invocation.getArgument(0));
+            return scheduled;
+        }).when(taskScheduler).schedule(Mockito.any(Runnable.class), Mockito.any(java.time.Instant.class));
+        Mockito.doThrow(new IllegalStateException("temporary admission failure"))
+                .when(followUpQueueService).admitHead(Mockito.eq(sessionId), Mockito.any());
+
+        chatController.onFollowUpQueueWakeup(new FollowUpQueueWakeupEvent(sessionId));
+
+        assertNotNull(retryCallback.get(), "a durable queued head should get one scheduled retry");
+        retryCallback.get().run();
+
+        Mockito.verify(followUpQueueService, Mockito.times(2))
+                .admitHead(Mockito.eq(sessionId), Mockito.any());
+        Mockito.verify(taskScheduler, Mockito.times(1))
+                .schedule(Mockito.any(Runnable.class), Mockito.any(java.time.Instant.class));
+    }
+
+    @Test
+    void failedFollowUpAdmissionSchedulesOneBoundedRetryAfterReleasingReservation() {
+        AtomicReference<Runnable> retryCallback = new AtomicReference<>();
+        ScheduledFuture<?> scheduledFuture = Mockito.mock(ScheduledFuture.class);
+        Mockito.doAnswer(invocation -> {
+            retryCallback.set(invocation.getArgument(0));
+            return scheduledFuture;
+        }).when(taskScheduler).schedule(Mockito.any(Runnable.class), Mockito.any(java.time.Instant.class));
+        Mockito.doThrow(new IllegalStateException("temporary admission failure"))
+                .when(followUpQueueService).admitHead(Mockito.eq(sessionId), Mockito.any());
+
+        chatController.onFollowUpQueueWakeup(new FollowUpQueueWakeupEvent(sessionId));
+
+        assertNotNull(retryCallback.get(), "the failed durable queue head must get one scheduled re-wakeup");
+        retryCallback.get().run();
+
+        Mockito.verify(followUpQueueService, Mockito.times(2))
+                .admitHead(Mockito.eq(sessionId), Mockito.any());
+        Mockito.verify(taskScheduler, Mockito.times(1))
+                .schedule(Mockito.any(Runnable.class), Mockito.any(java.time.Instant.class));
     }
 
     @Test
@@ -456,10 +502,12 @@ class ChatControllerTest extends AbstractH2Test {
                 baseUrl + "/api/v1/chat/runs/" + run.getId(), HttpMethod.GET,
                 new HttpEntity<>(headers), Map.class);
         assertEquals(ChatRun.ORIGIN_USER_SUBMISSION, recovered.getBody().get("origin"));
-        String operationId = (String) response.getBody().get("operationId");
-        assertNotNull(operationId);
-        assertEquals(operationId, ledgerOperationRepository.findByRunId(run.getId().toString()).orElseThrow().getId().toString());
-        assertEquals("completed", ledgerOperationRepository.findByRunId(run.getId().toString()).orElseThrow().getStatus());
+        // PLAN-0464 T1.1: ChatRun is the only root — the submit response carries
+        // no operationId and the terminal writes exactly one history row.
+        assertNull(response.getBody().get("operationId"));
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM chat_run_history WHERE run_id = CAST(? AS UUID)",
+                Integer.class, run.getId().toString()), "the terminal must write exactly one chat_run_history row");
     }
 
     @Test
@@ -585,7 +633,8 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(first.getBody().get("runId"), second.getBody().get("runId"));
         assertEquals(ChatRun.ORIGIN_USER_SUBMISSION, first.getBody().get("origin"));
         assertEquals(ChatRun.ORIGIN_USER_SUBMISSION, second.getBody().get("origin"));
-        assertEquals(first.getBody().get("operationId"), second.getBody().get("operationId"));
+        assertFalse(first.getBody().containsKey("operationId"));
+        assertFalse(second.getBody().containsKey("operationId"));
         assertEquals(first.getBody().get("runId"), jdbcTemplate.queryForObject(
                 "SELECT injected_run_id::text FROM inbox WHERE id = ?", String.class, inboxId),
                 "the first parent Run must claim the pending Inbox row");
@@ -677,19 +726,25 @@ class ChatControllerTest extends AbstractH2Test {
 
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
         pollMessages(5000);
-        UUID operationId = UUID.fromString((String) response.getBody().get("operationId"));
-        Map<String, Object> trace = operationService.getOperationTrace(operationId);
-        // PLAN-0338：终态还会异步追加 checkpoint 切片标记（kind=checkpoint），
-        // 本用例只断言 tool 事实条目。
-        List<?> items = ((List<?>) trace.get("items")).stream()
-                .filter(item -> "tool_call".equals(
-                        ((com.cc01cc.p.xihe.cp.entity.OperationItem) item).getKind()))
-                .toList();
-        List<?> attempts = (List<?>) trace.get("attempts");
-        assertEquals(1, items.size());
-        assertEquals("completed", ((com.cc01cc.p.xihe.cp.entity.OperationItem) items.get(0)).getStatus());
-        assertEquals(1, attempts.size());
-        assertEquals("succeeded", ((com.cc01cc.p.xihe.cp.entity.OperationAttempt) attempts.get(0)).getStatus());
+        // PLAN-0464 T2.2: the relay only writes the MCP execution domain now —
+        // one agent invocation keyed by the canonical toolCallId plus its
+        // agent_tool attempt, both settled by the tool_result event.
+        String runId = (String) response.getBody().get("runId");
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
+            assertEquals(1, jdbcTemplate.queryForObject(
+                    "SELECT count(*) FROM mcp_invocations WHERE run_id = CAST(? AS UUID) "
+                            + "AND tool_call_id = CAST(? AS UUID) AND source = 'agent'",
+                    Integer.class, runId, toolCallId));
+            assertEquals("completed", jdbcTemplate.queryForObject(
+                    "SELECT status FROM mcp_invocations WHERE run_id = CAST(? AS UUID) "
+                            + "AND tool_call_id = CAST(? AS UUID)",
+                    String.class, runId, toolCallId));
+            assertEquals(1, jdbcTemplate.queryForObject(
+                    "SELECT count(*) FROM mcp_attempts a JOIN mcp_invocations i ON a.invocation_id = i.id "
+                            + "WHERE i.run_id = CAST(? AS UUID) AND i.tool_call_id = CAST(? AS UUID) "
+                            + "AND a.stage = 'agent_tool' AND a.status = 'succeeded'",
+                    Integer.class, runId, toolCallId));
+        });
     }
 
     @Test
@@ -927,16 +982,14 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals("structured", policy.get("shape"));
         assertTrue(policy.get("reason") instanceof String reason && !reason.isBlank());
         assertFalse(policy.toString().contains("secret.md"));
-        var ledgerItem = operationService.findItemByApprovalRequestId(requestId);
-        assertNotNull(ledgerItem);
-        assertFalse(ledgerItem.getArgumentsPreview().contains("\"policy\""));
-        Map<String, Object> replay = approvalService.replayPending(sessionId, userId, workspaceId).stream()
-                .filter(item -> requestId.equals(item.get("requestId")))
-                .findFirst().orElseThrow();
-        assertEquals(event.keySet(), replay.keySet());
+        String historyPreview = jdbcTemplate.queryForObject(
+                "SELECT payload::text FROM approval_history "
+                        + "WHERE request_id = CAST(? AS UUID) AND event_type = 'requested'",
+                String.class, requestId);
+        assertNotNull(historyPreview, "PLAN-0464 T1.5: the approval creation writes approval_history");
+        assertFalse(historyPreview.contains("\"policy\""));
         assertEquals("pending", event.get("state"));
         assertEquals(Boolean.FALSE, event.get("replayed"));
-        assertEquals(Boolean.TRUE, replay.get("replayed"));
         assertFalse(event.containsKey("agentOnly"));
     }
 
@@ -1005,6 +1058,16 @@ class ChatControllerTest extends AbstractH2Test {
         }
     }
 
+    /** PLAN-0464 T1.4: reads the run-scoped llm.usage ContextEvent written at terminal. */
+    private String usageEventPayload(String runId) {
+        String payload = jdbcTemplate.query(
+                "SELECT payload::text FROM context_events "
+                        + "WHERE correlation_id = ? AND event_type = 'llm.usage'",
+                rs -> rs.next() ? rs.getString(1) : null, runId);
+        assertNotNull(payload, "the terminal must have written the llm.usage ContextEvent");
+        return payload;
+    }
+
     private List<Message> pollMessages(long timeoutMs) {
         long deadline = System.currentTimeMillis() + timeoutMs;
         while (System.currentTimeMillis() < deadline) {
@@ -1031,10 +1094,9 @@ class ChatControllerTest extends AbstractH2Test {
     @Test
     void chat_withUsageEvent_persistsExtensionAndWritesTokenCount() throws IOException {
         // PLAN-294 M1 (decisions #13/#14): the relay must intercept the
-        // agent's usage event, persist it as an llm_usage extension, and
+        // agent's usage event, persist it as an llm.usage ContextEvent, and
         // write chat_runs.token_count from usage.totalTokens instead of the
-        // SSE chunk counter. This path was silently blocked by the
-        // operation_items.kind CHECK until V10 — guard it here.
+        // SSE chunk counter.
         String sseBody = "event: token\ndata: {\"content\":\"hi\"}\n\n"
                 + "event: usage\ndata: {\"usage\":{\"inputTokens\":120,\"outputTokens\":30,\"totalTokens\":150,"
                 + "\"estimatedInputTokens\":140,\"source\":\"real\"}}\n\n"
@@ -1071,17 +1133,11 @@ class ChatControllerTest extends AbstractH2Test {
             // Real totalTokens (150), not the SSE chunk count (1 token event).
             assertEquals(150, run.getTokenCount());
 
-            UUID operationId = ledgerOperationRepository.findByRunId(runId).orElseThrow().getId();
-            var items = operationItemRepository.findByOperationIdOrderBySequenceAsc(operationId.toString());
-            var usageItem = items.stream()
-                    .filter(i -> "llm_usage".equals(i.getKind()))
-                    .findFirst().orElseThrow();
-            var extension = operationExtensionRepository
-                    .findByItemIdAndExtensionKindAndSchemaVersion(usageItem.getId().toString(), "llm_usage", 1)
-                    .orElseThrow();
-            assertTrue(extension.getPayload().contains("source"), "usage extension payload must carry source tag");
-            // 2026-09-13 E2E（V11）：usage 条目写完即 completed，不得残留 pending。
-            assertEquals("completed", usageItem.getStatus());
+            // PLAN-0464 T1.4: the terminal writes llm.usage from the relay's
+            // in-memory usageData — one run-scoped ContextEvent, no extension row.
+            String payload = usageEventPayload(runId);
+            assertTrue(payload.contains("source"), "usage event payload must carry source tag");
+            assertTrue(payload.contains("totalTokens"), "usage event payload must carry the token counts");
         });
     }
 
@@ -1128,18 +1184,11 @@ class ChatControllerTest extends AbstractH2Test {
 
         String runId = (String) response.getBody().get("runId");
         org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
-            UUID operationId = ledgerOperationRepository.findByRunId(runId).orElseThrow().getId();
-            var items = operationItemRepository.findByOperationIdOrderBySequenceAsc(operationId.toString());
-            var usageItem = items.stream()
-                    .filter(i -> "llm_usage".equals(i.getKind()))
-                    .findFirst().orElseThrow();
-            var extension = operationExtensionRepository
-                    .findByItemIdAndExtensionKindAndSchemaVersion(usageItem.getId().toString(), "llm_usage", 1)
-                    .orElseThrow();
-            assertTrue(extension.getPayload().contains("\"costSource\":\"price_table\""),
+            String payload = usageEventPayload(runId);
+            assertTrue(payload.contains("\"costSource\":\"price_table\""),
                     "mapped payload must carry costSource=price_table");
-            assertTrue(extension.getPayload().contains("\"cost\":0.0"), "mapped payload must carry computed cost");
-            assertTrue(extension.getPayload().contains("deepseek/deepseek-v4-flash"),
+            assertTrue(payload.contains("\"cost\":0.0"), "mapped payload must carry computed cost");
+            assertTrue(payload.contains("deepseek/deepseek-v4-flash"),
                     "mapped payload must carry the model key");
         });
     }
@@ -1179,19 +1228,12 @@ class ChatControllerTest extends AbstractH2Test {
 
         String runId = (String) response.getBody().get("runId");
         org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
-            UUID operationId = ledgerOperationRepository.findByRunId(runId).orElseThrow().getId();
-            var items = operationItemRepository.findByOperationIdOrderBySequenceAsc(operationId.toString());
-            var usageItem = items.stream()
-                    .filter(i -> "llm_usage".equals(i.getKind()))
-                    .findFirst().orElseThrow();
-            var extension = operationExtensionRepository
-                    .findByItemIdAndExtensionKindAndSchemaVersion(usageItem.getId().toString(), "llm_usage", 1)
-                    .orElseThrow();
-            assertTrue(extension.getPayload().contains("\"costSource\":\"unmapped\""),
+            String payload = usageEventPayload(runId);
+            assertTrue(payload.contains("\"costSource\":\"unmapped\""),
                     "unmapped model must carry costSource=unmapped");
-            assertTrue(extension.getPayload().contains("\"cost\":null"),
+            assertTrue(payload.contains("\"cost\":null"),
                     "unmapped model must carry cost=null (never 0)");
-            assertTrue(extension.getPayload().contains("model not in pricing config"),
+            assertTrue(payload.contains("model not in pricing config"),
                     "unmapped row must carry a costNote reason");
         });
     }
@@ -1284,7 +1326,7 @@ class ChatControllerTest extends AbstractH2Test {
                 baseUrl + "/api/v1/chat", HttpMethod.POST, chatEntity(request, headers), Map.class);
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
         String runId = (String) response.getBody().get("runId");
-        String operationId = (String) response.getBody().get("operationId");
+        assertNull(response.getBody().get("operationId"), "PLAN-0464 T1.1: no operationId on the wire");
 
         try {
             org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
@@ -1305,8 +1347,6 @@ class ChatControllerTest extends AbstractH2Test {
 
             assertEquals("running",
                     chatRunRepository.findById(UUID.fromString(runId)).orElseThrow().getStatus());
-            assertEquals("running",
-                    ledgerOperationRepository.findById(UUID.fromString(operationId)).orElseThrow().getStatus());
         } finally {
             releaseStream.countDown();
         }
@@ -1315,16 +1355,17 @@ class ChatControllerTest extends AbstractH2Test {
             assertEquals("succeeded",
                     chatRunRepository.findById(UUID.fromString(runId)).orElseThrow().getStatus());
         });
-        assertEquals("completed",
-                ledgerOperationRepository.findById(UUID.fromString(operationId)).orElseThrow().getStatus());
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM chat_run_history WHERE run_id = CAST(? AS UUID)",
+                Integer.class, runId), "PLAN-0464 T1.3: exactly one terminal history row");
         verify(runCheckpointService, timeout(5000)).requestCapture(runId);
-        List<?> toolItems = operationItemRepository.findByOperationIdOrderBySequenceAsc(operationId).stream()
-                .filter(item -> "tool_call".equals(
-                        ((com.cc01cc.p.xihe.cp.entity.OperationItem) item).getKind()))
-                .toList();
-        assertEquals(1, toolItems.size());
-        assertEquals("completed",
-                ((com.cc01cc.p.xihe.cp.entity.OperationItem) toolItems.get(0)).getStatus());
+        // PLAN-0464 T2.2: the relayed tool fact is the execution-domain invocation.
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
+            assertEquals("completed", jdbcTemplate.queryForObject(
+                    "SELECT status FROM mcp_invocations WHERE run_id = CAST(? AS UUID) "
+                            + "AND tool_call_id = CAST(? AS UUID) AND source = 'agent'",
+                    String.class, runId, toolCallId));
+        });
     }
 
     @Test
@@ -1358,15 +1399,16 @@ class ChatControllerTest extends AbstractH2Test {
                 baseUrl + "/api/v1/chat", HttpMethod.POST, chatEntity(request, headers), Map.class);
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
         String runId = (String) response.getBody().get("runId");
-        String operationId = (String) response.getBody().get("operationId");
+        assertNull(response.getBody().get("operationId"), "PLAN-0464 T1.1: no operationId on the wire");
 
         verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("approval_request"), any());
         org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
             assertEquals("succeeded",
                     chatRunRepository.findById(UUID.fromString(runId)).orElseThrow().getStatus());
         });
-        assertEquals("completed",
-                ledgerOperationRepository.findById(UUID.fromString(operationId)).orElseThrow().getStatus());
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM chat_run_history WHERE run_id = CAST(? AS UUID)",
+                Integer.class, runId), "PLAN-0464 T1.3: exactly one terminal history row");
         verify(runCheckpointService, timeout(5000)).requestCapture(runId);
     }
 

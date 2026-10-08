@@ -10,10 +10,17 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Commits approval rows and their optional metadata in isolated transactions. */
+/**
+ * Commits approval rows and their optional metadata in the caller's transaction.
+ *
+ * <p>PLAN-0464 T1.5: the isolated {@code REQUIRES_NEW} transactions are gone —
+ * they left a partial-commit window where the approval row was durable while its
+ * approval-history write was not. Row, policy summary and
+ * history now form a single approval-domain transaction that commits or rolls
+ * back together.</p>
+ */
 @Component
 public class ApprovalPendingStore {
 
@@ -30,12 +37,12 @@ public class ApprovalPendingStore {
         this.policySummary = policySummary;
     }
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional
     public ChatApproval save(ChatApproval approval) {
         return approvalRepository.save(approval);
     }
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional
     public String capturePolicySummary(UUID requestId, String tool, String sessionId,
                                        String userId, String workspaceId) {
         Optional<Map<String, Object>> summary = policySummary.buildAtCreation(

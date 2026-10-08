@@ -29,7 +29,7 @@ spec/
 |-- architecture/       # 模块边界、通信、运行拓扑
 |-- ui/                  # 交互状态、设计系统、可访问性
 |-- agent/               # 执行模型、Context/工具、Agent 绑定
-|-- session/             # Chat Session、ChatRun/Operation、MCP session
+|-- session/             # Chat Session、ChatRun、MCP session
 |-- security/            # 认证、授权、审批、能力策略、审计
 |-- workspace/           # 生命周期、Sandbox、Checkpoint、导入、事件
 |-- configuration/       # env/config 生效链和凭证
@@ -53,16 +53,17 @@ spec/
 | ui interaction | proposed | partial | UI + 跨边界 owner | UI、CP、Agent、Session、Workspace | A03-xihe | PLAN-0388；PLAN-0384 仅负责 feature flow |
 | agent execution / Context | proposed | partial | Agent owner | Agent、CP、Runtime、UI、Security | A03-xihe | PLAN-0387；PLAN-0381/0382 局部规范状态见其文件级消费者/来源字段 |
 | agent run guardrails（总览索引） | proposed | partial | Agent owner（索引 owner，不裁决跨域规则） | Agent、CP、Runtime、Security、UI、后续 XH PLAN | A03-xihe | PLAN-0429；只导航风险类别/执行层/实现状态，领域细则仍归各 owner SPEC |
-| session boundaries | proposed | partial | CP/Session owner | UI、CP/Session、Agent、Context、Operation、Workspace、Runtime/MCP | A03-xihe | PLAN-0387；Chat Session、ChatRun/Operation、MCP session 分开；fork/branch actions 见 PLAN-0409；派生协作 Inbox 见 PLAN-0408 |
+| session boundaries | proposed | partial | CP/Session owner | UI、CP/Session、Agent、Context、Workspace、Runtime/MCP | A03-xihe | PLAN-0387；Chat Session、ChatRun 与 MCP session 分开；fork/branch actions 见 PLAN-0409；派生协作 Inbox 见 PLAN-0408；Ledger 根行由 PLAN-0467 退役 |
 | session branch context isolation | active | partial | CP Context + Agent Context owners | CP Chat/EventStore/Context、Agent Context、UI | A03-xihe | PLAN-0410；V43 数据面已实现并承接 child `session.forked` seed consumer（T3.6），公开 branch selector、fork action 与浏览器验收由 PLAN-0409 消费；不覆盖 PLAN-0387 的 Session 生命周期 SPEC |
 | authentication / authorization | proposed | partial | Security owner | Authentication：CP API、UI 登录、Agent/Runtime 内部客户端；Authorization：CP policy、Workspace API、MCP 工具门、UI 结果 | A03-xihe | PLAN-0386；principal/role/scope 归 Security |
 | agent role/scope binding | proposed | partial | Agent owner | CP、Agent、Runtime、UI 审计 | A03-xihe | PLAN-0387；只写绑定、传播和消费，不复制授权模型 |
 | agent principal / Workspace binding | active | partial | Agent binding owner（PLAN-0374；Security canonical 归 PLAN-0407） | CP authorization/session/MCP、Workspace Agent API、Agent、UI Agent 管理与 Session 选择 | A03-xihe | PLAN-0374 principal/Workspace binding、template CRUD/form 与 V5/V6/V7 已完成；fork 创建归 PLAN-0409/0410；Agent 铸造与多层审批后置 BL-70/71 |
-| capability / approval / audit | proposed | partial | Runtime/Security/CP owners | Capability：Runtime、CP、UI；Approval：CP、Agent、UI、Audit；Audit：CP、授权/审批调用方、Operation | A03-xihe | PLAN-0386/0389；能力策略、审批、审计分别建模 |
+| capability / approval / audit | proposed | partial | Runtime/Security/CP owners | Capability：Runtime、CP、UI；Approval：CP、Agent、UI、Audit；Audit：CP、授权/审批调用方 | A03-xihe | PLAN-0386/0389；能力策略、审批、审计分别建模 |
 | workspace / sandbox / checkpoint | proposed | partial | Workspace/Runtime owners | CP、Runtime、UI、Agent | A03-xihe | PLAN-0389 |
 | execution job / scope / durable continuation | proposed | partial | CP durable-record + Runtime Job owners | CP Job API/durable record、Runtime Job backend、UI、Agent | A03-xihe | PLAN-0390; backend adapters PLAN-0392–0395; Workspace release PLAN-0391 |
 | configuration / env | proposed | partial | CP ConfigService owner | CP、Agent、Runtime、UI、Audit | A03-xihe | PLAN-0389；以现行配置模型整合历史来源 |
-| protocol / data | proposed | partial | 对应协议和 durable-record owners | Protocol：UI、CP、Agent、Runtime；Operation Ledger：CP、Agent、Runtime、UI、Audit | A03-xihe | PLAN-0385；OpenAPI/inventory/schema 保持各自事实源 |
+| protocol | proposed | partial | 对应协议 owners | UI、CP、Agent、Runtime | A03-xihe | PLAN-0385；OpenAPI/inventory/schema 保持各自事实源 |
+| Operation Ledger data model | superseded | retired | replaced by ChatRun/MCP/Workspace Job/Approval owners | historical consumers only | A03-xihe | PLAN-0467 / V56；参见 retired SPEC 与 migration/recovery evidence |
 
 ## 4. Agent 读取规则
 
@@ -85,7 +86,7 @@ PLAN-0385 已建立第一批架构/通信/事件/账本草案。它们仍为 `pr
 - [Runtime 运行拓扑](architecture/runtime-topology.md)
 - [事件流](protocol/event-stream.md)
 - [MCP 通信边界](protocol/mcp.md)
-- [Operation Ledger](data/operation-ledger.md)
+- [Operation Ledger (superseded by PLAN-0467)](data/operation-ledger.md)
 
 PLAN-0386 已建立 Security proposed 草案；当前 User/JWT/USER-ADMIN 实现与 DEV-032 的 independent Agent principal 目标仍存在 gap，未标记 active：
 
@@ -102,7 +103,7 @@ PLAN-0387 已建立 Agent/Session proposed 草案；它们只冻结执行、绑�
 - [Agent role/scope 绑定与传播](agent/role-scope-binding.md)
 - [Agent Context 与 Tool 边界](agent/context-tool.md)
 - [Chat Session 生命周期](session/chat-session.md)
-- [ChatRun 与 Operation 生命周期](session/chat-run-operation.md)
+- [ChatRun 与 Operation 生命周期（superseded）](session/chat-run-operation.md)
 - [Runtime MCP Session 生命周期](session/mcp-session.md)
 
 PLAN-0429 建立 Agent Run 护栏的跨域总览索引（风险类别、执行层、canonical owner 与实现状态导航；不复制领域细则、不新建策略裁决点，缺口盘点与 backlog 去向以 XH 台账为准）：

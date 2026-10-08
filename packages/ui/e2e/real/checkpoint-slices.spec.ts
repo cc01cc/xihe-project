@@ -23,7 +23,7 @@
  *   - ONE registered user/workspace per process: retries would re-register and
  *     the Agent cannot rebind → serial mode + `retries: 0`;
  *   - a Run must be terminal before the next send (409 CHAT_IN_PROGRESS): every
- *     send first polls the operation ledger to a terminal state;
+ *     send first polls the ChatRun audit state to a terminal state;
  *   - no fixed sleeps: readiness uses expect.poll / explicit timeouts only;
  *   - the C0 baseline is materialized explicitly (first test) so slice-count
  *     deltas per Run are deterministic — otherwise the first Run under test
@@ -46,6 +46,7 @@ import {
 import path from "node:path";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import {
+    awaitLatestChatRunCompleted,
     CP_URL,
     ensureAgentWorkspaceBinding,
     registerJourneyUser,
@@ -70,9 +71,7 @@ const SEED_FILE = `s0-seed-${NONCE}.md`;
 const SEED_CONTENT = `S0-SEED-${NONCE}-read-only-target\n`;
 
 const TERMINAL_RUN_PATTERN = /^(succeeded|failed|partial|ambiguous|cancelled)$/;
-// A fresh user has an empty operation ledger until the first send — "no
-// operation yet" is a ready state, not a terminal one.
-const TERMINAL_OPERATION_OR_NONE = /^(completed|failed|cancelled|interrupted|ambiguous|none)$/;
+// A fresh user has no ChatRun before the first send.
 const SLICE_REF_PATTERN = /^refs\/xihe\/slices\/\d+-[0-9a-f]{40}$/;
 
 interface CheckpointChangedFile {
@@ -236,21 +235,12 @@ async function runStatus(
     return ((await res.json()) as { status?: string }).status ?? "unknown";
 }
 
-/** Same-session sends must wait for the previous Run's ledger row to settle. */
+/** Same-session sends must wait for the previous ChatRun to settle. */
 async function awaitPreviousRunSettled(
     request: APIRequestContext,
     headers: Record<string, string>,
 ): Promise<void> {
-    await expect
-        .poll(
-            async () => {
-                const res = await request.get(`${CP_URL}/api/v1/operations?size=1`, { headers });
-                const body = (await res.json()) as { operations?: Array<{ status?: string }> };
-                return body.operations?.[0]?.status ?? "none";
-            },
-            { timeout: 180000, intervals: [1000, 2000] },
-        )
-        .toMatch(TERMINAL_OPERATION_OR_NONE);
+    await awaitLatestChatRunCompleted(request, headers);
 }
 
 async function awaitRunTerminal(

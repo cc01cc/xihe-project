@@ -60,6 +60,12 @@ public interface ChatApprovalRepository extends JpaRepository<ChatApproval, UUID
             + "where a.requestId = :requestId and a.state in ('pending', 'dispatching', 'dispatch_unknown')")
     int markExpired(@Param("requestId") UUID requestId, @Param("at") Instant at);
 
+    @Transactional
+    @Modifying
+    @Query("update ChatApproval a set a.state = 'expired', a.decidedAt = :at, a.updatedAt = :at "
+            + "where a.requestId = :requestId and a.state in ('pending', 'dispatch_unknown')")
+    int expireUnresolvedForRunTerminal(@Param("requestId") UUID requestId, @Param("at") Instant at);
+
     /**
      * Claims a pending/dispatch_unknown row for dispatch.
      *

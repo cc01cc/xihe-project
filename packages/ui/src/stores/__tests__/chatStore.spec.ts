@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
+import { api } from "../../composables/api";
 import { useChatStore } from "../chat";
 
 vi.mock("../../composables/api", async (importOriginal) => {
@@ -9,6 +10,7 @@ vi.mock("../../composables/api", async (importOriginal) => {
         api: {
             ...actual.api,
             getChatRunStatus: vi.fn(),
+            getPendingApprovals: vi.fn().mockResolvedValue([]),
         },
     };
 });
@@ -465,6 +467,14 @@ describe("refreshRunRecovery tri-state (PLAN-292 M3 C2/C3)", () => {
                 },
             ],
         });
+        vi.mocked(api.getPendingApprovals).mockResolvedValueOnce([
+            {
+                sessionId: SESSION_ID,
+                workspaceId: "workspace-a",
+                count: 1,
+                oldestRequestedAt: "2026-10-08T00:00:00Z",
+            },
+        ]);
         const store = useChatStore();
         await store.refreshRunRecovery(SESSION_ID, RUN_ID);
         expect(store.runRecovery[SESSION_ID]?.state).toBe("resumed");
@@ -488,6 +498,14 @@ describe("refreshRunRecovery tri-state (PLAN-292 M3 C2/C3)", () => {
                 },
             ],
         });
+        vi.mocked(api.getPendingApprovals).mockResolvedValueOnce([
+            {
+                sessionId: SESSION_ID,
+                workspaceId: "workspace-a",
+                count: 1,
+                oldestRequestedAt: "2026-10-08T00:00:00Z",
+            },
+        ]);
         const store = useChatStore();
         await store.refreshRunRecovery(SESSION_ID, RUN_ID);
         expect(store.runRecovery[SESSION_ID]?.state).toBe("resumed");
@@ -502,6 +520,52 @@ describe("refreshRunRecovery tri-state (PLAN-292 M3 C2/C3)", () => {
         const store = useChatStore();
         await store.refreshRunRecovery(SESSION_ID, RUN_ID);
         expect(store.runRecovery[SESSION_ID]?.state).toBe("cancelled");
+    });
+
+    it("expires the local approval when a ChatRun is cancelled", async () => {
+        const { useAgentStore } = await import("../agent");
+        const agent = useAgentStore();
+        const store = useChatStore();
+        agent.addApprovalRequest({
+            requestId: TERMINAL_REQUEST_ID,
+            runId: RUN_ID,
+            sessionId: SESSION_ID,
+            tool: "write_file",
+            action: "write",
+            details: "d",
+            state: "pending",
+        });
+        vi.mocked(api.getPendingApprovals).mockResolvedValueOnce([
+            {
+                sessionId: SESSION_ID,
+                workspaceId: "workspace-a",
+                count: 1,
+                oldestRequestedAt: "2026-10-07T00:00:00Z",
+            },
+        ]);
+        await agent.refreshPendingApprovals();
+        expect(agent.pendingApprovalCount(SESSION_ID)).toBe(1);
+        store.createStreamingMessage(SESSION_ID, RUN_ID);
+        store.upsertToolCall(SESSION_ID, {
+            id: "tool-call-1",
+            name: "start_background_process",
+            arguments: "{}",
+            status: "running",
+        });
+        await mockStatus("cancelled");
+        await store.refreshRunRecovery(SESSION_ID, RUN_ID);
+
+        expect(agent.agentState.pendingApprovals).toEqual([]);
+        expect(agent.pendingApprovalCount(SESSION_ID)).toBe(0);
+        expect(agent.resolvedApprovals[TERMINAL_REQUEST_ID]?.state).toBe("expired");
+        expect(store.isStreaming(SESSION_ID)).toBe(false);
+        const message = store.getMessages(SESSION_ID).find((item) => item.runId === RUN_ID);
+        expect(message).toMatchObject({
+            isStreaming: false,
+            runStatus: "cancelled",
+            terminalOutcome: "cancelled",
+            toolCalls: [{ status: "cancelled" }],
+        });
     });
 
     it("retry when the lease expired on a running run", async () => {

@@ -877,7 +877,6 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
     workspace_id: str | None = data.get("workspaceId") or None
     request_id: str = request.headers.get("X-Request-Id") or str(uuid4())
     run_id: str = request.headers.get("X-Chat-Run-Id") or data.get("runId") or str(uuid4())
-    operation_id: str | None = request.headers.get("X-Operation-Id") or data.get("operationId") or None
     model_override: str | None = data.get("model")
     provider_override: str | None = data.get("provider")
     tool_mode: str = data.get("toolMode", "none")
@@ -1129,8 +1128,6 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
             payload = dict(event_data)
             payload.setdefault("requestId", request_id)
             payload.setdefault("runId", run_id)
-            if operation_id:
-                payload.setdefault("operationId", operation_id)
             return payload
 
         try:
@@ -1185,7 +1182,6 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                         "runId": run_id,
                         "sessionId": session_id,
                         "workspaceId": workspace_id,
-                        "operationId": operation_id,
                         "branchId": context.branch_id,
                     }
                 )
@@ -1203,7 +1199,6 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                             "sessionId": session_id,
                             "workspaceId": workspace_id,
                             "requestId": request_id,
-                            "operationId": operation_id,
                             "provider": request_config.provider,
                             "model": model_override or request_config.model,
                             "toolMode": tool_mode,

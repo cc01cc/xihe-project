@@ -1036,14 +1036,14 @@ fn cancel_status(end: Option<ExecutionEnd>) -> (&'static str, bool) {
     }
 }
 
-/// 内部取消端点：按 (workspaceId, operationItemId) 定位在途执行并触发中止，
+/// 内部取消端点：按 (workspaceId, toolCallId) 定位在途执行并触发中止，
 /// 有界等待容器确认。找不到 → 404（幂等，不算错误）。
 async fn cancel_execution_handler(
     State(state): State<Arc<AppState>>,
-    Path((ws_id, item_id)): Path<(String, String)>,
+    Path((ws_id, tool_call_id)): Path<(String, String)>,
 ) -> Response {
     let in_flight = state.router.in_flight();
-    let Some(mut outcome) = in_flight.request_termination(&ws_id, &item_id) else {
+    let Some(mut outcome) = in_flight.request_termination(&ws_id, &tool_call_id) else {
         let request_id = uuid::Uuid::new_v4().to_string();
         return (
             StatusCode::NOT_FOUND,
@@ -1053,7 +1053,7 @@ async fn cancel_execution_handler(
                 "title": "Execution not found",
                 "status": 404,
                 "code": "EXECUTION_NOT_FOUND",
-                "detail": "No in-flight execution for this workspace and operation item",
+                "detail": "No in-flight execution for this workspace and tool call",
                 "requestId": request_id
             })),
         )
@@ -1649,13 +1649,12 @@ pub struct JobOutputRequest {
     limit: Option<u64>,
 }
 
-/// PLAN-0390: internal job-start request from CP. camelCase to match the
-/// Xihe-owned JSON contract (`operationItemId` / `timeoutSecs`).
+/// Internal job-start request from CP. `jobId` is the canonical Workspace Job identity.
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct JobStartRequest {
-    /// Operation-ledger item that owns this job (durable anchor).
-    pub operation_item_id: String,
+    /// Canonical Workspace Job identity.
+    pub job_id: String,
     pub command: String,
     #[serde(default)]
     pub args: Vec<String>,
@@ -2003,7 +2002,7 @@ async fn workspace_job_start_handler(
     AxumJson(req): AxumJson<JobStartRequest>,
 ) -> Result<(StatusCode, AxumJson<serde_json::Value>), (StatusCode, AxumJson<serde_json::Value>)> {
     let JobStartRequest {
-        operation_item_id,
+        job_id,
         command,
         args,
         timeout_secs,
@@ -2018,7 +2017,7 @@ async fn workspace_job_start_handler(
             &ws_id,
             &context.mode,
             &context.workspace_path,
-            &operation_item_id,
+            &job_id,
             &command,
             args,
             cwd,
@@ -2034,14 +2033,14 @@ async fn workspace_job_start_handler(
         .start_background_process(&ws_id, &command, args, Some(timeout_secs))
         .await
     {
-        Ok(job_id) => {
-            let job_id = normalize_job_id(&serde_json::Value::String(job_id));
+        Ok(runtime_job_id) => {
+            let runtime_job_id = normalize_job_id(&serde_json::Value::String(runtime_job_id));
             Ok((
                 StatusCode::ACCEPTED,
                 AxumJson(serde_json::json!({
                     "jobId": job_id,
+                    "runtimeJobId": runtime_job_id,
                     "status": "running",
-                    "operationItemId": operation_item_id,
                     "bootId": app.boot_id,
                 })),
             ))
@@ -2064,7 +2063,7 @@ async fn start_direct_attach_job(
     ws_id: &str,
     mode: &str,
     workspace_path: &str,
-    operation_item_id: &str,
+    job_id: &str,
     command: &str,
     args: Vec<String>,
     cwd: Option<String>,
@@ -2099,19 +2098,19 @@ async fn start_direct_attach_job(
                 env: env.unwrap_or_default(),
                 timeout_secs,
             },
-            &app.job_engine.output_dir(operation_item_id),
+            &app.job_engine.output_dir(job_id),
         )
         .map_err(job_engine_problem)?;
         return match app
             .job_engine
-            .start_in_workspace(Some(ws_id), operation_item_id, plan)
+            .start_in_workspace(Some(ws_id), job_id, plan)
         {
             Ok(_handle) => Ok((
                 StatusCode::ACCEPTED,
                 AxumJson(serde_json::json!({
-                    "jobId": operation_item_id,
+                    "jobId": job_id,
+                    "runtimeJobId": job_id,
                     "status": "running",
-                    "operationItemId": operation_item_id,
                     "bootId": app.boot_id,
                 })),
             )),
@@ -2134,20 +2133,20 @@ async fn start_direct_attach_job(
     .map_err(job_engine_problem)?;
     tracing::warn!(
         workspace_id = %workspace_path,
-        job_id = %operation_item_id,
+        job_id = %job_id,
         backend_kind = plan.backend_kind,
         "PLAN-0395: starting an unrestricted host job (no filesystem isolation)"
     );
     match app
         .job_engine
-        .start_in_workspace(Some(ws_id), operation_item_id, plan)
+        .start_in_workspace(Some(ws_id), job_id, plan)
     {
         Ok(_handle) => Ok((
             StatusCode::ACCEPTED,
             AxumJson(serde_json::json!({
-                "jobId": operation_item_id,
+                "jobId": job_id,
+                "runtimeJobId": job_id,
                 "status": "running",
-                "operationItemId": operation_item_id,
                 "bootId": app.boot_id,
             })),
         )),
@@ -2903,7 +2902,7 @@ fn build_app_router(app_state: &Arc<AppState>) -> Router {
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route(
-            "/internal/v1/runtime/workspaces/{ws_id}/executions/{item_id}/cancel",
+            "/internal/v1/runtime/workspaces/{ws_id}/executions/{tool_call_id}/cancel",
             post(cancel_execution_handler),
         )
         .route(
@@ -3503,22 +3502,26 @@ async fn mcp_config_poll_loop(
 /// runs on the first tick and then every 5th (PLAN-0317 decision #3, J-1).
 const JOB_CLEANUP_EVERY_TICKS: u64 = 5;
 
-/// PLAN-0317 T2.9（决策 #14）：把追偿确认的迟到终止回报给 CP——CP 只追加
-/// `item.terminated.late` 事件，不回改 item 终态。
+/// Report a confirmed late termination to the CP owner of the MCP invocation.
+fn late_termination_url(cp_url: &str, late: &xihe_runtime::executor::LateTermination) -> String {
+    format!(
+        "{cp_url}/internal/v1/mcp/invocations/{}/late-termination",
+        late.invocation_id
+    )
+}
+
 async fn report_late_termination(
     cp_url: &str,
     api_token: &str,
     late: &xihe_runtime::executor::LateTermination,
 ) {
-    let url = format!(
-        "{cp_url}/internal/v1/operations/items/{}/late-termination",
-        late.item_id
-    );
+    let url = late_termination_url(cp_url, late);
+    let target = late.invocation_id.clone();
     let Ok(client) = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
     else {
-        tracing::warn!(item_id = %late.item_id, "late-termination: HTTP client build failed");
+        tracing::warn!(tool_call_id = %late.tool_call_id, "late-termination: HTTP client build failed");
         return;
     };
     match client
@@ -3530,21 +3533,21 @@ async fn report_late_termination(
     {
         Ok(response) if response.status().is_success() => {
             tracing::info!(
-                item_id = %late.item_id,
+                target = %target,
                 workspace_id = %late.workspace_id,
                 "late-termination reported to CP"
             );
         }
         Ok(response) => {
             tracing::warn!(
-                item_id = %late.item_id,
+                target = %target,
                 status = %response.status(),
                 "late-termination report rejected by CP"
             );
         }
         Err(error) => {
             tracing::warn!(
-                item_id = %late.item_id,
+                target = %target,
                 error = %error,
                 "late-termination report failed"
             );
@@ -3875,6 +3878,29 @@ mod cancel_endpoint_tests {
         )
         .await;
         assert_eq!(cross.status(), StatusCode::NOT_FOUND);
+    }
+}
+
+#[cfg(test)]
+mod late_termination_route_tests {
+    use super::late_termination_url;
+    use xihe_runtime::executor::LateTermination;
+
+    fn late(invocation_id: &str) -> LateTermination {
+        LateTermination {
+            tool_call_id: "tool-call-1".to_string(),
+            workspace_id: "ws-1".to_string(),
+            confirmed: true,
+            invocation_id: invocation_id.to_string(),
+        }
+    }
+
+    #[test]
+    fn late_termination_targets_only_the_mcp_invocation() {
+        assert_eq!(
+            late_termination_url("http://cp", &late("inv-1")),
+            "http://cp/internal/v1/mcp/invocations/inv-1/late-termination"
+        );
     }
 }
 
@@ -4312,13 +4338,13 @@ mod remote_handler_tests {
     #[test]
     fn job_start_request_deserializes_camel_case_fields() {
         let req: JobStartRequest = serde_json::from_value(serde_json::json!({
-            "operationItemId": "x",
+            "jobId": "x",
             "command": "echo",
             "args": ["a"],
             "timeoutSecs": 5,
         }))
         .expect("camelCase job start request");
-        assert_eq!(req.operation_item_id, "x");
+        assert_eq!(req.job_id, "x");
         assert_eq!(req.command, "echo");
         assert_eq!(req.args, vec!["a".to_string()]);
         assert_eq!(req.timeout_secs, 5);
@@ -4329,12 +4355,21 @@ mod remote_handler_tests {
     #[test]
     fn job_start_request_defaults_args_and_timeout() {
         let req: JobStartRequest = serde_json::from_value(serde_json::json!({
-            "operationItemId": "x",
+            "jobId": "x",
             "command": "echo",
         }))
         .expect("minimal job start request");
         assert!(req.args.is_empty());
         assert_eq!(req.timeout_secs, 0);
+    }
+
+    #[test]
+    fn job_start_request_rejects_ledger_alias() {
+        let result = serde_json::from_value::<JobStartRequest>(serde_json::json!({
+            "operationItemId": "x",
+            "command": "echo",
+        }));
+        assert!(result.is_err());
     }
 
     #[test]
@@ -5487,6 +5522,7 @@ mod job_engine_route_tests {
     use axum::extract::{Path, State};
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+    use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
     use tokio::sync::Mutex;
@@ -5673,7 +5709,7 @@ mod job_engine_route_tests {
             Path(ws_id.clone()),
             State(app.clone()),
             axum::Json(JobStartRequest {
-                operation_item_id: job_id.clone(),
+                job_id: job_id.clone(),
                 command: "cmd".to_string(),
                 args: vec!["/C".to_string(), "echo engine-route & exit 0".to_string()],
                 timeout_secs: 30,
@@ -5686,6 +5722,7 @@ mod job_engine_route_tests {
         assert_eq!(started.0, StatusCode::ACCEPTED);
         let start_body = body_json(started.1.into_response()).await;
         assert_eq!(start_body["jobId"], job_id);
+        assert_eq!(start_body["runtimeJobId"], job_id);
         assert_eq!(start_body["bootId"], "test-boot");
 
         // Idempotent re-start must not spawn a second process.
@@ -5693,7 +5730,7 @@ mod job_engine_route_tests {
             Path(ws_id.clone()),
             State(app.clone()),
             axum::Json(JobStartRequest {
-                operation_item_id: job_id.clone(),
+                job_id: job_id.clone(),
                 command: "cmd".to_string(),
                 args: vec!["/C".to_string(), "exit 0".to_string()],
                 timeout_secs: 30,
@@ -5809,7 +5846,7 @@ mod job_engine_route_tests {
             Path(ws_id.clone()),
             State(app.clone()),
             axum::Json(JobStartRequest {
-                operation_item_id: job_id.clone(),
+                job_id: job_id.clone(),
                 command: "cmd".to_string(),
                 args: vec!["/C".to_string(), "exit 0".to_string()],
                 timeout_secs: 30,
@@ -5913,10 +5950,18 @@ mod job_engine_route_tests {
     /// `XIHE_JOB_CONFORMANCE_FIXTURE` 覆盖，否则按仓库相对位置解析。
     fn conformance_fixture() -> serde_json::Value {
         let path = std::env::var("XIHE_JOB_CONFORMANCE_FIXTURE").unwrap_or_else(|_| {
-            format!(
-                "{}/../../../plans/PLAN-0390-XH-execution-job-backends/fixture/job-handle-conformance.json",
-                env!("CARGO_MANIFEST_DIR")
-            )
+            let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            manifest
+                .ancestors()
+                .map(|ancestor| {
+                    ancestor.join(
+                        "plans/archive/PLAN-0390-XH-execution-job-backends/fixture/job-handle-conformance.json",
+                    )
+                })
+                .find(|candidate| candidate.is_file())
+                .unwrap_or_else(|| panic!("job-handle conformance fixture was not found above {manifest:?}"))
+                .to_string_lossy()
+                .into_owned()
         });
         let bytes = std::fs::read(&path)
             .unwrap_or_else(|error| panic!("cannot read conformance fixture {path}: {error}"));
@@ -5953,7 +5998,7 @@ mod job_engine_route_tests {
             Path(ws_id.to_string()),
             State(app.clone()),
             axum::Json(JobStartRequest {
-                operation_item_id: job_id.to_string(),
+                job_id: job_id.to_string(),
                 command: program.to_string(),
                 args,
                 timeout_secs,
@@ -6013,6 +6058,7 @@ mod job_engine_route_tests {
         .expect("start");
         assert_eq!(status, StatusCode::ACCEPTED);
         assert_eq!(body["jobId"], job_id);
+        assert_eq!(body["runtimeJobId"], job_id);
         assert!(!body["bootId"].as_str().unwrap_or_default().is_empty());
         let snapshot = app.job_engine.snapshot(&job_id).expect("snapshot");
         assert_eq!(snapshot.status.as_str(), "running");
@@ -6344,7 +6390,7 @@ mod job_engine_route_tests {
             Path(ws_id.clone()),
             State(app.clone()),
             axum::Json(JobStartRequest {
-                operation_item_id: job_id.clone(),
+                job_id: job_id.clone(),
                 command: "node".to_string(),
                 args: vec![
                     "-e".to_string(),
@@ -6423,14 +6469,14 @@ mod job_engine_route_tests {
 
         // PLAN-0397 V4：取消请求经 in-flight token 命中直连命令。
         let registrations = app.router.in_flight();
-        let item_id = "oneshot-cancel-item".to_string();
-        let signal_item = item_id.clone();
+        let tool_call_id = "oneshot-cancel-call".to_string();
+        let signal_tool_call = tool_call_id.clone();
         let signal_ws = ws_id.clone();
         let canceller = tokio::spawn(async move {
             for _ in 0..200 {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                 if registrations
-                    .request_termination(&signal_ws, &signal_item)
+                    .request_termination(&signal_ws, &signal_tool_call)
                     .is_some()
                 {
                     break;
@@ -6445,7 +6491,7 @@ mod job_engine_route_tests {
                 serde_json::json!({
                     "command": "cmd",
                     "args": ["/C", "ping -n 30 127.0.0.1 > nul"],
-                    "operationItemId": item_id,
+                    "toolCallId": tool_call_id,
                 }),
             )
             .await;

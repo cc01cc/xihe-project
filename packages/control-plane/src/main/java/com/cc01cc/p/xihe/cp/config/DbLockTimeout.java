@@ -5,14 +5,14 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
- * PLAN-0346 (T1.8): bounds PostgreSQL lock waits inside ledger/context write
+ * PLAN-0346 (T1.8): bounds PostgreSQL lock waits inside domain write
  * transactions. {@code SET LOCAL} is transaction-scoped, so the bound applies
  * only to the current transaction and never leaks to other users of the pooled
  * connection. Non-PostgreSQL datasources (H2 test contexts) skip the statement —
  * the invariant only exists on PostgreSQL.
  *
- * <p>Call {@link #apply()} as the first statement of every public ledger or
- * context write method whose first blocking statement is a row lock
+ * <p>Call {@link #apply()} as the first statement of every public database
+ * write method whose first blocking statement is a row lock
  * ({@code FOR UPDATE}), a conditional {@code UPDATE}, or a unique-index
  * {@code INSERT}. Duplicate calls inside one transaction are harmless.
  * The timeout value comes from {@code cp.lock-timeout-ms}

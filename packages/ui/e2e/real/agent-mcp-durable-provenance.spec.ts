@@ -221,48 +221,40 @@ test("@host PLAN-0387 T3.2 — CP checks durable Agent MCP tool-call provenance"
     });
     await page.screenshot({ path: testInfo.outputPath("mcp-durable-call-result.png") });
 
-    const operationsResponse = await request.get(`${CP_URL}/api/v1/operations?size=20`, {
-        headers,
-    });
-    expect(operationsResponse.ok(), await operationsResponse.text()).toBe(true);
-    const operations = (
-        (await operationsResponse.json()) as {
-            operations: Array<{
-                id: string;
-                runId: string;
-                sessionId: string;
-                workspaceId: string;
-            }>;
-        }
-    ).operations;
-    const operation = operations.find((item) => item.runId === runId);
-    expect(operation).toMatchObject({ runId, sessionId, workspaceId });
-    const traceResponse = await request.get(`${CP_URL}/api/v1/operations/${operation!.id}`, {
-        headers,
-    });
-    expect(traceResponse.ok(), await traceResponse.text()).toBe(true);
-    const trace = (await traceResponse.json()) as {
-        items: Array<{
+    const invocationResponse = await request.get(
+        `${CP_URL}/api/v1/audit/entries?type=mcp_invocation&workspaceId=${workspaceId}&size=50`,
+        { headers },
+    );
+    expect(invocationResponse.ok(), await invocationResponse.text()).toBe(true);
+    const invocations = (await invocationResponse.json()) as {
+        entries: Array<{
+            id: string;
+            runId: string;
+            sessionId: string;
+            workspaceId: string;
             source: string;
-            kind: string;
-            toolName: string;
-            toolCallId: string;
+            summary: string;
             status: string;
+            toolCallId?: string;
         }>;
     };
-    const agentToolCall = trace.items.find(
-        (item) =>
-            item.source === "agent" && item.kind === "tool_call" && item.toolName === "write_file",
+    const invocation = invocations.entries.find((item) => item.runId === runId);
+    expect(invocation).toMatchObject({ runId, sessionId, workspaceId, source: "agent", summary: "write_file" });
+    expect(invocation?.toolCallId).toBeTruthy();
+    const detailResponse = await request.get(
+        `${CP_URL}/api/v1/audit/entries/mcp_invocation/${invocation!.id}`,
+        { headers },
     );
-    const completedMcpToolCall = trace.items.find(
-        (item) =>
-            item.source === "mcp" &&
-            item.kind === "tool_call" &&
-            item.toolName === "write_file" &&
-            item.status === "completed",
+    expect(detailResponse.ok(), await detailResponse.text()).toBe(true);
+    const detail = (await detailResponse.json()) as {
+        attempts: Array<{ stage: string; status: string }>;
+    };
+    expect(detail.attempts).toEqual(
+        expect.arrayContaining([
+            expect.objectContaining({ stage: "agent_tool", status: "succeeded" }),
+            expect.objectContaining({ stage: "cp_forward", status: "succeeded" }),
+        ]),
     );
-    expect(agentToolCall?.toolCallId).toBeTruthy();
-    expect(completedMcpToolCall?.toolCallId).toBe(agentToolCall?.toolCallId);
 
     const cpGateApprovals = Number(
         queryIsolatedPostgres(

@@ -194,6 +194,8 @@ function pauseMessage(): string {
                 >
                     <span
                         class="inline-flex items-center gap-1.5"
+                        data-testid="follow-up-item-status"
+                        :data-status="item.status"
                         :class="
                             item.status === 'paused' ? 'text-amber-700 dark:text-amber-200' : ''
                         "

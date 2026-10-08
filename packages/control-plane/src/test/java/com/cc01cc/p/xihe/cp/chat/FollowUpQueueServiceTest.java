@@ -148,6 +148,71 @@ class FollowUpQueueServiceTest {
     }
 
     @Test
+    void admissionFailureWakeupSchedulesOnlyOneRetry() {
+        SessionRepository sessions = mock(SessionRepository.class);
+        SessionFollowUpItemRepository items = mock(SessionFollowUpItemRepository.class);
+        ChatRunRepository runs = mock(ChatRunRepository.class);
+        FileRepository files = mock(FileRepository.class);
+        BranchPathService branches = mock(BranchPathService.class);
+        DbLockTimeout lockTimeout = mock(DbLockTimeout.class);
+        EntityManager entityManager = mock(EntityManager.class);
+        ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
+        TaskScheduler taskScheduler = mock(TaskScheduler.class);
+        FollowUpQueueService service = new FollowUpQueueService(sessions, items, runs, files, branches,
+                lockTimeout, new ObjectMapper(), entityManager, events, taskScheduler);
+
+        String sessionId = UUID.randomUUID().toString();
+        Instant beforeSchedule = Instant.now();
+        ScheduledFuture<?> scheduled = mock(ScheduledFuture.class);
+        List<Runnable> callbacks = new ArrayList<>();
+        List<Instant> retryTimes = new ArrayList<>();
+        when(taskScheduler.schedule(any(Runnable.class), any(Instant.class))).thenAnswer(invocation -> {
+            callbacks.add(invocation.getArgument(0));
+            retryTimes.add(invocation.getArgument(1));
+            return scheduled;
+        });
+
+        service.scheduleAdmissionRetry(new FollowUpQueueWakeupEvent(sessionId));
+
+        assertEquals(1, callbacks.size());
+        assertTrue(retryTimes.get(0).isAfter(beforeSchedule));
+        callbacks.get(0).run();
+        verify(events).publishEvent(new FollowUpQueueWakeupEvent(sessionId, 1));
+
+        service.scheduleAdmissionRetry(new FollowUpQueueWakeupEvent(sessionId, 1));
+
+        assertEquals(1, callbacks.size(), "a failed retry must not reschedule indefinitely");
+        verify(taskScheduler, org.mockito.Mockito.times(1))
+                .schedule(any(Runnable.class), any(Instant.class));
+    }
+
+    @Test
+    void schedulerFailureFallsBackToOneImmediateRetryEvent() {
+        SessionRepository sessions = mock(SessionRepository.class);
+        SessionFollowUpItemRepository items = mock(SessionFollowUpItemRepository.class);
+        ChatRunRepository runs = mock(ChatRunRepository.class);
+        FileRepository files = mock(FileRepository.class);
+        BranchPathService branches = mock(BranchPathService.class);
+        DbLockTimeout lockTimeout = mock(DbLockTimeout.class);
+        EntityManager entityManager = mock(EntityManager.class);
+        ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
+        TaskScheduler taskScheduler = mock(TaskScheduler.class);
+        FollowUpQueueService service = new FollowUpQueueService(sessions, items, runs, files, branches,
+                lockTimeout, new ObjectMapper(), entityManager, events, taskScheduler);
+
+        String sessionId = UUID.randomUUID().toString();
+        when(taskScheduler.schedule(any(Runnable.class), any(Instant.class)))
+                .thenThrow(new IllegalStateException("scheduler is stopping"));
+
+        service.scheduleAdmissionRetry(new FollowUpQueueWakeupEvent(sessionId));
+
+        verify(taskScheduler, org.mockito.Mockito.times(1))
+                .schedule(any(Runnable.class), any(Instant.class));
+        verify(events, org.mockito.Mockito.times(1))
+                .publishEvent(new FollowUpQueueWakeupEvent(sessionId, 1));
+    }
+
+    @Test
     void missingAttachmentPausesHeadWithoutCallingAdmission() {
         SessionRepository sessions = mock(SessionRepository.class);
         SessionFollowUpItemRepository items = mock(SessionFollowUpItemRepository.class);

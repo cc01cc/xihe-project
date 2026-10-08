@@ -35,7 +35,6 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -257,7 +256,7 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void reconciliationIgnoresExpiredDispatchUnknownAndMarksAmbiguous() {
+    void reconciliationExpiresDispatchUnknownAndMarksAmbiguous() {
         ChatRun run = runWithLease("running", OWNER_A, Instant.now().plusSeconds(600));
         ChatApproval expired = new ChatApproval(
                 UUID.randomUUID().toString(),
@@ -278,12 +277,12 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
         assertEquals("ambiguous", marked.getStatus());
         assertEquals("CP_RESTARTED", marked.getErrorCode());
         assertNull(chatController.activeRunId(sessionId));
-        assertEquals("dispatch_unknown", approvalRepository.findById(expired.getRequestId()).orElseThrow().getState());
+        assertEquals("expired", approvalRepository.findById(expired.getRequestId()).orElseThrow().getState());
     }
 
     private ChatRunRecoveryService reconciliationService() {
         return new ChatRunRecoveryService(chatRunRepository, approvalRepository, chatController,
-                chatRunTerminalService, runCheckpointService);
+                chatRunTerminalService, historyWriter, runCheckpointService);
     }
 
     // ── PLAN-0317 T2.7：周期对账（grace=-1 让所有测试 run 立即进入候选） ──────
@@ -328,65 +327,19 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
     }
 
     /**
-     * PLAN-0317 T2.9（决策 #14）：追偿成功后只追加 item.terminated.late 事件，
-     * 不回改 item 已落定的终态。
-     */
-    @Test
-    void lateTerminationAppendsEventWithoutChangingItemStatus() {
-        var started = operationService.startOperation(userId, sessionId, workspaceId, null,
-                UUID.randomUUID().toString(), "tool_call", "agent", "agent", "agent-1", null, "test");
-        com.cc01cc.p.xihe.cp.entity.OperationItem item = operationService.appendItem(
-                started.operationId(), UUID.randomUUID().toString(), null, "tool_call", "shell",
-                "mcp", "{\"cmd\":\"ls\"}", null, null);
-        operationService.transitionItem(item.getId(), "running", "allow", null, null, null);
-        operationService.settleCancellation(item.getId(), null, "aborted", "CANCEL_UNCONFIRMED");
-
-        operationService.recordLateTermination(item.getId().toString(), true);
-
-        com.cc01cc.p.xihe.cp.entity.OperationItem after =
-                operationService.findItem(item.getId().toString());
-        assertEquals("aborted", after.getStatus(), "late termination must not rewrite the item state");
-        assertTrue(operationEventRepository.findByItemIdOrderBySequenceAsc(item.getId().toString())
-                        .stream()
-                        .anyMatch(event -> "item.terminated.late".equals(event.getEventType())),
-                "a late-termination event must be appended");
-    }
-
-    // ── PLAN-0317 T2.5 / T2.6 / T2.8④：取消收敛、竞态与单驱动 ─────────────
-
-    /**
-     * T2.5 竞态：取消晚于自然完成时不得改写已终态（账本保留执行事实）。
-     */
-    @Test
-    void settleCancellationKeepsAnAlreadyCompletedItem() {
-        var started = operationService.startOperation(userId, sessionId, workspaceId, null,
-                UUID.randomUUID().toString(), "tool_call", "agent", "agent", "agent-1", null, "test");
-        var item = operationService.appendItem(started.operationId(), UUID.randomUUID().toString(),
-                null, "tool_call", "shell", "mcp", "{\"cmd\":\"ls\"}", null, null);
-        operationService.transitionItem(item.getId(), "running", "allow", null, null, null);
-        operationService.transitionItem(item.getId(), "completed", "allow", null, null, null);
-
-        operationService.settleCancellation(item.getId(), null, "cancelled", null);
-
-        assertEquals("completed", operationService.findItem(item.getId().toString()).getStatus(),
-                "a naturally completed item must not be rewritten as cancelled");
-    }
-
-    /**
      * T2.6 + T2.4：Agent 不回音（本测试无 Agent）时取消仍自主收敛；Runtime 不可达
      * 时账本落 `aborted`（spec S4 三分映射的"未确认"分支）。
      */
     @Test
     void cancelConvergesWithoutAgentEchoAndFallsBackToAborted() {
         ChatRun run = runWithLease("running", OWNER_A, Instant.now().plusSeconds(600));
-        var started = operationService.startOperation(userId, sessionId, workspaceId,
-                run.getId().toString(), UUID.randomUUID().toString(), "tool_call", "agent",
-                "agent", "agent-1", null, "test");
-        var item = operationService.appendItem(started.operationId(), UUID.randomUUID().toString(),
-                null, "tool_call", "shell", "mcp", "{\"cmd\":\"ls\"}", null, null);
-        operationService.transitionItem(item.getId(), "running", "allow", null, null, null);
-        operationService.startAttempt(item.getId(), "cp_forward", null, "cp",
-                UUID.randomUUID().toString());
+        String approvalId = UUID.randomUUID().toString();
+        approvalRepository.saveAndFlush(new ChatApproval(approvalId, run.getId().toString(), sessionId,
+                userId, workspaceId, "shell", "start background process", "{}", "pending",
+                Instant.now().plusSeconds(600)));
+        String toolCallId = UUID.randomUUID().toString();
+        SpawnTestSupport.seedAgentInvocation(mcpInvocationRepository, sessionId,
+                run.getId().toString(), workspaceId, userId, toolCallId, "shell", "{}");
 
         com.cc01cc.p.xihe.cp.config.TenantContext.setUserId(userId);
         com.cc01cc.p.xihe.cp.config.TenantContext.setWorkspaceId(workspaceId);
@@ -396,18 +349,33 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
                         userId, null,
                         java.util.List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_USER"))));
         ResponseEntity<java.util.Map<String, Object>> response;
+        ResponseEntity<java.util.Map<String, Object>> runStatus;
         try {
             response = chatController.cancelRun(run.getId().toString(), java.util.Map.of("reason", "user"));
+            runStatus = chatController.getRunStatus(run.getId().toString());
         } finally {
             org.springframework.security.core.context.SecurityContextHolder.clearContext();
+            com.cc01cc.p.xihe.cp.config.TenantContext.clear();
         }
         assertEquals(200, response.getStatusCode().value());
+        assertEquals(200, runStatus.getStatusCode().value());
+        assertTrue(((java.util.List<?>) runStatus.getBody().get("pendingApprovals")).isEmpty(),
+                "cancelled ChatRuns must not surface approvals that can no longer be acted on");
 
         ChatRun after = chatRunRepository.findById(run.getId()).orElseThrow();
         assertEquals("cancelled", after.getStatus(), "cancel must converge without an Agent echo");
         assertEquals("cancelled", after.getTerminalOutcome());
-        assertEquals("aborted", operationService.findItem(item.getId().toString()).getStatus(),
-                "an unreachable/unconfirmed termination must land as aborted");
+        assertEquals("cancelled", jdbcTemplate.queryForObject(
+                "SELECT status FROM mcp_invocations WHERE run_id = CAST(? AS UUID)",
+                String.class, run.getId().toString()),
+                "an unreachable/unconfirmed termination must land as cancelled in mcp_invocations");
+        assertEquals("expired", approvalRepository.findById(UUID.fromString(approvalId)).orElseThrow().getState(),
+                "a cancelled ChatRun must not leave a pending approval actionable");
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM approval_history WHERE request_id = CAST(? AS UUID) "
+                        + "AND event_type = 'expired' AND from_state = 'pending' AND to_state = 'expired'",
+                Integer.class, approvalId),
+                "run cancellation must retain approval expiry in its durable history");
     }
 
     /**
@@ -485,123 +453,6 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
     }
 
     /**
-     * PLAN-0326 决策 #9（v3 通道事实模型）：同一 (operationId, toolCallId) 下，
-     * 中继（agent）与网关（mcp）各建己行、互不复用——"跨源命中同一行"的旧语义
-     * 被决策 #9 否决；同源重放才幂等命中。
-     */
-    @Test
-    void appendItemCreatesIndependentRowsPerChannel() {
-        var started = operationService.startOperation(userId, sessionId, workspaceId, null,
-                UUID.randomUUID().toString(), "tool_call", "agent", "agent", "agent-1", null, "test");
-        String toolCallId = UUID.randomUUID().toString();
-
-        var agentItem = operationService.appendItem(started.operationId(), toolCallId, null,
-                "tool_call", "shell", "agent", "{\"cmd\":\"ls\"}", null, null);
-        var gatewayItem = operationService.appendItem(started.operationId(), toolCallId, null,
-                "tool_call", "shell", "mcp", "{\"cmd\":\"ls\"}", null, null);
-
-        assertNotEquals(agentItem.getId(), gatewayItem.getId(),
-                "v3: each channel owns its own fact row for the same tool call");
-        assertEquals("agent", agentItem.getSource());
-        assertEquals("mcp", gatewayItem.getSource());
-
-        // 同源重放幂等：再次以 (agent, toolCallId) 追加命中 agent 行。
-        var replayed = operationService.appendItem(started.operationId(), toolCallId, null,
-                "tool_call", "shell", "agent", "{\"cmd\":\"ls\"}", null, null);
-        assertEquals(agentItem.getId(), replayed.getId(), "same-source replay must hit the same row");
-    }
-
-    /**
-     * T2.5 决策 #7② 并发回归：同一 operation 的并发事件追加必须被行锁串行化，
-     * 不得出现 `OPERATION_EVENT_CONFLICT`（宿主 E2E 曾实测到）。
-     */
-    @Test
-    void concurrentEventAppendsDoNotConflict() throws Exception {
-        var started = operationService.startOperation(userId, sessionId, workspaceId, null,
-                UUID.randomUUID().toString(), "tool_call", "agent", "agent", "agent-1", null, "test");
-        var item = operationService.appendItem(started.operationId(), UUID.randomUUID().toString(),
-                null, "tool_call", "shell", "mcp", "{\"cmd\":\"ls\"}", null, null);
-
-        int threads = 4;
-        java.util.concurrent.ExecutorService pool =
-                java.util.concurrent.Executors.newFixedThreadPool(threads);
-        java.util.List<Throwable> errors = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
-        java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
-        for (int i = 0; i < threads; i++) {
-            pool.submit(() -> {
-                try {
-                    start.await();
-                    operationService.recordLateTermination(item.getId().toString(), true);
-                } catch (Throwable t) {
-                    errors.add(t);
-                }
-            });
-        }
-        start.countDown();
-        pool.shutdown();
-        assertTrue(pool.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS));
-
-        assertTrue(errors.isEmpty(),
-                "concurrent event appends must serialize under the operation lock: " + errors);
-        long appended = operationEventRepository
-                .findByItemIdOrderBySequenceAsc(item.getId().toString())
-                .stream()
-                .filter(event -> "item.terminated.late".equals(event.getEventType()))
-                .count();
-        assertEquals(threads, appended, "every append must land with a unique sequence");
-    }
-
-    /**
-     * 2026-09-13 E2E（决策 #8 补充）：审批通过后的派发窗口 item 在 `resolving`，
-     * 此刻确认终止必须能落 `cancelled`（此前状态机无 resolving→cancelled 边，
-     * item 会悬挂在 resolving）。
-     */
-    @Test
-    void settleCancellationClosesResolvingItemWithStartedForward() {
-        var started = operationService.startOperation(userId, sessionId, workspaceId, null,
-                UUID.randomUUID().toString(), "tool_call", "agent", "agent", "agent-1", null, "test");
-        var item = operationService.appendItem(started.operationId(), UUID.randomUUID().toString(),
-                null, "tool_call", "shell", "mcp", "{}", null, null);
-        operationService.transitionItem(item.getId(), "running", "allow", null, null, null);
-        operationService.transitionItem(item.getId(), "waiting_for_approval", null, null, null, null);
-        operationService.transitionItem(item.getId(), "resolving", null, null, null, null);
-        var attempt = operationService.startAttempt(item.getId(), "cp_forward", null, "cp",
-                UUID.randomUUID().toString());
-
-        operationService.settleCancellation(item.getId(), attempt.getId(), "cancelled", null);
-
-        assertEquals("cancelled", operationService.findItem(item.getId().toString()).getStatus(),
-                "a confirmed termination during the dispatch window must land as cancelled");
-        assertEquals("cancelled",
-                operationAttemptRepository.findByItemIdOrderByStartedAtAsc(item.getId().toString())
-                        .get(0).getStatus());
-    }
-
-    /**
-     * 2026-09-13 E2E（决策 #8 补充）：取消收口必须清理 operation 下其余非终态
-     * item 与其 started attempt（中继重复建项、审批遗留），四层无中间态残留。
-     */
-    @Test
-    void settleRemainingOpenItemsClosesStrayItemsAndAttempts() {
-        var started = operationService.startOperation(userId, sessionId, workspaceId, null,
-                UUID.randomUUID().toString(), "tool_call", "agent", "agent", "agent-1", null, "test");
-        var stray = operationService.appendItem(started.operationId(), UUID.randomUUID().toString(),
-                null, "tool_call", "shell", "agent", "{}", null, null);
-        operationService.transitionItem(stray.getId(), "running", "allow", null, null, null);
-        operationService.startAttempt(stray.getId(), "agent_tool", null, "agent",
-                UUID.randomUUID().toString());
-
-        operationService.settleRemainingOpenItems(started.operationId());
-
-        assertEquals("cancelled", operationService.findItem(stray.getId().toString()).getStatus(),
-                "stray open items must be closed by the cancellation sweep");
-        assertEquals("cancelled",
-                operationAttemptRepository.findByItemIdOrderByStartedAtAsc(stray.getId().toString())
-                        .get(0).getStatus(),
-                "started attempts must be closed by the cancellation sweep");
-    }
-
-    /**
      * 2026-09-13 E2E（决策 #8 补充）：run 进入取消流程后，中继不得再为工具事件
      * 写终态——取消副作用（Agent 工具中止 → Tool error）被回写为 failed 时，
      * 与取消收口竞态导致 item 无法落 cancelled。
@@ -609,26 +460,33 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
     @Test
     void relayToolResultSkippedAfterRunCancelled() {
         ChatRun run = runWithLease("cancelled", null, null);
-        var started = operationService.startOperation(userId, sessionId, workspaceId,
-                run.getId().toString(), UUID.randomUUID().toString(), "tool_call", "agent",
-                "agent", "agent-1", null, "test");
-        var item = operationService.appendItem(started.operationId(), UUID.randomUUID().toString(),
-                null, "tool_call", "shell", "agent", "{}", null, null);
-        operationService.transitionItem(item.getId(), "running", "allow", null, null, null);
+        String toolCallId = UUID.randomUUID().toString();
+        SpawnTestSupport.seedAgentInvocation(mcpInvocationRepository, sessionId,
+                run.getId().toString(), workspaceId, userId, toolCallId, "shell", "{}");
+        var invocation = mcpInvocationRepository.findByRunIdAndToolCallIdAndSource(
+                        run.getId().toString(), toolCallId, "agent")
+                .orElseThrow();
+        int historyBefore = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM mcp_dispatch_history WHERE invocation_id = CAST(? AS UUID)",
+                Integer.class, invocation.getId().toString());
 
         Object target = org.springframework.test.util.AopTestUtils.getUltimateTargetObject(chatController);
-        // PLAN-0326：记账已抽 LedgerToolRecorder（决策 #8），直接以其 record() 驱动。
-        com.cc01cc.p.xihe.cp.operation.LedgerToolRecorder recorder =
-                (com.cc01cc.p.xihe.cp.operation.LedgerToolRecorder) org.springframework.test.util.ReflectionTestUtils
-                        .getField(target, "ledgerToolRecorder");
+        // PLAN-0464 T2.2：记账组件只剩执行域 McpRelayToolRecorder，直接以其 record() 驱动。
+        com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder recorder =
+                (com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder) org.springframework.test.util.ReflectionTestUtils
+                        .getField(target, "mcpRelayToolRecorder");
         recorder.record("tool_result",
                 java.util.Map.of("tool", "shell", "result", "Tool error: cancelled",
-                        "toolCallId", item.getToolCallId()),
+                        "toolCallId", toolCallId),
                 run.getId().toString(), null,
-                com.cc01cc.p.xihe.cp.operation.LedgerToolRecorder.RunLedger.create());
+                com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder.RunState.create());
 
-        assertEquals("running", operationService.findItem(item.getId().toString()).getStatus(),
-                "tool results after cancellation must not write terminal item facts");
+        assertEquals("active", mcpInvocationRepository.findById(invocation.getId()).orElseThrow().getStatus(),
+                "late tool results after cancellation must not update invocation state");
+        assertEquals(historyBefore, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM mcp_dispatch_history WHERE invocation_id = CAST(? AS UUID)",
+                Integer.class, invocation.getId().toString()),
+                "late tool results after cancellation must not append dispatch history");
     }
 
     /** 2026-09-13 E2E：CP→Agent 取消转发不得重复 `/internal/v1/agent` 前缀（曾 404）。 */
@@ -654,14 +512,15 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
     private ApprovalAgentClient approvalAgentClient;
 
     @Autowired
-    private com.cc01cc.p.xihe.cp.operation.OperationService operationService;
-
-    @Autowired
     private com.cc01cc.p.xihe.cp.service.RunCheckpointService runCheckpointService;
 
     @Autowired
-    private com.cc01cc.p.xihe.cp.repository.OperationEventRepository operationEventRepository;
+    private com.cc01cc.p.xihe.cp.repository.McpInvocationRepository mcpInvocationRepository;
 
     @Autowired
-    private com.cc01cc.p.xihe.cp.repository.OperationAttemptRepository operationAttemptRepository;
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.chat.ChatRunHistoryWriter historyWriter;
+
 }

@@ -4,22 +4,78 @@ import { useI18n } from "vue-i18n";
 import { TriangleAlert, Repeat2 } from "@lucide/vue";
 import BackToChatButton from "../../components/settings/BackToChatButton.vue";
 import SettingsNav from "../../components/settings/SettingsNav.vue";
-import { useOperationStore } from "../../stores/operations";
+import { useAuditStore } from "../../stores/audit";
 import type {
     ApprovalPolicyEffect,
     ApprovalPolicyMode,
     ApprovalPolicyShape,
     ApprovalPolicySourceLayer,
-    OperationItemView,
-    OperationStatus,
+    AuditEntry,
+    AuditEntryType,
+    AuditTimelineEvent,
 } from "../../types";
 
-const { t } = useI18n();
-const operationStore = useOperationStore();
-const statusFilter = ref<OperationStatus | "">("");
-const selectedOperationId = ref<string | null>(null);
+const { t, te } = useI18n();
+const auditStore = useAuditStore();
+const statusFilter = ref<string>("");
+const typeFilter = ref<AuditEntryType | "">("");
+const selectedEntryId = ref<string | null>(null);
 
-const selectedTrace = computed(() => operationStore.selectedTrace);
+const detail = computed(() => auditStore.selectedDetail);
+const entry = computed(() => detail.value?.entry ?? null);
+
+const typeOptions: { value: AuditEntryType; label: string }[] = [
+    { value: "chat_run", label: "settings.auditTypeChatRun" },
+    { value: "workspace_job", label: "settings.auditTypeWorkspaceJob" },
+    { value: "mcp_invocation", label: "settings.auditTypeMcpInvocation" },
+    { value: "approval", label: "settings.auditTypeApproval" },
+];
+
+/** Native status vocabularies of the four domains behind v_audit_entries. */
+const statusByType: Record<AuditEntryType, string[]> = {
+    chat_run: [
+        "queued",
+        "accepted",
+        "running",
+        "streaming",
+        "awaiting_approval",
+        "dispatching",
+        "cancelling",
+        "succeeded",
+        "partial",
+        "failed",
+        "cancelled",
+        "ambiguous",
+    ],
+    workspace_job: [
+        "pending",
+        "running",
+        "succeeded",
+        "cancelled",
+        "timeout",
+        "orphaned",
+        "interrupted",
+    ],
+    mcp_invocation: ["active", "completed", "failed", "unknown", "cancelled"],
+    approval: ["pending", "dispatching", "approved", "rejected", "expired", "dispatch_unknown"],
+};
+
+const allStatuses = computed(() => {
+    const seen = new Set<string>();
+    const values: string[] = [];
+    const groups = typeFilter.value
+        ? [statusByType[typeFilter.value]]
+        : Object.values(statusByType);
+    for (const group of groups) {
+        for (const status of group) {
+            if (!seen.has(status)) {
+                seen.add(status);
+                values.push(status);
+            }
+        }
+    }
+    return values;
+});
 
 const sourceLayerLabels: Record<ApprovalPolicySourceLayer, string> = {
     builtin: "chat.approvalLayerBuiltin",
@@ -66,27 +122,97 @@ function allowedByLabel(allowedBy: string): string {
     return t("settings.auditPolicyAllowedByOther");
 }
 
-function policyTestId(item: OperationItemView): string {
-    return `settings-audit-policy-${item.toolCallId || item.id}`;
+function policyTestId(target: AuditEntry): string {
+    return `settings-audit-policy-${target.toolCallId || target.id}`;
 }
 
-async function loadOperations(page = 0) {
-    await operationStore.load({
+function typeLabel(type: AuditEntryType | string): string {
+    const option = typeOptions.find((item) => item.value === type);
+    return option ? t(option.label) : type;
+}
+
+function statusLabel(status: string): string {
+    const key = `settings.auditStatusLabels.${status}`;
+    return te(key) ? t(key) : status;
+}
+
+/** Only tool-bearing domains carry a policy verdict block (mcp/approval snapshots). */
+function isPolicyCapable(target: AuditEntry | null): boolean {
+    return target?.type === "mcp_invocation" || target?.type === "approval";
+}
+
+function entryToolName(target: AuditEntry | null): string | null {
+    if (!target) return null;
+    if (target.type === "mcp_invocation" || target.type === "approval") {
+        return target.summary || null;
+    }
+    return null;
+}
+
+function eventTransition(event: AuditTimelineEvent): string {
+    return [event.fromStatus, event.toStatus].filter(Boolean).join(" → ");
+}
+
+function eventExtra(event: AuditTimelineEvent): string {
+    return [
+        event.actorType,
+        event.errorCode,
+        event.cancelReason,
+        event.terminalOutcome,
+        event.decisionKind,
+    ]
+        .filter(Boolean)
+        .join(" · ");
+}
+
+async function loadEntries(page = 0) {
+    await auditStore.load({
+        type: typeFilter.value || undefined,
         status: statusFilter.value || undefined,
         page,
         size: 20,
     });
 }
 
-async function selectOperation(id: string) {
-    selectedOperationId.value = id;
-    await operationStore.loadTrace(id);
+async function selectEntry(target: AuditEntry) {
+    selectedEntryId.value = target.id;
+    await auditStore.loadDetail(target.type, target.id);
 }
 
 function statusClass(status: string): string {
-    if (status === "completed") return "text-emerald-600 dark:text-emerald-400";
-    if (status === "failed" || status === "ambiguous") return "text-destructive";
-    if (status === "waiting_for_approval") return "text-amber-600 dark:text-amber-400";
+    if (["completed", "succeeded", "approved"].includes(status))
+        return "text-emerald-600 dark:text-emerald-400";
+    if (
+        [
+            "failed",
+            "ambiguous",
+            "timeout",
+            "orphaned",
+            "rejected",
+            "expired",
+            "dispatch_unknown",
+        ].includes(status)
+    )
+        return "text-destructive";
+    if (
+        [
+            "waiting_for_approval",
+            "awaiting_approval",
+            "pending",
+            "running",
+            "streaming",
+            "dispatching",
+            "cancelling",
+            "partial",
+            "interrupted",
+            "unknown",
+            "queued",
+            "accepted",
+            "active",
+            "cancelled",
+        ].includes(status)
+    )
+        return "text-amber-600 dark:text-amber-400";
     return "text-muted-foreground";
 }
 
@@ -100,19 +226,26 @@ function formatDuration(value?: number | null): string {
 }
 
 async function applyFilter() {
-    selectedOperationId.value = null;
-    operationStore.clearTrace();
-    await loadOperations();
+    selectedEntryId.value = null;
+    auditStore.clearDetail();
+    await loadEntries();
+}
+
+async function changeType() {
+    if (statusFilter.value && !allStatuses.value.includes(statusFilter.value)) {
+        statusFilter.value = "";
+    }
+    await applyFilter();
 }
 
 async function changePage(delta: number) {
-    const next = operationStore.page + delta;
-    if (next < 0 || next >= operationStore.totalPages) return;
-    await loadOperations(next);
+    const next = auditStore.page + delta;
+    if (next < 0 || next >= auditStore.totalPages) return;
+    await loadEntries(next);
 }
 
 onMounted(() => {
-    void loadOperations();
+    void loadEntries();
 });
 </script>
 
@@ -123,7 +256,7 @@ onMounted(() => {
         <header class="mb-6 flex flex-wrap items-end justify-between gap-4">
             <div>
                 <p class="mb-1 text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                    XH / Ledger
+                    XH / Audit
                 </p>
                 <h1
                     data-testid="settings-audit-heading"
@@ -133,30 +266,47 @@ onMounted(() => {
                 </h1>
                 <p class="mt-1 text-sm text-muted-foreground">{{ t("settings.auditDesc") }}</p>
             </div>
-            <label class="flex items-center gap-2 text-sm">
-                <span class="text-muted-foreground">{{ t("settings.auditStatus") }}</span>
-                <select
-                    v-model="statusFilter"
-                    data-testid="settings-audit-status"
-                    class="rounded-md border border-border bg-background px-2 py-1.5 text-sm"
-                    @change="applyFilter"
-                >
-                    <option value="">{{ t("settings.auditAllStatuses") }}</option>
-                    <option value="accepted">{{ t("settings.auditAccepted") }}</option>
-                    <option value="running">{{ t("settings.auditRunning") }}</option>
-                    <option value="waiting_for_approval">{{ t("settings.auditWaiting") }}</option>
-                    <option value="completed">{{ t("settings.auditCompleted") }}</option>
-                    <option value="failed">{{ t("settings.auditFailed") }}</option>
-                    <option value="ambiguous">{{ t("settings.auditAmbiguous") }}</option>
-                </select>
-            </label>
+            <div class="flex flex-wrap items-center gap-3 text-sm">
+                <label class="flex items-center gap-2">
+                    <span class="text-muted-foreground">{{ t("settings.auditKind") }}</span>
+                    <select
+                        v-model="typeFilter"
+                        data-testid="settings-audit-type"
+                        class="rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+                        @change="changeType"
+                    >
+                        <option value="">{{ t("settings.auditAllTypes") }}</option>
+                        <option
+                            v-for="option in typeOptions"
+                            :key="option.value"
+                            :value="option.value"
+                        >
+                            {{ t(option.label) }}
+                        </option>
+                    </select>
+                </label>
+                <label class="flex items-center gap-2">
+                    <span class="text-muted-foreground">{{ t("settings.auditStatus") }}</span>
+                    <select
+                        v-model="statusFilter"
+                        data-testid="settings-audit-status"
+                        class="rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+                        @change="applyFilter"
+                    >
+                        <option value="">{{ t("settings.auditAllStatuses") }}</option>
+                        <option v-for="status in allStatuses" :key="status" :value="status">
+                            {{ statusLabel(status) }}
+                        </option>
+                    </select>
+                </label>
+            </div>
         </header>
 
         <div
-            v-if="operationStore.error"
+            v-if="auditStore.error"
             class="mb-4 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
         >
-            {{ operationStore.error }}
+            {{ auditStore.error }}
         </div>
 
         <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
@@ -164,45 +314,45 @@ onMounted(() => {
                 <div class="flex items-center justify-between border-b border-border px-4 py-3">
                     <h2 class="text-sm font-medium">{{ t("settings.auditOperations") }}</h2>
                     <span class="text-xs text-muted-foreground">{{
-                        operationStore.totalElements
+                        auditStore.totalElements
                     }}</span>
                 </div>
-                <div v-if="operationStore.loading" class="p-4 text-sm text-muted-foreground">
+                <div v-if="auditStore.loading" class="p-4 text-sm text-muted-foreground">
                     {{ t("common.loading") }}
                 </div>
                 <div
-                    v-else-if="operationStore.operations.length === 0"
+                    v-else-if="auditStore.entries.length === 0"
                     data-testid="settings-audit-empty"
                     class="p-8 text-center text-sm text-muted-foreground"
                 >
                     {{ t("settings.auditEmpty") }}
                 </div>
                 <ul v-else class="divide-y divide-border">
-                    <li v-for="operation in operationStore.operations" :key="operation.id">
+                    <li v-for="auditEntry in auditStore.entries" :key="auditEntry.id">
                         <button
                             type="button"
                             class="w-full px-4 py-3 text-left transition-colors hover:bg-muted/50"
-                            :class="selectedOperationId === operation.id ? 'bg-muted/60' : ''"
-                            :data-testid="`settings-audit-operation-${operation.id}`"
-                            @click="selectOperation(operation.id)"
+                            :class="selectedEntryId === auditEntry.id ? 'bg-muted/60' : ''"
+                            :data-testid="`settings-audit-entry-${auditEntry.id}`"
+                            @click="selectEntry(auditEntry)"
                         >
                             <div class="flex items-start justify-between gap-3">
                                 <span class="min-w-0 truncate text-sm font-medium">{{
-                                    operation.summary || operation.kind
+                                    auditEntry.summary || auditEntry.type
                                 }}</span>
                                 <span
                                     class="shrink-0 text-xs font-medium"
-                                    :class="statusClass(operation.status)"
+                                    :class="statusClass(auditEntry.status)"
                                 >
-                                    {{ operation.status }}
+                                    {{ auditEntry.status }}
                                 </span>
                             </div>
                             <div
                                 class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground"
                             >
-                                <span>{{ operation.kind }}</span>
-                                <span>{{ operation.source }}</span>
-                                <span>{{ formatTime(operation.createdAt) }}</span>
+                                <span>{{ typeLabel(auditEntry.type) }}</span>
+                                <span>{{ auditEntry.source }}</span>
+                                <span>{{ formatTime(auditEntry.createdAt) }}</span>
                             </div>
                         </button>
                     </li>
@@ -212,19 +362,19 @@ onMounted(() => {
                 >
                     <button
                         type="button"
-                        :disabled="operationStore.page === 0"
+                        :disabled="auditStore.page === 0"
                         class="rounded px-2 py-1 hover:bg-muted disabled:opacity-40"
                         @click="changePage(-1)"
                     >
                         {{ t("settings.auditPrevious") }}
                     </button>
                     <span
-                        >{{ operationStore.page + 1 }} /
-                        {{ Math.max(operationStore.totalPages, 1) }}</span
+                        >{{ auditStore.page + 1 }} /
+                        {{ Math.max(auditStore.totalPages, 1) }}</span
                     >
                     <button
                         type="button"
-                        :disabled="operationStore.page + 1 >= operationStore.totalPages"
+                        :disabled="auditStore.page + 1 >= auditStore.totalPages"
                         class="rounded px-2 py-1 hover:bg-muted disabled:opacity-40"
                         @click="changePage(1)"
                     >
@@ -237,11 +387,11 @@ onMounted(() => {
                 <div class="border-b border-border px-4 py-3">
                     <h2 class="text-sm font-medium">{{ t("settings.auditTrace") }}</h2>
                 </div>
-                <div v-if="operationStore.traceLoading" class="p-4 text-sm text-muted-foreground">
+                <div v-if="auditStore.detailLoading" class="p-4 text-sm text-muted-foreground">
                     {{ t("common.loading") }}
                 </div>
                 <div
-                    v-else-if="!selectedTrace"
+                    v-else-if="!detail || !entry"
                     data-testid="settings-audit-no-selection"
                     class="p-8 text-center text-sm text-muted-foreground"
                 >
@@ -253,38 +403,46 @@ onMounted(() => {
                             <dt class="text-xs text-muted-foreground">
                                 {{ t("settings.auditStatus") }}
                             </dt>
-                            <dd
-                                class="mt-1 font-medium"
-                                :class="statusClass(selectedTrace.operation.status)"
-                            >
-                                {{ selectedTrace.operation.status }}
+                            <dd class="mt-1 font-medium" :class="statusClass(entry.status)">
+                                {{ entry.status }}
+                                <span
+                                    v-if="entry.errorCode"
+                                    data-testid="settings-audit-error-code"
+                                    class="ml-1 font-mono text-xs"
+                                    >{{ entry.errorCode }}</span
+                                >
                             </dd>
                         </div>
-                        <div>
+                        <div v-if="entry.createdAt">
+                            <dt class="text-xs text-muted-foreground">
+                                {{ t("settings.auditCreated") }}
+                            </dt>
+                            <dd class="mt-1">{{ formatTime(entry.createdAt) }}</dd>
+                        </div>
+                        <div v-if="entry.startedAt">
                             <dt class="text-xs text-muted-foreground">
                                 {{ t("settings.auditStarted") }}
                             </dt>
-                            <dd class="mt-1">
-                                {{ formatTime(selectedTrace.operation.startedAt) }}
-                            </dd>
+                            <dd class="mt-1">{{ formatTime(entry.startedAt) }}</dd>
+                        </div>
+                        <div>
+                            <dt class="text-xs text-muted-foreground">
+                                {{ t("settings.auditFinished") }}
+                            </dt>
+                            <dd class="mt-1">{{ formatTime(entry.finishedAt) }}</dd>
                         </div>
                         <div>
                             <dt class="text-xs text-muted-foreground">
                                 {{ t("settings.auditKind") }}
                             </dt>
-                            <dd class="mt-1">{{ selectedTrace.operation.kind }}</dd>
+                            <dd class="mt-1">{{ typeLabel(entry.type) }}</dd>
                         </div>
                         <div class="col-span-2">
                             <dt class="text-xs text-muted-foreground">
                                 {{ t("settings.auditRun") }}
                             </dt>
-                            <dd
-                                class="mt-1 break-all font-mono text-xs"
-                                :title="selectedTrace.operation.runId || ''"
-                            >
-                                {{
-                                    selectedTrace.operation.runId || t("settings.auditNotAvailable")
-                                }}
+                            <dd class="mt-1 break-all font-mono text-xs" :title="entry.runId || ''">
+                                {{ entry.runId || t("settings.auditNotAvailable") }}
                             </dd>
                         </div>
                     </div>
@@ -296,35 +454,35 @@ onMounted(() => {
                             {{ t("settings.auditItems") }}
                         </h3>
                         <div
-                            v-if="selectedTrace.items.length === 0"
+                            v-if="!entryToolName(entry) && !isPolicyCapable(entry)"
                             class="text-sm text-muted-foreground"
                         >
                             {{ t("settings.auditNoItems") }}
                         </div>
                         <ul v-else data-testid="settings-audit-items" class="space-y-2">
                             <li
-                                v-for="item in selectedTrace.items"
-                                :key="item.id"
-                                :data-testid="`settings-audit-item-${item.id}`"
+                                :data-testid="`settings-audit-item-${entry.id}`"
                                 class="rounded-md border border-border/70 px-3 py-2"
                             >
                                 <div class="flex items-center justify-between gap-3 text-sm">
-                                    <span>{{ item.toolName || item.kind }}</span>
-                                    <span :class="statusClass(item.status)">{{ item.status }}</span>
+                                    <span>{{ entryToolName(entry) || typeLabel(entry.type) }}</span>
+                                    <span :class="statusClass(entry.status)">{{
+                                        entry.status
+                                    }}</span>
                                 </div>
                                 <div
                                     class="mt-1 flex flex-wrap gap-x-3 text-xs text-muted-foreground"
                                 >
-                                    <span>{{ item.source }}</span>
-                                    <span v-if="item.approvalRequestId">{{
+                                    <span>{{ entry.source }}</span>
+                                    <span v-if="entry.approvalRequestId">{{
                                         t("settings.auditApprovalLinked")
                                     }}</span>
-                                    <span v-if="item.errorCode">{{ item.errorCode }}</span>
+                                    <span v-if="entry.cancelReason">{{ entry.cancelReason }}</span>
                                 </div>
 
                                 <div
-                                    v-if="item.policy"
-                                    :data-testid="policyTestId(item)"
+                                    v-if="entry.policy"
+                                    :data-testid="policyTestId(entry)"
                                     class="mt-2 rounded-md border border-border/70 bg-muted/30 px-2.5 py-2 text-xs"
                                 >
                                     <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -332,15 +490,15 @@ onMounted(() => {
                                             t("settings.auditPolicy")
                                         }}</span>
                                         <span
-                                            :data-testid="`${policyTestId(item)}-effect`"
+                                            :data-testid="`${policyTestId(entry)}-effect`"
                                             class="rounded-full border px-2 py-0.5 font-medium"
-                                            :class="effectClass(item.policy.effect)"
+                                            :class="effectClass(entry.policy.effect)"
                                         >
-                                            {{ t(effectLabels[item.policy.effect]) }}
+                                            {{ t(effectLabels[entry.policy.effect]) }}
                                         </span>
                                         <span
-                                            v-if="item.policy.reused === true"
-                                            :data-testid="`${policyTestId(item)}-reused`"
+                                            v-if="entry.policy.reused === true"
+                                            :data-testid="`${policyTestId(entry)}-reused`"
                                             class="inline-flex items-center gap-1 rounded-full border border-sky-600/50 bg-sky-500/15 px-2 py-0.5 font-medium"
                                         >
                                             <Repeat2
@@ -350,12 +508,12 @@ onMounted(() => {
                                             {{ t("settings.auditPolicyReused") }}
                                         </span>
                                         <span
-                                            v-if="item.toolCallId"
+                                            v-if="entry.toolCallId"
                                             class="font-mono text-muted-foreground"
-                                            :title="item.toolCallId"
+                                            :title="entry.toolCallId"
                                         >
                                             {{ t("settings.auditPolicyToolCallId") }}:
-                                            {{ item.toolCallId }}
+                                            {{ entry.toolCallId }}
                                         </span>
                                     </div>
                                     <dl class="mt-1.5 grid gap-x-4 gap-y-1 sm:grid-cols-2">
@@ -364,11 +522,11 @@ onMounted(() => {
                                                 {{ t("chat.approvalEvidenceMatchedRule") }}
                                             </dt>
                                             <dd
-                                                :data-testid="`${policyTestId(item)}-matched-rule`"
+                                                :data-testid="`${policyTestId(entry)}-matched-rule`"
                                                 class="min-w-0 break-all font-mono"
                                             >
                                                 {{
-                                                    item.policy.matchedRule ??
+                                                    entry.policy.matchedRule ??
                                                     t("chat.approvalNoMatchedRule")
                                                 }}
                                             </dd>
@@ -377,30 +535,32 @@ onMounted(() => {
                                             <dt class="shrink-0 text-muted-foreground">
                                                 {{ t("chat.approvalEvidenceSourceLayer") }}
                                             </dt>
-                                            <dd :data-testid="`${policyTestId(item)}-source-layer`">
-                                                {{ layerLabel(item.policy.sourceLayer) }}
+                                            <dd
+                                                :data-testid="`${policyTestId(entry)}-source-layer`"
+                                            >
+                                                {{ layerLabel(entry.policy.sourceLayer) }}
                                             </dd>
                                         </div>
                                         <div class="flex min-w-0 gap-1.5">
                                             <dt class="shrink-0 text-muted-foreground">
                                                 {{ t("chat.approvalEvidenceMode") }}
                                             </dt>
-                                            <dd :data-testid="`${policyTestId(item)}-mode`">
-                                                {{ modeLabel(item.policy.mode) }}
+                                            <dd :data-testid="`${policyTestId(entry)}-mode`">
+                                                {{ modeLabel(entry.policy.mode) }}
                                             </dd>
                                         </div>
                                     </dl>
                                     <p
-                                        v-if="item.policy.allowedBy"
-                                        :data-testid="`${policyTestId(item)}-allowed-by`"
+                                        v-if="entry.policy.allowedBy"
+                                        :data-testid="`${policyTestId(entry)}-allowed-by`"
                                         class="mt-1.5 flex flex-wrap items-center gap-x-1.5 rounded border border-amber-600/50 bg-amber-500/15 px-2 py-1 font-medium"
                                     >
                                         <TriangleAlert
                                             class="h-3.5 w-3.5 shrink-0"
                                             aria-hidden="true"
                                         />
-                                        <span>{{ allowedByLabel(item.policy.allowedBy) }}</span>
-                                        <code class="font-mono">{{ item.policy.allowedBy }}</code>
+                                        <span>{{ allowedByLabel(entry.policy.allowedBy) }}</span>
+                                        <code class="font-mono">{{ entry.policy.allowedBy }}</code>
                                     </p>
                                     <details class="mt-1.5">
                                         <summary
@@ -414,10 +574,10 @@ onMounted(() => {
                                                     {{ t("chat.approvalEvidenceReason") }}
                                                 </dt>
                                                 <dd
-                                                    :data-testid="`${policyTestId(item)}-reason`"
+                                                    :data-testid="`${policyTestId(entry)}-reason`"
                                                     class="min-w-0 whitespace-pre-wrap break-words"
                                                 >
-                                                    {{ item.policy.reason }}
+                                                    {{ entry.policy.reason }}
                                                 </dd>
                                             </div>
                                             <div class="flex min-w-0 gap-1.5">
@@ -425,26 +585,26 @@ onMounted(() => {
                                                     {{ t("chat.approvalEvidenceActionClass") }}
                                                 </dt>
                                                 <dd
-                                                    :data-testid="`${policyTestId(item)}-action-class`"
+                                                    :data-testid="`${policyTestId(entry)}-action-class`"
                                                     class="min-w-0 break-all font-mono"
                                                 >
-                                                    {{ item.policy.actionClass }}
+                                                    {{ entry.policy.actionClass }}
                                                 </dd>
                                             </div>
                                             <div class="flex min-w-0 gap-1.5">
                                                 <dt class="shrink-0 text-muted-foreground">
                                                     {{ t("chat.approvalEvidenceShape") }}
                                                 </dt>
-                                                <dd :data-testid="`${policyTestId(item)}-shape`">
-                                                    {{ t(shapeLabels[item.policy.shape]) }}
+                                                <dd :data-testid="`${policyTestId(entry)}-shape`">
+                                                    {{ t(shapeLabels[entry.policy.shape]) }}
                                                 </dd>
                                             </div>
                                         </dl>
                                     </details>
                                 </div>
                                 <p
-                                    v-else
-                                    :data-testid="`settings-audit-policy-absent-${item.id}`"
+                                    v-else-if="isPolicyCapable(entry)"
+                                    :data-testid="`settings-audit-policy-absent-${entry.id}`"
                                     class="mt-2 text-xs text-muted-foreground"
                                 >
                                     {{ t("settings.auditPolicyAbsent") }}
@@ -453,7 +613,7 @@ onMounted(() => {
                         </ul>
                     </div>
 
-                    <div>
+                    <div v-if="detail.attempts.length > 0">
                         <h3
                             class="mb-2 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground"
                         >
@@ -461,7 +621,7 @@ onMounted(() => {
                         </h3>
                         <ul class="space-y-2">
                             <li
-                                v-for="attempt in selectedTrace.attempts"
+                                v-for="attempt in detail.attempts"
                                 :key="attempt.id"
                                 class="flex items-center justify-between gap-3 border-l-2 border-border pl-3 text-sm"
                             >
@@ -486,20 +646,23 @@ onMounted(() => {
                             {{ t("settings.auditEvents") }}
                         </h3>
                         <div
-                            v-if="selectedTrace.events.length === 0"
+                            v-if="detail.timeline.length === 0"
                             class="text-sm text-muted-foreground"
                         >
                             {{ t("settings.auditNoEvents") }}
                         </div>
                         <ul v-else class="space-y-2">
                             <li
-                                v-for="event in selectedTrace.events"
-                                :key="event.id"
+                                v-for="event in detail.timeline"
+                                :key="event.sequence"
                                 class="flex items-center justify-between gap-3 border-l-2 border-border pl-3 text-sm"
                             >
                                 <span class="font-mono text-xs">{{ event.eventType }}</span>
                                 <span class="shrink-0 text-xs text-muted-foreground"
-                                    >{{ event.state }} · {{ event.actor }}</span
+                                    >{{ eventTransition(event)
+                                    }}<template v-if="eventExtra(event)">
+                                        · {{ eventExtra(event) }}</template
+                                    ></span
                                 >
                             </li>
                         </ul>

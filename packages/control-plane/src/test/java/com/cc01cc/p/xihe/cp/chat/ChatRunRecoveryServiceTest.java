@@ -3,7 +3,6 @@ package com.cc01cc.p.xihe.cp.chat;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.RunCheckpoint;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.RunCheckpointRepository;
@@ -45,9 +44,9 @@ class ChatRunRecoveryServiceTest {
     private ChatRunRepository chatRunRepository;
     private ChatApprovalRepository approvalRepository;
     private ChatController chatController;
-    private OperationService operationService;
     private ChatRunTerminalService terminalService;
     private RunCheckpointService runCheckpointService;
+    private ChatRunHistoryWriter historyWriter;
     private ChatRunRecoveryService service;
 
     @BeforeEach
@@ -55,9 +54,9 @@ class ChatRunRecoveryServiceTest {
         chatRunRepository = mock(ChatRunRepository.class);
         approvalRepository = mock(ChatApprovalRepository.class);
         chatController = mock(ChatController.class);
-        operationService = mock(OperationService.class);
         terminalService = mock(ChatRunTerminalService.class);
         runCheckpointService = mock(RunCheckpointService.class);
+        historyWriter = mock(ChatRunHistoryWriter.class);
         when(terminalService.terminalize(any())).thenAnswer(invocation -> {
             ChatRunTerminalService.TerminalRequest request = invocation.getArgument(0);
             return new ChatRunTerminalService.TerminalResult(
@@ -67,7 +66,7 @@ class ChatRunRecoveryServiceTest {
         when(chatRunRepository.findRecoverableRuns(any())).thenReturn(List.of());
         when(chatRunRepository.findTerminalRunsWithoutCheckpoint(any(), any())).thenReturn(List.of());
         service = new ChatRunRecoveryService(chatRunRepository, approvalRepository, chatController,
-                terminalService, runCheckpointService);
+                terminalService, historyWriter, runCheckpointService);
     }
 
     private ChatRun runWithStatus(String status) {
@@ -86,7 +85,7 @@ class ChatRunRecoveryServiceTest {
                 && request.expectedStatuses().contains("running")
                 && "ambiguous".equals(request.status())
                 && "CP_RESTARTED".equals(request.errorCode())
-                && request.ledgerMode() == ChatRunTerminalService.LedgerMode.RECONCILIATION));
+                && request.source() == ChatRunTerminalService.TerminalSource.RECONCILIATION));
 
         service.captureRecoveredRuns();
         verify(runCheckpointService).captureTerminalRuns();
@@ -152,10 +151,10 @@ class ChatRunRecoveryServiceTest {
         when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
                 .thenReturn(Optional.of(terminal));
         RunCheckpointService realService = new RunCheckpointService(checkpointRepository, client,
-                operationService, chatRunRepository, new ObjectMapper(),
+                chatRunRepository, new ObjectMapper(),
                 mock(com.cc01cc.p.xihe.cp.chat.SseEmitterManager.class));
         ChatRunRecoveryService recovery = new ChatRunRecoveryService(chatRunRepository,
-                approvalRepository, chatController, terminalService, realService);
+                approvalRepository, chatController, terminalService, historyWriter, realService);
         try {
             recovery.captureRecoveredRuns();
             recovery.captureRecoveredRuns();

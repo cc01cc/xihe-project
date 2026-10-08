@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 15
 status: active
 created: 2026-09-03
-updated: 2026-09-23
+updated: 2026-10-08
 ---
 
 # DEV-015: Runtime 架构
@@ -90,9 +90,9 @@ sequenceDiagram
 
 - **oneshot 中止协议**：宿主写入指令帧后**保持 stdin 打开**；超时/取消时写独立中止帧 `{"abort":true}`（EOF 兜底）。容器侧并发监听 stdin，命中后对执行进程组两阶段终止（SIGTERM → 1s → SIGKILL），并回 `CANCELLED`（超时同路径 `TIMEOUT`）帧；宿主有界等待（5s + EOF 兜底 2s）判定"确认终止"，未确认以 `RuntimeError::Cancelled{confirmed=false}` 上报。
 - **进程组规则（实测要点，缺一即静默失效）**：容器内所有 `kill` 必须用 `/bin/kill`（dash 内建不支持 `--`，`kill -TERM -- -PGID` 会报 `Illegal number`）；前台命令用 `process_group(0)` 显式建组（pid 即 PGID）；后台作业必须 `setsid` 会话隔离（仅建组会随 docker exec 会话被清理）。
-- **内部取消端点**：`POST /internal/v1/runtime/workspaces/{wsId}/executions/{itemId}/cancel`（key = `operationItemId`，Bearer + workspace 边界）；注册表 `InFlightExecutions` 记录在途执行与 exec 句柄，返回 `cancelled` / `unconfirmed` / `already_finished`，未命中 404。
-- **未确认追偿**：取消未确认的条目保留在注册表，空闲回收循环用 `inspect_exec` 复核；确认结束则回调 CP 的 late-termination 端点（5 次重试后放弃告警）。
-- **Job 运行时限**：`start_background_process` 的 `timeout`（payload `timeoutSecs`）默认 60 分钟、显式 0 不限；到点由宿主清理通道（`cleanup_jobs` op）终止进程组并落 `timeout` 终态。job 参数/描述统一 `jobId`，清理先判活（`/bin/kill -0`）、以**文件** mtime 判过期（禁用目录 mtime，防误清运行中 job）。**配置面（PLAN-0373 BL-22）**：CP `job-policy` 域四级解析（env `XIHE_JOB_TIMEOUT_DEFAULT_SECS`/`XIHE_JOB_TIMEOUT_MAX_SECS` → instance → workspace → 代码默认 3600）提供 `defaultTimeoutSecs`/`maxTimeoutSecs`（`maxTimeoutSecs=0`=上限未设不钳制）；CP 在 MCP `tools/call` 路由分叉前**无条件覆写**工具 `timeout`（未传→默认、`>0`→`min(参数,上限)`、显式 `0`→钳到上限，`__system__`/remote/stdio 三分支出口同值），每次覆写记 `event=job_timeout_clamp`（生效值 + env/instance/workspace/default 四级来源 + 参数原值）；env 键命中即锁定并在 `/settings/config` 显式呈现。
+- **内部取消端点**：`POST /internal/v1/runtime/workspaces/{wsId}/executions/{toolCallId}/cancel`（key = canonical `toolCallId`，对应 `X-Tool-Call-Id`；Bearer + workspace 边界）；注册表 `InFlightExecutions` 记录在途执行与 exec 句柄，返回 `cancelled` / `unconfirmed` / `already_finished`，未命中 404。
+- **未确认追偿**：取消未确认的条目保留在注册表，空闲回收循环用 `inspect_exec` 复核；确认结束则用携带的 `X-Mcp-Invocation-Id` 回调 CP 唯一 late-termination 端点（5 次重试后告警放弃）；无 invocation ID 时不调用此端点，不做兼容回退。
+- **Job 运行时限**：Runtime start request 使用 domain `jobId`，response 回显它并返回独立 `runtimeJobId` backend handle；`start_background_process` 的 `timeout`（payload `timeoutSecs`）默认 60 分钟、显式 0 不限；到点由宿主清理通道（`cleanup_jobs` op）终止进程组并落 `timeout` 终态。job 参数/描述统一 `jobId`，清理先判活（`/bin/kill -0`）、以**文件** mtime 判过期（禁用目录 mtime，防误清运行中 job）。**配置面（PLAN-0373 BL-22）**：CP `job-policy` 域四级解析（env `XIHE_JOB_TIMEOUT_DEFAULT_SECS`/`XIHE_JOB_TIMEOUT_MAX_SECS` → instance → workspace → 代码默认 3600）提供 `defaultTimeoutSecs`/`maxTimeoutSecs`（`maxTimeoutSecs=0`=上限未设不钳制）；CP 在 MCP `tools/call` 路由分叉前**无条件覆写**工具 `timeout`（未传→默认、`>0`→`min(参数,上限)`、显式 `0`→钳到上限，`__system__`/remote/stdio 三分支出口同值），每次覆写记 `event=job_timeout_clamp`（生效值 + env/instance/workspace/default 四级来源 + 参数原值）；env 键命中即锁定并在 `/settings/config` 显式呈现。
 - 容器侧改动必须先 `mise run image:workspace:build` 才生效（否则测到的是旧二进制）。
 
 ## 6. workspace checkpoint 切片与回滚（PLAN-0338/0339/0358）

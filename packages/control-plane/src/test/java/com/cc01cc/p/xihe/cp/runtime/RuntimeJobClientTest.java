@@ -16,8 +16,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * PLAN-0366 T1.3：Runtime `jobs/cancel` 的 CP 侧调用契约（无需 Docker）。
- * 冻结口径：POST `{jobId}` → 200 `{jobId,status:cancelled|failed}`；404 → notFound；
+ * Runtime Job start/cancel CP-side contracts (no Docker required).
+ * Frozen cancel contract: POST `{jobId}` → 200 `{jobId,status:cancelled|failed}`; 404 → notFound;
  * 非 2xx / 未知状态 / 不可解析 → unreachable（由 CP 折叠 502，不臆造取消成功）。
  */
 class RuntimeJobClientTest {
@@ -191,5 +191,36 @@ class RuntimeJobClientTest {
         assertEquals("INVALID_PATH", output.errorCode());
         assertEquals("runtime-rid-2", start.requestId());
         assertEquals(422, output.statusCode());
+    }
+
+    @Test
+    void startUsesDomainJobIdAndReadsDistinctRuntimeHandle() throws IOException {
+        String url = startServer((method, path) -> new Stub(202,
+                "{\"jobId\":\"domain-job-1\",\"runtimeJobId\":\"runtime-handle-1\","
+                        + "\"status\":\"running\",\"bootId\":\"boot-1\"}"));
+        RuntimeJobClient client = new RuntimeJobClient(url, "test-token");
+
+        RuntimeJobClient.JobStartResult result = client.startJob("ws-1", "domain-job-1", "echo",
+                java.util.List.of("ok"), null, 0L, java.util.Map.of());
+
+        assertTrue(result.launched());
+        assertEquals("runtime-handle-1", result.runtimeJobId());
+        assertEquals("/internal/v1/runtime/workspaces/ws-1/jobs/start", lastPath.get());
+        assertTrue(lastBody.get().contains("\"jobId\":\"domain-job-1\""));
+        assertFalse(lastBody.get().contains("operationItemId"));
+    }
+
+    @Test
+    void startRejectsResponseForDifferentDomainJobId() throws IOException {
+        String url = startServer((method, path) -> new Stub(202,
+                "{\"jobId\":\"other-job\",\"runtimeJobId\":\"runtime-handle-1\","
+                        + "\"status\":\"running\",\"bootId\":\"boot-1\"}"));
+        RuntimeJobClient client = new RuntimeJobClient(url, "test-token");
+
+        RuntimeJobClient.JobStartResult result = client.startJob("ws-1", "domain-job-1", "echo",
+                java.util.List.of(), null, 0L, java.util.Map.of());
+
+        assertFalse(result.launched());
+        assertEquals("RUNTIME_ERROR", result.errorCode());
     }
 }

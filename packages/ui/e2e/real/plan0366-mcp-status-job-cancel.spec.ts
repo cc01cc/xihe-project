@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
@@ -32,6 +34,8 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
     let sharedAuth: string;
     let sharedWs: string;
     let sharedHeaders: Record<string, string>;
+    /** cad8e727 后会话必须挂 agentPrincipalId：套件级 bootstrap 出的共享会话。 */
+    let suiteSessionId = "";
 
     test.beforeAll(async ({ request }) => {
         const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
@@ -48,6 +52,73 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
             Authorization: `Bearer ${auth.accessToken}`,
             "Content-Type": "application/json",
         };
+
+        // PLAN-0465 T3.2 调整（plan0366 入口随 cad8e727/0401 IA 迁移）：
+        // fresh workspace 无 agent binding → UI「新建对话」只能 toast、零会话
+        // composer 不渲染；照 session-branch 既有模式 API bootstrap
+        // grants → 模板 → principal → binding → 会话，S2 直接进 chat 路由。
+        // 模板 role 含 `exec`（start/cancel_background_process 的 actionClass，
+        // ToolFaceRegistry ACTION_EXEC）+ read/write。
+        const bootHeaders = { ...sharedHeaders, "X-Workspace-Id": sharedWs };
+        const me = await request.get(`${CP_URL}/api/v1/auth/me`, { headers: bootHeaders });
+        expect(me.ok(), await me.text()).toBeTruthy();
+        const userId = ((await me.json()) as { id: string }).id;
+        seedUserGrant(userId, sharedWs);
+
+        const roleId = randomUUID();
+        const templateId = randomUUID();
+        const rolePermissions = JSON.stringify([
+            { actionClass: "read", resource: "*" },
+            { actionClass: "write", resource: "*" },
+            { actionClass: "exec", resource: "*" },
+        ]);
+        const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
+            headers: bootHeaders,
+            data: {
+                roles: JSON.stringify([
+                    {
+                        id: roleId,
+                        name: "Plan0366 Role",
+                        permissions: JSON.parse(rolePermissions) as unknown[],
+                    },
+                ]),
+                templates: JSON.stringify([
+                    {
+                        id: templateId,
+                        name: "Plan0366 Agent",
+                        description: "Workspace-bound host fixture for job cancel verification",
+                        systemPrompt: "Respond briefly using only the current chat context.",
+                        toolMode: "workspace",
+                        provider: "openai",
+                        model: "fake-openai",
+                        roleId,
+                    },
+                ]),
+            },
+        });
+        expect(templateWrite.status(), await templateWrite.text()).toBe(200);
+
+        const principalRes = await request.post(`${CP_URL}/api/v1/agent-principals`, {
+            headers: bootHeaders,
+            data: { name: "Plan0366 Agent", templateId },
+        });
+        expect(principalRes.status(), await principalRes.text()).toBe(201);
+        const principalId = ((await principalRes.json()) as { principalId: string }).principalId;
+        const binding = await request.put(
+            `${CP_URL}/api/v1/workspaces/${sharedWs}/agents/${principalId}`,
+            {
+                headers: bootHeaders,
+                data: { permissions: JSON.parse(rolePermissions) as unknown[] },
+            },
+        );
+        expect(binding.status(), await binding.text()).toBe(200);
+
+        const sessionRes = await request.post(`${CP_URL}/api/v1/sessions`, {
+            headers: bootHeaders,
+            data: { title: "Plan0366 job cancel session", agentPrincipalId: principalId },
+        });
+        expect(sessionRes.status(), await sessionRes.text()).toBe(201);
+        suiteSessionId = ((await sessionRes.json()) as { id: string }).id;
     });
 
     function seedPage(page: import("@playwright/test").Page, token: string, wsId: string) {
@@ -124,26 +195,87 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         return id!;
     }
 
-    /** 会话最近一次 chat run 的 operation 状态（没有则 missing）。 */
-    async function chatOperationStatus(
+    /**
+     * PLAN-0464/0465：ChatRun 不再有 chat operation root，run 收敛以
+     * `GET /chat/runs/{runId}` 为关联面（messages DTO 每条消息带 runId）。
+     */
+    async function latestRunId(
         request: import("@playwright/test").APIRequestContext,
         sessionId: string,
     ): Promise<string> {
-        const res = await request.get(`${CP_URL}/api/v1/operations?size=5&sessionId=${sessionId}`, {
-            headers: sharedHeaders,
-        });
-        if (!res.ok()) return `http-${res.status()}`;
-        const body = (await res.json()) as {
-            operations?: Array<{ kind?: string; status?: string }>;
-        };
-        return body.operations?.find((op) => op.kind === "chat")?.status ?? "missing";
+        const branchId = await getRootBranchId(request, sessionId, sharedHeaders);
+        const res = await request.get(
+            `${CP_URL}/api/v1/sessions/${sessionId}/messages?branchId=${branchId}`,
+            { headers: sharedHeaders },
+        );
+        if (!res.ok()) return "";
+        const messages = (await res.json()) as Array<{ runId?: string }>;
+        const runIds = messages.map((message) => message.runId).filter(Boolean);
+        return runIds.at(-1) ?? "";
+    }
+
+    async function awaitLatestChatRunTerminal(
+        request: import("@playwright/test").APIRequestContext,
+        sessionId: string,
+    ): Promise<string> {
+        let runId = "";
+        await expect
+            .poll(
+                async () => {
+                    runId = await latestRunId(request, sessionId);
+                    return runId ? "found" : "missing";
+                },
+                {
+                    timeout: 120000,
+                    intervals: [1000, 2000],
+                    message: "chat run id appears in the messages DTO",
+                },
+            )
+            .toBe("found");
+        let status = "";
+        await expect
+            .poll(
+                async () => {
+                    const res = await request.get(`${CP_URL}/api/v1/chat/runs/${runId}`, {
+                        headers: sharedHeaders,
+                    });
+                    if (!res.ok()) return `http-${res.status()}`;
+                    const body = (await res.json()) as { status?: string };
+                    status = body.status ?? "unknown";
+                    return status;
+                },
+                {
+                    timeout: 120000,
+                    intervals: [500, 1000, 2000],
+                    message: "chat run settles without being cancelled",
+                },
+            )
+            .toMatch(/^(succeeded|failed|partial|cancelled|ambiguous)$/);
+        return status;
+    }
+
+    /** S5 domain history：直接查 `workspace_job_history`（PLAN-0462 decision #8）。 */
+    function queryIsolatedPostgres(sql: string): string {
+        const container = process.env.XIHE_E2E_PG_CONTAINER;
+        const database = process.env.XIHE_E2E_PG_DATABASE;
+        const user = process.env.XIHE_E2E_PG_USER;
+        if (!container || !database || !user) {
+            throw new Error(
+                "isolated Postgres fixture metadata is unavailable; run through scripts/e2e-host.mjs",
+            );
+        }
+        return execFileSync(
+            process.platform === "win32" ? "docker.exe" : "docker",
+            ["exec", container, "psql", "-X", "-A", "-t", "-U", user, "-d", database, "-c", sql],
+            { encoding: "utf8", timeout: 15_000, windowsHide: true },
+        ).trim();
     }
 
     /** 会话消息里的 job 档案摘要（顺序 = 工具调用顺序）。 */
     async function jobSummaries(
         request: import("@playwright/test").APIRequestContext,
         sessionId: string,
-    ): Promise<Array<{ itemId: string; jobId: string; status?: string }>> {
+    ): Promise<Array<{ jobId: string; workspaceId?: string; status?: string }>> {
         const branchId = await getRootBranchId(request, sessionId, sharedHeaders);
         const res = await request.get(
             `${CP_URL}/api/v1/sessions/${sessionId}/messages?branchId=${branchId}`,
@@ -153,13 +285,18 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         );
         expect(res.ok(), `messages DTO ${res.status()}`).toBeTruthy();
         const messages = (await res.json()) as Array<{
-            jobSummary?: Array<{ itemId?: string; jobId?: string; status?: string }>;
+            jobSummary?: Array<{ jobId?: string; workspaceId?: string; status?: string }>;
         }>;
         // 同一工具调用会双份出现在 parts 与 tool-result 消息 → 按 jobId 去重保序
-        const unique = new Map<string, { itemId: string; jobId: string; status?: string }>();
+        // （PLAN-0465 decision #7：jobId = domain 身份，itemId 已从 jobSummary 移除）。
+        const unique = new Map<string, { jobId: string; workspaceId?: string; status?: string }>();
         for (const job of messages.flatMap((message) => message.jobSummary ?? [])) {
-            if (job.itemId && job.jobId && !unique.has(job.jobId)) {
-                unique.set(job.jobId, { itemId: job.itemId, jobId: job.jobId, status: job.status });
+            if (job.jobId && !unique.has(job.jobId)) {
+                unique.set(job.jobId, {
+                    jobId: job.jobId,
+                    workspaceId: job.workspaceId,
+                    status: job.status,
+                });
             }
         }
         return [...unique.values()];
@@ -322,7 +459,11 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         await ensureAgentWorkspaceBinding(sharedWs);
         mkdirSync(EVIDENCE_DIR, { recursive: true });
         seedPage(page, sharedAuth, sharedWs);
-        await page.goto("/workspace/" + sharedWs, { waitUntil: "load" });
+        // cad8e727/0401 后 fresh workspace 无零会话 composer；直接进 beforeAll
+        // bootstrap 出的会话路由（session-branch 同路径），chat-input 在会话路由渲染。
+        await page.goto("/workspace/" + sharedWs + "/chat/" + suiteSessionId, {
+            waitUntil: "load",
+        });
 
         const chatInput = page.locator('[data-testid="chat-input"]');
         await expect(chatInput).toBeVisible({ timeout: 20000 });
@@ -331,19 +472,15 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         await page.locator('[data-testid="chat-send-button"]').click();
         await approveUntil(page, "Two jobs started.");
 
-        // 取会话并等 run 收尾（避免 CHAT_IN_PROGRESS 与重载竞态）
+        // 取会话并等 run 收尾（避免 CHAT_IN_PROGRESS 与重载竞态；PLAN-0464 起
+        // run 终态以 `/chat/runs/{runId}` 为关联面）。
         const sessionId = await resolveSessionId(request);
-        await expect
-            .poll(async () => await chatOperationStatus(request, sessionId), {
-                timeout: 90000,
-                message: "chat run settles without being cancelled",
-            })
-            .toBe("completed");
+        await awaitLatestChatRunTerminal(request, sessionId);
 
         // 重进会话路由：消息 DTO 带回 jobSummary（0344 口径；SSE 结束时卡片尚无档案）。
         // 工具调用会双份渲染（流式 parts + 持久化 tool-result 消息），且重载后 arguments
         // 不返回，因此用档案 jobId（面板可见）定位卡片，只取带 job-status 徽章的持久化卡。
-        await page.goto("/workspace/" + auth.workspaceId + "/chat/" + sessionId, {
+        await page.goto("/workspace/" + sharedWs + "/chat/" + sessionId, {
             waitUntil: "load",
         });
         const summaries = await jobSummaries(request, sessionId);
@@ -385,13 +522,13 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         );
         expect(cancelResponse.status(), `cancel failed: ${await cancelResponse.text()}`).toBe(200);
         const cancelBody = (await cancelResponse.json()) as {
-            itemId: string;
             jobId: string;
             status: string;
             changed: boolean;
         };
         expect(cancelBody.status).toBe("cancelled");
         expect(cancelBody.changed).toBe(true);
+        expect(cancelBody.jobId).toBe(targetJobId);
 
         // 可见结果：A 卡已取消；B 卡仍运行（同 run 其他 job 不受影响）
         await expect(cardA.locator('[data-testid="job-status"]')).toHaveText(/已取消|Cancelled/, {
@@ -413,7 +550,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
             "cancelled archive",
         ).toBe("cancelled");
         const controlOutput = await request.get(
-            `${CP_URL}/api/v1/operations/items/${controlItem!.itemId}/job-output`,
+            `${CP_URL}/api/v1/workspaces/${sharedWs}/jobs/${controlJobId}/output`,
             { headers: sharedHeaders },
         );
         expect(controlOutput.ok(), `control job-output ${controlOutput.status()}`).toBeTruthy();
@@ -421,7 +558,8 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         expect(controlChunk.jobStatus, "the other same-run job keeps running").toBe("running");
 
         // S3 未确认分支 UI 反馈：真实栈无法稳定复现「SIGKILL 后仍存活」→ 路由拦截 502
-        await page.route("**/api/v1/operations/items/*/cancel", async (route) => {
+        // PLAN-0465 T2.1：UI cancel 走 canonical 路径 /workspaces/{ws}/jobs/{jobId}/cancel。
+        await page.route("**/api/v1/workspaces/*/jobs/*/cancel", async (route) => {
             await route.fulfill({
                 status: 502,
                 contentType: "application/problem+json",
@@ -446,7 +584,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
             path: path.join(EVIDENCE_DIR, "s3-cancel-unconfirmed.png"),
             fullPage: false,
         });
-        await page.unroute("**/api/v1/operations/items/*/cancel");
+        await page.unroute("**/api/v1/workspaces/*/jobs/*/cancel");
 
         // S4 越权负例：无关用户一律 404（不泄露存在性）
         const otherEmail = `plan0366-other-${Date.now()}@test.com`;
@@ -455,8 +593,10 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         });
         expect([200, 201]).toContain(otherReg.status());
         const otherToken = (await otherReg.json()).accessToken as string;
+        // PLAN-0465 T2.1：canonical 路径的越权语义 = Workspace access 先判归属，
+        // 无关用户一律 404（不泄露 Workspace/Job 存在性）。
         const foreign = await request.post(
-            `${CP_URL}/api/v1/operations/items/${cancelBody.itemId}/cancel`,
+            `${CP_URL}/api/v1/workspaces/${sharedWs}/jobs/${cancelBody.jobId}/cancel`,
             {
                 headers: {
                     Authorization: `Bearer ${otherToken}`,
@@ -465,46 +605,29 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
             },
         );
         expect(foreign.status()).toBe(404);
-        expect(((await foreign.json()) as { code?: string }).code).toBe("OPERATION_ITEM_NOT_FOUND");
+        expect(((await foreign.json()) as { code?: string }).code).toBe("WORKSPACE_NOT_FOUND");
 
         // run 继续：run 终态不是 cancelled（取消 job ≠ 取消 run）
-        await expect
-            .poll(async () => await chatOperationStatus(request, sessionId), {
-                timeout: 90000,
-                message: "chat run settles without being cancelled",
-            })
-            .toBe("completed");
+        const finalRunStatus = await awaitLatestChatRunTerminal(request, sessionId);
+        expect(finalRunStatus, "run survives the single-job cancel").not.toBe("cancelled");
 
-        // S5 审计：GET /api/v1/operations/{operationId} → events[] 含 job.cancel（actor=user）
-        const opsRes = await request.get(
-            `${CP_URL}/api/v1/operations?size=5&sessionId=${sessionId}`,
-            {
-                headers: sharedHeaders,
-            },
+        // S5 审计（PLAN-0465 T1.3 / PLAN-0462 decision #8）：domain transition
+        // history 落 `workspace_job_history`——MCP 起的 Job 从 running 直接入域
+        // （start 事件 to_status=running），取消产生 cancel 事件
+        // （from=running → to=cancelled，cancel_reason=user_cancel）。
+        const jobIdLiteral = String(cancelBody.jobId);
+        const history = queryIsolatedPostgres(
+            `SELECT event_type || '|' || COALESCE(from_status, '-') || '|' || to_status || '|' || COALESCE(cancel_reason, '-') FROM workspace_job_history WHERE job_id = '${jobIdLiteral}'::uuid ORDER BY sequence`,
         );
-        const ops = (await opsRes.json()) as { operations?: Array<{ id: string; kind?: string }> };
-        const chatOp = (ops.operations ?? []).find((op) => op.kind === "chat");
-        expect(chatOp, "chat operation in the ledger").toBeTruthy();
-        const traceRes = await request.get(`${CP_URL}/api/v1/operations/${chatOp!.id}`, {
-            headers: sharedHeaders,
-        });
-        expect(traceRes.ok(), `operation trace ${traceRes.status()}`).toBeTruthy();
-        const trace = (await traceRes.json()) as {
-            events?: Array<{
-                eventType?: string;
-                actor?: string;
-                state?: string;
-                itemId?: string;
-                payload?: string;
-            }>;
-        };
-        const cancelEvent = trace.events?.find((event) => event.eventType === "job.cancel");
-        expect(cancelEvent, "job.cancel event in the operation ledger").toBeTruthy();
-        expect(cancelEvent!.actor).toBe("user");
-        expect(cancelEvent!.itemId).toBe(cancelBody.itemId);
-        expect(cancelEvent!.state).toBe("cancelled");
-        // 公开 trace 不投影 payload（OperationViews.toEvent 白名单）；payload 内容
-        //（jobId/runId/result/changed）由 T1.4 集成测试与 CP 日志 `job_cancel_recorded` 取证。
+        const historyRows = history ? history.split("\n") : [];
+        expect(historyRows, "domain history for the cancelled job").toContain("start|-|running|-");
+        expect(historyRows).toContain("cancel|running|cancelled|user_cancel");
+
+        const legacyResidue = queryIsolatedPostgres(
+            "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' " +
+                "AND table_name='workspace_jobs' AND column_name='operation_item_id'",
+        );
+        expect(legacyResidue).toBe("0");
 
         // 同会话继续对话（新 run）
         await chatInput.fill("continue after cancel");
@@ -519,3 +642,44 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         console.log(`[plan0366] S2/S3/S4/S5 evidence written to ${EVIDENCE_DIR}`);
     });
 });
+
+/**
+ * cad8e727 后配置/agent 管理写需要显式 grant（与 session-branch 同模式）：
+ * CREATE_ACCOUNT / CREATE_TEMPLATE / MANAGE_WORKSPACE_AGENTS。
+ * 复制自 session-branch.spec.ts seedUserGrant（isolated runner 提供 PG fixture env）。
+ */
+function seedUserGrant(userId: string, workspaceId: string) {
+    const container = process.env.XIHE_E2E_PG_CONTAINER;
+    const database = process.env.XIHE_E2E_PG_DATABASE;
+    const dbUser = process.env.XIHE_E2E_PG_USER;
+    if (!container || !database || !dbUser) {
+        throw new Error(
+            "isolated PostgreSQL fixture metadata is unavailable; run through scripts/e2e-host.mjs",
+        );
+    }
+    const permissions = JSON.stringify([
+        { actionClass: "CREATE_ACCOUNT", resource: "*" },
+        { actionClass: "CREATE_TEMPLATE", resource: "*" },
+        { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: workspaceId },
+    ]).replaceAll("'", "''");
+    execFileSync(
+        process.platform === "win32" ? "docker.exe" : "docker",
+        [
+            "exec",
+            container,
+            "psql",
+            "-X",
+            "-A",
+            "-t",
+            "-U",
+            dbUser,
+            "-d",
+            database,
+            "-c",
+            `INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions, source, read_state) ` +
+                `VALUES (gen_random_uuid(), 'user', '${userId}'::uuid, 'user', '${userId}'::uuid, ` +
+                `'${permissions}'::jsonb, 'direct', 'read')`,
+        ],
+        { encoding: "utf8", timeout: 15_000, windowsHide: true },
+    );
+}

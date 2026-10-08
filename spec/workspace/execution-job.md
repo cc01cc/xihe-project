@@ -5,17 +5,17 @@
 
 ## 1. 对象边界
 
-`ExecutionJob` 是 Workspace 级可追踪执行事实，不等同于 ChatRun、Session、Operation root 或 Runtime backend handle。
+`ExecutionJob` 是 Workspace 级可追踪执行事实，不等同于 ChatRun、Session 或 Runtime backend handle。
 
 | 对象 | 关系 |
 |---|---|
-| `ledger_operations` | Job 的审计根，`kind=job`，`workspace_id` 必填，`session_id/run_id` 可空 |
-| `operation_items` | Job 的 canonical durable item，`kind=job` |
-| `job_state` extension | Job 状态/后端/输出游标/错误载荷，`schema_version=1`，由 CP 独占写入 |
+| `workspace_jobs` | Job 的 canonical durable row；`id` 是 domain `jobId`，保存 Workspace/Session/Run scope、幂等与状态 |
+| `workspace_job_history` | 单 Job 的 append-only 状态变化 |
+| `state` JSONB | CP 管理的 Job state/error/output metadata；不是跨域 Operation extension |
 | `JobHandle` | Runtime backend 的 opaque handle；不作为 CP 业务 identity（契约见 [`../../../plans/PLAN-0390-XH-execution-job-backends/spec/job-handle-contract.md`](../../../plans/PLAN-0390-XH-execution-job-backends/spec/job-handle-contract.md)） |
 | ChatRun/Session | 可选 initiator/provenance；不决定所有 Job 的生命周期 |
 
-`operationItemId` 是 canonical Job identity。历史 Docker `jobId`、MXC wrapper PID、Host process handle 只作为 backend diagnostics。
+`jobId` 是唯一 canonical domain identity（`workspace_jobs.id`）。Runtime backend handle 用 `runtimeJobId` 表示，不可与 domain ID 混用。V53 的 `operation_item_id` transition anchor 已由 V56 删除；旧 Ledger 历史不回填。
 
 ## 2. Scope 与收口
 
@@ -43,7 +43,7 @@ running -> succeeded | cancelled | timeout | orphaned | interrupted
 
 ## 4. Authority 与恢复
 
-- CP durable ledger 是 Job 业务事实源和唯一 durable writer；`backendKind`/`executionMode` 支持 `docker | windows-mxc | windows-host`。
+- CP 的 `workspace_jobs`/`workspace_job_history` 是 Job 业务事实源和唯一 durable writer；`backendKind`/`executionMode` 支持 `docker | windows-mxc | windows-host`。
 - Runtime 返回执行事实、输出、backend diagnostics 和 cleanup 结果；不写 CP DB。
 - HTTP/SSE 是命令、查询和通知通道，不是状态真相。
 - Client/SSE 断线不改变 Job 状态；Runtime 重启未确认终态时标记 `interrupted`，不自动重放。
@@ -51,9 +51,10 @@ running -> succeeded | cancelled | timeout | orphaned | interrupted
 
 ## 5. Canonical API
 
-- **Start**：`POST /api/v1/workspaces/{workspaceId}/jobs`，header `Idempotency-Key` 必填，body `{command, args, cwd, timeoutSecs, scope, sessionId, runId, source, env}`（仅 `command` 必填）。同 key 重放返回既有 Job 响应（`200`，不产生第二个进程）；同 key 不同 `command/args/cwd/timeoutSecs` → `409 JOB_IDEMPOTENCY_CONFLICT`；缺 header → `400 IDEMPOTENCY_KEY_REQUIRED`；无 access/不存在 → `404 WORKSPACE_NOT_FOUND`；无 launcher 的 backend → `501 JOB_BACKEND_LAUNCH_PENDING`（不建 durable Job）；派发未确认 → `502 RUNTIME_UNAVAILABLE`（档案落 `interrupted`）。
-- **List**：`GET /api/v1/workspaces/{workspaceId}/jobs` 返回 Workspace-scoped Job 响应（start 响应同形）；响应字段为 `operationId, operationItemId, workspaceId, sessionId, runId, source, scope, status, jobId, startedAt, endedAt, exitCode, timeoutSecs, cancelReason, backendKind, executionMode, actorType, createdAt, cleanupStatus, errorCode`，与 `job_state` durable 记录的区别仅是后者多 `runtimeBootId`。
-- **续看/取消**：`GET /api/v1/operations/items/{itemId}/job-output`、`POST /api/v1/operations/items/{itemId}/cancel` 复用既有 operation 子资源（`operationItemId` 为键），不新增 `/api/v1/jobs/{jobId}` 平行 identity。
+- **Start**：`POST /api/v1/workspaces/{workspaceId}/jobs`，header `Idempotency-Key` 必填，body `{command, args, cwd, timeoutSecs, scope, sessionId, runId, source, env}`（仅 `command` 必填）。同 key 重放返回既有 Job 响应（`200`，不产生第二个进程）；同 key 不同 `command/args/cwd/timeoutSecs` → `409 JOB_IDEMPOTENCY_CONFLICT`；缺 header → `400 IDEMPOTENCY_KEY_REQUIRED`；无 access/不存在 → `404 WORKSPACE_NOT_FOUND`；无 launcher 的 backend → `501 JOB_BACKEND_LAUNCH_PENDING`（不建 durable Job）；派发未确认 → `502 RUNTIME_UNAVAILABLE`（档案落 `interrupted`）。响应中的 `jobId` 是 domain ID，`runtimeJobId` 是 Runtime backend handle。
+- **Runtime start contract**：CP→Runtime request 用 `{jobId, command, args, cwd, timeoutSecs, env}`；Runtime response 回显同一 `jobId`，另返回 `runtimeJobId` backend handle、`status` 与 `bootId`。CP 拒绝 jobId 回显不匹配的响应。
+- **List**：`GET /api/v1/workspaces/{workspaceId}/jobs` 返回 Workspace-scoped Job 响应（start 响应同形），字段 `jobId, runtimeJobId, workspaceId, sessionId, runId, source, scope, status, startedAt, endedAt, exitCode, timeoutSecs, cancelReason, backendKind, executionMode, actorType, createdAt, cleanupStatus, errorCode`。
+- **续看/取消**：`GET /api/v1/workspaces/{workspaceId}/jobs/{jobId}/output` 与 `POST /api/v1/workspaces/{workspaceId}/jobs/{jobId}/cancel` 以 domain `jobId` 为 public route key；CP 根据 row 内的 `runtimeJobId` 调用 Runtime。所有状态变更仅记入 `workspace_job_history`。
 - 引擎入口（internal，PLAN-0393）：`.../jobs/cleanup`（`CleanupResult`：outcome/reason/processes）与 `.../jobs/capabilities`（0390 形能力，含 `unavailableReason`）；进程 Job 的 handle 与有界输出**不跨 Runtime 重启**（重启后 404/`available=false`，不重放）。
 - 所有 public route 使用 `/api/v1`、Bearer、Workspace access check 和 RFC 9457 Problem Details。
 

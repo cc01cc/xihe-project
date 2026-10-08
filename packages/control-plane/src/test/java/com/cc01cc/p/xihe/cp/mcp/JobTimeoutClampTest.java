@@ -15,7 +15,6 @@ import com.cc01cc.p.xihe.cp.chat.AgentSpawnExecutionService;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.operation.JobStateService;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.policy.PolicyContext;
 import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
@@ -70,7 +69,6 @@ class JobTimeoutClampTest {
     private McpToolAliasRepository aliasRepository;
     private WorkspaceService workspaceService;
     private SessionRepository sessionRepository;
-    private OperationService operationService;
     private ConfigService configService;
     private AgentSpawnExecutionService agentSpawnExecutionService;
     private McpProxyController controller;
@@ -88,7 +86,6 @@ class JobTimeoutClampTest {
         aliasRepository = mock(McpToolAliasRepository.class);
         workspaceService = mock(WorkspaceService.class);
         sessionRepository = mock(SessionRepository.class);
-        operationService = mock(OperationService.class);
         configService = mock(ConfigService.class);
         agentSpawnExecutionService = mock(AgentSpawnExecutionService.class);
 
@@ -96,12 +93,13 @@ class JobTimeoutClampTest {
                 requestRewriter, policyEngine,
                 auditLogger, approvalService, objectMapper, sseEmitterManager, stdioServerRepository,
                 mcpServerRepository, aliasRepository,
-                workspaceService, sessionRepository, operationService,
+                workspaceService, sessionRepository,
                 mock(JobStateService.class),
                 configService,
                 new ToolTimeoutPolicy(),
                 new org.springframework.mock.env.MockEnvironment(),
-                agentSpawnExecutionService
+                agentSpawnExecutionService,
+                mock(com.cc01cc.p.xihe.cp.mcp.McpInvocationService.class)
         );
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 
@@ -112,7 +110,7 @@ class JobTimeoutClampTest {
                 anyString(), any(), any(), any()))
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ALLOW, null, PolicyLayer.BUILTIN,
                         "manual", "auto_allow"));
-        when(policyEngine.hasCurrentAgentToolCall(any(), any(), any(), any(), any(), any(), any())).thenReturn(true);
+        when(policyEngine.hasCurrentAgentToolCall(any(), any(), any(), any(), any(), any())).thenReturn(true);
         when(policyEngine.faceOf(any(PolicyContext.class), anyString()))
                 .thenReturn(new ToolFaceRegistry.Face("exec", ToolShape.STRUCTURED));
         when(requestRewriter.rewrite(anyString(), anyString(), anyString()))

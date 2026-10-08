@@ -71,7 +71,7 @@ public class JobScopeClosureService {
                     Map<String, Object> orphaned = new LinkedHashMap<>();
                     orphaned.put("status", "orphaned");
                     orphaned.put("cancelReason", JobStateService.REASON_JOB_MISSING);
-                    jobStateService.upsert(job.itemId(), orphaned);
+                    jobStateService.upsertById(job.workspaceJobId(), orphaned);
                     closed++;
                     continue;
                 }
@@ -85,7 +85,7 @@ public class JobScopeClosureService {
             incoming.put("status", "cancelled");
             incoming.put("cancelReason", reason);
             incoming.put("cleanupStatus", "completed");
-            jobStateService.upsert(job.itemId(), incoming);
+            jobStateService.upsertById(job.workspaceJobId(), incoming);
             closed++;
         }
         logger.info("[LIFECYCLE] service=cp event=job_scope_closed scope={} boundaryKey={} closed={} unconfirmed={}",

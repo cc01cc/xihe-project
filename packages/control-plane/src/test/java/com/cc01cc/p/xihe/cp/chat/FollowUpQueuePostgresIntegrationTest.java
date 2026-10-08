@@ -14,11 +14,9 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
-import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionFollowUpItemRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
@@ -94,9 +92,6 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
     private MessageRepository messageRepository;
 
     @Autowired
-    private LedgerOperationRepository ledgerOperationRepository;
-
-    @Autowired
     private AgentPrincipalRepository agentPrincipalRepository;
 
     @Autowired
@@ -107,9 +102,6 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private ChatSubmissionService chatSubmissionService;
-
-    @Autowired
-    private OperationService operationService;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -224,7 +216,7 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void childAdmissionRollbackRemovesChatRunMessageAndOperationAndKeepsQueueItemQueued() {
+    void childAdmissionRollbackRemovesChatRunAndMessageAndKeepsQueueItemQueued() {
         Fixture fixture = boundFixture();
         String parentRunId = activeRun(fixture);
         String branchId = branchPathService.ensureRootBranchId(fixture.sessionId());
@@ -240,7 +232,6 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
                 fixture.sessionId(), "atomic-child-admission").orElseThrow();
         String childRunId = UUID.randomUUID().toString();
         AtomicReference<UUID> childMessageId = new AtomicReference<>();
-        AtomicReference<UUID> childOperationId = new AtomicReference<>();
 
         assertThrows(RollbackProbe.class, () -> queueService.admitHead(fixture.sessionId(), context -> {
             Session session = context.session();
@@ -253,19 +244,15 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
                     "follow-up-test-lease", UUID.randomUUID().toString(), item.getContent(), "[]",
                     context.attachments().fileIds(), session.getAgentPrincipalId());
             childMessageId.set(created.userMessage().getId());
-            childOperationId.set(operationService.findOperationIdByRunId(childRunId));
 
             assertTrue(chatRunRepository.findById(UUID.fromString(childRunId)).isPresent());
             assertTrue(messageRepository.findById(childMessageId.get()).isPresent());
-            assertTrue(ledgerOperationRepository.findByRunId(childRunId).isPresent());
             throw new RollbackProbe();
         }));
 
         assertTrue(childMessageId.get() != null, "the real child admission callback must write a Message first");
-        assertTrue(childOperationId.get() != null, "the real child admission callback must write an Operation first");
         assertTrue(chatRunRepository.findById(UUID.fromString(childRunId)).isEmpty());
         assertTrue(messageRepository.findById(childMessageId.get()).isEmpty());
-        assertTrue(ledgerOperationRepository.findByRunId(childRunId).isEmpty());
 
         var afterRollback = followUpItemRepository.findBySessionIdAndIdempotencyKey(
                 fixture.sessionId(), "atomic-child-admission").orElseThrow();
@@ -303,7 +290,6 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
         assertEquals("FOLLOW_UP_QUEUE_NOT_EMPTY", error.getCode());
         assertTrue(chatRunRepository.findById(UUID.fromString(rejectedRunId)).isEmpty());
         assertTrue(messageRepository.findBySessionIdOrderByCreatedAtAsc(fixture.sessionId()).isEmpty());
-        assertTrue(ledgerOperationRepository.findByRunId(rejectedRunId).isEmpty());
         var queued = followUpItemRepository.findBySessionIdAndIdempotencyKey(fixture.sessionId(), queueKey)
                 .orElseThrow();
         assertEquals("queued", queued.getStatus());
@@ -350,7 +336,6 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
             assertTrue(chatRunRepository.findById(race.childRunId()).isEmpty());
             assertTrue(messageRepository.findBySessionIdOrderByCreatedAtAsc(
                     race.fixture().sessionId()).isEmpty());
-            assertTrue(ledgerOperationRepository.findByRunId(race.childRunId().toString()).isEmpty());
         } finally {
             releaseWithdraw.countDown();
             executor.shutdownNow();
@@ -404,7 +389,6 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
             assertTrue(chatRunRepository.findById(race.childRunId()).isPresent());
             assertEquals(1, messageRepository.findBySessionIdOrderByCreatedAtAsc(
                     race.fixture().sessionId()).size());
-            assertTrue(ledgerOperationRepository.findByRunId(race.childRunId().toString()).isPresent());
         } finally {
             releaseAdmission.countDown();
             executor.shutdownNow();

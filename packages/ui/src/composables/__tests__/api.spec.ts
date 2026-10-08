@@ -3,7 +3,7 @@ import {
     api,
     ApiError,
     normalizeApprovalRequest,
-    normalizeOperationPolicy,
+    normalizeSafePolicySummary,
     workspaceJobErrorReason,
 } from "../api";
 
@@ -1066,9 +1066,7 @@ describe("api policy admin (PLAN-0328)", () => {
     });
 });
 
-const OPERATION_ID = "99999999-9999-4999-8999-999999999999";
-
-// Exact shape produced by CP OperationPolicySummary (PLAN-0328 T1.15). An auto verdict is
+// Exact shape produced by CP SafePolicySummary. An auto verdict is
 // `effect: 'allow'` with a non-null allowedBy; the ask rule it upgraded stays in matchedRule.
 // `reused` is the T1.7 annotation and is nullable (null = reuse not applicable; V19 snapshots
 // omit the key entirely).
@@ -1097,183 +1095,33 @@ const OPERATION_ASK_POLICY = {
     reused: null,
 };
 
-const OPERATION_ITEM = {
-    id: "item-1",
-    operationId: OPERATION_ID,
-    toolCallId: "call-auto-1",
-    sequence: 1,
-    kind: "tool_call",
-    toolName: "write_file",
-    source: "mcp",
-    policyDecision: "allow",
-    status: "completed",
-};
-
-function operationTrace(items: unknown[]) {
-    return {
-        operation: {
-            id: OPERATION_ID,
-            kind: "chat",
-            source: "agent",
-            actorType: "agent",
-            status: "completed",
-        },
-        items,
-        attempts: [],
-        events: [],
-    };
-}
-
-describe("api operation policy projection (PLAN-0328 T1.15)", () => {
-    it("normalizes the server projection verbatim and ignores unknown keys", async () => {
-        fetchSpy.mockResolvedValueOnce({
-            ok: true,
-            json: () =>
-                Promise.resolve(
-                    operationTrace([
-                        { ...OPERATION_ITEM, policy: { ...OPERATION_POLICY, arguments: "raw" } },
-                        {
-                            ...OPERATION_ITEM,
-                            id: "item-2",
-                            toolCallId: "call-ask-2",
-                            policy: OPERATION_ASK_POLICY,
-                        },
-                    ]),
-                ),
-        } as Response);
-
-        const trace = await api.getOperationTrace(OPERATION_ID);
-
-        expect(fetchSpy).toHaveBeenCalledWith(
-            `/api/v1/operations/${OPERATION_ID}`,
-            expect.any(Object),
-        );
-        expect(trace.items[0]?.policy).toEqual(OPERATION_POLICY);
-        expect(trace.items[0]?.policyDecision).toBe("allow");
-        expect(trace.items[1]?.policy).toEqual(OPERATION_ASK_POLICY);
-    });
-
-    it("preserves explicitly null matchedRule, mode and allowedBy", async () => {
-        fetchSpy.mockResolvedValueOnce({
-            ok: true,
-            json: () =>
-                Promise.resolve(
-                    operationTrace([
-                        {
-                            ...OPERATION_ITEM,
-                            toolCallId: "call-default-2",
-                            policy: {
-                                ...OPERATION_POLICY,
-                                effect: "deny",
-                                matchedRule: null,
-                                mode: null,
-                                allowedBy: null,
-                            },
-                        },
-                    ]),
-                ),
-        } as Response);
-
-        const trace = await api.getOperationTrace(OPERATION_ID);
-
-        expect(trace.items[0]?.policy).toEqual({
-            ...OPERATION_POLICY,
-            effect: "deny",
-            matchedRule: null,
-            mode: null,
-            allowedBy: null,
-        });
-    });
-
-    it("carries the nullable T1.7 reused annotation without inventing it", async () => {
-        fetchSpy.mockResolvedValueOnce({
-            ok: true,
-            json: () =>
-                Promise.resolve(
-                    operationTrace([
-                        { ...OPERATION_ITEM, policy: { ...OPERATION_POLICY, reused: true } },
-                        {
-                            ...OPERATION_ITEM,
-                            id: "item-2",
-                            toolCallId: "call-ask-2",
-                            policy: OPERATION_ASK_POLICY,
-                        },
-                    ]),
-                ),
-        } as Response);
-
-        const trace = await api.getOperationTrace(OPERATION_ID);
-
-        expect(trace.items[0]?.policy?.reused).toBe(true);
-        expect(trace.items[1]?.policy?.reused).toBeNull();
-    });
-
-    it("omits the policy entirely for legacy rows instead of deriving one from policyDecision", async () => {
-        fetchSpy.mockResolvedValueOnce({
-            ok: true,
-            json: () => Promise.resolve(operationTrace([OPERATION_ITEM])),
-        } as Response);
-
-        const trace = await api.getOperationTrace(OPERATION_ID);
-
-        expect(trace.items[0]).not.toHaveProperty("policy");
-        expect(trace.items[0]?.policyDecision).toBe("allow");
-    });
-
-    it("treats a malformed projection as absent rather than fabricating a default", async () => {
-        fetchSpy.mockResolvedValueOnce({
-            ok: true,
-            json: () =>
-                Promise.resolve(
-                    operationTrace([{ ...OPERATION_ITEM, policy: { effect: "ALLOW" } }]),
-                ),
-        } as Response);
-
-        const trace = await api.getOperationTrace(OPERATION_ID);
-
-        expect(trace.items[0]).not.toHaveProperty("policy");
-    });
-
-    it("drops non-object items instead of rendering them", async () => {
-        fetchSpy.mockResolvedValueOnce({
-            ok: true,
-            json: () => Promise.resolve(operationTrace([null, "ghost", OPERATION_ITEM])),
-        } as Response);
-
-        const trace = await api.getOperationTrace(OPERATION_ID);
-
-        expect(trace.items).toHaveLength(1);
-        expect(trace.items[0]?.id).toBe("item-1");
-    });
-});
-
-describe("normalizeOperationPolicy", () => {
+describe("normalizeSafePolicySummary", () => {
     it("returns undefined for absent or non-object projections", () => {
-        expect(normalizeOperationPolicy(undefined)).toBeUndefined();
-        expect(normalizeOperationPolicy(null)).toBeUndefined();
-        expect(normalizeOperationPolicy("ask")).toBeUndefined();
-        expect(normalizeOperationPolicy([])).toBeUndefined();
+        expect(normalizeSafePolicySummary(undefined)).toBeUndefined();
+        expect(normalizeSafePolicySummary(null)).toBeUndefined();
+        expect(normalizeSafePolicySummary("ask")).toBeUndefined();
+        expect(normalizeSafePolicySummary([])).toBeUndefined();
     });
 
     it("accepts the exact projection and ignores unknown keys", () => {
-        expect(normalizeOperationPolicy({ ...OPERATION_POLICY, extra: "ignored" })).toEqual(
+        expect(normalizeSafePolicySummary({ ...OPERATION_POLICY, extra: "ignored" })).toEqual(
             OPERATION_POLICY,
         );
     });
 
     it("rejects uppercase or unknown enums, blank required text and non-string nullable fields", () => {
-        expect(normalizeOperationPolicy({ ...OPERATION_POLICY, effect: "ALLOW" })).toBeUndefined();
+        expect(normalizeSafePolicySummary({ ...OPERATION_POLICY, effect: "ALLOW" })).toBeUndefined();
         expect(
-            normalizeOperationPolicy({ ...OPERATION_POLICY, sourceLayer: "cloud" }),
+            normalizeSafePolicySummary({ ...OPERATION_POLICY, sourceLayer: "cloud" }),
         ).toBeUndefined();
-        expect(normalizeOperationPolicy({ ...OPERATION_POLICY, shape: "magic" })).toBeUndefined();
+        expect(normalizeSafePolicySummary({ ...OPERATION_POLICY, shape: "magic" })).toBeUndefined();
         expect(
-            normalizeOperationPolicy({ ...OPERATION_POLICY, mode: "future-mode" }),
+            normalizeSafePolicySummary({ ...OPERATION_POLICY, mode: "future-mode" }),
         ).toBeUndefined();
-        expect(normalizeOperationPolicy({ ...OPERATION_POLICY, reason: "" })).toBeUndefined();
-        expect(normalizeOperationPolicy({ ...OPERATION_POLICY, actionClass: "" })).toBeUndefined();
-        expect(normalizeOperationPolicy({ ...OPERATION_POLICY, matchedRule: 42 })).toBeUndefined();
-        expect(normalizeOperationPolicy({ ...OPERATION_POLICY, allowedBy: false })).toBeUndefined();
+        expect(normalizeSafePolicySummary({ ...OPERATION_POLICY, reason: "" })).toBeUndefined();
+        expect(normalizeSafePolicySummary({ ...OPERATION_POLICY, actionClass: "" })).toBeUndefined();
+        expect(normalizeSafePolicySummary({ ...OPERATION_POLICY, matchedRule: 42 })).toBeUndefined();
+        expect(normalizeSafePolicySummary({ ...OPERATION_POLICY, allowedBy: false })).toBeUndefined();
     });
 
     it("rejects projections that omit nullable keys instead of fabricating defaults", () => {
@@ -1281,24 +1129,24 @@ describe("normalizeOperationPolicy", () => {
         delete withoutNullables.matchedRule;
         delete withoutNullables.mode;
         delete withoutNullables.allowedBy;
-        expect(normalizeOperationPolicy(withoutNullables)).toBeUndefined();
+        expect(normalizeSafePolicySummary(withoutNullables)).toBeUndefined();
     });
 
     it("keeps the optional nullable reused annotation and never invents it", () => {
-        expect(normalizeOperationPolicy({ ...OPERATION_POLICY, reused: true })?.reused).toBe(true);
-        expect(normalizeOperationPolicy({ ...OPERATION_POLICY, reused: null })?.reused).toBeNull();
+        expect(normalizeSafePolicySummary({ ...OPERATION_POLICY, reused: true })?.reused).toBe(true);
+        expect(normalizeSafePolicySummary({ ...OPERATION_POLICY, reused: null })?.reused).toBeNull();
 
         // V19 snapshots predate `reused`: the key stays absent instead of becoming `false`.
         const legacySnapshot: Record<string, unknown> = { ...OPERATION_POLICY };
         delete legacySnapshot.reused;
-        const legacy = normalizeOperationPolicy(legacySnapshot);
+        const legacy = normalizeSafePolicySummary(legacySnapshot);
         expect(legacy).toEqual(legacySnapshot);
         expect(legacy).not.toHaveProperty("reused");
     });
 
     it("rejects a non-boolean reused value instead of guessing the annotation", () => {
-        expect(normalizeOperationPolicy({ ...OPERATION_POLICY, reused: "yes" })).toBeUndefined();
-        expect(normalizeOperationPolicy({ ...OPERATION_POLICY, reused: 1 })).toBeUndefined();
+        expect(normalizeSafePolicySummary({ ...OPERATION_POLICY, reused: "yes" })).toBeUndefined();
+        expect(normalizeSafePolicySummary({ ...OPERATION_POLICY, reused: 1 })).toBeUndefined();
     });
 });
 
@@ -1309,8 +1157,8 @@ describe("api.startWorkspaceJob (PLAN-0390)", () => {
             status: 202,
             json: () =>
                 Promise.resolve({
-                    operationId: OPERATION_ID,
-                    operationItemId: "item-1",
+                    jobId: "job-1",
+                    runtimeJobId: null,
                     workspaceId: WORKSPACE_ID,
                     scope: "session",
                     status: "pending",
@@ -1343,8 +1191,8 @@ describe("api.startWorkspaceJob (PLAN-0390)", () => {
             status: 200,
             json: () =>
                 Promise.resolve({
-                    operationId: OPERATION_ID,
-                    operationItemId: "item-existing",
+                    jobId: "job-existing",
+                    runtimeJobId: "runtime-existing",
                     workspaceId: WORKSPACE_ID,
                     scope: "session",
                     status: "running",
@@ -1357,7 +1205,8 @@ describe("api.startWorkspaceJob (PLAN-0390)", () => {
             "idem-key-123",
         );
 
-        expect(result.operationItemId).toBe("item-existing");
+        // The domain Job ID is canonical; the Runtime handle is separate.
+        expect(result.jobId).toBe("job-existing");
         expect(result.status).toBe("running");
     });
 
@@ -1372,14 +1221,13 @@ describe("api.startWorkspaceJob (PLAN-0390)", () => {
                 status: 202,
                 json: () =>
                     Promise.resolve({
-                        operationId: OPERATION_ID,
-                        operationItemId: `${backendKind}-item`,
+                        jobId,
+                        runtimeJobId: `${backendKind}-runtime`,
                         workspaceId: WORKSPACE_ID,
                         scope: "workspace",
                         status: "pending",
                         backendKind,
                         executionMode: backendKind,
-                        jobId,
                     }),
             } as Response);
 
@@ -1468,5 +1316,133 @@ describe("workspaceJobErrorReason", () => {
     it("falls back to the server detail for unknown codes and to the message otherwise", () => {
         expect(workspaceJobErrorReason(apiError(500, "SOMETHING_ELSE", "boom"))).toBe("boom");
         expect(workspaceJobErrorReason(new Error("network down"))).toBe("network down");
+    });
+});
+
+describe("api audit entries (PLAN-0466 T2.1)", () => {
+    it("lists audit entries with the type/status/paging query", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    entries: [
+                        {
+                            type: "chat_run",
+                            id: "77777777-7777-4777-8777-777777777777",
+                            status: "succeeded",
+                            createdAt: "2026-10-07T12:00:00Z",
+                        },
+                    ],
+                    page: 1,
+                    size: 20,
+                    totalElements: 3,
+                    totalPages: 1,
+                }),
+        } as Response);
+
+        const page = await api.listAuditEntries({
+            type: "chat_run",
+            status: "failed",
+            page: 1,
+            size: 20,
+        });
+
+        expect(fetchSpy).toHaveBeenCalledWith(
+            "/api/v1/audit/entries?type=chat_run&status=failed&page=1&size=20",
+            expect.any(Object),
+        );
+        expect(page.entries).toHaveLength(1);
+        expect(page.page).toBe(1);
+        expect(page.totalElements).toBe(3);
+        expect(page.totalPages).toBe(1);
+    });
+
+    it("drops malformed audit entries instead of rendering them", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    entries: [
+                        null,
+                        "not-an-entry",
+                        { status: "running" },
+                        { type: "workspace_job", id: "job-1", status: "running" },
+                    ],
+                    page: 0,
+                    size: 20,
+                    totalElements: 4,
+                    totalPages: 1,
+                }),
+        } as Response);
+
+        const page = await api.listAuditEntries();
+
+        expect(page.entries.map((auditEntry) => auditEntry.id)).toEqual(["job-1"]);
+    });
+
+    it("reads one audit entry from the typed detail route and normalizes its policy", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    entry: {
+                        type: "mcp_invocation",
+                        id: "88888888-8888-4888-8888-888888888888",
+                        toolCallId: "call-auto-1",
+                        status: "completed",
+                        summary: "write_file",
+                        policy: { ...OPERATION_POLICY, arguments: "raw" },
+                    },
+                    timeline: [null, { sequence: 1, eventType: "invocation.opened" }],
+                    attempts: [null, { id: "attempt-1", stage: "cp_forward" }],
+                }),
+        } as Response);
+
+        const detail = await api.getAuditEntry(
+            "mcp_invocation",
+            "88888888-8888-4888-8888-888888888888",
+        );
+
+        expect(fetchSpy).toHaveBeenCalledWith(
+            "/api/v1/audit/entries/mcp_invocation/88888888-8888-4888-8888-888888888888",
+            expect.any(Object),
+        );
+        expect(detail.entry.policy).toEqual(OPERATION_POLICY);
+        expect(detail.timeline).toHaveLength(1);
+        expect(detail.timeline[0]?.eventType).toBe("invocation.opened");
+        expect(detail.attempts).toHaveLength(1);
+        expect(detail.attempts[0]?.stage).toBe("cp_forward");
+    });
+
+    it("omits an unreadable policy instead of fabricating one", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    entry: {
+                        type: "approval",
+                        id: APPROVAL_ID,
+                        status: "approved",
+                        policy: { effect: "ask" },
+                    },
+                    timeline: [],
+                    attempts: [],
+                }),
+        } as Response);
+
+        const detail = await api.getAuditEntry("approval", APPROVAL_ID);
+
+        expect(detail.entry.policy).toBeUndefined();
+    });
+
+    it("leaves a body without an entry untouched (lenient detail projection)", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve("not-an-object"),
+        } as Response);
+
+        const detail = await api.getAuditEntry("chat_run", RUN_ID);
+
+        expect(detail).toBe("not-an-object");
     });
 });

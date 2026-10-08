@@ -95,8 +95,8 @@ class InboxV44UpgradeMigrationTest {
                     + "'::uuid, 1, 'tool_call', 'agent', 'running', '" + childRunId + "'::uuid)");
         }
 
-        migrateToCurrent(jdbcUrl);
-        migrateToCurrent(jdbcUrl);
+        migrateToV45(jdbcUrl);
+        migrateToV45(jdbcUrl);
 
         try (Connection connection = connect(jdbcUrl)) {
             assertEquals(1, scalarInt(connection, "SELECT count(*) FROM flyway_schema_history "
@@ -172,7 +172,7 @@ class InboxV44UpgradeMigrationTest {
             execute(connection, "CREATE TABLE inbox (placeholder UUID)");
         }
 
-        assertThrows(FlywayException.class, () -> migrateToCurrent(jdbcUrl));
+        assertThrows(FlywayException.class, () -> migrateToV45(jdbcUrl));
 
         try (Connection connection = connect(jdbcUrl)) {
             assertEquals(0, scalarInt(connection,
@@ -209,10 +209,11 @@ class InboxV44UpgradeMigrationTest {
                 .migrate();
     }
 
-    private static void migrateToCurrent(String jdbcUrl) {
+    private static void migrateToV45(String jdbcUrl) {
         Flyway.configure()
                 .dataSource(jdbcUrl, postgres.getUsername(), postgres.getPassword())
                 .locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("45"))
                 .load()
                 .migrate();
     }

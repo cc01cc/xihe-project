@@ -5,7 +5,6 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
-import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.UserRole;
@@ -14,7 +13,6 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
@@ -80,8 +78,6 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
     @Autowired
     private SessionService sessionService;
 
-    @Autowired
-    private OperationService operationService;
 
     @Autowired
     private ChatRunRepository chatRunRepository;
@@ -114,6 +110,9 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.repository.McpInvocationRepository mcpInvocationRepository;
+
+    @Autowired
     private PlatformTransactionManager transactionManager;
 
     private String userId;
@@ -122,6 +121,9 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
 
     @AfterEach
     void cleanFixtures() {
+        if (workspaceId != null) {
+            SpawnTestSupport.clearForWorkspace(mcpInvocationRepository, jdbcTemplate, workspaceId);
+        }
         TenantContext.clear();
         if (workspaceId != null) {
             deleteWorkspaceSessions();
@@ -173,11 +175,11 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
                 spawnDirect(parent.parentRunId, parent.toolCallId);
         assertNotNull(child.runId());
 
-        UUID childOperationId = operationService.findOperationIdByRunId(child.runId());
-        assertNotNull(childOperationId, "spawn run must have a durable operation");
+        // Spawn child runs are owned directly by the Chat domain.
         String grandChildToolCallId = UUID.randomUUID().toString();
-        operationService.appendItem(childOperationId, grandChildToolCallId, null,
-                "tool_call", "spawn_agent", "agent", "{\"prompt\":\"grandchild\"}", null, null);
+        SpawnTestSupport.seedAgentInvocation(mcpInvocationRepository, child.sessionId(), child.runId(),
+                workspaceId, userId, grandChildToolCallId, "spawn_agent",
+                "{\"prompt\":\"grandchild\"}");
         ChatSubmissionService.SpawnResult grandChild =
                 spawnDirect(child.runId(), grandChildToolCallId);
         assertNotNull(grandChild.runId());
@@ -333,7 +335,8 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
         assertTrue(chatRunRepository.findById(UUID.fromString(parent.parentRunId)).isEmpty());
         assertEquals(sessionsBefore - 1, sessionCount(), "delete winner leaves no child Session");
         assertEquals(runsBefore - 1, runCount(), "delete winner leaves no child Run");
-        assertEquals(0, operationItemCount(parent.operationId), "delete winner leaves no parent spawn item");
+        assertTrue(mcpInvocationRepository.findById(parent.invocationId()).isEmpty(),
+                "session deletion removes the parent-owned MCP invocation");
     }
 
     @Test
@@ -346,12 +349,8 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
                 sessionRepository.findByIdForUpdate(UUID.fromString(spawnParent.parentSessionId)).orElseThrow();
                 ChatSubmissionService.SpawnResult child = spawnDirect(
                         spawnParent.parentRunId, spawnParent.toolCallId);
-                assertEquals(1, jdbcTemplate.queryForObject(
-                        "SELECT count(*) FROM operation_items "
-                                + "WHERE operation_id = ? AND tool_call_id = ?",
-                        Integer.class, UUID.fromString(spawnParent.operationId),
-                        UUID.fromString(spawnParent.toolCallId)),
-                        "spawn winner must retain exactly one parent item until deletion; T2.10 owns the waiting link");
+                assertTrue(mcpInvocationRepository.findById(spawnParent.invocationId()).isPresent(),
+                        "the parent invocation remains present until session deletion");
                 Future<?> deletion = executor.submit(() -> {
                     return transactions.execute(deleteStatus -> {
                         jdbcTemplate.execute("SET LOCAL application_name = 't25-delete-after-spawn'");
@@ -366,8 +365,8 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
             assertTrue(sessionRepository.findById(UUID.fromString(spawnOutcome.child().sessionId())).isPresent(),
                     "spawn winner commits its child before parent deletion");
             assertEquals("accepted", runStatus(spawnOutcome.child().runId()));
-            assertEquals(0, operationItemCount(spawnParent.operationId),
-                    "parent deletion removes its ledger item without deleting the child");
+            assertTrue(mcpInvocationRepository.findById(spawnParent.invocationId()).isEmpty(),
+                    "parent deletion removes its invocation without deleting the child");
 
             ParentFixture cancelParent = fixture("spawn_agent", "{\"prompt\":\"cancel wins delete\"}");
             CancelDeleteOutcome cancelOutcome = transactions.execute(status -> {
@@ -388,8 +387,8 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
             assertEquals(ChatRunCancellationService.CancelOutcome.CLAIMED, cancelOutcome.claim().outcome());
             assertTrue(sessionRepository.findById(UUID.fromString(cancelParent.parentSessionId)).isEmpty());
             assertTrue(chatRunRepository.findById(UUID.fromString(cancelParent.parentRunId)).isEmpty());
-            assertEquals(0, operationItemCount(cancelParent.operationId),
-                    "cancel-winner then delete leaves no parent operation item");
+            assertTrue(mcpInvocationRepository.findById(cancelParent.invocationId()).isEmpty(),
+                    "cancel-winner then delete removes the parent invocation");
         } finally {
             executor.shutdownNow();
         }
@@ -506,8 +505,8 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
 
     /**
      * cancel 的 settle 会 fire-and-forget 排队 checkpoint capture（后台单线程）；
-     * 其 operation_items/ledger 写入与会话级联删除交叉时 PG 会检出死锁并即刻失败
-     * （2026-09-25 首轮 wave 实测）。有界轮询重试等 capture 自然收敛（毫秒级），
+     * checkpoint 与 Session 删除交叉时 PG 会检出死锁并即刻失败。有界轮询重试
+     * 等 capture 自然收敛（毫秒级），
      * 不使用固定 sleep。
      */
     private void deleteWorkspaceSessions() {
@@ -529,7 +528,7 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
     }
 
     private record ParentFixture(String parentSessionId, String parentRunId,
-                                 String operationId, String toolCallId) {}
+                                 String toolCallId, UUID invocationId) {}
 
     private record SpawnAttempt(boolean created, String runId, String code) {}
 
@@ -567,15 +566,14 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
         sessionRepository.saveAndFlush(parentSession);
 
         String parentRunId = saveRun(parentSession, "running");
-        OperationService.OperationStartResult operation = operationService.startOperation(
-                userId, parentSession.getId().toString(), workspaceId, parentRunId,
-                UUID.randomUUID().toString(), "chat", "ui", "user", userId,
-                "parent-submit-" + parentRunId, "Parent chat");
         String toolCallId = UUID.randomUUID().toString();
-        OperationItem item = operationService.appendItem(operation.operationId(), toolCallId, null,
-                "tool_call", toolName, "agent", argumentsPreview, null, null);
+        SpawnTestSupport.seedAgentInvocation(mcpInvocationRepository,
+                parentSession.getId().toString(), parentRunId, workspaceId, userId,
+                toolCallId, toolName, argumentsPreview);
+        UUID invocationId = mcpInvocationRepository.findByRunIdAndToolCallIdAndSource(
+                parentRunId, toolCallId, "agent").orElseThrow().getId();
         return new ParentFixture(parentSession.getId().toString(), parentRunId,
-                operation.operationId().toString(), item.getToolCallId());
+                toolCallId, invocationId);
     }
 
     /** This suite isolates Session→Run→Operation→Item serialization; gate behavior is tested separately. */
@@ -670,9 +668,4 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
                 Integer.class, workspaceId);
     }
 
-    private int operationItemCount(String operationId) {
-        return jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM operation_items WHERE operation_id = ?",
-                Integer.class, UUID.fromString(operationId));
-    }
 }

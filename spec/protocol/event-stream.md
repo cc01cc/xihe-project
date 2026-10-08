@@ -1,6 +1,6 @@
 # XH 事件流
 
-> 契约状态：`proposed`；实现状态：`partial`；Profile：`protocol`；Owner：CP/Runtime/Agent 跨边界 owner；来源：PLAN-0385，Session 派生状态事件扩展由 PLAN-0408 顺序承接；更新：2026-09-28。
+> 契约状态：`proposed`；实现状态：`partial`；Profile：`protocol`；Owner：CP/Runtime/Agent 跨边界 owner；来源：PLAN-0385，Session 派生状态事件扩展由 PLAN-0408 顺序承接；更新：2026-10-08。
 > 消费者：CP、UI、Agent、Runtime
 
 ## 1. Chat Session SSE
@@ -28,10 +28,10 @@
 
 | 事件面 | 生产者 | 中继/持久化 owner | 消费者 |
 |---|---|---|---|
-| ChatRun/Agent event | Agent | CP | UI、durable ledger/context |
+| ChatRun/Agent event | Agent | CP | UI、durable ChatRun/context projection |
 | approval event | CP gate 或 Agent relay | CP | UI、Agent decision path |
 | derived_state_changed | CP ChatRunTerminalService（child terminal commit 后 best-effort） | Inbox 是 durable source；CP SSE 仅提示 | 父 Session UI → refetch derived-state |
 | Workspace file hint | Runtime watcher | CP Workspace event manager | UI |
-| Operation event | CP services/Runtime callback | CP ledger | UI audit、内部 trace |
+| Domain history / audit projection | CP domain services/Runtime callback | Owning ChatRun, Workspace Job, MCP invocation or Approval record; CP audit read model | UI audit、内部 trace |
 
 事件 wire schema 不在本文复制；来源和语义冲突必须登记到 PLAN-0385 evidence。

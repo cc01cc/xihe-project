@@ -15,14 +15,14 @@ import java.util.Map;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
- * PLAN-0317 T2.4: client for the Runtime cancel endpoint
- * ({@code POST /internal/v1/runtime/workspaces/{ws}/executions/{item}/cancel}).
+ * Client for the Runtime tool-call cancellation endpoint
+ * ({@code POST /internal/v1/runtime/workspaces/{workspaceId}/executions/{toolCallId}/cancel}).
  *
  * <p>The Runtime side waits (bounded) for the container to acknowledge the
  * abort, so this client keeps a longer read timeout than the endpoint's own
  * confirmation window. A failed/unreachable Runtime is reported as
- * {@code unreachable} — the caller records the ledger as "unconfirmed" rather
- * than failing the cancel flow.
+ * {@code unreachable} — the caller treats the outcome as unconfirmed and
+ * continues the cancel-flow settlement.
  */
 @Component
 public class RuntimeExecutionClient {
@@ -60,13 +60,13 @@ public class RuntimeExecutionClient {
         }
     }
 
-    public CancelOutcome cancel(String workspaceId, String operationItemId) {
+    public CancelOutcome cancel(String workspaceId, String toolCallId) {
         if (workspaceId == null || workspaceId.isBlank()
-                || operationItemId == null || operationItemId.isBlank()) {
+                || toolCallId == null || toolCallId.isBlank()) {
             return CancelOutcome.unreachableOutcome();
         }
         String url = runtimeUrl + "/internal/v1/runtime/workspaces/" + workspaceId
-                + "/executions/" + operationItemId + "/cancel";
+                + "/executions/" + toolCallId + "/cancel";
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
@@ -80,8 +80,8 @@ public class RuntimeExecutionClient {
                 return new CancelOutcome(false, null, false, false);
             }
             if (response.statusCode() / 100 != 2) {
-                logger.warn("[LIFECYCLE] service=cp event=runtime_cancel_http_error workspaceId={} itemId={} status={}",
-                        workspaceId, operationItemId, response.statusCode());
+                logger.warn("[LIFECYCLE] service=cp event=runtime_cancel_http_error workspaceId={} toolCallId={} status={}",
+                        workspaceId, toolCallId, response.statusCode());
                 return CancelOutcome.unreachableOutcome();
             }
             @SuppressWarnings("unchecked")
@@ -90,8 +90,8 @@ public class RuntimeExecutionClient {
             boolean confirmed = Boolean.TRUE.equals(body.get("confirmed"));
             return new CancelOutcome(true, status, confirmed, false);
         } catch (Exception e) {
-            logger.warn("[LIFECYCLE] service=cp event=runtime_cancel_unreachable workspaceId={} itemId={} error={}",
-                    workspaceId, operationItemId, e.getMessage());
+            logger.warn("[LIFECYCLE] service=cp event=runtime_cancel_unreachable workspaceId={} toolCallId={} error={}",
+                    workspaceId, toolCallId, e.getMessage());
             return CancelOutcome.unreachableOutcome();
         }
     }

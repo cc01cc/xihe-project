@@ -5,7 +5,7 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
-import com.cc01cc.p.xihe.cp.entity.LedgerOperation;
+import com.cc01cc.p.xihe.cp.entity.McpInvocation;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.MessageRole;
 import com.cc01cc.p.xihe.cp.entity.Session;
@@ -15,11 +15,10 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
-import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
+import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
@@ -32,7 +31,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -47,7 +45,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.verifyNoInteractions;
 
 class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
 
@@ -69,11 +66,11 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private ChatRunRepository chatRunRepository;
 
-    @Autowired
+    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
     private MessageRepository messageRepository;
 
     @Autowired
-    private LedgerOperationRepository ledgerOperationRepository;
+    private McpInvocationRepository mcpInvocationRepository;
 
     @Autowired
     private EventStoreService eventStoreService;
@@ -102,11 +99,9 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
-    @MockitoBean
-    private OperationService operationService;
 
     @Test
-    void operationFailureRollsBackChatRunAndUserMessage() {
+    void messageWriteFailureRollsBackChatRunAndSessionBinding() {
         User user = userRepository.save(new User(
                 "chat-submit-" + UUID.randomUUID() + "@test.com", "hash", UserRole.USER, "Chat Submit"));
         Workspace workspace = workspaceRepository.save(new Workspace("Chat Submit Workspace", user.getId().toString()));
@@ -115,9 +110,11 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         Session persistedSession = sessionRepository.save(session);
 
         String runId = UUID.randomUUID().toString();
-        doThrow(new IllegalStateException("forced Ledger failure"))
-                .when(operationService)
-                .startOperation(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        // PLAN-0464 T1.1: startOperation is gone; the failure point after the
+        // ChatRun insert is now the user-message write in the same transaction.
+        doThrow(new IllegalStateException("forced message failure"))
+                .when(messageRepository)
+                .save(any(Message.class));
 
         AgentPrincipal principal = savePrincipal(user);
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
@@ -161,7 +158,6 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         agentPrincipalRepository.saveAndFlush(principal);
         String disabledPrincipalRunId = UUID.randomUUID().toString();
         assertRejectedWithoutWrites(disabledPrincipalRunId, persistedSession, user, workspace);
-        verifyNoInteractions(operationService);
     }
 
     @Test
@@ -232,7 +228,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void userDirectLedgerSessionCannotBeBoundToAnAgent() {
+    void userDirectInvocationSessionCannotBeBoundToAnAgent() {
         User user = userRepository.save(new User(
                 "chat-user-ledger-" + UUID.randomUUID() + "@test.com", "hash", UserRole.USER, "User ledger test"));
         Workspace workspace = workspaceRepository.save(new Workspace("User Ledger Workspace", user.getId().toString()));
@@ -240,17 +236,17 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         AgentPrincipal principal = savePrincipal(user);
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
                 workspace.getId().toString(), objectMapper.createArrayNode()));
-        LedgerOperation operation = new LedgerOperation();
-        operation.setId(UUID.randomUUID());
-        operation.setSessionId(session.getId().toString());
-        operation.setWorkspaceId(workspace.getId().toString());
-        operation.setUserId(user.getId().toString());
-        operation.setKind("tool_call");
-        operation.setSource("mcp");
-        operation.setActorType("user");
-        operation.setActorId(user.getId().toString());
-        operation.setStatus("running");
-        ledgerOperationRepository.saveAndFlush(operation);
+        McpInvocation invocation = new McpInvocation();
+        invocation.setId(UUID.randomUUID());
+        invocation.setSessionId(session.getId().toString());
+        invocation.setWorkspaceId(workspace.getId().toString());
+        invocation.setUserId(user.getId().toString());
+        invocation.setToolCallId(UUID.randomUUID().toString());
+        invocation.setToolName("write_file");
+        invocation.setSource(McpInvocation.SOURCE_DIRECT_USER);
+        invocation.setStatus(McpInvocation.STATUS_ACTIVE);
+        invocation.setArgumentsPreview("{}");
+        mcpInvocationRepository.saveAndFlush(invocation);
 
         String runId = UUID.randomUUID().toString();
         CpApiException rejected = assertThrows(CpApiException.class, () -> submit(runId, session,
@@ -337,7 +333,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
 
         assertTrue(terminalService.terminalize(new ChatRunTerminalService.TerminalRequest(
                 firstRunId, List.of("accepted"), "succeeded", "success", null, null,
-                0, 0, ChatRunTerminalService.LedgerMode.STREAM, List.of())).committed());
+                0, 0, ChatRunTerminalService.TerminalSource.STREAM, List.of())).committed());
         String laterRunId = UUID.randomUUID().toString();
         submit(laterRunId, fixture.session(), fixture.user(), fixture.workspace(),
                 "later parent run", fixture.principal().getId().toString());
@@ -377,7 +373,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         assertEquals("FORBIDDEN", error.getCode());
         assertTrue(chatRunRepository.findById(UUID.fromString(runId)).isEmpty());
         assertTrue(messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId().toString()).isEmpty());
-        assertTrue(ledgerOperationRepository.findBySessionIdOrderByCreatedAtDesc(session.getId().toString()).isEmpty());
+        assertFalse(mcpInvocationRepository.existsBySessionId(session.getId().toString()));
     }
 
     private ChatSubmissionService.Submission submit(String runId, Session session, User user,

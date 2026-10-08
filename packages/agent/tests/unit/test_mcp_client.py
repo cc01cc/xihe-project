@@ -248,7 +248,6 @@ class TestMCPAgentToolApproval:
                 "sessionId": "session-1",
                 "workspaceId": "workspace-1",
                 "runId": "run-1",
-                "operationId": "operation-1",
             }
         )
         return context
@@ -263,7 +262,7 @@ class TestMCPAgentToolApproval:
     @pytest.mark.asyncio
     async def test_sensitive_tool_dispatches_without_any_local_approval(self, context):
         """PLAN-0337 M2：写类工具首调用直达 CP 闸门，Agent 不做本地前置审批。"""
-        context.metadata["operationItemId"] = "item-1"
+        context.metadata["toolCallId"] = "item-1"
         approval_tool = MagicMock(spec=ApprovalAgentTool)
         approval_tool.execute = AsyncMock()
         manager = _fake_manager(approval_tool=approval_tool, result=_tool_result("ok"))
@@ -277,15 +276,15 @@ class TestMCPAgentToolApproval:
         assert headers == {
             "X-Session-Id": "session-1",
             "X-Chat-Run-Id": "run-1",
-            "X-Operation-Id": "operation-1",
-            "X-Operation-Item-Id": "item-1",
+            # Canonical tool-call correlation header.
+            "X-Tool-Call-Id": "item-1",
         }
         assert APPROVAL_GRANT_HEADER not in headers
 
     @pytest.mark.asyncio
     async def test_apply_patch_dispatches_without_any_local_approval(self, context):
         """PLAN-0337 M2：apply_patch 与其它写类工具同一路径，均由 CP 闸门裁决。"""
-        context.metadata["operationItemId"] = "item-apply-patch"
+        context.metadata["toolCallId"] = "item-apply-patch"
         approval_tool = MagicMock(spec=ApprovalAgentTool)
         approval_tool.execute = AsyncMock()
         manager = _fake_manager(approval_tool=approval_tool, result=_tool_result("patched"))
@@ -323,12 +322,39 @@ class TestMCPAgentToolApproval:
         assert headers == {
             "X-Session-Id": "session-1",
             "X-Chat-Run-Id": "run-1",
-            "X-Operation-Id": "operation-1",
         }
 
     @pytest.mark.asyncio
+    async def test_job_scoped_tool_dispatch_sends_x_job_id(self, context):
+        """PLAN-0465（0463 gap 4 生产方收口）：job-scoped dispatch 携带 X-Job-头。
+
+        `get/cancel_background_process` 的实参已知 jobId（Runtime handle）时发送；
+        `start_background_process` 尚无 jobId，不发送；CP 侧仅转发（0463）。
+        """
+        manager = _fake_manager(
+            approval_tool=MagicMock(spec=ApprovalAgentTool),
+            result=_tool_result("running"),
+        )
+        get_tool = MCPAgentTool(_stub_tool("get_background_process"), manager)
+
+        await get_tool.execute({"jobId": "runtime-job-1"}, context)
+
+        headers = manager.call_tool.await_args.args[2]
+        assert headers["X-Job-Id"] == "runtime-job-1"
+
+        manager_start = _fake_manager(
+            approval_tool=MagicMock(spec=ApprovalAgentTool),
+            result=_tool_result("new-job"),
+        )
+        start_tool = MCPAgentTool(_stub_tool("start_background_process"), manager_start)
+
+        await start_tool.execute({"command": "echo"}, context)
+
+        assert "X-Job-Id" not in manager_start.call_tool.await_args.args[2]
+
+    @pytest.mark.asyncio
     async def test_spawn_agent_uses_cp_mcp_context_and_existing_approval_retry(self, context):
-        context.metadata["operationItemId"] = "spawn-item-1"
+        context.metadata["toolCallId"] = "spawn-item-1"
         approval_tool = ApprovalAgentTool(timeout_seconds=5)
         calls: list[tuple[dict, dict[str, str]]] = []
 
@@ -356,8 +382,7 @@ class TestMCPAgentToolApproval:
             {
                 "X-Session-Id": "session-1",
                 "X-Chat-Run-Id": "run-1",
-                "X-Operation-Id": "operation-1",
-                "X-Operation-Item-Id": "spawn-item-1",
+                "X-Tool-Call-Id": "spawn-item-1",
             },
         )
         assert calls[1][0] == calls[0][0], "approval retry must retain identical spawn arguments"
@@ -399,7 +424,7 @@ class TestMCPAgentToolApproval:
     @pytest.mark.asyncio
     async def test_dispatch_wait_is_logged_with_tool_call_id(self, context, log_sink):
         """T1.8（spec S5.1）：派发等待值打点，随 toolCallId 串三层时间线。"""
-        context.metadata["operationItemId"] = "call-9"
+        context.metadata["toolCallId"] = "call-9"
         context.runtime_state["toolWaits"] = {"execute_command": 124}
         context.runtime_state["toolWaitOrigins"] = {"execute_command": "per-call"}
         manager = _fake_manager(result=_tool_result("ok"))
@@ -580,8 +605,6 @@ def _publishing_context(session_id: str = "session-gate") -> tuple[AgentContext,
             "sessionId": session_id,
             "workspaceId": "workspace-1",
             "runId": "run-1",
-            "operationId": "operation-1",
-            "operationItemId": "item-1",
         }
     )
     published: list[dict] = []
@@ -602,8 +625,6 @@ class TestMCPAgentToolPostGateApproval:
                 "sessionId": "session-gate",
                 "workspaceId": "workspace-1",
                 "runId": "run-1",
-                "operationId": "operation-1",
-                "operationItemId": "item-1",
             }
         )
         return context

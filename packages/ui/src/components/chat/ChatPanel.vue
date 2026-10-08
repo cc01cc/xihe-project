@@ -15,6 +15,7 @@ import {
     type WorkspaceAgentBinding,
 } from "../../composables/api";
 import { parseRawToParts } from "../../composables/useStreamParser";
+import { jobSummariesToToolCalls } from "./jobSummaryToolCalls";
 import { logger } from "../../lib/logger";
 import type {
     ApprovalDecisionEnvelope,
@@ -97,14 +98,23 @@ const branchOptions = computed(() => {
         }`,
     }));
 });
-const branchLabels = computed(() => Object.fromEntries(
-    branchOptions.value.map((branch) => [branch.branchId, branch.label] as const),
-));
-const followUpQueueMode = computed(() => isStreaming.value
-    || (followUpQueue.value?.outstandingCount ?? 0) > 0
-    || followUpQueue.value?.queueState === "paused");
-const followUpQueueFull = computed(() => Boolean(followUpQueue.value
-    && followUpQueue.value.outstandingCount >= followUpQueue.value.capacityLimit));
+const branchLabels = computed(() =>
+    Object.fromEntries(
+        branchOptions.value.map((branch) => [branch.branchId, branch.label] as const),
+    ),
+);
+const followUpQueueMode = computed(
+    () =>
+        isStreaming.value ||
+        (followUpQueue.value?.outstandingCount ?? 0) > 0 ||
+        followUpQueue.value?.queueState === "paused",
+);
+const followUpQueueFull = computed(() =>
+    Boolean(
+        followUpQueue.value &&
+        followUpQueue.value.outstandingCount >= followUpQueue.value.capacityLimit,
+    ),
+);
 const derivedState = ref<SessionDerivedStateResponse | null>(null);
 const derivedStateLoading = ref(false);
 const derivedStateError = ref(false);
@@ -182,11 +192,14 @@ watch(pendingApproval, (approval, previous) => {
     if (previous && (!approval || approval.requestId !== previous.requestId)) {
         dismissedRequestIds.value.delete(previous.requestId);
     }
+    if (approval) {
+        void refreshFollowUpQueue(props.sessionId);
+    }
 });
 /** Classification authority hint (server still enforces): workspace OWNER / instance ADMIN. */
 const canClassifyApproval = computed(() => authStore.canClassifyTools);
 
-async function loadSessionMessages(sessionId: string) {
+async function loadSessionMessages(sessionId: string, requiredMessageIds?: ReadonlySet<string>) {
     const requestId = ++messageLoadRequestId;
     try {
         let branchId = chatStore.getSelectedBranchId(sessionId);
@@ -203,41 +216,48 @@ async function loadSessionMessages(sessionId: string) {
         )
             return;
         if (!Array.isArray(rawMessages)) return;
-        chatStore.loadMessages(
-            sessionId,
-            rawMessages.map((message) => ({
-                id: message.id,
-                sessionId: message.sessionId,
-                role: message.role.toLowerCase() as Message["role"],
-                content: message.content,
-                parts:
-                    message.role.toLowerCase() === "assistant"
-                        ? parseRawToParts(message.content)
-                        : undefined,
-                timestamp: message.createdAt,
-                runId: message.runId,
-                runStatus: message.runStatus as Message["runStatus"],
-                terminalOutcome: message.terminalOutcome as Message["terminalOutcome"],
-                errorCode: message.errorCode,
-                error: message.error,
-                retryable: message.retryable,
-                attachments: message.attachments?.map((attachment) => ({
-                    id: attachment.fileId,
-                    fileId: attachment.fileId,
-                    name: attachment.name,
-                    type: attachment.type,
-                    size: attachment.size,
-                    url: `/api/v1/files/${encodeURIComponent(attachment.fileId)}`,
-                    state: "done" as const,
-                })),
+        const loadedMessages = rawMessages.map((message) => ({
+            id: message.id,
+            sessionId: message.sessionId,
+            role: message.role.toLowerCase() as Message["role"],
+            content: message.content,
+            parts:
+                message.role.toLowerCase() === "assistant"
+                    ? parseRawToParts(message.content)
+                    : undefined,
+            timestamp: message.createdAt,
+            runId: message.runId,
+            runStatus: message.runStatus as Message["runStatus"],
+            terminalOutcome: message.terminalOutcome as Message["terminalOutcome"],
+            errorCode: message.errorCode,
+            error: message.error,
+            retryable: message.retryable,
+            // PLAN-0344 T1.4 / PLAN-0465 T2.2：刷新后 job 卡片唯一重建源
+            //（messages DTO 的 jobSummary ← workspace_jobs 投影）。
+            toolCalls: message.jobSummary?.length
+                ? jobSummariesToToolCalls(message.jobSummary)
+                : undefined,
+            attachments: message.attachments?.map((attachment) => ({
+                id: attachment.fileId,
+                fileId: attachment.fileId,
+                name: attachment.name,
+                type: attachment.type,
+                size: attachment.size,
+                url: `/api/v1/files/${encodeURIComponent(attachment.fileId)}`,
+                state: "done" as const,
             })),
-        );
+        }));
+        if (requiredMessageIds && chatStore.isStreaming(sessionId)) {
+            for (const message of loadedMessages) {
+                if (!requiredMessageIds.has(message.id)) continue;
+                const existing = messages.value.find((current) => current.id === message.id);
+                if (existing) Object.assign(existing, message);
+                else chatStore.addMessage(sessionId, message);
+            }
+        }
+        chatStore.loadMessages(sessionId, loadedMessages);
         if (derivedState.value?.sessionId === sessionId) {
-            void loadWaitingOnProjection(
-                sessionId,
-                derivedState.value.activeChildren,
-                chatStore.getSessionRunId(sessionId),
-            );
+            void loadWaitingOnProjection(sessionId, derivedState.value.activeChildren);
         }
     } catch (cause) {
         if (cause instanceof ApiError && cause.problem.code === "MESSAGE_NOT_FOUND") return;
@@ -245,6 +265,11 @@ async function loadSessionMessages(sessionId: string) {
     }
 }
 
+/**
+ * PLAN-0464 T2.1: the waiting link lives on the child ChatRun row, so the
+ * projection reads `GET /chat/sessions/{childSessionId}/runs` once per child
+ * session instead of paging Operations and fetching every trace.
+ */
 async function refreshFollowUpQueue(sessionId: string) {
     const requestId = ++followUpQueueRequestId;
     try {
@@ -252,25 +277,33 @@ async function refreshFollowUpQueue(sessionId: string) {
         if (props.sessionId !== sessionId || requestId !== followUpQueueRequestId) return;
         followUpQueue.value = snapshot;
         followUpQueueError.value = null;
+        // Admission clears the queue's content copy; reload the owner Message so
+        // the queue row can keep showing the prompt after it becomes a ChatRun.
+        const missingAdmittedMessages = new Set(
+            snapshot.items
+                .filter((item) => item.status === "admitted" && item.childMessageId)
+                .map((item) => item.childMessageId!)
+                .filter((messageId) => {
+                    const message = messages.value.find((current) => current.id === messageId);
+                    return !message?.content.trim();
+                }),
+        );
+        if (missingAdmittedMessages.size > 0) {
+            void loadSessionMessages(sessionId, missingAdmittedMessages);
+        }
     } catch (cause) {
         if (props.sessionId !== sessionId || requestId !== followUpQueueRequestId) return;
-        followUpQueueError.value = cause instanceof ApiError
-            ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
-            : t("chat.followUpQueueLoadFailed");
+        followUpQueueError.value =
+            cause instanceof ApiError
+                ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
+                : t("chat.followUpQueueLoadFailed");
         logger.error("Failed to load Session Follow-up queue", cause);
     }
-}
-
-function isSpawnToolCall(name: string): boolean {
-    return (
-        name === "spawn_agent" || name.endsWith("__spawn_agent") || name.endsWith("/spawn_agent")
-    );
 }
 
 async function loadWaitingOnProjection(
     sessionId: string,
     activeChildren: SessionDerivedStateResponse["activeChildren"],
-    preferredParentRunId?: string,
 ) {
     const requestId = ++waitingOnRequestId;
     const activeByRunId = new Map(activeChildren.map((child) => [child.runId, child]));
@@ -279,62 +312,20 @@ async function loadWaitingOnProjection(
         return;
     }
 
-    const parentRunIds = new Set<string>();
-    if (preferredParentRunId) parentRunIds.add(preferredParentRunId);
-    for (const message of chatStore.getMessages(sessionId)) {
-        if (message.runId) parentRunIds.add(message.runId);
-        for (const toolCall of message.toolCalls ?? []) {
-            if (!isSpawnToolCall(toolCall.name)) continue;
-            if (toolCall.runId) parentRunIds.add(toolCall.runId);
-        }
-    }
-    if (parentRunIds.size === 0) {
-        waitingOnByToolCallId.value = {};
-        return;
-    }
-
     try {
         const waitingOn: Record<string, ToolCallWaitingOn> = {};
-        const resolvedRunIds = new Set<string>();
-        const matchedChildRunIds = new Set<string>();
-        let page = 0;
-        let totalPages = 1;
-        while (page < totalPages && matchedChildRunIds.size < activeByRunId.size) {
-            const operationPage = await api.listOperations({ sessionId, page, size: 50 });
-            totalPages = operationPage.totalPages;
-            const candidates = operationPage.operations.filter(
-                (operation) =>
-                    operation.runId &&
-                    parentRunIds.has(operation.runId) &&
-                    !resolvedRunIds.has(operation.runId),
-            );
-            for (
-                let offset = 0;
-                offset < candidates.length && matchedChildRunIds.size < activeByRunId.size;
-                offset += 8
-            ) {
-                const traces = await Promise.all(
-                    candidates.slice(offset, offset + 8).map(async (operation) => ({
-                        runId: operation.runId!,
-                        trace: await api.getOperationTrace(operation.id),
-                    })),
-                );
-                for (const { runId, trace } of traces) {
-                    resolvedRunIds.add(runId);
-                    for (const item of trace.items) {
-                        if (!item.toolCallId || !item.waitingOnRunId) continue;
-                        const child = activeByRunId.get(item.waitingOnRunId);
-                        if (!child) continue;
-                        waitingOn[item.toolCallId] = {
-                            childRunId: child.runId,
-                            name: child.name,
-                            status: child.status,
-                        };
-                        matchedChildRunIds.add(child.runId);
-                    }
-                }
+        const childSessionIds = [...new Set(activeChildren.map((child) => child.childSessionId))];
+        for (const childSessionId of childSessionIds) {
+            const runs = await api.listSessionRuns(childSessionId, { page: 0, size: 200 });
+            for (const run of runs.runs) {
+                const child = activeByRunId.get(run.runId);
+                if (!child || !run.waitingToolCallId) continue;
+                waitingOn[run.waitingToolCallId] = {
+                    childRunId: child.runId,
+                    name: child.name,
+                    status: child.status,
+                };
             }
-            page += 1;
         }
 
         if (props.sessionId === sessionId && requestId === waitingOnRequestId) {
@@ -351,7 +342,6 @@ async function loadWaitingOnProjection(
 async function refreshDerivedState(sessionId: string) {
     if (!sessionId) return;
     const requestId = ++derivedStateRequestId;
-    const parentRunIdAtRefresh = chatStore.getSessionRunId(sessionId);
     derivedStateLoading.value = true;
     derivedStateError.value = false;
     try {
@@ -364,7 +354,7 @@ async function refreshDerivedState(sessionId: string) {
                 activeRunIds.has(child.childRunId),
             ),
         );
-        await loadWaitingOnProjection(sessionId, result.activeChildren, parentRunIdAtRefresh);
+        await loadWaitingOnProjection(sessionId, result.activeChildren);
     } catch (cause) {
         if (props.sessionId === sessionId && requestId === derivedStateRequestId) {
             derivedStateError.value = true;
@@ -476,7 +466,7 @@ async function handleSend(
         }
         pendingSend.value = { content, attachments, branchId };
         selectedPrincipalId.value = "";
-    showPrincipalBinding.value = true;
+        showPrincipalBinding.value = true;
     } catch (cause) {
         const message = cause instanceof ApiError ? cause.message : t("workspace.agentLoadFailed");
         logger.error("Failed to load Workspace Agents for Session binding", cause);
@@ -488,8 +478,14 @@ async function handleSend(
 
 async function handleFollowUpQueue(content: string, attachments?: AttachmentFile[]) {
     const sessionId = props.sessionId;
-    if (!sessionId || followUpQueueSubmitting.value || followUpQueueFull.value
-        || followUpQueueBusyItemId.value || followUpQueueContinuing.value) return;
+    if (
+        !sessionId ||
+        followUpQueueSubmitting.value ||
+        followUpQueueFull.value ||
+        followUpQueueBusyItemId.value ||
+        followUpQueueContinuing.value
+    )
+        return;
     let branchId = selectedBranchId.value;
     if (!branchId) {
         try {
@@ -512,7 +508,12 @@ async function handleFollowUpQueue(content: string, attachments?: AttachmentFile
         .filter((fileId): fileId is string => Boolean(fileId));
     const binding = configStore.getEffectiveModel(sessionId);
     const signature = JSON.stringify([
-        branchId, content, fileIds, props.toolMode, binding?.provider ?? null, binding?.model ?? null,
+        branchId,
+        content,
+        fileIds,
+        props.toolMode,
+        binding?.provider ?? null,
+        binding?.model ?? null,
     ]);
     const sessionKeys = pendingFollowUpKeys.get(sessionId) ?? new Map<string, string>();
     const idempotencyKey = sessionKeys.get(signature) ?? crypto.randomUUID();
@@ -523,15 +524,20 @@ async function handleFollowUpQueue(content: string, attachments?: AttachmentFile
     followUpQueueSubmitting.value = true;
     followUpQueueError.value = null;
     try {
-        const snapshot = await api.enqueueFollowUp(sessionId, {
-            content,
-            ...(fileIds.length > 0 ? { attachments: fileIds } : {}),
-            branchId,
-            toolMode: props.toolMode,
-            ...(binding?.provider ? { provider: binding.provider } : {}),
-            ...(binding?.model ? { model: binding.model } : {}),
-        }, idempotencyKey);
-        if (props.sessionId !== sessionId || requestGeneration !== followUpQueueSubmitGeneration) return;
+        const snapshot = await api.enqueueFollowUp(
+            sessionId,
+            {
+                content,
+                ...(fileIds.length > 0 ? { attachments: fileIds } : {}),
+                branchId,
+                toolMode: props.toolMode,
+                ...(binding?.provider ? { provider: binding.provider } : {}),
+                ...(binding?.model ? { model: binding.model } : {}),
+            },
+            idempotencyKey,
+        );
+        if (props.sessionId !== sessionId || requestGeneration !== followUpQueueSubmitGeneration)
+            return;
         followUpQueue.value = snapshot;
         followUpQueueError.value = null;
         if (sessionKeys.get(signature) === idempotencyKey) {
@@ -542,10 +548,12 @@ async function handleFollowUpQueue(content: string, attachments?: AttachmentFile
         toast.success(t("chat.followUpQueued"));
         void refreshFollowUpQueue(sessionId);
     } catch (cause) {
-        if (props.sessionId !== sessionId || requestGeneration !== followUpQueueSubmitGeneration) return;
-        const message = cause instanceof ApiError
-            ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
-            : t("chat.followUpQueueFailed");
+        if (props.sessionId !== sessionId || requestGeneration !== followUpQueueSubmitGeneration)
+            return;
+        const message =
+            cause instanceof ApiError
+                ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
+                : t("chat.followUpQueueFailed");
         followUpQueueError.value = message;
         logger.error("Failed to enqueue Session Follow-up", cause);
         toast.error(message);
@@ -565,19 +573,23 @@ async function withdrawFollowUp(queueItemId: string) {
     followUpQueueError.value = null;
     try {
         const snapshot = await api.withdrawFollowUp(sessionId, queueItemId);
-        if (props.sessionId !== sessionId || requestGeneration !== followUpQueueActionGeneration) return;
+        if (props.sessionId !== sessionId || requestGeneration !== followUpQueueActionGeneration)
+            return;
         followUpQueue.value = snapshot;
         toast.success(t("chat.followUpWithdrawn"));
     } catch (cause) {
-        if (props.sessionId !== sessionId || requestGeneration !== followUpQueueActionGeneration) return;
-        const message = cause instanceof ApiError
-            ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
-            : t("chat.followUpQueueFailed");
+        if (props.sessionId !== sessionId || requestGeneration !== followUpQueueActionGeneration)
+            return;
+        const message =
+            cause instanceof ApiError
+                ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
+                : t("chat.followUpQueueFailed");
         followUpQueueError.value = message;
         logger.error("Failed to withdraw Session Follow-up", cause);
         toast.error(message);
     } finally {
-        if (requestGeneration === followUpQueueActionGeneration) followUpQueueBusyItemId.value = null;
+        if (requestGeneration === followUpQueueActionGeneration)
+            followUpQueueBusyItemId.value = null;
     }
 }
 
@@ -589,20 +601,24 @@ async function continueFollowUpQueue() {
     followUpQueueError.value = null;
     try {
         const snapshot = await api.continueFollowUpQueue(sessionId);
-        if (props.sessionId !== sessionId || requestGeneration !== followUpQueueActionGeneration) return;
+        if (props.sessionId !== sessionId || requestGeneration !== followUpQueueActionGeneration)
+            return;
         followUpQueue.value = snapshot;
         toast.success(t("chat.followUpContinued"));
         void refreshFollowUpQueue(sessionId);
     } catch (cause) {
-        if (props.sessionId !== sessionId || requestGeneration !== followUpQueueActionGeneration) return;
-        const message = cause instanceof ApiError
-            ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
-            : t("chat.followUpQueueFailed");
+        if (props.sessionId !== sessionId || requestGeneration !== followUpQueueActionGeneration)
+            return;
+        const message =
+            cause instanceof ApiError
+                ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
+                : t("chat.followUpQueueFailed");
         followUpQueueError.value = message;
         logger.error("Failed to continue Session Follow-up queue", cause);
         toast.error(message);
     } finally {
-        if (requestGeneration === followUpQueueActionGeneration) followUpQueueContinuing.value = false;
+        if (requestGeneration === followUpQueueActionGeneration)
+            followUpQueueContinuing.value = false;
     }
 }
 

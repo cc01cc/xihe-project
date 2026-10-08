@@ -7,7 +7,6 @@ import org.springframework.test.util.ReflectionTestUtils;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
-import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.chat.ApprovalService;
 import com.cc01cc.p.xihe.cp.chat.AgentSpawnExecutionService;
 import com.cc01cc.p.xihe.cp.chat.ChatSubmissionService;
@@ -25,10 +24,7 @@ import com.cc01cc.p.xihe.cp.repository.McpToolAliasRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy;
-import com.cc01cc.p.xihe.cp.operation.OperationPolicySummary;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
-import com.cc01cc.p.xihe.cp.entity.OperationAttempt;
-import com.cc01cc.p.xihe.cp.entity.OperationItem;
+import com.cc01cc.p.xihe.cp.policy.SafePolicySummary;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -54,10 +50,8 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -77,16 +71,16 @@ class McpProxyTest {
     private McpToolAliasRepository aliasRepository;
     private WorkspaceService workspaceService;
     private SessionRepository sessionRepository;
-    private OperationService operationService;
+    private McpInvocationService mcpInvocationService;
     private AgentSpawnExecutionService agentSpawnExecutionService;
     private McpProxyController controller;
     private org.springframework.mock.env.MockEnvironment environment;
 
     @Test
-    void safeLedgerPreviewPreservesOriginalRequestText() {
+    void safePreviewPreservesOriginalRequestText() {
         String body = "{\"params\":{\"arguments\":{\"token\":\"literal-user-data\"}}}";
 
-        String preview = ReflectionTestUtils.invokeMethod(controller, "safeLedgerPreview", body);
+        String preview = ReflectionTestUtils.invokeMethod(controller, "safePreview", body);
 
         assertEquals(body, preview);
     }
@@ -117,7 +111,6 @@ class McpProxyTest {
     @SuppressWarnings("unchecked")
     void cpSpawnDefersOneShotApprovalConsumptionToChildTransaction() throws Exception {
         String runId = "11111111-1111-1111-1111-111111111111";
-        String operationId = "22222222-2222-2222-2222-222222222222";
         String toolCallId = "33333333-3333-3333-3333-333333333333";
         String approvalId = "44444444-4444-4444-4444-444444444444";
         String sessionId = "55555555-5555-5555-5555-555555555555";
@@ -126,7 +119,7 @@ class McpProxyTest {
                 + "\"params\":{\"name\":\"spawn_agent\",\"arguments\":{\"prompt\":\""
                 + prompt + "\"}}}";
         ChatSubmissionService.SpawnInvocation invocation = new ChatSubmissionService.SpawnInvocation(
-                runId, toolCallId, sessionId, operationId, java.util.UUID.randomUUID(), "user-1",
+                runId, toolCallId, sessionId, java.util.UUID.randomUUID(), "user-1",
                 TEST_WS_UUID, "agent-1", "canonical-body");
         ChatSubmissionService.SpawnResult child = new ChatSubmissionService.SpawnResult(
                 "66666666-6666-6666-6666-666666666666", "77777777-7777-7777-7777-777777777777",
@@ -169,7 +162,7 @@ class McpProxyTest {
     void setUp() {
         requestRewriter = mock(RequestRewriter.class);
         policyEngine = mock(PolicyEngine.class);
-        when(policyEngine.hasCurrentAgentToolCall(any(), any(), any(), any(), any(), any(), any()))
+        when(policyEngine.hasCurrentAgentToolCall(any(), any(), any(), any(), any(), any()))
                 .thenReturn(true);
         auditLogger = mock(AuditLogger.class);
         approvalService = mock(ApprovalService.class);
@@ -180,7 +173,7 @@ class McpProxyTest {
         aliasRepository = mock(McpToolAliasRepository.class);
         workspaceService = mock(WorkspaceService.class);
         sessionRepository = mock(SessionRepository.class);
-        operationService = mock(OperationService.class);
+        mcpInvocationService = mock(McpInvocationService.class);
         agentSpawnExecutionService = mock(AgentSpawnExecutionService.class);
         environment = new org.springframework.mock.env.MockEnvironment();
 
@@ -188,12 +181,13 @@ class McpProxyTest {
                 requestRewriter, policyEngine,
                 auditLogger, approvalService, objectMapper, sseEmitterManager, stdioServerRepository,
                 mcpServerRepository, aliasRepository,
-                workspaceService, sessionRepository, operationService,
+                workspaceService, sessionRepository,
                 mock(com.cc01cc.p.xihe.cp.operation.JobStateService.class),
                 mock(com.cc01cc.p.xihe.cp.config.ConfigService.class),
                 new com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy(),
                 environment,
-                agentSpawnExecutionService
+                agentSpawnExecutionService,
+                mcpInvocationService
         );
         ReflectionTestUtils.setField(controller, "sessionIdHmacSecret", "test-only-key");
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
@@ -263,14 +257,14 @@ class McpProxyTest {
                 + "\"params\":{\"name\":\"execute_command\",\"arguments\":{}},\"id\":32}";
         HttpHeaders headers = new HttpHeaders();
         headers.set("X-Chat-Run-Id", TEST_WS_UUID);
-        headers.set("X-Operation-Id", UUID.randomUUID().toString());
+        headers.set("X-Tool-Call-Id", UUID.randomUUID().toString());
 
         ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                 controller, "handleToolsCall", TEST_WS_UUID, body, headers, "mcp-init",
                 accessContext(TEST_WS_UUID, "u-1"));
 
         assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
-        verifyNoInteractions(policyEngine, mcpServerRepository, operationService, approvalService);
+        verifyNoInteractions(policyEngine, mcpServerRepository, approvalService);
         verify(auditLogger).record(eq("mcp-init"), eq("execute_command"),
                 eq("caller_tool_denied"), anyString());
     }
@@ -286,7 +280,7 @@ class McpProxyTest {
                 internalAccessContext(TEST_WS_UUID, "u-1", null));
 
         assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
-        verifyNoInteractions(policyEngine, mcpServerRepository, operationService, approvalService);
+        verifyNoInteractions(policyEngine, mcpServerRepository, approvalService);
         verify(auditLogger).record(eq("mcp-init"), eq("read_file"),
                 eq("agent_session_required"), anyString());
     }
@@ -297,14 +291,12 @@ class McpProxyTest {
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"read_file\",\"arguments\":{\"path\":\"a.md\"}},\"id\":34}";
         String runId = "11111111-1111-1111-1111-111111111111";
-        String operationId = "22222222-2222-2222-2222-222222222222";
         String toolCallId = "33333333-3333-3333-3333-333333333333";
         when(policyEngine.hasCurrentAgentToolCall("u-1", TEST_WS_UUID, "sess-1",
-                runId, operationId, toolCallId, "read_file")).thenReturn(false);
+                runId, toolCallId, "read_file")).thenReturn(false);
         HttpHeaders headers = new HttpHeaders();
         headers.set("X-Chat-Run-Id", runId);
-        headers.set("X-Operation-Id", operationId);
-        headers.set("X-Operation-Item-Id", toolCallId);
+        headers.set("X-Tool-Call-Id", toolCallId);
         seedToolCache("read_file", "__system__");
 
         ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
@@ -314,7 +306,7 @@ class McpProxyTest {
         assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
         verify(policyEngine, never()).allowsByGrant(any(), anyString(), anyString(), anyString(),
                 anyString(), anyString(), anyBoolean());
-        verifyNoInteractions(mcpServerRepository, operationService, approvalService);
+        verifyNoInteractions(mcpServerRepository, approvalService);
         verify(auditLogger).record(eq("sess-1"), eq("read_file"),
                 eq("agent_tool_call_context_rejected"), anyString());
     }
@@ -573,7 +565,7 @@ class McpProxyTest {
         assertTrue(response.getBody().contains("\"code\":\"APPROVAL_REQUIRED\""));
         verify(sseEmitterManager).send(eq("sess-1"), eq("tool_exec_approval_required"), any());
         // PLAN-0328 T1.15: an undecided ASK dispatch must not invent a verdict snapshot.
-        verify(operationService, never()).attachPolicySummary(any(), anyString());
+        verifyNoInteractions(mcpInvocationService);
         verifyNoInteractions(mcpServerRepository);
     }
 
@@ -739,7 +731,7 @@ class McpProxyTest {
     void handleToolsCall_userDirectWorkspaceMutation_bypassesApprovalGate() throws Exception {
         // PLAN-290 B2 / Decision 17: a workspace user mutation without any agent
         // headers is UI-confirmed, not Agent-gated — the gate must let it pass
-        // (ledger records user_direct_allow); no APPROVAL_REQUIRED 409.
+        // (MCP invocation records the direct-user source); no APPROVAL_REQUIRED 409.
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"write_file\",\"arguments\":{}},\"id\":9}";
         when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
@@ -815,16 +807,14 @@ class McpProxyTest {
     private static HttpHeaders durableToolCallHeaders() {
         HttpHeaders headers = new HttpHeaders();
         headers.set("X-Chat-Run-Id", "11111111-1111-1111-1111-111111111111");
-        headers.set("X-Operation-Id", "22222222-2222-2222-2222-222222222222");
-        headers.set("X-Operation-Item-Id", "33333333-3333-3333-3333-333333333333");
+        headers.set("X-Tool-Call-Id", "33333333-3333-3333-3333-333333333333");
         return headers;
     }
 
     @Test
     @SuppressWarnings("unchecked")
-    void handleToolsCall_allowPath_attachesExactSafePolicySummaryToExistingItem() throws Exception {
-        // PLAN-0328 T1.15: the final verdict descriptor is attached to the dispatch ledger item
-        // with exactly the safe keys — never the MCP body / arguments.
+    void handleToolsCall_allowPathAttachesSafePolicySummaryToMcpInvocation() throws Exception {
+        // The final verdict snapshot belongs to the MCP invocation, never raw arguments.
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"read_file\",\"arguments\":{\"path\":\"secret-body-marker\"}},\"id\":11}";
         when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
@@ -835,15 +825,11 @@ class McpProxyTest {
                         PolicyLayer.BUILTIN, "manual", "allowed by read rules"));
         seedToolCache("read_file", "__system__");
 
-        OperationItem item = new OperationItem();
-        item.setId(java.util.UUID.randomUUID());
-        item.setStatus("pending");
-        OperationAttempt attempt = new OperationAttempt();
-        attempt.setId(java.util.UUID.randomUUID());
-        when(operationService.appendItem(any(), any(), any(), anyString(), anyString(), anyString(), any(), any(), any()))
-                .thenReturn(item);
-        when(operationService.startAttempt(any(), anyString(), any(), anyString(), any()))
-                .thenReturn(attempt);
+        UUID invocationId = UUID.randomUUID();
+        when(mcpInvocationService.findAgentInvocation(anyString(), anyString()))
+                .thenReturn(java.util.Optional.of(invocationId));
+        when(mcpInvocationService.startDispatchAttempt(eq(invocationId), isNull()))
+                .thenReturn(java.util.Optional.of(UUID.randomUUID()));
 
         com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
                 new java.net.InetSocketAddress("127.0.0.1", 0), 0);
@@ -860,8 +846,7 @@ class McpProxyTest {
                     "http://127.0.0.1:" + stub.getAddress().getPort());
             HttpHeaders headers = new HttpHeaders();
             headers.set("X-Chat-Run-Id", TEST_WS_UUID);
-            headers.set("X-Operation-Id", java.util.UUID.randomUUID().toString());
-            headers.set("X-Operation-Item-Id", java.util.UUID.randomUUID().toString());
+            headers.set("X-Tool-Call-Id", UUID.randomUUID().toString());
 
             ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                     controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
@@ -869,15 +854,12 @@ class McpProxyTest {
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
             ArgumentCaptor<String> summary = ArgumentCaptor.forClass(String.class);
-            verify(operationService).attachPolicySummary(eq(item.getId()), summary.capture());
-            // Identity rule: the verdict rides on the single dispatch item, no second item.
-            verify(operationService, times(1)).appendItem(
-                    any(), any(), any(), anyString(), anyString(), anyString(), any(), any(), any());
+            verify(mcpInvocationService).attachPolicySummary(eq(invocationId), summary.capture());
 
             JsonNode root = objectMapper.readTree(summary.getValue());
             Set<String> keys = new HashSet<>();
             root.fieldNames().forEachRemaining(keys::add);
-            assertEquals(OperationPolicySummary.POLICY_KEYS, keys);
+            assertEquals(SafePolicySummary.POLICY_KEYS, keys);
             assertEquals(Set.of("effect", "sourceLayer", "matchedRule", "reason", "mode",
                     "allowedBy", "actionClass", "shape", "reused"), keys);
             assertEquals("allow", root.get("effect").asText());
@@ -899,8 +881,8 @@ class McpProxyTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void handleToolsCall_autoAllow_recordsAllowedByMarker() throws Exception {
-        // PLAN-0328 决策 #32: auto-mode allows carry `allowed_by` (auto@<layer>) for audit.
+    void handleToolsCall_autoAllowRecordsAllowedByMarker() throws Exception {
+        // Auto-mode allows carry `allowed_by` (auto@<layer>) for audit.
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"write_file\",\"arguments\":{\"path\":\"secret-body-marker\"}},\"id\":13}";
         when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
@@ -914,15 +896,11 @@ class McpProxyTest {
                 .thenReturn(new ToolFaceRegistry.Face("write", ToolShape.STRUCTURED));
         seedToolCache("write_file", "__system__");
 
-        OperationItem item = new OperationItem();
-        item.setId(java.util.UUID.randomUUID());
-        item.setStatus("pending");
-        OperationAttempt attempt = new OperationAttempt();
-        attempt.setId(java.util.UUID.randomUUID());
-        when(operationService.appendItem(any(), any(), any(), anyString(), anyString(), anyString(), any(), any(), any()))
-                .thenReturn(item);
-        when(operationService.startAttempt(any(), anyString(), any(), anyString(), any()))
-                .thenReturn(attempt);
+        UUID invocationId = UUID.randomUUID();
+        when(mcpInvocationService.findAgentInvocation(anyString(), anyString()))
+                .thenReturn(java.util.Optional.of(invocationId));
+        when(mcpInvocationService.startDispatchAttempt(eq(invocationId), isNull()))
+                .thenReturn(java.util.Optional.of(UUID.randomUUID()));
 
         com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
                 new java.net.InetSocketAddress("127.0.0.1", 0), 0);
@@ -939,8 +917,7 @@ class McpProxyTest {
                     "http://127.0.0.1:" + stub.getAddress().getPort());
             HttpHeaders headers = new HttpHeaders();
             headers.set("X-Chat-Run-Id", TEST_WS_UUID);
-            headers.set("X-Operation-Id", java.util.UUID.randomUUID().toString());
-            headers.set("X-Operation-Item-Id", java.util.UUID.randomUUID().toString());
+            headers.set("X-Tool-Call-Id", UUID.randomUUID().toString());
 
             ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                     controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
@@ -948,7 +925,7 @@ class McpProxyTest {
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
             ArgumentCaptor<String> summary = ArgumentCaptor.forClass(String.class);
-            verify(operationService).attachPolicySummary(eq(item.getId()), summary.capture());
+            verify(mcpInvocationService).attachPolicySummary(eq(invocationId), summary.capture());
             JsonNode root = objectMapper.readTree(summary.getValue());
             assertEquals("allow", root.get("effect").asText());
             assertEquals("session", root.get("sourceLayer").asText());
@@ -976,24 +953,20 @@ class McpProxyTest {
 
         HttpHeaders headers = new HttpHeaders();
         headers.set("X-Chat-Run-Id", TEST_WS_UUID);
-        headers.set("X-Operation-Id", java.util.UUID.randomUUID().toString());
-        headers.set("X-Operation-Item-Id", java.util.UUID.randomUUID().toString());
         ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                 controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
                 internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
 
         assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
-        // A blocked call has no dispatch, so it must not create a ledger item or invent a verdict.
-        verify(operationService, never()).appendItem(
-                any(), any(), any(), anyString(), anyString(), anyString(), any(), any(), any());
-        verify(operationService, never()).attachPolicySummary(any(), anyString());
+        // A blocked call has no dispatch, so it must not create an invocation attempt or snapshot.
+        verifyNoInteractions(mcpInvocationService);
         verify(sseEmitterManager).send(eq("sess-1"), eq("tool_exec_denied"), any());
     }
 
     @Test
     @SuppressWarnings("unchecked")
     void handleToolsCall_approvalGrantFailure_neverDispatchesOrAttaches() throws Exception {
-        // PLAN-0328 T1.15: an approval-path failure must not fabricate a dispatch, an item,
+        // An approval-path failure must not fabricate a dispatch,
         // or a verdict snapshot.
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"write_file\",\"arguments\":{\"path\":\"secret-body-marker\"}},\"id\":15}";
@@ -1010,20 +983,16 @@ class McpProxyTest {
         HttpHeaders headers = new HttpHeaders();
         headers.set("X-Chat-Run-Id", TEST_WS_UUID);
         headers.set("X-Xihe-Approval-Request-Id", "grant-1");
-        headers.set("X-Operation-Id", java.util.UUID.randomUUID().toString());
-        headers.set("X-Operation-Item-Id", java.util.UUID.randomUUID().toString());
 
         assertThrows(RuntimeException.class, () -> ReflectionTestUtils.invokeMethod(
                 controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
                 internalAccessContext(TEST_WS_UUID, "u-1", "sess-1")));
-        verify(operationService, never()).appendItem(
-                any(), any(), any(), anyString(), anyString(), anyString(), any(), any(), any());
-        verify(operationService, never()).attachPolicySummary(any(), anyString());
+        verifyNoInteractions(mcpInvocationService);
     }
 
     @Test
     @SuppressWarnings("unchecked")
-    void handleToolsCall_missingLedgerItem_skipsSummaryAndStillDispatches() throws Exception {
+    void handleToolsCall_missingInvocationStillDispatchesWithoutAttempt() throws Exception {
         when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
                 .thenAnswer(inv -> inv.getArgument(1));
         seedToolCache("read_file", "__system__");
@@ -1041,7 +1010,7 @@ class McpProxyTest {
         try {
             ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
                     "http://127.0.0.1:" + stub.getAddress().getPort());
-            // No X-Operation-Id → no ledger item exists for this dispatch: skip safely.
+            // A missing MCP invocation is bookkeeping-only; it must not block dispatch.
             HttpHeaders headers = new HttpHeaders();
             headers.set("X-Chat-Run-Id", TEST_WS_UUID);
             String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
@@ -1052,9 +1021,8 @@ class McpProxyTest {
                     internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
-            verify(operationService, never()).appendItem(
-                    any(), any(), any(), anyString(), anyString(), anyString(), any(), any(), any());
-            verify(operationService, never()).attachPolicySummary(any(), anyString());
+            verify(mcpInvocationService).findAgentInvocation(anyString(), anyString());
+            verify(mcpInvocationService, never()).startDispatchAttempt(any(), anyString());
         } finally {
             stub.stop(0);
         }
@@ -1072,16 +1040,6 @@ class McpProxyTest {
         when(approvalService.consumeApprovedGrant(
                 eq("grant-1"), eq("u-1"), eq(TEST_WS_UUID), eq("sess-1"), eq("write_file"), eq(body)))
                 .thenReturn(true);
-        OperationItem item = new OperationItem();
-        item.setId(java.util.UUID.randomUUID());
-        item.setStatus("pending");
-        OperationAttempt attempt = new OperationAttempt();
-        attempt.setId(java.util.UUID.randomUUID());
-        when(operationService.appendItem(any(), any(), any(), anyString(), anyString(), anyString(), any(), any(), any()))
-                .thenReturn(item);
-        when(operationService.startAttempt(any(), anyString(), any(), anyString(), any()))
-                .thenReturn(attempt);
-
         Map<String, Map<String, String>> cache =
                 (Map<String, Map<String, String>>) ReflectionTestUtils.getField(controller, "toolServerCache");
         Map<String, Instant> timestamps =
@@ -1105,118 +1063,15 @@ class McpProxyTest {
             Object access = internalAccessContext(TEST_WS_UUID, "u-1", "sess-1");
             HttpHeaders headers = new HttpHeaders();
             headers.set("X-Xihe-Approval-Request-Id", "grant-1");
-            headers.set("X-Operation-Id", java.util.UUID.randomUUID().toString());
-            headers.set("X-Operation-Item-Id", java.util.UUID.randomUUID().toString());
             ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                     controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1", access);
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
             verify(approvalService).consumeApprovedGrant(
                     "grant-1", "u-1", TEST_WS_UUID, "sess-1", "write_file", body);
-            verify(operationService).finishAttempt(attempt.getId(), "succeeded", 200, null, null, null);
         } finally {
             stub.stop(0);
         }
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void handleToolsCall_approvalItemFound_outboundKeyReusesLedgerItemId() throws Exception {
-        // PLAN-0326 决策 #9（v3 通道事实模型）：网关自建 source=mcp 的派发事实行，
-        // 不再复用中继的 agent 行（0317 #18 跨源复用否决）。出站键取网关己行的
-        // tool_call_id——同键同源重放由 appendItem 幂等收敛，取消键与派发行同源。
-        String itemToolCallId = "66354ccb-0809-4c32-af9f-a968f888d466";
-        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
-                + "\"params\":{\"name\":\"write_file\",\"arguments\":{}},\"id\":8}";
-        when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
-        when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("write_file"), eq(body), eq("sess-1"), any(), any(), any()))
-                .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }", PolicyLayer.BUILTIN,
-                        "manual", "mutation requires approval"));
-        when(approvalService.consumeApprovedGrant(
-                eq("grant-1"), eq("u-1"), eq(TEST_WS_UUID), eq("sess-1"), eq("write_file"), eq(body)))
-                .thenReturn(true);
-        OperationItem item = new OperationItem();
-        item.setId(java.util.UUID.randomUUID());
-        item.setStatus("running");
-        item.setToolCallId(itemToolCallId);
-        OperationAttempt attempt = new OperationAttempt();
-        attempt.setId(java.util.UUID.randomUUID());
-        // v3：appendItem 同源幂等——审批重放（同 toolCallId 再派发）命中网关己行。
-        when(operationService.appendItem(any(), any(), any(), anyString(), anyString(), anyString(), any(), any(), any()))
-                .thenReturn(item);
-        when(operationService.startAttempt(any(), anyString(), any(), anyString(), any()))
-                .thenReturn(attempt);
-
-        Map<String, Map<String, String>> cache =
-                (Map<String, Map<String, String>>) ReflectionTestUtils.getField(controller, "toolServerCache");
-        Map<String, Instant> timestamps =
-                (Map<String, Instant>) ReflectionTestUtils.getField(controller, "cacheTimestamps");
-        cache.put(TEST_WS_UUID, new ConcurrentHashMap<>(Map.of("write_file", "__system__")));
-        timestamps.put(TEST_WS_UUID, Instant.now());
-
-        final String[] outboundItemId = new String[1];
-        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
-                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
-        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange -> {
-            outboundItemId[0] = exchange.getRequestHeaders().getFirst("X-Operation-Item-Id");
-            byte[] response = "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[]},\"id\":8}"
-                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            exchange.sendResponseHeaders(200, response.length);
-            exchange.getResponseBody().write(response);
-            exchange.close();
-        });
-        stub.start();
-        try {
-            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
-                    "http://127.0.0.1:" + stub.getAddress().getPort());
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("X-Xihe-Approval-Request-Id", "grant-1");
-            headers.set("X-Operation-Id", java.util.UUID.randomUUID().toString());
-            headers.set("X-Operation-Item-Id", "6e464138-f8d2-4fbf-9ef2-b1c0913924a7");
-
-            ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
-                    controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
-                    internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
-
-            assertEquals(HttpStatus.OK, response.getStatusCode());
-            assertEquals(itemToolCallId, outboundItemId[0],
-                    "命中既有条目时出站键必须复用条目 tool_call_id（取消键同源）");
-        } finally {
-            stub.stop(0);
-        }
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void forwardToRuntime_transportFailureRecordsUnknownAttemptAndAmbiguousItem() throws Exception {
-        OperationItem item = new OperationItem();
-        item.setId(java.util.UUID.randomUUID());
-        item.setStatus("pending");
-        OperationAttempt attempt = new OperationAttempt();
-        attempt.setId(java.util.UUID.randomUUID());
-        when(operationService.appendItem(any(), any(), any(), anyString(), anyString(), anyString(), any(), any(), any()))
-                .thenReturn(item);
-        when(operationService.startAttempt(any(), anyString(), any(), anyString(), any()))
-                .thenReturn(attempt);
-        when(operationService.findItemByApprovalRequestId(null)).thenReturn(null);
-
-        ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://127.0.0.1:1");
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("X-Operation-Id", java.util.UUID.randomUUID().toString());
-        headers.set("X-Operation-Item-Id", java.util.UUID.randomUUID().toString());
-        headers.set("X-Request-Id", java.util.UUID.randomUUID().toString());
-        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
-                + "\"params\":{\"name\":\"write_file\",\"arguments\":{}},\"id\":9}";
-
-        ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
-                controller, "forwardToRuntime", TEST_WS_UUID, null, body, headers, "sess-1",
-                accessContext(TEST_WS_UUID, "u-1"));
-
-        assertEquals(HttpStatus.BAD_GATEWAY, response.getStatusCode());
-        verify(operationService).finishAttempt(attempt.getId(), "unknown", 502,
-                "MCP_FORWARD_UNKNOWN", null, null);
-        verify(operationService).transitionItem(item.getId(), "ambiguous", null, null, null,
-                "MCP_FORWARD_UNKNOWN");
     }
 
     @Test
@@ -1318,7 +1173,7 @@ class McpProxyTest {
         final String[] outboundTimeout = new String[1];
         final String[] outboundOrigin = new String[1];
         final String[] leakedPerCall = new String[1];
-        final String[] outboundItemId = new String[1];
+        final String[] outboundToolCallId = new String[1];
         final String[] outboundRunId = new String[1];
         com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
                 new java.net.InetSocketAddress("127.0.0.1", 0), 0);
@@ -1326,7 +1181,7 @@ class McpProxyTest {
             outboundTimeout[0] = exchange.getRequestHeaders().getFirst("X-Xihe-Tool-Timeout-S");
             outboundOrigin[0] = exchange.getRequestHeaders().getFirst("X-Xihe-Tool-Timeout-Origin");
             leakedPerCall[0] = exchange.getRequestHeaders().getFirst("X-Xihe-Tool-Timeout-Per-Call");
-            outboundItemId[0] = exchange.getRequestHeaders().getFirst("X-Operation-Item-Id");
+            outboundToolCallId[0] = exchange.getRequestHeaders().getFirst("X-Tool-Call-Id");
             outboundRunId[0] = exchange.getRequestHeaders().getFirst("X-Chat-Run-Id");
             byte[] response = "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[]},\"id\":3}"
                     .getBytes(java.nio.charset.StandardCharsets.UTF_8);
@@ -1342,7 +1197,7 @@ class McpProxyTest {
                     + "\"params\":{\"name\":\"read_file\",\"arguments\":{}},\"id\":3}";
             HttpHeaders headers = new HttpHeaders();
             headers.set("X-Chat-Run-Id", TEST_WS_UUID);
-            headers.set("X-Operation-Item-Id", "call-abc-123");
+            headers.set("X-Tool-Call-Id", "call-abc-123");
             headers.set("X-Xihe-Tool-Timeout-Per-Call", "25");
             // 上游伪造的出站头必须被剥离，只认 CP 自己的计算（信任边界 spec S2.2 规则 5）。
             headers.set("X-Xihe-Tool-Timeout-S", "9999");
@@ -1356,66 +1211,12 @@ class McpProxyTest {
             assertEquals("25", outboundTimeout[0]);
             assertEquals("per-call", outboundOrigin[0]);
             assertNull(leakedPerCall[0], "入站 per-call 头不得透传给 Runtime");
-            // 关联键规范化后出站：入站原始值非 UUID 时走 nameUUIDFromBytes，
-            // 保证与 CP 账本、Runtime 注册表同键（PLAN-0317 决策 #12；spec S5.1 规则 1）。
+            // Non-UUID call IDs are normalized once before forwarding to Runtime.
             assertEquals(
                     java.util.UUID.nameUUIDFromBytes("call-abc-123".getBytes(
                             java.nio.charset.StandardCharsets.UTF_8)).toString(),
-                    outboundItemId[0]);
+                    outboundToolCallId[0]);
             assertEquals(TEST_WS_UUID, outboundRunId[0]);
-        } finally {
-            stub.stop(0);
-        }
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void handleToolsCall_terminalLedgerItem_stillForwardsCanonicalItemId() throws Exception {
-        // PLAN-0326 决策 #9（v3）：审批重放时网关同源条目已终态 → startLedgerAttempt
-        // 返回 null，出站键仍取规范化键（0317 决策 #12 保留：禁止透传 Agent 原始头）。
-        // 旧行为（跨源复用中继条目）已由决策 #9 否决——mock 改为 appendItem 幂等命中
-        // 同源终态行。
-        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
-                .thenAnswer(inv -> inv.getArgument(1));
-        seedToolCache("read_file", "__system__");
-        OperationItem terminal = new OperationItem();
-        terminal.setId(java.util.UUID.randomUUID());
-        terminal.setStatus("cancelled");
-        when(operationService.appendItem(any(), any(), any(), anyString(), anyString(), anyString(), any(), any(), any()))
-                .thenReturn(terminal);
-
-        final String[] outboundItemId = new String[1];
-        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
-                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
-        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange -> {
-            outboundItemId[0] = exchange.getRequestHeaders().getFirst("X-Operation-Item-Id");
-            byte[] response = "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[]},\"id\":3}"
-                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            exchange.sendResponseHeaders(200, response.length);
-            exchange.getResponseBody().write(response);
-            exchange.close();
-        });
-        stub.start();
-        try {
-            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
-                    "http://127.0.0.1:" + stub.getAddress().getPort());
-            String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
-                    + "\"params\":{\"name\":\"read_file\",\"arguments\":{}},\"id\":3}";
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("X-Chat-Run-Id", TEST_WS_UUID);
-            headers.set("X-Operation-Id", java.util.UUID.randomUUID().toString());
-            headers.set("X-Operation-Item-Id", "call-abc-123");
-
-            ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
-                    controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
-                    internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
-
-            assertEquals(HttpStatus.OK, response.getStatusCode());
-            assertEquals(
-                    java.util.UUID.nameUUIDFromBytes("call-abc-123".getBytes(
-                            java.nio.charset.StandardCharsets.UTF_8)).toString(),
-                    outboundItemId[0],
-                    "终态条目下出站键仍须规范化，禁止透传 Agent 原始头");
         } finally {
             stub.stop(0);
         }
@@ -1623,24 +1424,20 @@ class McpProxyTest {
 
     // ── PLAN-0346 gap A: mcp 行成功路径的三段终态判定 ────────────────────
 
-    private OperationItem seedLedgerMocks() {
-        OperationItem item = new OperationItem();
-        item.setId(java.util.UUID.randomUUID());
-        item.setStatus("running");
-        OperationAttempt attempt = new OperationAttempt();
-        attempt.setId(java.util.UUID.randomUUID());
-        when(operationService.appendItem(any(), any(), any(), anyString(), anyString(), anyString(), any(), any(), any()))
-                .thenReturn(item);
-        when(operationService.startAttempt(any(), anyString(), any(), anyString(), any()))
-                .thenReturn(attempt);
-        return item;
+    private UUID[] seedMcpDispatchMocks() {
+        UUID invocationId = UUID.randomUUID();
+        UUID attemptId = UUID.randomUUID();
+        when(mcpInvocationService.findAgentInvocation(anyString(), anyString()))
+                .thenReturn(java.util.Optional.of(invocationId));
+        when(mcpInvocationService.startDispatchAttempt(eq(invocationId), isNull()))
+                .thenReturn(java.util.Optional.of(attemptId));
+        return new UUID[]{invocationId, attemptId};
     }
 
     private ResponseEntity<String> callTool(String body) throws Exception {
         HttpHeaders headers = new HttpHeaders();
         headers.set("X-Chat-Run-Id", TEST_WS_UUID);
-        headers.set("X-Operation-Id", java.util.UUID.randomUUID().toString());
-        headers.set("X-Operation-Item-Id", java.util.UUID.randomUUID().toString());
+        headers.set("X-Tool-Call-Id", UUID.randomUUID().toString());
         return (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                 controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
                 internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
@@ -1670,76 +1467,68 @@ class McpProxyTest {
     }
 
     @Test
-    void handleToolsCall_successCompletesMcpItem() throws Exception {
-        // HTTP 200 + result.isError=false → item completed (previously stuck in
-        // "running" and wrongly settled to "aborted" by the run reconciler).
+    void handleToolsCall_successCompletesMcpInvocationAttempt() throws Exception {
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"read_file\",\"arguments\":{}},\"id\":21}";
         seedReadFileAllow(body);
-        OperationItem item = seedLedgerMocks();
+        UUID[] dispatch = seedMcpDispatchMocks();
         var stub = stubRuntime("{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[],\"isError\":false},\"id\":21}");
         try {
             ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
                     "http://127.0.0.1:" + stub.getAddress().getPort());
             ResponseEntity<String> response = callTool(body);
             assertEquals(HttpStatus.OK, response.getStatusCode());
-            verify(operationService).transitionItem(eq(item.getId()), eq("completed"),
-                    isNull(), isNull(), isNull(), isNull());
+            verify(mcpInvocationService).finishDispatchAttempt(eq(dispatch[0]), eq(dispatch[1]),
+                    eq(200), isNull(), eq(McpInvocationService.McpDispatchVerdict.COMPLETED));
         } finally {
             stub.stop(0);
         }
     }
 
     @Test
-    void handleToolsCall_mcpIsErrorFailsItem() throws Exception {
-        // HTTP 200 + result.isError=true → item failed with MCP_RESULT_IS_ERROR
-        // (transport succeeded but the tool execution failed).
+    void handleToolsCall_mcpIsErrorFailsInvocation() throws Exception {
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"read_file\",\"arguments\":{}},\"id\":22}";
         seedReadFileAllow(body);
-        OperationItem item = seedLedgerMocks();
+        UUID[] dispatch = seedMcpDispatchMocks();
         var stub = stubRuntime("{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[],\"isError\":true},\"id\":22}");
         try {
             ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
                     "http://127.0.0.1:" + stub.getAddress().getPort());
             ResponseEntity<String> response = callTool(body);
             assertEquals(HttpStatus.OK, response.getStatusCode());
-            verify(operationService).transitionItem(eq(item.getId()), eq("failed"),
-                    isNull(), isNull(), isNull(), eq("MCP_RESULT_IS_ERROR"));
+            verify(mcpInvocationService).finishDispatchAttempt(eq(dispatch[0]), eq(dispatch[1]),
+                    eq(200), isNull(), eq(McpInvocationService.McpDispatchVerdict.TOOL_ERROR));
         } finally {
             stub.stop(0);
         }
     }
 
     @Test
-    void handleToolsCall_unparseableBodyLeavesItemForReconciler() throws Exception {
-        // Non-JSON-RPC 2xx body → no item transition (previous behaviour kept;
-        // the reconciler owns settlement when the result is undecidable).
+    void handleToolsCall_unparseableBodyLeavesInvocationUndecidable() throws Exception {
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"read_file\",\"arguments\":{}},\"id\":23}";
         seedReadFileAllow(body);
-        OperationItem item = seedLedgerMocks();
+        UUID[] dispatch = seedMcpDispatchMocks();
         var stub = stubRuntime("not-json");
         try {
             ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
                     "http://127.0.0.1:" + stub.getAddress().getPort());
             ResponseEntity<String> response = callTool(body);
             assertEquals(HttpStatus.OK, response.getStatusCode());
-            verify(operationService, never()).transitionItem(any(), anyString(), any(), any(), any(), any());
+            verify(mcpInvocationService).finishDispatchAttempt(eq(dispatch[0]), eq(dispatch[1]),
+                    eq(200), isNull(), eq(McpInvocationService.McpDispatchVerdict.UNDECIDABLE));
         } finally {
             stub.stop(0);
         }
     }
 
     @Test
-    void handleToolsCall_jsonRpcErrorFailsItemWithCode() throws Exception {
-        // PLAN-0346 gap A (four-way): HTTP 200 + JSON-RPC error object is a
-        // protocol-level rejection → failed, detail carries only the numeric
-        // code (message text is never persisted).
+    void handleToolsCall_jsonRpcErrorFailsInvocationWithProtocolVerdict() throws Exception {
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"read_file\",\"arguments\":{}},\"id\":24}";
         seedReadFileAllow(body);
-        OperationItem item = seedLedgerMocks();
+        UUID[] dispatch = seedMcpDispatchMocks();
         var stub = stubRuntime("{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32602,"
                 + "\"message\":\"Invalid params: secret detail\"},\"id\":24}");
         try {
@@ -1747,33 +1536,8 @@ class McpProxyTest {
                     "http://127.0.0.1:" + stub.getAddress().getPort());
             ResponseEntity<String> response = callTool(body);
             assertEquals(HttpStatus.OK, response.getStatusCode());
-            verify(operationService).transitionItem(eq(item.getId()), eq("failed"),
-                    isNull(), isNull(), isNull(), eq("MCP_PROTOCOL_ERROR:-32602"));
-        } finally {
-            stub.stop(0);
-        }
-    }
-
-    @Test
-    void handleToolsCall_replayedDispatchIsIdempotentNot409() throws Exception {
-        // Same-source replay: the item is already terminal (completed on the
-        // first dispatch), so the re-entered finish path raises a state
-        // conflict — it must be swallowed and the caller still gets a 200
-        // (replay stays idempotent instead of surfacing a 409).
-        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
-                + "\"params\":{\"name\":\"read_file\",\"arguments\":{}},\"id\":25}";
-        seedReadFileAllow(body);
-        OperationItem item = seedLedgerMocks();
-        doThrow(new CpApiException(HttpStatus.CONFLICT, "OPERATION_STATE_CONFLICT",
-                "Operation item is already terminal (completed)"))
-                .when(operationService).transitionItem(eq(item.getId()), anyString(),
-                        isNull(), isNull(), isNull(), any());
-        var stub = stubRuntime("{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[],\"isError\":false},\"id\":25}");
-        try {
-            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
-                    "http://127.0.0.1:" + stub.getAddress().getPort());
-            ResponseEntity<String> response = callTool(body);
-            assertEquals(HttpStatus.OK, response.getStatusCode());
+            verify(mcpInvocationService).finishDispatchAttempt(eq(dispatch[0]), eq(dispatch[1]),
+                    eq(200), isNull(), eq(McpInvocationService.McpDispatchVerdict.PROTOCOL_ERROR));
         } finally {
             stub.stop(0);
         }

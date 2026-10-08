@@ -4,7 +4,6 @@ import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
-import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.UserRole;
@@ -12,12 +11,9 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
+import com.cc01cc.p.xihe.cp.repository.ChatRunHistoryRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
-import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
-import com.cc01cc.p.xihe.cp.repository.OperationEventRepository;
-import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
@@ -30,7 +26,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.awaitility.Awaitility;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
@@ -93,10 +88,8 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
     @Autowired private WorkspaceAgentRepository workspaceAgentRepository;
     @Autowired private SessionRepository sessionRepository;
     @Autowired private ChatRunRepository chatRunRepository;
-    @Autowired private LedgerOperationRepository ledgerOperationRepository;
-    @Autowired private OperationItemRepository operationItemRepository;
-    @Autowired private OperationEventRepository operationEventRepository;
-    @Autowired private OperationService operationService;
+    @Autowired private ChatRunHistoryRepository historyRepository;
+    @Autowired private com.cc01cc.p.xihe.cp.repository.McpInvocationRepository mcpInvocationRepository;
     @Autowired private ChatRunTerminalService terminalService;
     @Autowired private SessionService sessionService;
     @Autowired private ChatRunCancellationService cancellationService;
@@ -135,38 +128,24 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
                 new WorkspaceAgent(principalId.toString(), workspaceId, permissionSnapshot));
     }
 
-    @AfterEach
-    void awaitAfterCommitCheckpointMarkers() {
-        Awaitility.await().atMost(Duration.ofSeconds(10)).pollInterval(Duration.ofMillis(50))
-                .untilAsserted(() -> assertEquals(0, jdbcTemplate.queryForObject(
-                        "SELECT count(*) FROM chat_runs r "
-                                + "JOIN ledger_operations o ON o.run_id = r.id "
-                                + "WHERE r.workspace_id = CAST(? AS UUID) AND r.terminal_at IS NOT NULL "
-                                + "AND NOT EXISTS (SELECT 1 FROM operation_items i "
-                                + "WHERE i.operation_id = o.id AND i.tool_name = 'run_checkpoint' "
-                                + "AND i.status = 'completed')",
-                        Integer.class, workspaceId)));
-    }
-
     // ------------------------------------------------------------------
     // atomicity baseline, duplicate suppression, root terminal
     // ------------------------------------------------------------------
 
     @Test
     void childTerminalCommitsTerminalParentSettlementAndOneInboxRowAtomically() {
-        SpawnFixture fixture = createSpawnFixture(true, "running");
+        SpawnFixture fixture = createSpawnFixture(true);
 
         assertTrue(terminalService.terminalize(
                 request(fixture.child(), "succeeded", "success", null,
-                        ChatRunTerminalService.LedgerMode.STREAM)).committed());
+                        ChatRunTerminalService.TerminalSource.STREAM)).committed());
 
         ChatRun child = chatRunRepository.findById(fixture.child().run().getId()).orElseThrow();
         assertEquals("succeeded", child.getStatus());
         assertNotNull(child.getTerminalAt());
-        OperationItem parentItem = operationItemRepository.findById(fixture.parentItemId()).orElseThrow();
-        assertEquals("completed", parentItem.getStatus());
-        assertEquals(fixture.childAssistantMessageId(), parentItem.getResultRef());
-        assertNull(parentItem.getWaitingOnRunId());
+        assertNull(child.getWaitingOnRunId(), "the child waiting link must be settled");
+        assertNull(child.getWaitingToolCallId());
+        assertEquals(1, historyRepository.findByRunIdOrderBySequenceAsc(child.getId()).size());
 
         assertEquals(1, inboxCountForParent(fixture.parent().session().getId()),
                 "one child terminal must commit exactly one Inbox row");
@@ -181,7 +160,7 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
 
         ChatRunTerminalService.TerminalResult repeat = terminalService.terminalize(
                 request(fixture.child(), "failed", "error", "LATE",
-                        ChatRunTerminalService.LedgerMode.STREAM));
+                        ChatRunTerminalService.TerminalSource.STREAM));
         assertFalse(repeat.committed(), "a terminal run must not commit twice");
         assertEquals(1, inboxCountForParent(fixture.parent().session().getId()),
                 "a lost repeat CAS must not add or rewrite Inbox rows");
@@ -189,11 +168,11 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void partialChildTerminalCommitsPartialInboxState() {
-        SpawnFixture fixture = createSpawnFixture(true, "running");
+        SpawnFixture fixture = createSpawnFixture(true);
 
         assertTrue(terminalService.terminalize(
                 request(fixture.child(), "partial", "partial", "PARTIAL_RESULT",
-                        ChatRunTerminalService.LedgerMode.STREAM)).committed());
+                        ChatRunTerminalService.TerminalSource.STREAM)).committed());
 
         ChatRun child = chatRunRepository.findById(fixture.child().run().getId()).orElseThrow();
         assertEquals("partial", child.getStatus());
@@ -204,11 +183,11 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void terminalCommitPublishesExactRefreshHintToParentSessionChannel() throws Exception {
-        SpawnFixture fixture = createSpawnFixture(true, "running");
+        SpawnFixture fixture = createSpawnFixture(true);
 
         assertTrue(terminalService.terminalize(
                 request(fixture.child(), "succeeded", "success", null,
-                        ChatRunTerminalService.LedgerMode.STREAM)).committed());
+                        ChatRunTerminalService.TerminalSource.STREAM)).committed());
 
         ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);
         verify(sseEmitterManager).send(eq(fixture.parent().session().getId().toString()),
@@ -230,14 +209,14 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void failedSseSendDoesNotUndoTerminalOrInboxCommit() {
-        SpawnFixture fixture = createSpawnFixture(true, "running");
+        SpawnFixture fixture = createSpawnFixture(true);
         doThrow(new IllegalStateException("injected SSE send failure"))
                 .when(sseEmitterManager).send(eq(fixture.parent().session().getId().toString()),
                         eq("derived_state_changed"), any());
 
         assertTrue(terminalService.terminalize(
                 request(fixture.child(), "succeeded", "success", null,
-                        ChatRunTerminalService.LedgerMode.STREAM)).committed());
+                        ChatRunTerminalService.TerminalSource.STREAM)).committed());
 
         ChatRun child = chatRunRepository.findById(fixture.child().run().getId()).orElseThrow();
         assertEquals("succeeded", child.getStatus());
@@ -247,10 +226,10 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void startupRecoveryTerminalUsesTheSharedInboxTransaction() {
-        SpawnFixture fixture = createSpawnFixture(true, "running");
+        SpawnFixture fixture = createSpawnFixture(true);
         assertTrue(terminalService.terminalize(
                 request(fixture.parent(), "succeeded", "success", null,
-                        ChatRunTerminalService.LedgerMode.STREAM)).committed());
+                        ChatRunTerminalService.TerminalSource.STREAM)).committed());
 
         recoveryService.reconcileOnStartup();
 
@@ -264,7 +243,7 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void startupRecoveryClosesCancellingChildThroughTheSharedInboxTransaction() {
-        SpawnFixture fixture = createSpawnFixture(true, "running");
+        SpawnFixture fixture = createSpawnFixture(true);
         assertEquals(ChatRunCancellationService.CancelOutcome.CLAIMED,
                 cancellationService.claimCancellation(fixture.child().run().getId().toString(),
                         fixture.child().session().getId().toString(), userId, workspaceId).outcome());
@@ -281,10 +260,10 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void staleReconciliationTerminalUsesTheSharedInboxTransaction() {
-        SpawnFixture fixture = createSpawnFixture(true, "running");
+        SpawnFixture fixture = createSpawnFixture(true);
         assertTrue(terminalService.terminalize(
                 request(fixture.parent(), "succeeded", "success", null,
-                        ChatRunTerminalService.LedgerMode.STREAM)).committed());
+                        ChatRunTerminalService.TerminalSource.STREAM)).committed());
         ChatRunReconciliationService reconciler = new ChatRunReconciliationService(
                 chatRunRepository, chatController, terminalService, -1);
 
@@ -303,7 +282,7 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
         RunFixture root = createRun(createSession("root-no-inbox", null, null));
 
         assertTrue(terminalService.terminalize(
-                request(root, "succeeded", "success", null, ChatRunTerminalService.LedgerMode.STREAM))
+                request(root, "succeeded", "success", null, ChatRunTerminalService.TerminalSource.STREAM))
                 .committed());
 
         assertEquals(0, inboxCountForRef(root.run().getId()),
@@ -319,15 +298,14 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
         ChatSubmissionService.Submission first = createParentRun(firstRunId, parentSession);
 
         assertEquals(UUID.fromString(firstRunId), first.run().getId());
-        assertTrue(ledgerOperationRepository.findByRunId(firstRunId).isPresent(),
-                "the real parent operation root must exist with the claimed Run");
+        assertTrue(chatRunRepository.findById(UUID.fromString(firstRunId)).isPresent(),
+                "the real parent ChatRun must exist with the claimed Inbox");
         assertEquals(firstRunId, claimedRunId(firstInboxId),
                 "pending Inbox must be claimed in the real CP create transaction");
 
         assertTrue(terminalService.terminalize(
-                request(new RunFixture(parentSession, first.run(),
-                                ledgerOperationRepository.findByRunId(firstRunId).orElseThrow().getId()),
-                        "succeeded", "success", null, ChatRunTerminalService.LedgerMode.STREAM)).committed());
+                request(new RunFixture(parentSession, first.run()),
+                        "succeeded", "success", null, ChatRunTerminalService.TerminalSource.STREAM)).committed());
         String nextRunId = UUID.randomUUID().toString();
         createParentRun(nextRunId, parentSession);
         assertEquals(firstRunId, claimedRunId(firstInboxId),
@@ -339,16 +317,15 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
         TransactionTemplate transaction = new TransactionTemplate(transactionManager);
         transaction.executeWithoutResult(status -> {
             createParentRun(rolledBackRunId, rollbackSession);
-            assertTrue(ledgerOperationRepository.findByRunId(rolledBackRunId).isPresent(),
-                    "the operation root must be in the same outer transaction");
+            assertTrue(chatRunRepository.findById(UUID.fromString(rolledBackRunId)).isPresent(),
+                    "the ChatRun must be in the same outer transaction");
             assertEquals(rolledBackRunId, claimedRunId(rollbackInboxId));
             status.setRollbackOnly();
         });
 
         assertTrue(chatRunRepository.findById(UUID.fromString(rolledBackRunId)).isEmpty());
-        assertTrue(ledgerOperationRepository.findByRunId(rolledBackRunId).isEmpty());
         assertNull(claimedRunId(rollbackInboxId),
-                "Run, operation root and Inbox claim must roll back together");
+                "Run and Inbox claim must roll back together");
     }
 
     // ------------------------------------------------------------------
@@ -357,7 +334,7 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void inboxWriteFailureRollsBackAllFacesThenExplicitRetrySucceeds() {
-        SpawnFixture fixture = createSpawnFixture(true, "running");
+        SpawnFixture fixture = createSpawnFixture(true);
         try {
             jdbcTemplate.execute("CREATE FUNCTION fail_inbox_insert_t26b() RETURNS trigger "
                     + "LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected inbox failure'; END $$");
@@ -366,19 +343,11 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
 
             assertThrows(Exception.class, () -> terminalService.terminalize(
                     request(fixture.child(), "succeeded", "success", null,
-                            ChatRunTerminalService.LedgerMode.STREAM)));
+                            ChatRunTerminalService.TerminalSource.STREAM)));
 
             ChatRun child = chatRunRepository.findById(fixture.child().run().getId()).orElseThrow();
             assertEquals("running", child.getStatus(), "ChatRun status must roll back");
             assertNull(child.getTerminalAt(), "terminal_at must roll back");
-            OperationItem parentItem = operationItemRepository.findById(fixture.parentItemId()).orElseThrow();
-            assertEquals("running", parentItem.getStatus(), "parent item status must roll back");
-            assertNull(parentItem.getResultRef(), "parent resultRef must roll back");
-            assertEquals(fixture.child().run().getId(), parentItem.getWaitingOnRunId(),
-                    "waiting link must roll back with the Inbox failure");
-            assertEquals("running", ledgerOperationRepository
-                    .findByRunId(fixture.child().run().getId().toString()).orElseThrow().getStatus(),
-                    "child ledger operation must roll back");
             assertEquals(0, inboxCountForParent(fixture.parent().session().getId()),
                     "no Inbox row may survive a failed write");
         } finally {
@@ -388,44 +357,40 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
 
         assertTrue(terminalService.terminalize(
                 request(fixture.child(), "succeeded", "success", null,
-                        ChatRunTerminalService.LedgerMode.STREAM)).committed(),
+                        ChatRunTerminalService.TerminalSource.STREAM)).committed(),
                 "after the injected failure is removed the explicit retry must commit");
         assertEquals(1, inboxCountForParent(fixture.parent().session().getId()));
         assertEquals("success", payloadField(fixture.child(), "state"));
     }
 
     @Test
-    void parentItemWriteFailureRollsBackTerminalAndInbox() {
-        SpawnFixture fixture = createSpawnFixture(true, "running");
+    void historyWriteFailureRollsBackTerminalAndInbox() {
+        SpawnFixture fixture = createSpawnFixture(true);
         try {
-            jdbcTemplate.execute("CREATE FUNCTION fail_parent_item_update_t12() RETURNS trigger "
-                    + "LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected parent item update failure'; END $$");
-            jdbcTemplate.execute("CREATE TRIGGER fail_parent_item_update_t12 BEFORE UPDATE ON operation_items "
-                    + "FOR EACH ROW EXECUTE FUNCTION fail_parent_item_update_t12()");
+            jdbcTemplate.execute("CREATE FUNCTION fail_history_insert_t12() RETURNS trigger "
+                    + "LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected history insert failure'; END $$");
+            jdbcTemplate.execute("CREATE TRIGGER fail_history_insert_t12 BEFORE INSERT ON chat_run_history "
+                    + "FOR EACH ROW EXECUTE FUNCTION fail_history_insert_t12()");
 
             assertThrows(Exception.class, () -> terminalService.terminalize(
                     request(fixture.child(), "succeeded", "success", null,
-                            ChatRunTerminalService.LedgerMode.STREAM)));
+                            ChatRunTerminalService.TerminalSource.STREAM)));
 
             ChatRun child = chatRunRepository.findById(fixture.child().run().getId()).orElseThrow();
             assertEquals("running", child.getStatus());
             assertNull(child.getTerminalAt());
-            assertEquals("running", ledgerOperationRepository
-                    .findByRunId(fixture.child().run().getId().toString()).orElseThrow().getStatus());
-            OperationItem parentItem = operationItemRepository.findById(fixture.parentItemId()).orElseThrow();
-            assertEquals("running", parentItem.getStatus());
-            assertNull(parentItem.getResultRef());
-            assertEquals(fixture.child().run().getId(), parentItem.getWaitingOnRunId());
+            assertNotNull(child.getWaitingOnRunId(), "the link settlement must roll back too");
+            assertEquals(0, historyRepository.findByRunIdOrderBySequenceAsc(child.getId()).size());
             assertEquals(0, inboxCountForRef(fixture.child().run().getId()));
         } finally {
-            jdbcTemplate.execute("DROP TRIGGER IF EXISTS fail_parent_item_update_t12 ON operation_items");
-            jdbcTemplate.execute("DROP FUNCTION IF EXISTS fail_parent_item_update_t12()");
+            jdbcTemplate.execute("DROP TRIGGER IF EXISTS fail_history_insert_t12 ON chat_run_history");
+            jdbcTemplate.execute("DROP FUNCTION IF EXISTS fail_history_insert_t12()");
         }
     }
 
     @Test
     void deletedParentCommitsChildLocalTerminalWithoutInboxAndEmitsDiagnostic() {
-        SpawnFixture fixture = createSpawnFixture(true, "running");
+        SpawnFixture fixture = createSpawnFixture(true);
         sessionService.delete(fixture.parent().session().getId().toString(), userId, workspaceId);
         ChatRun beforeChildTerminal = chatRunRepository.findById(fixture.child().run().getId()).orElseThrow();
         assertEquals("running", beforeChildTerminal.getStatus(),
@@ -435,7 +400,7 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
         try (LogCapture logs = new LogCapture(ChatRunTerminalService.class)) {
             assertTrue(terminalService.terminalize(
                     request(fixture.child(), "succeeded", "success", null,
-                            ChatRunTerminalService.LedgerMode.STREAM)).committed());
+                            ChatRunTerminalService.TerminalSource.STREAM)).committed());
             assertTrue(logs.saw("derived_parent_missing"),
                     "the missing parent must be recorded as a structured diagnostic");
         }
@@ -443,23 +408,21 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
         ChatRun child = chatRunRepository.findById(fixture.child().run().getId()).orElseThrow();
         assertEquals("succeeded", child.getStatus());
         assertNotNull(child.getTerminalAt());
-        assertEquals("completed", ledgerOperationRepository
-                .findByRunId(fixture.child().run().getId().toString()).orElseThrow().getStatus(),
-                "child-local ledger settlement must still commit");
+        assertEquals(1, historyRepository.findByRunIdOrderBySequenceAsc(child.getId()).size(),
+                "the child-local history row must still commit");
         assertTrue(sessionRepository.findById(fixture.child().session().getId()).isPresent(),
                 "child Session stays independent of the deleted parent");
-        assertTrue(operationItemRepository.findById(fixture.parentItemId()).isEmpty());
         assertEquals(0, inboxCountForRef(fixture.child().run().getId()), "a missing parent has no recipient, so no Inbox row");
     }
 
     @Test
     void liveParentWithoutWaitingLinkRollsBackWithoutInboxAndEmitsDiagnostic() {
-        SpawnFixture fixture = createSpawnFixture(false, "running");
+        SpawnFixture fixture = createSpawnFixture(false);
 
         try (LogCapture logs = new LogCapture(ChatRunTerminalService.class)) {
             CpApiException failure = assertThrows(CpApiException.class, () -> terminalService.terminalize(
                     request(fixture.child(), "succeeded", "success", null,
-                            ChatRunTerminalService.LedgerMode.STREAM)));
+                            ChatRunTerminalService.TerminalSource.STREAM)));
             assertEquals("RUN_TERMINAL_INVARIANT_VIOLATION", failure.getCode());
             assertTrue(logs.saw("terminal_invariant_failed"),
                     "a live-parent link mismatch must be recorded as a structured consistency error");
@@ -468,39 +431,31 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
         ChatRun child = chatRunRepository.findById(fixture.child().run().getId()).orElseThrow();
         assertEquals("running", child.getStatus());
         assertNull(child.getTerminalAt());
-        assertNull(operationItemRepository.findById(fixture.parentItemId()).orElseThrow().getWaitingOnRunId());
+        assertNull(child.getWaitingOnRunId());
+        assertTrue(historyRepository.findByRunIdOrderBySequenceAsc(child.getId()).isEmpty());
         assertEquals(0, inboxCountForRef(fixture.child().run().getId()), "a rolled-back terminal must leave no Inbox row");
     }
 
     @Test
     void lateChildTerminalAfterParentTerminalPreservesParentAndWritesOneInboxRow() {
-        SpawnFixture fixture = createSpawnFixture(true, "running");
+        SpawnFixture fixture = createSpawnFixture(true);
         assertTrue(terminalService.terminalize(
                 request(fixture.parent(), "succeeded", "success", null,
-                        ChatRunTerminalService.LedgerMode.STREAM)).committed());
-        assertEquals("completed", ledgerOperationRepository.findById(fixture.parent().operationId())
+                        ChatRunTerminalService.TerminalSource.STREAM)).committed());
+        assertEquals("succeeded", chatRunRepository.findById(fixture.parent().run().getId())
                 .orElseThrow().getStatus());
-        OperationItem before = operationItemRepository.findById(fixture.parentItemId()).orElseThrow();
-        assertEquals(fixture.child().run().getId(), before.getWaitingOnRunId(),
+        ChatRun liveChild = chatRunRepository.findById(fixture.child().run().getId()).orElseThrow();
+        assertEquals(fixture.parent().run().getId().toString(), liveChild.getWaitingOnRunId(),
                 "a parent terminal keeps a still-live child link");
-        int parentItemEvents = operationEventRepository
-                .findByItemIdOrderBySequenceAsc(fixture.parentItemId().toString()).size();
 
         assertTrue(terminalService.terminalize(
                 request(fixture.child(), "failed", "error", "CHILD_ERROR",
-                        ChatRunTerminalService.LedgerMode.STREAM)).committed());
+                        ChatRunTerminalService.TerminalSource.STREAM)).committed());
 
-        OperationItem settled = operationItemRepository.findById(fixture.parentItemId()).orElseThrow();
         ChatRun child = chatRunRepository.findById(fixture.child().run().getId()).orElseThrow();
         assertEquals("failed", child.getStatus());
         assertNotNull(child.getTerminalAt());
-        assertEquals("running", settled.getStatus(), "the terminal parent item status must be preserved");
-        assertNull(settled.getErrorCode());
-        assertEquals(fixture.childAssistantMessageId(), settled.getResultRef());
-        assertNull(settled.getWaitingOnRunId());
-        assertEquals(parentItemEvents, operationEventRepository
-                .findByItemIdOrderBySequenceAsc(fixture.parentItemId().toString()).size(),
-                "a late child terminal must not reopen or append parent item events");
+        assertNull(child.getWaitingOnRunId(), "the late child terminal settles its own link");
         assertEquals(1, inboxCountForParent(fixture.parent().session().getId()),
                 "the late child terminal still commits exactly one Inbox row");
         assertEquals("error", payloadField(fixture.child(), "state"));
@@ -512,14 +467,14 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void parentDeleteWinsAgainstChildTerminalBarrier() throws Exception {
-        SpawnFixture fixture = createSpawnFixture(true, "running");
+        SpawnFixture fixture = createSpawnFixture(true);
         CountDownLatch start = new CountDownLatch(1);
         ExecutorService executor = Executors.newSingleThreadExecutor();
         try {
             Future<ChatRunTerminalService.TerminalResult> terminal = executor.submit(() -> {
                 start.await(5, TimeUnit.SECONDS);
                 return terminalService.terminalize(request(fixture.child(), "succeeded", "success", null,
-                        ChatRunTerminalService.LedgerMode.STREAM));
+                        ChatRunTerminalService.TerminalSource.STREAM));
             });
             TransactionTemplate tx = new TransactionTemplate(transactionManager);
             tx.execute(status -> {
@@ -540,14 +495,13 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
         assertEquals("succeeded", child.getStatus());
         assertNotNull(child.getTerminalAt());
         assertTrue(sessionRepository.findById(fixture.parent().session().getId()).isEmpty());
-        assertTrue(operationItemRepository.findById(fixture.parentItemId()).isEmpty());
         assertEquals(0, inboxCountForRef(fixture.child().run().getId()), "delete-wins leaves no parent aggregate and no Inbox row");
         assertTrue(sessionRepository.findById(fixture.child().session().getId()).isPresent());
     }
 
     @Test
     void terminalWinsAgainstParentDeleteBarrierAndDeleteClearsTheCommittedInbox() throws Exception {
-        SpawnFixture fixture = createSpawnFixture(true, "running");
+        SpawnFixture fixture = createSpawnFixture(true);
         CountDownLatch start = new CountDownLatch(1);
         ExecutorService executor = Executors.newFixedThreadPool(2);
         Future<Void> deletion = null;
@@ -555,7 +509,7 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
             Future<ChatRunTerminalService.TerminalResult> terminal = executor.submit(() -> {
                 start.await(5, TimeUnit.SECONDS);
                 return terminalService.terminalize(request(fixture.child(), "succeeded", "success", null,
-                        ChatRunTerminalService.LedgerMode.STREAM));
+                        ChatRunTerminalService.TerminalSource.STREAM));
             });
             TransactionTemplate tx = new TransactionTemplate(transactionManager);
             deletion = tx.execute(status -> {
@@ -590,10 +544,10 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void parentDeleteClearsTheInboxRowCommittedByTerminal() {
-        SpawnFixture fixture = createSpawnFixture(true, "running");
+        SpawnFixture fixture = createSpawnFixture(true);
         assertTrue(terminalService.terminalize(
                 request(fixture.child(), "succeeded", "success", null,
-                        ChatRunTerminalService.LedgerMode.STREAM)).committed());
+                        ChatRunTerminalService.TerminalSource.STREAM)).committed());
         assertEquals(1, inboxCountForParent(fixture.parent().session().getId()),
                 "terminal-wins commits the Inbox row first");
 
@@ -612,14 +566,14 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void cancelClaimWinsAgainstChildTerminalBarrier() throws Exception {
-        SpawnFixture fixture = createSpawnFixture(true, "running");
+        SpawnFixture fixture = createSpawnFixture(true);
         CountDownLatch start = new CountDownLatch(1);
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
             Future<ChatRunTerminalService.TerminalResult> terminal = executor.submit(() -> {
                 start.await(5, TimeUnit.SECONDS);
                 return terminalService.terminalize(request(fixture.child(), "succeeded", "success", null,
-                        ChatRunTerminalService.LedgerMode.STREAM));
+                        ChatRunTerminalService.TerminalSource.STREAM));
             });
             TransactionTemplate tx = new TransactionTemplate(transactionManager);
             ChatRunCancellationService.CancelClaim claim = tx.execute(status -> {
@@ -644,7 +598,7 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
 
         assertTrue(terminalService.terminalize(
                 requestExpected(fixture.child(), List.of("cancelling"), "cancelled", "cancelled", null,
-                        ChatRunTerminalService.LedgerMode.CANCELLATION)).committed());
+                        ChatRunTerminalService.TerminalSource.CANCELLATION)).committed());
         ChatRun child = chatRunRepository.findById(fixture.child().run().getId()).orElseThrow();
         assertEquals("cancelled", child.getStatus());
         assertNotNull(child.getTerminalAt());
@@ -656,14 +610,14 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void terminalWinsAgainstCancelClaimBarrier() throws Exception {
-        SpawnFixture fixture = createSpawnFixture(true, "running");
+        SpawnFixture fixture = createSpawnFixture(true);
         CountDownLatch start = new CountDownLatch(1);
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
             Future<ChatRunTerminalService.TerminalResult> terminal = executor.submit(() -> {
                 start.await(5, TimeUnit.SECONDS);
                 return terminalService.terminalize(request(fixture.child(), "succeeded", "success", null,
-                        ChatRunTerminalService.LedgerMode.STREAM));
+                        ChatRunTerminalService.TerminalSource.STREAM));
             });
             TransactionTemplate tx = new TransactionTemplate(transactionManager);
             Future<ChatRunCancellationService.CancelClaim> claimFuture = tx.execute(status -> {
@@ -693,8 +647,8 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
         assertEquals(1, inboxCountForParent(fixture.parent().session().getId()),
                 "terminal-wins commits exactly one Inbox row");
         assertEquals("success", payloadField(fixture.child(), "state"));
-        assertEquals(fixture.childAssistantMessageId(),
-                operationItemRepository.findById(fixture.parentItemId()).orElseThrow().getResultRef());
+        assertNull(chatRunRepository.findById(fixture.child().run().getId()).orElseThrow().getWaitingOnRunId(),
+                "terminal-wins settles the child waiting link");
     }
 
     // ------------------------------------------------------------------
@@ -705,8 +659,9 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
     void spawnWinsThenParentTerminalPreservesLinkAndChildTerminalWritesInbox() throws Exception {
         RunFixture parent = createRun(createSession("spawn-parent", null, null));
         String toolCallId = UUID.randomUUID().toString();
-        OperationItem spawnEvent = operationService.appendItem(parent.operationId(), toolCallId, null,
-                "tool_call", "spawn_agent", "agent", "{\"prompt\":\"child instruction\"}", null, null);
+        SpawnTestSupport.seedAgentInvocation(mcpInvocationRepository,
+                parent.session().getId().toString(), parent.run().getId().toString(), workspaceId, userId,
+                toolCallId, "spawn_agent", "{\"prompt\":\"child instruction\"}");
         ChatSubmissionService.SpawnAuthorization authorization = new ChatSubmissionService.SpawnAuthorization(
                 spawnAuthorizationBody("child instruction"), null, null);
 
@@ -717,7 +672,7 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
             Future<ChatRunTerminalService.TerminalResult> terminal = executor.submit(() -> {
                 start.await(5, TimeUnit.SECONDS);
                 return terminalService.terminalize(request(parent, "succeeded", "success", null,
-                        ChatRunTerminalService.LedgerMode.STREAM));
+                        ChatRunTerminalService.TerminalSource.STREAM));
             });
             TransactionTemplate tx = new TransactionTemplate(transactionManager);
             spawned = tx.execute(status -> {
@@ -738,8 +693,9 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
         assertNotNull(spawned, "the spawn transaction must commit with the holding transaction");
         ChatRun childRun = chatRunRepository.findById(UUID.fromString(spawned.runId())).orElseThrow();
         assertEquals(ChatRun.ORIGIN_SPAWN, childRun.getOrigin());
-        assertEquals(childRun.getId(), operationItemRepository.findById(spawnEvent.getId())
-                .orElseThrow().getWaitingOnRunId(), "spawn wins: waiting link commits exactly once");
+        assertEquals(parent.run().getId().toString(), childRun.getWaitingOnRunId(),
+                "spawn wins: the waiting link commits exactly once on the child run");
+        assertEquals(toolCallId, childRun.getWaitingToolCallId());
         assertEquals("succeeded", chatRunRepository.findById(parent.run().getId()).orElseThrow().getStatus());
         assertEquals(0, inboxCountForParent(parent.session().getId()),
                 "a root parent terminal writes no Inbox row");
@@ -747,8 +703,8 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
         Session childSessionRow = sessionRepository
                 .findById(UUID.fromString(childRun.getSessionId())).orElseThrow();
         assertTrue(terminalService.terminalize(
-                request(new RunFixture(childSessionRow, childRun, parent.operationId()),
-                        "succeeded", "success", null, ChatRunTerminalService.LedgerMode.STREAM)).committed());
+                request(new RunFixture(childSessionRow, childRun),
+                        "succeeded", "success", null, ChatRunTerminalService.TerminalSource.STREAM)).committed());
         assertEquals(1, inboxCountForParent(parent.session().getId()),
                 "the child terminal after the spawn-wins race commits exactly one Inbox row");
         assertEquals(childRun.getId().toString(),
@@ -760,14 +716,15 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
     void parentTerminalRejectsConcurrentSpawnWithZeroHalfRows() throws Exception {
         RunFixture parent = createRun(createSession("reject-parent", null, null));
         String toolCallId = UUID.randomUUID().toString();
-        OperationItem spawnEvent = operationService.appendItem(parent.operationId(), toolCallId, null,
-                "tool_call", "spawn_agent", "agent", "{\"prompt\":\"child instruction\"}", null, null);
+        SpawnTestSupport.seedAgentInvocation(mcpInvocationRepository,
+                parent.session().getId().toString(), parent.run().getId().toString(), workspaceId, userId,
+                toolCallId, "spawn_agent", "{\"prompt\":\"child instruction\"}");
         ChatSubmissionService.SpawnAuthorization authorization = new ChatSubmissionService.SpawnAuthorization(
                 spawnAuthorizationBody("child instruction"), null, null);
         int sessionsBefore = totalSessionRows();
 
         assertTrue(terminalService.terminalize(
-                request(parent, "succeeded", "success", null, ChatRunTerminalService.LedgerMode.STREAM))
+                request(parent, "succeeded", "success", null, ChatRunTerminalService.TerminalSource.STREAM))
                 .committed());
 
         CountDownLatch start = new CountDownLatch(1);
@@ -798,8 +755,6 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
         assertEquals(0, jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM chat_runs WHERE origin = 'spawn'", Integer.class),
                 "a rejected spawn must leave zero child ChatRun rows");
-        assertNull(operationItemRepository.findById(spawnEvent.getId()).orElseThrow().getWaitingOnRunId(),
-                "a rejected spawn must leave no waiting link");
         assertEquals(sessionsBefore, totalSessionRows(),
                 "a rejected spawn must not create a Session");
         assertEquals(0, inboxCountForParent(parent.session().getId()));
@@ -821,12 +776,12 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
             Future<ChatRunTerminalService.TerminalResult> firstTerminal = executor.submit(() -> {
                 start.await(5, TimeUnit.SECONDS);
                 return terminalService.terminalize(request(first.child(), "succeeded", "success", null,
-                        ChatRunTerminalService.LedgerMode.STREAM));
+                        ChatRunTerminalService.TerminalSource.STREAM));
             });
             Future<ChatRunTerminalService.TerminalResult> secondTerminal = executor.submit(() -> {
                 start.await(5, TimeUnit.SECONDS);
                 return terminalService.terminalize(request(second.child(), "failed", "error", "SIBLING_ERROR",
-                        ChatRunTerminalService.LedgerMode.STREAM));
+                        ChatRunTerminalService.TerminalSource.STREAM));
             });
             TransactionTemplate tx = new TransactionTemplate(transactionManager);
             tx.execute(status -> {
@@ -852,12 +807,12 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
                 "sibling notices must be distinct rows, never overwriting each other");
         assertEquals("success", payloadField(first.child(), "state"));
         assertEquals("error", payloadField(second.child(), "state"));
-        OperationItem firstItem = operationItemRepository.findById(first.parentItemId()).orElseThrow();
-        OperationItem secondItem = operationItemRepository.findById(second.parentItemId()).orElseThrow();
-        assertEquals("completed", firstItem.getStatus());
-        assertEquals("failed", secondItem.getStatus());
-        assertNull(firstItem.getWaitingOnRunId());
-        assertNull(secondItem.getWaitingOnRunId());
+        ChatRun firstChild = chatRunRepository.findById(first.child().run().getId()).orElseThrow();
+        ChatRun secondChild = chatRunRepository.findById(second.child().run().getId()).orElseThrow();
+        assertNull(firstChild.getWaitingOnRunId(), "each sibling settles its own waiting link");
+        assertNull(secondChild.getWaitingOnRunId());
+        assertEquals(1, historyRepository.findByRunIdOrderBySequenceAsc(firstChild.getId()).size());
+        assertEquals(1, historyRepository.findByRunIdOrderBySequenceAsc(secondChild.getId()).size());
     }
 
     // ------------------------------------------------------------------
@@ -871,18 +826,15 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
                 requestId, "t26b-hash-" + runId,
                 "provider", "model", "workspace", "running");
         run = chatRunRepository.saveAndFlush(run);
-        OperationService.OperationStartResult started = operationService.startOperation(
-                userId, session.getId().toString(), workspaceId, runId, requestId,
-                "chat", "ui", "user", userId, "t26b-idem-" + runId, "T2.6b integration");
-        operationService.transitionOperation(started.operationId(), "running", null, null);
-        return new RunFixture(session, run, started.operationId());
+        return new RunFixture(session, run);
     }
 
-    private OperationItem spawnItem(RunFixture parent) {
-        OperationItem item = operationService.appendItem(parent.operationId(), UUID.randomUUID().toString(),
-                null, "tool_call", "spawn_agent", "agent", "{}", null, null);
-        operationService.transitionItem(item.getId(), "running", null, null, null, null);
-        return item;
+    private String spawnItem(RunFixture parent) {
+        String toolCallId = UUID.randomUUID().toString();
+        SpawnTestSupport.seedAgentInvocation(mcpInvocationRepository,
+                parent.session().getId().toString(), parent.run().getId().toString(), workspaceId, userId,
+                toolCallId, "spawn_agent", "{}");
+        return toolCallId;
     }
 
     private ChatSubmissionService.Submission createParentRun(String runId, Session session) {
@@ -910,31 +862,27 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
                 String.class, inboxId);
     }
 
-    private SpawnFixture attachChild(RunFixture parent, OperationItem item, String title) {
+    private SpawnFixture attachChild(RunFixture parent, String toolCallId, String title) {
         Session childSession = createSession(title, Session.KIND_SPAWN, parent);
         RunFixture child = createRun(childSession);
         String assistantMessageId = UUID.randomUUID().toString();
         ChatRun updatedChild = chatRunRepository.findById(child.run().getId()).orElseThrow();
         updatedChild.setAssistantMessageId(assistantMessageId);
+        // PLAN-0464 T2.1: the waiting link lives on the child run row.
+        updatedChild.setWaitingOnRunId(parent.run().getId().toString());
+        updatedChild.setWaitingToolCallId(toolCallId);
         chatRunRepository.saveAndFlush(updatedChild);
-        OperationItem linkedItem = operationItemRepository.findById(item.getId()).orElseThrow();
-        linkedItem.setWaitingOnRunId(child.run().getId());
-        operationItemRepository.saveAndFlush(linkedItem);
-        return new SpawnFixture(parent, item.getId(), child, assistantMessageId);
+        return new SpawnFixture(parent, child, assistantMessageId, toolCallId);
     }
 
-    private SpawnFixture createSpawnFixture(boolean createWaitingLink, String parentItemStatus) {
+    private SpawnFixture createSpawnFixture(boolean createWaitingLink) {
         RunFixture parent = createRun(createSession("parent", null, null));
-        OperationItem item = spawnItem(parent);
-        if (!"running".equals(parentItemStatus)) {
-            operationService.transitionItem(item.getId(), parentItemStatus, null, null,
-                    "early-child-reference", null);
-        }
-        SpawnFixture fixture = attachChild(parent, item, "child");
+        SpawnFixture fixture = attachChild(parent, spawnItem(parent), "child");
         if (!createWaitingLink) {
-            OperationItem unlinked = operationItemRepository.findById(item.getId()).orElseThrow();
+            ChatRun unlinked = chatRunRepository.findById(fixture.child().run().getId()).orElseThrow();
             unlinked.setWaitingOnRunId(null);
-            operationItemRepository.saveAndFlush(unlinked);
+            unlinked.setWaitingToolCallId(null);
+            chatRunRepository.saveAndFlush(unlinked);
         }
         return fixture;
     }
@@ -961,14 +909,14 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
 
     private ChatRunTerminalService.TerminalRequest request(RunFixture run, String status, String outcome,
                                                            String errorCode,
-                                                           ChatRunTerminalService.LedgerMode mode) {
+                                                           ChatRunTerminalService.TerminalSource mode) {
         return requestExpected(run, List.of(run.run().getStatus()), status, outcome, errorCode, mode);
     }
 
     private ChatRunTerminalService.TerminalRequest requestExpected(RunFixture run, List<String> expected,
                                                                    String status, String outcome,
                                                                    String errorCode,
-                                                                   ChatRunTerminalService.LedgerMode mode) {
+                                                                   ChatRunTerminalService.TerminalSource mode) {
         String detail = errorCode == null ? null : "terminal inbox test error";
         return new ChatRunTerminalService.TerminalRequest(run.run().getId().toString(),
                 expected, status, outcome, errorCode, detail,
@@ -1078,8 +1026,8 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
         }
     }
 
-    private record RunFixture(Session session, ChatRun run, UUID operationId) {}
+    private record RunFixture(Session session, ChatRun run) {}
 
-    private record SpawnFixture(RunFixture parent, UUID parentItemId,
-                                RunFixture child, String childAssistantMessageId) {}
+    private record SpawnFixture(RunFixture parent, RunFixture child,
+                                String childAssistantMessageId, String toolCallId) {}
 }

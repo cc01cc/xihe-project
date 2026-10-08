@@ -92,7 +92,8 @@ async function ensureSession(): Promise<string | null> {
 }
 
 // PLAN-0344: job 卡片在刷新后的重建源——tool_result 不持久化，只回填
-// jobSummary（账本档案投影），续看内容点开时再按 itemId 拉取。
+// jobSummary（`workspace_jobs` 投影），续看内容点开时再按 workspaceId + jobId
+// 走 canonical 路径拉取（PLAN-0465 decision #7）。
 function jobStatusToToolStatus(status: string): ToolCall["status"] {
     if (status === "running") return "running";
     if (status === "succeeded") return "completed";
@@ -103,7 +104,7 @@ function jobSummariesToToolCalls(
     summaries: NonNullable<Awaited<ReturnType<typeof api.getMessages>>[number]["jobSummary"]>,
 ): ToolCall[] {
     return summaries.map((job) => ({
-        id: job.toolCallId ?? job.itemId,
+        id: job.toolCallId ?? job.jobId,
         name: job.toolName ?? "background_job",
         arguments: "",
         status: jobStatusToToolStatus(job.status),

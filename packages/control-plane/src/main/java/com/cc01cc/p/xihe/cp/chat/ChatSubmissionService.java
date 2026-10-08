@@ -3,26 +3,24 @@ package com.cc01cc.p.xihe.cp.chat;
 import jakarta.persistence.EntityManager;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.File;
+import com.cc01cc.p.xihe.cp.entity.McpInvocation;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.MessageRole;
-import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.InboxRepository;
+import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
-import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionFollowUpItemRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
-import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
 import com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.cc01cc.p.xihe.cp.service.ContextTemplateService;
@@ -32,22 +30,19 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 
 /**
- * Atomic Chat submission boundary for ChatRun, user Message and Ledger root.
+ * Atomic Chat submission boundary for ChatRun and user Message.
  * Agent dispatch starts only after this transaction has committed.
  */
 @Service
@@ -62,8 +57,7 @@ public class ChatSubmissionService {
     private final InboxRepository inboxRepository;
     private final MessageRepository messageRepository;
     private final FileRepository fileRepository;
-    private final OperationService operationService;
-    private final OperationItemRepository operationItemRepository;
+    private final McpInvocationRepository mcpInvocationRepository;
     private final SessionRepository sessionRepository;
     private final SessionFollowUpItemRepository followUpItemRepository;
     private final AgentPrincipalRepository agentPrincipalRepository;
@@ -71,7 +65,6 @@ public class ChatSubmissionService {
     private final GrantPrincipalPathResolver principalPathResolver;
     private final DbLockTimeout dbLockTimeout;
     private final ObjectMapper objectMapper;
-    private final LedgerOperationRepository ledgerOperationRepository;
     private final EventStoreRepository eventStoreRepository;
     private final AgentPrincipalService agentPrincipalService;
     private final ContextTemplateService contextTemplateService;
@@ -84,16 +77,14 @@ public class ChatSubmissionService {
                                  InboxRepository inboxRepository,
                                  MessageRepository messageRepository,
                                  FileRepository fileRepository,
-                                 OperationService operationService,
-                                  OperationItemRepository operationItemRepository,
-                                  SessionRepository sessionRepository,
-                                  SessionFollowUpItemRepository followUpItemRepository,
-                                  AgentPrincipalRepository agentPrincipalRepository,
+                                 McpInvocationRepository mcpInvocationRepository,
+                                 SessionRepository sessionRepository,
+                                 SessionFollowUpItemRepository followUpItemRepository,
+                                 AgentPrincipalRepository agentPrincipalRepository,
                                  WorkspaceAgentRepository workspaceAgentRepository,
                                  GrantPrincipalPathResolver principalPathResolver,
                                  DbLockTimeout dbLockTimeout,
                                  ObjectMapper objectMapper,
-                                 LedgerOperationRepository ledgerOperationRepository,
                                    EventStoreRepository eventStoreRepository,
                                    AgentPrincipalService agentPrincipalService,
                                    ContextTemplateService contextTemplateService,
@@ -105,8 +96,7 @@ public class ChatSubmissionService {
         this.inboxRepository = inboxRepository;
         this.messageRepository = messageRepository;
         this.fileRepository = fileRepository;
-        this.operationService = operationService;
-        this.operationItemRepository = operationItemRepository;
+        this.mcpInvocationRepository = mcpInvocationRepository;
         this.sessionRepository = sessionRepository;
         this.followUpItemRepository = followUpItemRepository;
         this.agentPrincipalRepository = agentPrincipalRepository;
@@ -114,7 +104,6 @@ public class ChatSubmissionService {
         this.principalPathResolver = principalPathResolver;
         this.dbLockTimeout = dbLockTimeout;
         this.objectMapper = objectMapper;
-        this.ledgerOperationRepository = ledgerOperationRepository;
         this.eventStoreRepository = eventStoreRepository;
         this.agentPrincipalService = agentPrincipalService;
         this.contextTemplateService = contextTemplateService;
@@ -161,91 +150,6 @@ public class ChatSubmissionService {
                 agentPrincipalId, true);
     }
 
-    /**
-     * Creates a derived child run directly inside CP. This deliberately does not
-     * pass through ChatController's browser SSE subscription gate.
-     */
-    @Transactional
-    public Submission createSpawn(SpawnSubmission spawn) {
-        if (spawn.spawnEventId() == null) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "spawnEventId is required");
-        }
-        requireUuid(spawn.runId(), "runId");
-        requireUuid(spawn.childSessionId(), "childSessionId");
-        requireUuid(spawn.parentSessionId(), "parentSessionId");
-        requireUuid(spawn.parentRunId(), "parentRunId");
-        if (isBlank(spawn.userId()) || isBlank(spawn.workspaceId()) || isBlank(spawn.requestId())) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                    "spawn user, workspace and request id are required");
-        }
-
-        // PLAN-0407 T2.5b: all spawn/cancel/delete writers lock Session before Run.
-        LockedSpawnParent lockedParent = lockSpawnParent(spawn.parentRunId(), spawn.parentSessionId(),
-                spawn.userId(), spawn.workspaceId(),
-                () -> spawnProvenanceConflict("Parent run or session not found"));
-        ChatRun parentRun = lockedParent.run();
-        UUID parentOperationId = operationService.findOperationIdByRunId(spawn.parentRunId());
-        if (parentOperationId == null) {
-            throw spawnProvenanceConflict("Parent run has no durable operation");
-        }
-        ledgerOperationRepository.findByIdForUpdate(parentOperationId)
-                .orElseThrow(() -> spawnProvenanceConflict("Parent LedgerOperation not found"));
-        OperationItem event = operationItemRepository.findByIdForUpdate(spawn.spawnEventId())
-                .orElseThrow(() -> spawnProvenanceConflict("Spawn event not found"));
-        entityManager.refresh(event);
-        if (!parentOperationId.toString().equals(event.getOperationId())
-                || !"agent".equals(event.getSource())
-                || !"tool_call".equals(event.getKind())
-                || !SPAWN_TOOL_NAME.equals(event.getToolName())
-                || !spawn.parentSessionId().equals(parentRun.getSessionId())
-                || !spawn.userId().equals(parentRun.getUserId())
-                || !spawn.workspaceId().equals(parentRun.getWorkspaceId())) {
-            throw spawnProvenanceConflict("Spawn event does not belong to the supplied parent run");
-        }
-
-        Session childSession = sessionRepository.findByIdForUpdate(UUID.fromString(spawn.childSessionId()))
-                .orElseThrow(() -> spawnProvenanceConflict("Child session not found"));
-        entityManager.refresh(childSession);
-        if (!spawn.userId().equals(childSession.getUserId())
-                || !spawn.workspaceId().equals(childSession.getWorkspaceId())
-                || !UUID.fromString(spawn.parentSessionId()).equals(childSession.getSpawnedFromSessionId())
-                || !UUID.fromString(spawn.parentRunId()).equals(childSession.getSpawnedFromRunId())
-                || childSession.getSpawnedAt() == null
-                || !Session.KIND_SPAWN.equals(childSession.getKind())) {
-            throw spawnProvenanceConflict("Child session provenance does not match the parent run");
-        }
-
-        SpawnAttachments attachments = normalizeSpawnAttachments(spawn);
-        String requestHash = ChatRequestHash.calculate(objectMapper, spawn.content(), spawn.provider(),
-                spawn.model(), spawn.toolMode(), attachments.fileIds(), Map.of());
-
-        String idempotencyKey = spawn.spawnEventId().toString();
-        ChatRun existingSpawn = chatRunRepository.findByUserIdAndIdempotencyKeyAndOrigin(
-                spawn.userId(), idempotencyKey, ChatRun.ORIGIN_SPAWN).orElse(null);
-        if (existingSpawn != null) {
-            if (!requestHash.equals(existingSpawn.getRequestHash())) {
-                throw idempotencyConflict();
-            }
-            return replay(existingSpawn);
-        }
-
-        ChatRun sameSessionRun = chatRunRepository.findByUserIdAndSessionIdAndIdempotencyKey(
-                spawn.userId(), spawn.childSessionId(), idempotencyKey).orElse(null);
-        if (sameSessionRun != null) {
-            throw idempotencyConflict();
-        }
-
-        // PLAN-0407 T2.5b: Session→Run locks serialize this admission check with cancel.
-        // Idempotent replay has already returned; the winner's retry returns the same child.
-        requireActiveParentRunForSpawn(parentRun);
-
-        String childBranchId = branchPathService.ensureRootBranchId(spawn.childSessionId());
-        return persist(ChatRun.ORIGIN_SPAWN, spawn.runId(), spawn.childSessionId(), spawn.userId(),
-                spawn.workspaceId(), childBranchId, idempotencyKey, requestHash, spawn.provider(), spawn.model(),
-                spawn.toolMode(), spawn.providerConnectionId(), spawn.connectionRevision(), spawn.leaseOwner(),
-                spawn.requestId(), spawn.content(), attachments.json(), attachments.fileIds(), null, false);
-    }
-
     @Transactional(readOnly = true)
     public SpawnInvocation prepareSpawnInvocation(String parentRunId, String toolCallId) {
         requireUuid(parentRunId, "parentRunId");
@@ -264,19 +168,13 @@ public class ChatSubmissionService {
         }
         requireWorkspaceSpawn(parentRun, parentSession);
 
-        UUID parentOperationId = operationService.findOperationIdByRunId(parentRunId);
-        if (parentOperationId == null) {
-            throw new CpApiException(HttpStatus.NOT_FOUND, "SPAWN_EVENT_NOT_FOUND",
-                    "Parent run has no durable operation");
-        }
-        String operationId = parentOperationId.toString();
-        OperationItem item = operationItemRepository
-                .findByOperationIdAndSourceAndToolCallId(operationId, "agent", toolCallId)
-                .orElseGet(() -> rejectUnmatchedSpawnItem(operationId, toolCallId));
-        validateSpawnItem(item, parentOperationId);
-        String content = deriveSpawnContent(item.getArgumentsPreview());
-        return new SpawnInvocation(parentRunId, toolCallId, parentSession.getId().toString(), operationId,
-                item.getId(), parentRun.getUserId(), parentRun.getWorkspaceId(),
+        // PLAN-0464 T2.1: spawn provenance is the Chat domain (Run/Session) plus
+        // the 0463 execution-domain invocation row, never a Ledger item.
+        McpInvocation invocation = requireSpawnInvocation(parentRunId, toolCallId);
+        validateSpawnInvocation(parentRunId, invocation);
+        String content = deriveSpawnContent(invocation.getArgumentsPreview());
+        return new SpawnInvocation(parentRunId, toolCallId, parentSession.getId().toString(),
+                invocation.getId(), parentRun.getUserId(), parentRun.getWorkspaceId(),
                 parentSession.getAgentPrincipalId(), createSpawnAuthorizationBody(content));
     }
 
@@ -321,26 +219,16 @@ public class ChatSubmissionService {
         ChatRun parentRun = lockedParent.run();
         Session parentSession = lockedParent.session();
         requireWorkspaceSpawn(parentRun, parentSession);
+        // Admission runs before any durable read: a terminal/dead parent run
+        // rejects the spawn with the domain conflict code, not a lookup miss.
+        requireActiveParentRunForSpawn(parentRun);
 
-        UUID parentOperationId = operationService.findOperationIdByRunId(parentRunId);
-        if (parentOperationId == null) {
-            throw new CpApiException(HttpStatus.NOT_FOUND, "SPAWN_EVENT_NOT_FOUND",
-                    "Parent run has no durable operation");
-        }
-        String operationId = parentOperationId.toString();
-        ledgerOperationRepository.findByIdForUpdate(parentOperationId)
-                .orElseThrow(() -> spawnProvenanceConflict("Parent LedgerOperation not found"));
+        // PLAN-0464 T2.1: provenance comes from the 0463 invocation row plus the
+        // locked Chat domain, never from a Ledger root/item.
+        McpInvocation invocation = requireSpawnInvocation(parentRunId, toolCallId);
+        validateSpawnInvocation(parentRunId, invocation);
 
-        OperationItem itemLocator = operationItemRepository
-                .findByOperationIdAndSourceAndToolCallId(operationId, "agent", toolCallId)
-                .orElseGet(() -> rejectUnmatchedSpawnItem(operationId, toolCallId));
-        OperationItem item = operationItemRepository.findByIdForUpdate(itemLocator.getId())
-                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "SPAWN_EVENT_NOT_FOUND",
-                        "Spawn item not found"));
-        entityManager.refresh(item);
-        validateSpawnItem(item, parentOperationId);
-
-        String content = deriveSpawnContent(item.getArgumentsPreview());
+        String content = deriveSpawnContent(invocation.getArgumentsPreview());
         String authorizationBody = createSpawnAuthorizationBody(content);
         if (!authorizationBody.equals(authorization.authorizationBody())) {
             throw new CpApiException(HttpStatus.CONFLICT, "SPAWN_ARGUMENTS_CHANGED",
@@ -349,16 +237,20 @@ public class ChatSubmissionService {
         String requestHash = ChatRequestHash.calculate(objectMapper, content, parentRun.getProvider(),
                 parentRun.getModel(), parentRun.getToolMode(), List.of(), Map.of());
 
+        // The spawn idempotency key is the canonical tool call id: a stable
+        // execution-domain identity instead of a retired Ledger row id.
+        String idempotencyKey = toolCallId;
         ChatRun existingSpawn = chatRunRepository
-                .findByUserIdAndIdempotencyKeyAndOrigin(parentRun.getUserId(), item.getId().toString(),
+                .findByUserIdAndIdempotencyKeyAndOrigin(parentRun.getUserId(), idempotencyKey,
                         ChatRun.ORIGIN_SPAWN)
                 .orElse(null);
         if (existingSpawn != null) {
             if (!requestHash.equals(existingSpawn.getRequestHash())) {
                 throw idempotencyConflict();
             }
-            if (!existingSpawn.getId().equals(item.getWaitingOnRunId())) {
-                throw spawnProvenanceConflict("Existing child run is not linked from its parent item");
+            if (!parentRunId.equals(existingSpawn.getWaitingOnRunId())
+                    || !toolCallId.equals(existingSpawn.getWaitingToolCallId())) {
+                throw spawnProvenanceConflict("Existing child run is not linked from its parent spawn call");
             }
             Session existingSession = sessionRepository
                     .findByIdForUpdate(UUID.fromString(existingSpawn.getSessionId()))
@@ -369,8 +261,8 @@ public class ChatSubmissionService {
         }
 
         // PLAN-0407 T2.5：cancel 获胜拒绝新 spawn——门在 child Session 创建之前，
-        // 拒绝路径零写入（行锁内状态不可能并发变化）。
-        requireActiveParentRunForSpawn(parentRun);
+        // 拒绝路径零写入。PLAN-0464 把同一门提到 invocation 读取之前，使死 run
+        // 报 admission conflict 而不是 lookup miss（行锁内状态不可能并发变化）。
 
         if (parentSession.getAgentPrincipalId() == null || parentSession.getAgentPermissionsSnapshot() == null) {
             throw agentSessionForbidden();
@@ -408,7 +300,6 @@ public class ChatSubmissionService {
 
         String requestId = UUID.randomUUID().toString();
         String childRunId = UUID.randomUUID().toString();
-        String idempotencyKey = item.getId().toString();
         String childBranchId = branchPathService.ensureRootBranchId(childSession.getId().toString());
         Submission created = persist(ChatRun.ORIGIN_SPAWN, childRunId, childSession.getId().toString(),
                 parentRun.getUserId(), parentRun.getWorkspaceId(), childBranchId, idempotencyKey,
@@ -416,22 +307,20 @@ public class ChatSubmissionService {
                 parentRun.getProvider(), parentRun.getModel(), parentRun.getToolMode(),
                 parentRun.getProviderConnectionId(), parentRun.getConnectionRevision(), null, requestId,
                 content, "[]", List.of(), childSession.getAgentPrincipalId(), false);
-        item.setWaitingOnRunId(created.run().getId());
-        item.setPolicySummary(authorization.policySummary());
-        if (authorization.approvalGrantId() != null) {
-            item.setApprovalRequestId(authorization.approvalGrantId());
-        }
-        operationItemRepository.save(item);
+        // PLAN-0464 T2.1: the waiting link lives on the child run row itself.
+        ChatRun childRun = created.run();
+        childRun.setWaitingOnRunId(parentRun.getId().toString());
+        childRun.setWaitingToolCallId(invocation.getToolCallId());
+        chatRunRepository.save(childRun);
 
         com.fasterxml.jackson.databind.node.ObjectNode detail = objectMapper.createObjectNode();
         detail.put("authorizationAction", "SPAWN_AGENT");
         detail.put("parentSessionId", parentSession.getId().toString());
         detail.put("parentRunId", parentRun.getId().toString());
-        detail.put("parentOperationId", parentOperationId.toString());
-        detail.put("parentOperationItemId", item.getId().toString());
+        detail.put("parentToolCallId", invocation.getToolCallId());
+        detail.put("parentInvocationId", invocation.getId().toString());
         detail.put("childSessionId", childSession.getId().toString());
         detail.put("childRunId", created.run().getId().toString());
-        detail.put("childOperationId", created.operation().operationId().toString());
         detail.put("agentPrincipalId", childSession.getAgentPrincipalId());
         if (authorization.approvalGrantId() != null) {
             detail.put("approvalRequestId", authorization.approvalGrantId());
@@ -475,16 +364,6 @@ public class ChatSubmissionService {
         return new LockedSpawnParent(parentSession, parentRun);
     }
 
-    private OperationItem rejectUnmatchedSpawnItem(String operationId, String toolCallId) {
-        if (operationItemRepository.existsByOperationIdAndToolCallId(operationId, toolCallId)) {
-            throw agentSpawnForbidden("Durable item is not an agent spawn tool call of this parent run");
-        }
-        if (operationItemRepository.existsBySourceAndToolCallId("agent", toolCallId)) {
-            throw agentSpawnForbidden("Durable item belongs to a different parent run");
-        }
-        throw new CpApiException(HttpStatus.NOT_FOUND, "SPAWN_EVENT_NOT_FOUND", "Spawn item not found");
-    }
-
     private String deriveSpawnContent(String argumentsPreview) {
         if (argumentsPreview == null || argumentsPreview.isBlank()
                 || argumentsPreview.length() >= MAX_SPAWN_ARGUMENTS_PREVIEW_LENGTH) {
@@ -518,12 +397,31 @@ public class ChatSubmissionService {
         return body.toString();
     }
 
-    private void validateSpawnItem(OperationItem item, UUID parentOperationId) {
-        if (!parentOperationId.toString().equals(item.getOperationId())
-                || !"tool_call".equals(item.getKind())
-                || !"agent".equals(item.getSource())
-                || !SPAWN_TOOL_NAME.equals(item.getToolName())) {
-            throw agentSpawnForbidden("Durable item is not an agent spawn_agent tool call of this parent run");
+    /**
+     * PLAN-0464 T2.1: resolves the durable spawn tool call from the execution
+     * domain. A tool call that exists under another parent run is a cross-parent
+     * reference (403); a tool call that does not exist at all is missing (404).
+     */
+    private McpInvocation requireSpawnInvocation(String parentRunId, String toolCallId) {
+        return mcpInvocationRepository
+                .findByRunIdAndToolCallIdAndSource(parentRunId, toolCallId, McpInvocation.SOURCE_AGENT)
+                .orElseGet(() -> rejectUnmatchedSpawnInvocation(toolCallId));
+    }
+
+    private McpInvocation rejectUnmatchedSpawnInvocation(String toolCallId) {
+        if (mcpInvocationRepository.findBySourceAndToolCallId(McpInvocation.SOURCE_AGENT, toolCallId).isPresent()) {
+            throw agentSpawnForbidden("Durable invocation belongs to a different parent run");
+        }
+        throw new CpApiException(HttpStatus.NOT_FOUND, "SPAWN_EVENT_NOT_FOUND", "Spawn item not found");
+    }
+
+    /** PLAN-0464 T2.1: invocation-side equivalent of the retired item check. */
+    private void validateSpawnInvocation(String parentRunId, McpInvocation invocation) {
+        if (!parentRunId.equals(invocation.getRunId())
+                || !McpInvocation.SOURCE_AGENT.equals(invocation.getSource())
+                || !SPAWN_TOOL_NAME.equals(invocation.getToolName())) {
+            throw agentSpawnForbidden(
+                    "Durable invocation is not an agent spawn_agent tool call of this parent run");
         }
     }
 
@@ -555,48 +453,6 @@ public class ChatSubmissionService {
         if (!ChatRunRepository.ACTIVE_LEASE_STATUSES.contains(parentRun.getStatus())) {
             throw new CpApiException(HttpStatus.CONFLICT, "SPAWN_PARENT_RUN_NOT_ACTIVE",
                     "Parent run no longer accepts spawn: " + parentRun.getStatus());
-        }
-    }
-
-    private SpawnAttachments normalizeSpawnAttachments(SpawnSubmission spawn) {
-        Set<String> seen = new HashSet<>();
-        List<String> fileIds = new ArrayList<>();
-        List<Map<String, Object>> attachmentRefs = new ArrayList<>();
-        for (String fileId : spawn.attachmentIds()) {
-            UUID attachmentId;
-            try {
-                attachmentId = UUID.fromString(fileId);
-            } catch (RuntimeException e) {
-                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Attachment id must be a UUID");
-            }
-            String canonicalId = attachmentId.toString();
-            if (!seen.add(canonicalId)) {
-                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Duplicate spawn attachment id");
-            }
-            File file = fileRepository.findById(attachmentId)
-                    .orElseThrow(() -> new CpApiException(
-                            HttpStatus.BAD_REQUEST, "ATTACHMENT_NOT_FOUND", "Attachment not found"));
-            if (!spawn.childSessionId().equals(file.getSessionId())
-                    || !spawn.workspaceId().equals(file.getWorkspaceId())
-                    || !spawn.userId().equals(file.getUserId())) {
-                throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
-                        "Spawn attachments must belong to the child session");
-            }
-            fileIds.add(canonicalId);
-            Map<String, Object> reference = new LinkedHashMap<>();
-            reference.put("fileId", canonicalId);
-            reference.put("name", file.getFilename());
-            reference.put("type", file.getMimeType());
-            reference.put("size", file.getSizeBytes());
-            attachmentRefs.add(reference);
-        }
-        if (attachmentRefs.isEmpty()) {
-            return new SpawnAttachments(null, List.of());
-        }
-        try {
-            return new SpawnAttachments(objectMapper.writeValueAsString(attachmentRefs), List.copyOf(fileIds));
-        } catch (Exception e) {
-            throw new IllegalStateException("Unable to serialize normalized spawn attachments", e);
         }
     }
 
@@ -639,7 +495,14 @@ public class ChatSubmissionService {
         chatRun.setLeaseExpiresAt(Instant.now().plus(LEASE_TTL));
         chatRun.setProviderConnectionId(providerConnectionId);
         chatRun.setConnectionRevision(connectionRevision);
-        chatRunRepository.save(chatRun);
+        // PLAN-0464 T1.1: ChatRun is the only admission root. Conflicts are owned
+        // by the chat_runs unique indexes; a race that slips past the in-memory
+        // and locked pre-checks surfaces on this insert and maps to the same 409.
+        try {
+            chatRunRepository.saveAndFlush(chatRun);
+        } catch (DataIntegrityViolationException e) {
+            throw admissionConflict(e);
+        }
 
         Message userMessage = new Message(sessionId, MessageRole.USER, content);
         userMessage.setRunId(runId);
@@ -656,15 +519,24 @@ public class ChatSubmissionService {
             fileRepository.save(file);
         }
 
-        OperationService.OperationStartResult operation = operationService.startOperation(
-                userId, sessionId, workspaceId, runId, requestId,
-                "chat", "ui", "user", userId, idempotencyKey, "Chat operation");
         int claimedNotices = inboxRepository.claimPendingForRun(UUID.fromString(sessionId), UUID.fromString(runId));
         if (claimedNotices > 0) {
             logger.info("[LIFECYCLE] service=cp event=derived_inbox_claimed sessionId={} runId={} count={}",
                     sessionId, runId, claimedNotices);
         }
-        return new Submission(chatRun, userMessage, operation);
+        return new Submission(chatRun, userMessage);
+    }
+
+    /** Unique-index admission conflicts are 409s, never 500s (V2 equivalence). */
+    private static CpApiException admissionConflict(DataIntegrityViolationException e) {
+        String reason = e.getMostSpecificCause() != null
+                ? e.getMostSpecificCause().getMessage() : e.getMessage();
+        logger.warn("[LIFECYCLE] service=cp event=chat_admission_conflict reason={}", reason);
+        if (reason != null && reason.contains("spawn_event_idempotency")) {
+            return idempotencyConflict();
+        }
+        return new CpApiException(HttpStatus.CONFLICT, "CHAT_IN_PROGRESS",
+                "Idempotency-Key already has a run for this session");
     }
 
     /**
@@ -720,7 +592,7 @@ public class ChatSubmissionService {
             if (session.getAgentPermissionsSnapshot() != null
                     || chatRunRepository.existsBySessionId(sessionId)
                     || messageRepository.existsBySessionId(sessionId)
-                    || ledgerOperationRepository.existsBySessionIdAndActorType(sessionId, "user")
+                    || mcpInvocationRepository.existsBySessionId(sessionId)
                     || eventStoreRepository.existsBySessionId(sessionId)) {
                 throw new CpApiException(HttpStatus.CONFLICT, "SESSION_PRINCIPAL_BINDING_CONFLICT",
                         "Only an empty, unbound Session can be assigned an Agent principal");
@@ -774,11 +646,7 @@ public class ChatSubmissionService {
     private Submission replay(ChatRun run) {
         Message message = messageRepository.findById(UUID.fromString(run.getUserMessageId()))
                 .orElseThrow(() -> new IllegalStateException("ChatRun user message is missing"));
-        UUID operationId = operationService.findOperationIdByRunId(run.getId().toString());
-        if (operationId == null) {
-            throw new IllegalStateException("ChatRun operation root is missing");
-        }
-        return new Submission(run, message, new OperationService.OperationStartResult(operationId, true));
+        return new Submission(run, message);
     }
 
     private static void requireUuid(String value, String field) {
@@ -802,18 +670,18 @@ public class ChatSubmissionService {
                 "Spawn event id was already used for a different request");
     }
 
-    public record Submission(ChatRun run, Message userMessage,
-                             OperationService.OperationStartResult operation) {}
+    /** PLAN-0464 T1.1: the ChatRun row is the only durable root of a submission. */
+    public record Submission(ChatRun run, Message userMessage) {}
 
     public record SpawnResult(String sessionId, String runId, String principalId, String workspaceId) {}
 
     public record SpawnInvocation(String parentRunId, String toolCallId, String parentSessionId,
-                                  String parentOperationId, UUID operationItemId, String userId,
+                                  UUID mcpInvocationId, String userId,
                                   String workspaceId, String principalId, String authorizationBody) {
         @Override
         public String toString() {
             return "SpawnInvocation[parentRunId=" + parentRunId + ", toolCallId=" + toolCallId
-                    + ", parentSessionId=" + parentSessionId + ", operationItemId=" + operationItemId + "]";
+                    + ", mcpInvocationId=" + mcpInvocationId + "]";
         }
     }
 
@@ -823,18 +691,6 @@ public class ChatSubmissionService {
             return "SpawnAuthorization[approvalGrantId=" + approvalGrantId + "]";
         }
     }
-
-    public record SpawnSubmission(String runId, String childSessionId, String userId, String workspaceId,
-                                  String parentSessionId, String parentRunId, UUID spawnEventId,
-                                  String provider, String model, String toolMode,
-                                  String providerConnectionId, Long connectionRevision, String leaseOwner,
-                                  String requestId, String content, List<String> attachmentIds) {
-        public SpawnSubmission {
-            attachmentIds = attachmentIds == null ? List.of() : List.copyOf(attachmentIds);
-        }
-    }
-
-    private record SpawnAttachments(String json, List<String> fileIds) {}
 
     private record LockedSpawnParent(Session session, ChatRun run) {}
 }

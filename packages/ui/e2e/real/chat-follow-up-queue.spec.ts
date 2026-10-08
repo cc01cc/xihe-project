@@ -147,10 +147,7 @@ interface BootstrapSession {
     principalId: string;
 }
 
-async function bootstrapSession(
-    request: APIRequestContext,
-    page: Page,
-): Promise<BootstrapSession> {
+async function bootstrapSession(request: APIRequestContext, page: Page): Promise<BootstrapSession> {
     const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
     const register = await request.post(`${CP_URL}/api/v1/auth/register`, {
         data: {
@@ -219,16 +216,56 @@ test("@host Follow-up is durably admitted and dispatched after parent approval",
     requireApprovalMode();
     test.setTimeout(240_000);
     const pageErrors: Error[] = [];
+    const consoleErrorCount = { value: 0 };
+    const requestFailures: string[] = [];
+    const browserMessageIds = new Set<string>();
     page.on("pageerror", (error) => pageErrors.push(error));
-
+    page.on("console", (message) => {
+        if (message.type() === "error") consoleErrorCount.value++;
+    });
+    page.on("requestfailed", (request) => {
+        const error = request.failure()?.errorText ?? "unknown";
+        if (error !== "net::ERR_ABORTED") {
+            requestFailures.push(`${request.method()} ${new URL(request.url()).pathname}`);
+        }
+    });
     const session = await bootstrapSession(request, page);
+    page.on("response", (response) => {
+        if (
+            !response.url().includes(`/api/v1/sessions/${session.sessionId}/messages`) ||
+            response.request().method() !== "GET"
+        ) {
+            return;
+        }
+        void response
+            .json()
+            .then((payload: unknown) => {
+                if (!Array.isArray(payload)) return;
+                for (const message of payload) {
+                    if (
+                        message &&
+                        typeof message === "object" &&
+                        "id" in message &&
+                        typeof message.id === "string"
+                    ) {
+                        browserMessageIds.add(message.id);
+                    }
+                }
+            })
+            .catch((error: unknown) => {
+                pageErrors.push(
+                    error instanceof Error ? error : new Error("Failed to parse messages response"),
+                );
+            });
+    });
 
     const parent = await submitChat(page, "please delete README.md");
-    const approval = page.locator('[data-testid="modal-content"]');
+    const approvalModal = page.locator('[data-testid="modal-backdrop"]:visible');
+    const approval = approvalModal.getByTestId("approval-modal-content");
     await expect(approval).toBeVisible({ timeout: 60_000 });
     await expect(page.getByTestId("chat-queue-button")).toBeVisible({ timeout: 10_000 });
-    await approval.getByRole("button", { name: "Close" }).click();
-    await expect(approval).toBeHidden({ timeout: 10_000 });
+    await approvalModal.getByRole("button", { name: "Close" }).click();
+    await expect(approvalModal).toBeHidden({ timeout: 10_000 });
 
     const followUpText = "After the first approval, summarize the result.";
     await page.getByTestId("chat-input").fill(followUpText);
@@ -293,6 +330,10 @@ test("@host Follow-up is durably admitted and dispatched after parent approval",
     expect(child?.childRunId).toBeTruthy();
     expect(child?.childRunId).not.toBe(parent.runId);
     expect(child?.childMessageId).toBeTruthy();
+    await expect
+        .poll(() => browserMessageIds.has(child!.childMessageId!), { timeout: 30_000 })
+        .toBe(true);
+    await expect(page.getByText(followUpText, { exact: true }).last()).toBeVisible();
 
     // Wait until the CHILD's approval exists SERVER-side: the parent is already
     // resolved (marker above), so a non-empty pending list proves the child request
@@ -313,6 +354,25 @@ test("@host Follow-up is durably admitted and dispatched after parent approval",
         )
         .toBeGreaterThan(0);
     await expect(approval).toBeVisible({ timeout: 60_000 });
+    await approvalModal.getByRole("button", { name: "Close" }).click();
+    await expect(approvalModal).toBeHidden({ timeout: 10_000 });
+    const desktopReopen = page.getByTestId("pending-approval-reopen-pill");
+    await expect(desktopReopen).toBeVisible({ timeout: 20_000 });
+    const desktopAdmittedItem = page.getByTestId("follow-up-queue-item").first();
+    // Admission clears the QueueItem payload copy; the admitted prompt is shown
+    // in ChatRun's user Message above, while the queue row retains its state.
+    await expect(page.getByText(followUpText, { exact: true }).last()).toBeVisible();
+    await expect(desktopAdmittedItem.getByTestId("follow-up-item-status")).toHaveAttribute(
+        "data-status",
+        "admitted",
+    );
+    await page.screenshot({
+        path: test.info().outputPath("follow-up-admitted-queue-desktop-1920x1080.png"),
+    });
+    await desktopReopen.click();
+    await expect(approval).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("approval-approve")).toBeInViewport();
+    await expect(page.getByTestId("approval-reject")).toBeInViewport();
     await expect(page.getByTestId("modal-backdrop")).toHaveCSS("opacity", "1", {
         timeout: 5_000,
     });
@@ -358,6 +418,8 @@ test("@host Follow-up is durably admitted and dispatched after parent approval",
     expect(finalMessages.filter((message) => message.content === followUpText)).toHaveLength(1);
     expect(session.principalId).toBeTruthy();
     expect(pageErrors).toEqual([]);
+    expect(consoleErrorCount.value).toBe(0);
+    expect(requestFailures).toEqual([]);
 });
 
 test("@host Follow-up queue stays durable and reachable on a mobile viewport", async ({
@@ -367,7 +429,18 @@ test("@host Follow-up queue stays durable and reachable on a mobile viewport", a
     requireApprovalMode();
     test.setTimeout(240_000);
     const pageErrors: Error[] = [];
+    const consoleErrorCount = { value: 0 };
+    const requestFailures: string[] = [];
     page.on("pageerror", (error) => pageErrors.push(error));
+    page.on("console", (message) => {
+        if (message.type() === "error") consoleErrorCount.value++;
+    });
+    page.on("requestfailed", (request) => {
+        const error = request.failure()?.errorText ?? "unknown";
+        if (error !== "net::ERR_ABORTED") {
+            requestFailures.push(`${request.method()} ${new URL(request.url()).pathname}`);
+        }
+    });
 
     // Create the session at desktop width: the workspace sidebar drawer that hosts
     // the create-session controls is collapsed by default at 390px, so clicking
@@ -386,11 +459,12 @@ test("@host Follow-up queue stays durable and reachable on a mobile viewport", a
     await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 20_000 });
 
     const parent = await submitChat(page, "please delete README.md");
-    const approval = page.locator('[data-testid="modal-content"]');
+    const approvalModal = page.locator('[data-testid="modal-backdrop"]:visible');
+    const approval = approvalModal.getByTestId("approval-modal-content");
     await expect(approval).toBeVisible({ timeout: 60_000 });
     await expect(page.getByTestId("chat-queue-button")).toBeVisible({ timeout: 10_000 });
-    await approval.getByRole("button", { name: "Close" }).click();
-    await expect(approval).toBeHidden({ timeout: 10_000 });
+    await approvalModal.getByRole("button", { name: "Close" }).click();
+    await expect(approvalModal).toBeHidden({ timeout: 10_000 });
 
     const followUpText = "Mobile follow-up after parent approval.";
     await page.getByTestId("chat-input").fill(followUpText);
@@ -462,21 +536,27 @@ test("@host Follow-up queue stays durable and reachable on a mobile viewport", a
             { timeout: 60_000 },
         )
         .toBeGreaterThan(0);
-    // On mobile the shared approval modal can be closed again by a state refresh
-    // after the handoff (pending stays >0, the reopen pill remains); deterministically
-    // reopen it through the pill before capturing so the evidence shot cannot race
-    // that close.
-    // Deterministically restore the modal through the reopen pill: the parent->child
-    // handoff can close it again while pending stays >0 (that close made earlier
-    // captures miss the modal). Force-click so the click lands even when the pill
-    // sits under the open modal's backdrop; the handler is idempotent when already
-    // open. This path produced the stable capture (attempt 16) after conditional
-    // clicking missed on attempt 15.
+    // Hide the modal to capture the admitted queue state, then reopen it and prove
+    // both approval controls remain reachable in the real mobile viewport.
     const mobileReopen = page.getByTestId("pending-approval-reopen-pill");
-    if (await mobileReopen.isVisible().catch(() => false)) {
-        await mobileReopen.click({ force: true });
+    if (await approvalModal.isVisible()) {
+        await approvalModal.getByRole("button", { name: "Close" }).click();
     }
-    await expect(approval).toBeVisible({ timeout: 60_000 });
+    await expect(approvalModal).toBeHidden({ timeout: 10_000 });
+    await expect(mobileReopen).toBeVisible({ timeout: 20_000 });
+    const mobileAdmittedItem = page.getByTestId("follow-up-queue-item").first();
+    await expect(page.getByText(followUpText, { exact: true }).last()).toBeVisible();
+    await expect(mobileAdmittedItem.getByTestId("follow-up-item-status")).toHaveAttribute(
+        "data-status",
+        "admitted",
+    );
+    await page.screenshot({
+        path: test.info().outputPath("follow-up-admitted-queue-mobile-390x844.png"),
+    });
+    await mobileReopen.click();
+    await expect(approval).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("approval-approve")).toBeInViewport();
+    await expect(page.getByTestId("approval-reject")).toBeInViewport();
     await expect(page.getByTestId("modal-backdrop")).toHaveCSS("opacity", "1", {
         timeout: 5_000,
     });
@@ -496,4 +576,6 @@ test("@host Follow-up queue stays durable and reachable on a mobile viewport", a
     await expect(page.getByTestId("follow-up-queue")).toHaveCount(0, { timeout: 20_000 });
     expect(parent.runId).toBeTruthy();
     expect(pageErrors).toEqual([]);
+    expect(consoleErrorCount.value).toBe(0);
+    expect(requestFailures).toEqual([]);
 });

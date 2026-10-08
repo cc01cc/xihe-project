@@ -3,10 +3,10 @@
 > 契约状态：`proposed`  
 > 实现状态：`partial`  
 > Profile：`lifecycle`  
-> Owner：CP Chat/Operation  
+> Owner：CP ChatRun/Inbox
 > 消费者：Agent、CP、UI  
 > 来源：PLAN-0408  
-> 更新日期：2026-09-28
+> 更新日期：2026-10-08
 
 ## 范围
 
@@ -22,10 +22,10 @@
 
 ## 写入与删除
 
-- CP 唯一 terminal CAS 在同一数据库事务中提交 ChatRun terminal status/`terminal_at`；仅 parent 存在且 OperationItem/waiting link 一致时，同事务收口 parent item 并 upsert Inbox。
+- CP 唯一 terminal CAS 在同一数据库事务中提交 ChatRun terminal status/`terminal_at`；仅 parent 存在且 child Run 的 `waiting_on_run_id`/`waiting_on_tool_call_id` 与 parent provenance 一致时，同事务结算 child ChatRun waiting link 并 upsert Inbox。
 - parent 缺失时走 child-local 分支，不写 parent/Inbox，并记录 `derived_parent_missing` diagnostic；不自动重试。
-- parent 存在但 parent OperationItem 缺失或 `waiting_on_run_id` 不匹配时，整笔 terminal transaction rollback 并记录一致性 diagnostic；修复关联后显式重试。
-- 重复 terminal CAS 由条件 CAS 与唯一键保证至多一条 Inbox 行。锁序服从 0407/0408 Session-first 契约，每个账本域先锁 LedgerOperation，再锁 OperationItem，Inbox business key 最后。
+- parent 存在但 parent ChatRun 缺失或 child waiting link 与 parent provenance 不匹配时，整笔 terminal transaction rollback 并记录一致性 diagnostic；修复关联后显式重试。
+- 重复 terminal CAS 由条件 CAS 与唯一键保证至多一条 Inbox 行。锁序服从 0407/0408 Session-first 契约：先锁相关 Session，再锁 child/parent ChatRun，Inbox business key 最后；不依赖跨域 Operation lock。
 - parent 删除清理其 Inbox 行；child Session/ChatRun 生命周期保持独立，不得级联删除。
 
 ## 领取与恢复

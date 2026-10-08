@@ -13,8 +13,8 @@ import java.util.List;
  * PLAN-0407 T2.6b / PLAN-0408: Inbox terminal-notice upsert and parent-Run claim.
  *
  * <p>{@link #upsertChildTerminal} runs inside the unified terminal transaction
- * (last write, after Session/Run/LedgerOperation/OperationItem locks per
- * design #45). The unique key {@code (to_session_id, type, ref)} plus the
+ * (last write, after Session/Run locks per design #45). The unique key
+ * {@code (to_session_id, type, ref)} plus the
  * conditional CAS upstream guarantee at most one row per child terminal; the
  * {@code ON CONFLICT} clause keeps a repeated attempt idempotent and never
  * touches {@code injected_run_id} or {@code created_at}. A failure here must
@@ -40,8 +40,8 @@ public interface InboxRepository extends Repository<Inbox, UUID> {
     /**
      * Claims every pending notice for a newly-created parent Run. The UPDATE
      * itself locks matching rows; ChatSubmissionService calls it last in the
-     * same Session-first create transaction, after the durable Run and
-     * operation root exist. Existing claims are never reassigned to a later Run.
+     * same Session-first create transaction, after the durable ChatRun and user
+     * Message exist. Existing claims are never reassigned to a later Run.
      */
     @Modifying
     @Query(value = """

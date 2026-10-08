@@ -53,6 +53,7 @@ import java.util.function.Function;
 public class FollowUpQueueService {
     private static final Logger logger = LoggerFactory.getLogger(FollowUpQueueService.class);
     public static final int CAPACITY_LIMIT = 5;
+    static final int MAX_ADMISSION_RETRIES = 1;
     private static final String PAUSE_STALE_ANCHOR = "anchor_unavailable";
     private static final long LEASE_RECHECK_MARGIN_MILLIS = 50;
     private static final Set<String> SUCCESS_TRIGGER_STATUSES = Set.of("succeeded", "partial", "failed");
@@ -694,6 +695,39 @@ public class FollowUpQueueService {
             logger.error("[LIFECYCLE] service=cp event=follow_up_wakeup_schedule_failed sessionId={} retryAt={}",
                     wake.sessionId(), retryAt, e);
             throw e;
+        }
+    }
+
+    void scheduleAdmissionRetry(FollowUpQueueWakeupEvent failedEvent) {
+        if (failedEvent.retryAttempt() >= MAX_ADMISSION_RETRIES) {
+            logger.error("[LIFECYCLE] service=cp event=follow_up_admission_retry_exhausted "
+                            + "sessionId={} retryAttempt={}",
+                    failedEvent.sessionId(), failedEvent.retryAttempt());
+            return;
+        }
+
+        FollowUpQueueWakeupEvent retry = new FollowUpQueueWakeupEvent(
+                failedEvent.sessionId(), failedEvent.retryAttempt() + 1);
+        Instant retryAt = Instant.now().plusMillis(LEASE_RECHECK_MARGIN_MILLIS);
+        try {
+            var scheduled = taskScheduler.schedule(() -> events.publishEvent(retry), retryAt);
+            if (scheduled == null) {
+                throw new IllegalStateException("Task scheduler rejected Follow-up admission retry");
+            }
+            logger.warn("[LIFECYCLE] service=cp event=follow_up_admission_retry_scheduled "
+                            + "sessionId={} retryAttempt={} retryAt={}",
+                    failedEvent.sessionId(), retry.retryAttempt(), retryAt);
+        } catch (RuntimeException e) {
+            logger.error("[LIFECYCLE] service=cp event=follow_up_admission_retry_schedule_failed "
+                            + "sessionId={} retryAttempt={} retryAt={}",
+                    failedEvent.sessionId(), retry.retryAttempt(), retryAt, e);
+            try {
+                events.publishEvent(retry);
+            } catch (RuntimeException fallbackFailure) {
+                logger.error("[LIFECYCLE] service=cp event=follow_up_admission_retry_fallback_failed "
+                                + "sessionId={} retryAttempt={}",
+                        failedEvent.sessionId(), retry.retryAttempt(), fallbackFailure);
+            }
         }
     }
 

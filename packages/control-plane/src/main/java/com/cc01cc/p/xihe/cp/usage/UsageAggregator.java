@@ -14,7 +14,7 @@ import java.util.UUID;
 
 /**
  * PLAN-0343 decision #5: internal read-only aggregation over the session's
- * llm.usage context events (mirrored from the llm_usage ledger extensions).
+ * llm.usage context events (older rows may originate from legacy usage mirrors).
  * NOT a public API surface — consumers are tests and PLAN-0355 back-testing.
  *
  * Recomputation contract (V3): sums are derived from the per-run snapshots;

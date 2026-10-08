@@ -3,16 +3,31 @@
 // run reaches done → the header usage line must show tokens, a mapped cost
 // (or 未映射) and a source badge. DOM + screenshot + console evidence.
 import { test, expect } from "@playwright/test";
+import { execFileSync } from "node:child_process";
 import {
     CP_URL,
     registerJourneyUser,
     seedPage,
     ensureChatReady,
-    awaitLastOperationCompleted,
+    awaitLatestChatRunCompleted,
     ensureAgentWorkspaceBinding,
 } from "./helpers/journey";
 
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
+
+function queryIsolatedPostgres(sql: string): string {
+    const container = process.env.XIHE_E2E_PG_CONTAINER;
+    const database = process.env.XIHE_E2E_PG_DATABASE;
+    const user = process.env.XIHE_E2E_PG_USER;
+    if (!container || !database || !user) {
+        throw new Error("isolated PostgreSQL fixture metadata is unavailable; run through scripts/e2e-host.mjs");
+    }
+    return execFileSync(
+        process.platform === "win32" ? "docker.exe" : "docker",
+        ["exec", container, "psql", "-X", "-A", "-t", "-U", user, "-d", database, "-c", sql],
+        { encoding: "utf8", timeout: 15_000, windowsHide: true },
+    ).trim();
+}
 
 test.describe("@host PLAN-0343 — usage line in session header", () => {
     test.describe.configure({ mode: "serial" });
@@ -68,7 +83,7 @@ test.describe("@host PLAN-0343 — usage line in session header", () => {
 
         // Wait for the run to reach a terminal state server-side (usage arrives
         // once per run, before done).
-        await awaitLastOperationCompleted(request, ctx.headers);
+        await awaitLatestChatRunCompleted(request, ctx.headers, ctx.workspaceId);
 
         // The usage line: tokens · cost/未映射 · source badge (workspace
         // conversation header renders a div, not a <header> element).
@@ -93,12 +108,23 @@ test.describe("@host PLAN-0343 — usage line in session header", () => {
             fullPage: false,
         });
 
-        // The mapped usage must also be durable in the ledger (cross-check).
-        const opsRes = await request.get(`${CP_URL}/api/v1/operations?size=1`, {
-            headers: ctx.headers,
-        });
-        const opsBody = (await opsRes.json()) as { operations?: Array<{ id?: string }> };
-        expect(opsBody.operations?.[0]?.id, "latest operation present").toBeTruthy();
+        // Usage persistence is owned by the ContextEvent for the terminal ChatRun.
+        const auditRes = await request.get(
+            `${CP_URL}/api/v1/audit/entries?type=chat_run&workspaceId=${ctx.workspaceId}&size=5`,
+            {
+                headers: ctx.headers,
+            },
+        );
+        expect(auditRes.ok(), `ChatRun audit list ${auditRes.status()}`).toBeTruthy();
+        const auditBody = (await auditRes.json()) as {
+            entries?: Array<{ id?: string; runId?: string }>;
+        };
+        const runId = auditBody.entries?.[0]?.runId ?? auditBody.entries?.[0]?.id;
+        expect(runId).toMatch(/^[0-9a-f-]{36}$/i);
+        const storedUsage = queryIsolatedPostgres(
+            `SELECT payload->'usage'->>'inputTokens' || '|' || payload->'usage'->>'outputTokens' || '|' || payload->'usage'->>'totalTokens' FROM context_events WHERE event_type='llm.usage' AND correlation_id='${runId}'::text`,
+        );
+        expect(storedUsage, "one durable usage event for the completed run").toMatch(/^\d+\|\d+\|\d+$/);
     });
 
     test("console has no fatal errors from the usage channel", async () => {

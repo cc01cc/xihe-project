@@ -5,13 +5,11 @@ import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Message;
-import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import com.cc01cc.p.xihe.cp.operation.JobStateService;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
-import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
-import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
 import com.cc01cc.p.xihe.cp.service.BranchPathService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -46,8 +44,7 @@ public class MessageController {
     private final FileRepository fileRepository;
     private final SessionService sessionService;
     private final ObjectMapper objectMapper;
-    private final LedgerOperationRepository ledgerOperationRepository;
-    private final OperationItemRepository operationItemRepository;
+    private final McpInvocationRepository mcpInvocationRepository;
     private final JobStateService jobStateService;
     private final BranchPathService branchPathService;
 
@@ -56,8 +53,7 @@ public class MessageController {
                              FileRepository fileRepository,
                              SessionService sessionService,
                              ObjectMapper objectMapper,
-                             LedgerOperationRepository ledgerOperationRepository,
-                             OperationItemRepository operationItemRepository,
+                             McpInvocationRepository mcpInvocationRepository,
                              JobStateService jobStateService,
                              BranchPathService branchPathService) {
         this.messageRepository = messageRepository;
@@ -65,8 +61,7 @@ public class MessageController {
         this.fileRepository = fileRepository;
         this.sessionService = sessionService;
         this.objectMapper = objectMapper;
-        this.ledgerOperationRepository = ledgerOperationRepository;
-        this.operationItemRepository = operationItemRepository;
+        this.mcpInvocationRepository = mcpInvocationRepository;
         this.jobStateService = jobStateService;
         this.branchPathService = branchPathService;
     }
@@ -217,34 +212,46 @@ public class MessageController {
     }
 
     /**
-     * PLAN-0344 T1.4：run 的 operation → job 工具 items → job_state 档案，
-     * 给出可重建 job 卡片的摘要（toolCallId 为 UI 关联键，itemId 为续看键）。
+     * PLAN-0465 T2.2: job summaries are read from `workspace_jobs` by run;
+     * `jobId` is the domain identity and `toolName` comes from MCP invocation provenance.
+     * This method is read-only; failures return an empty list.
      */
     private List<Map<String, Object>> jobSummariesForRun(String runId) {
         List<Map<String, Object>> summaries = new ArrayList<>();
-        var operation = ledgerOperationRepository.findByRunId(runId).orElse(null);
-        if (operation == null) {
-            return summaries;
-        }
-        List<OperationItem> items =
-                operationItemRepository.findByOperationIdOrderBySequenceAsc(operation.getId().toString());
-        for (OperationItem item : items) {
-            if (!JobStateService.isJobTool(item.getToolName())) {
-                continue;
+        try {
+            // Resolve tool names from MCP invocation provenance, then project
+            // the Workspace Jobs owned by this run.
+            Map<String, String> toolNamesByCall = new LinkedHashMap<>();
+            for (var invocation : mcpInvocationRepository.findByRunIdOrderByCreatedAtAsc(runId)) {
+                if (invocation.getToolCallId() != null && invocation.getToolName() != null) {
+                    toolNamesByCall.putIfAbsent(
+                            invocation.getToolCallId().toLowerCase(java.util.Locale.ROOT),
+                            invocation.getToolName());
+                }
             }
-            jobStateService.find(item.getId()).ifPresent(archive -> {
+            for (com.cc01cc.p.xihe.cp.entity.WorkspaceJob row : jobStateService.listByRun(runId)) {
                 Map<String, Object> summary = new LinkedHashMap<>();
-                summary.put("itemId", item.getId());
-                summary.put("toolCallId", item.getToolCallId());
-                summary.put("toolName", item.getToolName());
-                summary.put("jobId", archive.jobId());
-                summary.put("status", archive.status());
-                summary.put("scope", archive.scope());
-                summary.put("startedAt", archive.startedAt());
-                summary.put("endedAt", archive.endedAt());
+                summary.put("jobId", row.getId().toString());
+                summary.put("workspaceId", row.getWorkspaceId().toString());
+                String toolCallId =
+                        row.getToolCallId() == null ? null : row.getToolCallId().toString();
+                summary.put("toolCallId", toolCallId);
+                String toolName = toolCallId == null ? null
+                        : toolNamesByCall.get(toolCallId.toLowerCase(java.util.Locale.ROOT));
+                summary.put("toolName", toolName);
+                summary.put("status", row.getStatus());
+                summary.put("scope", row.getScope());
+                summary.put("startedAt",
+                        row.getStartedAt() == null ? null : row.getStartedAt().toString());
+                summary.put("endedAt", row.getEndedAt() == null ? null : row.getEndedAt().toString());
                 summaries.add(summary);
-            });
+            }
+        } catch (RuntimeException e) {
+            logger.warn("[LIFECYCLE] service=cp event=job_summary_projection_failed runId={} error={}",
+                    runId, e.getMessage());
         }
+        logger.info("[LIFECYCLE] service=cp event=job_summary_loaded runId={} count={}",
+                runId, summaries.size());
         return summaries;
     }
 }

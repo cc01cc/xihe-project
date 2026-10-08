@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
-import { ensureAgentWorkspaceBinding } from "./helpers/journey";
+import { awaitLatestChatRunCompleted, ensureAgentWorkspaceBinding } from "./helpers/journey";
 import { test, expect } from "@playwright/test";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
@@ -177,15 +177,7 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
             fullPage: false,
         });
 
-        const opsRes = await request.get(`${CP_URL}/api/v1/operations?size=20`, { headers });
-        expect(opsRes.ok(), `operations list ${opsRes.status()}`).toBeTruthy();
-        const ops = (await opsRes.json()) as { operations: Array<{ id: string }> };
-        expect(ops.operations.length).toBeGreaterThan(0);
-        const traceRes = await request.get(`${CP_URL}/api/v1/operations/${ops.operations[0].id}`, {
-            headers,
-        });
-        const trace = (await traceRes.json()) as { items?: Array<{ toolName?: string }> };
-        expect((trace.items ?? []).map((i) => i.toolName)).toContain("write_file");
+        await awaitLatestChatRunCompleted(request, headers);
     });
 
     test("C1-C3: refresh mid-approval recovers banner + modal; decide still lands", async ({
@@ -215,18 +207,7 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
 
         // Wait for the previous test's run to fully finish server-side — its
         // LangGraph teardown races the next send with CHAT_IN_PROGRESS (409).
-        await expect
-            .poll(
-                async () => {
-                    const res = await request.get(`${CP_URL}/api/v1/operations?size=1`, {
-                        headers,
-                    });
-                    const body = (await res.json()) as { operations?: Array<{ status?: string }> };
-                    return body.operations?.[0]?.status ?? "unknown";
-                },
-                { timeout: 120000, intervals: [2_000] },
-            )
-            .toBe("completed");
+        await awaitLatestChatRunCompleted(request, headers);
         await sendChat(page, `XIHE-E2E-WRITE ${fileName} ${content}`);
         await expect(modal, "approval modal before refresh").toBeVisible({ timeout: 120000 });
 
@@ -285,18 +266,7 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
         await expect(chatInput).toBeVisible({ timeout: 20000 });
         const modal = page.locator('[data-testid="modal-content"]');
 
-        await expect
-            .poll(
-                async () => {
-                    const res = await request.get(`${CP_URL}/api/v1/operations?size=1`, {
-                        headers,
-                    });
-                    const body = (await res.json()) as { operations?: Array<{ status?: string }> };
-                    return body.operations?.[0]?.status ?? "unknown";
-                },
-                { timeout: 120000, intervals: [2_000] },
-            )
-            .toBe("completed");
+        await awaitLatestChatRunCompleted(request, headers);
         await sendChat(page, `XIHE-E2E-WRITE ${fileName} should never be written`);
         await expect(modal).toBeVisible({ timeout: 120000 });
         await page.reload({ waitUntil: "load" });

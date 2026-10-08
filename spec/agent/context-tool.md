@@ -6,7 +6,7 @@
 > Owner：CP Context/Projection + Agent Context consumer  
 > 消费者：Agent、CP、Runtime、UI  
 > 来源：PLAN-0387、PLAN-0381、PLAN-0382、DEV-013  
-> 更新日期：2026-09-20
+> 更新日期：2026-10-08
 
 ## 范围
 
@@ -19,7 +19,7 @@
 | Event Store / durable event | CP | 通过既有接口读取，不直接写数据库 |
 | Context projection / snapshot | CP | 只读加载 `AgentContext` |
 | source/env provenance | Runtime 产生事实，CP 投影 | 只消费最终来源和状态，不自行生成 env 事实 |
-| tool call/result pairing | Agent/CP Ledger | 使用既有 `toolCallId`，不得另造关联键 |
+| tool call/result pairing | Agent callback + CP MCP invocation | 使用既有 `toolCallId`，不得另造关联键 |
 | artifact/output bound | Runtime/CP 既有 output/artifact contract | 只消费 preview/ref/status，遵守 TTL 和访问边界 |
 
 ## 规范条款
@@ -39,7 +39,7 @@ PLAN-0381 负责 tool-call/result durable message shape、projection round-trip�
 
 - `AgentContext.apply_event()` 与 Python `EventType` literal 均覆盖 `context.prune` 与 `context.env_updated`；CP Event Store 仍接收自由字符串，跨层机器校验 gap 见下一条。
 - CP Event Store 接收自由字符串 `eventType`，机器校验与 Agent 类型声明尚未形成闭环。
-- 当前 tool/output 真实字段由 Agent adapter、CP relay、Operation Ledger 和 Runtime artifact contract 分散拥有。
+- 当前 tool/output 真实字段由 Agent adapter、CP MCP invocation/Workspace Job projections 和 Runtime artifact contract 分域拥有。
 
 ## 验证映射
 

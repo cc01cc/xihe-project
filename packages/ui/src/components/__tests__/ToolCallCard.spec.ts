@@ -74,6 +74,7 @@ i18n.global.mergeLocaleMessage("en", {
         waitingOnChild: "Waiting for child task",
         derivedStateUnnamedChild: "Child session",
         derivedStateStatus: { running: "Running" },
+        toolStatus: { cancelled: "Cancelled" },
     },
 });
 
@@ -138,6 +139,13 @@ describe("ToolCallCard", () => {
             toolCall: makeToolCall({ status: "completed", startedAt, completedAt }),
         });
         expect(wrapper.text()).toMatch(/\d+\.?\d*s/);
+    });
+
+    it("renders a cancelled tool call as terminal rather than running", () => {
+        const wrapper = mountCard({ toolCall: makeToolCall({ status: "cancelled" }) });
+
+        expect(wrapper.text()).toContain("Cancelled");
+        expect(wrapper.find(".animate-spin").exists()).toBe(false);
     });
 
     it("emits approve when approve button clicked", async () => {
@@ -267,8 +275,8 @@ describe("ToolCallCard job output (PLAN-0344)", () => {
             name: "start_background_process",
             status: "running",
             jobSummary: {
-                itemId: "item-1",
                 jobId: "job-1",
+                workspaceId: "ws-1",
                 status: "running",
                 toolName: "start_background_process",
                 scope: "session",
@@ -308,13 +316,18 @@ describe("ToolCallCard job output (PLAN-0344)", () => {
 
         await wrapper.find('[data-testid="job-output-load"]').trigger("click");
         await flushPromises();
-        expect(getJobOutput).toHaveBeenCalledWith("item-1", expect.objectContaining({ offset: 0 }));
+        expect(getJobOutput).toHaveBeenCalledWith(
+            "ws-1",
+            "job-1",
+            expect.objectContaining({ offset: 0 }),
+        );
         expect(wrapper.find('[data-testid="job-output-data"]').text()).toContain("line1");
 
         await wrapper.find('[data-testid="job-output-more"]').trigger("click");
         await flushPromises();
         expect(getJobOutput).toHaveBeenLastCalledWith(
-            "item-1",
+            "ws-1",
+            "job-1",
             expect.objectContaining({ offset: 6 }),
         );
         expect(wrapper.find('[data-testid="job-output-data"]').text()).toContain("line2");
@@ -338,8 +351,8 @@ describe("ToolCallCard job output (PLAN-0344)", () => {
             toolCall: jobToolCall({
                 status: "completed",
                 jobSummary: {
-                    itemId: "item-1",
                     jobId: "job-1",
+                    workspaceId: "ws-1",
                     status: "succeeded",
                     toolName: "start_background_process",
                 },
@@ -370,8 +383,8 @@ describe("ToolCallCard job cancel (PLAN-0366 T2.2)", () => {
             name: "start_background_process",
             status: "running",
             jobSummary: {
-                itemId: "item-1",
                 jobId: "job-1",
+                workspaceId: "ws-1",
                 status: "running",
                 toolName: "start_background_process",
                 scope: "session",
@@ -395,7 +408,7 @@ describe("ToolCallCard job cancel (PLAN-0366 T2.2)", () => {
         const terminal = await expandJobCard({
             toolCall: jobToolCall({
                 status: "completed",
-                jobSummary: { itemId: "item-1", jobId: "job-1", status: "succeeded" },
+                jobSummary: { jobId: "job-1", workspaceId: "ws-1", status: "succeeded" },
             }),
         });
         expect(
@@ -405,7 +418,6 @@ describe("ToolCallCard job cancel (PLAN-0366 T2.2)", () => {
 
     it("requires a second confirmation before calling the endpoint", async () => {
         cancelJob.mockResolvedValue({
-            itemId: "item-1",
             jobId: "job-1",
             status: "cancelled",
             changed: true,
@@ -423,7 +435,7 @@ describe("ToolCallCard job cancel (PLAN-0366 T2.2)", () => {
         await wrapper.find('[data-testid="job-cancel-confirm"]').trigger("click");
         await flushPromises();
 
-        expect(cancelJob).toHaveBeenCalledWith("item-1");
+        expect(cancelJob).toHaveBeenCalledWith("ws-1", "job-1");
         expect(wrapper.find('[data-testid="job-status"]').text()).toBe("Cancelled");
         expect(wrapper.find('[data-testid="job-cancel-success"]').text()).toContain("Cancelled");
     });

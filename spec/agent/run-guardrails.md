@@ -6,7 +6,7 @@
 > Owner：Agent owner（总览索引 owner；各领域规则仍由对应 canonical owner 唯一拥有）  
 > 消费者：Agent、CP、Runtime、Security、UI、后续 XH PLAN  
 > 来源：PLAN-0429、DEV-013  
-> 更新日期：2026-10-03
+> 更新日期：2026-10-08
 
 ## 范围
 
@@ -27,12 +27,12 @@
 | 上下文超窗、历史与工具结果增长 | CP Context + Agent consumer | [Agent Context/Tool](./context-tool.md)、[Session 分支上下文隔离](../session/branch-context-isolation.md)；未来契约归 PLAN-0416（BL-50） | implemented（装配熔断、prune+tombstone、overflow 一次性重试、auto-compaction 均已接线） | 输入窗口预算 ≠ Agent Run 累计预算 |
 | 单次工具超时与输出过大 | CP policy 下发 + Agent 执行 + Runtime Job | [Agent Context/Tool](./context-tool.md)、[Execution Job](../workspace/execution-job.md)、[Sandbox](../workspace/sandbox-backend.md)、[DEV-013](../../docs/i18n/zh-Hans/DEV-013-agent-architecture.md) | implemented（per-call timeout、bounded result、回传中段省略） | per-tool wait/output bound ≠ 轮数或累计预算 |
 | Agent Run 循环持续、语义重复、无进展 | Agent Runner；副作用前仍须过授权/审批/幂等 | [Agent execution](./execution.md)（本文不新建 owner） | unimplemented（M0 证实：循环预算未接线、语义重复/无进展检测不存在；`toolCallId` 事件去重已实现但不阻止相同语义再次执行）；缺口登记见下节 | `toolCallId` 事件去重与历史消音 ≠ 语义重复执行防护 |
-| 取消、失败、partial/ambiguous 与恢复 | CP ChatRun/Operation + Agent stream | [Agent execution](./execution.md)、[ChatRun/Operation](../session/chat-run-operation.md) | implemented（cancel 全链路、幂等 409、recovery/reconciliation） | Agent 本地 `done` ≠ CP durable 终态；ChatRun 状态恢复 ≠ LangGraph 图状态恢复 |
-| ChatRun 内 LangGraph 图状态 checkpoint/恢复 | Agent Runner | 现状语义 owner = [ChatRun/Operation](../session/chat-run-operation.md)（ambiguous + 人工新 key 重试） | unimplemented（无 checkpointer/thread_id，每 run 由全量历史重建）；触发式后置，登记为观察态条目 | ≠ ExecutionJob 进程续跑；≠ 进程 Job 挂起/恢复（已裁定不做，见 backlog BL-24） |
+| 取消、失败、partial/ambiguous 与恢复 | CP ChatRun + MCP invocation + Agent stream | [Agent execution](./execution.md)、DEV-014 ChatRun lifecycle | implemented（cancel 全链路、幂等 409、recovery/reconciliation） | Agent 本地 `done` ≠ CP durable 终态；ChatRun 状态恢复 ≠ LangGraph 图状态恢复 |
+| ChatRun 内 LangGraph 图状态 checkpoint/恢复 | Agent Runner | CP ChatRun terminal semantics（DEV-014；ambiguous + 人工新 key 重试） | unimplemented（无 checkpointer/thread_id，每 run 由全量历史重建）；触发式后置，登记为观察态条目 | ≠ Workspace Job 进程续跑；≠ 进程 Job 挂起/恢复（已裁定不做，见 backlog BL-24） |
 | 授权、能力与人工审批 | CP/Security + Runtime capability | [Authorization](../security/authorization.md)、[Approval](../security/approval.md)、[Capability Boundary](../security/capability-boundary.md) | implemented（每个 MCP 工具调用过 gate，含 grant 复用与 user-direct 例外分支） | 模型计划不得扩大权限；允许执行 ≠ 本次操作已获批准 |
 | 进程资源、隔离和清理 | Runtime backend | [Sandbox](../workspace/sandbox-backend.md)、[Execution Job](../workspace/execution-job.md) | partial（job 运行时限配置已交付；Docker 后端能力线后置） | 进程时限、请求等待、job 时限三者分开 |
-| 事件、操作审计与敏感信息 | CP Operation + Agent event adapter | [Audit](../security/audit.md)、[Event Stream](../protocol/event-stream.md)、[Operation Ledger](../data/operation-ledger.md) | implemented（durable events 白名单 + ledger 唯一约束 + 配对读模型） | 审计留痕 ≠ 把敏感原文当普通模型上下文 |
-| 人类停止与运行中接管 | UI → CP → Agent cancel | stop 归 [Agent execution](./execution.md) 与 [ChatRun/Operation](../session/chat-run-operation.md)；排队 follow-up 已由 PLAN-0442 交付，steering/Guidance 归 backlog BL-63 | partial（停止已接线；Run 中排队 follow-up 经显式 Queue 动作入 durable 队列、Run 终态后 admission，队列未清空时普通发送按 409 `FOLLOW_UP_QUEUE_NOT_EMPTY` 拒绝；运行中纠偏 steering 未实现） | stop ≠ steering；预算耗尽/反复失败时的接管处置语义未定义 |
+| 事件、操作审计与敏感信息 | CP owner-domain history + Agent event adapter | [Audit](../security/audit.md)、[Event Stream](../protocol/event-stream.md) | implemented（owner-domain durable history、allowlisted event fields、paired audit projections） | 审计留痕 ≠ 把敏感原文当普通模型上下文 |
+| 人类停止与运行中接管 | UI → CP → Agent cancel | stop 归 [Agent execution](./execution.md) 与 CP ChatRun terminal semantics（DEV-014）；排队 Follow-up 归 [ChatRun lifecycle](../session/chat-run-operation.md)；steering/Guidance 归 backlog BL-63 | partial（停止已接线；Run 中排队 Follow-up 经显式 Queue 动作入 durable 队列、Run 终态后 admission，队列未清空时普通发送按 409 `FOLLOW_UP_QUEUE_NOT_EMPTY` 拒绝；运行中纠偏 steering 未实现） | stop ≠ steering；预算耗尽/反复失败时的接管处置语义未定义 |
 | 显式规划器的步数、进度与重规划预算 | 无生产者（计划工具未落地） | 计划工具目标态见归档 PLAN-0330 `spec/task-plan.md`；生产者缺口 = backlog P0-2 | unimplemented（`taskplan.*` 事件、表与投影为脚手架，无真实生产者与 UI 消费者） | 计划记录 ≠ 执行编排器（TaskPlan 不驱动调度） |
 
 ## 规范条款与不变式

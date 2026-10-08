@@ -1,10 +1,8 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
-import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import com.cc01cc.p.xihe.cp.entity.RunCheckpoint;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.RunCheckpointRepository;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeCheckpointClient;
@@ -17,7 +15,6 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -48,10 +45,7 @@ import java.util.concurrent.atomic.AtomicLong;
  *       checkpoint projection row (the slice model has no pre-dispatch row).</li>
  * </ul>
  *
- * <p>Checkpoint lifecycle markers use the existing operation ledger
- * ({@code kind=checkpoint}, {@code source=runtime}); user-triggered revert
- * markers use {@code source=ui}. When the run has no durable operation the
- * marker is skipped with a lifecycle log — the ledger is never fabricated.</p>
+ * <p>The {@code run_checkpoints} row owns checkpoint lifecycle and revert state.</p>
  */
 @Service
 public class RunCheckpointService {
@@ -73,16 +67,10 @@ public class RunCheckpointService {
 
     /** Changed-file projection cap of the public checkpoint view. */
     static final int MAX_VIEW_FILES = 20;
-    /** Suspect entries kept in the revert summary/ledger item. */
+    /** Suspect entries kept in the revert summary. */
     static final int MAX_SUMMARY_SUSPECTS = 20;
     /** PLAN-0338: startup compensation batch bound per boot. */
     static final int MAX_SWEEP_RUNS = 100;
-
-    static final String LEDGER_KIND = "checkpoint";
-    static final String LEDGER_TOOL_NAME = "run_checkpoint";
-    static final String LEDGER_TOOL_NAME_REVERT = "revert_checkpoint";
-    static final String LEDGER_SOURCE = "runtime";
-    static final String LEDGER_SOURCE_UI = "ui";
 
     /** SSE event announcing checkpoint lifecycle changes on the session channel. */
     static final String SSE_EVENT_RUN_CHECKPOINT = "run_checkpoint";
@@ -96,7 +84,6 @@ public class RunCheckpointService {
 
     private final RunCheckpointRepository checkpoints;
     private final RuntimeCheckpointClient runtime;
-    private final OperationService operationService;
     private final ChatRunRepository chatRuns;
     private final ObjectMapper objectMapper;
     private final SseEmitterManager sseManager;
@@ -106,13 +93,11 @@ public class RunCheckpointService {
 
     public RunCheckpointService(RunCheckpointRepository checkpoints,
                                 RuntimeCheckpointClient runtime,
-                                OperationService operationService,
                                 ChatRunRepository chatRuns,
                                 ObjectMapper objectMapper,
                                 SseEmitterManager sseManager) {
         this.checkpoints = checkpoints;
         this.runtime = runtime;
-        this.operationService = operationService;
         this.chatRuns = chatRuns;
         this.objectMapper = objectMapper;
         this.sseManager = sseManager;
@@ -337,8 +322,7 @@ public class RunCheckpointService {
 
     /**
      * Executes the restore to the row's slice ref. On success/partial the CP
-     * appends the revert ledger item and records
-     * {@code revert_state}/{@code revert_ref}/{@code revert_summary}/
+     * records {@code revert_state}/{@code revert_ref}/{@code revert_summary}/
      * {@code reverted_at} plus the attempt counter under a captured-state guard;
      * bookkeeping is best-effort and never rewrites the Runtime's result.
      */
@@ -489,9 +473,8 @@ public class RunCheckpointService {
     }
 
     /**
-     * Revert bookkeeping: ledger item first, then the conditional row update. The
-     * ledger item carries the frozen summary JSON (also persisted as
-     * {@code revert_summary}); suspects are capped at {@link #MAX_SUMMARY_SUSPECTS}.
+     * Revert bookkeeping conditionally updates the checkpoint row with the
+     * frozen summary JSON; suspects are capped at {@link #MAX_SUMMARY_SUSPECTS}.
      */
     private void recordRevert(RunCheckpoint row, RuntimeCheckpointClient.RevertResult result) {
         RuntimeCheckpointClient.ExecuteCounts counts = result.counts();
@@ -500,7 +483,6 @@ public class RunCheckpointService {
         String reason = revertReason(counts);
         Instant now = Instant.now();
         String summary = buildRevertSummary(row, result, counts, reason);
-        appendRevertLedger(row, summary);
         int updated = 0;
         try {
             updated = checkpoints.markReverted(row.getId(), revertState, result.sliceRef(), summary, now);
@@ -557,35 +539,6 @@ public class RunCheckpointService {
             logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_revert_summary_failed checkpointId={}",
                     row.getId());
             return null;
-        }
-    }
-
-    private void appendRevertLedger(RunCheckpoint row, String summary) {
-        UUID operationId = null;
-        try {
-            operationId = operationService.findOperationIdByRunId(row.getSourceRunId());
-        } catch (RuntimeException e) {
-            logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_ledger_lookup_failed runId={} marker=revert",
-                    row.getSourceRunId());
-        }
-        if (operationId == null) {
-            logger.info("[LIFECYCLE] service=cp event=run_checkpoint_ledger_skipped runId={} checkpointId={} "
-                            + "marker=revert reason=operation_missing",
-                    row.getSourceRunId(), row.getId());
-            return;
-        }
-        try {
-            String toolCallId = UUID.nameUUIDFromBytes(("run-checkpoint:revert:" + row.getId() + ":"
-                    + (row.getRevertAttemptCount() + 1)).getBytes(StandardCharsets.UTF_8)).toString();
-            OperationItem item = operationService.appendItem(operationId, toolCallId, null, LEDGER_KIND,
-                    LEDGER_TOOL_NAME_REVERT, LEDGER_SOURCE_UI, summary, null, null);
-            if ("pending".equals(item.getStatus())) {
-                operationService.transitionItem(item.getId(), "completed", null, null, summary, null);
-            }
-        } catch (Exception e) {
-            logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_ledger_failed runId={} marker=revert "
-                            + "failureType={}",
-                    row.getSourceRunId(), e.getClass().getName());
         }
     }
 
@@ -770,7 +723,6 @@ public class RunCheckpointService {
         logger.info("[LIFECYCLE] service=cp event=run_checkpoint_captured runId={} workspaceId={} state={} "
                         + "noChange={} changedFiles={}",
                 runId, workspaceId, state, result.noChange(), result.changedFiles().size());
-        appendLedgerMarker(row, state);
         emitRunCheckpoint(row, null);
         return true;
     }
@@ -809,53 +761,7 @@ public class RunCheckpointService {
         }
         logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_degraded runId={} workspaceId={} reason={} detail={}",
                 runId, workspaceId, reason, detail);
-        appendLedgerMarker(row, "degraded");
         emitRunCheckpoint(row, null);
-    }
-
-    private void appendLedgerMarker(RunCheckpoint row, String marker) {
-        UUID operationId = null;
-        try {
-            operationId = operationService.findOperationIdByRunId(row.getSourceRunId());
-        } catch (RuntimeException e) {
-            logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_ledger_lookup_failed runId={} marker={}",
-                    row.getSourceRunId(), marker);
-        }
-        if (operationId == null) {
-            logger.info("[LIFECYCLE] service=cp event=run_checkpoint_ledger_skipped runId={} checkpointId={} "
-                            + "marker={} reason=operation_missing",
-                    row.getSourceRunId(), row.getId(), marker);
-            return;
-        }
-        try {
-            String toolCallId = UUID.nameUUIDFromBytes(
-                    ("run-checkpoint:" + marker + ":" + row.getId()).getBytes(StandardCharsets.UTF_8)).toString();
-            String preview = ledgerPreview(row, marker);
-            OperationItem item = operationService.appendItem(operationId, toolCallId, null, LEDGER_KIND,
-                    LEDGER_TOOL_NAME, LEDGER_SOURCE, preview, null, null);
-            if ("pending".equals(item.getStatus())) {
-                operationService.transitionItem(item.getId(), "completed", null, null, preview, null);
-            }
-        } catch (Exception e) {
-            logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_ledger_failed runId={} marker={} failureType={}",
-                    row.getSourceRunId(), marker, e.getClass().getName());
-        }
-    }
-
-    private String ledgerPreview(RunCheckpoint row, String marker) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("checkpointId", row.getId().toString());
-        payload.put("marker", marker);
-        payload.put("state", row.getState());
-        payload.put("sliceRef", row.getSliceRef());
-        payload.put("unrollableReason", row.getUnrollableReason());
-        try {
-            return objectMapper.writeValueAsString(payload);
-        } catch (Exception e) {
-            logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_ledger_preview_failed checkpointId={}",
-                    row.getId());
-            return null;
-        }
     }
 
     private String serializeChangedFiles(List<RuntimeCheckpointClient.ChangedFile> files) {

@@ -48,8 +48,8 @@ public class EventStoreService {
     // unlocked (getLatest+1 → insert), so two concurrent appends to one session
     // (e.g. assistant.responded vs the llm.usage mirror at run settle) could
     // both compute the same sequence and one INSERT died on the unique index —
-    // silent event loss. Lock the session row first, mirroring the ledger's
-    // operation-row lock (0317 decision #7②). Cross-session writes stay parallel.
+    // silent event loss. Lock the session row first to serialize per-session
+    // appends. Cross-session writes stay parallel.
     //
     // The lock is taken only when the anchor row exists: a missing session has
     // no sequence timeline to serialize, and on PostgreSQL the insert is

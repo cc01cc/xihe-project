@@ -28,7 +28,7 @@ import {
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 const EVIDENCE_DIR = evidenceDir("diagnostics");
 const TERMINAL_RUN_PATTERN = /^(succeeded|failed|partial|ambiguous|cancelled)$/;
-const TERMINAL_OPERATION_OR_NONE = /^(completed|failed|cancelled|interrupted|ambiguous|none)$/;
+const TERMINAL_CHAT_RUN_OR_NONE = /^(succeeded|failed|partial|ambiguous|cancelled|none)$/;
 
 function record(scenario: string, observed: Record<string, unknown>): void {
     mkdirSync(EVIDENCE_DIR, { recursive: true });
@@ -61,13 +61,17 @@ async function awaitPreviousRunSettled(
     await expect
         .poll(
             async () => {
-                const res = await request.get(`${CP_URL}/api/v1/operations?size=1`, { headers });
-                const body = (await res.json()) as { operations?: Array<{ status?: string }> };
-                return body.operations?.[0]?.status ?? "none";
+                const res = await request.get(
+                    `${CP_URL}/api/v1/audit/entries?type=chat_run&size=1`,
+                    { headers },
+                );
+                if (!res.ok()) return `http-${res.status()}`;
+                const body = (await res.json()) as { entries?: Array<{ status?: string }> };
+                return body.entries?.[0]?.status ?? "none";
             },
             { timeout: 180000, intervals: [1000, 2000] },
         )
-        .toMatch(TERMINAL_OPERATION_OR_NONE);
+        .toMatch(TERMINAL_CHAT_RUN_OR_NONE);
 }
 
 async function awaitRunTerminal(

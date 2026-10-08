@@ -1,6 +1,6 @@
 // PLAN-0353 D1 (Q1-A): journey-b evidence — manual workspace mutations.
 // B1: human-readable error while Runtime is down, then recovery after restart;
-// B2: the user-direct UI mutation lands in the Operation Ledger as actorType=user.
+// B2: the user-direct UI mutation lands as a direct-user MCP invocation.
 //
 // Host profile only. Run via:
 //   node scripts/e2e-host.mjs --retries=0 e2e/real/journey-b.spec.ts
@@ -227,7 +227,7 @@ test.describe("@host Journey B — manual workspace mutations (PLAN-0353 D1)", (
         expect(seed.status(), `seed write failed: ${seed.status()} ${await seed.text()}`).toBe(200);
     });
 
-    test("B2-audit-user: UI manual mutation lands in the ledger as actorType=user", async ({
+    test("B2-audit-user: UI manual mutation lands as a direct-user MCP invocation", async ({
         page,
         request,
     }) => {
@@ -242,52 +242,49 @@ test.describe("@host Journey B — manual workspace mutations (PLAN-0353 D1)", (
             timeout: 20000,
         });
 
-        // Ledger fact (API): the newest user mutation is a tool_call with actorType=user.
-        let operationId = "";
+        // Audit view proves direct-user MCP provenance and visible history.
+        let auditEntryId = "";
         await expect
             .poll(
                 async () => {
-                    const res = await request.get(`${CP_URL}/api/v1/operations?size=5`, {
-                        headers: ctx.headers,
-                    });
+                    const res = await request.get(
+                        `${CP_URL}/api/v1/audit/entries?type=mcp_invocation&size=10`,
+                        { headers: ctx.headers },
+                    );
                     if (!res.ok()) return "http";
                     const body = (await res.json()) as {
-                        operations?: Array<{ id: string; actorType?: string; kind?: string }>;
+                        entries?: Array<{
+                            id: string;
+                            summary?: string;
+                            source?: string;
+                            workspaceId?: string;
+                        }>;
                     };
-                    const op = (body.operations ?? []).find(
+                    const entry = (body.entries ?? []).find(
                         (candidate) =>
-                            candidate.actorType === "user" && candidate.kind === "tool_call",
+                            candidate.summary === "write_file" &&
+                            candidate.source === "direct_user" &&
+                            candidate.workspaceId === ctx.workspaceId,
                     );
-                    if (op) {
-                        operationId = op.id;
+                    if (entry) {
+                        auditEntryId = entry.id;
                         return "ok";
                     }
                     return "pending";
                 },
                 {
-                    message: "a user tool_call operation must exist after the UI mutation",
+                    message: "a write_file mcp_invocation audit entry must exist",
                     timeout: 30000,
                     intervals: [1000, 2000],
                 },
             )
             .toBe("ok");
 
-        const traceRes = await request.get(`${CP_URL}/api/v1/operations/${operationId}`, {
-            headers: ctx.headers,
-        });
-        expect(traceRes.ok(), `trace ${traceRes.status()}`).toBeTruthy();
-        const trace = (await traceRes.json()) as {
-            items?: Array<{ toolName?: string }>;
-        };
-        const toolNames = (trace.items ?? []).map((item) => item.toolName);
-        expect(toolNames, `trace items: ${JSON.stringify(toolNames)}`).toContain("write_file");
-
-        // UI audit view (PLAN-290 B2: visible non-Agent provenance).
         await page.goto("/settings/audit", { waitUntil: "load" });
         await expect(page.getByTestId("settings-audit-heading")).toBeVisible({ timeout: 20000 });
-        const operationRow = page.getByTestId(`settings-audit-operation-${operationId}`);
-        await expect(operationRow).toBeVisible({ timeout: 20000 });
-        await operationRow.click();
+        const entryRow = page.getByTestId(`settings-audit-entry-${auditEntryId}`);
+        await expect(entryRow).toBeVisible({ timeout: 20000 });
+        await entryRow.click();
         await expect(page.getByTestId("settings-audit-items")).toContainText("write_file", {
             timeout: 15000,
         });

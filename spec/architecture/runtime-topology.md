@@ -67,8 +67,8 @@ flowchart LR
 | WorkspaceStorage（direct-attach） | 用户显式授权目录 | 用户；Runtime 校验后使用 | 用户目录自身生命周期 | Runtime 不拥有，不负责其存亡 |
 | shadow Git slice | `hostRoot/.xihe-shadow/workspaceId.git` | Runtime checkpoint | 随 Workspace；retention GC（数量 + TTL） | slice 可按 retention 清理；不承担唯一真源职责 |
 | Sandbox 容器 | Docker Engine | Runtime lifecycle | 懒物化 → 六态 → 注销 | 可丢弃；可重建 |
-| Job durable 记录（Job 事实源） | CP PostgreSQL `operation_extensions(extension_kind='job_state')` | CP（唯一 durable writer） | 随账本；终态不可回退 | 不可丢弃；Job 事实源；Runtime 只返回执行事实 |
-| Docker job 状态文件（backend 细节） | 容器内 `/tmp/xihe-jobs/jobId` | Runtime container runtime | 随容器存活 + TTL | 可丢弃；容器重建即孤儿化（显式行为）。**不是 Job 的唯一存放处**，只是 Docker backend 的本地状态，业务事实由上面的 Job durable 记录承载 |
+| Job durable 记录（Job 事实源） | CP PostgreSQL `workspace_jobs` + `workspace_job_history` | CP（唯一 durable writer） | 按 Workspace Job scope；终态不可回退 | Job 事实源；Runtime 只返回执行事实 |
+| Docker job 状态文件（backend 细节） | 容器内 `/tmp/xihe-jobs/{runtimeJobId}` | Runtime container runtime | 随容器存活 + TTL | 可丢弃；容器重建即孤儿化（显式行为）。**不是 Job 的唯一存放处**，只是 Docker backend 的本地状态，业务事实由上面的 Workspace Job row/history 承载 |
 | file watcher | Runtime host 进程内 | Runtime workspace_events | 随 Workspace materialize 建立 | 可丢弃；随 destroy/eviction 停止 |
 
 不变式：
@@ -122,10 +122,10 @@ flowchart TB
 | 通道 | 建立方式 | 生命周期 | 典型用途 |
 |---|---|---|---|
 | Job cleanup / capabilities | CP `.../jobs/cleanup`（`{jobId}` → outcome/reason/processes）、`.../jobs/capabilities`（0390 形能力，含 `unavailableReason`）；能力经 CP environment `jobCapability` 上行 UI | 非 Docker 模式由 `job_engine` 提供；Docker 模式 capabilities 显式 501 `JOB_BACKEND_LAUNCH_PENDING` |
-| backend-neutral Job start | CP `POST /internal/v1/runtime/workspaces/{ws_id}/jobs/start` → 该 Workspace backend 的 launcher | 由 backend 决定（Docker 走下方 detach job）；无 launcher 显式 `501 JOB_BACKEND_LAUNCH_PENDING` | Workspace Job（scope `run/session/workspace`）；CP 是 durable 唯一写者，Runtime 只返回 `{jobId,status,operationItemId,bootId}` |
+| backend-neutral Job start | CP `POST /internal/v1/runtime/workspaces/{ws_id}/jobs/start` → 该 Workspace backend 的 launcher | request `jobId` 是 Workspace Job domain ID；response echo `jobId` 并返回 backend handle `runtimeJobId`。无 launcher 显式 `501 JOB_BACKEND_LAUNCH_PENDING` | Workspace Job（scope `run/session/workspace`）；CP 是 durable 唯一写者 |
 | per-request oneshot exec | create_exec → start_exec(attach) → 单帧 op JSON → 读首个完整 result JSON → EOF 清理 | 单次操作 | 文件/命令/PDF/审批后 apply_patch |
 | exec attach 长驻会话 | exec attach（非 TTY，换行分隔 JSON-RPC） | `(workspace, serverId)` 会话，FIFO 单飞 | stdio MCP server |
-| detach job（Docker backend 实现） | start_exec(detach) + `/tmp/xihe-jobs/jobId` 状态文件 | job 终态或 TTL 清理 | 后台进程 |
+| detach job（Docker backend 实现） | start_exec(detach) + `/tmp/xihe-jobs/{runtimeJobId}` 状态文件 | job 终态或 TTL 清理 | 后台进程 |
 
 Sandbox 容器隔离基线（Docker backend 当前事实）：workspace 目录 bind mount `workspacePath:/workspace:rw`；Strict profile `network_mode=none`；无端口发布；`cap_drop=ALL` + `no-new-privileges`；Strict/Isolated readonly rootfs；资源默认 512MB / 2 CPU / 100 pids，经 `XIHE_SANDBOX_MEMORY_MB` / `XIHE_SANDBOX_CPUS` / `XIHE_SANDBOX_PIDS_LIMIT` 覆盖（env 为部署权威）。
 

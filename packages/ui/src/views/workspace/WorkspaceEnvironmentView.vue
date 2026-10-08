@@ -584,12 +584,12 @@ onBeforeUnmount(stopPolling);
                         <ul v-else class="mt-3 divide-y text-sm">
                             <li
                                 v-for="job in jobs"
-                                :key="job.operationItemId"
+                                :key="job.jobId"
                                 class="flex flex-wrap items-center justify-between gap-3 py-3"
                             >
                                 <div class="min-w-0">
                                     <p class="truncate font-mono text-xs">
-                                        {{ job.operationItemId }}
+                                        {{ job.jobId }}
                                     </p>
                                     <p
                                         class="mt-1 text-xs text-muted-foreground"

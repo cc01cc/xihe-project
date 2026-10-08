@@ -714,7 +714,7 @@ async def test_await_external_registers_waiter_before_resolving_and_approves():
     coordinator = ApprovalCoordinator(timeout_seconds=5)
     context = _make_context(
         "session-external",
-        {"runId": "run-9", "operationId": "op-9", "workspaceId": "ws-9"},
+        {"runId": "run-9", "workspaceId": "ws-9"},
     )
 
     task = asyncio.create_task(coordinator.await_external("apr-ext-1", "read_file", _external_deadline(), context))
@@ -726,7 +726,6 @@ async def test_await_external_registers_waiter_before_resolving_and_approves():
     assert pending["tool"] == "read_file"
     assert pending["source"] == "cp_gate"
     assert pending["runId"] == "run-9"
-    assert pending["operationId"] == "op-9"
     assert pending["workspaceId"] == "ws-9"
     assert pending["expiresAt"].endswith("Z")
     # The external waiter payload never carries raw arguments/details.

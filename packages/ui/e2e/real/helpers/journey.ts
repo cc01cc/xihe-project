@@ -315,24 +315,45 @@ export async function sendChat(page: import("@playwright/test").Page, text: stri
     throw new Error("send never produced a user message bubble");
 }
 
-/** Wait until the session's latest operation reaches a terminal state. */
-export async function awaitLastOperationCompleted(
+/**
+ * Wait until the session's latest non-legacy operation reaches a terminal state.
+ *
+ * Wait for the newest ChatRun visible in the domain-owned audit projection.
+ */
+export async function awaitLatestChatRunCompleted(
     request: import("@playwright/test").APIRequestContext,
     headers: Record<string, string>,
+    workspaceId?: string,
 ): Promise<void> {
     await expect
         .poll(
             async () => {
-                const res = await request.get(`${CP_URL}/api/v1/operations?size=1`, { headers });
-                const body = (await res.json()) as { operations?: Array<{ status?: string }> };
-                return body.operations?.[0]?.status ?? "unknown";
+                const res = await request.get(
+                    `${CP_URL}/api/v1/audit/entries?type=chat_run&size=5${workspaceId ? `&workspaceId=${encodeURIComponent(workspaceId)}` : ""}`,
+                    { headers },
+                );
+                if (!res.ok()) return "unavailable";
+                const body = (await res.json()) as {
+                    entries?: Array<{ status?: string }>;
+                };
+                const entries = body.entries ?? [];
+                if (entries.length === 0) {
+                    return "unknown";
+                }
+                return entries[0]?.status ?? "unknown";
             },
             { timeout: 120000, intervals: [2_000] },
         )
         .toBe("completed");
 }
 
-/** Wait for the operation correlated with this ChatRun, not another Session's latest row. */
+const CHAT_RUN_TERMINAL = /^(succeeded|failed|partial|cancelled|ambiguous)$/;
+
+/**
+ * Wait until THIS ChatRun reaches a terminal state.
+ *
+ * Wait for a specific ChatRun by its domain ID.
+ */
 export async function awaitOperationCompletedForRun(
     request: import("@playwright/test").APIRequestContext,
     headers: Record<string, string>,
@@ -341,19 +362,16 @@ export async function awaitOperationCompletedForRun(
     await expect
         .poll(
             async () => {
-                const res = await request.get(`${CP_URL}/api/v1/operations?size=50`, { headers });
+                const res = await request.get(`${CP_URL}/api/v1/chat/runs/${runId}`, {
+                    headers,
+                });
                 if (!res.ok()) return "unavailable";
-                const body = (await res.json()) as {
-                    operations?: Array<{ runId?: string; status?: string }>;
-                };
-                return (
-                    body.operations?.find((operation) => operation.runId === runId)?.status ??
-                    "missing"
-                );
+                const body = (await res.json()) as { status?: string };
+                return body.status ?? "unknown";
             },
             { timeout: 120000, intervals: [500, 1000, 2000] },
         )
-        .toBe("completed");
+        .toMatch(CHAT_RUN_TERMINAL);
 }
 
 /**

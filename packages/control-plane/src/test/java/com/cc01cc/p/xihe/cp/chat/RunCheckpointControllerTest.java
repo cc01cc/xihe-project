@@ -5,7 +5,6 @@ import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
-import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import com.cc01cc.p.xihe.cp.entity.RunCheckpoint;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
@@ -13,9 +12,7 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
-import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
 import com.cc01cc.p.xihe.cp.repository.RunCheckpointRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
@@ -75,10 +72,6 @@ class RunCheckpointControllerTest extends AbstractH2Test {
     private ChatRunRepository chatRunRepository;
     @Autowired
     private RunCheckpointRepository checkpointRepository;
-    @Autowired
-    private OperationItemRepository operationItemRepository;
-    @Autowired
-    private OperationService operationService;
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
     @LocalServerPort
@@ -302,8 +295,6 @@ class RunCheckpointControllerTest extends AbstractH2Test {
     @Test
     void revertUsesWorkspaceSliceAndTypeAcknowledgements() {
         seedCheckpoint(RunCheckpoint.STATE_CAPTURED);
-        var operation = operationService.startOperation(userId, sessionId, workspaceId, runId,
-                UUID.randomUUID().toString(), "chat", "ui", "user", userId, null, null);
         RESPONSES.put("revert", new AtomicReference<>(json(200, revertBody())));
 
         ResponseEntity<Map> response = post("/api/v1/workspaces/" + workspaceId + "/checkpoints/revert",
@@ -317,13 +308,6 @@ class RunCheckpointControllerTest extends AbstractH2Test {
         assertEquals(1, row.getRevertAttemptCount());
         assertFalse(row.getRevertSummary().contains(RAW_REQUEST_MARKER));
 
-        List<OperationItem> items = operationItemRepository
-                .findByOperationIdOrderBySequenceAsc(operation.operationId().toString());
-        OperationItem revertItem = items.stream()
-                .filter(item -> "revert_checkpoint".equals(item.getToolName()))
-                .findFirst().orElseThrow();
-        assertEquals("checkpoint", revertItem.getKind());
-        assertEquals("ui", revertItem.getSource());
     }
 
     @Test

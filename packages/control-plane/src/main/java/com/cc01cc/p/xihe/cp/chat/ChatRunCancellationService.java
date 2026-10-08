@@ -3,11 +3,10 @@ package com.cc01cc.p.xihe.cp.chat;
 import jakarta.persistence.EntityManager;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
-import com.cc01cc.p.xihe.cp.entity.OperationAttempt;
-import com.cc01cc.p.xihe.cp.entity.OperationItem;
+import com.cc01cc.p.xihe.cp.entity.McpInvocation;
 import com.cc01cc.p.xihe.cp.entity.Session;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeExecutionClient;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -66,7 +65,7 @@ public class ChatRunCancellationService {
     private final EntityManager entityManager;
     private final ChatRunRepository chatRunRepository;
     private final SessionRepository sessionRepository;
-    private final OperationService operationService;
+    private final McpInvocationRepository mcpInvocationRepository;
     private final RuntimeExecutionClient runtimeExecutionClient;
     private final ChatRunTerminalService terminalService;
     private final DbLockTimeout dbLockTimeout;
@@ -90,7 +89,7 @@ public class ChatRunCancellationService {
             EntityManager entityManager,
             ChatRunRepository chatRunRepository,
             SessionRepository sessionRepository,
-            OperationService operationService,
+            McpInvocationRepository mcpInvocationRepository,
             RuntimeExecutionClient runtimeExecutionClient,
             ChatRunTerminalService terminalService,
             DbLockTimeout dbLockTimeout,
@@ -99,7 +98,7 @@ public class ChatRunCancellationService {
         this.entityManager = entityManager;
         this.chatRunRepository = chatRunRepository;
         this.sessionRepository = sessionRepository;
-        this.operationService = operationService;
+        this.mcpInvocationRepository = mcpInvocationRepository;
         this.runtimeExecutionClient = runtimeExecutionClient;
         this.terminalService = terminalService;
         this.dbLockTimeout = dbLockTimeout;
@@ -386,11 +385,11 @@ public class ChatRunCancellationService {
     /**
      * 取消的 CP 侧收口（原 {@code ChatController.settleRunCancellation}，PLAN-0317 T2.4/T2.5/T2.6）。
      *
-     * <p>对每个仍在途的 CP→Runtime 转发：按规范化 operationItemId 调 Runtime
-     * 取消端点；确认终止 → item {@code cancelled}，未确认/不可达 → {@code aborted}
-     * （对齐 spec S4 三分映射）；执行已自然结束（未命中）→ 不改 item。
-     * 最后把 run 与 operation 收敛为 {@code cancelled}——成功/失败路径的转换
-     * 期望集不含 {@code cancelling}，因此不会被回音路径覆盖。
+     * <p>对每个仍在途的 CP→Runtime 转发：按 execution-domain 的 {@code toolCallId}
+     * 调 Runtime 取消端点（PLAN-0464 后关联源是 {@code mcp_invocations}，不再读
+     * Ledger item/attempt）。最后把 run 收敛为 {@code cancelled}——成功/失败路径的
+     * 转换期望集不含 {@code cancelling}，因此不会被回音路径覆盖；run 终态事务负责
+     * history、waiting link 与仍滞留 {@code active} 的 invocation 对账。</p>
      */
     private void settleCancellation(String runId, String workspaceId) {
         ChatRun run = chatRunRepository.findById(UUID.fromString(runId)).orElse(null);
@@ -398,34 +397,22 @@ public class ChatRunCancellationService {
             logger.warn("[LIFECYCLE] service=cp event=run_cancel_settle_missing runId={}", runId);
             return;
         }
-        UUID operationId = operationService.findOperationIdByRunId(runId);
-        List<ChatRunTerminalService.AttemptSettlement> settlements = new ArrayList<>();
-        if (operationId != null) {
-            for (OperationAttempt attempt : operationService.findStartedForwards(operationId)) {
-                OperationItem item = operationService.findItem(attempt.getItemId());
-                if (item == null || item.getToolCallId() == null || item.getToolCallId().isBlank()) {
-                    continue;
-                }
-                RuntimeExecutionClient.CancelOutcome outcome =
-                        runtimeExecutionClient.cancel(workspaceId, item.getToolCallId());
-                if (outcome.found() && "already_finished".equals(outcome.status())) {
-                    logger.info("[LIFECYCLE] service=cp event=runtime_cancel_already_finished runId={} itemId={}",
-                            runId, item.getId());
-                    continue;
-                }
-                boolean cancelled = outcome.found() && "cancelled".equals(outcome.status());
-                String itemStatus = cancelled ? "cancelled" : "aborted";
-                String errorCode = cancelled ? null : "CANCEL_UNCONFIRMED";
-                settlements.add(new ChatRunTerminalService.AttemptSettlement(
-                        item.getId(), attempt.getId(), itemStatus, errorCode));
-                logger.info("[LIFECYCLE] service=cp event=runtime_cancel_settled runId={} itemId={} status={} confirmed={} unreachable={}",
-                        runId, item.getId(), itemStatus, outcome.confirmed(), outcome.unreachable());
+        for (McpInvocation invocation : mcpInvocationRepository.findByRunIdAndStatus(
+                runId, McpInvocation.STATUS_ACTIVE)) {
+            RuntimeExecutionClient.CancelOutcome outcome =
+                    runtimeExecutionClient.cancel(workspaceId, invocation.getToolCallId());
+            if (outcome.found() && "already_finished".equals(outcome.status())) {
+                logger.info("[LIFECYCLE] service=cp event=runtime_cancel_already_finished runId={} invocationId={}",
+                        runId, invocation.getId());
+                continue;
             }
+            logger.info("[LIFECYCLE] service=cp event=runtime_cancel_requested runId={} invocationId={} confirmed={} unreachable={}",
+                    runId, invocation.getId(), outcome.confirmed(), outcome.unreachable());
         }
         ChatRunTerminalService.TerminalResult result = terminalService.terminalize(
                 new ChatRunTerminalService.TerminalRequest(runId, List.of("cancelling"),
                         "cancelled", "cancelled", null, null, run.getTokenCount(), run.getAssistantChars(),
-                        ChatRunTerminalService.LedgerMode.CANCELLATION, settlements));
+                        ChatRunTerminalService.TerminalSource.CANCELLATION, null));
         if (!result.committed()) {
             logger.warn("[LIFECYCLE] service=cp event=run_cancel_transition_ignored runId={} outcome={} status={}",
                     runId, result.outcome(), result.currentStatus());

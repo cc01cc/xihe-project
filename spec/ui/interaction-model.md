@@ -6,7 +6,7 @@
 > Owner：UI + 跨边界 owner  
 > 消费者：UI、CP、Agent、Session、Workspace、可访问性审查者  
 > 来源：PLAN-0388、PLAN-0401、DEV-010/017、UI stores/SSE/E2E  
-> 更新日期：2026-09-23
+> 更新日期：2026-10-08
 
 ## 范围
 
@@ -17,7 +17,7 @@
 | Surface | 用户动作 | canonical 数据源 | UI 本地视图 |
 |---|---|---|---|
 | Sidebar/Chat | 新建、切换 Session（导航到 Workspace Chat） | CP Session API | `useSessionStore` + workspace-chat route |
-| Chat stream | 发送、停止、重试、查看 tool/diagnostic | CP ChatRun/Operation + Chat SSE | `useChatStore`、`useAgentStore` |
+| Chat stream | 发送、停止、重试、查看 tool/diagnostic | CP ChatRun + owner-domain history + Chat SSE | `useChatStore`、`useAgentStore` |
 | Approval | 查看、批准、拒绝、保存规则 | CP approval/policy API + SSE | `ApprovalModal`、pending summary |
 | Workspace | 打开、切换、刷新、文件操作 | CP Workspace + Runtime + Workspace SSE | `useWorkspaceStore` |
 | Workspace Chat | 在当前 Workspace 上下文中发送 Chat（含 tool-mode） | Session/Agent/Workspace contracts | `ChatPanel` + Session store |
@@ -59,7 +59,7 @@
 ## 跨域不变式
 
 - `sessionId` 只定位 Chat Session/Chat SSE；`workspaceId` 只定位 Workspace/Workspace SSE；二者不得互充。
-- UI store 只做本地视图（非权威）；Session/ChatRun/Operation/Approval/Workspace 终态由 CP/Runtime owner 决定。
+- UI store 只做本地视图（非权威）；Session/ChatRun/MCP invocation/Approval/Workspace Job 终态由对应 CP/Runtime domain owner 决定。
 - Chat SSE 的 `done` 只结束当前 run，不关闭持久 Session SSE；Workspace event 不进入 Chat bubble。
 - Approval Modal 关闭不自动 reject；服务端决策 response 才能改变 Approval state。
 - `dispatch_unknown` 不表示 approved，也不允许 UI 直接重发同一 decision；UI 先刷新 pending/run status。若服务端仍返回 `pending`，用户可以基于同一 requestId 重新决策；若返回 terminal，移除 Modal 并保留结果/审计提示。

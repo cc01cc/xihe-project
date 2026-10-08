@@ -118,8 +118,7 @@ def _publishing_context(session_id: str = "session-gate") -> tuple[AgentContext,
             "sessionId": session_id,
             "workspaceId": "workspace-1",
             "runId": "run-1",
-            "operationId": "operation-1",
-            "operationItemId": "item-1",
+            "toolCallId": "item-1",
         }
     )
     published: list[dict] = []

@@ -19,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -52,14 +53,24 @@ public class GrantAuthorizationService {
         this.workspaceUserRepository = workspaceUserRepository;
     }
 
-    /** Checks that an Agent MCP call belongs to the current durable Session/Run/ToolCall tuple. */
+    /**
+     * Checks that an Agent MCP call belongs to the current durable Session/Run/ToolCall tuple.
+     *
+     * <p>PLAN-0464 T2.2 (supersedes the PLAN-0463 transition semantics in
+     * wire-contract.md §6): the verdict is exclusively
+     * {@code ChatRun lease + mcp_invocations active + scope}. The legacy
+     * legacy operation/item tuple check is gone; with no invocation row the call fails closed.</p>
+     */
     public boolean hasCurrentAgentToolCall(String userId, String workspaceId, String sessionId,
-                                           String runId, String operationId, String toolCallId,
-                                           String toolName) {
+                                           String runId, String toolCallId, String toolName) {
         try {
-            principalPathResolver.validateAgentToolCallContext(
-                    userId, workspaceId, sessionId, runId, operationId, toolCallId, toolName);
-            return true;
+            Optional<Boolean> invocationVerdict = principalPathResolver.validateAgentInvocationContext(
+                    userId, workspaceId, sessionId, runId, toolCallId, toolName);
+            if (invocationVerdict.isEmpty()) {
+                logger.warn("[POLICY] event=agent_tool_call_context_fail_closed reason=no_invocation runId={}", runId);
+                return false;
+            }
+            return Boolean.TRUE.equals(invocationVerdict.get());
         } catch (IllegalArgumentException e) {
             logger.warn("[POLICY] event=agent_tool_call_context_fail_closed reason={}", e.getMessage());
             return false;

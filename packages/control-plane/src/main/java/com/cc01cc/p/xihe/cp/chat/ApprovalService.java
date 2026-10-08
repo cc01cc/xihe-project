@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.entity.ApprovalHistory;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
@@ -11,7 +12,6 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.policy.LayeredPolicyResolver;
 import com.cc01cc.p.xihe.cp.policy.PolicyContext;
 import com.cc01cc.p.xihe.cp.policy.PolicyRevision;
@@ -45,6 +45,7 @@ public class ApprovalService {
     private static final Logger logger = LoggerFactory.getLogger(ApprovalService.class);
     private static final List<String> REPLAYABLE_STATES = List.of("pending", "dispatching", "dispatch_unknown");
     private static final List<String> ACTIONABLE_SUMMARY_STATES = List.of("pending", "dispatch_unknown");
+    private static final List<String> TERMINAL_EXPIRABLE_STATES = List.of("pending", "dispatch_unknown");
     private static final int MAX_ACTION_LENGTH = 512;
     private static final int MAX_DETAILS_LENGTH = 512;
     private static final int MAX_ARGUMENTS_HASH_LENGTH = 96;
@@ -59,7 +60,7 @@ public class ApprovalService {
     private final ApprovalAgentClient agentClient;
     private final ObjectMapper objectMapper;
     private final ObjectMapper canonicalMapper;
-    private final OperationService operationService;
+    private final ApprovalHistoryWriter historyWriter;
     private final ApprovalGrantWriter grantWriter;
     private final AuditLogger audit;
     private final ApprovalPolicySummary policySummary;
@@ -74,7 +75,7 @@ public class ApprovalService {
                            ChatRunRepository chatRunRepository,
                            ApprovalAgentClient agentClient,
                            ObjectMapper objectMapper,
-                           OperationService operationService,
+                           ApprovalHistoryWriter historyWriter,
                            ApprovalGrantWriter grantWriter,
                            AuditLogger audit,
                            ApprovalPolicySummary policySummary,
@@ -90,7 +91,7 @@ public class ApprovalService {
         this.objectMapper = objectMapper;
         this.canonicalMapper = objectMapper.copy()
                 .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
-        this.operationService = operationService;
+        this.historyWriter = historyWriter;
         this.grantWriter = grantWriter;
         this.audit = audit;
         this.policySummary = policySummary;
@@ -148,7 +149,8 @@ public class ApprovalService {
                 throw new CpApiException(HttpStatus.BAD_GATEWAY, "AGENT_EVENT_ID_MISMATCH",
                         "Approval request identity changed for an existing requestId");
             }
-            recordLedgerApprovalItem(payload, runId, requestId);
+            appendApprovalHistory(existing, ApprovalHistory.EVENT_REQUESTED, null, "pending",
+                    null, null, approvalActor(existing), safeHistoryPreview(payload));
             return existing;
         }
         String tool = optional(payload, "tool", "request_approval");
@@ -205,7 +207,8 @@ public class ApprovalService {
         if (saved != null) {
             saved.setPolicySummary(storedPolicy);
         }
-        recordLedgerApprovalItem(payload, runId, requestId);
+        appendApprovalHistory(approval, ApprovalHistory.EVENT_REQUESTED, null, "pending",
+                null, null, approvalActor(approval), safeHistoryPreview(payload));
         recordAnswererAudit(approval, resolution, null);
         logger.info("[LIFECYCLE] service=cp event=chat_approval_pending requestId={} sessionId={} runId={} answerer={}",
                 requestId, approval.getSessionId(), runId, resolution.answerer());
@@ -215,8 +218,8 @@ public class ApprovalService {
     /**
      * Immediate fail-closed reject of a chain resolution that cannot keep waiting. The row is
      * terminal from creation ({@code rejected} + {@code decisionKind=reject}) so no replay,
-     * summary or decision path can ever surface it as actionable, and the operation ledger item
-     * is resolved as rejected instead of dangling.
+     * summary or decision path can ever surface it as actionable, and the approval-domain
+     * history records both the creation and the decision in the approval domain.
      *
      * <p>An {@code ALLOW} is intentionally not honoured yet: auto-allow needs its Agent dispatch
      * wiring, which is not part of this seam. Until that exists it fails closed loudly rather
@@ -229,8 +232,10 @@ public class ApprovalService {
         approval.setDecisionKind(ApprovalDecision.Kind.REJECT.wireName());
         approval.setDecidedAt(Instant.now());
         ChatApproval saved = pendingStore.save(approval);
-        recordLedgerApprovalItem(payload, runId, requestId);
-        operationService.resolveApprovalItem(requestId, false);
+        appendApprovalHistory(approval, ApprovalHistory.EVENT_REQUESTED, null, "pending",
+                null, null, approvalActor(approval), safeHistoryPreview(payload));
+        appendApprovalHistory(approval, ApprovalHistory.EVENT_DECIDED, "pending", "rejected",
+                Boolean.FALSE, ApprovalDecision.Kind.REJECT.wireName(), "answerer", null);
         recordAnswererAudit(approval, resolution, "reject");
         notifyAnswererRejection(requestId, runId, resolution);
         if (resolution.outcome() == ApprovalAnswerer.Outcome.ALLOW) {
@@ -300,6 +305,32 @@ public class ApprovalService {
                 .toList();
     }
 
+    /** Terminal ChatRuns cannot leave an unanswered approval that can be replayed or granted later. */
+    @Transactional
+    public int expirePendingForTerminalRun(String runId, String terminalStatus) {
+        if (runId == null || runId.isBlank()) {
+            return 0;
+        }
+        Instant now = Instant.now();
+        int expired = 0;
+        for (ChatApproval approval : approvalRepository.findByRunIdAndStateIn(
+                runId, TERMINAL_EXPIRABLE_STATES)) {
+            int changed = approvalRepository.expireUnresolvedForRunTerminal(approval.getRequestId(), now);
+            if (changed != 1) {
+                continue;
+            }
+            appendApprovalHistory(approval, ApprovalHistory.EVENT_EXPIRED, approval.getState(), "expired",
+                    null, null, "system",
+                    "{\"reason\":\"chat_run_terminal\",\"terminalStatus\":\"" + terminalStatus + "\"}");
+            expired++;
+        }
+        if (expired > 0) {
+            logger.info("[LIFECYCLE] service=cp event=run_pending_approvals_expired runId={} terminalStatus={} count={}",
+                    runId, terminalStatus, expired);
+        }
+        return expired;
+    }
+
     /**
      * PLAN-0328 M1 (spec §14, decision #23/#25): one decision entry point for the three grant tiers,
      * rejection with feedback, and the session propagation semantics.
@@ -324,6 +355,8 @@ public class ApprovalService {
                 throw new CpApiException(HttpStatus.CONFLICT, "APPROVAL_DECISION_IN_PROGRESS",
                         "Approval decision is already being dispatched");
             }
+            appendApprovalHistoryQuietly(approval, ApprovalHistory.EVENT_EXPIRED,
+                    approval.getState(), "expired", null, null, "system", null);
             returnRunFromAwaitingApproval(approval.getRunId());
             throw new CpApiException(HttpStatus.GONE, "APPROVAL_EXPIRED", "Approval request expired");
         }
@@ -357,6 +390,8 @@ public class ApprovalService {
         approval.setReuseScope(reuseScope);
         approval.setPolicyRevision(policyRevisionAtGrant);
         approval.setSandboxGeneration(sandboxGeneration);
+        appendApprovalHistoryQuietly(approval, ApprovalHistory.EVENT_DISPATCHING,
+                approval.getState(), "dispatching", null, null, "user", null);
         try {
             if (plan != null) {
                 grantWriter.commit(plan, approval.getSessionId(), userId, workspaceId,
@@ -367,12 +402,16 @@ public class ApprovalService {
             // 领域错误（如 workspace OWNER 校验 403）不是写入故障：行标记 dispatch_unknown 可重试，
             // 但客户端必须看到原始状态码而不是被包装成 500。
             approvalRepository.markDispatchUnknown(approval.getRequestId(), e.getCode(), Instant.now());
+            appendApprovalHistoryQuietly(approval, ApprovalHistory.EVENT_DISPATCH_UNKNOWN,
+                    "dispatching", "dispatch_unknown", null, null, "system", e.getCode());
             logger.error("[LIFECYCLE] service=cp event=approval_rule_write_denied requestId={} code={}",
                     requestId, e.getCode(), e);
             throw e;
         } catch (RuntimeException e) {
             int unknown = approvalRepository.markDispatchUnknown(approval.getRequestId(),
                     "POLICY_RULE_WRITE_FAILED", Instant.now());
+            appendApprovalHistoryQuietly(approval, ApprovalHistory.EVENT_DISPATCH_UNKNOWN,
+                    "dispatching", "dispatch_unknown", null, null, "system", "POLICY_RULE_WRITE_FAILED");
             logger.error("[LIFECYCLE] service=cp event=approval_rule_write_failed requestId={} marked={}",
                     requestId, unknown, e);
             throw new CpApiException(HttpStatus.INTERNAL_SERVER_ERROR, "POLICY_RULE_WRITE_FAILED",
@@ -385,6 +424,8 @@ public class ApprovalService {
             if (marked == 0) {
                 logger.warn("[LIFECYCLE] service=cp event=chat_approval_dispatch_unknown_skipped requestId={} state was no longer dispatching", requestId);
             }
+            appendApprovalHistoryQuietly(approval, ApprovalHistory.EVENT_DISPATCH_UNKNOWN,
+                    "dispatching", "dispatch_unknown", null, null, "system", e.getCode());
             throw e;
         }
         int decided = approvalRepository.markDecided(approval.getRequestId(),
@@ -392,7 +433,9 @@ public class ApprovalService {
         if (decided == 0) {
             logger.error("[LIFECYCLE] service=cp event=chat_approval_decide_transition_lost requestId={} expected dispatching state", requestId);
         }
-        operationService.resolveApprovalItem(requestId, approved);
+        // Approval history is now owned by the Approval domain.
+        appendApprovalHistory(approval, ApprovalHistory.EVENT_DECIDED, "dispatching",
+                approved ? "approved" : "rejected", approved, decision.kind().wireName(), "user", null);
         returnRunFromAwaitingApproval(approval.getRunId());
         audit.record(approval.getSessionId(), approval.getTool(), "approval_decision",
                 decision.kind().wireName() + (decision.feedback() == null ? "" : " feedback=" + safeFeedback(decision.feedback())));
@@ -407,7 +450,6 @@ public class ApprovalService {
         }
         int updated = chatRunRepository.transition(UUID.fromString(runId),
                 List.of("awaiting_approval"), "running", null, null, null, 0, 0);
-        operationService.transitionOperationForRun(runId, "running", null, null);
         logger.info("[LIFECYCLE] service=cp event=chat_approval_run_returned runId={} updated={}",
                 runId, updated);
     }
@@ -493,16 +535,22 @@ public class ApprovalService {
             return false;
         }
         row.setModeAtGrant(modeAtGrant);
+        appendApprovalHistoryQuietly(row, ApprovalHistory.EVENT_DISPATCHING,
+                row.getState(), "dispatching", null, null, "user", null);
         try {
             agentClient.respond(requestId, approved, kind, null);
         } catch (CpApiException e) {
             approvalRepository.markDispatchUnknown(row.getRequestId(), e.getCode(), Instant.now());
+            appendApprovalHistoryQuietly(row, ApprovalHistory.EVENT_DISPATCH_UNKNOWN,
+                    "dispatching", "dispatch_unknown", null, null, "system", e.getCode());
             logger.warn("[LIFECYCLE] service=cp event=approval_propagation_dispatch_unknown requestId={} code={}",
                     requestId, e.getCode());
             return false;
         }
         approvalRepository.markDecided(row.getRequestId(), approved ? "approved" : "rejected", kind, Instant.now());
-        operationService.resolveApprovalItem(requestId, approved);
+        // Approval history is now owned by the Approval domain.
+        appendApprovalHistory(row, ApprovalHistory.EVENT_DECIDED, "dispatching",
+                approved ? "approved" : "rejected", approved, kind, "user", null);
         audit.record(row.getSessionId(), row.getTool(),
                 approved ? "approval_propagated_allow" : "approval_propagated_reject", requestId);
         logger.info("[LIFECYCLE] service=cp event=approval_propagated requestId={} approved={} sessionId={}",
@@ -544,19 +592,55 @@ public class ApprovalService {
         return redacted.length() <= 200 ? redacted : redacted.substring(0, 200) + "…";
     }
 
-    private void recordLedgerApprovalItem(Map<?, ?> payload, String runId, String requestId) {
-        UUID operationId = operationService.findOperationIdByRunId(runId);
-        if (operationId == null) {
-            return;
-        }
-        operationService.appendApprovalItem(
-                operationId,
-                requestId,
-                optional(payload, "tool", "request_approval"),
-                safeLedgerPreview(payload));
+    /**
+     * PLAN-0464 T1.5: the single write path of {@code approval_history}. Runs in
+     * the caller's transaction so a history row commits with the
+     * {@code approval_requests} transition it describes.
+     */
+    private void appendApprovalHistory(ChatApproval row, String eventType, String fromState,
+                                       String toState, Boolean approved, String decisionKind,
+                                       String actorType, String payload) {
+        historyWriter.append(row.getRequestId(),
+                parseQuietUuid(row.getRunId()),
+                parseQuietUuid(row.getSessionId()),
+                eventType, fromState, toState, approved, decisionKind, actorType, payload);
     }
 
-    private String safeLedgerPreview(Map<?, ?> payload) {
+    /**
+     * Same write, but a history failure must never change an already-committed
+     * {@code approval_requests} transition control flow (see decide()).
+     */
+    private void appendApprovalHistoryQuietly(ChatApproval row, String eventType, String fromState,
+                                              String toState, Boolean approved, String decisionKind,
+                                              String actorType, String payload) {
+        try {
+            appendApprovalHistory(row, eventType, fromState, toState, approved, decisionKind,
+                    actorType, payload);
+        } catch (RuntimeException e) {
+            logger.error("[LIFECYCLE] service=cp event=approval_history_write_failed requestId={} eventType={} failureType={}",
+                    row.getRequestId(), eventType, e.getClass().getName(), e);
+        }
+    }
+
+    private static UUID parseQuietUuid(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(raw);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    private static String approvalActor(ChatApproval row) {
+        if (ChatApproval.ORIGIN_AGENT_RELAY.equals(row.getOrigin())) {
+            return "agent";
+        }
+        return ChatApproval.ORIGIN_CP_GATE.equals(row.getOrigin()) ? "cp" : "system";
+    }
+
+    private String safeHistoryPreview(Map<?, ?> payload) {
         try {
             String json = objectMapper.writeValueAsString(payload);
             return json.length() <= 4096 ? json : json.substring(0, 4096);
@@ -760,7 +844,6 @@ public class ApprovalService {
         if (isAwaitingAnswer(row)) {
             chatRunRepository.transition(UUID.fromString(runId), List.of("running", "streaming"),
                     "awaiting_approval", null, null, null, 0, 0);
-            operationService.transitionOperationForRun(runId, "waiting_for_approval", null, null);
             logger.info("[LIFECYCLE] service=cp event=chat_approval_gate_pending requestId={}"
                             + " sessionId={} runId={} reused={}",
                     row.getRequestId(), sessionId, runId, reused);

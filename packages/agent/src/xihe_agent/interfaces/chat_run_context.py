@@ -40,7 +40,6 @@ class ChatRunContext:
     user_id: str
     workspace_id: str | None
     request_id: str
-    operation_id: str | None
     provider: str
     model: str
     tool_mode: str
@@ -156,7 +155,7 @@ class ChatRunContext:
         return cls(
             run_id=str(data.get("runId") or ""), session_id=str(data.get("sessionId") or ""),
             user_id=str(data.get("userId") or ""), workspace_id=data.get("workspaceId"),
-            request_id=str(data.get("requestId") or ""), operation_id=data.get("operationId"),
+            request_id=str(data.get("requestId") or ""),
             provider=str(data.get("provider") or ""), model=str(data.get("model") or ""),
             tool_mode=str(data.get("toolMode") or "none"), agent_instructions=instructions,
             platform_instructions=platform_instructions,

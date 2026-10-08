@@ -1,7 +1,9 @@
-# XH Operation Ledger
+# XH Operation Ledger (superseded)
 
-> 契约状态：`proposed`；实现状态：`partial`；Profile：`data`；Owner：CP durable-record owner；来源：PLAN-0385；更新：2026-09-21。
-> 消费者：CP、Agent、Runtime、UI、Audit
+> 契约状态：`superseded`；实现状态：`retired`（PLAN-0467 / Flyway V56）；Profile：`data`；历史来源：PLAN-0385；状态更新：2026-10-08。
+> 影响范围：本文以下模型与路由只保留作迁移历史，禁止当作当前 schema、API 或实现契约。
+> 当前 owner：ChatRun → `chat_runs`/`chat_run_history`；MCP 执行 → `mcp_invocations`/`mcp_attempts`/`mcp_dispatch_history`；Workspace Job → `workspace_jobs`/`workspace_job_history`；审批 → `approval_requests`/`approval_history`；Audit → `v_audit_entries`。
+> V55 pre-DROP snapshot/recovery 与迁移证据：`plans/PLAN-0467-xh-ledger-retirement/evidence/snapshot-restore.md`、`migration-rehearsal.md`。
 
 ## 1. 对象边界
 

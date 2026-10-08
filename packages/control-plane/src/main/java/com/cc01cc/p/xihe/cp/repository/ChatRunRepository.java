@@ -43,6 +43,13 @@ public interface ChatRunRepository extends JpaRepository<ChatRun, UUID> {
     /** PLAN-0352 T1.2：会话删除路径枚举非终态 run（含 cancelling）。 */
     List<ChatRun> findBySessionIdAndStatusIn(String sessionId, Collection<String> statuses);
 
+    /**
+     * PLAN-0464 T2.1: read surface behind {@code GET /chat/sessions/{id}/runs}
+     * — newest first, caller-bounded page (replaces listOperations as the
+     * ChatPanel waiting-link recovery source).
+     */
+    List<ChatRun> findBySessionIdOrderByCreatedAtDescIdDesc(String sessionId, Pageable pageable);
+
     /** PLAN-0407 T3.1 Tier-1 status query：会话最新 run（createdAt 降序，id 兜底定序）。 */
     Optional<ChatRun> findFirstBySessionIdOrderByCreatedAtDescIdDesc(String sessionId);
 

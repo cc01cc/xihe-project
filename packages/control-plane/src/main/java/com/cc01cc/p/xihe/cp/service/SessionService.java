@@ -12,6 +12,9 @@ import com.cc01cc.p.xihe.cp.provider.ProviderConnectionService;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
+import com.cc01cc.p.xihe.cp.repository.McpAttemptRepository;
+import com.cc01cc.p.xihe.cp.repository.McpDispatchHistoryRepository;
+import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionBranchRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionForkRequestRepository;
@@ -32,6 +35,9 @@ public class SessionService {
     private final SessionForkRequestRepository forkRequestRepository;
     private final SessionBranchRepository sessionBranchRepository;
     private final MessageRepository messageRepository;
+    private final McpAttemptRepository mcpAttemptRepository;
+    private final McpDispatchHistoryRepository mcpDispatchHistoryRepository;
+    private final McpInvocationRepository mcpInvocationRepository;
     private final FileRepository fileRepository;
     private final EventStoreRepository eventStoreRepository;
     private final ContextProjectionRepository contextProjectionRepository;
@@ -49,6 +55,9 @@ public class SessionService {
                           SessionForkRequestRepository forkRequestRepository,
                           SessionBranchRepository sessionBranchRepository,
                           MessageRepository messageRepository,
+                          McpAttemptRepository mcpAttemptRepository,
+                          McpDispatchHistoryRepository mcpDispatchHistoryRepository,
+                          McpInvocationRepository mcpInvocationRepository,
                           FileRepository fileRepository,
                           EventStoreRepository eventStoreRepository,
                           ContextProjectionRepository contextProjectionRepository,
@@ -65,6 +74,9 @@ public class SessionService {
         this.forkRequestRepository = forkRequestRepository;
         this.sessionBranchRepository = sessionBranchRepository;
         this.messageRepository = messageRepository;
+        this.mcpAttemptRepository = mcpAttemptRepository;
+        this.mcpDispatchHistoryRepository = mcpDispatchHistoryRepository;
+        this.mcpInvocationRepository = mcpInvocationRepository;
         this.fileRepository = fileRepository;
         this.eventStoreRepository = eventStoreRepository;
         this.contextProjectionRepository = contextProjectionRepository;
@@ -340,6 +352,10 @@ public class SessionService {
         messageRepository.deleteBySessionId(sessionId);
         contextProjectionRepository.deleteBySessionId(sessionId);
         eventStoreRepository.deleteBySessionId(sessionId);
+        // V50 has restrictive FKs; remove leaf history, then attempts, then invocations.
+        mcpDispatchHistoryRepository.deleteBySessionId(sessionId);
+        mcpAttemptRepository.deleteBySessionId(sessionId);
+        mcpInvocationRepository.deleteBySessionId(sessionId);
         authorizationGrantRepository.deleteBySubjectTypeAndSubjectId("agent", lockedSession.getId());
         sessionRepository.delete(lockedSession);
         // T1.7: session mode, L4 rules and reuse fingerprints must not outlive the session.

@@ -33,13 +33,11 @@ public class AgentSpawnExecutionService {
         }
 
         String runId = requiredUuidHeader(headers, "X-Chat-Run-Id");
-        String operationId = requiredUuidHeader(headers, "X-Operation-Id");
-        String toolCallId = requiredUuidHeader(headers, "X-Operation-Item-Id");
+        String toolCallId = requiredUuidHeader(headers, "X-Tool-Call-Id");
         ChatSubmissionService.SpawnInvocation invocation = submissions.prepareSpawnInvocation(runId, toolCallId);
         if (!sessionId.equals(invocation.parentSessionId())
                 || !userId.equals(invocation.userId())
-                || !workspaceId.equals(invocation.workspaceId())
-                || !operationId.equals(invocation.parentOperationId())) {
+                || !workspaceId.equals(invocation.workspaceId())) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "SPAWN_AGENT_CONTEXT_MISMATCH",
                     "MCP caller context does not match the durable parent tool call");
         }
@@ -69,6 +67,10 @@ public class AgentSpawnExecutionService {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "SPAWN_AGENT_CONTEXT_REQUIRED",
                     "Required MCP caller context is missing");
         }
+        return parseUuidHeader(value, name);
+    }
+
+    private static String parseUuidHeader(String value, String name) {
         try {
             return UUID.fromString(value).toString();
         } catch (IllegalArgumentException e) {

@@ -20,8 +20,6 @@ import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 import com.cc01cc.p.xihe.cp.status.RequestQueue;
 import com.cc01cc.p.xihe.cp.status.CircuitBreaker;
 import com.cc01cc.p.xihe.cp.provider.ProviderCredentialLeaseService;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
-import com.cc01cc.p.xihe.cp.entity.OperationItem;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -72,8 +70,6 @@ public class ChatController {
     private final ObjectMapper objectMapper;
     private final SseEmitterManager sseManager;
     private final ApprovalService approvalService;
-    private final OperationService operationService;
-    private final com.cc01cc.p.xihe.cp.context.service.EventStoreService eventStoreService;
     private final com.cc01cc.p.xihe.cp.context.service.ContextService contextService;
     private final ChatSubmissionService chatSubmissionService;
     private final FollowUpQueueService followUpQueueService;
@@ -86,7 +82,7 @@ public class ChatController {
     private final RequestQueue requestQueue;
     private final ProviderCredentialLeaseService credentialLeases;
     private final ConfigService configService;
-    private final com.cc01cc.p.xihe.cp.operation.LedgerToolRecorder ledgerToolRecorder;
+    private final com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder mcpRelayToolRecorder;
     private final com.cc01cc.p.xihe.cp.mcp.McpProxyController mcpProxyController;
     private final com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy;
     private final ChatRunCancellationService chatRunCancellationService;
@@ -126,12 +122,10 @@ public class ChatController {
             ObjectMapper objectMapper,
             SseEmitterManager sseManager,
             ApprovalService approvalService,
-            OperationService operationService,
-            com.cc01cc.p.xihe.cp.context.service.EventStoreService eventStoreService,
-             com.cc01cc.p.xihe.cp.context.service.ContextService contextService,
-             ChatSubmissionService chatSubmissionService,
-             FollowUpQueueService followUpQueueService,
-             SessionService sessionService,
+            com.cc01cc.p.xihe.cp.context.service.ContextService contextService,
+            ChatSubmissionService chatSubmissionService,
+            FollowUpQueueService followUpQueueService,
+            SessionService sessionService,
             AgentPrincipalService agentPrincipalService,
             MessageRepository messageRepository,
             FileRepository fileRepository,
@@ -140,7 +134,7 @@ public class ChatController {
             RequestQueue requestQueue,
             ProviderCredentialLeaseService credentialLeases,
             ConfigService configService,
-            com.cc01cc.p.xihe.cp.operation.LedgerToolRecorder ledgerToolRecorder,
+            com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder mcpRelayToolRecorder,
             com.cc01cc.p.xihe.cp.mcp.McpProxyController mcpProxyController,
             com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy,
             ChatRunCancellationService chatRunCancellationService,
@@ -155,8 +149,6 @@ public class ChatController {
         this.objectMapper = objectMapper;
         this.sseManager = sseManager;
         this.approvalService = approvalService;
-        this.operationService = operationService;
-        this.eventStoreService = eventStoreService;
         this.contextService = contextService;
         this.chatSubmissionService = chatSubmissionService;
         this.followUpQueueService = followUpQueueService;
@@ -169,7 +161,7 @@ public class ChatController {
         this.requestQueue = requestQueue;
         this.credentialLeases = credentialLeases;
         this.configService = configService;
-        this.ledgerToolRecorder = ledgerToolRecorder;
+        this.mcpRelayToolRecorder = mcpRelayToolRecorder;
         this.mcpProxyController = mcpProxyController;
         this.toolTimeoutPolicy = toolTimeoutPolicy;
         this.chatRunCancellationService = chatRunCancellationService;
@@ -228,6 +220,7 @@ public class ChatController {
         if (activeRuns.putIfAbsent(event.sessionId(), reservationId) != null) {
             return;
         }
+        boolean retryAdmission = false;
         try {
             followUpQueueService.admitHead(event.sessionId(), admission -> {
                 Session session = admission.session();
@@ -268,10 +261,15 @@ public class ChatController {
                         created.run().getId(), created.userMessage().getId());
             });
         } catch (Exception e) {
-            logger.error("[LIFECYCLE] service=cp event=follow_up_queue_dispatch_failed sessionId={} failureType={}",
-                    event.sessionId(), e.getClass().getSimpleName(), e);
+            logger.error("[LIFECYCLE] service=cp event=follow_up_queue_dispatch_failed "
+                            + "sessionId={} retryAttempt={} failureType={}",
+                    event.sessionId(), event.retryAttempt(), e.getClass().getSimpleName(), e);
+            retryAdmission = true;
         } finally {
             activeRuns.remove(event.sessionId(), reservationId);
+        }
+        if (retryAdmission) {
+            followUpQueueService.scheduleAdmissionRetry(event);
         }
     }
 
@@ -360,7 +358,7 @@ public class ChatController {
             chatRunTerminalService.terminalize(new ChatRunTerminalService.TerminalRequest(
                     runId, List.of("accepted"), "ambiguous", "ambiguous", "FOLLOW_UP_DISPATCH_FAILED",
                     "The admitted Follow-up could not be dispatched; it will not be replayed",
-                    0, 0, ChatRunTerminalService.LedgerMode.RECONCILIATION, List.of()));
+                    0, 0, ChatRunTerminalService.TerminalSource.RECONCILIATION, List.of()));
         } catch (RuntimeException e) {
             logger.error("[LIFECYCLE] service=cp event=follow_up_dispatch_failure_terminalization_failed sessionId={} runId={} failureType={}",
                     sessionId, runId, e.getClass().getSimpleName(), e);
@@ -578,7 +576,6 @@ public class ChatController {
                     instanceId(), requestId, content, attachmentsJson, attachmentIds);
             ChatRun chatRun = submission.run();
             Message userMessage = submission.userMessage();
-            OperationService.OperationStartResult operation = submission.operation();
 
             if (!attachmentIds.isEmpty()) {
                 logger.debug("[LIFECYCLE] service=cp event=chat_attachments_linked runId={} count={}",
@@ -605,7 +602,6 @@ public class ChatController {
                         "sessionId", sessionId,
                         "messageId", userMessage.getId(),
                         "runId", runId,
-                        "operationId", operation.operationId(),
                         "reason", "agent_down"
                     ));
                 }
@@ -621,8 +617,7 @@ public class ChatController {
                 "origin", chatRun.getOrigin(),
                 "sessionId", sessionId,
                 "messageId", userMessage.getId(),
-                "runId", runId,
-                "operationId", operation.operationId()
+                "runId", runId
             ));
         } finally {
             if (!handedOff) {
@@ -669,6 +664,55 @@ public class ChatController {
         body.put("terminalOutcome", run.getTerminalOutcome());
         body.put("leaseExpired", leaseExpired);
         body.put("pendingApprovals", pendingApprovals);
+        return ResponseEntity.ok(body);
+    }
+
+    // ── PLAN-0464 T2.1: session-scoped run list (waiting/status read surface) ──
+
+    /**
+     * Runs of one Session with their status and spawn waiting link. This is the
+     * recovery source ChatPanel uses after a refresh: the child run row itself
+     * carries {@code waitingOnRunId}/{@code waitingToolCallId}, so no Operation
+     * read is involved.
+     */
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @GetMapping("/api/v1/chat/sessions/{sessionId}/runs")
+    public ResponseEntity<Map<String, Object>> listSessionRuns(
+            @PathVariable String sessionId,
+            @RequestParam(name = "page", defaultValue = "0") int page,
+            @RequestParam(name = "size", defaultValue = "100") int size) {
+        String userId = TenantContext.getUserId();
+        String workspaceId = TenantContext.getWorkspaceId();
+        if (userId == null || workspaceId == null) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED,
+                    "AUTHORIZATION_REQUIRED", "Workspace context is required");
+        }
+        Session session = sessionService.requireCurrent(sessionId, userId, workspaceId);
+        int safePage = Math.max(page, 0);
+        int safeSize = Math.min(Math.max(size, 1), 200);
+        List<ChatRun> runs = chatRunRepository.findBySessionIdOrderByCreatedAtDescIdDesc(
+                session.getId().toString(),
+                org.springframework.data.domain.PageRequest.of(safePage, safeSize));
+        List<Map<String, Object>> items = new ArrayList<>(runs.size());
+        for (ChatRun run : runs) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("runId", run.getId().toString());
+            item.put("sessionId", run.getSessionId());
+            item.put("origin", run.getOrigin());
+            item.put("status", run.getStatus());
+            item.put("terminalOutcome", run.getTerminalOutcome());
+            item.put("errorCode", run.getErrorCode());
+            item.put("createdAt", run.getCreatedAt() == null ? null : run.getCreatedAt().toString());
+            item.put("terminalAt", run.getTerminalAt() == null ? null : run.getTerminalAt().toString());
+            item.put("waitingOnRunId", run.getWaitingOnRunId());
+            item.put("waitingToolCallId", run.getWaitingToolCallId());
+            items.add(item);
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("sessionId", session.getId().toString());
+        body.put("page", safePage);
+        body.put("size", safeSize);
+        body.put("runs", items);
         return ResponseEntity.ok(body);
     }
 
@@ -842,10 +886,6 @@ public class ChatController {
                 agentRequest.put("workspaceId", workspaceId);
                 agentRequest.put("requestId", requestId);
                 agentRequest.put("runId", runId);
-                UUID operationId = operationService.findOperationIdByRunId(runId);
-                if (operationId != null) {
-                    agentRequest.put("operationId", operationId.toString());
-                }
                 agentRequest.put("stream", true);
                 if (effectiveProvider != null && !effectiveProvider.isBlank()) {
                     agentRequest.put("provider", effectiveProvider);
@@ -909,7 +949,6 @@ public class ChatController {
                 }
 
                 String agentRequestBody = objectMapper.writeValueAsString(agentRequest);
-                String agentOperationIdHeader = operationId != null ? operationId.toString() : null;
 
                 // PLAN-0341 T1.1 (decision #2/#3): at-most-once overflow retry.
                 // On CONTEXT_OVERFLOW: force-compact (bypass cooldown) → preflight →
@@ -927,9 +966,6 @@ public class ChatController {
                         .header("X-User-Id", userId)
                         .header("X-Workspace-Id", workspaceId)
                         .header("X-Session-Id", sessionId);
-                    if (agentOperationIdHeader != null) {
-                        dispatchBuilder.header("X-Operation-Id", agentOperationIdHeader);
-                    }
                     if (overflowRetried) {
                         dispatchBuilder.header("X-Overflow-Retry", "1");
                     }
@@ -1023,7 +1059,8 @@ public class ChatController {
                         relayResult.errorCode(),
                         null,
                         relayResult.tokenCount(),
-                        assistantContent == null ? 0 : assistantContent.length());
+                        assistantContent == null ? 0 : assistantContent.length(),
+                        relayResult.usageEnvelope());
                 // PLAN-0352 V1: the session SSE must observe the terminal error/done
                 // BEFORE the connection closes. Two real orders exist around session
                 // delete (claim `cancelling` → settleCancellation durable `cancelled`):
@@ -1040,7 +1077,7 @@ public class ChatController {
                         && terminalSent.compareAndSet(false, true)) {
                     for (RelayedTerminalEvent terminalEvent : relayResult.terminalEvents()) {
                         dispatchRelayedEvent(sessionId, terminalEvent.name(), terminalEvent.data(),
-                                runId, requestId, userId, workspaceId, relayResult.runLedger());
+                                runId, requestId, userId, workspaceId, relayResult.runState());
                     }
                 } else if (terminalCommitted) {
                     logger.warn("[LIFECYCLE] service=cp event=chat_terminal_sse_suppressed requestId={} runId={} reason=terminal_already_sent",
@@ -1247,6 +1284,18 @@ public class ChatController {
     private boolean transitionRun(String runId, List<String> expectedStatuses, String status,
                                   String outcome, String errorCode, String errorDetail,
                                   int tokenCount, int assistantChars) {
+        return transitionRun(runId, expectedStatuses, status, outcome, errorCode, errorDetail,
+                tokenCount, assistantChars, null);
+    }
+
+    /**
+     * PLAN-0464 T1.4: {@code usagePayload} is the relay's in-memory (cost-mapped)
+     * usage envelope and is only carried by the terminal transition that this
+     * relay owns; every other caller passes {@code null}.
+     */
+    private boolean transitionRun(String runId, List<String> expectedStatuses, String status,
+                                  String outcome, String errorCode, String errorDetail,
+                                  int tokenCount, int assistantChars, Object usagePayload) {
         if (runId == null || runId.isBlank()) {
             return false;
         }
@@ -1254,7 +1303,7 @@ public class ChatController {
             ChatRunTerminalService.TerminalResult result = chatRunTerminalService.terminalize(
                     new ChatRunTerminalService.TerminalRequest(runId, expectedStatuses, status,
                             outcome, errorCode, errorDetail, tokenCount, assistantChars,
-                            ChatRunTerminalService.LedgerMode.STREAM, List.of()));
+                            ChatRunTerminalService.TerminalSource.STREAM, usagePayload));
             if (!result.committed()) {
                 logger.debug("[LIFECYCLE] service=cp event=chat_run_transition_ignored runId={} targetStatus={} outcome={}",
                         runId, status, result.outcome());
@@ -1268,20 +1317,6 @@ public class ChatController {
             logger.debug("[LIFECYCLE] service=cp event=chat_run_transition_ignored runId={} targetStatus={}",
                     runId, status);
             return false;
-        }
-        String operationStatus = switch (status) {
-            case "running" -> "running";
-            case "awaiting_approval" -> "waiting_for_approval";
-            case "succeeded" -> "completed";
-            case "failed", "partial" -> "failed";
-            case "cancelled" -> "cancelled";
-            case "ambiguous" -> "ambiguous";
-            default -> null;
-        };
-        if (operationStatus != null) {
-            operationService.transitionOperationForRun(runId, operationStatus,
-                    errorCode == null && "partial".equals(status) ? "PARTIAL_RESULT" : errorCode,
-                    errorDetail);
         }
         return true;
     }
@@ -1484,10 +1519,6 @@ public class ChatController {
         if (run.getErrorCode() != null) {
             response.put("errorCode", run.getErrorCode());
         }
-        UUID operationId = operationService.findOperationIdByRunId(run.getId().toString());
-        if (operationId != null) {
-            response.put("operationId", operationId);
-        }
         return response;
     }
 
@@ -1502,15 +1533,15 @@ public class ChatController {
         // PLAN-294 decision #13: real/estimated token totals from the agent's
         // usage event; replaces the SSE chunk counter in chat_runs.token_count.
         Map<?, ?> usageData = null;
+        // PLAN-0464 T1.4: cost-mapped usage envelope handed to the terminal write.
+        Map<?, ?> usageEnvelope = null;
         boolean doneSeen = false;
         boolean streamingMarked = false;
         boolean awaitingApprovalSeen = false;
         String outcome = "success";
         String errorCode = null;
         int eventIndex = 0;
-        Map<String, UUID> operationItems = new LinkedHashMap<>();
-        Map<UUID, UUID> operationAttempts = new LinkedHashMap<>();
-        var runLedger = new com.cc01cc.p.xihe.cp.operation.LedgerToolRecorder.RunLedger(operationItems, operationAttempts);
+        var runState = com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder.RunState.create();
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(agentStream, StandardCharsets.UTF_8))) {
             String eventName = "message";
             StringBuilder data = new StringBuilder();
@@ -1537,16 +1568,15 @@ public class ChatController {
                     }
                     collectEventContent(assistantContent, eventName, data.toString());
                     if ("usage".equals(eventName)) {
-                        // PLAN-294 decisions #13/#14: persist the agent's usage
-                        // payload (estimated + real token counts with source
-                        // tagging) as an operation extension. PLAN-0343
-                        // decision #9: after cost mapping the event IS relayed
-                        // to the UI (single event, before done) for the
-                        // session-header usage line.
+                        // PLAN-0464 T1.4: cost mapping still happens here so the
+                        // session-header usage line is relayed before `done`
+                        // (PLAN-0343 decision #9), but nothing is persisted —
+                        // the terminal transition owns the llm.usage write.
                         Object usagePayload = parsePayload(eventName, data.toString());
-                        Map<?, ?> enriched = persistUsageExtension(sessionId, runId, usagePayload);
-                        if (enriched != null) {
-                            sseManager.send(sessionId, "usage", enriched);
+                        Object enriched = mapUsageCost(runId, usagePayload);
+                        usageEnvelope = enriched instanceof Map<?, ?> map ? map : null;
+                        if (usageEnvelope != null) {
+                            sseManager.send(sessionId, "usage", usageEnvelope);
                         }
                         Map<?, ?> usage = asMap(usagePayload).get("usage") instanceof Map<?, ?> u ? u : null;
                         if (usage != null) {
@@ -1590,7 +1620,7 @@ public class ChatController {
                             terminalEvents.add(new RelayedTerminalEvent(eventName, data.toString()));
                         } else {
                             dispatchRelayedEvent(sessionId, eventName, data.toString(), runId, requestId,
-                                    userId, workspaceId, runLedger);
+                                    userId, workspaceId, runState);
                         }
                     }
                     eventName = "message";
@@ -1647,7 +1677,7 @@ public class ChatController {
                     terminalEvents.add(new RelayedTerminalEvent(eventName, data.toString()));
                 } else {
                     dispatchRelayedEvent(sessionId, eventName, data.toString(), runId, requestId,
-                            userId, workspaceId, runLedger);
+                            userId, workspaceId, runState);
                 }
             }
         }
@@ -1674,62 +1704,18 @@ public class ChatController {
                 : eventCounts.getOrDefault("token", 0);
         return new StreamRelayResult(
                 assistantContent.toString(), outcome, errorCode,
-                usageTotal, List.copyOf(terminalEvents), runLedger);
+                usageTotal, List.copyOf(terminalEvents), runState, usageEnvelope);
     }
 
     private static int intValue(Object value, int fallback) {
         return value instanceof Number n ? n.intValue() : fallback;
     }
 
-    // PLAN-294 M1 (decision #13): the usage event carries estimated + real
-    // token counts and the source tag; store it on the run's operation as an
-    // llm_usage extension (audit + calibration baseline). PLAN-0343 decision
-    // #7: the cost mapping happens ONLY here (run-terminal snapshot, one per
-    // run) so the ledger item, the extension, the context-event mirror and
-    // the UI relay all carry the same cost fields (spec §4 单一计算点).
-    // Returns the enriched payload for UI relay (decision #9), or null when
-    // nothing was persisted (no operation).
-    private Map<?, ?> persistUsageExtension(String sessionId, String runId, Object parsedPayload) {
-        UUID operationId = operationService.findOperationIdByRunId(runId);
-        if (operationId == null) {
-            logger.debug("[LIFECYCLE] service=cp event=usage_extension_skipped runId={} reason=no_operation", runId);
-            return null;
-        }
-        try {
-            Object enriched = mapUsageCost(runId, parsedPayload);
-            OperationItem item = operationService.appendItem(
-                    operationId, null, null, "llm_usage", "chat", "agent", null, null, null);
-            operationService.appendExtension(item.getId(), null, "llm_usage", 1,
-                    objectMapper.writeValueAsString(enriched));
-            // 2026-09-13 E2E（V11）：usage 条目写完即终态，避免账本残留 pending 中间态。
-            operationService.transitionItem(item.getId(), "completed", null, null, null, null);
-            // PLAN-294 M3 (decision #5 signal bridge): mirror the usage into
-            // the context event store so the compaction gate reads a single
-            // source. workspace_id/user_id are NOT NULL in context_events —
-            // fill them from the run's ownership.
-            ChatRun usageRun = chatRunRepository.findById(UUID.fromString(runId)).orElse(null);
-            if (usageRun != null) {
-                Map<String, Object> usageEnvelope = new java.util.HashMap<>();
-                usageEnvelope.put("usage", asMap(enriched).get("usage"));
-                // PLAN-0410 T2.3 (matrix §4): llm.usage is run-scoped — carry
-                // correlation_id=runId so CP derives the durable branch.
-                eventStoreService.append(sessionId, usageRun.getWorkspaceId().toString(),
-                        usageRun.getUserId().toString(), "llm.usage", usageEnvelope,
-                        usageRun.getId().toString());
-            }
-            // PLAN-294 ①2: success visibility — the estimated/real token
-            // counts reaching the ledger is the calibration baseline; without
-            // this line a silent CHECK-constraint rejection is undetectable.
-            Map<?, ?> usage = asMap(asMap(enriched).get("usage"));
-            logger.info("[LIFECYCLE] service=cp event=usage_extension_persisted runId={} source={} inputTokens={} totalTokens={} cost={} costSource={}",
-                    runId, usage.get("source"), usage.get("inputTokens"), usage.get("totalTokens"),
-                    usage.get("cost"), usage.get("costSource"));
-            return asMap(enriched);
-        } catch (Exception e) {
-            logger.warn("[LIFECYCLE] service=cp event=usage_extension_failed runId={} error={}", runId, e.getMessage());
-            return null;
-        }
-    }
+    // PLAN-0464 T1.4: the `llm_usage` extension path is gone. Cost mapping stays
+    // here (single computation point, PLAN-0343 decision #7) so the UI relay
+    // carries the same cost fields the terminal write will persist; the durable
+    // `llm.usage` ContextEvent is written by ChatRunTerminalService from the
+    // envelope this relay hands over.
 
     /**
      * PLAN-0343 decision #7: single cost computation point (now shared with
@@ -1782,7 +1768,8 @@ public class ChatController {
             String errorCode,
             int tokenCount,
             List<RelayedTerminalEvent> terminalEvents,
-            com.cc01cc.p.xihe.cp.operation.LedgerToolRecorder.RunLedger runLedger
+            com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder.RunState runState,
+            Map<?, ?> usageEnvelope
     ) {}
 
     private record RelayedTerminalEvent(String name, String data) {}
@@ -1844,11 +1831,11 @@ public class ChatController {
 
     private void dispatchRelayedEvent(String sessionId, String eventName, String payload,
                                       String runId, String requestId, String userId, String workspaceId,
-                                      com.cc01cc.p.xihe.cp.operation.LedgerToolRecorder.RunLedger runLedger) {
+                                      com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder.RunState runState) {
         Object parsedPayload = parsePayload(eventName, payload);
-        // PLAN-0326 决策 #8/#9：Agent 侧工具事实记账统一走 LedgerToolRecorder
-        // （按事件阶段映射，幂等限定同源）；本类只做事件分发，不再散写账本。
-        ledgerToolRecorder.record(eventName, asMap(parsedPayload), runId, requestId, runLedger);
+        // PLAN-0464 T2.2：Agent 侧工具事实记账只剩执行域（invocation + agent_tool
+        // attempt）；LedgerToolRecorder 及其 operation_* 写入已随本计划删除。
+        mcpRelayToolRecorder.record(eventName, asMap(parsedPayload), runId, requestId, runState);
         if ("approval_request".equals(eventName)) {
             ChatApproval storedApproval = approvalService.recordPending(
                     asMap(parsedPayload), sessionId, runId, userId, workspaceId);
@@ -1863,7 +1850,7 @@ public class ChatController {
             }
             transitionRun(runId, List.of("running", "streaming"), "awaiting_approval", null, null, null, 0, 0);
 
-            // Keep ledger/audit input unchanged; relay only the durable canonical row.
+            // Relay the durable canonical Approval row, not the stale Agent payload.
             sseManager.send(sessionId, eventName, approvalService.payloadFor(storedApproval, false));
             return;
         }

@@ -5,13 +5,13 @@
 > Owner：CP Context + Agent Context owners（PLAN-0410）  
 > 消费者：CP Chat/EventStore/Context、Agent Context、PLAN-0407、PLAN-0409  
 > 来源：PLAN-0410  
-> 更新日期：2026-09-29
+> 更新日期：2026-10-08
 >
 > 实现状态：`partial`（V43 branch path/cursor、per-branch Context projection 读模型与 Agent 输入已实现；child `session.forked` seed consumer 由 PLAN-0410 T3.6 实施；公开 branch selector、fork producer/API 与浏览器验收由 PLAN-0409 实施）
 
 ## 范围
 
-本规范定义同一 Chat Session 中分支路径对 CP 持久化事件、Context projection 读模型（CP 由 `context_events` 重建，非事实源）、摘要/压缩及 Agent prompt 的可见性。Session 生命周期与 ChatRun/Operation 终态仍由 PLAN-0387 对应 SPEC 负责；User/Agent principal 与授权由 Security 负责；公开 fork/branch API、UI 和唯一真实浏览器验收由 PLAN-0409 负责。
+本规范定义同一 Chat Session 中分支路径对 CP 持久化事件、Context projection 读模型（CP 由 `context_events` 重建，非事实源）、摘要/压缩及 Agent prompt 的可见性。Session 生命周期由 `chat-session.md` 定义；ChatRun 终态与各域 durable history 由当前 CP domain owners 实现（DEV-014），Operation Ledger 已由 PLAN-0467 退役；User/Agent principal 与授权由 Security 负责；公开 fork/branch API、UI 和唯一真实浏览器验收由 PLAN-0409 负责。
 
 ## 核心不变式
 
@@ -43,7 +43,7 @@
 
 - Fresh 与 upgrade migration 均须为每个 Session 创建唯一 root branch，并将既有 Message、ChatRun、ContextEvent 和 ContextProjection 归入 root；迁移前后数量、外键和唯一性必须可对账。
 - 旧 Event 只有在 payload `runId` 与同 Session durable ChatRun 双验通过时才可补写关联。无法验证的 Event 仅作为 root baseline，不得充当 branch cursor；`Message.run_id=NULL` 的 legacy content 保留为共同 root baseline，不得作为 anchor。
-- Session 的 create、import、attachment placeholder、User ledger、spawn 与 fork 等入口必须在 CP 中建立 root branch 或按契约完成绑定；实现前须由 PLAN-0410 M0 核实完整调用面。
+- Session 的 create、import、attachment placeholder、user-direct MCP invocation、spawn 与 fork 等入口必须在 CP 中建立 root branch 或按契约完成绑定；实现前须由 PLAN-0410 M0 核实完整调用面。
 
 ## 实现映射
 

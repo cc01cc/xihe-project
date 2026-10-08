@@ -200,7 +200,7 @@ public class RuntimeJobClient {
      * 由 CP 折叠为 501，不 fallback 到其它 backend。
      */
     public record JobStartResult(boolean reachable, boolean launched, boolean backendPending,
-                                 String jobId, String errorCode, String reason, String requestId,
+                                 String runtimeJobId, String errorCode, String reason, String requestId,
                                  int statusCode) {
 
         public JobStartResult(boolean reachable, boolean launched, boolean backendPending,
@@ -213,11 +213,11 @@ public class RuntimeJobClient {
         }
     }
 
-    public JobStartResult startJob(String workspaceId, String operationItemId, String command,
+    public JobStartResult startJob(String workspaceId, String jobId, String command,
                                    List<String> args, String cwd, Long timeoutSecs,
                                    Map<String, String> env) {
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("operationItemId", operationItemId);
+        body.put("jobId", jobId);
         body.put("command", command);
         body.put("args", args == null ? List.of() : args);
         if (cwd != null && !cwd.isBlank()) {
@@ -244,13 +244,20 @@ public class RuntimeJobClient {
                     problem.requestId(), problem.statusCode());
         }
         JsonNode node = readTree(response.body());
-        String jobId = node == null ? null : node.path("jobId").asText(null);
-        if (jobId == null || jobId.isBlank()) {
+        String returnedJobId = node == null ? null : node.path("jobId").asText(null);
+        String runtimeJobId = node == null ? null : node.path("runtimeJobId").asText(null);
+        if (returnedJobId == null || !returnedJobId.equals(jobId)) {
+            logger.warn("[LIFECYCLE] service=cp event=runtime_job_start_identity_mismatch workspaceId={}",
+                    workspaceId);
+            return new JobStartResult(true, false, false, null, "RUNTIME_ERROR",
+                    "Runtime returned an inconsistent Workspace Job identity", null, response.statusCode());
+        }
+        if (runtimeJobId == null || runtimeJobId.isBlank()) {
             logger.warn("[LIFECYCLE] service=cp event=runtime_job_start_missing_job_id workspaceId={}",
                     workspaceId);
             return JobStartResult.unreachableResult();
         }
-        return new JobStartResult(true, true, false, jobId, null);
+        return new JobStartResult(true, true, false, runtimeJobId, null);
     }
 
     /**
