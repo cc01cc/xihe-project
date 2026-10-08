@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 2
 status: active
 created: 2026-05-28
-updated: 2026-09-05
+updated: 2026-10-08
 ---
 
 # DEV-002: 开发者指南
@@ -241,7 +241,7 @@ Chat SSE 结构化事件与日志字段见 DEV-004 §6.3；UI 传输层见 DEV-0
 
 > 约束：H 盘为开发专供，不迁移 `CARGO_TARGET_DIR`。`packages/runtime/target/` 在 stable cargo 下无自动回收（`-Zgc` 仅管 `~/.cargo` 全局缓存，不管本地 `target/`），叠加 Windows PDB（150~200MB/个）+ 4 bin + 11 test target，多 hash 孤儿可堆到 40GB（2026-09-05 实测 39.5GB，H 剩 1.6GB）。单次编译不需要 40GB，常态活集约 6~10GB。
 
-水位线（`target/`）：正常 ≤12GB，告警 15GB，强制 20GB；H 余量 <5GB 直接走强制。
+水位线（`target/`）：正常 ≤12GB，12–15GB 观察，≥15GB 告警，≥20GB 强制；H 余量 <5GB 直接走强制。巡检入口：`mise run check:runtime-target`（输出占用与判定，exit 1 = 强制线、exit 2 = 检查不完整；脚本 `scripts/check-runtime-target.mjs`），双周先跑它、超线再按下面顺序清理。
 
 日常（双周，无重编代价）：`mise run clean:runtime-sweep`（`cargo sweep --time 7 && cargo sweep --maxsize 12GB`，只删孤儿 rlib/pdb/rmeta，活指纹保留）。前提一次性 `cargo install cargo-sweep`。注意 `--time 14` 在高频构建下可能清零（孤儿全部 <14 天），以 `--maxsize` 为准。
 

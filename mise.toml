@@ -342,3 +342,8 @@ run = "cargo sweep --time 7 && cargo sweep --maxsize 12GB"
 description = "Sweep orphaned Rust artifacts (7d+ / 12GB cap, keeps live fingerprints, no rebuild)"
 dir = "packages/runtime"
 alias = "clean:runtime-sweep"
+
+[tasks."check:runtime-target"]
+run = "node scripts/check-runtime-target.mjs"
+description = "Check Runtime target water lines (normal 12GB / watch >12GB / warn 15GB / force 20GB or H free <5GB; exit 1 = force)"
+alias = "check:target"
