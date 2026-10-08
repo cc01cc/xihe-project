@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
 import {
-    awaitLastOperationCompleted,
+    awaitLatestChatRunCompleted,
     ensureAgentWorkspaceBinding,
     getRootBranchId,
     sendChat,
@@ -108,31 +108,42 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
             .toContain(approveContent);
         await page.screenshot({ path: "journey-a-after-approve.png", fullPage: false });
 
-        // A5: user-facing ledger shows write_file tool item
-        const opsRes = await request.get(`${CP_URL}/api/v1/operations?size=20`, {
-            headers: authHeaders,
-        });
-        expect(opsRes.ok(), `operations list ${opsRes.status()}`).toBeTruthy();
-        const ops = (await opsRes.json()) as {
-            operations: Array<{ id: string; actorType?: string }>;
+        // A5: the MCP invocation domain owns the durable tool-call history.
+        let writeInvocationId = "";
+        await expect
+            .poll(
+                async () => {
+                    const res = await request.get(
+                        `${CP_URL}/api/v1/audit/entries?type=mcp_invocation&workspaceId=${wsId}&size=50`,
+                        { headers: authHeaders },
+                    );
+                    if (!res.ok()) return "";
+                    const body = (await res.json()) as {
+                        entries?: Array<{ id?: string; summary?: string; status?: string }>;
+                    };
+                    const entry = body.entries?.find(
+                        (candidate) =>
+                            candidate.summary === "write_file" && candidate.status === "completed",
+                    );
+                    writeInvocationId = entry?.id ?? "";
+                    return writeInvocationId;
+                },
+                { timeout: 30000, intervals: [500, 1000, 2000] },
+            )
+            .not.toBe("");
+        const detailRes = await request.get(
+            `${CP_URL}/api/v1/audit/entries/mcp_invocation/${writeInvocationId}`,
+            { headers: authHeaders },
+        );
+        expect(detailRes.ok(), `MCP invocation detail ${detailRes.status()}`).toBeTruthy();
+        const detail = (await detailRes.json()) as {
+            attempts?: Array<{ stage?: string; status?: string }>;
         };
-        expect(ops.operations.length).toBeGreaterThan(0);
-        const traceRes = await request.get(`${CP_URL}/api/v1/operations/${ops.operations[0].id}`, {
-            headers: authHeaders,
-        });
-        expect(traceRes.ok(), `trace ${traceRes.status()}`).toBeTruthy();
-        const trace = (await traceRes.json()) as {
-            items?: Array<{ toolName?: string; policyDecision?: string }>;
-        };
-        const toolNames = (trace.items ?? []).map((i) => i.toolName);
-        expect(
-            toolNames,
-            `expected write_file in trace, got ${JSON.stringify(toolNames)}`,
-        ).toContain("write_file");
+        expect(detail.attempts?.some((attempt) => attempt.stage === "cp_forward")).toBe(true);
 
         // Settle: first write_file may still be finishing LangGraph after FS write
         // (grant response / tool_result). Avoid CHAT_IN_PROGRESS on next send.
-        await awaitLastOperationCompleted(page.request, authHeaders);
+        await awaitLatestChatRunCompleted(page.request, authHeaders);
 
         // --- A3: reject write_file → APPROVAL_REJECTED; no new file ---
         await sendChat(page, `XIHE-E2E-WRITE ${rejectFile} # should not exist`);

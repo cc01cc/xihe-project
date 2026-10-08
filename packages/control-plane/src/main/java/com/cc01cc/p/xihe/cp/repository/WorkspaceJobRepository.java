@@ -22,16 +22,11 @@ import java.util.UUID;
  */
 public interface WorkspaceJobRepository extends JpaRepository<WorkspaceJob, UUID> {
 
+    Optional<WorkspaceJob> findByToolCallId(UUID toolCallId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select j from WorkspaceJob j where j.id = :id")
     Optional<WorkspaceJob> findByIdForUpdate(@Param("id") UUID id);
-
-    Optional<WorkspaceJob> findByOperationItemId(UUID operationItemId);
-
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select j from WorkspaceJob j where j.operationItemId = :operationItemId")
-    Optional<WorkspaceJob> findByOperationItemIdForUpdate(
-            @Param("operationItemId") UUID operationItemId);
 
     /**
      * PLAN-0465：post-0464 chat-run MCP 行以 tool_call_id 为物化键

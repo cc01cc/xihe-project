@@ -161,7 +161,7 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
         forgedAgentContext.setBearerAuth(token);
         forgedAgentContext.set("X-Workspace-Id", wsId);
         forgedAgentContext.set("X-Chat-Run-Id", UUID.randomUUID().toString());
-        forgedAgentContext.set("X-Operation-Id", UUID.randomUUID().toString());
+        forgedAgentContext.set("X-Tool-Call-Id", UUID.randomUUID().toString());
         ResponseEntity<String> forgedResponse = restTemplate.postForEntity(
                 url("/api/v1/mcp"), new HttpEntity<>(body, forgedAgentContext), String.class);
         assertEquals(HttpStatus.FORBIDDEN, forgedResponse.getStatusCode());

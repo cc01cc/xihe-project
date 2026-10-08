@@ -227,7 +227,7 @@ test.describe("@host Journey B — manual workspace mutations (PLAN-0353 D1)", (
         expect(seed.status(), `seed write failed: ${seed.status()} ${await seed.text()}`).toBe(200);
     });
 
-    test("B2-audit-user: UI manual mutation lands in the ledger as actorType=user", async ({
+    test("B2-audit-user: UI manual mutation lands as a direct-user MCP invocation", async ({
         page,
         request,
     }) => {
@@ -242,49 +242,7 @@ test.describe("@host Journey B — manual workspace mutations (PLAN-0353 D1)", (
             timeout: 20000,
         });
 
-        // Ledger fact (API): the newest user mutation is a tool_call with actorType=user.
-        let operationId = "";
-        await expect
-            .poll(
-                async () => {
-                    const res = await request.get(`${CP_URL}/api/v1/operations?size=5`, {
-                        headers: ctx.headers,
-                    });
-                    if (!res.ok()) return "http";
-                    const body = (await res.json()) as {
-                        operations?: Array<{ id: string; actorType?: string; kind?: string }>;
-                    };
-                    const op = (body.operations ?? []).find(
-                        (candidate) =>
-                            candidate.actorType === "user" && candidate.kind === "tool_call",
-                    );
-                    if (op) {
-                        operationId = op.id;
-                        return "ok";
-                    }
-                    return "pending";
-                },
-                {
-                    message: "a user tool_call operation must exist after the UI mutation",
-                    timeout: 30000,
-                    intervals: [1000, 2000],
-                },
-            )
-            .toBe("ok");
-
-        const traceRes = await request.get(`${CP_URL}/api/v1/operations/${operationId}`, {
-            headers: ctx.headers,
-        });
-        expect(traceRes.ok(), `trace ${traceRes.status()}`).toBeTruthy();
-        const trace = (await traceRes.json()) as {
-            items?: Array<{ toolName?: string }>;
-        };
-        const toolNames = (trace.items ?? []).map((item) => item.toolName);
-        expect(toolNames, `trace items: ${JSON.stringify(toolNames)}`).toContain("write_file");
-
-        // UI audit view (PLAN-290 B2 + PLAN-0466 T2.1: visible non-Agent provenance on the
-        // four-domain audit read model; the ledger probe above stays the PLAN-0353
-        // actorType=user proof until PLAN-0467 removes the operations routes).
+        // Audit view proves direct-user MCP provenance and visible history.
         let auditEntryId = "";
         await expect
             .poll(
@@ -295,10 +253,18 @@ test.describe("@host Journey B — manual workspace mutations (PLAN-0353 D1)", (
                     );
                     if (!res.ok()) return "http";
                     const body = (await res.json()) as {
-                        entries?: Array<{ id: string; summary?: string }>;
+                        entries?: Array<{
+                            id: string;
+                            summary?: string;
+                            source?: string;
+                            workspaceId?: string;
+                        }>;
                     };
                     const entry = (body.entries ?? []).find(
-                        (candidate) => candidate.summary === "write_file",
+                        (candidate) =>
+                            candidate.summary === "write_file" &&
+                            candidate.source === "direct_user" &&
+                            candidate.workspaceId === ctx.workspaceId,
                     );
                     if (entry) {
                         auditEntryId = entry.id;

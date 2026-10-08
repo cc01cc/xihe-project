@@ -120,8 +120,8 @@ public class ChatRunRecoveryService {
     }
 
     /**
-     * PLAN-0317 T2.6：取消中途重启的 run 收敛为 cancelled，并把对应 operation
-     * 一并收口（cancelling 不在 ACTIVE_LEASE_STATUSES 内，原逻辑无法回收）。
+     * PLAN-0317 T2.6: settle Runs left cancelling by a process restart as
+     * cancelled, reconciling their domain-owned records through the terminal service.
      */
     private int reconcileCancellingRuns() {
         int cancelled = 0;

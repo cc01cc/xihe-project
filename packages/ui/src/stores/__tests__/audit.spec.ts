@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
-import { useOperationStore } from "../operations";
+import { useAuditStore } from "../audit";
 import { api } from "../../composables/api";
 import type { AuditEntry, AuditEntryDetail, AuditListResponse } from "../../types";
 
@@ -8,8 +8,6 @@ vi.mock("../../composables/api", () => ({
     api: {
         listAuditEntries: vi.fn(),
         getAuditEntry: vi.fn(),
-        listOperations: vi.fn(),
-        getOperationTrace: vi.fn(),
     },
 }));
 
@@ -46,14 +44,14 @@ const detail: AuditEntryDetail = {
     attempts: [],
 };
 
-describe("operations store", () => {
+describe("audit store", () => {
     beforeEach(() => {
         setActivePinia(createPinia());
         vi.resetAllMocks();
     });
 
     it("loads audit entry pages", async () => {
-        const store = useOperationStore();
+        const store = useAuditStore();
         vi.mocked(api.listAuditEntries).mockResolvedValue(
             auditEntries({
                 entries: [chatEntry],
@@ -81,7 +79,7 @@ describe("operations store", () => {
     });
 
     it("passes the type filter through to the audit list route", async () => {
-        const store = useOperationStore();
+        const store = useAuditStore();
         vi.mocked(api.listAuditEntries).mockResolvedValue(auditEntries());
 
         await store.load({ type: "mcp_invocation", page: 0, size: 20 });
@@ -94,7 +92,7 @@ describe("operations store", () => {
     });
 
     it("drops stale list responses", async () => {
-        const store = useOperationStore();
+        const store = useAuditStore();
         let rejectFirst: (reason: Error) => void = () => undefined;
         vi.mocked(api.listAuditEntries)
             .mockImplementationOnce(
@@ -124,7 +122,7 @@ describe("operations store", () => {
     });
 
     it("surfaces list load errors", async () => {
-        const store = useOperationStore();
+        const store = useAuditStore();
         vi.mocked(api.listAuditEntries).mockRejectedValue(new Error("503 unavailable"));
 
         await store.load({ page: 0, size: 20 });
@@ -135,7 +133,7 @@ describe("operations store", () => {
     });
 
     it("loads one audit entry detail with its timeline", async () => {
-        const store = useOperationStore();
+        const store = useAuditStore();
         vi.mocked(api.getAuditEntry).mockResolvedValue(detail);
 
         await store.loadDetail("chat_run", chatEntry.id);
@@ -148,7 +146,7 @@ describe("operations store", () => {
     });
 
     it("drops stale detail responses", async () => {
-        const store = useOperationStore();
+        const store = useAuditStore();
         let rejectFirst: (reason: Error) => void = () => undefined;
         vi.mocked(api.getAuditEntry)
             .mockImplementationOnce(
@@ -170,7 +168,7 @@ describe("operations store", () => {
     });
 
     it("surfaces detail load errors", async () => {
-        const store = useOperationStore();
+        const store = useAuditStore();
         vi.mocked(api.getAuditEntry).mockRejectedValue(new Error("404 AUDIT_ENTRY_NOT_FOUND"));
 
         await store.loadDetail("chat_run", chatEntry.id);
@@ -181,7 +179,7 @@ describe("operations store", () => {
     });
 
     it("clears the selected detail", async () => {
-        const store = useOperationStore();
+        const store = useAuditStore();
         vi.mocked(api.getAuditEntry).mockResolvedValue(detail);
         await store.loadDetail("chat_run", chatEntry.id);
         expect(store.selectedDetail).not.toBeNull();

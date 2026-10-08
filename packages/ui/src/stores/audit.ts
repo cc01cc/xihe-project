@@ -4,14 +4,14 @@ import { api } from "@/composables/api";
 import type { AuditEntry, AuditEntryDetail, AuditEntryType, AuditListFilters } from "@/types";
 
 /**
- * PLAN-0466 T2.1: audit read state.
+ * Audit read state.
  *
  * Reads the four-domain audit surface (`/api/v1/audit/entries*`) instead of the
  * legacy ledger routes; `load` owns the list (entries/paging/error), `loadDetail`
  * owns one entry's timeline. Responses of a superseded request are dropped so a
  * slow older call can never overwrite a newer filter result.
  */
-export const useOperationStore = defineStore("operations", () => {
+export const useAuditStore = defineStore("audit", () => {
     const entries = ref<AuditEntry[]>([]);
     const selectedDetail = ref<AuditEntryDetail | null>(null);
     const page = ref(0);

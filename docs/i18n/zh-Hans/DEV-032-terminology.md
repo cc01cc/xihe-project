@@ -6,7 +6,7 @@ lang: zh-Hans
 sidebar_group: "开发指南"
 status: active
 created: 2026-09-16
-updated: 2026-09-27
+updated: 2026-10-08
 ---
 
 # DEV-032: 术语规范（一词多义与多词一义）
@@ -37,7 +37,7 @@ updated: 2026-09-27
 | | checkpoint 恢复层 L1/L2/L3 | **`checkpoint L1`** 等（中文：**检查点 L1 层**） | 裸 `L1` | 0338 |
 | **resume** | A. 会话 / ChatRun 恢复 | **`run resume`**（中文：**run 恢复**） | 裸 `resume` 指 unpause | 既有 chat 语义 |
 | | B. 工作区从 `paused` 回到可用 | **`unpause`**（中文：**解除暂停**） | 裸 `resume` 指 workspace；`恢复消费者` 作唯一正名 | 见 §2 unpause 路径 |
-| **scope** | A. Job 的存活边界 | **`job scope`**（值 `run/session/workspace`） | 裸 `scope` 指策略层 | 0390；canonical identity 是 `operationItemId` |
+| **scope** | A. Job 的存活边界 | **`job scope`**（值 `run/session/workspace`） | 裸 `scope` 指策略层 | 0390；canonical identity is domain `jobId` (`workspace_jobs.id`), backend handle is `runtimeJobId` |
 | | B. 策略/工具面的作用层 | **`policy scope`**（`instance/workspace/user`；tool-face 另有 `builtin`） | 裸 `scope` 指 Job | 0328 |
 | **interrupted** | Job 因 Runtime 重启或派发未确认落定的终态 | **`job interrupted`** | 与 run `ambiguous` 混用；称「已恢复/已重放」 | 0390；不自动重放 |
 | **runtimeBootId** | Runtime 单进程 boot 标识 | **`runtimeBootId`** | 当作业务 identity | 0390；变化即把未确认 Job 判 `interrupted` |

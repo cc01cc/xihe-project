@@ -177,7 +177,6 @@ class ApprovalCoordinator:
         payload = {
             "requestId": request_id,
             "runId": str(metadata.get("runId", "")),
-            "operationId": str(metadata.get("operationId") or ""),
             "sessionId": str(metadata.get("sessionId", context.aggregate_id)),
             "workspaceId": str(metadata.get("workspaceId", "")),
             "tool": tool,
@@ -333,7 +332,6 @@ class ApprovalCoordinator:
         return {
             "requestId": request_id,
             "runId": str(metadata.get("runId", "")),
-            "operationId": str(metadata.get("operationId") or ""),
             "sessionId": str(metadata.get("sessionId", context.aggregate_id if context is not None else "")),
             "workspaceId": str(metadata.get("workspaceId", "")),
             "tool": tool,

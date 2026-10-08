@@ -4,7 +4,7 @@ import com.cc01cc.p.xihe.cp.chat.ApprovalPolicySummary;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.McpInvocation;
-import com.cc01cc.p.xihe.cp.operation.OperationPolicySummary;
+import com.cc01cc.p.xihe.cp.policy.SafePolicySummary;
 import com.cc01cc.p.xihe.cp.repository.ApprovalHistoryRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunHistoryRepository;
@@ -226,7 +226,7 @@ public class AuditReadService {
     private void attachMcpPolicy(Map<String, Object> entry, McpInvocation invocation) {
         // Only the parsed safe snapshot is projected; the raw policy_summary TEXT and
         // arguments_preview columns never leave this process (T2.2).
-        OperationPolicySummary.parse(invocation.getPolicySummary())
+        SafePolicySummary.parse(invocation.getPolicySummary())
                 .ifPresent(policy -> entry.put("policy", policy));
     }
 
@@ -234,7 +234,7 @@ public class AuditReadService {
         approvalPolicySummary.parse(approval.getPolicySummary()).ifPresent(policy -> {
             // Approval snapshots are taken at creation (effect=ask) and carry neither an
             // automatic-allow marker nor the reuse annotation: both keys project as
-            // null — "not applicable", exactly what the OperationPolicySummary schema
+            // null — "not applicable", exactly what the safe policy summary schema
             // documents for legacy-shaped snapshots. Never a guessed value.
             policy.putIfAbsent("allowedBy", null);
             policy.putIfAbsent("reused", null);

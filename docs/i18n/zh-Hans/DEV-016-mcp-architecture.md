@@ -7,7 +7,7 @@ sidebar_group: "开发指南"
 sidebar_order: 16
 status: active
 created: 2026-06-03
-updated: 2026-09-18
+updated: 2026-10-08
 ---
 
 # DEV-016: MCP 三层路由架构
@@ -92,23 +92,20 @@ sequenceDiagram
 一次 `tools/call` 的跨服务关联 header（完整契约见
 `plans/PLAN-0463-xh-mcp-execution-domain/evidence/wire-contract.md`）：
 
-| Header | 方向 | 语义 | 0463 状态 |
+| Header | 方向 | 语义 |
 |---|---|---|---|
-| `X-Chat-Run-Id` | Agent→CP→Runtime | ChatRun 主键（租约校验 + 日志关联） | 不变 |
-| `X-Tool-Call-Id` | Agent→CP→Runtime | **新主键**：canonical `toolCallId`（非 UUID 由 CP `nameUUIDFromBytes` 规范化） | 新增 |
-| `X-Mcp-Invocation-Id` | CP→Runtime | gate 创建的 `mcp_invocations.id`（迟到终止新 target） | 新增 |
-| `X-Job-Id` | CP→Runtime | job 场景可选关联 | 新增（0463 仅透传解析，producer 随 0465） |
-| `X-Operation-Id` / `X-Operation-Item-Id` / `X-Operation-Attempt-Id` | Agent→CP→Runtime | 旧 operation 关联 | **兼容保留，0464 移除** |
+| `X-Chat-Run-Id` | Agent→CP→Runtime | ChatRun ID（租约校验 + 日志关联） |
+| `X-Tool-Call-Id` | Agent→CP→Runtime | canonical MCP tool-call ID（非 UUID 由 CP `nameUUIDFromBytes` 规范化） |
+| `X-Mcp-Invocation-Id` | CP→Runtime | `mcp_invocations.id`，用于迟到终止关联 |
+| `X-Job-Id` | CP→Runtime | 可选 Workspace Job 域 ID 关联 |
 
-- **同值规则**：`X-Tool-Call-Id` 与 `X-Operation-Item-Id` 在 0463 期间取同一 canonical 值，
-  因此 Runtime in-flight / cancel key 的**取值不变**，取消链路零回归。
+- **关联规则**：Runtime in-flight/cancel key 使用 `toolCallId`；Job backend handle 单独使用 `runtimeJobId`，不得与 Workspace Job 的 domain `jobId` 混淆。
 - **写路径**：gate 在 grant 校验前建 `mcp_invocations`（`source=agent`）；SSE relay 的
   `agent_tool` attempt 与 Proxy 的 `cp_forward` attempt 落 `mcp_attempts`，流转追加
   `mcp_dispatch_history`；dispatch 网络不确定记 `unknown`，迟到确认 `unknown → late_confirmed`。
-- **Grant 校验**：主路径 = `ChatRun lease + invocation active + scope`；operation/item
-  校验保留为 0464 前的过渡回退（删除挂 0464 T2.2）。
-- **迟到终止**：`POST /internal/v1/mcp/invocations/{invocationId}/late-termination`（新），
-  旧 `POST /internal/v1/operations/items/{itemId}/late-termination` 标 `deprecated`（下线 0467）。
+- **Grant 校验**：唯一主路径 = `ChatRun lease + invocation active + scope`；无 invocation 行或 owner 不匹配一律 fail-closed。
+- **迟到终止**：`POST /internal/v1/mcp/invocations/{invocationId}/late-termination`；
+  Runtime 必须提供 MCP invocation ID，不存在兼容 fallback route。
 
 ## 4. 关键技术决策
 

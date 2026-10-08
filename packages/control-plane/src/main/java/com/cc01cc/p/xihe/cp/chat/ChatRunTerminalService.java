@@ -36,8 +36,7 @@ import java.util.UUID;
  * The only CP owner that commits a ChatRun terminal state.
  *
  * <p>PLAN-0464: the ChatRun row is the single root. This service no longer
- * settles an Operation, mirrors a Ledger status or keeps a per-run waiting link
- * on an OperationItem — it writes the run terminal transition, its
+ * writes only the ChatRun terminal transition, its
  * {@code chat_run_history} row, the spawn waiting-link settlement, the Inbox
  * notice and (when the relay supplied it) the {@code llm.usage} ContextEvent,
  * all in one transaction.</p>
@@ -231,8 +230,7 @@ public class ChatRunTerminalService {
 
         requestCheckpointAfterCommit(runId.toString());
         // PLAN-0464 T1.2 (review round-1 #1): the run-scope Job收口 trigger is
-        // now owned by the Chat terminal path; OperationService is no longer the
-        // single entry. Both are best-effort after commit (Runtime is remote).
+        // now owned by the Chat terminal path. Both are best-effort after commit (Runtime is remote).
         requestRunScopeClosureAfterCommit(runId.toString());
         settleStrandedInvocationsAfterCommit(runId.toString(), request);
         return new TerminalResult(Outcome.COMMITTED, request.status());

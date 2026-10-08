@@ -15,7 +15,6 @@ import com.cc01cc.p.xihe.cp.chat.AgentSpawnExecutionService;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.operation.JobStateService;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.policy.PolicyContext;
 import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
@@ -62,7 +61,6 @@ class JobTimeoutClampTest {
     private McpToolAliasRepository aliasRepository;
     private WorkspaceService workspaceService;
     private SessionRepository sessionRepository;
-    private OperationService operationService;
     private ConfigService configService;
     private AgentSpawnExecutionService agentSpawnExecutionService;
     private McpProxyController controller;
@@ -80,7 +78,6 @@ class JobTimeoutClampTest {
         aliasRepository = mock(McpToolAliasRepository.class);
         workspaceService = mock(WorkspaceService.class);
         sessionRepository = mock(SessionRepository.class);
-        operationService = mock(OperationService.class);
         configService = mock(ConfigService.class);
         agentSpawnExecutionService = mock(AgentSpawnExecutionService.class);
 
@@ -88,7 +85,7 @@ class JobTimeoutClampTest {
                 requestRewriter, policyEngine,
                 auditLogger, approvalService, objectMapper, sseEmitterManager, stdioServerRepository,
                 mcpServerRepository, aliasRepository,
-                workspaceService, sessionRepository, operationService,
+                workspaceService, sessionRepository,
                 mock(JobStateService.class),
                 configService,
                 new ToolTimeoutPolicy(),

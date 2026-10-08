@@ -19,11 +19,7 @@ pub const HEADER_ORIGIN: &str = "x-xihe-tool-timeout-origin";
 pub const ENV_KEY: &str = "XIHE_EXEC_COLLECT_TIMEOUT_S";
 /// 关联键（spec S5.1）：CP 透传的 toolCallId / runId / requestId（同一工具调用跨三层可检索）。
 ///
-/// PLAN-0463 wire contract R2：`X-Tool-Call-Id` 是新的主关联键，`X-Operation-Item-Id`
-/// 是 0463 期间的兼容回退（两者取值相同，见 R1），0464 移除旧键。
 pub const HEADER_TOOL_CALL_ID: &str = "x-tool-call-id";
-/// Legacy correlation key kept until PLAN-0464 removes the `X-Operation-*` headers.
-pub const HEADER_TOOL_CALL_ID_LEGACY: &str = "x-operation-item-id";
 /// PLAN-0463：CP 在 gate 分配的 `mcp_invocations.id`，供迟到终止回报定位。
 pub const HEADER_INVOCATION_ID: &str = "x-mcp-invocation-id";
 /// PLAN-0463：Job 场景可选关联键（0463 仅透传解析，producer 随 0465 落地）。
@@ -104,8 +100,6 @@ impl Correlation {
 
 /// 从请求头解析关联键（HTTP transport 经 Parts 注入；直连/单测缺失时全空）。
 ///
-/// PLAN-0463 wire contract R2：`tool_call_id` 优先取 `X-Tool-Call-Id`，缺失时回退
-/// 旧键 `X-Operation-Item-Id`（0463 期间两键取值相同，取消链路键值不变）。
 pub fn correlation_from_headers(headers: &HeaderMap) -> Correlation {
     let value = |name: &str| {
         headers
@@ -116,7 +110,7 @@ pub fn correlation_from_headers(headers: &HeaderMap) -> Correlation {
             .map(str::to_string)
     };
     Correlation {
-        tool_call_id: value(HEADER_TOOL_CALL_ID).or_else(|| value(HEADER_TOOL_CALL_ID_LEGACY)),
+        tool_call_id: value(HEADER_TOOL_CALL_ID),
         run_id: value(HEADER_RUN_ID),
         request_id: value(HEADER_REQUEST_ID),
         invocation_id: value(HEADER_INVOCATION_ID),
@@ -442,13 +436,13 @@ mod tests {
         assert!(rendered.contains("jobId=job-1"), "{rendered}");
     }
 
-    /// PLAN-0463 wire contract R2：新键缺失时回退旧键（0463 迁移期兼容）。
+    /// Retired Operation item headers are ignored; only current domain headers are parsed.
     #[test]
-    fn correlation_falls_back_to_legacy_operation_item_header() {
+    fn correlation_ignores_legacy_operation_item_header() {
         let mut headers = HeaderMap::new();
-        headers.insert(HEADER_TOOL_CALL_ID_LEGACY, "call-legacy".parse().unwrap());
+        headers.insert("x-operation-item-id", "call-legacy".parse().unwrap());
         let correlation = correlation_from_headers(&headers);
-        assert_eq!(correlation.tool_call_id.as_deref(), Some("call-legacy"));
+        assert!(correlation.tool_call_id.is_none());
         assert_eq!(correlation.invocation_id, None);
 
         // 两键同时存在时新键优先（R2）。

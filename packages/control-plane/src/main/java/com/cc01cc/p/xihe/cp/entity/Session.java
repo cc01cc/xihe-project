@@ -117,7 +117,7 @@ public class Session {
     /**
      * PLAN-0410 spec §7: the Session root Branch must exist in the same CP
      * transaction as the Session row — one hook covers every Session creation
-     * entry (create/import/upload/ledger/spawn).
+     * entry (create/import/upload/Agent spawn).
      */
     @PostPersist
     protected void onCreated() {

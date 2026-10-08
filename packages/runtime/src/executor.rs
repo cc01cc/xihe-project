@@ -45,16 +45,14 @@ struct InFlightEntry {
     invocation_id: Option<String>,
 }
 
-/// PLAN-0317 T2.9（决策 #14）：追偿成功（或确认执行已结束）的迟到终止，
-/// 由宿主回调 CP 追加 `item.terminated.late`。
+/// A confirmed late termination that CP can correlate to a durable MCP invocation.
 #[derive(Debug, Clone)]
 pub struct LateTermination {
-    pub item_id: String,
+    pub tool_call_id: String,
     pub workspace_id: String,
     pub confirmed: bool,
-    /// PLAN-0463：优先走 `/internal/v1/mcp/invocations/{id}/late-termination`；
-    /// 缺失（调用方未携带 `X-Mcp-Invocation-Id`）时回落旧 itemId 路由。
-    pub invocation_id: Option<String>,
+    /// CP-assigned MCP invocation that owns the durable execution record.
+    pub invocation_id: String,
 }
 
 /// 追偿重试上限：超过后放弃并告警（交由容器生命周期兜底）。
@@ -66,9 +64,8 @@ pub struct ExecutionRegistration {
     pub outcome: tokio::sync::watch::Sender<Option<ExecutionEnd>>,
 }
 
-/// Host-side registry of executions that are still running, keyed by
-/// `operationItemId` (PLAN-0317 T2.1, decision #12 — the same key CP stores in
-/// `operation_items.tool_call_id` and forwards as `X-Operation-Item-Id`).
+/// Host-side registry of executions that are still running, keyed by the
+/// canonical `toolCallId` shared with CP and Runtime.
 ///
 /// A cancel request looks the execution up by that key **within its workspace**
 /// (decision #13: no cross-workspace termination) and triggers its
@@ -85,10 +82,10 @@ impl InFlightExecutions {
     }
 
     /// Registers a running execution. The returned token is cancelled when a
-    /// cancel request arrives for the same `item_id`; the exec task reports its
+    /// cancel request arrives for the same `tool_call_id`; the exec task reports its
     /// outcome through the returned watch sender.
-    pub fn register(&self, workspace_id: &str, item_id: &str) -> ExecutionRegistration {
-        self.register_with_invocation(workspace_id, item_id, None)
+    pub fn register(&self, workspace_id: &str, tool_call_id: &str) -> ExecutionRegistration {
+        self.register_with_invocation(workspace_id, tool_call_id, None)
     }
 
     /// PLAN-0463: same registration plus the CP-assigned invocation id, carried
@@ -96,7 +93,7 @@ impl InFlightExecutions {
     pub fn register_with_invocation(
         &self,
         workspace_id: &str,
-        item_id: &str,
+        tool_call_id: &str,
         invocation_id: Option<String>,
     ) -> ExecutionRegistration {
         let token = CancellationToken::new();
@@ -106,7 +103,7 @@ impl InFlightExecutions {
         // the old execution then becomes unaddressable, which is logged by the
         // caller rather than silently ignored.
         if let Some(previous) = map.insert(
-            item_id.to_string(),
+            tool_call_id.to_string(),
             InFlightEntry {
                 workspace_id: workspace_id.to_string(),
                 container: String::new(),
@@ -124,33 +121,33 @@ impl InFlightExecutions {
     }
 
     /// PLAN-0317 T2.9：登记 exec 句柄（create/start exec 成功后），供追偿检查。
-    pub fn attach_exec(&self, item_id: &str, container: &str, exec_id: &str) {
+    pub fn attach_exec(&self, tool_call_id: &str, container: &str, exec_id: &str) {
         let mut map = self.inner.lock().expect("in-flight registry poisoned");
-        if let Some(entry) = map.get_mut(item_id) {
+        if let Some(entry) = map.get_mut(tool_call_id) {
             entry.container = container.to_string();
             entry.exec_id = Some(exec_id.to_string());
         }
     }
 
     /// PLAN-0317 T2.9：终止未确认时保留条目（不注销），等待追偿重试。
-    pub fn retain_for_retry(&self, item_id: &str) {
+    pub fn retain_for_retry(&self, tool_call_id: &str) {
         let mut map = self.inner.lock().expect("in-flight registry poisoned");
-        if let Some(entry) = map.get_mut(item_id) {
+        if let Some(entry) = map.get_mut(tool_call_id) {
             entry.retain_unconfirmed = true;
         }
     }
 
     /// Removes an execution once it has finished (any exit path). Unconfirmed
     /// terminations are retained for the late-retry loop instead.
-    pub fn unregister(&self, item_id: &str) {
+    pub fn unregister(&self, tool_call_id: &str) {
         let mut map = self.inner.lock().expect("in-flight registry poisoned");
         if map
-            .get(item_id)
+            .get(tool_call_id)
             .is_some_and(|entry| entry.retain_unconfirmed)
         {
             return;
         }
-        map.remove(item_id);
+        map.remove(tool_call_id);
     }
 
     /// Requests termination inside `workspace_id`; `None` when nothing is in
@@ -159,10 +156,10 @@ impl InFlightExecutions {
     pub fn request_termination(
         &self,
         workspace_id: &str,
-        item_id: &str,
+        tool_call_id: &str,
     ) -> Option<tokio::sync::watch::Receiver<Option<ExecutionEnd>>> {
         let map = self.inner.lock().expect("in-flight registry poisoned");
-        match map.get(item_id) {
+        match map.get(tool_call_id) {
             Some(entry) if entry.workspace_id == workspace_id => {
                 entry.token.cancel();
                 Some(entry.outcome.subscribe())
@@ -210,11 +207,11 @@ impl InFlightExecutions {
 
     /// PLAN-0463：注册条目携带的 invocation id（迟到终止新 target 的来源）。
     /// 纯读取，不做容器探测。
-    pub fn invocation_id_for(&self, item_id: &str) -> Option<String> {
+    pub fn invocation_id_for(&self, tool_call_id: &str) -> Option<String> {
         self.inner
             .lock()
             .expect("in-flight registry poisoned")
-            .get(item_id)
+            .get(tool_call_id)
             .and_then(|entry| entry.invocation_id.clone())
     }
 
@@ -227,10 +224,10 @@ impl InFlightExecutions {
             let map = self.inner.lock().expect("in-flight registry poisoned");
             map.iter()
                 .filter(|(_, entry)| entry.retain_unconfirmed)
-                .filter_map(|(item_id, entry)| {
+                .filter_map(|(tool_call_id, entry)| {
                     entry.exec_id.as_ref().map(|exec_id| {
                         (
-                            item_id.clone(),
+                            tool_call_id.clone(),
                             entry.workspace_id.clone(),
                             exec_id.clone(),
                             entry.retry_attempts,
@@ -241,12 +238,12 @@ impl InFlightExecutions {
                 .collect()
         };
         let mut late = Vec::new();
-        for (item_id, workspace_id, exec_id, attempts, invocation_id) in candidates {
+        for (tool_call_id, workspace_id, exec_id, attempts, invocation_id) in candidates {
             let still_running = match docker.inspect_exec(&exec_id).await {
                 Ok(info) => info.running.unwrap_or(false),
                 Err(error) => {
                     tracing::debug!(
-                        item_id = %item_id,
+                        tool_call_id = %tool_call_id,
                         error = %error,
                         "late-termination: exec no longer inspectable, treating as finished"
                     );
@@ -256,7 +253,7 @@ impl InFlightExecutions {
             if still_running {
                 let exhausted = {
                     let mut map = self.inner.lock().expect("in-flight registry poisoned");
-                    match map.get_mut(&item_id) {
+                    match map.get_mut(&tool_call_id) {
                         Some(entry) => {
                             entry.retry_attempts = attempts + 1;
                             entry.retry_attempts >= LATE_RETRY_MAX_ATTEMPTS
@@ -266,14 +263,14 @@ impl InFlightExecutions {
                 };
                 if exhausted {
                     tracing::warn!(
-                        item_id = %item_id,
+                        tool_call_id = %tool_call_id,
                         attempts = attempts + 1,
                         "late-termination retries exhausted; leaving termination to container lifecycle"
                     );
                     self.inner
                         .lock()
                         .expect("in-flight registry poisoned")
-                        .remove(&item_id);
+                        .remove(&tool_call_id);
                 }
                 continue;
             }
@@ -281,19 +278,26 @@ impl InFlightExecutions {
                 .inner
                 .lock()
                 .expect("in-flight registry poisoned")
-                .remove(&item_id)
+                .remove(&tool_call_id)
             {
                 let _ = entry
                     .outcome
                     .send(Some(ExecutionEnd::Cancelled { confirmed: true }));
             }
-            tracing::info!(item_id = %item_id, "late-termination confirmed after unconfirmed cancel");
-            late.push(LateTermination {
-                item_id,
-                workspace_id,
-                confirmed: true,
-                invocation_id,
-            });
+            match invocation_id {
+                Some(invocation_id) => {
+                    tracing::info!(tool_call_id = %tool_call_id,
+                        "late-termination confirmed after unconfirmed cancel");
+                    late.push(LateTermination {
+                        tool_call_id,
+                        workspace_id,
+                        confirmed: true,
+                        invocation_id,
+                    });
+                }
+                None => tracing::warn!(tool_call_id = %tool_call_id,
+                    "late termination confirmed without an MCP invocation; no callback target exists"),
+            }
         }
         late
     }
@@ -302,7 +306,7 @@ impl InFlightExecutions {
 /// Removes the in-flight entry on every exit path of an execution.
 struct InFlightGuard {
     registry: Arc<InFlightExecutions>,
-    item_id: String,
+    tool_call_id: String,
 }
 
 /// PLAN-0397：引擎错误 → RuntimeError（保持既有对外错误面）。
@@ -325,7 +329,7 @@ fn job_engine_error(error: crate::job_engine::JobEngineError) -> RuntimeError {
 
 /// Per-execution handles kept by the running call (PLAN-0317 T2.1/T2.3).
 struct InFlightState {
-    item_id: String,
+    tool_call_id: String,
     token: CancellationToken,
     outcome: tokio::sync::watch::Sender<Option<ExecutionEnd>>,
 }
@@ -340,7 +344,7 @@ type CollectJoin = std::result::Result<CollectResult, tokio::task::JoinError>;
 
 impl Drop for InFlightGuard {
     fn drop(&mut self) {
-        self.registry.unregister(&self.item_id);
+        self.registry.unregister(&self.tool_call_id);
     }
 }
 
@@ -608,7 +612,7 @@ impl WorkspaceExecutionRouter {
     }
 
     /// In-flight execution registry (PLAN-0317 T2.1); cancel requests (T2.3)
-    /// address executions through it by `operationItemId`.
+    /// address executions through their canonical `toolCallId`.
     pub fn in_flight(&self) -> Arc<InFlightExecutions> {
         self.in_flight.clone()
     }
@@ -874,19 +878,18 @@ impl WorkspaceExecutionRouter {
                 );
                 // PLAN-0397：一次性命令也进 Job Object（与 Job 同一归属/终止实现）。
                 // 返回契约与改造前逐字一致（spec/oneshot-job-contract.md §1）。
-                let item_id = payload
-                    .get("operationItemId")
-                    .or_else(|| payload.get("toolCallId"))
+                let tool_call_id = payload
+                    .get("toolCallId")
                     .or_else(|| payload.get("requestId"))
                     .and_then(Value::as_str)
                     .map(str::to_string)
                     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-                let job_id = format!("oneshot-{workspace_path}-{item_id}");
+                let job_id = format!("oneshot-{workspace_path}-{tool_call_id}");
                 // PLAN-0397：直连命令登记进 in-flight 注册表，取消请求经 token 命中。
-                let registration = self.in_flight.register(workspace_id, &item_id);
+                let registration = self.in_flight.register(workspace_id, &tool_call_id);
                 let _in_flight_guard = InFlightGuard {
                     registry: self.in_flight.clone(),
-                    item_id: item_id.clone(),
+                    tool_call_id: tool_call_id.clone(),
                 };
                 let cancel_token = registration.token.clone();
                 let shell = payload
@@ -1075,27 +1078,25 @@ impl WorkspaceExecutionRouter {
     ) -> Result<Value> {
         let container_name = Self::container_name(workspace_id);
         let request_id = uuid::Uuid::new_v4().to_string();
-        // PLAN-0317 T2.1/T2.2 + PLAN-0463 wire contract: register the execution
-        // under the CP-provided tool-call correlation key (now `X-Tool-Call-Id`,
-        // falling back to `X-Operation-Item-Id` — same value during 0463) so a
+        // Register under the canonical CP-provided `toolCallId` so a
         // cancel request can address this exact run. The guard removes the
         // entry on every exit path.
         let correlation = tool_timeout::current_correlation();
-        let in_flight_state = correlation.tool_call_id.as_deref().map(|item_id| {
+        let in_flight_state = correlation.tool_call_id.as_deref().map(|tool_call_id| {
             let registration = self.in_flight.register_with_invocation(
                 workspace_id,
-                item_id,
+                tool_call_id,
                 correlation.invocation_id.clone(),
             );
             InFlightState {
-                item_id: item_id.to_string(),
+                tool_call_id: tool_call_id.to_string(),
                 token: registration.token.clone(),
                 outcome: registration.outcome.clone(),
             }
         });
         let _in_flight_guard = in_flight_state.as_ref().map(|state| InFlightGuard {
             registry: self.in_flight.clone(),
-            item_id: state.item_id.clone(),
+            tool_call_id: state.tool_call_id.clone(),
         });
         let cancel_token = in_flight_state.as_ref().map(|state| state.token.clone());
         let op = OperationRequest {
@@ -1146,7 +1147,7 @@ impl WorkspaceExecutionRouter {
         // PLAN-0317 T2.9：登记 exec 句柄，供追偿循环检查原执行是否仍在运行。
         if let Some(state) = &in_flight_state {
             self.in_flight
-                .attach_exec(&state.item_id, &container_name, &exec.id);
+                .attach_exec(&state.tool_call_id, &container_name, &exec.id);
         }
         let mut op_bytes = op_json.into_bytes();
         op_bytes.push(b'\n');
@@ -1273,7 +1274,7 @@ impl WorkspaceExecutionRouter {
                         .send(Some(ExecutionEnd::Cancelled { confirmed }));
                     if !confirmed {
                         // PLAN-0317 T2.9（决策 #14）：未确认终止保留条目供追偿。
-                        self.in_flight.retain_for_retry(&state.item_id);
+                        self.in_flight.retain_for_retry(&state.tool_call_id);
                     }
                 }
                 if reason == "timeout" {
@@ -1794,7 +1795,7 @@ impl WorkspaceExecutionRouter {
 mod in_flight_tests {
     use super::*;
 
-    /// PLAN-0317 T2.1/T2.3：注册后可按 (workspace, operationItemId) 触发终止，
+    /// Register so cancellation can target `(workspace, toolCallId)`,
     /// 且幂等；执行侧通过 outcome 通道回报终局。
     #[test]
     fn request_termination_cancels_registered_execution_idempotently() {

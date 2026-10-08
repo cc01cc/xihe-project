@@ -154,7 +154,7 @@ export interface ToolCall {
     startedAt?: string;
     completedAt?: string;
     diagnostics?: DiagnosticsBundle;
-    /** UI-only projection from durable OperationItem.waitingOnRunId + derived-state API. */
+    /** UI-only projection from the parent ChatRun waiting link + derived-state API. */
     waitingOn?: ToolCallWaitingOn | null;
     /** PLAN-0344: durable job archival summary restored from the messages DTO after refresh. */
     jobSummary?: JobSummary;
@@ -196,7 +196,6 @@ export type ApprovalRequestOrigin = "cp_gate" | "agent_relay";
 
 export interface ApprovalRequest {
     requestId: string;
-    operationId?: string;
     runId: string;
     sessionId: string;
     workspaceId?: string;
@@ -349,7 +348,6 @@ export interface Message {
     marker?: "status" | "date" | "tool";
     status?: string;
     runId?: string;
-    operationId?: string;
     runStatus?: ChatRunResponse["status"] | "interrupted";
     terminalOutcome?: "success" | "error" | "partial" | "ambiguous" | "cancelled";
     errorCode?: string;
@@ -434,40 +432,13 @@ export interface ChatRunResponse {
         | "cancelled";
     sessionId: string;
     runId: string;
-    operationId?: string;
     messageId?: string;
     outcome?: "success" | "error" | "partial" | "ambiguous";
     errorCode?: string;
 }
 
-export type OperationStatus =
-    | "accepted"
-    | "running"
-    | "waiting_for_approval"
-    | "completed"
-    | "failed"
-    | "cancelled"
-    | "interrupted"
-    | "ambiguous";
-
-export interface OperationSummary {
-    id: string;
-    sessionId?: string | null;
-    workspaceId?: string | null;
-    runId?: string | null;
-    kind: string;
-    source: string;
-    actorType: string;
-    status: OperationStatus | string;
-    summary?: string | null;
-    errorCode?: string | null;
-    startedAt?: string | null;
-    finishedAt?: string | null;
-    createdAt?: string | null;
-}
-
 /**
- * Safe policy verdict snapshot carried by operation items (PLAN-0328 T1.15, spec ui-ux §3.5).
+ * Safe policy verdict snapshot carried by MCP invocation/audit detail.
  * Exactly the server-projected fields; `matchedRule` / `mode` / `allowedBy` are nullable and
  * absent for legacy rows or non-MCP paths. The projection never contains raw arguments.
  *
@@ -475,7 +446,7 @@ export interface OperationSummary {
  * by an exact session reuse (never a verdict effect of its own); `null` (or an absent key on
  * legacy V19 snapshots) means reuse was not applicable. The view must not infer reuse otherwise.
  */
-export interface OperationPolicyView {
+export interface SafePolicySummaryView {
     effect: ApprovalPolicyEffect;
     sourceLayer: ApprovalPolicySourceLayer;
     matchedRule: string | null;
@@ -485,73 +456,6 @@ export interface OperationPolicyView {
     actionClass: string;
     shape: ApprovalPolicyShape;
     reused?: boolean | null;
-}
-
-export interface OperationItemView {
-    id: string;
-    operationId: string;
-    toolCallId?: string | null;
-    sequence: number;
-    kind: string;
-    toolName?: string | null;
-    source: string;
-    policyDecision?: string | null;
-    policy?: OperationPolicyView;
-    approvalRequestId?: string | null;
-    waitingOnRunId: string | null;
-    status: string;
-    errorCode?: string | null;
-    startedAt?: string | null;
-    finishedAt?: string | null;
-}
-
-export interface OperationAttemptView {
-    id: string;
-    itemId: string;
-    stage: string;
-    retryNo: number;
-    parentAttemptId?: string | null;
-    module: string;
-    status: string;
-    errorCode?: string | null;
-    durationMs?: number | null;
-    startedAt?: string | null;
-    finishedAt?: string | null;
-}
-
-export interface OperationEventView {
-    id: string;
-    operationId: string;
-    itemId?: string | null;
-    attemptId?: string | null;
-    sequence: number;
-    eventType: string;
-    state: string;
-    actor: string;
-    createdAt?: string | null;
-}
-
-export interface OperationListResponse {
-    operations: OperationSummary[];
-    page: number;
-    size: number;
-    totalElements: number;
-    totalPages: number;
-}
-
-/** Read-only pairing of the agent row and the mcp row of one tool call (PLAN-0346 Q2). */
-export interface OperationToolCallPair {
-    toolCallId: string;
-    agentItemId?: string | null;
-    mcpItemId?: string | null;
-}
-
-export interface OperationTrace {
-    operation: OperationSummary;
-    items: OperationItemView[];
-    attempts: OperationAttemptView[];
-    events: OperationEventView[];
-    toolCallPairs?: OperationToolCallPair[];
 }
 
 /**
@@ -585,7 +489,7 @@ export interface AuditEntry {
     startedAt?: string | null;
     finishedAt?: string | null;
     /** Safe verdict snapshot on mcp_invocation/approval details; absent when unreadable. */
-    policy?: OperationPolicyView;
+    policy?: SafePolicySummaryView;
     approved?: boolean | null;
     decisionKind?: string | null;
 }
@@ -899,7 +803,7 @@ export type WorkspaceJobCleanupStatus = "not_started" | "running" | "completed" 
  * Workspace Job projection (`GET/POST /api/v1/workspaces/{workspaceId}/jobs`).
  * PLAN-0465 decision #7：身份字段是 domain `jobId`（`workspace_jobs.id`），
  * `runtimeJobId` 是 Runtime backend handle（诊断/输出目录操作用）；
- * `operationId`/`operationItemId` 不再出现在 wire（0467 legacy drop 前旧路由仍存在）。
+ * The Job contract uses the domain jobId only; no Ledger identifiers are exposed.
  * Every projection key is present; nullable value fields use `null` rather than omission.
  */
 export interface WorkspaceJob {

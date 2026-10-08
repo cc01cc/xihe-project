@@ -96,7 +96,7 @@ class LangGraphEventAdapter(EventAdapter):
                 return None
             tool_input = data.get("input", "")
             # PLAN-0407 T2.10: LangChain's callback run_id is shared with
-            # LCToolAdapter.run_manager and is the CP ledger/MCP header key.
+            # LCToolAdapter.run_manager and is the CP MCP tool-call correlation key.
             tool_call_id = run_id or data.get("tool_call_id")
             return AgentEvent(
                 type="tool_call",
@@ -120,7 +120,7 @@ class LangGraphEventAdapter(EventAdapter):
             if isinstance(tool_output, ToolMessage):
                 formatted = tool_output.content
                 # Provider ToolMessage IDs only pair LangGraph messages; CP
-                # ledger and MCP headers use the callback lifecycle run ID.
+                # MCP headers use the callback lifecycle run ID.
                 tool_call_id = run_id or tool_output.tool_call_id
                 # PLAN-0342 T1.2: structured diagnostics are copied from the
                 # ToolMessage artifact channel into the SSE payload.

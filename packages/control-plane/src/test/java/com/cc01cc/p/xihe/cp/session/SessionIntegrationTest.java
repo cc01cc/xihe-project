@@ -9,12 +9,11 @@ import com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
-import com.cc01cc.p.xihe.cp.entity.LedgerOperation;
+import com.cc01cc.p.xihe.cp.entity.McpAttempt;
+import com.cc01cc.p.xihe.cp.entity.McpDispatchHistory;
+import com.cc01cc.p.xihe.cp.entity.McpInvocation;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.MessageRole;
-import com.cc01cc.p.xihe.cp.entity.OperationAttempt;
-import com.cc01cc.p.xihe.cp.entity.OperationExtension;
-import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
@@ -26,11 +25,10 @@ import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
-import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
+import com.cc01cc.p.xihe.cp.repository.McpAttemptRepository;
+import com.cc01cc.p.xihe.cp.repository.McpDispatchHistoryRepository;
+import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
-import com.cc01cc.p.xihe.cp.repository.OperationAttemptRepository;
-import com.cc01cc.p.xihe.cp.repository.OperationExtensionRepository;
-import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -102,6 +100,12 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
     private ContextProjectionRepository contextProjectionRepository;
 
     @Autowired
+    private McpAttemptRepository mcpAttemptRepository;
+
+    @Autowired
+    private McpDispatchHistoryRepository mcpDispatchHistoryRepository;
+
+    @Autowired
     private SseEmitterManager sseEmitterManager;
 
     @Autowired
@@ -111,16 +115,7 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
     private AuthorizationGrantRepository authorizationGrantRepository;
 
     @Autowired
-    private LedgerOperationRepository ledgerOperationRepository;
-
-    @Autowired
-    private OperationItemRepository operationItemRepository;
-
-    @Autowired
-    private OperationAttemptRepository operationAttemptRepository;
-
-    @Autowired
-    private OperationExtensionRepository operationExtensionRepository;
+    private McpInvocationRepository mcpInvocationRepository;
 
     private String authToken;
     private String userId;
@@ -205,7 +200,6 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
         assertEquals(0L, authorizationGrantRepository.countBySubjectTypeAndSubjectIdAndSource(
                 "agent", session.getId(), "default"));
         sessionService.delete(sessionId, userId, workspaceId);
-
         assertFalse(sessionRepository.findById(UUID.fromString(sessionId)).isPresent());
         assertTrue(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).isEmpty());
         assertEquals(0L, authorizationGrantRepository.countBySubjectTypeAndSubjectIdAndSource(
@@ -295,66 +289,52 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
                 "agent", session.getId(), "default"));
     }
 
-    /**
-     * PLAN-0367 V5 (DDL-13): the session hard delete must succeed and remove the
-     * whole ledger chain when extension rows are present (before V34 the
-     * SET NULL rewrite violated ck_operation_extensions_target and rolled back
-     * the transaction).
-     */
+    /** Session hard delete removes MCP invocation history owned by that session. */
     @Test
-    void deleteSession_withOperationExtensions_cascadesLedgerChain() {
+    void deleteSession_removesMcpInvocationHistory() {
         Session session = sessionService.create(userId, workspaceId, "Delete With Extensions", null, null);
         String sessionId = session.getId().toString();
-
-        LedgerOperation operation = new LedgerOperation();
-        operation.setId(UUID.randomUUID());
-        operation.setSessionId(sessionId);
-        operation.setWorkspaceId(workspaceId);
-        operation.setUserId(userId);
-        operation.setKind("chat");
-        operation.setSource("ui");
-        operation.setActorType("user");
-        operation.setStatus("completed");
-        ledgerOperationRepository.save(operation);
-
-        OperationItem item = new OperationItem();
-        item.setId(UUID.randomUUID());
-        item.setOperationId(operation.getId().toString());
-        item.setSequence(1);
-        item.setKind("llm_usage");
-        item.setSource("agent");
-        item.setStatus("completed");
-        operationItemRepository.save(item);
-
-        OperationAttempt attempt = new OperationAttempt();
-        attempt.setId(UUID.randomUUID());
-        attempt.setItemId(item.getId().toString());
-        attempt.setStage("agent_tool");
-        attempt.setRetryNo(0);
+        McpInvocation invocation = new McpInvocation();
+        invocation.setId(UUID.randomUUID());
+        invocation.setSessionId(sessionId);
+        invocation.setWorkspaceId(workspaceId);
+        invocation.setUserId(userId);
+        invocation.setToolCallId(UUID.randomUUID().toString());
+        invocation.setToolName("read_file");
+        invocation.setSource(McpInvocation.SOURCE_DIRECT_USER);
+        invocation.setStatus(McpInvocation.STATUS_COMPLETED);
+        invocation.setArgumentsPreview("{}");
+        mcpInvocationRepository.saveAndFlush(invocation);
+        UUID attemptId = UUID.randomUUID();
+        McpAttempt attempt = new McpAttempt();
+        attempt.setId(attemptId);
+        attempt.setInvocationId(invocation.getId());
+        attempt.setStage(McpAttempt.STAGE_AGENT_TOOL);
         attempt.setModule("agent");
-        attempt.setStatus("succeeded");
-        attempt.setStartedAt(java.time.Instant.now());
-        operationAttemptRepository.save(attempt);
+        attempt.setStatus(McpAttempt.STATUS_SUCCEEDED);
+        mcpAttemptRepository.saveAndFlush(attempt);
 
-        OperationExtension itemExtension = new OperationExtension(
-                item.getId().toString(), null, "llm_usage", 1, "{\"totalTokens\": 10}");
-        itemExtension.setId(UUID.randomUUID());
-        operationExtensionRepository.save(itemExtension);
-        OperationExtension attemptExtension = new OperationExtension(
-                null, attempt.getId().toString(), "mcp_call", 1, "{\"toolName\": \"read_file\"}");
-        attemptExtension.setId(UUID.randomUUID());
-        operationExtensionRepository.save(attemptExtension);
+        UUID historyId = UUID.randomUUID();
+        McpDispatchHistory history = new McpDispatchHistory();
+        history.setId(historyId);
+        history.setInvocationId(invocation.getId());
+        history.setAttemptId(attemptId);
+        history.setSequence(1L);
+        history.setEventType(McpDispatchHistory.EVENT_ATTEMPT_SUCCEEDED);
+        history.setActorType("agent");
+        mcpDispatchHistoryRepository.saveAndFlush(history);
 
-        sessionService.delete(sessionId, userId, workspaceId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        ResponseEntity<Void> response = restTemplate.exchange(
+                baseUrl + "/api/v1/sessions/" + sessionId,
+                HttpMethod.DELETE, new HttpEntity<>(headers), Void.class);
 
+        assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
         assertFalse(sessionRepository.findById(UUID.fromString(sessionId)).isPresent());
-        assertFalse(ledgerOperationRepository.findById(operation.getId()).isPresent());
-        assertTrue(operationItemRepository.findByOperationIdOrderBySequenceAsc(
-                operation.getId().toString()).isEmpty());
-        assertTrue(operationAttemptRepository.findByItemIdOrderByStartedAtAsc(
-                item.getId().toString()).isEmpty());
-        assertTrue(operationExtensionRepository.findByItemId(item.getId().toString()).isEmpty());
-        assertTrue(operationExtensionRepository.findByAttemptId(attempt.getId().toString()).isEmpty());
+        assertTrue(mcpInvocationRepository.findById(invocation.getId()).isEmpty());
+        assertTrue(mcpAttemptRepository.findById(attemptId).isEmpty());
+        assertTrue(mcpDispatchHistoryRepository.findById(historyId).isEmpty());
     }
 
     @Test

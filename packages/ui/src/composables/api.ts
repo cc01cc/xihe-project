@@ -24,11 +24,7 @@ import type {
     CheckpointResult,
     CheckpointResultCounts,
     CheckpointResultEntry,
-    OperationItemView,
-    OperationListResponse,
-    OperationPolicyView,
-    OperationTrace,
-    OperationStatus,
+    SafePolicySummaryView,
     PolicyDomainView,
     PolicyModeUpdateResponse,
     PolicyRuleLayer,
@@ -246,13 +242,13 @@ function isNonEmptyString(value: unknown): value is string {
 }
 
 /**
- * Strict normalizer for the optional operation item `policy` projection (PLAN-0328 T1.15).
+ * Strict normalizer for the optional safe policy summary projection.
  * Returns `undefined` when the projection is absent or malformed so the view can show the
  * explicit no-verdict state; it never fabricates defaults (e.g. `mode: 'manual'`) and
  * ignores unknown keys. `reused` (T1.7) is optional and nullable: a legacy snapshot without
  * the key stays keyless, and a non-boolean value makes the whole projection unreadable.
  */
-export function normalizeOperationPolicy(value: unknown): OperationPolicyView | undefined {
+export function normalizeSafePolicySummary(value: unknown): SafePolicySummaryView | undefined {
     const record = asRecord(value);
     if (
         !record ||
@@ -286,28 +282,9 @@ export function normalizeOperationPolicy(value: unknown): OperationPolicyView | 
     };
 }
 
-function normalizeOperationItem(value: unknown): OperationItemView | null {
-    const record = asRecord(value);
-    if (!record || !isNonEmptyString(record.id)) return null;
-    const { policy: rawPolicy, ...rest } = record;
-    const policy = normalizeOperationPolicy(rawPolicy);
-    return (policy ? { ...rest, policy } : rest) as unknown as OperationItemView;
-}
-
-function normalizeOperationTrace(value: unknown): OperationTrace {
-    const record = asRecord(value);
-    if (!record || !Array.isArray(record.items)) return value as OperationTrace;
-    return {
-        ...record,
-        items: record.items
-            .map(normalizeOperationItem)
-            .filter((item): item is OperationItemView => item !== null),
-    } as unknown as OperationTrace;
-}
-
 /**
  * PLAN-0466 T2.1: normalize an audit detail body — safe `policy` verdicts only
- * (same OperationPolicySummary rules as the ledger trace) plus array-shaped
+ * plus array-shaped
  * timeline/attempts; anything malformed is dropped rather than guessed at.
  */
 function normalizeAuditDetail(value: unknown): AuditEntryDetail {
@@ -317,7 +294,7 @@ function normalizeAuditDetail(value: unknown): AuditEntryDetail {
         return value as AuditEntryDetail;
     }
     const { policy, ...rest } = entry;
-    const normalizedPolicy = normalizeOperationPolicy(policy);
+    const normalizedPolicy = normalizeSafePolicySummary(policy);
     return {
         ...record,
         entry: normalizedPolicy ? { ...rest, policy: normalizedPolicy } : rest,
@@ -431,7 +408,6 @@ export function normalizeApprovalRequest(
 
     return {
         requestId,
-        operationId: typeof record.operationId === "string" ? record.operationId : undefined,
         runId: typeof record.runId === "string" ? record.runId : "",
         sessionId,
         workspaceId: typeof record.workspaceId === "string" ? record.workspaceId : undefined,
@@ -1383,8 +1359,7 @@ export const api = {
     },
     /**
      * PLAN-0464 T2.1: runs of one session with status + spawn waiting link.
-     * Replaces `listOperations` as the ChatPanel refresh-recovery source — the
-     * child ChatRun row carries `waitingOnRunId`/`waitingToolCallId`.
+     * The child ChatRun row carries `waitingOnRunId`/`waitingToolCallId`.
      */
     listSessionRuns(
         sessionId: string,
@@ -1521,9 +1496,8 @@ export const api = {
     },
     /**
      * PLAN-0465 T2.1：durable job 输出续看（canonical 路径
-     * `GET /api/v1/workspaces/{workspaceId}/jobs/{jobId}/output`，offset 字节游标，
-     * Workspace access）。旧 `/operations/items/{itemId}/job-output` 保留至 0467，
-     * UI 自 0465 起只用 canonical 路径。
+     * `GET /api/v1/workspaces/{workspaceId}/jobs/{jobId}/output` with byte offsets
+     * and Workspace access.
      */
     getJobOutput(
         workspaceId: string,
@@ -1748,40 +1722,6 @@ export const api = {
                 details?: string;
             }>;
         }>("/status");
-    },
-    /**
-     * Legacy ledger list.
-     *
-     * @deprecated PLAN-0466 — use {@link listAuditEntries}; this keeps calling
-     *   `GET /api/v1/operations` until PLAN-0467 removes the route.
-     */
-    listOperations(
-        filters: {
-            sessionId?: string;
-            workspaceId?: string;
-            status?: OperationStatus | string;
-            page?: number;
-            size?: number;
-        } = {},
-    ): Promise<OperationListResponse> {
-        const params = new URLSearchParams();
-        if (filters.sessionId) params.set("sessionId", filters.sessionId);
-        if (filters.workspaceId) params.set("workspaceId", filters.workspaceId);
-        if (filters.status) params.set("status", filters.status);
-        if (filters.page !== undefined) params.set("page", String(filters.page));
-        if (filters.size !== undefined) params.set("size", String(filters.size));
-        const query = params.toString();
-        return request<OperationListResponse>(`/operations${query ? `?${query}` : ""}`);
-    },
-    /**
-     * Legacy ledger trace.
-     *
-     * @deprecated PLAN-0466 — use {@link getAuditEntry}; removal tracked by PLAN-0467.
-     */
-    async getOperationTrace(operationId: string): Promise<OperationTrace> {
-        return normalizeOperationTrace(
-            await request<unknown>(`/operations/${encodeURIComponent(operationId)}`),
-        );
     },
     /**
      * PLAN-0466 T2.1: one page of `GET /api/v1/audit/entries` — the four-domain

@@ -30,4 +30,10 @@ public interface McpInvocationRepository extends JpaRepository<McpInvocation, UU
     List<McpInvocation> findByRunIdAndStatus(String runId, String status);
 
     List<McpInvocation> findByWorkspaceIdAndStatus(String workspaceId, String status);
+
+    boolean existsBySessionId(String sessionId);
+
+    long deleteBySessionId(String sessionId);
+
+    long deleteByWorkspaceId(String workspaceId);
 }

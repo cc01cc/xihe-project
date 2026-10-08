@@ -3,7 +3,7 @@ package com.cc01cc.p.xihe.cp.chat;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
-import com.cc01cc.p.xihe.cp.operation.OperationPolicySummary;
+import com.cc01cc.p.xihe.cp.policy.SafePolicySummary;
 import com.cc01cc.p.xihe.cp.policy.PolicyContext;
 import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
@@ -69,7 +69,7 @@ public class AgentSpawnAuthorizationService {
         }
 
         Face face = policy.faceOf(context, tool);
-        String policySummary = OperationPolicySummary.buildSnapshot(
+        String policySummary = SafePolicySummary.buildSnapshot(
                 verdict, face, context, reusedSessionGrant ? Boolean.TRUE : null).orElse(null);
         return GateResult.allowed(new ChatSubmissionService.SpawnAuthorization(
                 invocation.authorizationBody(), consumeApprovalId, policySummary));

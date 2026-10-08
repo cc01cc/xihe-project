@@ -27,7 +27,7 @@ export const useChatStore = defineStore("chat", () => {
     const sessionRunStates = ref<Record<string, ChatSessionRunState>>({});
     // PLAN-0343: last run-terminal usage snapshot per session (CP relays the
     // mapped usage event once per run). Not persisted across reloads — the
-    // ledger is the durable record; the header line is live-run visibility.
+    // llm.usage ContextEvent is durable; the header line is live-run visibility.
     const sessionLastUsage = ref<Record<string, ChatRunUsage>>({});
     const sessionBranches = ref<Record<string, ApiSessionBranch[]>>({});
     const selectedBranchIds = ref<Record<string, string>>({});

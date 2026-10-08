@@ -12,7 +12,8 @@ import java.util.UUID;
 
 /**
  * Append-only transition history for the MCP execution domain (PLAN-0463 V49,
- * PLAN-0462 decision #8). Rows are never updated or deleted; the sequence is
+ * PLAN-0462 decision #8). Rows are never updated during an invocation's
+ * lifetime; Session hard-delete removes its owned history. The sequence is
  * allocated per invocation inside the write transaction.
  */
 @Entity

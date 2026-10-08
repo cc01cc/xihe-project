@@ -26,7 +26,6 @@ class WorkspaceJobControllerTest {
     private JobStateService jobStateService;
     private WorkspaceJobStartService workspaceJobStartService;
     private WorkspaceService workspaceService;
-    private OperationService operationService;
     private WorkspaceJobController controller;
 
     @BeforeEach
@@ -34,9 +33,8 @@ class WorkspaceJobControllerTest {
         jobStateService = Mockito.mock(JobStateService.class);
         workspaceJobStartService = Mockito.mock(WorkspaceJobStartService.class);
         workspaceService = Mockito.mock(WorkspaceService.class);
-        operationService = Mockito.mock(OperationService.class);
         controller = new WorkspaceJobController(jobStateService, workspaceJobStartService,
-                workspaceService, Mockito.mock(RuntimeJobClient.class), operationService);
+                workspaceService, Mockito.mock(RuntimeJobClient.class));
         TenantContext.setUserId("user-1");
     }
 

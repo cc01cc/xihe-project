@@ -91,7 +91,7 @@ public class RunCheckpoint {
     @Column(name = "revert_ref", columnDefinition = "TEXT")
     private String revertRef;
 
-    /** JSON text: ledger summary of the last revert ({marker, counts, conflicts, ...}). */
+    /** JSON text: checkpoint summary of the last revert (counts, conflicts, ...). */
     @Column(name = "revert_summary", columnDefinition = "TEXT")
     private String revertSummary;
 

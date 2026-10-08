@@ -4,7 +4,7 @@ import { useI18n } from "vue-i18n";
 import { TriangleAlert, Repeat2 } from "@lucide/vue";
 import BackToChatButton from "../../components/settings/BackToChatButton.vue";
 import SettingsNav from "../../components/settings/SettingsNav.vue";
-import { useOperationStore } from "../../stores/operations";
+import { useAuditStore } from "../../stores/audit";
 import type {
     ApprovalPolicyEffect,
     ApprovalPolicyMode,
@@ -16,12 +16,12 @@ import type {
 } from "../../types";
 
 const { t, te } = useI18n();
-const operationStore = useOperationStore();
+const auditStore = useAuditStore();
 const statusFilter = ref<string>("");
 const typeFilter = ref<AuditEntryType | "">("");
 const selectedEntryId = ref<string | null>(null);
 
-const detail = computed(() => operationStore.selectedDetail);
+const detail = computed(() => auditStore.selectedDetail);
 const entry = computed(() => detail.value?.entry ?? null);
 
 const typeOptions: { value: AuditEntryType; label: string }[] = [
@@ -166,7 +166,7 @@ function eventExtra(event: AuditTimelineEvent): string {
 }
 
 async function loadEntries(page = 0) {
-    await operationStore.load({
+    await auditStore.load({
         type: typeFilter.value || undefined,
         status: statusFilter.value || undefined,
         page,
@@ -176,7 +176,7 @@ async function loadEntries(page = 0) {
 
 async function selectEntry(target: AuditEntry) {
     selectedEntryId.value = target.id;
-    await operationStore.loadDetail(target.type, target.id);
+    await auditStore.loadDetail(target.type, target.id);
 }
 
 function statusClass(status: string): string {
@@ -227,7 +227,7 @@ function formatDuration(value?: number | null): string {
 
 async function applyFilter() {
     selectedEntryId.value = null;
-    operationStore.clearDetail();
+    auditStore.clearDetail();
     await loadEntries();
 }
 
@@ -239,8 +239,8 @@ async function changeType() {
 }
 
 async function changePage(delta: number) {
-    const next = operationStore.page + delta;
-    if (next < 0 || next >= operationStore.totalPages) return;
+    const next = auditStore.page + delta;
+    if (next < 0 || next >= auditStore.totalPages) return;
     await loadEntries(next);
 }
 
@@ -303,10 +303,10 @@ onMounted(() => {
         </header>
 
         <div
-            v-if="operationStore.error"
+            v-if="auditStore.error"
             class="mb-4 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
         >
-            {{ operationStore.error }}
+            {{ auditStore.error }}
         </div>
 
         <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
@@ -314,21 +314,21 @@ onMounted(() => {
                 <div class="flex items-center justify-between border-b border-border px-4 py-3">
                     <h2 class="text-sm font-medium">{{ t("settings.auditOperations") }}</h2>
                     <span class="text-xs text-muted-foreground">{{
-                        operationStore.totalElements
+                        auditStore.totalElements
                     }}</span>
                 </div>
-                <div v-if="operationStore.loading" class="p-4 text-sm text-muted-foreground">
+                <div v-if="auditStore.loading" class="p-4 text-sm text-muted-foreground">
                     {{ t("common.loading") }}
                 </div>
                 <div
-                    v-else-if="operationStore.entries.length === 0"
+                    v-else-if="auditStore.entries.length === 0"
                     data-testid="settings-audit-empty"
                     class="p-8 text-center text-sm text-muted-foreground"
                 >
                     {{ t("settings.auditEmpty") }}
                 </div>
                 <ul v-else class="divide-y divide-border">
-                    <li v-for="auditEntry in operationStore.entries" :key="auditEntry.id">
+                    <li v-for="auditEntry in auditStore.entries" :key="auditEntry.id">
                         <button
                             type="button"
                             class="w-full px-4 py-3 text-left transition-colors hover:bg-muted/50"
@@ -362,19 +362,19 @@ onMounted(() => {
                 >
                     <button
                         type="button"
-                        :disabled="operationStore.page === 0"
+                        :disabled="auditStore.page === 0"
                         class="rounded px-2 py-1 hover:bg-muted disabled:opacity-40"
                         @click="changePage(-1)"
                     >
                         {{ t("settings.auditPrevious") }}
                     </button>
                     <span
-                        >{{ operationStore.page + 1 }} /
-                        {{ Math.max(operationStore.totalPages, 1) }}</span
+                        >{{ auditStore.page + 1 }} /
+                        {{ Math.max(auditStore.totalPages, 1) }}</span
                     >
                     <button
                         type="button"
-                        :disabled="operationStore.page + 1 >= operationStore.totalPages"
+                        :disabled="auditStore.page + 1 >= auditStore.totalPages"
                         class="rounded px-2 py-1 hover:bg-muted disabled:opacity-40"
                         @click="changePage(1)"
                     >
@@ -387,7 +387,7 @@ onMounted(() => {
                 <div class="border-b border-border px-4 py-3">
                     <h2 class="text-sm font-medium">{{ t("settings.auditTrace") }}</h2>
                 </div>
-                <div v-if="operationStore.detailLoading" class="p-4 text-sm text-muted-foreground">
+                <div v-if="auditStore.detailLoading" class="p-4 text-sm text-muted-foreground">
                     {{ t("common.loading") }}
                 </div>
                 <div

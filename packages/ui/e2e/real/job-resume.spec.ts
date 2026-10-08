@@ -331,8 +331,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
 
         // PLAN-0465（访问边界与 plan0390 listAfterDestroy 同判据）：destroy 后
         // requireActiveWorkspace 先判 Workspace 存在性 → canonical 输出路由
-        // 404 WORKSPACE_NOT_FOUND（旧 /operations/items/{id}/job-output 同语义，
-        // 两条路由都经 requireAccessibleWorkspace）。409 LOST/EXPIRED 的区分只在
+        // 404 WORKSPACE_NOT_FOUND. 409 LOST/EXPIRED 的区分只在
         // Workspace 存活期可观察——该能力由 plan0390 覆盖（容器内 job 目录删除 →
         // 409 JOB_OUTPUT_LOST；沙盒移除 → 503 RUNTIME_ERROR）。
         const outputPath = `${CP_URL}/api/v1/workspaces/${jobWorkspaceId}/jobs/${jobId}/output`;

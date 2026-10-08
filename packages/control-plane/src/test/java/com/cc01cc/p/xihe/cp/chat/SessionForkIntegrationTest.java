@@ -26,6 +26,7 @@ import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
+import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionBranchRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionForkRequestRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
@@ -109,6 +110,7 @@ class SessionForkIntegrationTest extends AbstractIntegrationTest {
     @Autowired private SessionService sessionService;
     @Autowired private ChatRunRepository chatRunRepository;
     @Autowired private MessageRepository messageRepository;
+    @Autowired private McpInvocationRepository mcpInvocationRepository;
     @Autowired private FileRepository fileRepository;
     @Autowired private SessionForkRequestRepository forkRequestRepository;
     @Autowired private SessionBranchRepository sessionBranchRepository;
@@ -792,11 +794,13 @@ class SessionForkIntegrationTest extends AbstractIntegrationTest {
         Source source = createSource("row count bytes"
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8), false);
         UUID sourceId = source.session().getId();
+        String toolCallId = UUID.randomUUID().toString();
+        SpawnTestSupport.seedAgentInvocation(mcpInvocationRepository, sourceId.toString(), source.runId(),
+                workspaceId, userId, toolCallId, "read_file", "{}");
 
         int sourceMessages = countRows("select count(*) from messages where session_id = ?", sourceId);
         int sourceRuns = countRows("select count(*) from chat_runs where session_id = ?", sourceId);
-        int sourceLedger = countRows("select count(*) from ledger_operations where session_id = ?", sourceId);
-        int sourceItems = countRows(ITEMS_BY_SESSION_SQL, sourceId);
+        int sourceInvocations = countRows("select count(*) from mcp_invocations where session_id = ?", sourceId);
         assertEquals(2, sourceMessages);
         assertEquals(1, sourceRuns);
 
@@ -806,13 +810,11 @@ class SessionForkIntegrationTest extends AbstractIntegrationTest {
 
         assertEquals(sourceMessages, countRows("select count(*) from messages where session_id = ?", sourceId));
         assertEquals(sourceRuns, countRows("select count(*) from chat_runs where session_id = ?", sourceId));
-        assertEquals(sourceLedger, countRows("select count(*) from ledger_operations where session_id = ?", sourceId));
-        assertEquals(sourceItems, countRows(ITEMS_BY_SESSION_SQL, sourceId));
+        assertEquals(sourceInvocations, countRows("select count(*) from mcp_invocations where session_id = ?", sourceId));
 
         assertEquals(0, countRows("select count(*) from chat_runs where session_id = ?", childId));
-        assertEquals(0, countRows("select count(*) from ledger_operations where session_id = ?", childId));
-        assertEquals(0, countRows(ITEMS_BY_SESSION_SQL, childId),
-                "the fork child inherits no ledger rows");
+        assertEquals(0, countRows("select count(*) from mcp_invocations where session_id = ?", childId),
+                "the fork child inherits no MCP invocation history");
     }
 
     @Test
@@ -1007,11 +1009,6 @@ class SessionForkIntegrationTest extends AbstractIntegrationTest {
                         + "/attachments/" + source.file().getId()),
                 HttpMethod.DELETE, new HttpEntity<>(headers), Map.class);
     }
-
-    /** {@code operation_items} has no session column; scope it through its ledger root. */
-    private static final String ITEMS_BY_SESSION_SQL =
-            "select count(*) from operation_items where operation_id in "
-                    + "(select id from ledger_operations where session_id = ?)";
 
     private int countRows(String sql, Object sessionId) {
         return jdbcTemplate.queryForObject(sql, Integer.class, sessionId);

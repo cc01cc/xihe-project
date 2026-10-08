@@ -5,7 +5,7 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
-import com.cc01cc.p.xihe.cp.entity.LedgerOperation;
+import com.cc01cc.p.xihe.cp.entity.McpInvocation;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.MessageRole;
 import com.cc01cc.p.xihe.cp.entity.Session;
@@ -18,7 +18,7 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
-import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
+import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
@@ -72,7 +72,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     private MessageRepository messageRepository;
 
     @Autowired
-    private LedgerOperationRepository ledgerOperationRepository;
+    private McpInvocationRepository mcpInvocationRepository;
 
     @Autowired
     private EventStoreService eventStoreService;
@@ -230,7 +230,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void userDirectLedgerSessionCannotBeBoundToAnAgent() {
+    void userDirectInvocationSessionCannotBeBoundToAnAgent() {
         User user = userRepository.save(new User(
                 "chat-user-ledger-" + UUID.randomUUID() + "@test.com", "hash", UserRole.USER, "User ledger test"));
         Workspace workspace = workspaceRepository.save(new Workspace("User Ledger Workspace", user.getId().toString()));
@@ -238,17 +238,17 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         AgentPrincipal principal = savePrincipal(user);
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
                 workspace.getId().toString(), objectMapper.createArrayNode()));
-        LedgerOperation operation = new LedgerOperation();
-        operation.setId(UUID.randomUUID());
-        operation.setSessionId(session.getId().toString());
-        operation.setWorkspaceId(workspace.getId().toString());
-        operation.setUserId(user.getId().toString());
-        operation.setKind("tool_call");
-        operation.setSource("mcp");
-        operation.setActorType("user");
-        operation.setActorId(user.getId().toString());
-        operation.setStatus("running");
-        ledgerOperationRepository.saveAndFlush(operation);
+        McpInvocation invocation = new McpInvocation();
+        invocation.setId(UUID.randomUUID());
+        invocation.setSessionId(session.getId().toString());
+        invocation.setWorkspaceId(workspace.getId().toString());
+        invocation.setUserId(user.getId().toString());
+        invocation.setToolCallId(UUID.randomUUID().toString());
+        invocation.setToolName("write_file");
+        invocation.setSource(McpInvocation.SOURCE_DIRECT_USER);
+        invocation.setStatus(McpInvocation.STATUS_ACTIVE);
+        invocation.setArgumentsPreview("{}");
+        mcpInvocationRepository.saveAndFlush(invocation);
 
         String runId = UUID.randomUUID().toString();
         CpApiException rejected = assertThrows(CpApiException.class, () -> submit(runId, session,
@@ -375,7 +375,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         assertEquals("FORBIDDEN", error.getCode());
         assertTrue(chatRunRepository.findById(UUID.fromString(runId)).isEmpty());
         assertTrue(messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId().toString()).isEmpty());
-        assertTrue(ledgerOperationRepository.findBySessionIdOrderByCreatedAtDesc(session.getId().toString()).isEmpty());
+        assertFalse(mcpInvocationRepository.existsBySessionId(session.getId().toString()));
     }
 
     private ChatSubmissionService.Submission submit(String runId, Session session, User user,

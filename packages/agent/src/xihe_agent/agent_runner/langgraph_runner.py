@@ -99,7 +99,6 @@ def event_writer_v2_enabled() -> bool:
 
 
 def _tool_event_payload(
-    base: dict[str, Any],
     *,
     call_id: str,
     tool_name: str,
@@ -121,15 +120,11 @@ def _tool_event_payload(
             # status（failed 显式落账；completed 保持 pre-gate 字段集逐字节）。
             if status != "completed":
                 legacy["status"] = status
-        legacy["operation_id"] = base.get("operation_id")
-        legacy["operation_item_id"] = base.get("operation_item_id")
         return legacy
     payload: dict[str, Any] = {
         "schemaVersion": 2,
         "toolCallId": call_id,
         "toolName": tool_name,
-        "operation_id": base.get("operation_id"),
-        "operation_item_id": base.get("operation_item_id"),
     }
     if run_id:
         payload["runId"] = run_id
@@ -590,8 +585,8 @@ class LCToolAdapter(BaseTool):
         # Share LangChain's tool-run identity with SSE start/end and the CP MCP header.
         call_id = str(run_manager.run_id) if run_manager is not None else str(uuid4())
         await self._append_tool_called(call_id, kwargs)
-        previous_item_id = self._context.metadata.get("operationItemId")
-        self._context.metadata["operationItemId"] = call_id
+        previous_tool_call_id = self._context.metadata.get("toolCallId")
+        self._context.metadata["toolCallId"] = call_id
         try:
             try:
                 result = await self._tool.execute(kwargs, self._context)
@@ -656,10 +651,10 @@ class LCToolAdapter(BaseTool):
             artifact = {"diagnostics": diagnostics} if diagnostics is not None else None
             return text, artifact
         finally:
-            if previous_item_id is None:
-                self._context.metadata.pop("operationItemId", None)
+            if previous_tool_call_id is None:
+                self._context.metadata.pop("toolCallId", None)
             else:
-                self._context.metadata["operationItemId"] = previous_item_id
+                self._context.metadata["toolCallId"] = previous_tool_call_id
 
     def _build_diagnostics(
         self,
@@ -702,10 +697,6 @@ class LCToolAdapter(BaseTool):
         # PLAN-0381 T1.2: payload shape behind the D5 writer gate; legacy
         # mode stays byte-identical to the pre-gate writer (contract §1/§2).
         payload = _tool_event_payload(
-            {
-                "operation_id": self._context.metadata.get("operationId"),
-                "operation_item_id": call_id,
-            },
             call_id=call_id,
             tool_name=self._tool.spec.name,
             run_id=self._context.metadata.get("runId"),
@@ -746,10 +737,6 @@ class LCToolAdapter(BaseTool):
         if self._event_store is None:
             return
         payload: dict[str, Any] = _tool_event_payload(
-            {
-                "operation_id": self._context.metadata.get("operationId"),
-                "operation_item_id": call_id,
-            },
             call_id=call_id,
             tool_name=self._tool.spec.name,
             run_id=self._context.metadata.get("runId"),

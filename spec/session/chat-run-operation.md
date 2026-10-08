@@ -1,12 +1,8 @@
-# ChatRun 与 Operation 生命周期
+# ChatRun 与 Operation 生命周期（历史规范）
 
-> 契约状态：`proposed`  
-> 实现状态：`partial`  
-> Profile：`lifecycle`  
-> Owner：CP Chat/Operation owners  
-> 消费者：Agent、Runtime、UI、Audit  
-> 来源：PLAN-0385、PLAN-0387、PLAN-0464、DEV-014、DEV-017
-> 更新日期：2026-10-06
+> 契约状态：`superseded`；实现状态：`partial`；Profile：`historical`；Owner：退休的 CP Operation Ledger owner；消费者：仅历史设计回溯；退役：PLAN-0467 / Flyway V55（2026-10-08）
+
+> 本文件把 ChatRun 与跨域 Operation 聚合在一个生命周期模型中，已不再是当前契约。Session/ChatRun 现行边界见 [`chat-session.md`](chat-session.md)；MCP 调用事实由 MCP invocation 域持有；Workspace Job 见 [`../workspace/execution-job.md`](../workspace/execution-job.md)；API/wire 以 DEV-014、DEV-015、OpenAPI 和 inventory 为准。以下正文仅作旧设计记录，不得用于实现新调用方。
 
 ## 三类对象
 

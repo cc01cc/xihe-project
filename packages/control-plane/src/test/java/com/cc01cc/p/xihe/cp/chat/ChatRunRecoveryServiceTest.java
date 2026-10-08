@@ -3,7 +3,6 @@ package com.cc01cc.p.xihe.cp.chat;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.RunCheckpoint;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.RunCheckpointRepository;
@@ -45,7 +44,6 @@ class ChatRunRecoveryServiceTest {
     private ChatRunRepository chatRunRepository;
     private ChatApprovalRepository approvalRepository;
     private ChatController chatController;
-    private OperationService operationService;
     private ChatRunTerminalService terminalService;
     private RunCheckpointService runCheckpointService;
     private ChatRunHistoryWriter historyWriter;
@@ -56,7 +54,6 @@ class ChatRunRecoveryServiceTest {
         chatRunRepository = mock(ChatRunRepository.class);
         approvalRepository = mock(ChatApprovalRepository.class);
         chatController = mock(ChatController.class);
-        operationService = mock(OperationService.class);
         terminalService = mock(ChatRunTerminalService.class);
         runCheckpointService = mock(RunCheckpointService.class);
         historyWriter = mock(ChatRunHistoryWriter.class);
@@ -154,7 +151,7 @@ class ChatRunRecoveryServiceTest {
         when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
                 .thenReturn(Optional.of(terminal));
         RunCheckpointService realService = new RunCheckpointService(checkpointRepository, client,
-                operationService, chatRunRepository, new ObjectMapper(),
+                chatRunRepository, new ObjectMapper(),
                 mock(com.cc01cc.p.xihe.cp.chat.SseEmitterManager.class));
         ChatRunRecoveryService recovery = new ChatRunRecoveryService(chatRunRepository,
                 approvalRepository, chatController, terminalService, historyWriter, realService);

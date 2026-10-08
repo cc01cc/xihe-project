@@ -4,7 +4,6 @@ import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
-import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.UserRole;
@@ -12,15 +11,10 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.policy.GrantAuthorizationService;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunHistoryRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
-import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
-import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
-import com.cc01cc.p.xihe.cp.repository.OperationAttemptRepository;
-import com.cc01cc.p.xihe.cp.repository.OperationEventRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
@@ -31,8 +25,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.awaitility.Awaitility;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,7 +33,6 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -74,11 +65,6 @@ class TerminalTransactionCoreIntegrationTest extends AbstractIntegrationTest {
     @Autowired private SessionRepository sessionRepository;
     @Autowired private ChatRunRepository chatRunRepository;
     @Autowired private ChatRunHistoryRepository historyRepository;
-    @Autowired private LedgerOperationRepository ledgerOperationRepository;
-    @Autowired private OperationItemRepository operationItemRepository;
-    @Autowired private OperationAttemptRepository operationAttemptRepository;
-    @Autowired private OperationEventRepository operationEventRepository;
-    @Autowired private OperationService operationService;
     @Autowired private ChatRunTerminalService terminalService;
     @Autowired private SessionService sessionService;
     @Autowired private GrantAuthorizationService grantAuthorizationService;
@@ -116,30 +102,12 @@ class TerminalTransactionCoreIntegrationTest extends AbstractIntegrationTest {
                 new WorkspaceAgent(principalId.toString(), workspaceId, permissionSnapshot));
     }
 
-    @AfterEach
-    void awaitAfterCommitCheckpointMarkers() {
-        Awaitility.await().atMost(Duration.ofSeconds(10)).pollInterval(Duration.ofMillis(50))
-                .untilAsserted(() -> assertEquals(0, jdbcTemplate.queryForObject(
-                        "SELECT count(*) FROM chat_runs r "
-                                + "JOIN ledger_operations o ON o.run_id = r.id "
-                                + "WHERE r.workspace_id = CAST(? AS UUID) AND r.terminal_at IS NOT NULL "
-                                + "AND NOT EXISTS (SELECT 1 FROM operation_items i "
-                                + "WHERE i.operation_id = o.id AND i.tool_name = 'run_checkpoint' "
-                                + "AND i.status = 'completed')",
-                        Integer.class, workspaceId)));
-    }
-
     @Test
     void v44AndV50TerminalColumnsAreMappedOnAChainThatIncludesV45() {
         assertEquals(1, jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM information_schema.columns "
                         + "WHERE table_schema = current_schema() AND table_name = 'chat_runs' "
                         + "AND column_name = 'terminal_at'",
-                Integer.class));
-        assertEquals(1, jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM information_schema.columns "
-                        + "WHERE table_schema = current_schema() AND table_name = 'operation_items' "
-                        + "AND column_name = 'waiting_on_run_id'",
                 Integer.class));
         assertEquals(1, jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM information_schema.columns "
@@ -178,7 +146,7 @@ class TerminalTransactionCoreIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void childTerminalCommitsHistoryAndClearsWaitingLink() {
-        SpawnFixture fixture = createSpawnFixture(true, "running");
+        SpawnFixture fixture = createSpawnFixture(true);
 
         ChatRunTerminalService.TerminalResult result = terminalService.terminalize(
                 request(fixture.child(), "succeeded", "success", null,
@@ -193,22 +161,11 @@ class TerminalTransactionCoreIntegrationTest extends AbstractIntegrationTest {
         assertEquals(1, historyRepository.findByRunIdOrderBySequenceAsc(child.getId()).size());
         assertEquals("running", chatRunRepository.findById(fixture.parent().run().getId())
                 .orElseThrow().getStatus(), "child terminal must not touch the parent run");
-        // The legacy parent item is untouched by the terminal path (PLAN-0464 T1.2).
-        OperationItem parentItem = operationItemRepository.findById(fixture.parentItemId()).orElseThrow();
-        assertEquals("running", parentItem.getStatus());
-        assertNull(parentItem.getResultRef());
-        assertEquals(fixture.child().run().getId(), parentItem.getWaitingOnRunId());
     }
 
     @Test
     void parentTerminalPreservesChildWaitingLinkUntilChildSettlesIt() {
-        SpawnFixture fixture = createSpawnFixture(true, "running");
-
-        operationService.transitionItem(fixture.parentItemId(), "completed", null, null, null, null);
-        OperationItem completedToolItem = operationItemRepository.findById(fixture.parentItemId()).orElseThrow();
-        assertEquals("completed", completedToolItem.getStatus());
-        assertEquals(fixture.child().run().getId(), completedToolItem.getWaitingOnRunId(),
-                "finishing the parent tool result must preserve the previously committed link");
+        SpawnFixture fixture = createSpawnFixture(true);
 
         assertTrue(terminalService.terminalize(request(fixture.parent(), "succeeded", "success", null,
                 ChatRunTerminalService.TerminalSource.STREAM)).committed());
@@ -227,61 +184,29 @@ class TerminalTransactionCoreIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void childTerminalLeavesTerminalParentOperationItemsUntouched() {
-        SpawnFixture fixture = createSpawnFixture(true, "running");
+    void childTerminalDoesNotMutateParentRun() {
+        SpawnFixture fixture = createSpawnFixture(true);
 
         assertTrue(terminalService.terminalize(request(fixture.parent(), "succeeded", "success", null,
                 ChatRunTerminalService.TerminalSource.STREAM)).committed());
-        OperationItem before = operationItemRepository.findById(fixture.parentItemId()).orElseThrow();
-        assertEquals("running", before.getStatus());
-        assertEquals(fixture.child().run().getId(), before.getWaitingOnRunId());
-        int parentItemEventCount = operationEventRepository
-                .findByItemIdOrderBySequenceAsc(fixture.parentItemId().toString()).size();
+        int parentHistoryCount = historyRepository.findByRunIdOrderBySequenceAsc(
+                fixture.parent().run().getId()).size();
 
         assertTrue(terminalService.terminalize(request(fixture.child(), "failed", "error", "CHILD_TERMINAL_ERROR",
                 ChatRunTerminalService.TerminalSource.STREAM)).committed());
 
-        OperationItem settled = operationItemRepository.findById(fixture.parentItemId()).orElseThrow();
-        assertEquals("running", settled.getStatus(), "child terminal must not mutate a legacy parent item");
-        assertNull(settled.getErrorCode());
-        assertNull(settled.getFinishedAt());
-        assertNull(settled.getResultRef(), "PLAN-0464: the terminal path no longer writes the parent item");
-        assertEquals(fixture.child().run().getId(), settled.getWaitingOnRunId());
-        assertEquals(parentItemEventCount, operationEventRepository
-                .findByItemIdOrderBySequenceAsc(fixture.parentItemId().toString()).size(),
-                "child settlement must not append a state event to the parent item");
+        assertEquals(parentHistoryCount, historyRepository.findByRunIdOrderBySequenceAsc(
+                fixture.parent().run().getId()).size(),
+                "child settlement must not write terminal history for the parent run");
+        assertEquals("succeeded", chatRunRepository.findById(fixture.parent().run().getId())
+                .orElseThrow().getStatus());
         assertEquals("failed", chatRunRepository.findById(fixture.child().run().getId())
                 .orElseThrow().getStatus());
     }
 
     @Test
-    void childTerminalLeavesAlreadyFailedParentItemUntouched() {
-        SpawnFixture fixture = createSpawnFixture(true, "running");
-        operationService.transitionItem(fixture.parentItemId(), "failed", null, null,
-                "existing-parent-result", "PARENT_ITEM_ERROR");
-        OperationItem before = operationItemRepository.findById(fixture.parentItemId()).orElseThrow();
-        int parentItemEventCount = operationEventRepository
-                .findByItemIdOrderBySequenceAsc(fixture.parentItemId().toString()).size();
-
-        assertTrue(terminalService.terminalize(request(fixture.child(), "failed", "error", "CHILD_TERMINAL_ERROR",
-                ChatRunTerminalService.TerminalSource.STREAM)).committed());
-
-        OperationItem settled = operationItemRepository.findById(fixture.parentItemId()).orElseThrow();
-        assertEquals("failed", settled.getStatus());
-        assertEquals("PARENT_ITEM_ERROR", settled.getErrorCode());
-        assertEquals(before.getFinishedAt(), settled.getFinishedAt());
-        assertEquals("existing-parent-result", settled.getResultRef(),
-                "an already-set result_ref is preserved — the terminal path never writes it");
-        assertEquals(fixture.child().run().getId(), settled.getWaitingOnRunId());
-        assertEquals(parentItemEventCount, operationEventRepository
-                .findByItemIdOrderBySequenceAsc(fixture.parentItemId().toString()).size(),
-                "terminal item settlement must not append a duplicate status event");
-        assertEquals(1, historyRepository.findByRunIdOrderBySequenceAsc(fixture.child().run().getId()).size());
-    }
-
-    @Test
     void deletedParentAllowsChildLocalTerminalCommit() {
-        SpawnFixture fixture = createSpawnFixture(true, "running");
+        SpawnFixture fixture = createSpawnFixture(true);
         sessionService.delete(fixture.parent().session().getId().toString(), userId, workspaceId);
 
         ChatRunTerminalService.TerminalResult result = terminalService.terminalize(
@@ -292,12 +217,11 @@ class TerminalTransactionCoreIntegrationTest extends AbstractIntegrationTest {
         assertTrue(sessionRepository.findById(fixture.child().session().getId()).isPresent());
         assertEquals("succeeded", chatRunRepository.findById(fixture.child().run().getId()).orElseThrow().getStatus());
         assertEquals(1, historyRepository.findByRunIdOrderBySequenceAsc(fixture.child().run().getId()).size());
-        assertTrue(operationItemRepository.findById(fixture.parentItemId()).isEmpty());
     }
 
     @Test
     void liveParentWithoutWaitingLinkRollsBackTerminalTransition() {
-        SpawnFixture fixture = createSpawnFixture(false, "running");
+        SpawnFixture fixture = createSpawnFixture(false);
 
         CpApiException failure = assertThrows(CpApiException.class, () -> terminalService.terminalize(
                 request(fixture.child(), "succeeded", "success", null,
@@ -311,14 +235,11 @@ class TerminalTransactionCoreIntegrationTest extends AbstractIntegrationTest {
         assertTrue(historyRepository.findByRunIdOrderBySequenceAsc(child.getId()).isEmpty());
         assertEquals("running", chatRunRepository.findById(fixture.parent().run().getId())
                 .orElseThrow().getStatus());
-        // The legacy parent item link is a fixture detail; the invariant that
-        // matters is the child run's own missing waiting link.
-        assertNotNull(operationItemRepository.findById(fixture.parentItemId()).orElseThrow().getWaitingOnRunId());
     }
 
     @Test
     void historyWriteFailureRollsBackRunAndParentLink() {
-        SpawnFixture fixture = createSpawnFixture(true, "running");
+        SpawnFixture fixture = createSpawnFixture(true);
         doThrow(new IllegalStateException("forced history failure"))
                 .when(historyWriter)
                 .append(any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
@@ -332,9 +253,6 @@ class TerminalTransactionCoreIntegrationTest extends AbstractIntegrationTest {
         assertNull(child.getTerminalAt());
         assertNotNull(child.getWaitingOnRunId(), "a failed history write rolls the link settlement back");
         assertTrue(historyRepository.findByRunIdOrderBySequenceAsc(child.getId()).isEmpty());
-        OperationItem item = operationItemRepository.findById(fixture.parentItemId()).orElseThrow();
-        assertEquals("running", item.getStatus());
-        assertEquals(fixture.child().run().getId(), item.getWaitingOnRunId());
     }
 
     @Test
@@ -375,14 +293,9 @@ class TerminalTransactionCoreIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void terminalRunBlocksTheDurableCallerGateButAllowsCheckpointMarkers() {
+    void terminalRunBlocksInvocationCallerGate() {
         RunFixture root = createRun(createSession("late-writer-root", null, null));
         String toolCallId = UUID.randomUUID().toString();
-        OperationItem item = operationService.appendItem(root.operationId(), toolCallId,
-                null, "tool_call", "mcp__test", "mcp", "{}", null, null);
-        operationService.transitionItem(item.getId(), "running", null, null, null, null);
-        var attempt = operationService.startAttempt(item.getId(), "cp_forward", null, "cp",
-                UUID.randomUUID().toString());
         SpawnTestSupport.seedAgentInvocation(mcpInvocationRepository,
                 root.session().getId().toString(), root.run().getId().toString(), workspaceId, userId,
                 toolCallId, "mcp__test", "{}");
@@ -394,23 +307,13 @@ class TerminalTransactionCoreIntegrationTest extends AbstractIntegrationTest {
         assertTrue(terminalService.terminalize(request(root, "succeeded", "success", null,
                 ChatRunTerminalService.TerminalSource.STREAM)).committed());
 
-        // PLAN-0464 T2.2: the durable caller gate is the run lease + invocation
-        // scope, so a terminal run fails closed even though the legacy Ledger
-        // operation row is no longer finished by the terminal path.
+        // The durable caller gate is the run lease + invocation scope.
         assertFalse(grantAuthorizationService.hasCurrentAgentToolCall(userId, workspaceId,
                 root.session().getId().toString(), root.run().getId().toString(), toolCallId, "mcp__test"),
                 "a terminal run must fail the durable caller gate closed");
-
-        // PLAN-0464: the Ledger no longer mirrors run terminal state, so a late
-        // ledger write is accepted — the durable caller gate above is now the
-        // only thing that rejects the tool call (0467 drops the Ledger anyway).
-        operationService.finishAttempt(attempt.getId(), "succeeded", 200, null, null, null);
-        assertEquals("succeeded", operationAttemptRepository.findById(attempt.getId()).orElseThrow().getStatus());
-
-        OperationItem marker = operationService.appendItem(root.operationId(), UUID.randomUUID().toString(),
-                null, "checkpoint", "run_checkpoint", "runtime", "{}", null, null);
-        operationService.transitionItem(marker.getId(), "completed", null, null, "checkpoint-ref", null);
-        assertEquals("completed", operationItemRepository.findById(marker.getId()).orElseThrow().getStatus());
+        assertEquals("failed", mcpInvocationRepository
+                .findByRunIdAndToolCallIdAndSource(root.run().getId().toString(), toolCallId, "agent")
+                .orElseThrow().getStatus());
     }
 
     private RunFixture createRun(Session session) {
@@ -420,23 +323,12 @@ class TerminalTransactionCoreIntegrationTest extends AbstractIntegrationTest {
                 requestId, "t26-hash-" + runId,
                 "provider", "model", "workspace", "running");
         run = chatRunRepository.saveAndFlush(run);
-        OperationService.OperationStartResult started = operationService.startOperation(
-                userId, session.getId().toString(), workspaceId, runId, requestId,
-                "chat", "ui", "user", userId, "t26-idem-" + runId, "T2.6a integration");
-        operationService.transitionOperation(started.operationId(), "running", null, null);
-        return new RunFixture(session, run, started.operationId());
+        return new RunFixture(session, run);
     }
 
-    private SpawnFixture createSpawnFixture(boolean createWaitingLink, String parentItemStatus) {
+    private SpawnFixture createSpawnFixture(boolean createWaitingLink) {
         RunFixture parent = createRun(createSession("parent", null, null));
         String toolCallId = UUID.randomUUID().toString();
-        OperationItem parentItem = operationService.appendItem(parent.operationId(), toolCallId, null,
-                "tool_call", "spawn_agent", "agent", "{}", null, null);
-        operationService.transitionItem(parentItem.getId(), "running", null, null, null, null);
-        if (!"running".equals(parentItemStatus)) {
-            operationService.transitionItem(parentItem.getId(), parentItemStatus,
-                    null, null, "early-child-reference", null);
-        }
 
         Session childSession = createSession("child", Session.KIND_SPAWN, parent);
         RunFixture child = createRun(childSession);
@@ -444,17 +336,12 @@ class TerminalTransactionCoreIntegrationTest extends AbstractIntegrationTest {
         ChatRun updatedChild = chatRunRepository.findById(child.run().getId()).orElseThrow();
         updatedChild.setAssistantMessageId(assistantMessageId);
         if (createWaitingLink) {
-            // PLAN-0464 T2.1: the waiting link lives on the child run row; the
-            // legacy parent-item link stays as a fixture detail the terminal
-            // must never touch.
+            // The waiting link belongs to the child ChatRun.
             updatedChild.setWaitingOnRunId(parent.run().getId().toString());
             updatedChild.setWaitingToolCallId(toolCallId);
         }
         chatRunRepository.saveAndFlush(updatedChild);
-        OperationItem linkedItem = operationItemRepository.findById(parentItem.getId()).orElseThrow();
-        linkedItem.setWaitingOnRunId(child.run().getId());
-        operationItemRepository.saveAndFlush(linkedItem);
-        return new SpawnFixture(parent, parentItem.getId(), child, assistantMessageId, toolCallId);
+        return new SpawnFixture(parent, child, assistantMessageId, toolCallId);
     }
 
     private Session createSession(String title, String kind, RunFixture parent) {
@@ -492,8 +379,8 @@ class TerminalTransactionCoreIntegrationTest extends AbstractIntegrationTest {
         return caps;
     }
 
-    private record RunFixture(Session session, ChatRun run, UUID operationId) {}
+    private record RunFixture(Session session, ChatRun run) {}
 
-    private record SpawnFixture(RunFixture parent, UUID parentItemId,
-                                RunFixture child, String childAssistantMessageId, String toolCallId) {}
+    private record SpawnFixture(RunFixture parent, RunFixture child,
+                                String childAssistantMessageId, String toolCallId) {}
 }

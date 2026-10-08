@@ -623,25 +623,11 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         expect(historyRows, "domain history for the cancelled job").toContain("start|-|running|-");
         expect(historyRows).toContain("cancel|running|cancelled|user_cancel");
 
-        // 过渡双写观察（0466 审计视图仍消费 legacy 事件，0467 随 legacy drop 删除）：
-        // workspace-start 双写行带 legacy item → 断言 job.cancel 事件仍在；
-        // post-0464 chat-run 的 MCP 行没有 ledger item（Agent 停发 X-Operation-Id），
-        // legacy 事件面天然缺席——域 transition history 是这类行的唯一审计面。
-        const legacyItemId = queryIsolatedPostgres(
-            `SELECT COALESCE(operation_item_id::text, '') FROM workspace_jobs WHERE id = '${jobIdLiteral}'::uuid`,
+        const legacyResidue = queryIsolatedPostgres(
+            "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' " +
+                "AND table_name='workspace_jobs' AND column_name='operation_item_id'",
         );
-        if (legacyItemId) {
-            const legacyOpId = queryIsolatedPostgres(
-                `SELECT operation_id FROM operation_items WHERE id = '${legacyItemId}'::uuid`,
-            );
-            const legacyEvents = queryIsolatedPostgres(
-                `SELECT event_type || '|' || COALESCE(state, '-') FROM operation_events WHERE operation_id = '${legacyOpId}'::uuid ORDER BY sequence`,
-            );
-            expect(
-                legacyEvents ? legacyEvents.split("\n") : [],
-                "legacy job.cancel event remains for the 0466 audit view",
-            ).toContain("job.cancel|cancelled");
-        }
+        expect(legacyResidue).toBe("0");
 
         // 同会话继续对话（新 run）
         await chatInput.fill("continue after cancel");

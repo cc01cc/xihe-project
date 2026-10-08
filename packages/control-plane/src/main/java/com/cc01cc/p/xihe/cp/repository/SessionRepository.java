@@ -21,10 +21,8 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
             UUID id, String userId, String workspaceId);
 
     /**
-     * PLAN-0346 (gap E): pessimistic lock for context_events sequence
-     * allocation — mirrors the operation-row lock used by the ledger (0317
-     * decision #7②), keeping both event streams on the same serialization
-     * paradigm.
+     * PLAN-0346 (gap E): pessimistic lock used to serialize per-Session
+     * context_events sequence allocation while allowing other Sessions to proceed.
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from Session s where s.id = :id")

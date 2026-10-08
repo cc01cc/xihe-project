@@ -5,15 +5,12 @@ import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Message;
-import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.operation.JobStateService;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
-import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
-import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
 import com.cc01cc.p.xihe.cp.service.BranchPathService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -43,8 +40,6 @@ public class MessageController {
     private final FileRepository fileRepository;
     private final SessionService sessionService;
     private final ObjectMapper objectMapper;
-    private final LedgerOperationRepository ledgerOperationRepository;
-    private final OperationItemRepository operationItemRepository;
     private final McpInvocationRepository mcpInvocationRepository;
     private final JobStateService jobStateService;
     private final BranchPathService branchPathService;
@@ -54,8 +49,6 @@ public class MessageController {
                              FileRepository fileRepository,
                              SessionService sessionService,
                              ObjectMapper objectMapper,
-                             LedgerOperationRepository ledgerOperationRepository,
-                             OperationItemRepository operationItemRepository,
                              McpInvocationRepository mcpInvocationRepository,
                              JobStateService jobStateService,
                              BranchPathService branchPathService) {
@@ -64,8 +57,6 @@ public class MessageController {
         this.fileRepository = fileRepository;
         this.sessionService = sessionService;
         this.objectMapper = objectMapper;
-        this.ledgerOperationRepository = ledgerOperationRepository;
-        this.operationItemRepository = operationItemRepository;
         this.mcpInvocationRepository = mcpInvocationRepository;
         this.jobStateService = jobStateService;
         this.branchPathService = branchPathService;
@@ -217,18 +208,15 @@ public class MessageController {
     }
 
     /**
-     * PLAN-0465 T2.2：jobSummary 改读 `workspace_jobs`（按 run 关联列，
-     * decision #5 provenance），不再逐 item 回扫 operation tree。
-     * `jobId` = domain 身份（decision #7，`itemId` 不再出现在 jobSummary）；
-     * `toolName` 过渡期经 `operation_item_id` 锚点回读 legacy item（至 0467）。
-     * 本方法只读：失败返回空列表，不写 operation。
+     * PLAN-0465 T2.2: job summaries are read from `workspace_jobs` by run;
+     * `jobId` is the domain identity and `toolName` comes from MCP invocation provenance.
+     * This method is read-only; failures return an empty list.
      */
     private List<Map<String, Object>> jobSummariesForRun(String runId) {
         List<Map<String, Object>> summaries = new ArrayList<>();
         try {
-            // PLAN-0465 A类适配：post-0464 chat MCP 行无 ledger item，toolName
-            // 真源 = `mcp_invocations`（tool_call_id 关联；0463 域表）；legacy
-            // 双写行（workspace start / user-direct mutation）回读 item 锚点兜底。
+            // Resolve tool names from MCP invocation provenance, then project
+            // the Workspace Jobs owned by this run.
             Map<String, String> toolNamesByCall = new LinkedHashMap<>();
             for (var invocation : mcpInvocationRepository.findByRunIdOrderByCreatedAtAsc(runId)) {
                 if (invocation.getToolCallId() != null && invocation.getToolName() != null) {
@@ -246,10 +234,6 @@ public class MessageController {
                 summary.put("toolCallId", toolCallId);
                 String toolName = toolCallId == null ? null
                         : toolNamesByCall.get(toolCallId.toLowerCase(java.util.Locale.ROOT));
-                if (toolName == null && row.getOperationItemId() != null) {
-                    toolName = operationItemRepository.findById(row.getOperationItemId())
-                            .map(OperationItem::getToolName).orElse(null);
-                }
                 summary.put("toolName", toolName);
                 summary.put("status", row.getStatus());
                 summary.put("scope", row.getScope());

@@ -1,4 +1,4 @@
-package com.cc01cc.p.xihe.cp.operation;
+package com.cc01cc.p.xihe.cp.migration;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import jakarta.persistence.EntityManagerFactory;
@@ -23,12 +23,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * lines 37–61) on the Spring-managed Testcontainers schema — the same Flyway chain the
  * application boots with, inspected through {@code JdbcTemplate}.
  *
- * <p>{@code OperationLedgerFreshMigrationTest} covers the same spec §3 objects on a standalone
- * Flyway-fresh connection, but only at migration granularity: index/existence/NOT-NULL for
- * origin, fresh+upgrade round-trips for the V44 columns, uniqueness insert behavior for
- * {@code uq_grants_default_subject}, and the provenance all-null/all-present CHECK. This class
- * asserts the conformance slice that test does not: exact enumeration value sets (grants.source,
- * sessions.kind, chat_runs.origin), the partial default-index definition, the single waiting-link
+ * <p>{@code DomainSchemaMigrationTest} covers fresh and upgraded schema paths on a standalone
+ * Flyway connection. This class asserts exact enumeration value sets (grants.source,
+ * sessions.kind, chat_runs.origin), the partial default-index definition, the ChatRun waiting-link
  * carrier, and that Hibernate {@code ddl-auto=validate} runs against this schema.</p>
  */
 class SpecFieldConformanceTest extends AbstractIntegrationTest {
@@ -101,14 +98,15 @@ class SpecFieldConformanceTest extends AbstractIntegrationTest {
         assertEquals(Set.of("user_submission", "spawn"), checkAllowedValues("ck_chat_runs_origin"),
                 "spec §3.3: origin ∈ {user_submission, spawn} — exactly two values, no extras");
 
-        assertEquals("uuid", columnInfo("operation_items", "waiting_on_run_id", "data_type"),
-                "spec §3.3: the waiting link is operation_items.waiting_on_run_id");
-        assertEquals("YES", columnInfo("operation_items", "waiting_on_run_id", "is_nullable"),
+        assertEquals("uuid", columnInfo("chat_runs", "waiting_on_run_id", "data_type"),
+                "spec §3.3: the waiting link is chat_runs.waiting_on_run_id");
+        assertEquals("YES", columnInfo("chat_runs", "waiting_on_run_id", "is_nullable"),
                 "spec §3.3: the waiting link is nullable (cleared inside the terminal transaction)");
-        assertEquals(1, waitingKeyColumnCount("operation_items"),
-                "spec §3.3: operation_items carries exactly one waiting-key column");
-        assertEquals(0, waitingKeyColumnCount("operation_extensions"),
-                "spec §3.3: the waiting link must not be stored in operation_extensions");
+        assertEquals("uuid", columnInfo("chat_runs", "waiting_tool_call_id", "data_type"),
+                "spec §3.3: the waiting tool-call link is UUID-valued");
+        assertEquals("YES", columnInfo("chat_runs", "waiting_tool_call_id", "is_nullable"));
+        assertEquals(2, waitingKeyColumnCount("chat_runs"),
+                "spec §3.3: ChatRun carries the parent-run and tool-call waiting keys");
 
         assertEquals("timestamp with time zone", columnInfo("chat_runs", "terminal_at", "data_type"),
                 "V44 delta: chat_runs.terminal_at exists");
@@ -125,7 +123,7 @@ class SpecFieldConformanceTest extends AbstractIntegrationTest {
                 "the JPA bootstrap ran against the Testcontainers database — that boot is when "
                         + "Hibernate performs schema validation");
         assertEquals(1, jdbcTemplate.queryForObject(
-                        "SELECT count(*) FROM flyway_schema_history WHERE version = '44' AND success = true",
+                        "SELECT count(*) FROM flyway_schema_history WHERE version = '55' AND success = true",
                         Integer.class),
                 "the validated schema is the Flyway-managed one with the V44 delta applied");
     }

@@ -44,8 +44,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </ul>
  *
  * <p>Deliberately NOT duplicated here: bootstrap idempotency and concurrency
- * ({@code GrantDefaultBootstrapIntegrationTest}), the partial unique index enforcement
- * ({@code OperationLedgerFreshMigrationTest#v38GrantsDefaultUniquenessIsScopedToSubjectAndSource}),
+ * ({@code GrantDefaultBootstrapIntegrationTest}), partial index schema conformance
+ * ({@code SpecFieldConformanceTest#grantsColumnsSourceVocabularyAndDefaultIndexConformToSpec31}),
  * out-of-vocabulary fail-closed ({@code LookupAskGateTest#outOfVocabularyActionClassIsDeniedByTheLookup
  * EvenWithDefaultGrants}) and HardGuard L0 counter-proofs ({@code HardGuardTest}).</p>
  */

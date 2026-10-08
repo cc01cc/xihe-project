@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
-import { ensureAgentWorkspaceBinding } from "./helpers/journey";
+import { awaitLatestChatRunCompleted, ensureAgentWorkspaceBinding } from "./helpers/journey";
 import { test, expect, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 
 /**
@@ -17,7 +17,7 @@ import { test, expect, type APIRequestContext, type Locator, type Page } from "@
  *   S4  non-git        : asserts `HOST_ROOT/<ws>/.git` is absent, reruns the S1 flow.
  *   S5  no slice       : a read-only run gets no workspace slice row; restore answers 409.
  *   S6  concurrency    : revert while the run is active is rejected; back-to-back executes are
- *                        idempotent (second all-noop) and the ledger keeps two revert attempts.
+ *                        idempotent (second all-noop) and RunCheckpoint persists revert attempts.
  *   S7  dual diff      : this-run (shadow) and pending-commit (git status) render separately.
  *
  * Documented runner invocations (scripts/e2e-host.mjs starts the isolated stack; the fake-LLM
@@ -32,7 +32,7 @@ import { test, expect, type APIRequestContext, type Locator, type Page } from "@
  *  - One registered user/workspace per process — the Agent keeps ONE MCP workspace binding and
  *    retries would re-register (host specs run with --retries=0).
  *  - A terminal run is required before the next send (CHAT_IN_PROGRESS 409 otherwise); every
- *    send first waits for the latest operation to reach a terminal state.
+ *    send waits on the ChatRun domain state.
  *  - No screenshot baselines (spec/testing §7): assertions are DOM/request/server-value based.
  */
 
@@ -53,34 +53,6 @@ const BASELINE_CONTENT = "checkpoint rollback baseline\n";
 
 const TERMINAL_RUN_STATUSES = ["succeeded", "failed", "partial", "ambiguous", "cancelled"] as const;
 const TERMINAL_RUN_PATTERN = new RegExp(`^(${TERMINAL_RUN_STATUSES.join("|")})$`);
-const TERMINAL_OPERATION_STATUSES = [
-    "completed",
-    "failed",
-    "cancelled",
-    "interrupted",
-    "ambiguous",
-];
-// A fresh user has an empty operation ledger until the first send — the send gate
-// must treat "no operation yet" as ready instead of polling for a terminal status.
-const NO_OPERATION_STATUS = "none";
-const TERMINAL_OPERATION_PATTERN_OR_NONE = new RegExp(
-    `^(${[NO_OPERATION_STATUS, ...TERMINAL_OPERATION_STATUSES].join("|")})$`,
-);
-
-interface OperationSummary {
-    id: string;
-    runId: string | null;
-    kind?: string;
-    status?: string;
-}
-
-interface OperationItemView {
-    kind: string;
-    toolName: string | null;
-    status: string;
-    toolCallId: string | null;
-}
-
 interface CheckpointChangedFile {
     status: string;
     path: string;
@@ -104,6 +76,7 @@ interface CheckpointView {
         at: string | null;
         counts: Record<string, number> | null;
         ref: string | null;
+        attemptCount: number;
     } | null;
 }
 
@@ -202,37 +175,37 @@ function latestMarker(page: Page): Locator {
 
 // ── API helpers ─────────────────────────────────────────────────────────────
 
-/** Wait until the newest operation of this user is terminal (the run send gate). */
-async function awaitLatestOperationTerminal(
+/** Wait until the latest ChatRun is terminal (the run send gate). */
+async function awaitPreviousRunSettled(
     request: APIRequestContext,
     headers: Record<string, string>,
+    workspaceId: string,
 ): Promise<void> {
-    await expect
-        .poll(
-            async () => {
-                const res = await request.get(`${CP_URL}/api/v1/operations?size=1`, { headers });
-                const body = (await res.json()) as { operations?: Array<{ status?: string }> };
-                return body.operations?.[0]?.status ?? NO_OPERATION_STATUS;
-            },
-            { timeout: 180000, intervals: [2000] },
-        )
-        .toMatch(TERMINAL_OPERATION_PATTERN_OR_NONE);
+    await awaitLatestChatRunCompleted(request, headers, workspaceId);
 }
 
-/** The newest operation that carries a runId — i.e. the run just started. */
+/** The newest ChatRun audit entry — i.e. the run just started. */
 async function currentRunId(
     request: APIRequestContext,
     headers: Record<string, string>,
+    workspaceId: string,
 ): Promise<string> {
     let runId = "";
     await expect
         .poll(
             async () => {
-                const res = await request.get(`${CP_URL}/api/v1/operations?size=5`, { headers });
-                const body = (await res.json()) as { operations?: OperationSummary[] };
-                const op = body.operations?.find((entry) => entry.runId);
-                if (!op?.runId) return "pending";
-                runId = op.runId;
+                const res = await request.get(
+                    `${CP_URL}/api/v1/audit/entries?type=chat_run&workspaceId=${workspaceId}&size=5`,
+                    { headers },
+                );
+                if (!res.ok()) return "pending";
+                const body = (await res.json()) as {
+                    entries?: Array<{ id?: string; runId?: string }>;
+                };
+                const entry = body.entries?.find((candidate) => candidate.runId || candidate.id);
+                const current = entry?.runId ?? entry?.id;
+                if (!current) return "pending";
+                runId = current;
                 return "found";
             },
             { timeout: 60000, intervals: [1000] },
@@ -338,22 +311,6 @@ async function executeRevert(
     return { status: res.status(), body: (await res.json()) as RevertResultBody & ProblemBody };
 }
 
-/** Ledger items of the durable operation behind one run (kind/toolName are part of the projection). */
-async function operationItems(
-    request: APIRequestContext,
-    headers: Record<string, string>,
-    runId: string,
-): Promise<OperationItemView[]> {
-    const listRes = await request.get(`${CP_URL}/api/v1/operations?size=50`, { headers });
-    const list = (await listRes.json()) as { operations?: OperationSummary[] };
-    const operation = list.operations?.find((entry) => entry.runId === runId);
-    if (!operation) throw new Error(`no durable operation found for run ${runId}`);
-    const detailRes = await request.get(`${CP_URL}/api/v1/operations/${operation.id}`, { headers });
-    expect(detailRes.ok(), `operation detail ${detailRes.status()}`).toBeTruthy();
-    const detail = (await detailRes.json()) as { items?: OperationItemView[] };
-    return detail.items ?? [];
-}
-
 // ── Run drivers ─────────────────────────────────────────────────────────────
 
 /** Gate on the previous run, send the marker message and wait for the approval modal. */
@@ -361,9 +318,10 @@ async function beginApprovalRun(
     page: Page,
     request: APIRequestContext,
     headers: Record<string, string>,
+    workspaceId: string,
     markerText: string,
 ): Promise<Locator> {
-    await awaitLatestOperationTerminal(request, headers);
+    await awaitPreviousRunSettled(request, headers, workspaceId);
     const modal = page.locator('[data-testid="modal-content"]');
     await sendChat(page, markerText);
     await expect(modal, "approval modal").toBeVisible({ timeout: 120000 });
@@ -405,9 +363,10 @@ async function writeFileRunThroughUi(
         page,
         request,
         headers,
+        workspaceId,
         `XIHE-E2E-WRITE ${fileName} ${content}`,
     );
-    const runId = await currentRunId(request, headers);
+    const runId = await currentRunId(request, headers, workspaceId);
     await approveModal(modal);
     const hostFile = path.join(hostDir, fileName);
     await awaitHostFile(hostFile, content);
@@ -603,16 +562,10 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
             "preview payloads carry no raw file contents",
         ).not.toContain(content);
 
-        // Ledger: the user revert is a checkpoint/revert_checkpoint item owned by CP.
-        const items = await operationItems(request, sharedHeaders, flow.runId);
-        const revertItems = items.filter(
-            (item) => item.kind === "checkpoint" && item.toolName === "revert_checkpoint",
-        );
-        expect(revertItems.length, "one ledger item per executed revert").toBe(1);
-        expect(revertItems[0].status).toBe("completed");
-        expect(
-            items.some((item) => item.kind === "checkpoint" && item.toolName === "run_checkpoint"),
-        ).toBe(true);
+        // The checkpoint row is the source of truth for the revert attempt.
+        const persisted = await checkpointView(request, sharedHeaders, sharedWs, flow.runId);
+        expect(persisted.revert?.attemptCount).toBe(1);
+        expect(persisted.revert?.state).toBe("rolled_back");
     });
 
     // S2 ─ L2 exec/shell coverage ──────────────────────────────────────────────
@@ -629,9 +582,10 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
             page,
             request,
             sharedHeaders,
+            sharedWs,
             `XIHE-E2E-EXEC echo ${content} > ${fileName}`,
         );
-        const runId = await currentRunId(request, sharedHeaders);
+        const runId = await currentRunId(request, sharedHeaders, sharedWs);
         await approveModal(modal);
         const hostFile = path.join(hostDir, fileName);
         await awaitHostFile(hostFile, content);
@@ -776,9 +730,9 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         writeFileSync(path.join(hostDir, seeded), "seed content for the read-only run\n");
 
         await openWorkspace(page, sharedAuth, sharedWs);
-        await awaitLatestOperationTerminal(request, sharedHeaders);
+        await awaitPreviousRunSettled(request, sharedHeaders, sharedWs);
         await sendChat(page, `XIHE-E2E-READ ${seeded}`);
-        const runId = await currentRunId(request, sharedHeaders);
+        const runId = await currentRunId(request, sharedHeaders, sharedWs);
         // read_file is auto-allowed: no approval modal may appear, the run goes straight to terminal.
         const status = await awaitChatRunTerminal(request, sharedHeaders, runId);
         expect(status).toBe("succeeded");
@@ -823,9 +777,10 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
             page,
             request,
             sharedHeaders,
+            sharedWs,
             `XIHE-E2E-WRITE ${fileName} ${content}`,
         );
-        const runId = await currentRunId(request, sharedHeaders);
+        const runId = await currentRunId(request, sharedHeaders, sharedWs);
 
         // The run is awaiting approval (non-terminal): both revert routes must refuse.
         const activeSliceRef = "refs/xihe/slices/0-0000000000000000000000000000000000000000";
@@ -857,15 +812,8 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         // Persistence: the projection carries the last (noop) summary and the file stays deleted.
         const after = await checkpointView(request, sharedHeaders, sharedWs, runId);
         expect(after.revert?.state).toBe("rolled_back");
+        expect(after.revert?.attemptCount).toBe(2);
         expect(existsSync(hostFile)).toBe(false);
-
-        // Attempt count: each successful execution owns one ledger item (toolCallId carries the attempt).
-        const items = await operationItems(request, sharedHeaders, runId);
-        const revertItems = items.filter(
-            (item) => item.kind === "checkpoint" && item.toolName === "revert_checkpoint",
-        );
-        expect(revertItems.length, "two recorded revert attempts").toBe(2);
-        expect(new Set(revertItems.map((item) => item.toolCallId)).size).toBe(2);
 
         // Final state is stable across a re-read.
         const stable = await checkpointView(request, sharedHeaders, sharedWs, runId);

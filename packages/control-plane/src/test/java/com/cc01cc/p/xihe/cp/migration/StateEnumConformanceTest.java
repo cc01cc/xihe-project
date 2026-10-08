@@ -21,19 +21,17 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * V9 (PLAN-0407 G2 Q1/Q2): zero additions to the state-machine enumerations — every state set must
- * equal the list frozen in the migration chain (V1–V44) or, for the one state machine without a DB
+ * Zero additions to the active domain state enumerations — every state set must
+ * equal the list frozen in the migration chain or, for the run state machine without a DB
  * CHECK, the code-owned vocabulary.
  *
- * <p>The five state machines:</p>
+ * <p>The current state machines:</p>
  * <ol>
- *   <li>{@code ledger_operations.status} — CHECK {@code ck_ledger_operations_status} (V2, renamed by V33)</li>
- *   <li>{@code operation_items.status} — CHECK {@code ck_operation_items_status} (V2)</li>
- *   <li>{@code operation_attempts.status} — CHECK {@code ck_operation_attempts_status} (V2)</li>
+ *   <li>{@code workspace_jobs.status} — CHECK {@code ck_workspace_jobs_status} (V52)</li>
+ *   <li>{@code mcp_invocations.status} — CHECK {@code ck_mcp_invocations_status} (V49)</li>
+ *   <li>{@code mcp_attempts.status} — CHECK {@code ck_mcp_attempts_status} (V49)</li>
  *   <li>{@code approval_requests.state} — CHECK {@code ck_approval_requests_state} (V1)</li>
- *   <li>{@code chat_runs.status} — no DB CHECK exists (V1 DDL); the vocabulary is code-owned, so it
- *       is asserted from the code constants that produce it. {@code sessions} has no status column
- *       at all (only {@code archived}), so it is not one of the five.</li>
+ *   <li>{@code chat_runs.status} — no DB CHECK exists; the vocabulary is code-owned.</li>
  * </ol>
  *
  * <p>{@code grants.source}, {@code sessions.kind} and {@code chat_runs.origin} enumerations are
@@ -44,19 +42,12 @@ class StateEnumConformanceTest extends AbstractIntegrationTest {
 
     private static final Pattern QUOTED_VALUE = Pattern.compile("'([^']+)'");
 
-    /** V2 {@code ck_session_operations_status} → {@code ck_ledger_operations_status} (V33 rename). */
-    private static final Set<String> LEDGER_OPERATION_STATUSES = Set.of(
-            "accepted", "running", "waiting_for_approval", "completed",
-            "failed", "cancelled", "interrupted", "ambiguous");
-
-    /** V2 {@code ck_operation_items_status}. */
-    private static final Set<String> OPERATION_ITEM_STATUSES = Set.of(
-            "pending", "running", "waiting_for_approval", "resolving", "completed",
-            "failed", "aborted", "cancelled", "ambiguous");
-
-    /** V2 {@code ck_operation_attempts_status}. */
-    private static final Set<String> OPERATION_ATTEMPT_STATUSES = Set.of(
-            "started", "succeeded", "failed", "timed_out", "cancelled", "unknown");
+    private static final Set<String> WORKSPACE_JOB_STATUSES = Set.of(
+            "pending", "running", "succeeded", "cancelled", "timeout", "orphaned", "interrupted");
+    private static final Set<String> MCP_INVOCATION_STATUSES = Set.of(
+            "active", "completed", "failed", "unknown", "cancelled");
+    private static final Set<String> MCP_ATTEMPT_STATUSES = Set.of(
+            "started", "succeeded", "failed", "timed_out", "cancelled", "unknown", "late_confirmed");
 
     /** V1 {@code ck_approval_requests_state}. */
     private static final Set<String> APPROVAL_STATES = Set.of(
@@ -70,21 +61,21 @@ class StateEnumConformanceTest extends AbstractIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Test
-    void ledgerOperationStatusSetEqualsTheFrozenMigrationVocabulary() {
-        assertEquals(LEDGER_OPERATION_STATUSES, checkAllowedValues("ck_ledger_operations_status"),
-                "ledger_operations.status must keep exactly the V2/V33 value set");
+    void workspaceJobStatusSetEqualsTheFrozenMigrationVocabulary() {
+        assertEquals(WORKSPACE_JOB_STATUSES, checkAllowedValues("ck_workspace_jobs_status"),
+                "workspace_jobs.status must keep exactly the V52 value set");
     }
 
     @Test
-    void operationItemStatusSetEqualsTheFrozenMigrationVocabulary() {
-        assertEquals(OPERATION_ITEM_STATUSES, checkAllowedValues("ck_operation_items_status"),
-                "operation_items.status must keep exactly the V2 value set");
+    void mcpInvocationStatusSetEqualsTheFrozenMigrationVocabulary() {
+        assertEquals(MCP_INVOCATION_STATUSES, checkAllowedValues("ck_mcp_invocations_status"),
+                "mcp_invocations.status must keep exactly the V49 value set");
     }
 
     @Test
-    void operationAttemptStatusSetEqualsTheFrozenMigrationVocabulary() {
-        assertEquals(OPERATION_ATTEMPT_STATUSES, checkAllowedValues("ck_operation_attempts_status"),
-                "operation_attempts.status must keep exactly the V2 value set");
+    void mcpAttemptStatusSetEqualsTheFrozenMigrationVocabulary() {
+        assertEquals(MCP_ATTEMPT_STATUSES, checkAllowedValues("ck_mcp_attempts_status"),
+                "mcp_attempts.status must keep exactly the V49 value set");
     }
 
     @Test

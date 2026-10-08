@@ -24,7 +24,6 @@ class JobScopeClosureServiceTest {
     private RuntimeJobClient runtimeJobClient;
     private JobScopeClosureService service;
 
-    private final UUID itemId = UUID.randomUUID();
     private final UUID rowId = UUID.randomUUID();
 
     @BeforeEach
@@ -35,14 +34,14 @@ class JobScopeClosureServiceTest {
     }
 
     private JobStateService.JobArchive archive(String jobId, String scope, String status) {
-        return new JobStateService.JobArchive(itemId.toString(), jobId, WORKSPACE_ID, scope, status,
+        return new JobStateService.JobArchive(jobId, WORKSPACE_ID, scope, status,
                 null, null, null, null, null, "docker", "docker", "ui", "user", null,
                 "not_started", null, null, null, null);
     }
 
     private void givenActive(String scope, String key, String jobId, String status) {
         when(jobStateService.findActiveForScope(scope, key))
-                .thenReturn(List.of(new JobStateService.ActiveJob(rowId, itemId, archive(jobId, scope, status))));
+                .thenReturn(List.of(new JobStateService.ActiveJob(rowId, archive(jobId, scope, status))));
     }
 
     @Test

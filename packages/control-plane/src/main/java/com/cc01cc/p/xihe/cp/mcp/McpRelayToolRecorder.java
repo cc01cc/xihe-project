@@ -12,10 +12,9 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * PLAN-0464 T2.2: the SSE-relay half of the MCP execution domain.
+ * PLAN-0464 T2.2: records the SSE-relay half of the MCP execution domain.
  *
- * <p>This is what remains of {@code LedgerToolRecorder} after PLAN-0464 removed
- * the Chat-root operation writes: opening the {@code source=agent} invocation
+ * <p>It opens the {@code source=agent} invocation
  * for a relayed {@code tool_call} (so an early relay event wins the
  * {@code (runId, toolCallId)} key before the MCP gate) and running the
  * {@code agent_tool} attempt in {@code mcp_attempts}. Every write is

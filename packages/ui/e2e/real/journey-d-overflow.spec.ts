@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { test, expect } from "@playwright/test";
 import {
     CP_URL,
-    awaitLastOperationCompleted,
+    awaitLatestChatRunCompleted,
     ensureChatReady,
     evidenceDir,
     getRootBranchId,
@@ -48,7 +48,7 @@ test.describe("@host Journey D — overflow retry (CTX-1)", () => {
         await page.goto("/workspace", { waitUntil: "load" });
         await ensureChatReady(page);
         await sendChat(page, "XIHE-E2E-OVERFLOW please answer after context shrink");
-        await awaitLastOperationCompleted(page.request, sharedHeaders);
+        await awaitLatestChatRunCompleted(page.request, sharedHeaders);
 
         // Official reply is the retry payload (decision #2 ③).
         const assistant = page

@@ -3,7 +3,7 @@ import path from "node:path";
 import { test, expect } from "@playwright/test";
 import {
     CP_URL,
-    awaitLastOperationCompleted,
+    awaitLatestChatRunCompleted,
     ensureAgentWorkspaceBinding,
     ensureChatReady,
     evidenceDir,
@@ -100,7 +100,7 @@ test.describe("@host Journey D — context pipeline", () => {
         ).toContainText("XIHE-HIST-SEEN: none", { timeout: 120000 });
         await page.screenshot({ path: path.join(EVIDENCE_DIR, "d1-turn1.png"), fullPage: false });
 
-        await awaitLastOperationCompleted(page.request, sharedHeaders);
+        await awaitLatestChatRunCompleted(page.request, sharedHeaders);
 
         // Turn 2: plant a second marker. The provider receives the messages array
         // — if the pipeline is intact, turn-1's marker MUST be among them.
@@ -216,32 +216,41 @@ test.describe("@host Journey D — context pipeline", () => {
             fullPage: false,
         });
 
-        // 2) Server-side truth: the run's operation fails with the mapped code.
+        // 2) Server-side truth: the ChatRun audit entry fails with the mapped code.
         await expect
             .poll(
                 async () => {
-                    const res = await request.get(`${CP_URL}/api/v1/operations?size=1`, {
-                        headers,
-                    });
-                    const body = (await res.json()) as { operations?: Array<{ status?: string }> };
-                    return body.operations?.[0]?.status ?? "unknown";
+                    const res = await request.get(
+                        `${CP_URL}/api/v1/audit/entries?type=chat_run&workspaceId=${wsId}&size=10`,
+                        { headers },
+                    );
+                    if (!res.ok()) return "unavailable";
+                    const body = (await res.json()) as {
+                        entries?: Array<{ id?: string; status?: string; errorCode?: string }>;
+                    };
+                    const failed = body.entries?.find(
+                        (entry) => entry.status === "failed" && entry.errorCode === "LLM_TOOL_ROUTE_UNSUPPORTED",
+                    );
+                    return failed ? "failed" : "pending";
                 },
                 { timeout: 120000, intervals: [2_000] },
             )
             .toBe("failed");
-        const opsRes = await request.get(`${CP_URL}/api/v1/operations?size=1`, { headers });
-        expect(opsRes.ok(), `operations list ${opsRes.status()}`).toBeTruthy();
-        const op = (
-            (await opsRes.json()) as {
-                operations?: Array<{ id?: string; status?: string; errorCode?: string }>;
-            }
-        ).operations?.[0];
-        expect(op?.errorCode, "UnsupportedParamsError maps to LLM_TOOL_ROUTE_UNSUPPORTED").toBe(
-            "LLM_TOOL_ROUTE_UNSUPPORTED",
+        const runRes = await request.get(
+            `${CP_URL}/api/v1/audit/entries?type=chat_run&workspaceId=${wsId}&size=10`,
+            { headers },
         );
+        expect(runRes.ok(), `ChatRun audit list ${runRes.status()}`).toBeTruthy();
+        const runEntries = (await runRes.json()) as {
+            entries?: Array<{ id?: string; status?: string; errorCode?: string }>;
+        };
+        const failedRun = runEntries.entries?.find(
+            (entry) => entry.status === "failed" && entry.errorCode === "LLM_TOOL_ROUTE_UNSUPPORTED",
+        );
+        expect(failedRun?.id, "failed ChatRun audit entry must be visible").toBeTruthy();
 
         // 3) No silent route switch: the canonical pair stays native xiaomi, no
-        //    assistant content is produced, no write_file item completes, and the
+        //    assistant content is produced, no write_file invocation completes, and the
         //    requested file never lands in the workspace host root.
         const sessRes = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}`, { headers });
         expect(sessRes.ok(), `session ${sessRes.status()}`).toBeTruthy();
@@ -264,18 +273,23 @@ test.describe("@host Journey D — context pipeline", () => {
             ),
             "failed run must not produce assistant content via a fallback route",
         ).toEqual([]);
-        if (op?.id) {
-            const traceRes = await request.get(`${CP_URL}/api/v1/operations/${op.id}`, { headers });
-            const trace = (await traceRes.json()) as {
-                items?: Array<{ toolName?: string; status?: string }>;
-            };
-            expect(
-                (trace.items ?? []).some(
-                    (item) => item.toolName === "write_file" && item.status === "completed",
-                ),
-                "no tool may execute when the route rejects tools",
-            ).toBe(false);
-        }
+        const invocationRes = await request.get(
+            `${CP_URL}/api/v1/audit/entries?type=mcp_invocation&workspaceId=${wsId}&size=50`,
+            { headers },
+        );
+        expect(invocationRes.ok(), `MCP invocation audit list ${invocationRes.status()}`).toBeTruthy();
+        const invocations = (await invocationRes.json()) as {
+            entries?: Array<{ runId?: string; summary?: string; status?: string }>;
+        };
+        expect(
+            (invocations.entries ?? []).some(
+                (entry) =>
+                    entry.runId === failedRun?.id &&
+                    entry.summary === "write_file" &&
+                    entry.status === "completed",
+            ),
+            "no write_file invocation may complete when the route rejects tools",
+        ).toBe(false);
         expect(
             existsSync(path.join(HOST_ROOT, wsId, fileName)),
             "requested file must not exist after a route-level refusal",
@@ -313,7 +327,7 @@ test.describe("@host Journey D — context pipeline", () => {
         await expect(lastAssistant).toContainText(`XIHE-HIST-CURRENT: ${markerA}`, {
             timeout: 120000,
         });
-        await awaitLastOperationCompleted(page.request, sharedHeaders);
+        await awaitLatestChatRunCompleted(page.request, sharedHeaders);
 
         // Manual compaction (decision #15): user-reachable endpoint on
         // /api/v1/sessions (M3 UI entry will call the same route).

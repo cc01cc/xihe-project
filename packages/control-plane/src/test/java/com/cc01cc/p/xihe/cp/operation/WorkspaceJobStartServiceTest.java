@@ -30,7 +30,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * PLAN-0465 T1.2：start 编排在 `workspace_jobs` 域上的契约——
- * 幂等重读（V36 语义）→ 原子双写 → 派发 → 失败收口。
+ * 幂等重读（V36 语义）→ 原子 domain row → 派发 → 失败收口。
  */
 class WorkspaceJobStartServiceTest {
 
@@ -38,35 +38,25 @@ class WorkspaceJobStartServiceTest {
     /** 0465：domain 行 user_id 为 UUID 列，userId 必须是合法 UUID。 */
     private static final String USER_ID = "33333333-3333-3333-3333-333333333333";
 
-    private OperationService operationService;
     private JobStateService jobStateService;
     private WorkspaceService workspaceService;
     private RuntimeJobClient runtimeJobClient;
     private ApplicationContext applicationContext;
     private WorkspaceJobStartService service;
 
-    private final UUID operationId = UUID.randomUUID();
-    private final UUID itemId = UUID.randomUUID();
-
     @BeforeEach
     void setUp() {
-        operationService = Mockito.mock(OperationService.class);
         jobStateService = Mockito.mock(JobStateService.class);
         workspaceService = Mockito.mock(WorkspaceService.class);
         runtimeJobClient = Mockito.mock(RuntimeJobClient.class);
         applicationContext = Mockito.mock(ApplicationContext.class);
-        service = new WorkspaceJobStartService(operationService, jobStateService,
+        service = new WorkspaceJobStartService(jobStateService,
                 workspaceService, runtimeJobClient, applicationContext);
         when(applicationContext.getBean(WorkspaceJobStartService.class)).thenReturn(service);
 
-        // 默认：域内/legacy 幂等均未命中，原子双写成功产出 domain 行。
+        // Default: no idempotent row exists, and the domain row is inserted.
         when(jobStateService.findForReplay(any(), any(), any(), any()))
                 .thenReturn(Optional.empty());
-        when(operationService.findWorkspaceJobForReplay(any(), any(), any(), any(), any()))
-                .thenReturn(null);
-        when(operationService.persistLegacyJobRoot(any(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any()))
-                .thenReturn(new OperationService.WorkspaceJobStart(operationId, itemId, false));
     }
 
     private void workspace(String executionMode) {
@@ -117,8 +107,7 @@ class WorkspaceJobStartServiceTest {
 
         assertFalse(outcome.replayed());
         assertEquals("domain-1", outcome.job().get("jobId"));
-        // PLAN-0465：Runtime 请求键 = domain jobId（新造 UUID），不是 legacy item、
-        // 也不是 Runtime handle——Runtime 字段名 operationItemId 沿用至 0467。
+        // Runtime receives the canonical domain jobId, not the runtime handle.
         ArgumentCaptor<String> jobKey = ArgumentCaptor.forClass(String.class);
         verify(runtimeJobClient).startJob(eq(WORKSPACE_ID), jobKey.capture(), eq("echo"),
                 any(), any(), any(), any());
@@ -148,8 +137,6 @@ class WorkspaceJobStartServiceTest {
         assertTrue(outcome.replayed());
         assertEquals(projection, outcome.job());
         verify(runtimeJobClient, never()).startJob(any(), any(), any(), any(), any(), any(), any());
-        verify(operationService, never()).persistLegacyJobRoot(any(), any(), any(), any(),
-                any(), any(), any(), any(), any(), any());
     }
 
     @Test

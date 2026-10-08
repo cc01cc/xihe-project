@@ -6,7 +6,6 @@ import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.MessageRole;
-import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.UserRole;
@@ -15,13 +14,11 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
-import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
@@ -84,9 +81,6 @@ class ForkPropagationTest extends AbstractIntegrationTest {
     private ChatController chatController;
 
     @Autowired
-    private OperationService operationService;
-
-    @Autowired
     private ChatRunRepository chatRunRepository;
 
     @Autowired
@@ -94,9 +88,6 @@ class ForkPropagationTest extends AbstractIntegrationTest {
 
     @Autowired
     private SessionService sessionService;
-
-    @Autowired
-    private OperationItemRepository operationItemRepository;
 
     @Autowired
     private GrantPrincipalPathResolver principalPathResolver;
@@ -177,9 +168,8 @@ class ForkPropagationTest extends AbstractIntegrationTest {
     /**
      * kind 传播差的 schema 基础（V40 / spec §3.2）：{@code ck_sessions_kind} 拒绝
      * 枚举外 kind，{@code ck_sessions_provenance_shape} 拒绝"有 kind 无 provenance"。
-     * 正例（合法 spawn/fork/root 行可写入）已由 {@code OperationLedgerFreshMigrationTest}
-     * （kind='fork' round-trip :881-887、无 kind 的 provenance 拒绝 :912-916）与
-     * {@code SpawnCancelSerializationTest} 的 fork fixture 覆盖，本类只补两个反例缺口。
+     * 正例（合法 spawn/fork/root 行可写入）由 {@code DomainSchemaMigrationTest} 的 V41 升级夹具与
+     * {@code SpawnCancelSerializationTest} 的 fork fixture 覆盖；本类补直接写库时的反例缺口。
      */
     @Test
     void sessionsKindCheckRejectsUnknownKindAndProvenancelessDerivedRow() {
@@ -246,11 +236,6 @@ class ForkPropagationTest extends AbstractIntegrationTest {
         ParentFixture parent = fixture("spawn_agent", "{\"prompt\":\"fork terminal\"}");
         Session fork = forkSession(parent.parentSessionId, parent.parentRunId);
         String forkRunId = saveRun(fork, "running");
-        OperationItem parentItemBefore = operationItemRepository
-                .findById(UUID.fromString(parent.itemPk)).orElseThrow();
-        assertNull(parentItemBefore.getWaitingOnRunId(),
-                "fixture parent item carries no waiting link (fork is not a spawn tool child)");
-        String parentItemStatusBefore = parentItemBefore.getStatus();
 
         ChatRunCancellationService.CancelClaim claim = cancellationService.cancelSerialized(
                 forkRunId, fork.getId().toString(), userId, workspaceId, "fork_side_stop");
@@ -261,12 +246,9 @@ class ForkPropagationTest extends AbstractIntegrationTest {
         assertNotNull(forkRun.getTerminalAt(), "fork child terminal commits terminal_at in one transaction");
         assertEquals("running", runStatus(parent.parentRunId),
                 "fork terminal must not settle or cancel the parent run");
-        OperationItem parentItemAfter = operationItemRepository
-                .findById(UUID.fromString(parent.itemPk)).orElseThrow();
-        assertEquals(parentItemStatusBefore, parentItemAfter.getStatus(),
-                "fork terminal must not settle the parent item");
-        assertNull(parentItemAfter.getWaitingOnRunId(),
-                "fork terminal must not write the spawn waiting link");
+        assertEquals("active", mcpInvocationRepository.findByRunIdAndToolCallIdAndSource(
+                parent.parentRunId, parent.toolCallId, "agent").orElseThrow().getStatus(),
+                "fork terminal must not mutate the parent MCP invocation");
         assertTrue(sessionRepository.findById(fork.getId()).isPresent(),
                 "cancel never deletes sessions");
     }
@@ -445,8 +427,7 @@ class ForkPropagationTest extends AbstractIntegrationTest {
         }
     }
 
-    private record ParentFixture(String parentSessionId, String parentRunId,
-                                 String operationId, String toolCallId, String itemPk) {}
+    private record ParentFixture(String parentSessionId, String parentRunId, String toolCallId) {}
 
     private ParentFixture fixture(String toolName, String argumentsPreview) {
         ensureWorkspace();
@@ -458,18 +439,11 @@ class ForkPropagationTest extends AbstractIntegrationTest {
         sessionRepository.saveAndFlush(parentSession);
 
         String parentRunId = saveRun(parentSession, "running");
-        OperationService.OperationStartResult operation = operationService.startOperation(
-                userId, parentSession.getId().toString(), workspaceId, parentRunId,
-                UUID.randomUUID().toString(), "chat", "ui", "user", userId,
-                "parent-submit-" + parentRunId, "Parent chat");
         String toolCallId = UUID.randomUUID().toString();
-        OperationItem item = operationService.appendItem(operation.operationId(), toolCallId, null,
-                "tool_call", toolName, "agent", argumentsPreview, null, null);
         SpawnTestSupport.seedAgentInvocation(mcpInvocationRepository,
                 parentSession.getId().toString(), parentRunId, workspaceId, userId,
-                item.getToolCallId(), toolName, argumentsPreview);
-        return new ParentFixture(parentSession.getId().toString(), parentRunId,
-                operation.operationId().toString(), item.getToolCallId(), item.getId().toString());
+                toolCallId, toolName, argumentsPreview);
+        return new ParentFixture(parentSession.getId().toString(), parentRunId, toolCallId);
     }
 
     /** This suite isolates kind propagation; spawn admission gates are tested separately. */

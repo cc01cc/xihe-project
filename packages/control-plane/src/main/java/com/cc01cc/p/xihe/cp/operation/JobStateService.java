@@ -1,13 +1,8 @@
 package com.cc01cc.p.xihe.cp.operation;
 
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
-import com.cc01cc.p.xihe.cp.entity.OperationExtension;
-import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceJob;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceJobHistory;
-import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
-import com.cc01cc.p.xihe.cp.repository.OperationExtensionRepository;
-import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceJobRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -39,9 +34,8 @@ import java.util.UUID;
  * 并发写者之间用行锁串行化，撞唯一索引后重试一次。状态每次前进都同步 `status`
  * 查询列与 {@code workspace_job_history}（decision #8）。</p>
  *
- * <p>过渡期（至 PLAN-0467）读路径 dual-read：先查 `workspace_jobs`（按
- * `operation_item_id` 锚点），未命中再回退 legacy `job_state` extension（0465
- * 之前的行，不回填，decision #9）。写路径只写新表。</p>
+ * <p>All reads and writes use the canonical `workspace_jobs.id` or `tool_call_id`;
+ * no Ledger or extension fallback remains.</p>
  *
  * <p>字段与状态机冻结口径见
  * {@code plans/PLAN-0344-XH-durable-job-continuation/evidence/job-freeze.md}；
@@ -52,8 +46,6 @@ public class JobStateService {
 
     private static final Logger logger = LoggerFactory.getLogger(JobStateService.class);
 
-    /** Legacy read-fallback only（0465 前写入的行；本类不再写）。 */
-    public static final String EXTENSION_KIND = "job_state";
     public static final int SCHEMA_VERSION = 1;
     /** Final fresh-baseline scope vocabulary. */
     public static final String SCOPE_RUN = "run";
@@ -95,26 +87,17 @@ public class JobStateService {
 
     private final WorkspaceJobRepository jobs;
     private final WorkspaceJobHistoryWriter historyWriter;
-    private final OperationExtensionRepository extensions;
-    private final OperationItemRepository items;
-    private final LedgerOperationRepository operations;
     private final DbLockTimeout dbLockTimeout;
     private final ObjectMapper objectMapper;
     private final ApplicationContext applicationContext;
 
     public JobStateService(WorkspaceJobRepository jobs,
                            WorkspaceJobHistoryWriter historyWriter,
-                           OperationExtensionRepository extensions,
-                           OperationItemRepository items,
-                           LedgerOperationRepository operations,
                            DbLockTimeout dbLockTimeout,
                            ObjectMapper objectMapper,
                            ApplicationContext applicationContext) {
         this.jobs = jobs;
         this.historyWriter = historyWriter;
-        this.extensions = extensions;
-        this.items = items;
-        this.operations = operations;
         this.dbLockTimeout = dbLockTimeout;
         this.objectMapper = objectMapper;
         this.applicationContext = applicationContext;
@@ -127,25 +110,16 @@ public class JobStateService {
     // ── 来源① ②：MCP 工具结果拦截（McpProxyController 调用） ────────────────
 
     /**
-     * 工具调用 provenance（PLAN-0465 A类适配）：PLAN-0464 R3 后 Agent 不再发送
-     * `X-Operation-Id`，chat-run 的 MCP 工具调用不再产生 ledger tool item——
-     * 行物化改由 dispatch 头（X-Session-Id / X-Chat-Run-Id / canonical
-     * tool-call id / AccessContext userId）提供身份与关联；`operationItemId`
-     * 仅在 ledger 双写路径存在（workspace start / user-direct mutation）。
+     * MCP tool-call identity and its Workspace/ChatRun ownership from CP dispatch.
      */
-    public record ToolJobProvenance(UUID operationItemId, String workspaceId, String userId,
+    public record ToolJobProvenance(String workspaceId, String userId,
                                     String sessionId, String runId, String toolCallId) { }
 
     /**
      * 从一次成功的 MCP tools/call 响应里提取 job 事实并 upsert 档案。
      * best-effort：任何解析/落库失败只记日志，绝不影响工具派发本身。
      */
-    public void applyToolResult(UUID itemId, String workspaceId, String toolName, String responseBody) {
-        applyToolResult(new ToolJobProvenance(itemId, workspaceId, null, null, null, null),
-                toolName, responseBody);
-    }
-
-    /** PLAN-0465：provenance 版（itemId 可为 null——post-0464 chat-run 工具无 ledger item）。 */
+    /** Apply a tool result using the domain provenance from CP dispatch. */
     public void applyToolResult(ToolJobProvenance provenance, String toolName, String responseBody) {
         if (provenance == null || provenance.workspaceId() == null || toolName == null
                 || responseBody == null || !JOB_TOOLS.contains(toolName)) {
@@ -173,8 +147,8 @@ public class JobStateService {
                 default -> { }
             }
         } catch (Exception e) {
-            logger.warn("[LIFECYCLE] service=cp event=job_state_sync_failed itemId={} tool={} error={}",
-                    provenance.operationItemId(), toolName, e.getMessage());
+            logger.warn("[LIFECYCLE] service=cp event=job_state_sync_failed toolCallId={} tool={} error={}",
+                    provenance.toolCallId(), toolName, e.getMessage());
         }
     }
 
@@ -204,8 +178,8 @@ public class JobStateService {
                 upsertWithProvenance(provenance, mapJobInfo(job, provenance.workspaceId()));
             }
         } catch (Exception e) {
-            logger.warn("[LIFECYCLE] service=cp event=job_state_get_parse_failed itemId={} error={}",
-                    provenance.operationItemId(), e.getMessage());
+            logger.warn("[LIFECYCLE] service=cp event=job_state_get_parse_failed toolCallId={} error={}",
+                    provenance.toolCallId(), e.getMessage());
         }
     }
 
@@ -223,15 +197,7 @@ public class JobStateService {
 
     // ── 来源③：Runtime 状态（对账兜底 / 端点读） ─────────────────────────────
 
-    /** 把 Runtime `get_background_process` 的 JobInfo 映射成档案增量。 */
-    public void syncJobInfo(UUID itemId, String workspaceId, JsonNode job) {
-        if (itemId == null || job == null || !job.isObject()) {
-            return;
-        }
-        upsert(itemId, mapJobInfo(job, workspaceId));
-    }
-
-    /** PLAN-0465：按 domain jobId 同步 Runtime JobInfo（无 ledger item 的 chat MCP 行）。 */
+    /** Sync Runtime JobInfo under the canonical Workspace Job ID. */
     public void syncJobInfoById(UUID workspaceJobId, String workspaceId, JsonNode job) {
         if (workspaceJobId == null || job == null || !job.isObject()) {
             return;
@@ -292,44 +258,9 @@ public class JobStateService {
 
     // ── upsert（状态机前进 + 行锁 + 唯一索引兜底） ──────────────────────────
 
-    /** 增量字段可为 null（表示不修改该字段）。 */
-    public void upsert(UUID itemId, Map<String, Object> incoming) {
-        if (itemId == null || incoming == null || incoming.isEmpty()) {
-            return;
-        }
-        try {
-            self().upsertInNewTx(itemId, incoming);
-        } catch (DataIntegrityViolationException race) {
-            // 并发首建：赢家已提交，重跑一次走更新路径。
-            logger.info("[LIFECYCLE] service=cp event=job_state_create_race itemId={}", itemId);
-            try {
-                self().upsertInNewTx(itemId, incoming);
-            } catch (RuntimeException retryFailure) {
-                logger.warn("[LIFECYCLE] service=cp event=job_state_upsert_failed itemId={} error={}",
-                        itemId, retryFailure.getMessage());
-            }
-        } catch (RuntimeException e) {
-            logger.warn("[LIFECYCLE] service=cp event=job_state_upsert_failed itemId={} error={}",
-                    itemId, e.getMessage());
-        }
-    }
-
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void upsertInNewTx(UUID itemId, Map<String, Object> incoming) {
-        dbLockTimeout.apply();
-        WorkspaceJob row = jobs.findByOperationItemIdForUpdate(itemId).orElse(null);
-        if (row == null) {
-            createFromProvenance(new ToolJobProvenance(itemId, null, null, null, null, null),
-                    incoming);
-            return;
-        }
-        applyIncoming(row, incoming);
-    }
-
     /**
-     * PLAN-0465（A类适配）：provenance upsert——post-0464 chat-run MCP 工具
-     * 无 ledger item，行身份按 tool_call_id → operation_item_id 顺序解析，
-     * 首建携带 dispatch 头 provenance（user/session/run/toolCall）。
+     * Provenance upsert: resolve by canonical tool-call ID or materialize a new
+     * Workspace Job from the dispatch identity.
      */
     public void upsertWithProvenance(ToolJobProvenance provenance, Map<String, Object> incoming) {
         if (provenance == null || incoming == null || incoming.isEmpty()) {
@@ -361,9 +292,6 @@ public class JobStateService {
         if (toolCallId != null) {
             row = jobs.findByToolCallIdForUpdate(toolCallId).orElse(null);
         }
-        if (row == null && provenance.operationItemId() != null) {
-            row = jobs.findByOperationItemIdForUpdate(provenance.operationItemId()).orElse(null);
-        }
         if (row == null) {
             createFromProvenance(provenance, incoming);
             return;
@@ -379,11 +307,11 @@ public class JobStateService {
         try {
             self().upsertByIdInNewTx(workspaceJobId, incoming);
         } catch (DataIntegrityViolationException race) {
-            logger.warn("[LIFECYCLE] service=cp event=job_state_upsert_conflict jobId={} error={}",
-                    workspaceJobId, race.getMessage());
+            logger.warn("[LIFECYCLE] service=cp event=job_state_upsert_conflict jobId={}",
+                    workspaceJobId, race);
         } catch (RuntimeException e) {
-            logger.warn("[LIFECYCLE] service=cp event=job_state_upsert_failed jobId={} error={}",
-                    workspaceJobId, e.getMessage());
+            logger.warn("[LIFECYCLE] service=cp event=job_state_upsert_failed jobId={}",
+                    workspaceJobId, e);
         }
     }
 
@@ -398,8 +326,7 @@ public class JobStateService {
 
     /**
      * PLAN-0465 T1.1：创建 domain Job 行 + 初始 state + history {@code start}。
-     * 无事务注解——由 {@code WorkspaceJobStartService} 的 REQUIRES_NEW 事务调用，
-     * 与 legacy root/item 双写在**同一事务**内原子提交（0467 观察点：双写一致性）。
+     * 无事务注解——由 {@code WorkspaceJobStartService} 的 REQUIRES_NEW 事务调用。
      */
     public WorkspaceJob createJob(WorkspaceJob row, Map<String, Object> initialState) {
         Map<String, Object> payload = initialPayload(initialState, row);
@@ -407,49 +334,29 @@ public class JobStateService {
         syncColumns(row, payload);
         jobs.saveAndFlush(row);
         appendHistory(row, null, row.getStatus(), WorkspaceJobHistory.EVENT_START);
-        logger.info("[LIFECYCLE] service=cp event=workspace_job_row_created jobId={} itemId={} status={}",
-                row.getId(), row.getOperationItemId(), row.getStatus());
+        logger.info("[LIFECYCLE] service=cp event=workspace_job_row_created jobId={} status={}",
+                row.getId(), row.getStatus());
         return row;
     }
 
-    /**
-     * 首建路径（MCP 工具结果先到）：物化 domain 行。
-     * 身份/provenance 双源：`operationItemId` 在场时回读 item/operation 补齐
-     * （legacy 双写/user-direct mutation 路径）；否则纯 dispatch 头 provenance
-     *（post-0464 chat-run 工具，无 ledger item）。
-     */
+    /** Materialize a Workspace Job from its CP dispatch provenance. */
     private void createFromProvenance(ToolJobProvenance provenance, Map<String, Object> incoming) {
-        UUID itemId = provenance.operationItemId();
-        OperationItem item = itemId == null ? null : items.findById(itemId).orElse(null);
-        if (itemId != null && item == null) {
-            logger.warn("[LIFECYCLE] service=cp event=job_state_item_missing itemId={}", itemId);
-            return;
-        }
-        var operation = item == null ? null
-                : operations.findById(UUID.fromString(item.getOperationId())).orElse(null);
         String workspaceId = str(incoming.get("workspaceId"));
         if (workspaceId == null || workspaceId.isBlank()) {
             workspaceId = provenance.workspaceId();
         }
         if (workspaceId == null || workspaceId.isBlank()) {
-            workspaceId = operation == null ? null : operation.getWorkspaceId();
-        }
-        if (workspaceId == null || workspaceId.isBlank()) {
-            logger.warn("[LIFECYCLE] service=cp event=job_state_workspace_missing itemId={}", itemId);
+            logger.warn("[LIFECYCLE] service=cp event=job_state_workspace_missing toolCallId={}",
+                    provenance.toolCallId());
             return;
         }
         String userId = provenance.userId();
-        if ((userId == null || userId.isBlank()) && operation != null) {
-            userId = operation.getUserId();
-        }
         if (userId == null || userId.isBlank()) {
-            logger.warn("[LIFECYCLE] service=cp event=job_state_owner_missing itemId={}", itemId);
+            logger.warn("[LIFECYCLE] service=cp event=job_state_owner_missing toolCallId={}",
+                    provenance.toolCallId());
             return;
         }
         String source = str(incoming.get("source"));
-        if ((source == null || source.isBlank()) && item != null) {
-            source = item.getSource();
-        }
         if (source == null || source.isBlank()) {
             source = "mcp";
         }
@@ -460,14 +367,11 @@ public class JobStateService {
         row.setUserId(firstUuid(userId, null));
         String sessionPreferred = provenance.sessionId() != null && !provenance.sessionId().isBlank()
                 ? provenance.sessionId() : str(incoming.get("sessionId"));
-        row.setSessionId(firstUuid(sessionPreferred,
-                operation == null ? null : operation.getSessionId()));
+        row.setSessionId(firstUuid(sessionPreferred, null));
         String runPreferred = provenance.runId() != null && !provenance.runId().isBlank()
                 ? provenance.runId() : str(incoming.get("runId"));
-        row.setRunId(firstUuid(runPreferred, operation == null ? null : operation.getRunId()));
-        row.setToolCallId(firstUuid(provenance.toolCallId(),
-                item == null ? null : item.getToolCallId()));
-        row.setOperationItemId(itemId);
+        row.setRunId(firstUuid(runPreferred, null));
+        row.setToolCallId(firstUuid(provenance.toolCallId(), null));
         row.setSource(normalizeSource(source));
         row.setScope(normalizeScope(incoming.get("scope")));
 
@@ -476,8 +380,8 @@ public class JobStateService {
         syncColumns(row, payload);
         jobs.saveAndFlush(row);
         appendHistory(row, null, row.getStatus(), WorkspaceJobHistory.EVENT_START);
-        logger.info("[LIFECYCLE] service=cp event=job_state_created itemId={} jobId={} toolCallId={} runId={} status={}",
-                itemId, payload.get("jobId"), row.getToolCallId(), row.getRunId(), row.getStatus());
+        logger.info("[LIFECYCLE] service=cp event=job_state_created jobId={} toolCallId={} runId={} status={}",
+                payload.get("jobId"), row.getToolCallId(), row.getRunId(), row.getStatus());
     }
 
     /** 状态前进 + 落库 + history（调用方必须已持有行锁）。 */
@@ -545,25 +449,7 @@ public class JobStateService {
 
     // ── 读路径（端点/对账/list） ────────────────────────────────────────────
 
-    /**
-     * 按 legacy item 锚点读档案：先 `workspace_jobs`（dual-read 主路径），
-     * 未命中回退 pre-deploy 的 `job_state` extension（只读兼容，至 0467）。
-     */
-    @Transactional(readOnly = true)
-    public Optional<JobArchive> find(UUID itemId) {
-        if (itemId == null) {
-            return Optional.empty();
-        }
-        WorkspaceJob row = jobs.findByOperationItemId(itemId).orElse(null);
-        if (row != null) {
-            return Optional.of(toArchive(row));
-        }
-        return extensions
-                .findFirstByItemIdAndExtensionKindOrderBySchemaVersionDesc(itemId.toString(), EXTENSION_KIND)
-                .map(extension -> toLegacyArchive(itemId, extension));
-    }
-
-    /** 按 domain jobId 读档案。 */
+    /** Read a Job archive by canonical domain jobId. */
     @Transactional(readOnly = true)
     public Optional<JobArchive> findByJobId(UUID workspaceJobId) {
         if (workspaceJobId == null) {
@@ -600,8 +486,7 @@ public class JobStateService {
             if (row.getRuntimeJobId() == null || row.getRuntimeJobId().isBlank()) {
                 continue;
             }
-            refs.add(new JobStateRef(row.getId(), row.getOperationItemId(),
-                    row.getRuntimeJobId(), row.getWorkspaceId().toString()));
+            refs.add(new JobStateRef(row.getId(), row.getRuntimeJobId(), row.getWorkspaceId().toString()));
         }
         return refs;
     }
@@ -658,12 +543,11 @@ public class JobStateService {
     }
 
     /**
-     * 对账候选引用：`workspaceJobId` 是 domain 写入键（无 ledger item 的 chat MCP
-     * 行 itemId 为 null）；`itemId` 仅 legacy 双写锚点，`jobId` 为 Runtime handle。
+     * Reconciliation identity is the Workspace Job ID; `jobId` is the Runtime handle.
      */
-    public record JobStateRef(UUID workspaceJobId, UUID itemId, String jobId, String workspaceId) { }
+    public record JobStateRef(UUID workspaceJobId, String jobId, String workspaceId) { }
 
-    public record JobArchive(String itemId, String jobId, String workspaceId, String scope,
+    public record JobArchive(String jobId, String workspaceId, String scope,
                              String status, String startedAt, Integer exitCode, Long timeoutSecs,
                              String cancelReason, String endedAt,
                              String backendKind, String executionMode, String source, String actorType,
@@ -679,16 +563,12 @@ public class JobStateService {
         }
     }
 
-    /**
-     * Active Job 档案 + domain 写入键（scope 收口/对账用）。
-     * `workspaceJobId` 恒有；`itemId` 仅 legacy 双写锚点（post-0464 chat MCP 行为 null）。
-     */
-    public record ActiveJob(UUID workspaceJobId, UUID itemId, JobArchive archive) { }
+    /** Active Job archive plus its canonical domain write key. */
+    public record ActiveJob(UUID workspaceJobId, JobArchive archive) { }
 
     JobArchive toArchive(WorkspaceJob row) {
         Map<String, Object> payload = readJson(row.getState());
         return new JobArchive(
-                row.getOperationItemId() == null ? null : row.getOperationItemId().toString(),
                 row.getRuntimeJobId(),
                 row.getWorkspaceId().toString(),
                 row.getScope(),
@@ -708,21 +588,6 @@ public class JobStateService {
                 row.getRunId() == null ? null : row.getRunId().toString());
     }
 
-    private JobArchive toLegacyArchive(UUID itemId, OperationExtension extension) {
-        Map<String, Object> payload = readJson(extension.getPayload());
-        return new JobArchive(itemId.toString(), str(payload.get("jobId")),
-                str(payload.get("workspaceId")), normalizeScope(payload.get("scope")),
-                str(payload.get("status")), str(payload.get("startedAt")),
-                payload.get("exitCode") instanceof Number number ? number.intValue() : null,
-                payload.get("timeoutSecs") instanceof Number number ? number.longValue() : null,
-                str(payload.get("cancelReason")), str(payload.get("endedAt")),
-                str(payload.get("backendKind")), str(payload.get("executionMode")),
-                str(payload.get("source")), str(payload.get("actorType")),
-                str(payload.get("createdAt")), str(payload.get("cleanupStatus")),
-                str(payload.get("errorCode")), str(payload.get("runtimeBootId")),
-                str(payload.get("sessionId")), str(payload.get("runId")));
-    }
-
     /**
      * 该 Workspace 下仍 active（pending/running）的行。
      * 由调用方决定收口动作（scope 收口 / Workspace destroy / 对账）。
@@ -738,7 +603,7 @@ public class JobStateService {
         }
         List<ActiveJob> active = new ArrayList<>();
         for (WorkspaceJob row : jobs.findByWorkspaceIdAndStatusInOrderByCreatedAtAsc(id, ACTIVE)) {
-            active.add(new ActiveJob(row.getId(), row.getOperationItemId(), toArchive(row)));
+            active.add(new ActiveJob(row.getId(), toArchive(row)));
         }
         return active;
     }
@@ -764,7 +629,7 @@ public class JobStateService {
         };
         List<ActiveJob> active = new ArrayList<>();
         for (WorkspaceJob row : rows) {
-            active.add(new ActiveJob(row.getId(), row.getOperationItemId(), toArchive(row)));
+            active.add(new ActiveJob(row.getId(), toArchive(row)));
         }
         return active;
     }
@@ -791,7 +656,7 @@ public class JobStateService {
             if (job.workspaceJobId() == null) {
                 continue;
             }
-            // 写入键 = domain jobId（post-0464 chat MCP 行无 legacy item 锚点）。
+            // The Workspace Job domain ID is the durable write key.
             upsertById(job.workspaceJobId(), incoming);
             marked++;
         }
@@ -832,7 +697,7 @@ public class JobStateService {
     /**
      * PLAN-0465 decision #7 wire：`jobId` = domain 身份（新表 id），
      * `runtimeJobId` = Runtime backend handle（原 wire `jobId` 的值，供输出目录
-     * 操作/诊断使用）；不再出现 `operationId`/`operationItemId`。
+     * 操作/诊断使用）。
      */
     public Map<String, Object> wireView(WorkspaceJob row) {
         Map<String, Object> payload = readJson(row.getState());

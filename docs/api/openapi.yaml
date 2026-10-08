@@ -435,8 +435,8 @@ paths:
       description: |
         PLAN-0464 T2.1: newest-first page of the Session's ChatRun rows with the
         status/terminal fields plus `waitingOnRunId`/`waitingToolCallId` (the spawn
-        waiting link that used to live on the parent OperationItem). ChatPanel uses
-        this endpoint as its refresh-recovery source instead of listing Operations.
+        waiting link owned by the child ChatRun). ChatPanel uses this endpoint as
+        its refresh-recovery source.
       security: [{ bearerAuth: [] }]
       parameters:
         - in: path
@@ -642,7 +642,7 @@ paths:
         * Connection authorization is bounded by the access-token lifetime; v1 closes the SSE before token expiry and the UI enters a recoverable authenticated state (no silent credential leak).
         * `derived_state_changed` is sent on the parent Session channel after a child terminal commits. Its JSON is exactly `{sessionId,runId,state,at}`: `sessionId` and `runId` identify the child, `at` equals durable `chat_runs.terminal_at`; it is best-effort only and the parent page re-reads its own `GET /api/v1/sessions/{sessionId}/derived-state` for authoritative state.
         * PLAN-0338/0339: the session channel also carries `run_checkpoint` — `{runId, sessionId, sliceRef?, capturedAt?, state, changedCount, unrollableReason?, revert?}` — after a slice capture, a degraded capture, or a completed restore (`revert` = `{state, at, counts, ref, attemptCount}`). The event only annotates lifecycle; the workspace slice list remains the durable source on reload.
-          * Event order per run is `connected` (once per SSE open) → `status`/`thinking` (optional) → `approval_request` (optional) → approval decision via the CP public route → `tool_result` (approval gate) → downstream `tool_call`/`tool_result` and `token` (only after approval) → `done` (exactly one, may carry `errorCode`/`synthetic`). Tool events carry `toolCallId` and `origin` (`local` or `mcp`) for the channel-fact ledger; `request_approval` itself is represented by the approval event/item and does not emit a duplicate tool event. Approval live/replay envelopes are built from the durable row only and include `state`, the durable creation `origin` (`cp_gate` for CP-gate rows, `agent_relay` for model-initiated `request_approval`, null for rows predating V25) plus `replayed=false/true`; at creation, the display-only `policy` summary is persisted when it can be captured: `effect`, `sourceLayer`, `matchedRule`, `reason`, `mode`, `actionClass`, and `shape`. The policy summary never contains raw tool arguments. After the atomic decision claim, `policy.modeAtGrant` records the effective session mode at that decision and is never rewritten by a retry; replay uses the stored snapshot, and descriptor failure omits only policy metadata without blocking delivery. On rejection/expiry, no downstream sensitive tool call is allowed and a terminal `error` + `done` is sent. The session SSE is retained unless the emitter itself is unwritable. A failed, parseable command result may carry an optional `diagnostics` bundle (`{items, total, confidence}`; `items` is the Top-N slice of `total`) on `tool_result` data — structured facts copied from the Agent tool-message artifact channel and relayed unchanged by CP; the model-visible `<diagnostics>` block stays inside the untrusted envelope.
+          * Event order per run is `connected` (once per SSE open) → `status`/`thinking` (optional) → `approval_request` (optional) → approval decision via the CP public route → `tool_result` (approval gate) → downstream `tool_call`/`tool_result` and `token` (only after approval) → `done` (exactly one, may carry `errorCode`/`synthetic`). Tool events carry `toolCallId` and `origin` (`local` or `mcp`) for canonical tool-call correlation and source attribution; `request_approval` itself is represented by the approval request and approval-history record and does not emit a duplicate tool event. Approval live/replay envelopes are built from the durable row only and include `state`, the durable creation `origin` (`cp_gate` for CP-gate rows, `agent_relay` for model-initiated `request_approval`, null for rows predating V25) plus `replayed=false/true`; at creation, the display-only `policy` summary is persisted when it can be captured: `effect`, `sourceLayer`, `matchedRule`, `reason`, `mode`, `actionClass`, and `shape`. The policy summary never contains raw tool arguments. After the atomic decision claim, `policy.modeAtGrant` records the effective session mode at that decision and is never rewritten by a retry; replay uses the stored snapshot, and descriptor failure omits only policy metadata without blocking delivery. On rejection/expiry, no downstream sensitive tool call is allowed and a terminal `error` + `done` is sent. The session SSE is retained unless the emitter itself is unwritable. A failed, parseable command result may carry an optional `diagnostics` bundle (`{items, total, confidence}`; `items` is the Top-N slice of `total`) on `tool_result` data — structured facts copied from the Agent tool-message artifact channel and relayed unchanged by CP; the model-visible `<diagnostics>` block stays inside the untrusted envelope.
       security: [{ bearerAuth: [] }]
       parameters:
         - in: query
@@ -944,53 +944,51 @@ paths:
           description: 'RUNTIME_UNAVAILABLE (Runtime unreachable or invalid JSON)'
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
   /api/v1/workspaces/{workspaceId}/jobs:
-     get: { operationId: listWorkspaceJobs, description: 'Workspace-scoped durable Job response (PLAN-0390 + PLAN-0465 T2.1); canonical identity is `jobId` (= `workspace_jobs.id`, decision #7). Each item carries the full WorkspaceJob response view.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace-scoped durable Job response, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/WorkspaceJob' } } } } }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
-     post:
-       operationId: startWorkspaceJob
-       summary: Start a Workspace-scoped durable Job
-       description: |
-         Creates a `ledger_operations(kind=job)` root with its job item and dispatches execution
-         (PLAN-0390). `Idempotency-Key` is required: repeating the same key returns the existing Job
-         Job response with `200` and never starts a second process, while the same key with a different
-          command/args/cwd/timeoutSecs returns `409 JOB_IDEMPOTENCY_CONFLICT`. `windows-host` and
-          `windows-mxc` direct-attach workspaces dispatch through the Runtime Job engine. A Runtime
-          probe/launcher response of `501 JOB_BACKEND_LAUNCH_PENDING` is fail-closed and never falls
-          back to another backend. When Runtime dispatch cannot be confirmed the durable state becomes
-          `interrupted` (never replayed) and the call answers `502 RUNTIME_UNAVAILABLE`; other Runtime
-          Problem Details codes are preserved.
-       security: [{ bearerAuth: [] }]
-       parameters:
-         - { in: path, name: workspaceId, required: true, schema: { type: string } }
-         - in: header
-           name: Idempotency-Key
-           required: true
-           schema: { type: string, maxLength: 128 }
-           description: Required. Replays the same request to the existing Job response; a different command/args/cwd/timeoutSecs returns 409.
-       requestBody:
-         required: true
-         content:
-           application/json:
-             schema: { $ref: '#/components/schemas/WorkspaceJobStartRequest' }
-       responses:
-         '202':
-           description: Job accepted and dispatched; body is the Job response
-           content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceJob' } } }
-         '200':
-           description: Idempotent replay of the existing Job response for the same Idempotency-Key
-           content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceJob' } } }
-         '400':
-           description: 'IDEMPOTENCY_KEY_REQUIRED (header missing) or INVALID_REQUEST (command missing)'
-           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
-         '401': { $ref: '#/components/responses/Problem' }
-         '403': { $ref: '#/components/responses/Problem' }
-         '404':
-           description: WORKSPACE_NOT_FOUND (missing or no Workspace access; no 403 leak)
-           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
-         '409': { description: JOB_IDEMPOTENCY_CONFLICT (same key, different command/args/cwd/timeoutSecs), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
-         '501': { description: JOB_BACKEND_LAUNCH_PENDING (Runtime launcher/probe unavailable; no fallback and no new process), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
-         '502':
-           description: RUNTIME_UNAVAILABLE (dispatch unconfirmed; durable Job state becomes interrupted)
-           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
+    get: { operationId: listWorkspaceJobs, description: 'Workspace-scoped durable Job response (PLAN-0390 + PLAN-0465 T2.1); canonical identity is `jobId` (= `workspace_jobs.id`, decision #7). Each item carries the full WorkspaceJob response view.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace-scoped durable Job response, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/WorkspaceJob' } } } } }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
+    post:
+      operationId: startWorkspaceJob
+      summary: Start a Workspace-scoped durable Job
+      description: |
+        Creates a Workspace Job domain row and dispatches execution. `Idempotency-Key` is required.
+        Replaying the same key returns the existing Job with `200` and never starts a second process;
+        the same key with a different command/args/cwd/timeoutSecs returns `409 JOB_IDEMPOTENCY_CONFLICT`.
+        `windows-host` and `windows-mxc` direct-attach workspaces dispatch through the Runtime Job engine.
+        A Runtime probe/launcher response of `501 JOB_BACKEND_LAUNCH_PENDING` is fail-closed and never
+        falls back to another backend. When Runtime dispatch cannot be confirmed the durable state
+        becomes `interrupted` (never replayed) and the call answers `502 RUNTIME_UNAVAILABLE`.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: workspaceId, required: true, schema: { type: string } }
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, maxLength: 128 }
+          description: Required. Replays the same request to the existing Job response; a different command/args/cwd/timeoutSecs returns 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkspaceJobStartRequest' }
+      responses:
+        '202':
+          description: Job accepted and dispatched; body is the Job response
+          content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceJob' } } }
+        '200':
+          description: Idempotent replay of the existing Job response for the same Idempotency-Key
+          content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceJob' } } }
+        '400':
+          description: 'IDEMPOTENCY_KEY_REQUIRED (header missing) or INVALID_REQUEST (command missing)'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404':
+          description: WORKSPACE_NOT_FOUND (missing or no Workspace access; no 403 leak)
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
+        '409': { description: JOB_IDEMPOTENCY_CONFLICT (same key, different command/args/cwd/timeoutSecs), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '501': { description: JOB_BACKEND_LAUNCH_PENDING (Runtime launcher/probe unavailable; no fallback and no new process), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '502':
+          description: RUNTIME_UNAVAILABLE (dispatch unconfirmed; durable Job state becomes interrupted)
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
   /api/v1/workspaces/{workspaceId}/execution-mode:
      patch: { operationId: updateWorkspaceExecutionMode, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [executionMode], properties: { executionMode: { type: string, enum: [docker, windows-mxc, windows-host] } } } } } }, responses: { '200': { description: Updated execution mode }, '404': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' }, '503': { $ref: '#/components/responses/Problem' } } }
   /api/v1/workspaces/{workspaceId}/materialize:
@@ -1343,10 +1341,8 @@ paths:
     delete: { operationId: stopMcpSession, description: 'PLAN-0347 T1.3: stops one stdio session (config removal / diagnostics); next call rebuilds lazily.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: serverId, required: true, schema: { type: string } }], responses: { '200': { description: Stopped, content: { application/json: { schema: { $ref: '#/components/schemas/StatusResponse' } } } }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId}:
     post: { operationId: stdioMcp, description: 'PLAN-0347 T1.3: forwards one JSON-RPC frame to the stdio MCP session (exec attach direct; no in-container bridge). Errors use MCP_SESSION_UNAVAILABLE / MCP_SESSION_FAILED / MCP_SESSION_BUSY.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: serverId, required: true, schema: { type: string } }], responses: { '200': { description: MCP response }, '429': { $ref: '#/components/responses/Problem' }, '502': { $ref: '#/components/responses/Problem' }, '503': { $ref: '#/components/responses/Problem' } } }
-  /internal/v1/runtime/workspaces/{workspaceId}/executions/{itemId}/cancel:
-    post: { operationId: cancelRuntimeExecution, description: 'PLAN-0317 T2.3: cancels an in-flight execution identified by the canonical tool-call correlation key (PLAN-0463: value of X-Tool-Call-Id, equal to the legacy X-Operation-Item-Id during the header migration) and waits (bounded) for termination confirmation; scope is limited to the workspace in the path.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: itemId, required: true, schema: { type: string } }], responses: { '200': { description: 'Cancellation outcome (cancelled | unconfirmed | already_finished)', content: { application/json: { schema: { type: object, properties: { status: { type: string, enum: [cancelled, unconfirmed, already_finished] }, confirmed: { type: boolean } }, required: [status, confirmed] } } } }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
-  /internal/v1/operations/items/{itemId}/late-termination:
-    post: { operationId: recordLateTermination, deprecated: true, description: 'DEPRECATED (PLAN-0463 T2.2): use POST /internal/v1/mcp/invocations/{invocationId}/late-termination. Kept for Runtime callers without an invocation id; removal is tracked by PLAN-0467. Still appends the legacy item.terminated.late event without rewriting the item terminal state.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: itemId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { confirmed: { type: boolean } }, required: [confirmed] } } } }, responses: { '200': { description: Recorded }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' }, '503': { description: OPERATION_LOCK_TIMEOUT — bounded database lock wait exceeded; safe to retry } } }
+  /internal/v1/runtime/workspaces/{workspaceId}/executions/{toolCallId}/cancel:
+    post: { operationId: cancelRuntimeExecution, description: 'Cancels an in-flight execution identified by its canonical tool-call correlation key and waits (bounded) for termination confirmation; scope is limited to the workspace in the path.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: toolCallId, required: true, schema: { type: string } }], responses: { '200': { description: 'Cancellation outcome (cancelled | unconfirmed | already_finished)', content: { application/json: { schema: { type: object, properties: { status: { type: string, enum: [cancelled, unconfirmed, already_finished] }, confirmed: { type: boolean } }, required: [status, confirmed] } } } }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/mcp/invocations/{invocationId}/late-termination:
     post: { operationId: recordMcpInvocationLateTermination, description: 'PLAN-0463 T2.2: records a Runtime-reported late termination against the MCP execution domain. Appends an mcp_dispatch_history event (attempt.late_confirmed) and settles an unknown attempt/invocation to late_confirmed when confirmed; an already settled invocation is never rewritten.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: invocationId, required: true, schema: { type: string, format: uuid } }], requestBody: { content: { application/json: { schema: { type: object, properties: { confirmed: { type: boolean }, attemptId: { type: string, format: uuid } }, required: [confirmed] } } } }, responses: { '200': { description: Recorded, content: { application/json: { schema: { type: object, properties: { status: { type: string, enum: [recorded] } }, required: [status] } } } }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '404': { description: MCP_INVOCATION_NOT_FOUND, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '503': { description: OPERATION_LOCK_TIMEOUT - bounded database lock wait exceeded; safe to retry } } }
   # PLAN-0390 Job start / status / output / cancel live behind the same internal
@@ -1369,7 +1365,7 @@ paths:
             schema: { $ref: '#/components/schemas/RuntimeJobStartRequest' }
       responses:
         '202':
-          description: Job dispatched (jobId/status/operationItemId/bootId)
+          description: Job dispatched (jobId/status/bootId)
           content: { application/json: { schema: { $ref: '#/components/schemas/RuntimeJobStartResponse' } } }
         '401': { $ref: '#/components/responses/Problem' }
         '501': { description: JOB_BACKEND_LAUNCH_PENDING (Runtime probe/launcher unavailable; no process started), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
@@ -1596,59 +1592,6 @@ paths:
     post: { operationId: runtimeStat, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Metadata } } }
   /internal/v1/runtime/workspaces/{workspaceId}/files/write/{path}:
     post: { operationId: runtimeWriteFile, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: path, required: true, schema: { type: string } }], responses: { '200': { description: Written } } }
-  /api/v1/operations:
-    get:
-      operationId: listOperations
-      deprecated: true
-      description: 'PLAN-0466 T1.3: deprecated ledger list — replaced by `GET /api/v1/audit/entries` (four-domain `v_audit_entries` view); kept serving legacy rows until PLAN-0467 removes it.'
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - { in: query, name: sessionId, schema: { type: string } }
-        - { in: query, name: workspaceId, schema: { type: string } }
-        - { in: query, name: status, schema: { type: string, enum: [accepted, running, waiting_for_approval, completed, failed, cancelled, interrupted, ambiguous] } }
-        - { in: query, name: page, schema: { type: integer, minimum: 0, default: 0 } }
-        - { in: query, name: size, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
-      responses: { '200': { description: Paginated user operations (redacted), content: { application/json: { schema: { $ref: '#/components/schemas/UserOperationListResponse' } } } }, '401': { $ref: '#/components/responses/Problem' } }
-  /api/v1/operations/{operationId}:
-    get:
-      operationId: getOperation
-      deprecated: true
-      description: 'PLAN-0466 T1.3: deprecated ledger trace — replaced by `GET /api/v1/audit/entries/{type}/{id}` (domain detail + history timeline); removal tracked by PLAN-0467.'
-      security: [{ bearerAuth: [] }]
-      parameters: [{ in: path, name: operationId, required: true, schema: { type: string, format: uuid } }]
-      responses: { '200': { description: Owner-only operation trace (redacted), content: { application/json: { schema: { $ref: '#/components/schemas/OperationTrace' } } } }, '404': { $ref: '#/components/responses/Problem' } }
-  /api/v1/operations/items/{itemId}/job-output:
-    get:
-      operationId: getJobOutput
-      deprecated: true
-      security: [{ bearerAuth: [] }]
-      description: 'PLAN-0344 durable job output resume — LEGACY TRANSITION ROUTE (PLAN-0465 T2.1): survives unchanged until PLAN-0467, then drops with the legacy job item. Canonical route is `GET /api/v1/workspaces/{workspaceId}/jobs/{jobId}/output`. Byte-cursor pagination over the container-side job output file; UTF-8 boundaries are guaranteed by the Runtime. Access = Workspace membership (requireWorkspaceAccessibleItem -> requireAccessibleWorkspace), not owner-only.'
-      parameters:
-        - { in: path, name: itemId, required: true, schema: { type: string, format: uuid } }
-        - { in: query, name: stream, schema: { type: string, enum: [stdout, stderr], default: stdout } }
-        - { in: query, name: offset, schema: { type: integer, minimum: 0, default: 0, description: Byte cursor; pass the nextOffset returned by the previous read } }
-        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 1048576, default: 65536 } }
-      responses: { '200': { description: Job output chunk, content: { application/json: { schema: { $ref: '#/components/schemas/JobOutputChunk' } } } }, '400': { $ref: '#/components/responses/Problem' }, '404': { description: JOB_ARCHIVE_NOT_FOUND or OPERATION_ITEM_NOT_FOUND, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }, '409': { description: JOB_OUTPUT_LOST (job non-terminal but output gone) or JOB_OUTPUT_EXPIRED (terminal job output cleaned after TTL), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }, '502': { description: RUNTIME_UNAVAILABLE, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } } }
-  /api/v1/operations/items/{itemId}/cancel:
-    post:
-      operationId: cancelOperationItemJob
-      deprecated: true
-      security: [{ bearerAuth: [] }]
-      description: |
-        PLAN-0366 single-job cancel — LEGACY TRANSITION ROUTE (PLAN-0465 T2.1):
-        survives unchanged until PLAN-0467, then drops with the legacy job item.
-        Canonical route is `POST /api/v1/workspaces/{workspaceId}/jobs/{jobId}/cancel`.
-        Access = Workspace membership (not owner-only). Cancelling a job never
-        changes the run or conversation terminal state. Idempotent for terminal
-        archives: 200 with the original status and `changed=false`. `changed` only
-        reports whether this call moved a `running` archive to a terminal state.
-        502 JOB_CANCEL_UNCONFIRMED means the Runtime could not confirm termination
-        and the archive is unchanged; 502 RUNTIME_UNAVAILABLE means the Runtime call
-        failed and the archive is unchanged. Runtime 404 (job missing) archives the
-        job as `orphaned` (fail-closed).
-      parameters:
-        - { in: path, name: itemId, required: true, schema: { type: string, format: uuid } }
-      responses: { '200': { description: 'Cancel outcome: itemId/jobId/status/changed', content: { application/json: { schema: { $ref: '#/components/schemas/JobCancelResult' } } } }, '400': { $ref: '#/components/responses/Problem' }, '404': { description: 'OPERATION_ITEM_NOT_FOUND (not owner or missing; no 403) or JOB_ARCHIVE_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '502': { description: 'JOB_CANCEL_UNCONFIRMED (termination unconfirmed; archive unchanged) or RUNTIME_UNAVAILABLE', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } }
   /api/v1/workspaces/{workspaceId}/jobs/{jobId}/output:
     get:
       operationId: getWorkspaceJobOutput
@@ -1669,31 +1612,16 @@ paths:
         PLAN-0465 T2.1 canonical single-job cancel (decision #7: path key =
         domain `jobId`). Access = Workspace membership (not owner-only);
         (jobId, workspaceId) double-keyed, foreign/missing collapse to 404.
-        Frozen semantics identical to the legacy route: cancelling a job never
+        Cancelling a job never
         changes the run or conversation terminal state; terminal archives are
         idempotent 200 with `changed=false`; 502 JOB_CANCEL_UNCONFIRMED and 502
         RUNTIME_UNAVAILABLE leave the archive unchanged; Runtime 404 archives the
-        job as `orphaned` (`cancelReason=job_missing`, fail-closed). The legacy
-        `operation_events(job.cancel)` audit row keeps being dual-written until
-        PLAN-0467; the domain transition history lands in `workspace_job_history`.
+        job as `orphaned` (`cancelReason=job_missing`, fail-closed); transition history
+        is recorded in `workspace_job_history`.
       parameters:
         - { in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }
         - { in: path, name: jobId, required: true, schema: { type: string, format: uuid } }
       responses: { '200': { description: 'Cancel outcome: jobId/status/changed (domain jobId)', content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceJobCancelResult' } } } }, '400': { $ref: '#/components/responses/Problem' }, '404': { description: 'WORKSPACE_NOT_FOUND (foreign or missing; no 403) or JOB_ARCHIVE_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '502': { description: 'JOB_CANCEL_UNCONFIRMED (termination unconfirmed; archive unchanged) or RUNTIME_UNAVAILABLE', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } }
-  /internal/v1/operations:
-    post:
-      operationId: startOperation
-      security: [{ bearerAuth: [] }]
-      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/OperationStartRequest' } } } }
-      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/OperationStartResponse' } } } }, '200': { description: Idempotent replay of an existing operation, content: { application/json: { schema: { $ref: '#/components/schemas/OperationStartResponse' } } } }, '409': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '503': { description: OPERATION_LOCK_TIMEOUT — bounded database lock wait exceeded; safe to retry } }
-  /internal/v1/operations/{operationId}/trace:
-    get:
-      operationId: getInternalOperationTrace
-      deprecated: true
-      description: 'PLAN-0466 T1.3: deprecated internal ledger trace — replaced by `GET /internal/v1/audit/entries/{type}/{id}` (internal field tier); removal tracked by PLAN-0467.'
-      security: [{ bearerAuth: [] }]
-      parameters: [{ in: path, name: operationId, required: true, schema: { type: string, format: uuid } }]
-      responses: { '200': { description: Full operation trace (references only; artifact contents are never returned), content: { application/json: { schema: { $ref: '#/components/schemas/InternalOperationTrace' } } } }, '404': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' } }
   /internal/v1/agents/spawn:
     post:
       operationId: spawnAgentSession
@@ -1701,7 +1629,7 @@ paths:
       description: Internal CP service surface only; the Agent production caller uses the CP-owned spawn_agent tool through /api/v1/mcp.
       security: [{ bearerAuth: [] }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AgentSpawnRequest' } } } }
-      responses: { '200': { description: 'Child Session and spawn ChatRun created, or the same child idempotently replayed; authorization, waiting link, audit, and one-shot grant consumption commit atomically', content: { application/json: { schema: { $ref: '#/components/schemas/AgentSpawnResponse' } } } }, '400': { description: 'INVALID_REQUEST — body must contain exactly parentRunId and toolCallId as UUID strings; injected identity/grant fields or incomplete/truncated durable prompt arguments are rejected before any write', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '401': { $ref: '#/components/responses/Problem' }, '403': { description: 'FORBIDDEN — no explicit SPAWN_AGENT grant, the durable item is not an agent spawn_agent tool call of this parent run, or the parent Session has no active Workspace-bound Agent principal', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '404': { description: 'SPAWN_PARENT_RUN_NOT_FOUND or SPAWN_EVENT_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '409': { description: 'APPROVAL_REQUIRED, SPAWN_PARENT_RUN_NOT_ACTIVE, SPAWN_ARGUMENTS_CHANGED, or IDEMPOTENCY_KEY_CONFLICT', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '503': { $ref: '#/components/responses/Problem' } }
+      responses: { '200': { description: 'Child Session and spawn ChatRun created, or the same child idempotently replayed; authorization, waiting link, audit, and one-shot grant consumption commit atomically', content: { application/json: { schema: { $ref: '#/components/schemas/AgentSpawnResponse' } } } }, '400': { description: 'INVALID_REQUEST — body must contain exactly parentRunId and toolCallId as UUID strings; injected identity/grant fields or incomplete/truncated durable prompt arguments are rejected before any write', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '401': { $ref: '#/components/responses/Problem' }, '403': { description: 'FORBIDDEN — no explicit SPAWN_AGENT grant, the MCP invocation is not an agent spawn_agent call of this parent run, or the parent Session has no active Workspace-bound Agent principal', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '404': { description: 'SPAWN_PARENT_RUN_NOT_FOUND or SPAWN_EVENT_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '409': { description: 'APPROVAL_REQUIRED, SPAWN_PARENT_RUN_NOT_ACTIVE, SPAWN_ARGUMENTS_CHANGED, or IDEMPOTENCY_KEY_CONFLICT', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '503': { $ref: '#/components/responses/Problem' } }
   /api/v1/audit/entries:
     get:
       operationId: listAuditEntries
@@ -1771,7 +1699,7 @@ components:
     RuntimeReadFileRequest: { type: object, required: [path], additionalProperties: false, properties: { path: { type: string, description: 'Workspace-relative path.' }, max_bytes: { type: integer, description: 'Truncate content to N bytes; truncated=true marks an applied cut.' } } }
     WorkspaceFactsResult: { type: object, required: [isRepository, cwd, platform, shell, observedAt], properties: { isRepository: { type: boolean }, branch: { type: string, description: 'Omitted when non-repo or detached.' }, head: { type: string }, cwd: { type: string, nullable: true, description: 'Logical sandbox cwd (/workspace in docker); null = unknown (host/mxc never report host paths).' }, platform: { type: string, nullable: true, description: 'Execution-face OS (container OS in docker, Runtime host OS otherwise).' }, shell: { type: string, nullable: true, description: 'Tool-exec shell entry (xihe-shell in docker); null = no shell layer or unknown.' }, observedAt: { type: string, format: date-time, description: 'Report time (RFC3339 UTC); diagnostics only, never an idempotency key.' } } }
     RuntimeReadFileResult: { type: object, required: [found, content, truncated], properties: { found: { type: boolean, description: 'false = path resolved to no content (missing file or unmaterialized root); true = content authoritative even when empty string.' }, content: { type: string, description: 'File content; empty string when found=false or the file is empty (distinguish via found).' }, truncated: { type: boolean } } }
-    AgentSpawnRequest: { type: object, required: [parentRunId, toolCallId], additionalProperties: false, properties: { parentRunId: { type: string, format: uuid }, toolCallId: { type: string, format: uuid, description: 'Agent tool-call correlation id of the durable spawn_agent OperationItem; never the OperationItem primary key' } } }
+    AgentSpawnRequest: { type: object, required: [parentRunId, toolCallId], additionalProperties: false, properties: { parentRunId: { type: string, format: uuid }, toolCallId: { type: string, format: uuid, description: 'Canonical MCP tool-call correlation ID for the spawn invocation.' } } }
     AgentSpawnResponse: { type: object, required: [sessionId, runId, principalId, workspaceId], properties: { sessionId: { type: string, format: uuid }, runId: { type: string, format: uuid }, principalId: { type: string, format: uuid, description: 'Stable AgentPrincipal resolved from the durable parent Session; never taken from the request' }, workspaceId: { type: string, format: uuid } } }
     RegisterRequest: { type: object, required: [email, password, name], properties: { email: { type: string }, password: { type: string }, name: { type: string } } }
     LoginRequest: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string } } }
@@ -2101,7 +2029,6 @@ components:
         status: { type: string, enum: [pending, approved, rejected, expired] }
         requestId: { type: string, format: uuid }
         runId: { type: string, format: uuid }
-        operationId: { type: string, format: uuid }
         sessionId: { type: string, format: uuid }
         workspaceId: { type: string, format: uuid }
         tool: { type: string }
@@ -2399,7 +2326,6 @@ components:
         componentSources:
           type: object
           additionalProperties: { $ref: '#/components/schemas/ContextComponentSource' }
-        operationId: { type: string, format: uuid, readOnly: true }
         stream: { type: boolean, default: true }
         provider: { type: string }
         model: { type: string }
@@ -2496,7 +2422,7 @@ components:
     WorkspaceEnvironment: { type: object, required: [workspaceId, status, storageBackend, storageRef, storageMode, executionMode, capability, jobCapability, runtime], properties: { workspaceId: { type: string }, status: { type: string }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'], description: 'Canonical host path only for the owner/admin; null for ordinary members.' }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] }, capability: { $ref: '#/components/schemas/BackendCapabilitySnapshot' }, jobCapability: { $ref: '#/components/schemas/WorkspaceJobCapability' }, executionSpec: { type: object, additionalProperties: true }, runtime: { type: object, additionalProperties: true } } }
     WorkspaceJob:
       type: object
-      description: 'Workspace-scoped durable Job response (PLAN-0390 + PLAN-0465 T2.1). Shared by the POST start response and the GET list items. PLAN-0465 decision #7: canonical identity is `jobId` (= `workspace_jobs.id`, domain UUID); `runtimeJobId` is the opaque Runtime backend handle. `operationId`/`operationItemId` no longer appear on the wire (legacy `/operations/items/*` transition routes survive until PLAN-0467). `succeeded`/`timeout`/`orphaned` keep the Docker literal names in this batch; normalization to `completed`/`failed`/`timed_out` is deferred to the backend adapters.'
+      description: 'Workspace-scoped durable Job response. `jobId` is `workspace_jobs.id`; `runtimeJobId` is the opaque Runtime backend handle. No Ledger identifiers are exposed. `succeeded`/`timeout`/`orphaned` retain the current Job status vocabulary.'
       required: [jobId, workspaceId, scope, status]
       properties:
         jobId: { type: string, format: uuid, description: 'Domain Job identity (`workspace_jobs.id`); the only key on `/api/v1/workspaces/{workspaceId}/jobs/{jobId}/*` routes.' }
@@ -2587,40 +2513,13 @@ components:
         model: { type: string }
         retryable: { type: boolean }
         outcome: { type: string, enum: [success, error, partial, ambiguous] }
-    UserOperationSummary:
-      type: object
-      required: [id, kind, source, actorType, status, createdAt]
-      description: Redacted user 安全摘要 response; never includes errorRef, resultRef or argumentsPreview.
-      properties:
-        id: { type: string, format: uuid, readOnly: true }
-        sessionId: { type: [string, 'null'], readOnly: true }
-        workspaceId: { type: [string, 'null'], readOnly: true }
-        runId: { type: [string, 'null'], readOnly: true }
-        kind: { type: string, enum: [chat, tool_call, approval, job, workspace_lifecycle, system, other, llm_usage], readOnly: true }
-        source: { type: string, enum: [ui, agent, runtime, system, mcp], readOnly: true }
-        actorType: { type: string, enum: [user, agent, system, service], readOnly: true }
-        status: { type: string, enum: [accepted, running, waiting_for_approval, completed, failed, cancelled, interrupted, ambiguous], readOnly: true }
-        summary: { type: [string, 'null'], readOnly: true }
-        errorCode: { type: [string, 'null'], readOnly: true }
-        startedAt: { type: [string, 'null'], format: date-time, readOnly: true }
-        finishedAt: { type: [string, 'null'], format: date-time, readOnly: true }
-        createdAt: { type: string, format: date-time, readOnly: true }
-    UserOperationListResponse:
-      type: object
-      required: [operations, page, size, totalElements, totalPages]
-      properties:
-        operations: { type: array, items: { $ref: '#/components/schemas/UserOperationSummary' } }
-        page: { type: integer }
-        size: { type: integer }
-        totalElements: { type: integer }
-        totalPages: { type: integer }
     JobOutputChunk:
       type: object
-      description: 'PLAN-0344 durable job output chunk. `nextOffset` is always a UTF-8 rune boundary; clients must pass it back as `offset`. `truncated` = the output file hit the 1 MiB JOB_CAP (head kept). PLAN-0465 T2.1: on the canonical `/workspaces/{workspaceId}/jobs/{jobId}/output` route `jobId` is the domain identity and `runtimeJobId` is also returned; the legacy transition route keeps the pre-0465 shape (`jobId` = Runtime handle).'
+      description: 'Durable Job output chunk. `jobId` is the Workspace Job domain identity and `runtimeJobId` is the backend handle. `nextOffset` is always a UTF-8 rune boundary; `truncated` means the output file hit the 1 MiB JOB_CAP.'
       required: [jobId, stream, offset, nextOffset, sizeBytes, truncated, data, jobStatus]
       properties:
-        jobId: { type: string, description: Domain jobId (canonical route) or Runtime handle (legacy transition route). }
-        runtimeJobId: { type: string, description: Runtime backend handle (canonical route only). }
+        jobId: { type: string, format: uuid, description: Workspace Job domain identity. }
+        runtimeJobId: { type: string, description: Runtime backend handle. }
         stream: { type: string, enum: [stdout, stderr] }
         offset: { type: integer, description: Actual byte offset (malformed input offsets are advanced to the nearest boundary) }
         nextOffset: { type: integer }
@@ -2646,18 +2545,9 @@ components:
               sinceMs: { type: integer, description: Unix milliseconds when the current state was entered }
               epoch: { type: integer, description: Session generation counter }
         count: { type: integer }
-    JobCancelResult:
-      type: object
-      description: PLAN-0366 single-job cancel outcome — LEGACY TRANSITION ROUTE shape (`/api/v1/operations/items/{itemId}/cancel`, survives until PLAN-0467; `jobId` = Runtime handle). `changed` is true only when this call moved a `running` archive to a terminal state; terminal archives return 200 with the original status and changed=false.
-      required: [itemId, jobId, status, changed]
-      properties:
-        itemId: { type: string, format: uuid }
-        jobId: { type: string }
-        status: { type: string, enum: [succeeded, cancelled, timeout, orphaned] }
-        changed: { type: boolean }
     WorkspaceJobCancelResult:
       type: object
-      description: PLAN-0465 T2.1 canonical single-job cancel outcome (`/api/v1/workspaces/{workspaceId}/jobs/{jobId}/cancel`); `jobId` = domain identity (decision #7, no `itemId` alias).
+      description: Canonical single-job cancel outcome; `jobId` is the Workspace Job domain identity.
       required: [jobId, status, changed]
       properties:
         jobId: { type: string, format: uuid }
@@ -2665,9 +2555,9 @@ components:
         changed: { type: boolean }
     RuntimeJobStartRequest:
       type: object
-      required: [operationItemId, command]
+      required: [jobId, command]
       properties:
-        operationItemId: { type: string, format: uuid, description: Durable operation item that owns this job (the CP-side anchor). }
+        jobId: { type: string, format: uuid, description: Canonical Workspace Job identity. }
         command: { type: string }
         args: { type: array, items: { type: string }, default: [] }
         timeoutSecs: { type: integer, format: int64, default: 0, description: '0 means unlimited.' }
@@ -2675,17 +2565,17 @@ components:
         env: { type: object, additionalProperties: { type: string }, description: Accepted but currently ignored by the Docker path. }
     RuntimeJobStartResponse:
       type: object
-      required: [jobId, status, operationItemId, bootId]
+      required: [jobId, runtimeJobId, status, bootId]
       properties:
-        jobId: { type: string }
+        jobId: { type: string, format: uuid, description: Echo of the canonical Workspace Job identity from the request. }
+        runtimeJobId: { type: string, description: Runtime backend handle used for status/output/cancel calls. }
         status: { type: string, enum: [running] }
-        operationItemId: { type: string, format: uuid }
         bootId: { type: string, description: Runtime per-process boot id; a change makes unconfirmed Jobs interrupted without replay. }
     RuntimeJobHandleRequest:
       type: object
       required: [jobId]
       properties:
-        jobId: { type: string, description: canonical operationItemId (PLAN-0390 Job identity). }
+        jobId: { type: string, description: Canonical Workspace Job identity. }
     RuntimeJobOutputRequest:
       type: object
       required: [jobId, stream, offset, limit]
@@ -2717,47 +2607,11 @@ components:
         available: { type: boolean }
         unavailableReason: { type: [string, 'null'], description: Stable reason when available=false. }
         reason: { type: [string, 'null'], description: Legacy probe key kept in sync with unavailableReason. }
-    UserOperationItemView:
-      type: object
-      required: [id, operationId, sequence, kind, source, status, waitingOnRunId]
-      description: >-
-        Owner-facing item projection (PLAN-0466 M0 fix): carries no resultRef, no
-        argumentsPreview and no cwd — those three reference fields exist only on
-        InternalOperationItemView, so the public OperationTrace schema cannot leak
-        internal-only fields.
-      properties:
-        id: { type: string, format: uuid, readOnly: true }
-        operationId: { type: string, format: uuid, readOnly: true }
-        toolCallId: { type: [string, 'null'], readOnly: true }
-        parentItemId: { type: [string, 'null'], readOnly: true }
-        sequence: { type: integer, readOnly: true }
-        kind: { type: string, enum: [chat, tool_call, approval, job, workspace_lifecycle, system, other, llm_usage], readOnly: true }
-        toolName: { type: [string, 'null'], readOnly: true }
-        source: { type: string, enum: [ui, agent, runtime, system, mcp], readOnly: true }
-        policyDecision: { type: [string, 'null'], readOnly: true, description: 'Legacy coarse decision marker (allow/deny/pending/...); the typed safe verdict snapshot is `policy`.' }
-        policy: { $ref: '#/components/schemas/OperationPolicySummary', description: 'Optional safe verdict snapshot for dispatched calls; omitted on legacy rows and non-dispatch items.' }
-        approvalRequestId: { type: [string, 'null'], format: uuid, readOnly: true }
-        waitingOnRunId: { type: [string, 'null'], format: uuid, readOnly: true, description: 'Durable child Run currently linked to this tool item; null when no child is waiting.' }
-        status: { type: string, enum: [pending, running, waiting_for_approval, resolving, completed, failed, aborted, cancelled, ambiguous], readOnly: true }
-        errorCode: { type: [string, 'null'], readOnly: true }
-        startedAt: { type: [string, 'null'], format: date-time, readOnly: true }
-        finishedAt: { type: [string, 'null'], format: date-time, readOnly: true }
-    InternalOperationItemView:
-      description: >-
-        Internal trace item (PLAN-0466 M0 fix): the owner-facing projection plus
-        reference-only fields; artifact contents are never returned.
-      allOf:
-        - $ref: '#/components/schemas/UserOperationItemView'
-        - type: object
-          properties:
-            resultRef: { type: [string, 'null'], readOnly: true, description: 'Internal trace view only.' }
-            argumentsPreview: { type: [string, 'null'], readOnly: true, description: 'Internal trace view only; never returned to callers through the audit surface.' }
-            cwd: { type: [string, 'null'], readOnly: true, description: 'Internal trace view only.' }
-    OperationPolicySummary:
+    SafePolicySummary:
       type: object
       additionalProperties: false
       description: >-
-        Safe verdict snapshot attached to the dispatch ledger item (PLAN-0328 T1.15): why the call
+        Safe verdict snapshot attached to the MCP invocation: why the call
         was allowed or blocked. Raw tool arguments, MCP request bodies and free-form exception text
         are never included; legacy V19-absent rows omit the whole `policy` object. `reused` is the
         T1.7 reuse annotation: true when the dispatch reused an exact session grant, null when reuse
@@ -2814,96 +2668,6 @@ components:
           type: [string, 'null']
           description: Run recovery route (`/api/v1/chat/runs/{runId}`) for the originating run; present only when the call carried a run context. Informational for the Agent (user auth required).
         policy: { $ref: '#/components/schemas/ApprovalPolicySummary' }
-    UserOperationAttemptView:
-      type: object
-      required: [id, itemId, stage, retryNo, module, status]
-      description: 'Owner-facing attempt projection (PLAN-0466 M0 fix): no httpStatus and no resultRef — both live on InternalOperationAttemptView.'
-      properties:
-        id: { type: string, format: uuid, readOnly: true }
-        itemId: { type: string, format: uuid, readOnly: true }
-        stage: { type: string, readOnly: true }
-        retryNo: { type: integer, readOnly: true }
-        parentAttemptId: { type: [string, 'null'], readOnly: true }
-        module: { type: string, enum: [agent, cp, runtime, mcp], readOnly: true }
-        status: { type: string, enum: [started, succeeded, failed, timed_out, cancelled, unknown], readOnly: true }
-        errorCode: { type: [string, 'null'], readOnly: true }
-        durationMs: { type: [integer, 'null'], readOnly: true }
-        startedAt: { type: string, format: date-time, readOnly: true }
-        finishedAt: { type: [string, 'null'], format: date-time, readOnly: true }
-    InternalOperationAttemptView:
-      description: 'Internal trace attempt: the owner-facing projection plus transport/result references.'
-      allOf:
-        - $ref: '#/components/schemas/UserOperationAttemptView'
-        - type: object
-          properties:
-            httpStatus: { type: [integer, 'null'], readOnly: true }
-            resultRef: { type: [string, 'null'], readOnly: true, description: 'Internal trace view only.' }
-    OperationEventView:
-      type: object
-      required: [id, operationId, sequence, eventType, state, actor]
-      properties:
-        id: { type: string, format: uuid, readOnly: true }
-        operationId: { type: string, format: uuid, readOnly: true }
-        itemId: { type: [string, 'null'], readOnly: true }
-        attemptId: { type: [string, 'null'], readOnly: true }
-        sequence: { type: integer, readOnly: true }
-        eventType: { type: string, readOnly: true }
-        state: { type: string, readOnly: true }
-        actor: { type: string, readOnly: true }
-        schemaVersion: { type: integer, readOnly: true }
-        createdAt: { type: string, format: date-time, readOnly: true }
-    OperationTrace:
-      type: object
-      required: [operation, items, attempts, events]
-      description: Owner-scoped redacted trace; items/attempts use the user-only schemas (no resultRef, httpStatus, errorRef or argumentsPreview).
-      properties:
-        operation: { $ref: '#/components/schemas/UserOperationSummary' }
-        items: { type: array, items: { $ref: '#/components/schemas/UserOperationItemView' } }
-        attempts: { type: array, items: { $ref: '#/components/schemas/UserOperationAttemptView' } }
-        events: { type: array, items: { $ref: '#/components/schemas/OperationEventView' } }
-        toolCallPairs: { type: array, items: { $ref: '#/components/schemas/OperationToolCallPair' } }
-    InternalOperationTrace:
-      type: object
-      required: [operation, items, attempts, events]
-      description: Developer/Admin diagnostic trace; includes references but never artifact contents.
-      properties:
-        operation:
-          type: object
-          required: [id, kind, source, actorType, status, createdAt]
-          properties:
-            id: { type: string, format: uuid, readOnly: true }
-            sessionId: { type: [string, 'null'], readOnly: true }
-            workspaceId: { type: [string, 'null'], readOnly: true }
-            userId: { type: [string, 'null'], readOnly: true }
-            runId: { type: [string, 'null'], readOnly: true }
-            requestId: { type: [string, 'null'], readOnly: true }
-            kind: { type: string, readOnly: true }
-            source: { type: string, readOnly: true }
-            actorType: { type: string, readOnly: true }
-            actorId: { type: [string, 'null'], readOnly: true }
-            status: { type: string, readOnly: true }
-            idempotencyKey: { type: [string, 'null'], readOnly: true }
-            summary: { type: [string, 'null'], readOnly: true }
-            errorCode: { type: [string, 'null'], readOnly: true }
-            errorRef: { type: [string, 'null'], readOnly: true }
-            startedAt: { type: [string, 'null'], format: date-time, readOnly: true }
-            finishedAt: { type: [string, 'null'], format: date-time, readOnly: true }
-            createdAt: { type: string, format: date-time, readOnly: true }
-        items: { type: array, items: { $ref: '#/components/schemas/InternalOperationItemView' } }
-        attempts: { type: array, items: { $ref: '#/components/schemas/InternalOperationAttemptView' } }
-        events: { type: array, items: { $ref: '#/components/schemas/OperationEventView' } }
-        toolCallPairs: { type: array, items: { $ref: '#/components/schemas/OperationToolCallPair' } }
-    OperationToolCallPair:
-      type: object
-      required: [toolCallId]
-      description: >-
-        Read-only pairing (PLAN-0346 Q2) of the agent row and the mcp row of one
-        tool call; both rows share the same tool_call_id. A missing side is null
-        so an unfinished/dropped channel stays visible.
-      properties:
-        toolCallId: { type: string }
-        agentItemId: { type: [string, 'null'], format: uuid, readOnly: true }
-        mcpItemId: { type: [string, 'null'], format: uuid, readOnly: true }
     AuditEntry:
       type: object
       required: [type, id, status, createdAt]
@@ -2930,7 +2694,7 @@ components:
         createdAt: { type: string, format: date-time, readOnly: true }
         startedAt: { type: [string, 'null'], format: date-time, readOnly: true }
         finishedAt: { type: [string, 'null'], format: date-time, readOnly: true }
-        policy: { $ref: '#/components/schemas/OperationPolicySummary', description: 'Safe verdict snapshot on mcp_invocation/approval details; omitted when the stored snapshot is unreadable (never guessed).' }
+        policy: { $ref: '#/components/schemas/SafePolicySummary', description: 'Safe verdict snapshot on mcp_invocation/approval details; omitted when the stored snapshot is unreadable (never guessed).' }
         approved: { type: [boolean, 'null'], description: 'Approval detail only.' }
         decisionKind: { type: [string, 'null'], description: 'Approval detail only.' }
     InternalAuditEntry:
@@ -3023,24 +2787,3 @@ components:
         entry: { $ref: '#/components/schemas/InternalAuditEntry' }
         timeline: { type: array, items: { $ref: '#/components/schemas/AuditTimelineEvent' } }
         attempts: { type: array, items: { $ref: '#/components/schemas/InternalAuditAttempt' } }
-    OperationStartRequest:
-      type: object
-      required: [kind, source, actorType]
-      properties:
-        userId: { type: [string, 'null'], format: uuid }
-        sessionId: { type: [string, 'null'], format: uuid }
-        workspaceId: { type: [string, 'null'], format: uuid }
-        runId: { type: [string, 'null'], format: uuid }
-        requestId: { type: [string, 'null'], format: uuid }
-        kind: { type: string, enum: [chat, tool_call, approval, job, workspace_lifecycle, system, other] }
-        source: { type: string, enum: [ui, agent, runtime, system, mcp] }
-        actorType: { type: string, enum: [user, agent, system, service] }
-        actorId: { type: [string, 'null'] }
-        idempotencyKey: { type: [string, 'null'], maxLength: 128 }
-        summary: { type: [string, 'null'] }
-    OperationStartResponse:
-      type: object
-      required: [operationId, alreadyRecorded]
-      properties:
-        operationId: { type: string, format: uuid }
-        alreadyRecorded: { type: boolean }

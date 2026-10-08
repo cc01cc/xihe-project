@@ -180,7 +180,7 @@ function connectSession(id: string) {
         onUsage: (data) => {
             if (!isCurrentSession()) return;
             // PLAN-0343: keep the latest run-terminal usage snapshot for the
-            // session-header usage line (live-run visibility; ledger is durable).
+            // session-header usage line.
             chatStore.setSessionLastUsage(id, data as ChatRunUsage);
         },
         onToolCall: (name: string, args: Record<string, unknown>) => {

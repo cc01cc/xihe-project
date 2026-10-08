@@ -33,10 +33,7 @@ public class AgentSpawnExecutionService {
         }
 
         String runId = requiredUuidHeader(headers, "X-Chat-Run-Id");
-        // PLAN-0464 T2.2: `X-Operation-Id` is no longer produced or required; the
-        // durable parent tool call is keyed by `X-Tool-Call-Id` (legacy fallback
-        // kept per PLAN-0463 wire contract R5b).
-        String toolCallId = requiredUuidHeader(headers, "X-Tool-Call-Id", "X-Operation-Item-Id");
+        String toolCallId = requiredUuidHeader(headers, "X-Tool-Call-Id");
         ChatSubmissionService.SpawnInvocation invocation = submissions.prepareSpawnInvocation(runId, toolCallId);
         if (!sessionId.equals(invocation.parentSessionId())
                 || !userId.equals(invocation.userId())
@@ -71,16 +68,6 @@ public class AgentSpawnExecutionService {
                     "Required MCP caller context is missing");
         }
         return parseUuidHeader(value, name);
-    }
-
-    /** PLAN-0463 wire contract R2: new key first, legacy key as the fallback. */
-    private static String requiredUuidHeader(HttpHeaders headers, String primaryName,
-                                             String fallbackName) {
-        String value = headers.getFirst(primaryName);
-        if (value != null && !value.isBlank()) {
-            return parseUuidHeader(value, primaryName);
-        }
-        return requiredUuidHeader(headers, fallbackName);
     }
 
     private static String parseUuidHeader(String value, String name) {

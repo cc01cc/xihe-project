@@ -12,8 +12,7 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * PLAN-0466 T1.2/T2.2: whitelist projections for the audit read views — the ported
- * equivalent of {@code OperationViews} for the four-domain read model.
+ * PLAN-0466 whitelist projections for the four-domain audit read model.
  *
  * <p>Field boundary (spec/security/audit.md §3, PLAN-0466 T2.2): no prompt, no
  * credential, no raw arguments in either tier. The user tier never emits
@@ -125,7 +124,7 @@ public final class AuditViews {
     // Attempt projections (mcp_invocations detail only)
     // ---------------------------------------------------------------------
 
-    /** User tier attempt: no httpStatus, no resultRef (OperationViews.toAttempt parity). */
+    /** User tier attempt: no httpStatus and no resultRef. */
     public static Map<String, Object> toUserAttempt(McpAttempt attempt) {
         Map<String, Object> view = new LinkedHashMap<>();
         view.put("id", attempt.getId() == null ? null : attempt.getId().toString());

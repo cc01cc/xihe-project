@@ -14,8 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.UUID;
 
 /**
- * PLAN-0466 T1.2: the service-Bearer audit read surface — the ported equivalent of
- * {@code GET /internal/v1/operations/{operationId}/trace}.
+ * PLAN-0466 service-Bearer audit read surface replacing the retired operation trace route.
  *
  * <pre>
  * GET /internal/v1/audit/entries/{type}/{id}

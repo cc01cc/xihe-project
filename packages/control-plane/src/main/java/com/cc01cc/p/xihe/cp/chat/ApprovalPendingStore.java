@@ -17,7 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>PLAN-0464 T1.5: the isolated {@code REQUIRES_NEW} transactions are gone —
  * they left a partial-commit window where the approval row was durable while its
- * history write (previously the ledger item) was not. Row, policy summary and
+ * approval-history write was not. Row, policy summary and
  * history now form a single approval-domain transaction that commits or rolls
  * back together.</p>
  */

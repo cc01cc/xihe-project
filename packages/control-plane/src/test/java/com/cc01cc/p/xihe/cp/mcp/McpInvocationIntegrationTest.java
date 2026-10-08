@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.mcp;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
+import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.McpAttempt;
 import com.cc01cc.p.xihe.cp.entity.McpDispatchHistory;
@@ -16,6 +17,7 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.policy.GrantAuthorizationService;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
+import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.McpAttemptRepository;
 import com.cc01cc.p.xihe.cp.repository.McpDispatchHistoryRepository;
@@ -41,6 +43,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -62,6 +65,7 @@ class McpInvocationIntegrationTest extends AbstractIntegrationTest {
     @Autowired private WorkspaceUserRepository workspaceUserRepository;
     @Autowired private SessionRepository sessionRepository;
     @Autowired private ChatRunRepository chatRunRepository;
+    @Autowired private ChatApprovalRepository chatApprovalRepository;
     @Autowired private AgentPrincipalRepository agentPrincipalRepository;
     @Autowired private WorkspaceAgentRepository workspaceAgentRepository;
     @Autowired private McpInvocationRepository invocationRepository;
@@ -69,12 +73,8 @@ class McpInvocationIntegrationTest extends AbstractIntegrationTest {
     @Autowired private McpDispatchHistoryRepository historyRepository;
     @Autowired private McpInvocationService mcpInvocationService;
     @Autowired private GrantAuthorizationService grantAuthorizationService;
-    @Autowired private com.cc01cc.p.xihe.cp.operation.OperationService operationService;
-    @Autowired private com.cc01cc.p.xihe.cp.repository.OperationItemRepository operationItemRepository;
-    @Autowired private com.cc01cc.p.xihe.cp.repository.OperationAttemptRepository operationAttemptRepository;
     @Autowired private McpRelayToolRecorder relayToolRecorder;
     @Autowired private ObjectMapper objectMapper;
-    @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     private String userId;
     private String otherUserId;
@@ -148,7 +148,7 @@ class McpInvocationIntegrationTest extends AbstractIntegrationTest {
 
     /**
      * verify V1: an active in-scope invocation opens idempotently at the gate and
-     * authorizes the tool call with NO operation / operation_item row anywhere.
+     * authorizes the tool call from its MCP invocation owner row.
      */
     @Test
     void gateInvocationAuthorizesWithoutLegacyOperationRows() {
@@ -163,11 +163,9 @@ class McpInvocationIntegrationTest extends AbstractIntegrationTest {
 
         assertTrue(grantAuthorizationService.hasCurrentAgentToolCall(
                         userId, workspaceId, sessionId, runId, toolCallId, "read_file"),
-                "an active in-scope invocation must authorize without an operation/item row");
-
-        assertEquals(0, jdbcTemplate.queryForObject(
-                        "select count(*) from ledger_operations where run_id = ?", Long.class, UUID.fromString(runId)),
-                "this test must not have created any legacy operation row");
+                "an active in-scope invocation must authorize through its domain row");
+        assertEquals(1, invocationRepository.findByRunIdOrderByCreatedAtAsc(runId).size(),
+                "the MCP invocation is the durable fact for this tool call");
 
         // verify V4 negative authorization: a session outside the invocation scope fails closed.
         assertFalse(grantAuthorizationService.hasCurrentAgentToolCall(
@@ -275,6 +273,36 @@ class McpInvocationIntegrationTest extends AbstractIntegrationTest {
     }
 
     /** T1.2 (review round-1 #2): user-direct mutations record an invocation best-effort. */
+    @Test
+    void deletingApprovalClearsOptionalInvocationReferenceWithoutDeletingInvocation() {
+        UUID requestId = UUID.randomUUID();
+        ChatApproval approval = new ChatApproval(requestId.toString(), runId, sessionId, userId,
+                workspaceId, "write_file", "write fixture", "safe preview", "dispatch_unknown",
+                Instant.now().plusSeconds(60));
+        chatApprovalRepository.saveAndFlush(approval);
+
+        McpInvocation invocation = new McpInvocation();
+        invocation.setId(UUID.randomUUID());
+        invocation.setRunId(runId);
+        invocation.setSessionId(sessionId);
+        invocation.setWorkspaceId(workspaceId);
+        invocation.setUserId(userId);
+        invocation.setToolCallId(UUID.randomUUID().toString());
+        invocation.setToolName("write_file");
+        invocation.setSource(McpInvocation.SOURCE_AGENT);
+        invocation.setStatus(McpInvocation.STATUS_ACTIVE);
+        invocation.setArgumentsPreview("{}");
+        invocation.setApprovalRequestId(requestId.toString());
+        invocationRepository.saveAndFlush(invocation);
+
+        chatApprovalRepository.delete(approval);
+        chatApprovalRepository.flush();
+
+        McpInvocation afterDelete = invocationRepository.findById(invocation.getId()).orElseThrow();
+        assertNull(afterDelete.getApprovalRequestId());
+        assertEquals(McpInvocation.STATUS_ACTIVE, afterDelete.getStatus());
+    }
+
     @Test
     void directUserMutationRecordsDirectSourceInvocation() {
         String toolCallId = UUID.nameUUIDFromBytes(

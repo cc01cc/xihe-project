@@ -32,7 +32,7 @@ class FakeTool:
     """Minimal tool for driving the LCToolAdapter event writers."""
 
     def __init__(self) -> None:
-        self.operation_item_id: str | None = None
+        self.tool_call_id: str | None = None
         self._spec = ToolSpec(
             name="fake_tool",
             description="A fake tool",
@@ -48,7 +48,7 @@ class FakeTool:
         return self._spec
 
     async def execute(self, input: dict, context: AgentContext) -> dict:
-        self.operation_item_id = context.metadata.get("operationItemId")
+        self.tool_call_id = context.metadata.get("toolCallId")
         return {"content": f"result for {input.get('query', '')}"}
 
 
@@ -254,8 +254,7 @@ async def test_tool_event_store_and_mcp_context_share_langchain_callback_run_id(
 
     expected_id = str(callback_run_id)
     assert [event.payload["call_id"] for event in store.events] == [expected_id, expected_id]
-    assert [event.payload["operation_item_id"] for event in store.events] == [expected_id, expected_id]
-    assert tool.operation_item_id == expected_id
+    assert tool.tool_call_id == expected_id
     assert isinstance(result, ToolMessage)
     assert result.tool_call_id == "provider-tool-id", "provider ID remains internal to LangGraph"
 

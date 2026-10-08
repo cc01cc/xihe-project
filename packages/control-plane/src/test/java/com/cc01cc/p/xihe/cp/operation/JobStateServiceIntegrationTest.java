@@ -3,15 +3,14 @@ package com.cc01cc.p.xihe.cp.operation;
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
-import com.cc01cc.p.xihe.cp.entity.OperationItem;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceJob;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceJob;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceJobRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.OperationExtensionRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,42 +24,19 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * PLAN-0344 T1.2：job_state 档案的状态机前进规则、回填来源、orphaned 收敛。
- */
+/** Domain-owned MCP tool result materialization and Workspace Job state transitions. */
 class JobStateServiceIntegrationTest extends AbstractIntegrationTest {
 
-    @Autowired
-    private JobStateService jobStateService;
-
-    @Autowired
-    private OperationService operationService;
-
-    @Autowired
-    private SessionRepository sessionRepository;
-
-    @Autowired
-    private UserRepository userRepository;
-
-    @Autowired
-    private WorkspaceRepository workspaceRepository;
-
-    @Autowired
-    private ObjectMapper objectMapper;
-
-    @Autowired
-    private OperationExtensionRepository operationExtensions;
-
-    @Autowired
-    private com.cc01cc.p.xihe.cp.repository.WorkspaceJobRepository workspaceJobs;
-
-    @Autowired
-    private com.cc01cc.p.xihe.cp.repository.ChatRunRepository chatRunRepository;
+    @Autowired private JobStateService jobStateService;
+    @Autowired private SessionRepository sessionRepository;
+    @Autowired private UserRepository userRepository;
+    @Autowired private WorkspaceRepository workspaceRepository;
+    @Autowired private WorkspaceJobRepository workspaceJobs;
+    @Autowired private ObjectMapper objectMapper;
 
     private String userId;
     private String workspaceId;
     private String sessionId;
-    private UUID operationId;
 
     @BeforeEach
     void setUp() {
@@ -76,19 +52,12 @@ class JobStateServiceIntegrationTest extends AbstractIntegrationTest {
         Session session = new Session(workspaceId, userId, "Job State Session");
         session.setId(UUID.randomUUID());
         sessionId = sessionRepository.save(session).getId().toString();
-
-        operationId = operationService.startOperation(userId, sessionId, workspaceId, null, null,
-                "chat", "ui", "user", userId,
-                "job-state-" + UUID.randomUUID(), "Job state test").operationId();
     }
 
-    private UUID newItem(String toolName) {
-        OperationItem item = operationService.appendItem(operationId, UUID.randomUUID().toString(),
-                null, "tool_call", toolName, "mcp", null, null, null);
-        return item.getId();
+    private JobStateService.ToolJobProvenance provenance(String toolCallId) {
+        return new JobStateService.ToolJobProvenance(workspaceId, userId, sessionId, null, toolCallId);
     }
 
-    /** 构造最小 MCP tools/call 成功响应（content[0].text = 工具返回文本）。 */
     private String toolResult(String text, boolean isError) throws Exception {
         var root = objectMapper.createObjectNode();
         var result = root.putObject("result");
@@ -102,102 +71,44 @@ class JobStateServiceIntegrationTest extends AbstractIntegrationTest {
         Map<String, Object> job = new LinkedHashMap<>();
         job.put("jobId", jobId);
         job.put("status", status);
-        if (exitCode != null) {
-            job.put("exitCode", exitCode);
-        }
+        if (exitCode != null) job.put("exitCode", exitCode);
         job.put("createdAt", "2026-09-18T00:00:00Z");
-        if (timeoutSecs != null) {
-            job.put("timeoutSecs", timeoutSecs);
-        }
+        if (timeoutSecs != null) job.put("timeoutSecs", timeoutSecs);
         return objectMapper.writeValueAsString(job);
     }
 
-    private void startJob(UUID itemId, String jobId) throws Exception {
-        jobStateService.applyToolResult(itemId, workspaceId, "start_background_process",
-                toolResult(jobId, false));
-    }
-
-    private void syncJob(UUID itemId, String jobId, String status, Integer exitCode, Long timeoutSecs)
-            throws Exception {
-        jobStateService.applyToolResult(itemId, workspaceId, "get_background_process",
-                toolResult(jobInfoJson(jobId, status, exitCode, timeoutSecs), false));
+    private WorkspaceJob startJob(String toolCallId, String runtimeJobId) throws Exception {
+        jobStateService.applyToolResult(provenance(toolCallId), "start_background_process",
+                toolResult(runtimeJobId, false));
+        return workspaceJobs.findByToolCallId(UUID.fromString(toolCallId)).orElseThrow();
     }
 
     @Test
-    void startResultCreatesRunningArchiveWithSessionScope() throws Exception {
-        UUID item = newItem("start_background_process");
-        String jobId = UUID.randomUUID().toString();
-        startJob(item, jobId);
+    void startResultCreatesRunningArchiveUnderCanonicalWorkspaceJobId() throws Exception {
+        String toolCallId = UUID.randomUUID().toString();
+        String runtimeJobId = UUID.randomUUID().toString();
+        WorkspaceJob row = startJob(toolCallId, runtimeJobId);
 
-        JobStateService.JobArchive archive = jobStateService.find(item).orElseThrow();
-        assertEquals(jobId, archive.jobId());
+        JobStateService.JobArchive archive = jobStateService.findByJobId(row.getId()).orElseThrow();
+        assertEquals(runtimeJobId, archive.jobId());
         assertEquals(workspaceId, archive.workspaceId());
         assertEquals("session", archive.scope());
         assertEquals("running", archive.status());
         assertNull(archive.endedAt());
+        assertEquals(UUID.fromString(toolCallId), row.getToolCallId());
     }
 
     @Test
-    void explicitWorkspaceScopeIsPersistedWithoutChangingOperationItemIdentity() throws Exception {
-        UUID item = newItem("start_background_process");
-        String jobId = UUID.randomUUID().toString();
-        startJob(item, jobId);
+    void terminalTransitionFillsExitCodeAndCannotRegress() throws Exception {
+        String toolCallId = UUID.randomUUID().toString();
+        String runtimeJobId = UUID.randomUUID().toString();
+        WorkspaceJob row = startJob(toolCallId, runtimeJobId);
+        jobStateService.applyToolResult(provenance(toolCallId), "get_background_process",
+                toolResult(jobInfoJson(runtimeJobId, "succeeded", 3, 600L), false));
 
-        jobStateService.upsert(item, Map.of("scope", JobStateService.SCOPE_WORKSPACE));
-
-        JobStateService.JobArchive archive = jobStateService.find(item).orElseThrow();
-        assertEquals(item.toString(), archive.itemId());
-        assertEquals("workspace", archive.scope());
-        assertEquals(jobId, archive.jobId());
-    }
-
-    @Test
-    void finalSchemaScopeIsStoredWithoutVersionBump() throws Exception {
-        UUID item = newItem("start_background_process");
-        String jobId = UUID.randomUUID().toString();
-        startJob(item, jobId);
-        jobStateService.upsert(item, Map.of("scope", JobStateService.SCOPE_WORKSPACE));
-
-        // PLAN-0465：state 落 `workspace_jobs.state`（唯一 schema，无版本演进），
-        // `job_state` extension 不再写入。
-        WorkspaceJob row = workspaceJobs.findByOperationItemId(item).orElseThrow();
-        assertEquals("workspace", row.getScope());
-        // jsonb 回读会归一化空白（`{"scope": "workspace"}`），比较前去空格。
-        assertTrue(row.getState().replace(" ", "").contains("\"scope\":\"workspace\""));
-        assertTrue(operationExtensions.findByItemId(item.toString()).isEmpty(),
-                "PLAN-0465 后 job 状态不再写 operation_extensions");
-    }
-
-    @Test
-    void workspaceJobProjectionUsesOperationItemIdentityAndScope() {
-        UUID jobOperation = operationService.startOperation(
-                userId, null, workspaceId, null, null,
-                "job", "ui", "user", userId,
-                "workspace-job-" + UUID.randomUUID(), "Workspace job projection").operationId();
-        OperationItem item = operationService.appendItem(
-                jobOperation, UUID.randomUUID().toString(), null, "job",
-                "execute_command", "ui", null, null, null);
-        jobStateService.upsert(item.getId(), Map.of(
-                "jobId", UUID.randomUUID().toString(),
-                "workspaceId", workspaceId,
-                "scope", JobStateService.SCOPE_WORKSPACE));
-
-        List<Map<String, Object>> jobs = jobStateService.listView(workspaceId);
-
-        assertTrue(jobs.stream().anyMatch(job -> job.get("jobId") != null
-                        && workspaceId.equals(job.get("workspaceId"))
-                        && "workspace".equals(job.get("scope"))),
-                "PLAN-0465 wire 以 domain jobId 为身份（不再出现 operationItemId）");
-    }
-
-    @Test
-    void terminalTransitionFillsExitCodeAndSealsEndedAt() throws Exception {
-        UUID item = newItem("start_background_process");
-        String jobId = UUID.randomUUID().toString();
-        startJob(item, jobId);
-        syncJob(item, jobId, "succeeded", 3, 600L);
-
-        JobStateService.JobArchive archive = jobStateService.find(item).orElseThrow();
+        jobStateService.applyToolResult(provenance(toolCallId), "get_background_process",
+                toolResult(jobInfoJson(runtimeJobId, "running", null, null), false));
+        JobStateService.JobArchive archive = jobStateService.findByJobId(row.getId()).orElseThrow();
         assertEquals("succeeded", archive.status());
         assertEquals(3, archive.exitCode());
         assertEquals(600L, archive.timeoutSecs());
@@ -205,157 +116,28 @@ class JobStateServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void terminalStateCannotRegressOrChange() throws Exception {
-        UUID item = newItem("start_background_process");
-        String jobId = UUID.randomUUID().toString();
-        startJob(item, jobId);
-        syncJob(item, jobId, "succeeded", 0, null);
+    void explicitWorkspaceScopeUpdatesTheDomainRowAndProjection() throws Exception {
+        WorkspaceJob row = startJob(UUID.randomUUID().toString(), UUID.randomUUID().toString());
+        jobStateService.upsertById(row.getId(), Map.of("scope", JobStateService.SCOPE_WORKSPACE));
 
-        // running 回落被丢弃
-        jobStateService.syncJobInfo(item, workspaceId,
-                objectMapper.readTree(jobInfoJson(jobId, "running", null, null)));
-        assertEquals("succeeded", jobStateService.find(item).orElseThrow().status());
-
-        // 另一终态覆盖被丢弃
-        jobStateService.applyToolResult(item, workspaceId, "cancel_background_process",
-                toolResult("cancelled", false));
-        JobStateService.JobArchive archive = jobStateService.find(item).orElseThrow();
-        assertEquals("succeeded", archive.status());
-        assertNull(archive.cancelReason());
+        WorkspaceJob updated = workspaceJobs.findById(row.getId()).orElseThrow();
+        assertEquals("workspace", updated.getScope());
+        assertTrue(updated.getState().replace(" ", "").contains("\"scope\":\"workspace\""));
+        List<Map<String, Object>> jobs = jobStateService.listView(workspaceId);
+        assertTrue(jobs.stream().anyMatch(job -> row.getId().toString().equals(job.get("jobId"))
+                && workspaceId.equals(job.get("workspaceId"))
+                && "workspace".equals(job.get("scope"))));
     }
 
     @Test
-    void cancelResultMarksCancelledWithUserReason() throws Exception {
-        UUID item = newItem("cancel_background_process");
-        String jobId = UUID.randomUUID().toString();
-        startJob(item, jobId);
-        jobStateService.applyToolResult(item, workspaceId, "cancel_background_process",
-                toolResult("cancelled", false));
-
-        JobStateService.JobArchive archive = jobStateService.find(item).orElseThrow();
-        assertEquals("cancelled", archive.status());
-        assertEquals("user_cancel", archive.cancelReason());
-        assertNotNull(archive.endedAt());
-    }
-
-    @Test
-    void failedRuntimeStatusConvergesToOrphaned() throws Exception {
-        UUID item = newItem("get_background_process");
-        String jobId = UUID.randomUUID().toString();
-        startJob(item, jobId);
-        jobStateService.syncJobInfo(item, workspaceId,
-                objectMapper.readTree(jobInfoJson(jobId, "failed", null, null)));
-
-        assertEquals("orphaned", jobStateService.find(item).orElseThrow().status());
-    }
-
-    @Test
-    void toolErrorDoesNotCreateArchive() throws Exception {
-        UUID item = newItem("start_background_process");
-        jobStateService.applyToolResult(item, workspaceId, "start_background_process",
-                toolResult("boom", true));
-        assertTrue(jobStateService.find(item).isEmpty());
-    }
-
-    @Test
-    void orphanMarkingMarksOnlyRunningArchives() throws Exception {
-        UUID runningItem = newItem("start_background_process");
-        UUID finishedItem = newItem("start_background_process");
-        startJob(runningItem, UUID.randomUUID().toString());
-        String finishedJobId = UUID.randomUUID().toString();
-        startJob(finishedItem, finishedJobId);
-        syncJob(finishedItem, finishedJobId, "succeeded", 0, null);
-
-        int marked = jobStateService.markOrphanedForWorkspace(workspaceId, null);
-
-        assertEquals(1, marked);
-        JobStateService.JobArchive orphaned = jobStateService.find(runningItem).orElseThrow();
-        assertEquals("orphaned", orphaned.status());
-        assertEquals("destroy_orphan", orphaned.cancelReason());
-        assertEquals("succeeded", jobStateService.find(finishedItem).orElseThrow().status());
-    }
-
-    @Test
-    void orphanMarkingRespectsAliveEnumeration() throws Exception {
-        UUID aliveItem = newItem("start_background_process");
-        UUID otherItem = newItem("start_background_process");
-        String aliveJobId = UUID.randomUUID().toString();
-        startJob(aliveItem, aliveJobId);
-        startJob(otherItem, UUID.randomUUID().toString());
-
-        // Runtime 只枚举到 aliveJobId → 仅它落 orphaned（另一条留给对账）
-        int marked = jobStateService.markOrphanedForWorkspace(workspaceId, java.util.Set.of(aliveJobId));
-
-        assertEquals(1, marked);
-        assertEquals("orphaned", jobStateService.find(aliveItem).orElseThrow().status());
-        assertEquals("running", jobStateService.find(otherItem).orElseThrow().status());
-    }
-
-    @Test
-    void findRunningSinceReturnsOnlyRunningRefs() throws Exception {
-        UUID runningItem = newItem("start_background_process");
-        String runningJobId = UUID.randomUUID().toString();
-        startJob(runningItem, runningJobId);
-        UUID finishedItem = newItem("start_background_process");
-        String finishedJobId = UUID.randomUUID().toString();
-        startJob(finishedItem, finishedJobId);
-        syncJob(finishedItem, finishedJobId, "cancelled", null, null);
-
-        List<JobStateService.JobStateRef> refs =
-                jobStateService.findRunningSince(java.time.Instant.now().minus(java.time.Duration.ofDays(1)));
-
-        assertTrue(refs.stream().anyMatch(ref -> runningJobId.equals(ref.jobId())));
-        assertTrue(refs.stream().noneMatch(ref -> finishedJobId.equals(ref.jobId())));
-    }
-
-    @Test
-    void getBackgroundProcessToolBodySyncsFromMcpResponse() throws Exception {
-        UUID item = newItem("get_background_process");
-        String jobId = UUID.randomUUID().toString();
-        startJob(item, jobId);
-        jobStateService.applyToolResult(item, workspaceId, "get_background_process",
-                toolResult(jobInfoJson(jobId, "timeout", null, 60L), false));
-
-        JobStateService.JobArchive archive = jobStateService.find(item).orElseThrow();
-        assertEquals("timeout", archive.status());
-        assertEquals(60L, archive.timeoutSecs());
-    }
-    /**
-     * PLAN-0465 A类适配：post-0464 chat-run 的 MCP 工具调用没有 ledger item
-     *（Agent 停发 X-Operation-Id）——行由 dispatch provenance 物化，
-     * 以 run/toolCall 关联进 jobSummary 面；legacy item 锚点为 null。
-     */
-    @Test
-    void mcpToolWithoutLedgerItemMaterializesRowFromProvenance() throws Exception {
-        // run_id 是 FK（chat_runs）：provenance 的 X-Chat-Run-Id 在真实链路里
-        // 必然指向既有 run，测试同样先落 run 行。
-        String runId = UUID.randomUUID().toString();
-        chatRunRepository.save(new com.cc01cc.p.xihe.cp.entity.ChatRun(runId, sessionId, userId,
-                workspaceId, "idem-" + UUID.randomUUID(), "hash", "openai", "gpt-test",
-                "none", "running"));
+    void missingDomainOwnerDoesNotMaterializeAJob() throws Exception {
         String toolCallId = UUID.randomUUID().toString();
-        JobStateService.ToolJobProvenance provenance = new JobStateService.ToolJobProvenance(
-                null, workspaceId, userId, sessionId, runId, toolCallId);
+        JobStateService.ToolJobProvenance incomplete = new JobStateService.ToolJobProvenance(
+                workspaceId, null, sessionId, null, toolCallId);
 
-        jobStateService.applyToolResult(provenance, "start_background_process",
-                toolResult("prov-job-1", false));
+        jobStateService.applyToolResult(incomplete, "start_background_process",
+                toolResult(UUID.randomUUID().toString(), false));
 
-        List<com.cc01cc.p.xihe.cp.entity.WorkspaceJob> rows = jobStateService.listByRun(runId);
-        assertEquals(1, rows.size(), "provenance row must land on the run");
-        com.cc01cc.p.xihe.cp.entity.WorkspaceJob row = rows.get(0);
-        assertNull(row.getOperationItemId(), "no ledger item for post-0464 chat-run tools");
-        assertEquals(toolCallId, row.getToolCallId().toString());
-        assertEquals(workspaceId, row.getWorkspaceId().toString());
-        assertEquals(sessionId, row.getSessionId().toString());
-        assertEquals(JobStateService.STATUS_RUNNING, row.getStatus());
-        assertEquals("prov-job-1",
-                jobStateService.findByJobId(row.getId()).orElseThrow().jobId());
-
-        // 同 tool call 的后续 get 结果回写同一行（tool_call_id 物化键）。
-        jobStateService.applyToolResult(provenance, "get_background_process",
-                toolResult(jobInfoJson("prov-job-1", "succeeded", 0, 30L), false));
-        assertEquals(1, jobStateService.listByRun(runId).size());
-        assertEquals("succeeded",
-                jobStateService.findByJobId(row.getId()).orElseThrow().status());
+        assertTrue(workspaceJobs.findByToolCallId(UUID.fromString(toolCallId)).isEmpty());
     }
 }

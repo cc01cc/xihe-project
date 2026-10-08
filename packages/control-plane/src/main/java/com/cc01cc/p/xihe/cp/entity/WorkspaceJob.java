@@ -19,9 +19,7 @@ import java.util.UUID;
  * <p>{@code id} is the domain {@code jobId} — the only Job identity on the wire.
  * {@code state} carries the former {@code job_state} extension payload (row-lock
  * + monotonic-forward semantics live in {@code JobStateService}); {@code status}
- * and {@code scope} are promoted query columns mirrored from that payload.
- * {@code operation_item_id} is the dual-write anchor to the legacy job item and
- * survives until PLAN-0467 drops the legacy Ledger job rows.</p>
+ * and {@code scope} are promoted query columns mirrored from that payload.</p>
  */
 @Entity
 @Table(name = "workspace_jobs")
@@ -45,15 +43,6 @@ public class WorkspaceJob {
 
     @Column(name = "tool_call_id", columnDefinition = "uuid")
     private UUID toolCallId;
-
-    /**
-     * Legacy job item anchor（至 0467；workspace-start 双写行必有）。
-     * Nullable：PLAN-0464 后 chat-run MCP 工具调用不再产生 ledger item
-     * （Agent 停发 X-Operation-Id），此类行以 tool_call_id/run_id/session_id
-     * 为 provenance。
-     */
-    @Column(name = "operation_item_id", columnDefinition = "uuid")
-    private UUID operationItemId;
 
     @Column(nullable = false, length = 32)
     private String source;
@@ -121,8 +110,6 @@ public class WorkspaceJob {
     public void setRunId(UUID runId) { this.runId = runId; }
     public UUID getToolCallId() { return toolCallId; }
     public void setToolCallId(UUID toolCallId) { this.toolCallId = toolCallId; }
-    public UUID getOperationItemId() { return operationItemId; }
-    public void setOperationItemId(UUID operationItemId) { this.operationItemId = operationItemId; }
     public String getSource() { return source; }
     public void setSource(String source) { this.source = source; }
     public String getScope() { return scope; }

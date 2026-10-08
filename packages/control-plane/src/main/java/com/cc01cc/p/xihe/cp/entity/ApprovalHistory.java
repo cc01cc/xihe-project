@@ -13,8 +13,7 @@ import java.util.UUID;
  * PLAN-0464 T1.5 (decision #8): append-only流转记录 for one approval request.
  *
  * <p>Covers {@code requested → dispatching → decided / expired /
- * dispatch_unknown}; it replaces the eight Operation-ledger write sites in
- * {@code ApprovalService}. Rows are never updated; the sequence is allocated
+ * dispatch_unknown}. Rows are never updated; the sequence is allocated
  * per request inside the transaction that already locked/updated the
  * {@code approval_requests} row.</p>
  */

@@ -62,14 +62,14 @@ public class McpInvocation {
     @Column(name = "tool_name", nullable = false, length = 128)
     private String toolName;
 
-    /** Bounded raw prefix preview (same 4096 rule as the legacy ledger preview). */
+    /** Bounded raw prefix preview (maximum 4096 bytes). */
     @Column(name = "arguments_preview", columnDefinition = "TEXT")
     private String argumentsPreview;
 
     @Column(name = "policy_decision", length = 16)
     private String policyDecision;
 
-    /** Safe verdict snapshot only (see {@code OperationPolicySummary}). */
+    /** Safe verdict snapshot only (see {@code SafePolicySummary}). */
     @Column(name = "policy_summary", columnDefinition = "TEXT")
     private String policySummary;
 

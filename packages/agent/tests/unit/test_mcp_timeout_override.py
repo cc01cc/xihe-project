@@ -200,7 +200,7 @@ def test_normalize_tool_timeouts_tolerates_missing_payload():
 def test_signature_carries_tool_call_id_from_metadata(monkeypatch):
     monkeypatch.delenv("XIHE_MCP_TOOL_TIMEOUT_S", raising=False)
     ctx = _context({"list_directory": 94})
-    ctx.metadata["operationItemId"] = "call-abc-123"
+    ctx.metadata["toolCallId"] = "call-abc-123"
 
     wait = _resolve_tool_wait("list_directory", ctx)
 
@@ -220,7 +220,7 @@ async def test_tool_logs_carry_tool_call_id_and_outcome(monkeypatch, log_sink):
     monkeypatch.delenv("XIHE_MCP_TOOL_TIMEOUT_S", raising=False)
     tool = _make_tool(sleep_s=0.0)
     ctx = _context({"list_directory": 94})
-    ctx.metadata["operationItemId"] = "call-log-1"
+    ctx.metadata["toolCallId"] = "call-log-1"
 
     await tool.execute({}, ctx)
 
@@ -243,7 +243,7 @@ async def test_downstream_error_result_is_labeled(monkeypatch, log_sink):
     )
     tool = MCPAgentTool(_stub_tool("list_directory"), manager)
     ctx = _context({"list_directory": 94})
-    ctx.metadata["operationItemId"] = "call-ds-1"
+    ctx.metadata["toolCallId"] = "call-ds-1"
 
     result = await tool.execute({}, ctx)
 

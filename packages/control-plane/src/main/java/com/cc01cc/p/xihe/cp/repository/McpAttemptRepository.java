@@ -50,4 +50,10 @@ public interface McpAttemptRepository extends JpaRepository<McpAttempt, UUID> {
     int confirmLate(@Param("id") UUID id,
             @Param("finishedAt") Instant finishedAt,
             @Param("updatedAt") Instant updatedAt);
+
+    @Modifying
+    @Transactional
+    @Query("delete from McpAttempt a where a.invocationId in "
+            + "(select i.id from McpInvocation i where i.sessionId = :sessionId)")
+    int deleteBySessionId(@Param("sessionId") String sessionId);
 }

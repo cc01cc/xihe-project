@@ -27,8 +27,7 @@ import java.util.UUID;
  * GET /api/v1/audit/entries/{type}/{id}
  * </pre>
  *
- * <p>Replaces the ledger-backed {@code GET /api/v1/operations*} reads (those stay
- * served until PLAN-0467). Scope is the TenantContext user plus optional
+ * <p>Unified audit read model over the current domain owners. Scope is the TenantContext user plus optional
  * session/workspace/type/status filters; a wrong-owner detail id answers the same
  * 404 as a missing one.</p>
  */

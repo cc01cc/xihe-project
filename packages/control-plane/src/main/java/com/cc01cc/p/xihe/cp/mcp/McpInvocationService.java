@@ -6,7 +6,7 @@ import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.McpAttempt;
 import com.cc01cc.p.xihe.cp.entity.McpDispatchHistory;
 import com.cc01cc.p.xihe.cp.entity.McpInvocation;
-import com.cc01cc.p.xihe.cp.operation.OperationPolicySummary;
+import com.cc01cc.p.xihe.cp.policy.SafePolicySummary;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.McpAttemptRepository;
 import com.cc01cc.p.xihe.cp.repository.McpDispatchHistoryRepository;
@@ -31,10 +31,10 @@ import java.util.UUID;
  *
  * <p>Every write runs in its own {@code REQUIRES_NEW} transaction bounded by
  * {@link DbLockTimeout}, so an execution-domain bookkeeping failure can never
- * poison or widen the dispatch transaction: the gate path fails back to the
- * legacy operation/item grant check when no invocation could be opened, while
- * the direct-user path is best-effort by design (design key 3/4: creation
- * failure is logged as a known gap and never blocks the mutation).</p>
+ * poison or widen the dispatch transaction: the Agent gate fails closed when
+ * no invocation could be opened, while the direct-user path is best-effort by
+ * design (design key 3/4: creation failure is logged as a known gap and never
+ * blocks the mutation).</p>
  *
  * <p>Nothing here persists a prompt, unbounded arguments or any secret; the
  * preview column keeps the existing 4096-byte bounded-prefix rule and history
@@ -77,9 +77,8 @@ public class McpInvocationService {
      * invocation for this {@code (runId, toolCallId)}.
      *
      * <p>Returns {@code empty} when the run context is unusable (missing/invalid
-     * ids, ChatRun row absent) or when the write failed — the caller then keeps
-     * the legacy operation/item grant path, so bookkeeping failure alone never
-     * widens or narrows authorization.</p>
+     * ids, ChatRun row absent) or when the write failed — the caller's invocation
+     * context gate then rejects the dispatch. No legacy owner fallback is used.</p>
      */
     @Transactional(isolation = Isolation.READ_COMMITTED, propagation = Propagation.REQUIRES_NEW)
     public Optional<UUID> openAgentInvocation(String runId, String toolCallId, String toolName,
@@ -133,7 +132,7 @@ public class McpInvocationService {
             if (canonicalToolCallId == null || workspaceId == null || userId == null) {
                 return Optional.empty();
             }
-            McpInvocation invocation = create(null, sessionId, workspaceId, userId,
+            McpInvocation invocation = create(null, canonicalUuidString(sessionId), workspaceId, userId,
                     canonicalToolCallId, toolName, McpInvocation.SOURCE_DIRECT_USER,
                     requestId, argumentsPreview);
             return Optional.of(invocation.getId());
@@ -398,13 +397,13 @@ public class McpInvocationService {
                 invocationId, target != null ? target.getId() : null, confirmed, fromStatus);
     }
 
-    /** Safe verdict snapshot attach (same shape defense as the ledger path). */
+    /** Attach the verdict snapshot after applying the same bounded-payload defenses. */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void attachPolicySummary(UUID invocationId, String policySummaryJson) {
         if (invocationId == null || policySummaryJson == null || policySummaryJson.isBlank()) {
             return;
         }
-        if (OperationPolicySummary.parse(policySummaryJson).isEmpty()) {
+        if (SafePolicySummary.parse(policySummaryJson).isEmpty()) {
             logger.warn("[LIFECYCLE] service=cp event=mcp_invocation_policy_summary_rejected invocationId={} reason=unsafe_shape",
                     invocationId);
             return;

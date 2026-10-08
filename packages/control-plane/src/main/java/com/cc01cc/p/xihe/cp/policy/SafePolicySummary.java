@@ -1,13 +1,8 @@
-package com.cc01cc.p.xihe.cp.operation;
+package com.cc01cc.p.xihe.cp.policy;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.cc01cc.p.xihe.cp.policy.LayeredPolicyResolver;
-import com.cc01cc.p.xihe.cp.policy.PolicyContext;
-import com.cc01cc.p.xihe.cp.policy.PolicyVerdict;
-import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
-
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -16,18 +11,17 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * Safe policy verdict snapshot attached to a dispatch ledger item (PLAN-0328 T1.15, spec
- * ui-ux §3.5): "why was this call allowed / blocked" without ever persisting raw inputs.
+ * Safe policy verdict snapshot stored with an MCP invocation or spawn approval:
+ * "why was this call allowed / blocked" without persisting raw inputs.
  *
  * <p>The stored shape is exactly {@link #POLICY_KEYS} — camelCase keys, lower-case enum words,
  * nullable {@code matchedRule} / {@code mode} / {@code allowedBy}. It never carries arguments,
  * MCP or rewritten bodies, or free-form exception text; the descriptor fields come from the
  * {@link PolicyVerdict} and the tool face resolved for the same evaluation.</p>
  *
- * <p>Static utility: the write path (MCP dispatch) and the read path (OperationViews projection)
- * must share one exact parser, and the projection is a static controller helper.</p>
+ * <p>Write and read paths share the exact parser and key allowlist.</p>
  */
-public final class OperationPolicySummary {
+public final class SafePolicySummary {
 
     /** The exact safe key set; any extra key makes a stored snapshot unreadable. */
     public static final Set<String> POLICY_KEYS = Set.of(
@@ -45,10 +39,10 @@ public final class OperationPolicySummary {
     private static final Set<String> SHAPES = Set.of("structured", "interpreter", "opaque");
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private OperationPolicySummary() {}
+    private SafePolicySummary() {}
 
     /**
-     * Builds the persisted JSON snapshot from the final verdict of one MCP dispatch. Returns empty
+     * Builds the persisted JSON snapshot from a final policy verdict. Returns empty
      * on an incomplete descriptor and never throws, so a missing snapshot cannot block dispatch.
      */
     public static Optional<String> buildSnapshot(PolicyVerdict verdict, ToolFaceRegistry.Face face,
@@ -86,7 +80,7 @@ public final class OperationPolicySummary {
     }
 
     /**
-     * Parses a stored snapshot into the exact safe projection used by the operation views.
+     * Parses a stored snapshot into the exact safe policy projection.
      * Absent, legacy (null) and malformed snapshots are omitted, never guessed.
      */
     public static Optional<Map<String, Object>> parse(String serialized) {

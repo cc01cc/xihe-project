@@ -137,17 +137,6 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
             }>;
         };
     }> = [];
-    const operationTraceResponses: Array<{
-        status: number;
-        body: {
-            items?: Array<{
-                toolCallId?: string;
-                waitingOnRunId?: string;
-                toolName?: string;
-                status?: string;
-            }>;
-        };
-    }> = [];
     page.on("pageerror", (error) => pageErrors.push(error.message));
     page.on("console", (message) => {
         if (message.type() === "error") {
@@ -232,21 +221,6 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
             derivedStateResponses.push({ status: response.status(), body: await response.json() });
         } catch {
             derivedStateResponses.push({ status: response.status(), body: {} });
-        }
-    });
-    page.on("response", async (response) => {
-        if (
-            response.request().method() !== "GET" ||
-            !response.url().includes("/api/v1/operations/")
-        )
-            return;
-        try {
-            operationTraceResponses.push({
-                status: response.status(),
-                body: await response.json(),
-            });
-        } catch {
-            operationTraceResponses.push({ status: response.status(), body: {} });
         }
     });
     page.on("response", async (response) => {
@@ -712,8 +686,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
             )
             .toBeTruthy();
 
-        // PLAN-0464: the child terminal settles the child run's own waiting
-        // link; the legacy parent OperationItem is never touched by the terminal.
+        // Child terminal settles the waiting link on the child ChatRun itself.
         await expect
             .poll(
                 async () => {
@@ -760,6 +733,9 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         const parentRunsBeforeClaim = scalarCount(
             `SELECT count(*) FROM chat_runs WHERE session_id = '${parentSessionId}'::uuid`,
         );
+        const parentInvocationsBeforeClaim = scalarCount(
+            `SELECT count(*) FROM mcp_invocations WHERE session_id = '${parentSessionId}'::uuid`,
+        );
         const submissionsBeforeClaim = browserChatSubmissions.length;
         await sendChat(page, `Acknowledge completed child ${token}`);
         await expect.poll(() => browserChatSubmissions.length).toBe(submissionsBeforeClaim + 1);
@@ -804,8 +780,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         expect(replayResponse.status(), await replayResponse.text()).toBe(202);
         const replay = (await replayResponse.json()) as { runId?: string; operationId?: string };
         expect(replay.runId).toBe(claimRunId);
-        // PLAN-0464 T1.1: a ChatRun has no Operation root, so the replay body
-        // carries no operationId and no ledger_operations row is minted.
+        // Idempotent replay must not create another durable invocation.
         expect(replay.operationId).toBeUndefined();
         expect(
             scalarCount(
@@ -813,6 +788,9 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
             ),
         ).toBe(parentRunsBeforeClaim + 1);
         expect(claimedRunId()).toBe(claimRunId);
+        expect(scalarCount(
+            `SELECT count(*) FROM mcp_invocations WHERE session_id = '${parentSessionId}'::uuid`,
+        )).toBe(parentInvocationsBeforeClaim);
 
         await expect
             .poll(
@@ -846,8 +824,8 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
                     runCount: scalarCount(
                         `SELECT count(*) FROM chat_runs WHERE session_id = '${parentSessionId}'::uuid`,
                     ),
-                    operationCount: scalarCount(
-                        `SELECT count(*) FROM ledger_operations WHERE session_id = '${parentSessionId}'::uuid`,
+                    mcpInvocationCount: scalarCount(
+                        `SELECT count(*) FROM mcp_invocations WHERE session_id = '${parentSessionId}'::uuid`,
                     ),
                 },
                 null,

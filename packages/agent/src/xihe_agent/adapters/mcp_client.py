@@ -116,10 +116,10 @@ class ToolWait(NamedTuple):
 
 
 def _resolve_tool_wait(tool_name: str, context: "AgentContext | None") -> ToolWait:
-    # 关联键（spec S5.1）：与 CP/Runtime 共用的 toolCallId（= 随请求透传的 operationItemId）。
+    # Correlation key shared with CP/Runtime for this tool invocation.
     tool_call_id: str | None = None
     if context is not None:
-        raw_id = context.metadata.get("operationItemId")
+        raw_id = context.metadata.get("toolCallId")
         if raw_id:
             tool_call_id = str(raw_id)
     delivered: float | None = None
@@ -184,12 +184,9 @@ def _context_headers(
             headers["X-Session-Id"] = str(session_id)
         if run_id:
             headers["X-Chat-Run-Id"] = str(run_id)
-        # PLAN-0464 T2.2（wire contract R3 收口）：`X-Operation-Id` /
-        # `X-Operation-Item-Id` 不再发送；`X-Tool-Call-Id` 是唯一工具调用关联键
-        # （LangChain run id），CP 规范化规则不变。
-        operation_item_id = metadata.get("operationItemId")
-        if operation_item_id:
-            headers["X-Tool-Call-Id"] = str(operation_item_id)
+        tool_call_id = metadata.get("toolCallId")
+        if tool_call_id:
+            headers["X-Tool-Call-Id"] = str(tool_call_id)
     # PLAN-0465（0463 gap 4 生产方收口）：job-scoped dispatch 携带 X-Job-Id——
     # 工具实参已知 jobId（get/cancel_background_process）时发送该 Runtime handle，
     # CP 转发后 Runtime 侧 `Correlation.job_id` 才能对上日志时间线；值 = Agent
@@ -443,7 +440,7 @@ class MCPAgentTool(BaseAgentTool):
         if approval_tool is None:
             raise ApprovalProtocolError("CP gate approval requires a local approval coordinator")
         tool_call_id = ""
-        raw_id = context.metadata.get("operationItemId") if context is not None else None
+        raw_id = context.metadata.get("toolCallId") if context is not None else None
         if raw_id:
             tool_call_id = str(raw_id)
         logger.info(

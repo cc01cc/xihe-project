@@ -1657,7 +1657,7 @@ public class ChatController {
             }
             transitionRun(runId, List.of("running", "streaming"), "awaiting_approval", null, null, null, 0, 0);
 
-            // Keep ledger/audit input unchanged; relay only the durable canonical row.
+            // Relay the durable canonical Approval row, not the stale Agent payload.
             sseManager.send(sessionId, eventName, approvalService.payloadFor(storedApproval, false));
             return;
         }

@@ -8,7 +8,7 @@ import type {
     AuditEntry,
     AuditEntryDetail,
     AuditListResponse,
-    OperationPolicyView,
+    SafePolicySummaryView,
 } from "../../../types";
 
 vi.mock("vue-router", () => ({
@@ -40,9 +40,9 @@ vi.mock("../../../composables/api", async (importOriginal) => {
     };
 });
 
-// Exact values produced by CP OperationPolicySummary (PLAN-0328 T1.15). Bypass upgrades an
+// Exact values produced by CP SafePolicySummary. Bypass upgrades an
 // ask rule to `effect: 'allow'` with a non-null allowedBy, so this fixture mirrors that verdict.
-const POLICY: OperationPolicyView = {
+const POLICY: SafePolicySummaryView = {
     effect: "allow",
     sourceLayer: "builtin",
     matchedRule: '{ write, "*", ask }',

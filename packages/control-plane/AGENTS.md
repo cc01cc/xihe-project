@@ -2,7 +2,7 @@
 
 ## 定位与技术栈
 
-Control Plane（CP）负责公开 API、认证/租户边界、策略与审批、Chat/MCP 编排、Operation 账本，以及 Runtime/Agent 客户端调用。技术栈：Java 25、Spring Boot 4.0.6、Maven、PostgreSQL 17、Flyway 13.4.0、JPA、Spring Security、springdoc 3.1.0。
+Control Plane（CP）负责公开 API、认证/租户边界、策略与审批、Chat/MCP 编排、Workspace Job 生命周期、Audit 读面，以及 Runtime/Agent 客户端调用。技术栈：Java 25、Spring Boot 4.0.6、Maven、PostgreSQL 17、Flyway 13.4.0、JPA、Spring Security、springdoc 3.1.0。
 
 完整架构与 API 说明：
 - [`DEV-014-control-plane-architecture.md`](../../docs/i18n/zh-Hans/DEV-014-control-plane-architecture.md)
@@ -16,12 +16,12 @@ Control Plane（CP）负责公开 API、认证/租户边界、策略与审批、
 - `policy/`：分层策略、Tool Face、模式与 guard。
 - `chat/`：ChatRun、SSE、审批与 checkpoint API。
 - `mcp/`：MCP 代理、请求重写与工具面。
-- `operation/`：Operation ledger 与读模型。
+- `operation/`：Workspace Job API/start/state/transition services（目录名仅是现有包路径）。
 - `event/`：Workspace 事件信封与 SSE 扇出（`WorkspaceEvent` 只携带相对路径，`WorkspaceEventManager` 负责按 workspace 订阅/发布、序列号定序与 `snapshot_required`）。
 - `runtime/`、`agent/`、`config/`：Runtime/Agent 客户端及配置/认证边界。
 - `service/`、`entity/`、`repository/`：应用服务、持久化模型与仓储。
 
-Session、ChatRun/Operation 生命周期的项目级 proposed SPEC 见 `../../spec/session/`；Agent principal 与 Workspace 绑定契约见 `../../spec/agent/principal-workspace-binding.md`（PLAN-0374）。本文件和 DEV-014/OpenAPI/代码仍是当前实现事实源。
+Session、ChatRun、Workspace Job 与 MCP invocation 生命周期的项目级 proposed SPEC 见 `../../spec/`；Agent principal 与 Workspace 绑定契约见 `../../spec/agent/principal-workspace-binding.md`（PLAN-0374）。本文件和 DEV-014/OpenAPI/代码仍是当前实现事实源。
 
 测试位于 `src/test/java/`，按同名领域包组织；跨模块测试在 `crossmodule/`。
 
@@ -49,7 +49,7 @@ mvn -o -q checkstyle:check
 
 ## 实现边界
 
-- Policy、audit 记录不得写入原始 arguments/secret；仅保存必要的 canonical hash、摘要与脱敏元数据。Operation/审批 preview 只作**有界预览**（≤4096 裸前缀截断），不做正则脱敏/改写，也不参与授权或批准后执行；结构化审计仍用 hash/白名单字段，日志出口由序列化层统一脱敏（PLAN-0407 T1.3 措辞，收敛后落位于本节）。
+- Policy、audit 记录不得写入原始 arguments/secret；仅保存必要的 canonical hash、摘要与脱敏元数据。MCP/审批 preview 只作**有界预览**（≤4096 裸前缀截断），不做正则脱敏/改写，也不参与授权或批准后执行；结构化审计仍用 hash/白名单字段，日志出口由序列化层统一脱敏（PLAN-0407 T1.3 措辞，收敛后落位于本节）。
 - 不绕过状态机直接写入状态表或 durable 记录；状态变更必须经既有 service/transition 路径。
 - CP→Runtime/Agent 调用保持显式超时与错误结果，禁止 host fallback 或静默降级。
 - 禁止新增固定 `sleep`、`Thread.sleep` 或无诊断的等待循环；超时、就绪与清理规则见 [`command-execution-strategies`](../../../.agents/skills/command-execution-strategies/SKILL.md)。

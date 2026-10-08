@@ -28,15 +28,13 @@ import java.util.UUID;
 /**
  * PLAN-0390 M2 T2.2 / PLAN-0465 T1.2：Workspace Job start 编排。
  *
- * <p>顺序：Workspace access → 幂等重读（`workspace_jobs`，V36 语义）→ 原子双写
- * （legacy root/item + `workspace_jobs` 行，同一 REQUIRES_NEW 事务）→ Runtime
+ * <p>顺序：Workspace access → 幂等重读（`workspace_jobs`，V36 语义）→ 创建
+ * `workspace_jobs` 行与 history `start` → Runtime
  * 派发 → 落 running / 失败收口。CP 是 durable 唯一写者，Runtime 只返回执行事实；
  * dispatch 复用既有 per-request exec（Docker 立即执行，direct-attach 显式
  * `PROCESS_BACKEND_LAUNCH_PENDING`，不 fallback）。</p>
  *
- * <p>PLAN-0465 decision #7：对外 `jobId` = `workspace_jobs.id`（domain 身份）；
- * 派发给 Runtime 的 `operationItemId` 请求键也改为该 domain jobId（Runtime 字段名
- * 沿用至 0467，对照表见 evidence/m0-baseline.md T0.2）。</p>
+ * <p>`jobId` = `workspace_jobs.id` is the domain identity sent to Runtime.</p>
  */
 @Service
 public class WorkspaceJobStartService {
@@ -47,18 +45,15 @@ public class WorkspaceJobStartService {
             Set.of(JobStateService.SCOPE_RUN, JobStateService.SCOPE_SESSION, JobStateService.SCOPE_WORKSPACE);
     private static final Set<String> SOURCES = Set.of("ui", "agent", "runtime", "system", "mcp");
 
-    private final OperationService operationService;
     private final JobStateService jobStateService;
     private final WorkspaceService workspaceService;
     private final RuntimeJobClient runtimeJobClient;
     private final ApplicationContext applicationContext;
 
-    public WorkspaceJobStartService(OperationService operationService,
-                                    JobStateService jobStateService,
+    public WorkspaceJobStartService(JobStateService jobStateService,
                                     WorkspaceService workspaceService,
                                     RuntimeJobClient runtimeJobClient,
                                     ApplicationContext applicationContext) {
-        this.operationService = operationService;
         this.jobStateService = jobStateService;
         this.workspaceService = workspaceService;
         this.runtimeJobClient = runtimeJobClient;
@@ -102,14 +97,7 @@ public class WorkspaceJobStartService {
         if (replayRow.isPresent()) {
             return replayOutcome(replayRow.get(), inputHash);
         }
-        // 2) legacy 幂等兜底（0465 前建的 key，无 domain 行；dual-read，至 0467）。
-        OperationService.WorkspaceJobStart legacy = operationService.findWorkspaceJobForReplay(
-                userId, workspaceId, sessionId, idempotencyKey, inputHash);
-        if (legacy != null) {
-            return new StartOutcome(legacyWireView(legacy.itemId()), true);
-        }
-
-        // 3) 原子双写：legacy root/item + workspace_jobs 行（同一事务）。
+        // 2) 建立 canonical domain row before dispatch so retries have one identity.
         UUID jobId;
         try {
             jobId = self().insertJob(workspaceId, userId, sessionId, runId, source, scope,
@@ -122,18 +110,13 @@ public class WorkspaceJobStartService {
             if (winner.isPresent()) {
                 return replayOutcome(winner.get(), inputHash);
             }
-            OperationService.WorkspaceJobStart legacyWinner = operationService.findWorkspaceJobForReplay(
-                    userId, workspaceId, sessionId, idempotencyKey, inputHash);
-            if (legacyWinner != null) {
-                return new StartOutcome(legacyWireView(legacyWinner.itemId()), true);
-            }
             throw new CpApiException(HttpStatus.CONFLICT, "JOB_IDEMPOTENCY_CONFLICT",
                     "A job with the same idempotency key already exists");
         }
         logger.info("[LIFECYCLE] service=cp event=workspace_job_started jobId={} workspaceId={}",
                 jobId, workspaceId);
 
-        // 4) Runtime 派发（请求键 = domain jobId；Runtime 字段名 0467 才改）。
+        // 3) Runtime receives the same canonical domain jobId.
         RuntimeJobClient.JobStartResult result = runtimeJobClient.startJob(
                 workspaceId, jobId.toString(), request.command(), args,
                 request.cwd(), request.timeoutSecs(), request.env());
@@ -158,7 +141,7 @@ public class WorkspaceJobStartService {
                     result.requestId());
         }
         Map<String, Object> running = new LinkedHashMap<>();
-        running.put("jobId", result.jobId());
+        running.put("jobId", result.runtimeJobId());
         running.put("status", JobStateService.STATUS_RUNNING);
         running.put("startedAt", java.time.Instant.now().toString());
         String bootId = runtimeJobClient.runtimeBootId();
@@ -167,32 +150,26 @@ public class WorkspaceJobStartService {
         }
         jobStateService.upsertById(jobId, running);
         logger.info("[LIFECYCLE] service=cp event=workspace_job_dispatched jobId={} runtimeJobId={} workspaceId={}",
-                jobId, result.jobId(), workspaceId);
+                jobId, result.runtimeJobId(), workspaceId);
         return new StartOutcome(jobStateService.wireViewById(jobId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.CONFLICT, "JOB_IDEMPOTENCY_CONFLICT",
                         "Started job has no durable projection")), false);
     }
 
     /**
-     * 原子双写插入（REQUIRES_NEW）：legacy root/item 先行（提供 item 锚点），
-     * 再建 `workspace_jobs` 行 + history `start`；任一唯一索引冲突整体回滚，
-     * 由 {@link #start} 重读赢家。
+     * 原子插入 domain row + history `start`; unique conflicts roll back and
+     * {@link #start} rereads the winning row.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public WorkspaceJob insertJob(String workspaceId, String userId, String sessionId, String runId,
                                   String source, String scope, String idempotencyKey, String inputHash,
                                   StartRequest request, List<String> args, String executionMode) {
-        OperationService.WorkspaceJobStart legacy = operationService.persistLegacyJobRoot(
-                userId, workspaceId, sessionId, runId, source, "user", idempotencyKey, inputHash,
-                "job:" + request.command(), argumentsPreview(request.command(), args));
-
         WorkspaceJob row = new WorkspaceJob();
         row.setId(UUID.randomUUID());
         row.setWorkspaceId(UUID.fromString(workspaceId));
         row.setUserId(UUID.fromString(userId));
         row.setSessionId(parseUuid(sessionId));
         row.setRunId(parseUuid(runId));
-        row.setOperationItemId(legacy.itemId());
         row.setSource(source);
         row.setScope(scope);
         row.setIdempotencyKey(idempotencyKey);
@@ -223,34 +200,6 @@ public class WorkspaceJobStartService {
         logger.info("[LIFECYCLE] service=cp event=workspace_job_replayed jobId={} workspaceId={}",
                 row.getId(), row.getWorkspaceId());
         return new StartOutcome(jobStateService.wireView(row), true);
-    }
-
-    /** pre-deploy legacy 行的重放投影：wire `jobId` = legacy item 身份（过渡登记至 0467）。 */
-    private Map<String, Object> legacyWireView(UUID itemId) {
-        JobStateService.JobArchive archive = jobStateService.find(itemId)
-                .orElseThrow(() -> new CpApiException(HttpStatus.CONFLICT, "JOB_IDEMPOTENCY_CONFLICT",
-                        "Idempotent job root has no archived state"));
-        Map<String, Object> view = new LinkedHashMap<>();
-        view.put("jobId", archive.itemId());
-        view.put("runtimeJobId", archive.jobId());
-        view.put("workspaceId", archive.workspaceId());
-        view.put("sessionId", archive.sessionId());
-        view.put("runId", archive.runId());
-        view.put("source", archive.source());
-        view.put("scope", archive.scope());
-        view.put("status", archive.status());
-        view.put("startedAt", archive.startedAt());
-        view.put("endedAt", archive.endedAt());
-        view.put("exitCode", archive.exitCode());
-        view.put("timeoutSecs", archive.timeoutSecs());
-        view.put("cancelReason", archive.cancelReason());
-        view.put("backendKind", archive.backendKind());
-        view.put("executionMode", archive.executionMode());
-        view.put("actorType", archive.actorType());
-        view.put("createdAt", archive.createdAt());
-        view.put("cleanupStatus", archive.cleanupStatus());
-        view.put("errorCode", archive.errorCode());
-        return view;
     }
 
     private static HttpStatus runtimeStatus(int statusCode) {
@@ -295,15 +244,6 @@ public class WorkspaceJobStartService {
             return UUID.fromString(value);
         } catch (IllegalArgumentException e) {
             return null;
-        }
-    }
-
-    private static String argumentsPreview(String command, List<String> args) {
-        try {
-            return new com.fasterxml.jackson.databind.ObjectMapper()
-                    .writeValueAsString(Map.of("command", command, "args", args));
-        } catch (Exception e) {
-            return "{\"command\":\"" + command + "\"}";
         }
     }
 

@@ -6,8 +6,8 @@ sidebar_group: "开发指南"
 sidebar_order: 19
 status: active
 created: 2026-09-07
-updated: 2026-09-27
-description: XH PostgreSQL 全量表结构速查：业务表按域分组、ER 关系、字段约束与索引、当前 V1~V41 迁移对照（PLAN-280 rebaseline 后）与本地查看方法
+updated: 2026-10-08
+description: XH PostgreSQL 全量表结构速查：业务表按域分组、ER 关系、字段约束与索引、当前 V1~V55 升级迁移对照（PLAN-280 rebaseline 后）与本地查看方法
 tags:
   - postgres
   - flyway
@@ -16,14 +16,14 @@ tags:
 
 # DEV-019: 数据库设计
 
-> 读者：新加入 XH 的后端 / 全栈开发者。内容：当前最终库表一览（结论先行），细节按域查表。Source of Truth 是 `packages/control-plane/src/main/resources/db/migration/V1~V41`，JPA Entity 只是镜像。前置阅读：[DEV-001](DEV-001-system-architecture.md)（四模块与 PG 定位）、[DEV-014](DEV-014-control-plane-architecture.md)（CP 通道）、[DEV-017](DEV-017-session-architecture.md)（会话语义）、[DEV-003](DEV-003-config-management.md)（Config 三层）。
+> 读者：新加入 XH 的后端 / 全栈开发者。内容：当前最终库表一览（结论先行），细节按域查表。Schema Source of Truth 是 `packages/control-plane/src/main/resources/db/migration` 的 V1~V55 Flyway 升级链；已删除的 Ledger 只留在历史迁移记录，JPA Entity 仅镜像当前 schema。前置阅读：[DEV-001](DEV-001-system-architecture.md)（四模块与 PG 定位）、[DEV-014](DEV-014-control-plane-architecture.md)（CP 通道）、[DEV-017](DEV-017-session-architecture.md)（会话语义）、[DEV-003](DEV-003-config-management.md)（Config 三层）。
 
 ## 1. 结论与使用规则
 
 | 结论 | 内容 |
 |------|------|
 | 数据库 | PostgreSQL 17 + pgvector，Docker 镜像 `pgvector/pgvector:pg17`，dev 端口 `12634`，库名/用户名 `xihe` |
-| 表数量 | 35 张业务表 + `flyway_schema_history`（Flyway 自维护，不在本文列字段） |
+| 表数量 | 42 张业务表 + `flyway_schema_history`（Flyway 自维护） + 1 个只读 Audit view (`v_audit_entries`)，按 V55 fresh schema 盘点 |
 | 权威顺序 | Flyway SQL > JPA Entity > 本文档；`ddl-auto=validate`（PLAN-280），Flyway 是唯一 schema manager |
 | 主键风格 | 全部 PostgreSQL 原生 `UUID`（PLAN-280）；Java 侧 @Id 为 `UUID` 类型，FK 列为 `String` + `UuidStringConverter` |
 | 时间风格 | 当前 Flyway 链的时间列均为带时区类型：`TIMESTAMPTZ`（V21/V23 以等价的 `TIMESTAMP WITH TIME ZONE` 书写），默认值按各迁移定义；不存在裸 `TIMESTAMP` |
@@ -38,13 +38,13 @@ tags:
 | Compose PG 定义 | `docker-compose.yml`（`postgres` 服务，`./postgres-init:/docker-entrypoint-initdb.d:ro`） |
 | 扩展初始化 | `postgres-init/01-enable-pgvector.sql` |
 | 连接配置 | `packages/control-plane/src/main/resources/application.properties:12-24`（`datasource.url`、`flyway.locations=classpath:db/migration`） |
-| 迁移链 | `packages/control-plane/src/main/resources/db/migration/V1__init_schema.sql` 至 `V48__context_template_session_binding.sql`（当前 active chain；V1 基线，V2–V48 增量迁移；V42–V47 行由各自计划补登） |
-| Entity 镜像 | `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/entity/`（32 个）+ `context/entity/`（3 个） |
+| 迁移链 | `packages/control-plane/src/main/resources/db/migration/V1__init_schema.sql` 至 V55（当前 active upgrade chain；V55 removes retired Ledger tables） |
+| Entity 镜像 | `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/entity/` 与 `context/entity/`（按当前源码为准） |
 | Seed | `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/config/DataSeeder.java`（仅 seed `admin@xihe.local`，密码随机不落日志） |
 
-> **PLAN-280 rebaseline（2026-09-07）**：`V1__init_schema.sql` 是当前链的 schema 基线；其后的 V2–V41 继续在 active classpath 中按顺序增量应用。统一原生 UUID、带时区时间类型、显式命名约束与 ON DELETE、`ddl-auto=validate`。更早的历史 V1~V22+U6 编号仍仅作 Git 历史溯源。`spring-boot-flyway` 模块缺失曾导致 Flyway 自动配置从未生效（schema 实际由 Hibernate 建），已在本轮修复。
+> **PLAN-280 rebaseline（2026-09-07）**：`V1__init_schema.sql` 是当前链的 schema 基线；V2–V55 在 active classpath 按顺序用于既有库升级。V55 是当前 schema 终点：移除 operation Ledger tables 与 Workspace Job transition anchor。统一原生 UUID、带时区时间类型、显式命名约束与 ON DELETE、`ddl-auto=validate`。更早的历史 V1~V22+U6 编号仍仅作 Git 历史溯源。`spring-boot-flyway` 模块缺失曾导致 Flyway 自动配置从未生效（schema 实际由 Hibernate 建），已在本轮修复。
 >
-> **版本标注约定**：§2/§3 各表括注与附录 A「旧链首次迁移」列的 `V<n>` 一律是 **rebaseline 前的旧链编号**（迁移溯源用），与 §4 的 active 链（V1~V41）**编号不通用**——例如「旧链 V11」指 `workspace_assignments` 建表，而 active `V11` 是 `mcp_server_tool_timeout`。逐表 active 变更见 §4。
+> **版本标注约定**：§2/§3 各表括注与附录 A「旧链首次迁移」列的 `V<n>` 若注明“旧链”，仅用于迁移溯源；active 链统一以 §4 和 Flyway history（V1~V55）为准。逐表变更见 §4。
 
 ## 2. ER 关系（分域 erDiagram）
 
@@ -148,37 +148,35 @@ erDiagram
     sessions ||--o{ context_events : appends
     sessions ||--|| context_projections : materializes
     sessions ||--o{ files : attaches
-    sessions |o--o{ ledger_operations : audits
-    ledger_operations ||--o{ operation_items : contains
-    operation_items ||--o{ operation_attempts : executes
-    operation_items ||--o{ operation_events : logs
+    mcp_invocations ||--o{ mcp_attempts : attempts
+    mcp_invocations ||--o{ mcp_dispatch_history : history
+    approval_requests |o--o{ mcp_invocations : "optional approval (set null)"
+    workspaces ||--o{ workspace_jobs : jobs
+    sessions |o--o{ workspace_jobs : "session scope (cascade)"
+    chat_runs |o--o{ workspace_jobs : "run scope (set null)"
+    workspace_jobs ||--o{ workspace_job_history : transitions
 ```
 
 代码锚点：实体 = 表名；关系名 = 外键语义（括注为特殊语义：m2m 关联表、无 FK 约束的逻辑外键、nullable、ES 只追加）；无边实体清单见各域小节。字段/索引细节见 §3，DDL 见 §4 迁移对照，Entity 见附录 A。
 
-### 2.7 操作账本与任务连续性
+### 2.7 域持久化与任务连续性
 
 ```mermaid
 %%{init: {'theme': 'neutral'}}%%
 erDiagram
-    sessions |o--o{ ledger_operations : "audits (cascade)"
-    chat_runs |o--o{ ledger_operations : "roots (set null)"
-    ledger_operations ||--o{ operation_items : "contains (cascade)"
-    operation_items ||--o{ operation_attempts : "executes (cascade)"
-    ledger_operations ||--o{ operation_events : "appends (cascade)"
-    operation_items |o--o{ operation_events : "logs (set null)"
-    operation_attempts |o--o{ operation_events : "logs (set null)"
-    operation_items |o--o{ operation_extensions : "payload (cascade)"
-    operation_attempts |o--o{ operation_extensions : "payload (cascade)"
-    ledger_operations ||--o{ diagnostic_artifacts : "artifacts (cascade)"
-    operation_items |o--o{ diagnostic_artifacts : "origin (set null)"
+    mcp_invocations ||--o{ mcp_attempts : "attempts (cascade)"
+    mcp_invocations ||--o{ mcp_dispatch_history : "history (cascade)"
+    approval_requests |o--o{ mcp_invocations : "optional approval (set null)"
+    workspaces ||--o{ workspace_jobs : "jobs (cascade)"
+    sessions |o--o{ workspace_jobs : "session scope (cascade)"
+    chat_runs |o--o{ workspace_jobs : "run scope (set null)"
+    workspace_jobs ||--o{ workspace_job_history : "transitions (cascade)"
     chat_runs ||--o{ task_plans : "plans (cascade)"
     workspaces ||--o{ task_plans : "plans (cascade)"
     task_plans ||--o{ task_items : "steps (cascade)"
 ```
 
-- `ledger_operations` 是审计根，`operation_items` 是通道事实总表，`operation_attempts/operation_events/operation_extensions/diagnostic_artifacts` 依次挂在 item/attempt 上（字段与约束见 §3.7）。
-- `operation_extensions` 对 item/attempt 为 `ON DELETE CASCADE`（V34，PLAN-0367 DDL-13；此前 `SET NULL` 与 `ck_operation_extensions_target`（至少一目标非空）的组合使含 extension 行的会话硬删整事务回滚，见 §3.7 与 [DEV-018](DEV-018-known-issues.md)）。
+- V55 后按域存储：MCP invocation、attempt 与 dispatch history 由 MCP execution domain 持有；Job 状态与 transition history 由 Workspace Job domain 持有。`approval_request_id` 是可空硬 FK，删除审批时 `SET NULL`，不级联删除 invocation。
 - `task_plans`/`task_items` 为 run 任务连续性（`V6`，见 §3.8）；`task_plans.session_id` 无 FK，仅 run/workspace 建 FK。
 
 ## 3. 按域表详情
@@ -707,174 +705,20 @@ erDiagram
 > - `idx_audit_logs_workspace_id (workspace_id)`
 > - `idx_audit_logs_action (action)`
 
-### 3.7 操作账本（ledger_operations / operation_items / operation_attempts / operation_events / operation_extensions / diagnostic_artifacts）
+### 3.7 操作账本（历史 schema，V55 已退役）
 
-> PLAN-0326（v3 通道事实模型，2026-09-14）后的行身份与写者语义；PLAN-0351（V33，2026-09-19）把审计根表 `session_operations` 改名为 `ledger_operations`——旧名→新名 14 项映射登记在 `plans/archive/20260919/PLAN-0351-XH-schema-cleanup/spec/migration-contract.md` §5，`V2__session_operation_ledger.sql` 等历史迁移文件名保留旧名不改写。本节为项目侧速查。
+> **状态（PLAN-0467）**：以下六表字段/关系仅为 V1–V54 的升级历史，不是当前 schema。V55 已删除 `ledger_operations`、`operation_items`、`operation_attempts`、`operation_events`、`operation_extensions` 与 `diagnostic_artifacts`；Flyway 历史迁移仍保留以支持既有库升级。不可按本节重建或新增运行时引用。
+>
+> 切换点的完整 V54 快照及恢复演练见 workspace 根 `plans/PLAN-0467-xh-ledger-retirement/evidence/snapshot-restore.md`；V55 升级演练与 Workspace Job 行保留证据见 `evidence/migration-rehearsal.md`。
 
-**职责分层**：`ledger_operations` = 一次用户/系统动作的审计根（谁/何时/终态）；`operation_items` = 通道事实总表（**每通道事实一行**，`kind` 区分事实种类，`source` 是行身份位）；`operation_attempts` = 实际执行尝试（`agent_tool` 中继 / `cp_forward` 网关）；`operation_events` = append-only 状态流转流水；`operation_extensions` = 通道个性载荷（`mcp_call`/`llm_usage`/`job_state` 等）；`diagnostic_artifacts` = 诊断工件元数据（内容在受保护存储，仅存 hash/ref/acl）。
+| 旧表（V55 已删除） | 现行事实源 / 处置 |
+|---|---|
+| `ledger_operations` | 不再设跨域根行；ChatRun 由 `chat_runs`/`chat_run_history` 持有，工具调用由 `mcp_invocations` 持有，Workspace Job 由 `workspace_jobs` 持有。无历史回填。 |
+| `operation_items` | 依事实归属到 ChatRun、MCP invocation、Workspace Job 或 `run_checkpoints`；V55 同批删除其 `workspace_jobs.operation_item_id` transition anchor。 |
+| `operation_attempts` / `operation_events` | MCP 调用阶段与执行事实归 `mcp_attempts` / `mcp_dispatch_history`；审批归 `approval_requests` / `approval_history`；Job 状态变化归 `workspace_job_history`。 |
+| `operation_extensions` / `diagnostic_artifacts` | 不做跨域回填；按 owner 生命周期随对应 Session/Workspace 事实处理。受保护工件仍由其 domain-owned storage reference 管理。 |
 
-**ledger_operations**（`V2` 建 `session_operations`，`V33` 改名；`V30` 加 CHECK；Entity `entity/LedgerOperation.java`）：
-
-| 字段 | 类型 | 约束 | 说明 |
-|------|------|------|------|
-| id | UUID | PK | — |
-| session_id | UUID | nullable FK `sessions(id) ON DELETE CASCADE` | 会话归属；`kind='chat'` 时必填（`ck_ledger_operations_chat_session`，`V30`） |
-| workspace_id | UUID | nullable FK `workspaces(id) ON DELETE CASCADE` | workspace 归属 |
-| user_id | UUID | nullable FK `users(id) ON DELETE NO ACTION` | 发起人（系统动作可空） |
-| run_id | UUID | nullable FK `chat_runs(id) ON DELETE SET NULL` | 归属轮次 |
-| request_id | UUID | nullable，无 FK | 逻辑关联请求 |
-| kind | VARCHAR(32) | NOT NULL，`ck_ledger_operations_kind` | `chat/tool_call/approval/job/workspace_lifecycle/system/other` |
-| source | VARCHAR(24) | NOT NULL，`ck_ledger_operations_source` | `ui/agent/runtime/system/mcp` |
-| actor_type | VARCHAR(24) | NOT NULL，`ck_ledger_operations_actor_type` | `user/agent/system/service` |
-| actor_id | VARCHAR(128) | nullable | 主体标识 |
-| status | VARCHAR(24) | NOT NULL，`ck_ledger_operations_status` | `accepted/running/waiting_for_approval/completed/failed/cancelled/interrupted/ambiguous` |
-| idempotency_key | VARCHAR(128) | nullable | 幂等键 |
-| input_hash | VARCHAR(64) | nullable | 入参哈希 |
-| summary | TEXT | nullable | 摘要 |
-| error_code | VARCHAR(64) | nullable | 错误码 |
-| error_ref | TEXT | nullable | 错误引用 |
-| started_at / finished_at | TIMESTAMPTZ | nullable | 起止时刻 |
-| created_at / updated_at | TIMESTAMPTZ | NOT NULL DEFAULT `NOW()` | — |
-
-> 索引：
-> - `uq_ledger_operations_idempotency (user_id, session_id, idempotency_key) WHERE idempotency_key IS NOT NULL` — NULL-safe 幂等
-> - `uq_ledger_operations_run (run_id) WHERE run_id IS NOT NULL` — v1 简化：每 run 至多一个根操作
-> - `idx_ledger_operations_session_time (session_id, created_at)`
-> - `idx_ledger_operations_workspace_time (workspace_id, created_at)`
-
-**operation_items**（`V2` + `V10/V14/V19/V22`，Entity `entity/OperationItem.java`）：通道事实行；`fk_operation_items_operation` 指向改名后的 `ledger_operations`（子表侧 FK 名不随 V33 变）。
-
-| 字段 | 类型 | 约束 | 说明 |
-|------|------|------|------|
-| id | UUID | PK | — |
-| operation_id | UUID | NOT NULL FK `ledger_operations(id) ON DELETE CASCADE` | 审计根 |
-| tool_call_id | UUID | nullable | 跨通道关联键；非工具行用自身 id |
-| parent_item_id | UUID | nullable FK `operation_items(id) ON DELETE SET NULL` | 父行 |
-| sequence | INTEGER | NOT NULL | operation 内时间线序号（行锁分配） |
-| kind | VARCHAR(32) | NOT NULL，`ck_operation_items_kind`（`V22` 终版） | `chat/tool_call/approval/job/workspace_lifecycle/system/other/llm_usage/checkpoint` |
-| tool_name | VARCHAR(128) | nullable | 工具名 |
-| source | VARCHAR(24) | NOT NULL，`ck_operation_items_source` | `ui/agent/runtime/system/mcp`（V14 起为行身份位） |
-| policy_decision | VARCHAR(24) | nullable | 策略判定（开放域） |
-| approval_request_id | UUID | nullable FK `approval_requests(request_id) ON DELETE SET NULL` | 关联审批 |
-| request_hash | VARCHAR(64) | nullable | 请求哈希 |
-| arguments_preview | JSONB | nullable | 有界预览参数（≤4096 前缀截断，见下） |
-| normalized_argv | JSONB | nullable | 规范化参数 |
-| cwd | VARCHAR(1024) | nullable | 工作目录 |
-| env_policy_hash | VARCHAR(64) | nullable | 环境策略哈希 |
-| expires_at | TIMESTAMPTZ | nullable | 过期 |
-| status | VARCHAR(24) | NOT NULL，`ck_operation_items_status` | `pending/running/waiting_for_approval/resolving/completed/failed/aborted/cancelled/ambiguous` |
-| result_ref | TEXT | nullable | 结果引用 |
-| error_code | VARCHAR(64) | nullable | 错误码 |
-| policy_summary | TEXT | nullable（`V19`） | 脱敏策略裁决摘要，不含原始参数 |
-| started_at / finished_at | TIMESTAMPTZ | nullable | 起止时刻 |
-| created_at / updated_at | TIMESTAMPTZ | NOT NULL DEFAULT `NOW()` | — |
-
-> 索引：
-> - `uq_operation_items_operation_source_tool_call (operation_id, source, tool_call_id) WHERE tool_call_id IS NOT NULL`（`V14`，行身份）
-> - `uq_operation_items_operation_sequence (operation_id, sequence)`（时间线唯一）
-
-**operation_attempts**（`V2`，Entity `entity/OperationAttempt.java`）：一次跨模块实际执行尝试。
-
-| 字段 | 类型 | 约束 | 说明 |
-|------|------|------|------|
-| id | UUID | PK | — |
-| item_id | UUID | NOT NULL FK `operation_items(id) ON DELETE CASCADE` | 归属事实行 |
-| stage | VARCHAR(24) | NOT NULL | 阶段（开放域） |
-| retry_no | INTEGER | NOT NULL DEFAULT 0 | 重试序号 |
-| parent_attempt_id | UUID | nullable FK `operation_attempts(id) ON DELETE SET NULL` | 父尝试 |
-| module | VARCHAR(24) | NOT NULL，`ck_operation_attempts_module` | `agent/cp/runtime/mcp` |
-| request_id | UUID | nullable，无 FK | 逻辑关联请求 |
-| status | VARCHAR(24) | NOT NULL，`ck_operation_attempts_status` | `started/succeeded/failed/timed_out/cancelled/unknown` |
-| http_status | INTEGER | nullable | 出站 HTTP 状态 |
-| error_code | VARCHAR(64) | nullable | 错误码 |
-| result_ref | TEXT | nullable | 结果引用 |
-| duration_ms | BIGINT | nullable | 耗时 |
-| started_at | TIMESTAMPTZ | NOT NULL | 开始 |
-| finished_at | TIMESTAMPTZ | nullable | 结束 |
-| created_at / updated_at | TIMESTAMPTZ | NOT NULL DEFAULT `NOW()` | — |
-
-> 索引：`uq_operation_attempts_item_stage_retry (item_id, stage, retry_no)`
-
-**operation_events**（`V2` + `V31`，Entity `entity/OperationEvent.java`）：append-only 状态流转流水（只追加见附录 B）。
-
-| 字段 | 类型 | 约束 | 说明 |
-|------|------|------|------|
-| id | UUID | PK | — |
-| operation_id | UUID | NOT NULL FK `ledger_operations(id) ON DELETE CASCADE` | 审计根 |
-| item_id | UUID | nullable FK `operation_items(id) ON DELETE SET NULL` | 关联事实行 |
-| attempt_id | UUID | nullable FK `operation_attempts(id) ON DELETE SET NULL` | 关联尝试 |
-| sequence | BIGINT | NOT NULL | operation 内事件序号 |
-| event_type | VARCHAR(40) | NOT NULL | 事件类型（开放域） |
-| state | VARCHAR(24) | NOT NULL | 状态（开放域） |
-| actor | VARCHAR(24) | NOT NULL | 主体（开放域） |
-| payload | JSONB | nullable | 事件载荷 |
-| schema_version | INTEGER | NOT NULL DEFAULT 1 | 载荷版本 |
-| created_at | TIMESTAMPTZ | NOT NULL DEFAULT `NOW()` | — |
-
-> 索引与约束：
-> - `uq_operation_events_operation_sequence (operation_id, sequence)`
-> - `idx_operation_events_item_sequence (item_id, sequence)`（`V31`）
-> - `idx_operation_events_attempt_sequence (attempt_id, sequence)`（`V31`）
-> - append-only 由服务/仓储层测试钉住（无 DB 触发器，PLAN-0351 决策 #6）
-
-**operation_extensions**（`V2`，Entity `entity/OperationExtension.java`）：通道个性载荷。
-
-| 字段 | 类型 | 约束 | 说明 |
-|------|------|------|------|
-| id | UUID | PK | — |
-| item_id | UUID | nullable FK `operation_items(id) ON DELETE CASCADE`（V34，PLAN-0367） | 目标事实行 |
-| attempt_id | UUID | nullable FK `operation_attempts(id) ON DELETE CASCADE`（V34，PLAN-0367） | 目标尝试 |
-| extension_kind | VARCHAR(40) | NOT NULL | 载荷种类（开放域） |
-| schema_version | INTEGER | NOT NULL | 载荷版本 |
-| payload | JSONB | NOT NULL | 载荷 |
-| created_at | TIMESTAMPTZ | NOT NULL DEFAULT `NOW()` | — |
-
-> 索引与约束：
-> - `ck_operation_extensions_target`：`item_id IS NOT NULL OR attempt_id IS NOT NULL`
-> - `uq_operation_extensions_item_kind_version (item_id, extension_kind, schema_version) WHERE item_id IS NOT NULL AND attempt_id IS NULL`
-> - `uq_operation_extensions_attempt_kind_version (attempt_id, extension_kind, schema_version) WHERE attempt_id IS NOT NULL AND item_id IS NULL`
-> - 删除语义：目标行删除时 `CASCADE`（V34，PLAN-0367 DDL-13；此前 `SET NULL` 与 CHECK 的组合使含 extension 行的会话硬删整事务回滚）。硬删随账本一并删除 `llm_usage`/`job_state`/`mcp_call` 档案（接受的取舍）
-
-> **`job_state` extension（PLAN-0344/0390）**：`extension_kind='job_state'`、挂 Job item（`item_id`）、`schema_version=1`，由 CP 独占写入（Runtime 不写库）。payload 键恰为：`jobId, workspaceId, sessionId, runId, scope, status, startedAt, endedAt, exitCode, timeoutSecs, cancelReason, backendKind, executionMode, source, actorType, createdAt, cleanupStatus, errorCode, runtimeBootId`。`scope ∈ {run,session,workspace}`；`cancelReason ∈ {user_cancel,scope_run_end,scope_session_stop,workspace_destroy,runtime_restart,destroy_orphan,job_missing}`；`cleanupStatus ∈ {not_started,running,completed,failed}`。Docker backend 的 status 词表本批保持 `succeeded/timeout/orphaned`（归一化为 `completed/failed/timed_out` 后置到 adapter 批次），另有 `interrupted`（Runtime 重启或派发未确认，不重放）。无 Session 的 Job root 幂等由 V36 部分唯一索引 `uq_ledger_operations_workspace_job_idempotency` 保证。
-
-**diagnostic_artifacts**（`V2`，Entity `entity/DiagnosticArtifact.java`）：诊断工件元数据（内容在受保护工件存储）。
-
-| 字段 | 类型 | 约束 | 说明 |
-|------|------|------|------|
-| id | UUID | PK | — |
-| operation_id | UUID | NOT NULL FK `ledger_operations(id) ON DELETE CASCADE` | 审计根 |
-| item_id | UUID | nullable FK `operation_items(id) ON DELETE SET NULL` | 关联事实行 |
-| attempt_id | UUID | nullable FK `operation_attempts(id) ON DELETE SET NULL` | 关联尝试 |
-| kind | VARCHAR(40) | NOT NULL | 工件种类（开放域） |
-| content_type | VARCHAR(128) | NOT NULL | MIME |
-| storage_backend | VARCHAR(24) | NOT NULL | 存储后端（开放域） |
-| storage_ref | TEXT | NOT NULL | 存储引用 |
-| content_sha256 | VARCHAR(64) | NOT NULL | 内容哈希 |
-| size_bytes | BIGINT | NOT NULL | 大小 |
-| encryption_algorithm | VARCHAR(32) | NOT NULL | 加密算法 |
-| encryption_key_version | VARCHAR(32) | NOT NULL | 密钥版本 |
-| acl_scope | VARCHAR(24) | NOT NULL | 访问范围（开放域） |
-| expires_at | TIMESTAMPTZ | nullable | 过期 |
-| created_at | TIMESTAMPTZ | NOT NULL DEFAULT `NOW()` | — |
-| deleted_at | TIMESTAMPTZ | nullable | 软删标记 |
-
-> 索引：
-> - `idx_diagnostic_artifacts_operation_time (operation_id, created_at)`
-> - `idx_diagnostic_artifacts_live_expiry (expires_at) WHERE deleted_at IS NULL`
-
-**行身份（v3，V14）**：`uq_operation_items_operation_source_tool_call (operation_id, source, tool_call_id) WHERE tool_call_id IS NOT NULL`——同一次工具调用在中继（agent）与网关（mcp）各有一行，`toolCallId` 为跨通道关联键（join 得完整故事）；是否实际派发以 `source=mcp` 行是否存在为准。无键行（`tool_call_id IS NULL`，如 `llm_usage`/`chat`）不参与该唯一键。时间线唯一：`(operation_id, sequence)`（行锁分配，0317 决策 #7②）。
-
-**payload schema 注册表**（新 kind 前置条件：DEV-019 已登记字段清单，禁止未登记写入）：
-
-| kind | 写者 | payload 字段（camelCase） |
-|------|------|---------------------------|
-| `mcp_call` | 网关 | `httpStatus` int、`durationMs` bigint、`resultHash` string?、`resultSize` int?、`errorCode` string? |
-| `llm_usage` | 中继 | `inputTokens` int、`outputTokens` int、`totalTokens` int、`source` string（`real`/`estimated`） |
-
-`arguments_preview`（operation_items JSONB）：**有界预览**的参数 JSON（PLAN-0407 T1.3 / design #8）——保留原始参数文本，有界 ≤4096、超长按前缀裸截断，不做正则脱敏/改写、不携带 `truncated` 标记、不参与授权或批准后执行；日志出口脱敏由序列化层 `LogRedactor` 承担。
-
-**V14/V30/V31/V33 变更**：V14 drop 空表 `runtime_jobs`（悬空 registry，PLAN-274 债务 #11）并把工具调用唯一键替换为上式（历史不迁移，开发态按 fresh baseline 清库）；V30 增 `ck_ledger_operations_chat_session`（`kind='chat' ⇒ session_id IS NOT NULL`；随 V33 改名）；V31 补 `operation_events` 两条 FK 子列索引；V33 表改名 + 14 项跟随改名（PK ×1、FK ×4、CHECK ×5、唯一索引 ×2、普通索引 ×2）。
-
+当前 schema 以本文件 §3.2–§3.6、§3.8–§3.9、`docs/api/openapi.yaml`、`docs/api/inventory.md` 与 V55 migration 为准。
 ### 3.8 任务连续性（task_plans / task_items）
 
 **task_plans**（`V6`，Entity `entity/TaskPlan.java`）：一次 run 的目标导向计划（PLAN-276 M1）。
@@ -909,7 +753,7 @@ erDiagram
 
 ### 3.9 Workspace Job（workspace_jobs / workspace_job_history）
 
-**workspace_jobs**（`V52`，Entity `entity/WorkspaceJob.java`）：Workspace Job 领域表（PLAN-0465 T1.1，PLAN-0462 decision #5/#7）。`id` 即 domain `jobId`（wire 唯一身份）；`state` JSONB 保留原 `job_state` extension payload（行锁 + 单调前进语义不变），`status`/`scope` 为同步查询列；`operation_item_id` 为到 legacy job item 的 dual-write 锚点（至 0467）。不回填旧行（decision #9）。
+**workspace_jobs**（`V52`，Entity `entity/WorkspaceJob.java`）：Workspace Job 领域表（PLAN-0465 T1.1，PLAN-0462 decision #5/#7）。`id` 即 domain `jobId`（wire 唯一身份）；`state` JSONB 保存 Job state，`status`/`scope` 为同步查询列。V55 已移除只供迁移期双写的 `operation_item_id` anchor；不回填 Ledger 历史（decision #9）。
 
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
@@ -919,19 +763,18 @@ erDiagram
 | session_id | UUID | nullable FK `sessions(id) ON DELETE CASCADE` | session-less Job 为 NULL |
 | run_id | UUID | nullable FK `chat_runs(id) ON DELETE SET NULL` | run-scope 归属/收口键 |
 | tool_call_id | UUID | nullable | MCP 工具调用关联（decision #5 provenance） |
-| operation_item_id | UUID | NOT NULL UNIQUE FK `operation_items(id) ON DELETE CASCADE` | legacy 锚点（0467 drop） |
 | source | VARCHAR(32) | NOT NULL，`ui/agent/runtime/system/mcp` | — |
 | scope | VARCHAR(16) | NOT NULL，`ck_workspace_jobs_scope` | `run/session/workspace`（存活边界） |
 | idempotency_key | VARCHAR(128) | nullable | V36 语义迁入 |
 | input_hash | VARCHAR(64) | nullable | 同 key 异 hash → 409 |
 | status | VARCHAR(24) | NOT NULL，`ck_workspace_jobs_status` | `pending/running/succeeded/cancelled/timeout/orphaned/interrupted` |
-| state | JSONB | NOT NULL | 原 `job_state` payload（含 runtime handle `jobId`） |
+| state | JSONB | NOT NULL | Job state payload；其中历史键 `jobId` 表示 Runtime backend handle，不是 `workspace_jobs.id` |
 | cancel_reason / error_code | VARCHAR(64) | nullable | 冻结词汇见 DEV-014 §9 |
-| runtime_job_id | VARCHAR(128) | nullable | Runtime backend handle（`state->>'jobId'` 镜像，output/status/cancel 目标） |
+| runtime_job_id | VARCHAR(128) | nullable | Runtime backend handle（`state->>'jobId'` 的索引列镜像，output/status/cancel 目标） |
 | started_at / ended_at | TIMESTAMPTZ | nullable | `state` 时间列镜像 |
 | created_at / updated_at | TIMESTAMPTZ | NOT NULL DEFAULT `now()` | 时间索引面 |
 
-> 索引/唯一：`uq_workspace_jobs_session_idempotency (user_id, session_id, idempotency_key) WHERE session_id IS NOT NULL AND idempotency_key IS NOT NULL`；`uq_workspace_jobs_workspace_idempotency (user_id, workspace_id, idempotency_key) WHERE session_id IS NULL AND idempotency_key IS NOT NULL`（V36 语义）；`uq_workspace_jobs_operation_item (operation_item_id)`；`idx_workspace_jobs_workspace_created_at (workspace_id, created_at DESC)`（list + 0466 审计 VIEW 分页）；`idx_workspace_jobs_created_at (created_at)`（对账 sweep）；`idx_workspace_jobs_run_id` / `idx_workspace_jobs_session_id`（scope 收口等值探针）。
+> 索引/唯一：`uq_workspace_jobs_session_idempotency (user_id, session_id, idempotency_key) WHERE session_id IS NOT NULL AND idempotency_key IS NOT NULL`；`uq_workspace_jobs_workspace_idempotency (user_id, workspace_id, idempotency_key) WHERE session_id IS NULL AND idempotency_key IS NOT NULL`（V36 语义）；`idx_workspace_jobs_workspace_created_at (workspace_id, created_at DESC)`（list + 0466 审计 VIEW 分页）；`idx_workspace_jobs_created_at (created_at)`（对账 sweep）；`idx_workspace_jobs_run_id` / `idx_workspace_jobs_session_id`（scope 收口等值探针）。
 
 **workspace_job_history**（`V53`，Entity `entity/WorkspaceJobHistory.java`）：单 Job append-only transition history（PLAN-0465 T1.3，PLAN-0462 decision #8）。只插入不更新；`sequence` 在 `workspace_jobs` 行锁内 max+1 分配；`job_id` FK `ON DELETE CASCADE`。
 
@@ -948,7 +791,7 @@ erDiagram
 
 > 索引：`uq_workspace_job_history_job_sequence (job_id, sequence)`；`idx_workspace_job_history_job_created (job_id, created_at)`。
 
-## 4. 迁移对照（当前 active 链 V1~V53；V42–V47 与 V49–V51 行由各自计划补登）
+## 4. 迁移对照（当前 active 升级链 V1~V55）
 
 > PLAN-280 destructive rebaseline 取代了当时的历史链（旧 V2~V22/U6 移出 active classpath，仅 Git 历史可追溯）；V15 起的 V15~V41 均为当前 active 链的 post-rebaseline migrations。本节保留历史编号解释，不把两套编号混用；表内 V2/V3/V4/V30 的旧名属于历史迁移文件名与原表名（V33 改名后保留）。
 
@@ -989,15 +832,17 @@ erDiagram
 | V33 | `V33__rename_session_operations_to_ledger_operations.sql` | `session_operations` RENAME `ledger_operations` + 14 项跟随改名（PK ×1、FK ×4、CHECK ×5、唯一索引 ×2、普通索引 ×2；PLAN-0351 DDL-12） | `ledger_operations` 及其约束/索引 |
 | V34 | `V34__operation_extensions_cascade.sql` | `operation_extensions` 两目标 FK `SET NULL` → `CASCADE`（CHECK 保留；PLAN-0367 DDL-13） | `operation_extensions` |
 | V35 | `V35__workspace_imports.sql` | Workspace 导入 durable 记录表（状态 `queued/running/completed/cancelled/failed`、`(owner_id, idempotency_key)` 唯一、workspace+created 索引与 active 部分索引；PLAN-0376） | `workspace_imports` |
-| V36 | `V36__workspace_job_idempotency.sql` | 新增部分唯一索引 `uq_ledger_operations_workspace_job_idempotency (user_id, workspace_id, kind, idempotency_key) WHERE idempotency_key IS NOT NULL AND session_id IS NULL`，为无 Session 的 Job root 提供幂等（Postgres 视 NULL 互异，此前无保护；PLAN-0390 M2 T2.2） | `ledger_operations` |
+| V36 | `V36__workspace_job_idempotency.sql` | 历史 Ledger 上为 session-less Job root 增部分唯一索引；V52 将幂等约束迁至 `workspace_jobs`，V55 随 Ledger 表退役 | historical `ledger_operations` |
 | V37 | `V37__session_provenance.sql` | `sessions` 增 nullable `spawned_from_session_id/spawned_from_run_id/spawned_at` 与两条非空部分查找索引（PLAN-0407 T1.1） | `sessions` |
 | V38 | `V38__authorization_grants.sql` | 新增 grants 主体权限表、source/read_state CHECK、subject 查找索引与每主体一份 default grant 部分唯一索引（PLAN-0407 T1.2） | `grants` |
 | V39 | `V39__chat_run_origin.sql` | `chat_runs.origin` 回填旧行为 `user_submission`，约束 `user_submission/spawn`；新增 spawn-only `(user_id,idempotency_key)` 部分唯一索引，保证父 durable event 全局幂等（PLAN-0407 T1.4） | `chat_runs` |
 | V40 | `V40__session_derivation_kind.sql` | `sessions.kind` 区分 `spawn/fork`；root provenance 全 NULL、派生四元组全 NOT NULL 的 CHECK；既有 V37 provenance 行在无 fork creator 的前置阶段回填为 spawn（PLAN-0407 T2.2） | `sessions` |
 | V41 | `V41__default_grant_bootstrap.sql` | 对既有 users 与 root Agent Sessions 补 source=default grant（USER/ADMIN 矩阵），自动默认 read_state=read，并为回填 grant 写 audit row（PLAN-0407 T2.4） | `grants` |
 | V48 | `V48__context_template_session_binding.sql` | **纯 schema（不含数据清理）**：`sessions` 增 `context_template_layer/id/version` 三列（NOT NULL DEFAULT 钉内置模板）与 CHECK（PLAN-0414 T1.1/T1.3），`chat_runs` 增 `context_template_snapshot` JSONB 对象 DEFAULT（T1.4 admission 原子快照）；存量清库是迁移前置运维动作 `dev:reset`（用户 2026-10-03 裁定「先清库，迁移里不该清」，V14 dev-state 可弃先例），迁移不携带 DELETE/拦截 | `sessions/chat_runs` |
-| V52 | `V52__workspace_jobs.sql` | Workspace Job 领域表（PLAN-0465 T1.1 / PLAN-0462 decision #5/#7）：domain `jobId` PK、V36 幂等唯一索引迁入、`operation_item_id` dual-write 锚点（UNIQUE）、`status/scope` 查询列、`(workspace_id, created_at)` 时间索引；不回填旧行（decision #9） | `workspace_jobs` |
+| V52 | `V52__workspace_jobs.sql` | Workspace Job 领域表（PLAN-0465 T1.1 / PLAN-0462 decision #5/#7）：domain `jobId` PK、V36 幂等唯一索引迁入、暂存的 `operation_item_id` dual-write anchor（由 V55 删除）、`status/scope` 查询列与时间索引；不回填旧行（decision #9） | `workspace_jobs` |
 | V53 | `V53__workspace_job_history.sql` | 单 Job append-only transition history（PLAN-0465 T1.3 / decision #8）：六事件 `start/running/settle/cancel/orphaned/interrupted`，per-job `sequence` 唯一，FK 级联 | `workspace_job_history` |
+| V54 | `V54__audit_entries_view.sql` | 四域 Audit read-only view，不回填或改写 owner tables | `v_audit_entries` |
+| V55 | `V55__retire_operation_ledger.sql` | 先从 `workspace_jobs` 删除 `operation_item_id` FK/index/column，再按 FK 依赖次序删除六张 Ledger 历史表；V54 pre-DROP snapshot hash 与恢复演练见 `plans/PLAN-0467-xh-ledger-retirement/evidence/` | `workspace_jobs` / retired Ledger tables |
 
 ## 5. 本地查看与运维
 
@@ -1013,7 +858,7 @@ erDiagram
 | 重置 admin | `mise run reset-admin`（`scripts/reset-admin.ps1 -Password <pw>`，免重启，不删数据） |
 | 重建 dev 库 | `mise run dev:reset`（默认 dry-run，显式 `-Reset` 才执行，先备份） |
 
-> **当前链备注**：V21 的 `policy_revision` 是审批 grant 失效判断的 durable counter；V22/V23/V26 是 checkpoint 切片语义落地前的历史增量；V27 按 PLAN-0339 物理清空旧 `run_checkpoints` 行并重建 workspace 切片记录行，不做旧格式数据迁移；V28 按 PLAN-0357 删除 V4/V5 legacy snapshot 对象（空表纯清理，V4/V5 原文保留为不可变历史）；V29 清空遗留单键源哈希（无 schema 变更）；V30–V33 为 PLAN-0351 的 schema 清理与 `ledger_operations` 改名（V33，见 §4）；V34 为 PLAN-0367 的 `operation_extensions` 目标 FK CASCADE 修复（读路径无改动）；V35 为 PLAN-0376 的 Workspace 导入 durable 记录表；V36 为 PLAN-0390 的 Workspace Job 幂等部分唯一索引（无 Session root，见 §3.7 `job_state`）；V37–V41 为 PLAN-0407 的会话 provenance/kind、授权 grants、ChatRun origin/幂等约束与 default grant backfill。具体约束以对应 SQL 文件为准，禁止通过手工 DROP 表回滚 active 链。
+> **当前链备注**：V21 的 `policy_revision` 是审批 grant 失效判断的 durable counter；V22/V23/V26 是 checkpoint 切片语义落地前的历史增量；V27 按 PLAN-0339 物理清空旧 `run_checkpoints` 行并重建 workspace slice rows；V28 按 PLAN-0357 删除 V4/V5 legacy snapshot 对象；V29 清空遗留单键源哈希；V30–V34 是 Ledger schema 历史增量，相关表于 V55 退役；V35–V41 落地 Workspace import、Session provenance/kind、authorization grants、ChatRun origin/幂等约束与 default grant backfill；V48 落地 Context Template binding；V49–V55 落地 MCP invocation、approval FK/history、Workspace Job/history、Audit view 与 Ledger retirement。具体历史变化以迁移 SQL 和 plan evidence 为准，禁止手工 DROP/回滚 active 链。
 
 ## 附录 A：表—Entity—迁移三向对照
 
@@ -1047,12 +892,12 @@ erDiagram
 | policy_rules | `entity/PolicyRuleEntity.java` | V15 |
 | tool_faces | `entity/ToolFaceEntity.java` | V15 |
 | policy_revision | `entity/PolicyRevisionEntity.java` | V21 |
-| ledger_operations | `entity/LedgerOperation.java` | V2（V33 由 `session_operations` 改名） |
-| operation_items | `entity/OperationItem.java` | V2 |
-| operation_attempts | `entity/OperationAttempt.java` | V2 |
-| operation_events | `entity/OperationEvent.java` | V2 |
-| operation_extensions | `entity/OperationExtension.java` | V2 |
-| diagnostic_artifacts | `entity/DiagnosticArtifact.java` | V2 |
+| ledger_operations | 无当前 Entity（V55 删除） | V2/V33 历史，V55 DROP |
+| operation_items | 无当前 Entity（V55 删除） | V2 历史，V55 DROP |
+| operation_attempts | 无当前 Entity（V55 删除） | V2 历史，V55 DROP |
+| operation_events | 无当前 Entity（V55 删除） | V2 历史，V55 DROP |
+| operation_extensions | 无当前 Entity（V55 删除） | V2/V34 历史，V55 DROP |
+| diagnostic_artifacts | 无当前 Entity（V55 删除） | V2 历史，V55 DROP |
 | task_plans | `entity/TaskPlan.java` | V6 |
 | task_items | `entity/TaskItem.java` | V6 |
 | mcp_stdio_servers | `entity/McpStdioServer.java` | V12（自 config 域 `mcp` 迁出） |
@@ -1062,8 +907,9 @@ erDiagram
 
 | 约定 | 内容 |
 |------|------|
-| 级联删 | `sessions` → `messages/context_events/context_projections/files(session)`；`workspaces` → `workspace_execution_specs/run_checkpoints`；`provider_connections` → `provider_credential_leases`；账本链：`ledger_operations` → `operation_items`（CASCADE）→ `operation_attempts/operation_events/diagnostic_artifacts`（CASCADE）；`operation_extensions` 对 item/attempt 为 `CASCADE`（V34，PLAN-0367；CHECK 保留，见 §3.7）；`task_plans` → `task_items`（CASCADE） |
-| 置空 | `messages` 删后 `files.message_id` 置空，文件行保留待 orphan 清理 |
+| 删除生命周期 | SessionService 硬删 Session 时删除 Session-owned `messages/context_events/context_projections/files`、ChatRun 及 MCP invocation histories；Workspace 软删不级联删除 Job/数据；Job/session/run 硬 FK 按各自生命周期处理 |
+| FK 级联 | `mcp_invocations` → `mcp_attempts/mcp_dispatch_history`；`workspace_jobs` → `workspace_job_history`；`provider_connections` → `provider_credential_leases`；`task_plans` → `task_items` |
+| 置空 | `messages` 删后 `files.message_id` 置空，文件行保留待 orphan 清理；删除 `approval_requests` 时 `mcp_invocations.approval_request_id` 由 V51 `ON DELETE SET NULL` |
 | 软删 | 仅 `workspaces.deleted_at`，查询须带 `WHERE deleted_at IS NULL`，唯一约束用部分索引实现 |
-| 只追加 | `context_events/provider_connection_audit/operation_events` 禁 UPDATE/DELETE（服务/仓储层测试钉住，无 DB 触发器——PLAN-0351 决策 #6），`context_projections` 是唯一可重建的物化 |
+| 只追加 | `context_events/provider_connection_audit/mcp_dispatch_history/approval_history/workspace_job_history` 由 service append-only 写入（各 owner 删除时按生命周期处理）；`context_projections` 是唯一可重建的物化 |
 | 脱敏 | `oauth_credentials.refresh_token_ciphertext` / `provider_connections.credential_ciphertext` 信封加密；`config_audit` 历史密钥已改写；`audit_logs.details` / `chat_runs.error_detail` 写前脱敏 |

@@ -37,7 +37,7 @@
 - Agent、CP、Runtime、MCP 当前实现分别见 [`DEV-013`](docs/i18n/zh-Hans/DEV-013-agent-architecture.md)、[`DEV-014`](docs/i18n/zh-Hans/DEV-014-control-plane-architecture.md)、[`DEV-015`](docs/i18n/zh-Hans/DEV-015-runtime-architecture.md)、[`DEV-016`](docs/i18n/zh-Hans/DEV-016-mcp-architecture.md)；API wire 以 `docs/api/openapi.yaml` / `inventory.md` 为准。SPEC 是目标契约入口，`proposed` 不代表已经实现。
 - Runtime/Sandbox 后端与生命周期契约见 [`DEV-031`](docs/i18n/zh-Hans/DEV-031-sandbox-backend-contract.md)。未知 Workspace、后端不可用或超时必须显式失败；MXC/Docker 故障不得自动回退到宿主执行。`windows-host/unrestricted` 只能由用户显式选择；进程沙盒只约束受其管理的进程，不得据此宣称宿主 Workspace 外写入安全。host execution 仍受原有授权/审批约束；删除执行实体不得删除 WorkspaceStorage。
 - Runtime 的实现字段（如 pid、wrapperPid、policyPath、mxcTier）不得透传到 API；CP/API view 必须显式过滤内部与敏感字段。
-- Workspace/Session、ChatRun 与 Operation 不变量见 [`DEV-017`](docs/i18n/zh-Hans/DEV-017-session-architecture.md)、DEV-014 和对应 SPEC；模块间变更必须按下方跨协议门禁同步。
+- Workspace/Session、ChatRun、Workspace Job 与 MCP invocation 不变量见 [`DEV-017`](docs/i18n/zh-Hans/DEV-017-session-architecture.md)、DEV-014 和对应 SPEC；模块间变更必须按下方跨协议门禁同步。
 
 ## SPEC Contract Layer
 

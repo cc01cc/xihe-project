@@ -42,9 +42,8 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
-import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
 import com.cc01cc.p.xihe.cp.status.HealthMonitor;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
+import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.cc01cc.p.xihe.cp.service.AgentTemplateService;
 import com.cc01cc.p.xihe.cp.service.BranchPathService;
@@ -108,19 +107,10 @@ class ChatControllerTest extends AbstractH2Test {
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
-    private LedgerOperationRepository ledgerOperationRepository;
-
-    @Autowired
-    private com.cc01cc.p.xihe.cp.repository.OperationItemRepository operationItemRepository;
-
-    @Autowired
-    private com.cc01cc.p.xihe.cp.repository.OperationExtensionRepository operationExtensionRepository;
-
-    @Autowired
     private com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository configJpaRepository;
 
     @Autowired
-    private OperationService operationService;
+    private McpInvocationRepository mcpInvocationRepository;
 
     @Autowired
     private AgentPrincipalService agentPrincipalService;
@@ -288,7 +278,7 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(0, jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ?", Integer.class, sessionId));
         assertTrue(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).isEmpty());
-        assertTrue(ledgerOperationRepository.findBySessionIdOrderByCreatedAtDesc(sessionId).isEmpty());
+        assertFalse(mcpInvocationRepository.existsBySessionId(sessionId));
     }
 
     @Test
@@ -505,7 +495,8 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(first.getBody().get("runId"), second.getBody().get("runId"));
         assertEquals(ChatRun.ORIGIN_USER_SUBMISSION, first.getBody().get("origin"));
         assertEquals(ChatRun.ORIGIN_USER_SUBMISSION, second.getBody().get("origin"));
-        assertEquals(first.getBody().get("operationId"), second.getBody().get("operationId"));
+        assertFalse(first.getBody().containsKey("operationId"));
+        assertFalse(second.getBody().containsKey("operationId"));
         assertEquals(first.getBody().get("runId"), jdbcTemplate.queryForObject(
                 "SELECT injected_run_id::text FROM inbox WHERE id = ?", String.class, inboxId),
                 "the first parent Run must claim the pending Inbox row");
@@ -859,13 +850,8 @@ class ChatControllerTest extends AbstractH2Test {
                 String.class, requestId);
         assertNotNull(historyPreview, "PLAN-0464 T1.5: the approval creation writes approval_history");
         assertFalse(historyPreview.contains("\"policy\""));
-        Map<String, Object> replay = approvalService.replayPending(sessionId, userId, workspaceId).stream()
-                .filter(item -> requestId.equals(item.get("requestId")))
-                .findFirst().orElseThrow();
-        assertEquals(event.keySet(), replay.keySet());
         assertEquals("pending", event.get("state"));
         assertEquals(Boolean.FALSE, event.get("replayed"));
-        assertEquals(Boolean.TRUE, replay.get("replayed"));
         assertFalse(event.containsKey("agentOnly"));
     }
 
@@ -970,10 +956,9 @@ class ChatControllerTest extends AbstractH2Test {
     @Test
     void chat_withUsageEvent_persistsExtensionAndWritesTokenCount() throws IOException {
         // PLAN-294 M1 (decisions #13/#14): the relay must intercept the
-        // agent's usage event, persist it as an llm_usage extension, and
+        // agent's usage event, persist it as an llm.usage ContextEvent, and
         // write chat_runs.token_count from usage.totalTokens instead of the
-        // SSE chunk counter. This path was silently blocked by the
-        // operation_items.kind CHECK until V10 — guard it here.
+        // SSE chunk counter.
         String sseBody = "event: token\ndata: {\"content\":\"hi\"}\n\n"
                 + "event: usage\ndata: {\"usage\":{\"inputTokens\":120,\"outputTokens\":30,\"totalTokens\":150,"
                 + "\"estimatedInputTokens\":140,\"source\":\"real\"}}\n\n"

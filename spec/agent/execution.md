@@ -6,7 +6,7 @@
 > Owner：Agent owner  
 > 消费者：CP、Runtime、UI、Security  
 > 来源：PLAN-0387、DEV-013  
-> 更新日期：2026-10-07
+> 更新日期：2026-10-08
 
 ## 范围
 
@@ -18,7 +18,7 @@ Agent Run 相关护栏（Context 预算、工具超时/输出、循环与无进�
 
 | 参与者 | 权威职责 |
 |---|---|
-| CP | 创建 ChatRun，计算可执行输入，拥有 ChatRun/Operation 终态 |
+| CP | 创建 ChatRun，计算可执行输入，拥有 ChatRun 终态与各域 durable records |
 | Agent | 执行模型循环、工具调用和事件翻译；不得自行扩大授权 |
 | Runtime | 承载文件、命令、进程和 MCP 执行 |
 | UI | 消费 CP relay 的 SSE/HTTP 状态映射与响应，不把本地状态当作 durable authority |
@@ -28,7 +28,7 @@ Agent Run 相关护栏（Context 预算、工具超时/输出、循环与无进�
 
 ## 规范条款
 
-1. Agent MUST 只使用 CP 下发的 `sessionId`、`runId`、`workspaceId`、`toolCallId` 和 Context snapshot；`operationId`/`operationItemId` 不作为 Agent 的 canonical 执行身份。
+1. Agent MUST 只使用 CP 下发的 `sessionId`、`runId`、`workspaceId`、`toolCallId` 和 Context snapshot；MCP invocation/attempt 身份由 CP MCP execution domain 持有。
 2. Agent MUST 通过 `AgentRunner.stream()` 产生统一事件；框架原始事件 MUST 经过 `EventAdapter` 翻译。
 3. Agent MUST 将 `toolCallId` 同时用于对应的 tool call/result 事件；缺少稳定调用键时 MUST fail-closed 或沿用既有 adapter fallback，不得生成第二套跨层键。
 4. Agent MUST 将取消、审批等待、provider failure 和 partial/ambiguous 结果交给 CP 的终态路径；Agent 本地 `done` 不得单独宣称 durable ChatRun 已完成。
@@ -37,11 +37,11 @@ Agent Run 相关护栏（Context 预算、工具超时/输出、循环与无进�
 ## MCP 关联键与迟到终止
 
 1. Agent MUST 为同一次 MCP 工具调用在 `AgentEvent.tool_call` 与 `AgentEvent.tool_result` 使用相同的 `toolCallId`；不得按阶段重新派生另一关联键。
-2. Agent→CP 请求 MUST 发送 `X-Tool-Call-Id`，其值为事件 `toolCallId`。过渡期（截至 PLAN-0464 移除兼容头前）旧实现 MAY 同时发送 `X-Operation-Id` 与 `X-Operation-Item-Id`，且二者 MUST 与 `X-Tool-Call-Id` 同值；当前实现 MUST NOT 发送这两个兼容头。
-3. Agent MUST NOT 创建或选择 `mcpInvocationId`。CP 在 MCP gate 创建并拥有 invocation；CP→Runtime 发送 `X-Mcp-Invocation-Id`。Runtime in-flight cancel key 仍使用 canonical `toolCallId`；Runtime late-termination SHOULD 优先报告 `mcpInvocationId`，旧 itemId route 仅作为退役前兼容回退。
+2. Agent→CP 请求 MUST 发送唯一关联头 `X-Tool-Call-Id`，值为事件 `toolCallId`；不得发送 Ledger operation/item headers。
+3. Agent MUST NOT 创建或选择 `mcpInvocationId`。CP 在 MCP gate 创建并拥有 invocation；CP→Runtime 发送 `X-Mcp-Invocation-Id`。Runtime in-flight cancel key 仍使用 canonical `toolCallId`；Runtime late-termination 经 MCP invocation route 报告 `mcpInvocationId`，不保留 itemId fallback。
 4. 每次调用最多一个 canonical `toolCallId` 与一个 CP-owned invocation；header 缺失、冲突或 scope 不匹配时由 CP fail-closed，Agent MUST 不绕过 CP 自行执行或补造身份。
 
-验证映射：Agent `tests/unit/test_mcp_client.py`；CP `McpInvocationIntegrationTest` / `GrantPrincipalPathResolverTest`；Runtime `tool_timeout.rs` 与 late-termination integration tests；HTTP route 以 `docs/api/openapi.yaml` 和 `docs/api/inventory.md` 为准。兼容头与旧 late route 的删除 owner 为 PLAN-0464/0467。
+验证映射：Agent `tests/unit/test_mcp_client.py`；CP `McpInvocationIntegrationTest` / `GrantPrincipalPathResolverTest`；Runtime `tool_timeout.rs` 与 late-termination integration tests；HTTP route 以 `docs/api/openapi.yaml` 和 `docs/api/inventory.md` 为准。PLAN-0464/0467 已移除 Ledger compatibility headers 与 itemId late route。
 
 ## 执行边界
 
@@ -63,7 +63,7 @@ sequenceDiagram
 
 ## 状态、失败与恢复
 
-- Agent stream 可以出现 token、tool call/result、approval request、error 和 done；CP 负责将它们映射为 ChatRun/Operation 状态。
+- Agent stream 可以出现 token、tool call/result、approval request、error 和 done；CP 负责将它们映射为 ChatRun 状态与 owner-domain durable records。
 - 断线后，UI/CP 通过既有 run 查询和 SSE 恢复机制恢复可见状态；Agent 不自行重放已完成的 tool call。
 - provider 不可达、工具超时、审批过期和取消必须保留稳定错误码/终态来源；错误 detail 不得包含 token 或原始 secret。
 
@@ -71,7 +71,7 @@ sequenceDiagram
 
 - Agent `EventType` literal 与 `AgentContext.apply_event()` 均覆盖 `context.prune`、`context.env_updated`；CP Event Store 自由字符串尚未形成跨层机器校验闭环。
 - Agent payload 目前没有独立 Agent principal/schema；该 gap 由 PLAN-0374 与 Security 前置决策承接。
-- MCP canonical `toolCallId`、CP-owned invocation 与 Runtime late-termination 关联由 PLAN-0463 落地；legacy operation headers 已由 PLAN-0464 移除，旧 itemId late route 仍 deprecated，等待 PLAN-0467 删除。
+- MCP canonical `toolCallId`、CP-owned invocation 与 Runtime late-termination 关联由 PLAN-0463 落地；PLAN-0464/0467 已移除 Ledger headers、Job anchor alias 与旧 itemId late route。
 
 ## 验证映射
 

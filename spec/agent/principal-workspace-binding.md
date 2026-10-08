@@ -6,7 +6,7 @@
 > Owner：PLAN-0374（canonical binding；spawn caller amendment per PLAN-0407 #53）
 > 消费者：CP 授权/Session/Chat admission、Workspace Agent 管理 API、UI Agent 管理与 Session 选择、PLAN-0407/0409/0410  
 > 来源：PLAN-0374（原承接 BL-18/BL-29；2026-09-23 G2 已冻结入 PLAN-0407 承接，执行中；本地稿 `plans/PLAN-0374-XH-agent-workspace-scope/spec/agent/principal-workspace-binding.md`）  
-> 更新日期：2026-09-28
+> 更新日期：2026-10-08
 
 ## 范围
 
@@ -37,9 +37,9 @@ Fork 实现归属：0374 定义并验证 stable principal 与独立授权 root �
 2. `user_id` 不参与 Agent grants；user-only 路径与 Agent 路径互不替代，WorkspaceUser 成员关系与 WorkspaceAgent binding 独立生效。
 3. cap 写入 subset 判据：actionClass 一致；ceiling resource `*` 可覆盖具体 resource，其余 resource pattern 必须全等；不推断一般 glob 包含。写入同时受操作者当前 grants 与 principal grants 限定。
 4. `CREATE_ACCOUNT`、`CREATE_TEMPLATE`、`MANAGE_WORKSPACE_AGENTS` 是三个独立授权 action，默认 deny，不得别名合并或由模板 config 写权限替代。
-5. CP internal spawn service route（`POST /internal/v1/agents/spawn`）仅认 service Bearer；请求严格 `{parentRunId, toolCallId}`，principal/owner/workspace/tool 由 durable parent run + `(operation_id, source='agent', tool_call_id)` item 派生；忽略/拒绝任何注入字段（400/401/403/404/409）。该 route 不是 Agent 的 tool caller。
-6. Agent 生产 spawn caller 必须是 CP logical MCP endpoint 发布的 CP-owned `spawn_agent` tool；`LCToolAdapter` 以 LangChain callback `run_manager.run_id` 贯通 EventStore、Agent SSE 和 MCP `X-Operation-Item-Id` header。provider ToolMessage ID 仅是 LangGraph 内部关联，不作为 CP durable item key。CP 在 grant/approval gate 后本地派发，禁止 Agent 直调 internal spawn route。
-7. `POST /api/v1/sessions` 必须显式 `agentPrincipalId` 并校验 binding；Chat admission 只接受已绑定 Session，无 lazy-create。principal-null 空 Session 首绑条件：显式 `agentPrincipalId` + 无 ChatRun/message/user-direct Operation/ContextEvent，row CAS 与 ChatRun/Message/Operation 同事务；已绑定 Session 换 principal → 409。
+5. CP internal spawn service route（`POST /internal/v1/agents/spawn`）仅认 service Bearer；请求严格 `{parentRunId, toolCallId}`，principal/owner/workspace/tool 由 durable parent run + 匹配的 MCP invocation（`source='agent'`、`run_id=parentRunId`、`tool_call_id`）派生；忽略/拒绝任何注入字段（400/401/403/404/409）。该 route 不是 Agent 的 tool caller。
+6. Agent 生产 spawn caller 必须是 CP logical MCP endpoint 发布的 CP-owned `spawn_agent` tool；`LCToolAdapter` 以 LangChain callback `run_manager.run_id` 贯通 EventStore、Agent SSE 和 MCP `X-Tool-Call-Id` header。provider ToolMessage ID 仅是 LangGraph 内部关联，不作为 CP MCP invocation key。CP 在 grant/approval gate 后本地派发，禁止 Agent 直调 internal spawn route。
+7. `POST /api/v1/sessions` 必须显式 `agentPrincipalId` 并校验 binding；Chat admission 只接受已绑定 Session，无 lazy-create。principal-null 空 Session 首绑条件：显式 `agentPrincipalId` + 无 ChatRun/message/MCP invocation/ContextEvent，row CAS 与 ChatRun/Message/MCP invocation 检查同事务；已绑定 Session 换 principal → 409。
 8. 每项变更写 `audit_logs`（`agent_principal_created`、`workspace_agent_bound`/`workspace_agent_cap_updated`/`workspace_agent_unbound`），含 actor、authorizationAction、object 与 permission diff；snapshot/API/audit 不含 systemPrompt 原文、provider secret 或 token。
 9. 人类创建账户与创建模板是分离授权/审计的两种操作；可创建权限不得超出操作者当前权限子集。V1 仅 human 执行；Agent 自助与多层审批按 BL-71/BL-70 后置，不得由模板 CRUD、spawn 或 config 写权限旁路。
 
@@ -47,7 +47,7 @@ Fork 实现归属：0374 定义并验证 stable principal 与独立授权 root �
 
 - binding 缺失、撤销、空 cap、principal disabled、非法 provenance 链 → 拒绝且不写入；撤权在下一工具边界生效，已返回的决策不被追溯修改。
 - pending approval 不绕过重评：授权拒绝发生在审批评估之前。
-- principal-null Session：附件占位/导入历史/MCP user-ledger fallback 保持 no Agent grant；记录 user-direct Operation 或 tool ContextEvent 后不得升级为 Agent Chat。
+- principal-null Session：附件占位/导入历史/user-direct MCP invocation fallback 保持 no Agent grant；记录 user-direct MCP invocation 或 tool ContextEvent 后不得升级为 Agent Chat。
 - 解绑只影响本 Workspace：阻止该 Workspace 新 Session/Run，保留历史 Session 与其他 Workspace binding。
 
 ## 代表性场景
@@ -68,7 +68,7 @@ UI → `POST /api/v1/agent-principals`、`GET/PUT/DELETE /api/v1/workspaces/{id}
 ## 验证映射
 
 - 授权交集/链/独立性：`GrantAuthorizationServiceIntegrationTest`（真实 PostgreSQL；含多级 spawn 链、fork root、WorkspaceUser/WorkspaceAgent 双向独立、user_id-only deny、撤权边界）。
-- Migration/schema：`OperationLedgerFreshMigrationTest`、`AgentPrincipalMigrationTest`。
+- Migration/schema：`DomainSchemaMigrationTest`、`AgentPrincipalMigrationTest`。
 - Spawn route：`AgentSpawnPrincipalContractTest`；管理/创建 API：`WorkspaceAgentControllerContractTest`、`AgentPrincipalControllerContractTest`；Session entrypoint：`ChatSubmissionServiceIntegrationTest`、`ChatIntegrationTest`、`SessionIntegrationTest`。
 - 真实浏览器：`packages/ui/e2e/real/workspace-agent-management.spec.ts`（PLAN-0374 evidence `t4-4-workspace-agent-browser.md`）。
 

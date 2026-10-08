@@ -7,7 +7,7 @@ sidebar_group: "开发指南"
 sidebar_order: 13
 status: active
 created: 2026-07-07
-updated: 2026-09-29
+updated: 2026-10-08
 ---
 
 # DEV-013: Agent 架构与接口抽象
@@ -135,7 +135,7 @@ flowchart TD
 - **取值模型（决策 #25/#27）**：**CP 是唯一计算点**——预算 B 输入优先级 per-call > 数据库配置（`agent-runtime.systemToolTimeoutS` / remote `tool_timeout_s`）> 代码默认 30；CP 输出三跳最终等待值（Runtime = B、CP 转发 = B+2s、Agent = B+4s；固定余量仅兜内层挂死），经 run payload / 请求头下发。**模块侧只有三条判断（零算术）**：本模块 ENV 显式 → 用 ENV；per-call 性质标记存在 → 用下发值（压制本模块 ENV）；否则用下发值；都没有 → 代码默认。
 - **上限（T3.1，2026-09-13）**：per-call 与数据库配置**同顶 30s**（`MAX_BUDGET_SECONDS`，代码常量）；per-call 超限 → CP 400 拒绝，遗留配置超限 → 告警后回落默认。超过 30s 的同步等待走异步 job，不放大预算。
 - **传输兜底**：Agent 的 fastmcp 客户端显式 `timeout=3600s`（`SESSION_READ_HANG_BACKSTOP_S`），保证 SDK/会话默认值（`read=300s`）不抢先于逻辑授权值；权威等待界仍是 `asyncio.wait_for`。
-- **头与关联键**：调用方 per-call 走入站头 `X-Xihe-Tool-Timeout-Per-Call`；出站 `X-Xihe-Tool-Timeout-S` / `-Origin` 只由 CP 设置并覆盖上游同名头（防绕过）；输出上限走 `X-Xihe-Tool-Output-Limit`；`toolCallId` 统一为 LangChain tool callback `run_manager.run_id`，经 EventStore、Agent SSE 与 `X-Operation-Item-Id` 三层贯通，不使用 LLM provider 的 ToolMessage ID。
+- **头与关联键**：调用方 per-call 走入站头 `X-Xihe-Tool-Timeout-Per-Call`；出站 `X-Xihe-Tool-Timeout-S` / `-Origin` 只由 CP 设置并覆盖上游同名头（防绕过）；输出上限走 `X-Xihe-Tool-Output-Limit`；`toolCallId` 统一为 LangChain tool callback `run_manager.run_id`，经 EventStore、Agent SSE 与 `X-Tool-Call-Id` 贯通，不使用 LLM provider 的 ToolMessage ID。
 - **错误署名**：超时错误写 `layer` / `effectiveSeconds` / `source`（env|cp|default）/ `valueOrigin`（per-call|config）/ `overriddenSeconds` / `origin=self|downstream`（容器守卫到界另带 `mechanism=guard`）；掐断层判定 = 时间线上最早的 `origin=self`（某跳 ENV 先到界属配置结果，非故障）。
 - **已废弃表述**：旧的「四级解析链 + min 语义 + 冷启动 ×3（`firstToolCallDone`）」不再适用；冷启动宽限机制未实施，按 PLAN-0308 决策 #35 ④ **显式延期**（需要时再立）。
 - 离线兜底：各模块 `XIHE_MCP_TOOL_TIMEOUT_S`（Agent）/ `XIHE_EXEC_COLLECT_TIMEOUT_S`（Runtime）/ `xihe.mcp.forward-timeout-s`（CP）仅作部署者**本跳覆盖**，正常路径由 CP 预算派生，各跳不做跨层比较。

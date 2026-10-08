@@ -14,10 +14,9 @@ import java.util.UUID;
 /**
  * One execution attempt of an {@link McpInvocation} (PLAN-0463 V49).
  *
- * <p>{@code stage=agent_tool} rows are written by the SSE relay next to the
- * legacy {@code operation_attempts} row (both stay until 0464 removes the
- * recorder component); {@code stage=cp_forward} rows are written by the MCP
- * proxy dispatch. Transport uncertainty finishes as {@code unknown} and may be
+ * <p>{@code stage=agent_tool} rows are written by the SSE relay;
+ * {@code stage=cp_forward} rows are written by the MCP proxy dispatch.
+ * Transport uncertainty finishes as {@code unknown} and may be
  * settled later as {@code late_confirmed}.</p>
  */
 @Entity

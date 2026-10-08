@@ -31,7 +31,7 @@ sequenceDiagram
 - service authentication **MUST** 使用 `Authorization: Bearer <token>`；不得引入自定义 token header。
 - XH 自有 JSON **MUST** 使用 camelCase；MCP JSON-RPC 字段遵守 MCP 版本。
 - HTTP 错误 **MUST** 使用 RFC 9457 Problem Details；`code` 和 `requestId` 是跨层定位键。
-- 跨 operation hop 使用 `X-Operation-Id`、`X-Operation-Item-Id`、`X-Operation-Attempt-Id`；各层 **MUST** 复用上游 canonical key。
+- 跨边界 ID 按 owner 传递：ChatRun 用 `runId`；MCP execution 用 `invocationId` 与 `toolCallId`；Workspace Job 用 domain `jobId`，Runtime backend handle 单独用 `runtimeJobId`。各层 **MUST NOT** 把不同 owner 的 ID 混作同一关联键。
 - OpenAPI、`inventory.md`、事件 schema 和代码类型是 wire source；本文只记录业务不变式和跨模块 ownership。
 
 ## 3. 超时、重试和幂等

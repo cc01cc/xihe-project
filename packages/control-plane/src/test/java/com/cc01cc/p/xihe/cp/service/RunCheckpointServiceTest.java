@@ -1,10 +1,8 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
-import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import com.cc01cc.p.xihe.cp.entity.RunCheckpoint;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.RunCheckpointRepository;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeCheckpointClient;
@@ -43,7 +41,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * PLAN-0339 T0.4: workspace slice-checkpoint lifecycle — single terminal capture,
- * no-change omission, frozen degradation policy, ledger markers, startup compensation.
+ * no-change omission, frozen degradation policy, domain-owned revert summaries and startup compensation.
  */
 class RunCheckpointServiceTest {
 
@@ -56,7 +54,6 @@ class RunCheckpointServiceTest {
 
     private RunCheckpointRepository repository;
     private RuntimeCheckpointClient client;
-    private OperationService operationService;
     private ChatRunRepository chatRunRepository;
     private SseEmitterManager sseManager;
     private RunCheckpointService service;
@@ -66,7 +63,6 @@ class RunCheckpointServiceTest {
     void setUp() {
         repository = mock(RunCheckpointRepository.class);
         client = mock(RuntimeCheckpointClient.class);
-        operationService = mock(OperationService.class);
         chatRunRepository = mock(ChatRunRepository.class);
         sseManager = mock(SseEmitterManager.class);
         rows.clear();
@@ -115,9 +111,7 @@ class RunCheckpointServiceTest {
                 });
         when(repository.countByWorkspaceId(anyString())).thenReturn(0L);
         when(repository.countSliceRefs(anyString())).thenReturn(0L);
-        when(operationService.findOperationIdByRunId(anyString())).thenReturn(null);
-
-        service = new RunCheckpointService(repository, client, operationService, chatRunRepository,
+        service = new RunCheckpointService(repository, client, chatRunRepository,
                 new ObjectMapper(), sseManager);
     }
 
@@ -167,16 +161,9 @@ class RunCheckpointServiceTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void terminalCaptureWritesCapturedRowAndLedgerMarker() {
-        UUID operationId = UUID.randomUUID();
+    void terminalCaptureWritesCapturedRow() {
         when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
                 .thenReturn(Optional.of(runWithStatus("succeeded")));
-        when(operationService.findOperationIdByRunId(RUN_ID)).thenReturn(operationId);
-        OperationItem item = new OperationItem();
-        item.setId(UUID.randomUUID());
-        item.setStatus("pending");
-        when(operationService.appendItem(eq(operationId), any(), any(), eq("checkpoint"),
-                eq("run_checkpoint"), eq("runtime"), any(), any(), any())).thenReturn(item);
         when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
                 .thenReturn(captureOk(SLICE_REF));
 
@@ -191,15 +178,6 @@ class RunCheckpointServiceTest {
         assertNotNull(row.getCapturedAt());
         verify(client).capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false);
 
-        ArgumentCaptor<String> previews = ArgumentCaptor.forClass(String.class);
-        ArgumentCaptor<String> toolCallIds = ArgumentCaptor.forClass(String.class);
-        verify(operationService).appendItem(eq(operationId), toolCallIds.capture(), any(),
-                eq("checkpoint"), eq("run_checkpoint"), eq("runtime"), previews.capture(), isNull(), isNull());
-        verify(operationService).transitionItem(eq(item.getId()), eq("completed"),
-                isNull(), isNull(), any(), isNull());
-        assertNotNull(UUID.fromString(toolCallIds.getValue()), "the marker identity is a UUID");
-        assertTrue(previews.getValue().contains(SLICE_REF));
-        assertTrue(previews.getValue().contains("\"marker\":\"captured\""));
     }
 
     @Test
@@ -399,7 +377,7 @@ class RunCheckpointServiceTest {
     }
 
     @Test
-    void ledgerMarkerIsSkippedWhenOperationIsMissing() {
+    void checkpointCaptureDependsOnlyOnRunAndWorkspaceOwnership() {
         when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
                 .thenReturn(Optional.of(runWithStatus("succeeded")));
         when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
@@ -407,8 +385,6 @@ class RunCheckpointServiceTest {
 
         assertTrue(service.captureCheckpoint(RUN_ID));
 
-        verify(operationService, never()).appendItem(any(), any(), any(), anyString(), anyString(),
-                anyString(), any(), any(), any());
         assertEquals(1, rows.size());
     }
 
@@ -566,13 +542,6 @@ class RunCheckpointServiceTest {
         seedCapturedRow();
         when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
                 .thenReturn(Optional.of(runWithStatus("succeeded")));
-        UUID operationId = UUID.randomUUID();
-        when(operationService.findOperationIdByRunId(RUN_ID)).thenReturn(operationId);
-        OperationItem item = new OperationItem();
-        item.setId(UUID.randomUUID());
-        item.setStatus("pending");
-        when(operationService.appendItem(eq(operationId), any(), any(), eq("checkpoint"),
-                eq("revert_checkpoint"), eq("ui"), any(), any(), any())).thenReturn(item);
         when(client.revert(WORKSPACE_ID, SLICE_REF, List.of(RAW_REQUEST_MARKER)))
                 .thenReturn(revertOk(2, 0, 0));
 
@@ -588,20 +557,15 @@ class RunCheckpointServiceTest {
         verify(repository).markReverted(eq(row.getId()), eq(RunCheckpoint.REVERT_ROLLED_BACK),
                 eq(SLICE_REF), any(), any());
 
-        ArgumentCaptor<String> summary = ArgumentCaptor.forClass(String.class);
-        verify(operationService).appendItem(eq(operationId), any(), any(), eq("checkpoint"),
-                eq("revert_checkpoint"), eq("ui"), summary.capture(), isNull(), isNull());
-        assertTrue(summary.getValue().contains("\"marker\":\"revert\""));
-        assertTrue(summary.getValue().contains("\"checkpointId\":\"" + row.getId() + "\""));
-        assertTrue(summary.getValue().contains("\"sliceRef\":\"" + SLICE_REF + "\""));
-        assertTrue(summary.getValue().contains("\"allowedBy\":\"user_ui\""));
-        assertTrue(summary.getValue().contains("\"restored\":2"));
-        assertTrue(summary.getValue().contains("\"reason\":null"));
-        assertFalse(summary.getValue().contains(RAW_REQUEST_MARKER));
-        assertFalse(summary.getValue().contains("arguments"));
-        assertFalse(summary.getValue().contains("details"));
-        verify(operationService).transitionItem(eq(item.getId()), eq("completed"), isNull(), isNull(),
-                any(), isNull());
+        String summary = row.getRevertSummary();
+        assertTrue(summary.contains("\"checkpointId\":\"" + row.getId() + "\""));
+        assertTrue(summary.contains("\"sliceRef\":\"" + SLICE_REF + "\""));
+        assertTrue(summary.contains("\"allowedBy\":\"user_ui\""));
+        assertTrue(summary.contains("\"restored\":2"));
+        assertTrue(summary.contains("\"reason\":null"));
+        assertFalse(summary.contains(RAW_REQUEST_MARKER));
+        assertFalse(summary.contains("arguments"));
+        assertFalse(summary.contains("details"));
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
@@ -616,13 +580,6 @@ class RunCheckpointServiceTest {
     @Test
     void revertPartialRecordsPartialStateAndCappedSuspects() {
         seedCapturedRow();
-        UUID operationId = UUID.randomUUID();
-        when(operationService.findOperationIdByRunId(RUN_ID)).thenReturn(operationId);
-        OperationItem item = new OperationItem();
-        item.setId(UUID.randomUUID());
-        item.setStatus("completed");
-        when(operationService.appendItem(any(), any(), any(), anyString(), anyString(), anyString(),
-                any(), any(), any())).thenReturn(item);
         when(client.revert(WORKSPACE_ID, SLICE_REF, List.of("c0.txt", RAW_REQUEST_MARKER)))
                 .thenReturn(revertOk(1, 2, 25));
 
@@ -632,21 +589,18 @@ class RunCheckpointServiceTest {
         assertEquals(RunCheckpointService.Gate.OK, outcome.gate());
         RunCheckpoint row = rows.get(0);
         assertEquals(RunCheckpoint.REVERT_PARTIAL, row.getRevertState());
-        ArgumentCaptor<String> summary = ArgumentCaptor.forClass(String.class);
-        verify(operationService).appendItem(any(), any(), any(), eq("checkpoint"), eq("revert_checkpoint"),
-                eq("ui"), summary.capture(), any(), any());
-        assertTrue(summary.getValue().contains("\"reason\":\"FAILED\""));
-        assertTrue(summary.getValue().contains("\"failed\":2"));
-        long suspectCount = summary.getValue().split("\"suspect-", -1).length - 1;
-        assertEquals(20, suspectCount, "suspects are capped at 20 in the ledger summary");
-        assertFalse(summary.getValue().contains(RAW_REQUEST_MARKER));
-        assertFalse(summary.getValue().contains("arguments"));
-        assertFalse(summary.getValue().contains("details"));
-        verify(operationService, never()).transitionItem(any(), any(), any(), any(), any(), any());
+        String summary = row.getRevertSummary();
+        assertTrue(summary.contains("\"reason\":\"FAILED\""));
+        assertTrue(summary.contains("\"failed\":2"));
+        long suspectCount = summary.split("\"suspect-", -1).length - 1;
+        assertEquals(20, suspectCount, "suspects are capped at 20 in the checkpoint summary");
+        assertFalse(summary.contains(RAW_REQUEST_MARKER));
+        assertFalse(summary.contains("arguments"));
+        assertFalse(summary.contains("details"));
     }
 
     @Test
-    void revertWithFailuresAndNoOperationSkipsLedger() {
+    void revertWithFailuresStoresDomainSummary() {
         seedCapturedRow();
         when(client.revert(WORKSPACE_ID, SLICE_REF, List.of())).thenReturn(revertOk(1, 2, 0));
 
@@ -656,8 +610,6 @@ class RunCheckpointServiceTest {
         RunCheckpoint row = rows.get(0);
         assertEquals(RunCheckpoint.REVERT_PARTIAL, row.getRevertState());
         assertTrue(row.getRevertSummary().contains("\"reason\":\"FAILED\""));
-        verify(operationService, never()).appendItem(any(), any(), any(), anyString(), anyString(),
-                anyString(), any(), any(), any());
     }
 
     @Test

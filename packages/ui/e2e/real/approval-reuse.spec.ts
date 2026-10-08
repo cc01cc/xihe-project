@@ -53,7 +53,7 @@ const HOST_ROOT = path.join(PROJECT_DIR, ".tmp", "e2e-host", RUN_ID);
 const AUDIT_LOG = path.join(HOST_ROOT, "logs", "audit.log");
 
 const TERMINAL_RUN_STATES = /^(succeeded|failed|partial|ambiguous|cancelled)$/;
-const TERMINAL_OPERATION_STATES = /^(completed|failed|partial|cancelled|none)$/;
+const TERMINAL_CHAT_RUN_STATES = /^(succeeded|failed|partial|cancelled|ambiguous)$/;
 
 // 单会话单 workspace：Agent 每进程只绑定一个 workspace（PLAN-262 边界），retry 会重新注册
 // 新 workspace 而旧 Agent 无法复用，因此本文件关闭重试。
@@ -151,14 +151,14 @@ function approvalRowCountByOrigin(sessionId: string, origin: string): number {
     );
 }
 
-async function latestOperationStatus(
+async function latestChatRunStatus(
     request: APIRequestContext,
     headers: Record<string, string>,
 ): Promise<string> {
-    const res = await request.get(`${CP_URL}/api/v1/operations?size=1`, { headers });
+    const res = await request.get(`${CP_URL}/api/v1/audit/entries?type=chat_run&size=1`, { headers });
     if (!res.ok()) return `http-${res.status()}`;
-    const body = (await res.json()) as { operations?: Array<{ status?: string }> };
-    return body.operations?.[0]?.status ?? "none";
+    const body = (await res.json()) as { entries?: Array<{ status?: string }> };
+    return body.entries?.[0]?.status ?? "none";
 }
 
 async function runStatus(
@@ -171,18 +171,18 @@ async function runStatus(
     return ((await res.json()) as { status?: string }).status ?? "unknown";
 }
 
-/** 同会话连续调用必须先等上一轮 operation 落地，否则命中 409 CHAT_IN_PROGRESS。 */
+/** 同会话连续调用必须先等上一轮 ChatRun 落地，否则命中 409 CHAT_IN_PROGRESS。 */
 async function awaitSessionIdle(
     request: APIRequestContext,
     headers: Record<string, string>,
 ): Promise<void> {
     await expect
-        .poll(() => latestOperationStatus(request, headers), {
+        .poll(() => latestChatRunStatus(request, headers), {
             timeout: 120000,
             intervals: [1000, 2000],
-            message: "上一轮 operation 未在超时内settled",
+            message: "上一轮 ChatRun 未在超时内 terminal",
         })
-        .toMatch(TERMINAL_OPERATION_STATES);
+        .toMatch(TERMINAL_CHAT_RUN_STATES);
 }
 
 /**

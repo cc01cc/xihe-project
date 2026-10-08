@@ -17,7 +17,8 @@ import java.util.List;
  * <p>候选 = 非终态 + 无有效 lease + 创建已超过宽限期；再用"本进程是否正在处理
  * 该 run"做二次保护，避免误伤正在流式输出的运行（v1 单 CP 实例，该保护是权威
  * 的活跃判断）。收敛规则：{@code cancelling → cancelled}（用户意图），其余
- * {@code → ambiguous}（不谎称成功）。所属 operation 与在途 item/attempt 一并收口。
+ * {@code → ambiguous}（不谎称成功）；Run-owned domain records are reconciled by
+ * the terminal service.
  */
 @Component
 public class ChatRunReconciliationService {

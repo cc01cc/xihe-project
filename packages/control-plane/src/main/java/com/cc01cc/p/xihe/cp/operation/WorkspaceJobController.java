@@ -6,8 +6,6 @@ import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeJobClient;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import com.fasterxml.jackson.databind.JsonNode;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -26,17 +24,14 @@ import java.util.UUID;
 /**
  * Workspace-scoped Job API（PLAN-0390 M2 / PLAN-0465 T2.1）。
  *
- * <p>PLAN-0465 decision #7：响应以 domain {@code jobId}（= `workspace_jobs.id`）
- * 为唯一身份，`runtimeJobId` 是 Runtime backend handle；`operationItemId`
- * 不再出现在响应。job-output/cancel 的 canonical 路径是
+ * <p>Responses use domain {@code jobId} (`workspace_jobs.id`) as the only public
+ * Job identity; `runtimeJobId` remains an internal Runtime backend handle.
+ * Canonical job-output/cancel routes are
  * {@code GET/POST /api/v1/workspaces/{workspaceId}/jobs/{jobId}/…}；
- * 旧 {@code /api/v1/operations/items/{itemId}/job-output|cancel} 路由保留至
- * PLAN-0467 删除（过渡路由存活，不是响应别名）。</p>
+ * legacy operation/item routes are retired by PLAN-0467.</p>
  */
 @RestController
 public class WorkspaceJobController {
-
-    private static final Logger logger = LoggerFactory.getLogger(WorkspaceJobController.class);
 
     /** PLAN-0344 T1.2：续看分页缺省 64KiB / 上限 1MiB（与 Runtime JOB_CAP 一致）。 */
     private static final long DEFAULT_OUTPUT_LIMIT = 64 * 1024;
@@ -46,18 +41,15 @@ public class WorkspaceJobController {
     private final WorkspaceJobStartService workspaceJobStartService;
     private final WorkspaceService workspaceService;
     private final RuntimeJobClient runtimeJobClient;
-    private final OperationService operationService;
 
     public WorkspaceJobController(JobStateService jobStateService,
                                   WorkspaceJobStartService workspaceJobStartService,
                                   WorkspaceService workspaceService,
-                                  RuntimeJobClient runtimeJobClient,
-                                  OperationService operationService) {
+                                  RuntimeJobClient runtimeJobClient) {
         this.jobStateService = jobStateService;
         this.workspaceJobStartService = workspaceJobStartService;
         this.workspaceService = workspaceService;
         this.runtimeJobClient = runtimeJobClient;
-        this.operationService = operationService;
     }
 
     @GetMapping("/api/v1/workspaces/{workspaceId}/jobs")
@@ -103,9 +95,8 @@ public class WorkspaceJobController {
     }
 
     /**
-     * PLAN-0465 T2.1：job 续看（canonical 路径，契约 =
-     * spec/execution-job-contract.md §续看；分支与 OperationController.jobOutput
-     * 一致，键位换成 domain jobId）。输出真源仍在 Runtime 容器文件；
+     * Read archived output for the canonical domain Job identity. Output source remains
+     * the Runtime container files;
      * 归属按 domain jobId + workspace 双键校验。
      */
     @GetMapping("/api/v1/workspaces/{workspaceId}/jobs/{jobId}/output")
@@ -180,10 +171,8 @@ public class WorkspaceJobController {
     }
 
     /**
-     * PLAN-0465 T2.1：Workspace access 成员直连取消单个 durable job
-     * （canonical 路径；分支与 OperationController.cancelJob 冻结语义一致，
-     * 键位换成 domain jobId）。过渡期继续双写 `operation_events(job.cancel)`
-     * （0466 audit 视图仍消费，至 0467 随 legacy drop 删除）。
+     * Cancel one durable Workspace Job by canonical {@code jobId}. Its state
+     * transition and history row are the sole durable cancellation record.
      */
     @PostMapping("/api/v1/workspaces/{workspaceId}/jobs/{jobId}/cancel")
     public ResponseEntity<?> cancelJob(@PathVariable String workspaceId, @PathVariable String jobId) {
@@ -204,13 +193,11 @@ public class WorkspaceJobController {
                             "No job archive for this job"));
             if (archive.terminal()) {
                 // 已终态：不改写事实、不调 Runtime（幂等 200 + 原状态）。
-                recordJobCancel(archive, archive.status(), "rejected_terminal", false);
                 return ResponseEntity.ok(cancelBody(domainJobId, archive.status(), false));
             }
             RuntimeJobClient.JobCancelResult result =
                     runtimeJobClient.cancelJob(archive.workspaceId(), archive.jobId());
             if (!result.reachable()) {
-                recordJobCancel(archive, archive.status(), "unreachable", false);
                 return ProblemDetailsHandler.problemResponse(
                         HttpStatus.BAD_GATEWAY, "RUNTIME_UNAVAILABLE", "Runtime job cancel failed");
             }
@@ -224,12 +211,10 @@ public class WorkspaceJobController {
                 incoming.put("status", "orphaned");
                 incoming.put("cancelReason", "job_missing");
                 jobStateService.upsertById(domainJobId, incoming);
-                recordJobCancel(archive, "orphaned", "orphaned", true);
                 return ResponseEntity.ok(cancelBody(domainJobId, "orphaned", true));
             }
             if ("failed".equals(result.status())) {
                 // 四阶段后进程仍存活：终止未确认，不改档案。
-                recordJobCancel(archive, archive.status(), "unconfirmed", false);
                 return ProblemDetailsHandler.problemResponse(
                         HttpStatus.BAD_GATEWAY, "JOB_CANCEL_UNCONFIRMED",
                         "Job termination was not confirmed");
@@ -238,28 +223,9 @@ public class WorkspaceJobController {
             incoming.put("status", "cancelled");
             incoming.put("cancelReason", "user_cancel");
             jobStateService.upsertById(domainJobId, incoming);
-            recordJobCancel(archive, "cancelled", "cancelled", true);
             return ResponseEntity.ok(cancelBody(domainJobId, "cancelled", true));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
-        }
-    }
-
-    /**
-     * 过渡双写（至 0467）：保留既有 `operation_events(job.cancel)` 审计语义
-     * （0466 audit 视图仍消费它）；`itemId` 为 legacy job item 锚点。
-     */
-    private void recordJobCancel(JobStateService.JobArchive archive, String state, String result,
-            boolean changed) {
-        if (archive.itemId() == null || archive.itemId().isBlank()) {
-            return;
-        }
-        try {
-            operationService.recordJobCancel(archive.itemId(), archive.workspaceId(),
-                    archive.jobId(), state, result, changed);
-        } catch (RuntimeException e) {
-            logger.warn("[LIFECYCLE] service=cp event=job_cancel_audit_failed itemId={} error={}",
-                    archive.itemId(), e.getMessage());
         }
     }
 

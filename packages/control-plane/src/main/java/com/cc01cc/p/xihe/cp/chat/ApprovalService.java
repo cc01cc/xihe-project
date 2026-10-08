@@ -220,7 +220,7 @@ public class ApprovalService {
      * Immediate fail-closed reject of a chain resolution that cannot keep waiting. The row is
      * terminal from creation ({@code rejected} + {@code decisionKind=reject}) so no replay,
      * summary or decision path can ever surface it as actionable, and the approval-domain
-     * history records both the creation and the decision instead of a dangling ledger item.
+     * history records both the creation and the decision in the approval domain.
      *
      * <p>An {@code ALLOW} is intentionally not honoured yet: auto-allow needs its Agent dispatch
      * wiring, which is not part of this seam. Until that exists it fails closed loudly rather
@@ -434,7 +434,7 @@ public class ApprovalService {
         if (decided == 0) {
             logger.error("[LIFECYCLE] service=cp event=chat_approval_decide_transition_lost requestId={} expected dispatching state", requestId);
         }
-        // PLAN-0464 T1.5: replaces operationService.resolveApprovalItem.
+        // Approval history is now owned by the Approval domain.
         appendApprovalHistory(approval, ApprovalHistory.EVENT_DECIDED, "dispatching",
                 approved ? "approved" : "rejected", approved, decision.kind().wireName(), "user", null);
         returnRunFromAwaitingApproval(approval.getRunId());
@@ -549,7 +549,7 @@ public class ApprovalService {
             return false;
         }
         approvalRepository.markDecided(row.getRequestId(), approved ? "approved" : "rejected", kind, Instant.now());
-        // PLAN-0464 T1.5: replaces operationService.resolveApprovalItem.
+        // Approval history is now owned by the Approval domain.
         appendApprovalHistory(row, ApprovalHistory.EVENT_DECIDED, "dispatching",
                 approved ? "approved" : "rejected", approved, kind, "user", null);
         audit.record(row.getSessionId(), row.getTool(),

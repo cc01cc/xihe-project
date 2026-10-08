@@ -59,8 +59,7 @@ public class GrantAuthorizationService {
      * <p>PLAN-0464 T2.2 (supersedes the PLAN-0463 transition semantics in
      * wire-contract.md §6): the verdict is exclusively
      * {@code ChatRun lease + mcp_invocations active + scope}. The legacy
-     * operation/item tuple check and its {@code X-Operation-Id} dependency are
-     * gone; with no invocation row the call fails closed.</p>
+     * legacy operation/item tuple check is gone; with no invocation row the call fails closed.</p>
      */
     public boolean hasCurrentAgentToolCall(String userId, String workspaceId, String sessionId,
                                            String runId, String toolCallId, String toolName) {

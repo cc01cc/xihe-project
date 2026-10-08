@@ -256,8 +256,9 @@ public class SessionController {
             chatRunCancellationService.awaitTerminalDelivery(
                     sessionId, inFlightRuns, SESSION_DELETE_SSE_WAIT);
             // PLAN-0390 T1.3：session 硬删前关闭 scope=session 的 active Job。
-            // ledger_operations 随 session 级联删除，收口必须在删除前完成，
-            // 否则 Runtime 进程会失去 CP 侧引用（会话级 Job 不得跨 Session 存活）。
+            // Close Session-scoped Jobs before deleting the owner Session; purge
+            // Session-owned MCP invocations as part of the same deletion lifecycle.
+            // Session-scoped Jobs must not outlive their Session.
             try {
                 jobScopeClosureService.closeSessionScope(sessionId);
             } catch (RuntimeException e) {
