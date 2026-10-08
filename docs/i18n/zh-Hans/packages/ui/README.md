@@ -4,6 +4,7 @@ category: api
 sidebar_group: "@xihe/ui"
 sidebar_order: 1
 lang: zh-Hans
+url_slug: packages-ui
 ---
 
 # xihe-ui

@@ -4,6 +4,7 @@ category: api
 sidebar_group: "@xihe/runtime"
 sidebar_order: 3
 lang: en
+url_slug: packages-runtime
 ---
 
 # xihe-runtime
