@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 18
 status: active
 created: 2026-09-02
-updated: 2026-09-27
+updated: 2026-10-08
 ---
 
 # DEV-018: Known Issues (Supplement)
@@ -81,6 +81,7 @@ updated: 2026-09-27
 
 - **会话删除不收尾 SSE、不处置在飞 run**：已修复。`SessionController.delete` 在删除事务外先取消该会话全部非终态 run（`ChatRunCancellationService`，与 `POST /api/v1/chat/runs/{runId}/cancel` 共用编排），再有界等待终态投递（上界 N=2s，等待信号 = relay 终结 `releaseRun`/`lease_owner` 置空；超时记 `session_delete_sse_wait_timeout` 后继续），然后执行删除事务，成功后 `complete(sessionId)` 关闭 SSE；无在飞 run 时删除后立即收尾。删除失败保留连接并记 `session_delete_failed`。
 - **已知前置（阻断，非本计划范围）**：含 `operation_extensions` 行（`llm_usage`/`job_state`/`mcp_call`）的会话硬删会被 `ck_operation_extensions_target`（`V2__session_operation_ledger.sql:181-192`）阻断；登记 backlog `DDL-13`。**已修复（PLAN-0367 V34，2026-09-19）**：两目标 FK 改 `ON DELETE CASCADE`（CHECK 保留），硬删随账本删除 extension 档案（接受的取舍，登记于 backlog DDL-13）。
+- **审计留存边界（2026-10-06）**：当前领域审计事实随所属 Session/Workspace 生命周期级联删除；删除后独立留存或匿名化不属于当前需求，后置债务登记为 DDL-14。
 - **残余**：会话硬删时 `scope=session` 存活 job 无处置入口（依赖 BL-21 单 job 取消入口）；承接登记 PLAN-0353。
 
 ## 环境 / Docker
