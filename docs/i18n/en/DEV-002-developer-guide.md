@@ -153,7 +153,7 @@ mise run test:cp
 mise run dev:runtime
 mise run test:runtime
 
-mise run test:e2e
+mise run test:e2e:compose
 mise run validate:full
 ```
 
@@ -398,7 +398,7 @@ cd packages/runtime && cargo test
 cd packages/control-plane && mvn test
 ```
 
-The UI lint/validate gate blocks format (`oxfmt --check`), syntax/correctness, unused-variable, `prefer-const`, and duplicate-import errors. Other style warnings remain visible but are not fatal, so a successful command does not mean zero warnings. The full UI formatter migration completed in its dedicated wave (419 historical files normalized) and the format check is now wired into `lint`. CP's `mise run lint:cp` similarly blocks the selected error-severity Checkstyle rules while existing warning-severity style findings remain visible and non-blocking (PLAN-0458). Agent's `mise run lint:agent` runs mypy as a real blocking gate over `src/` (the global `ignore_errors` switch was removed; currently 0 errors) — type errors must be fixed, never masked by global or module-wide ignores (PLAN-0459).
+The UI lint/validate gate blocks format (`oxfmt --check`), syntax/correctness, unused-variable, `prefer-const`, and duplicate-import errors. Other style warnings remain visible but are not fatal, so a successful command does not mean zero warnings. The full UI formatter migration completed in its dedicated wave (419 historical files normalized) and the format check is now wired into `lint`. CP's `mise run lint:cp` blocks **every** Checkstyle rule at error severity (baseline 0 violations after the rule/convention alignment wave; see PLAN-0458 evidence) — it must never be weakened back to warning or globally suppressed. Agent's `mise run lint:agent` runs mypy as a real blocking gate over `src/` (the global `ignore_errors` switch was removed; currently 0 errors) — type errors must be fixed, never masked by global or module-wide ignores (PLAN-0459).
 
 ### 4.4. CP Integration Test Modes
 

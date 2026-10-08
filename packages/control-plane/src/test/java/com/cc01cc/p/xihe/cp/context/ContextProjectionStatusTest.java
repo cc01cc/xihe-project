@@ -24,7 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class ContextProjectionStatusTest extends AbstractH2Test {
 
-    private final String SESSION = java.util.UUID.randomUUID().toString();
+    private final String session = java.util.UUID.randomUUID().toString();
     private static final String WS = "bbbbbbb2-0000-0000-0000-000000000000";
     private static final String USER = "bbbbbbb3-0000-0000-0000-000000000000";
 
@@ -35,13 +35,13 @@ class ContextProjectionStatusTest extends AbstractH2Test {
     private ContextProjectionService projectionService;
 
     private ObjectNode epoch() {
-        ObjectNode ctx = projectionService.project(SESSION, 0L);
+        ObjectNode ctx = projectionService.project(session, 0L);
         return (ObjectNode) ctx.get("epoch");
     }
 
     @Test
     void legacyCreatedEventDerivesL1StatusOk() {
-        contextService.appendEvent(SESSION, WS, USER, "context.source_changed", Map.of(
+        contextService.appendEvent(session, WS, USER, "context.source_changed", Map.of(
                 "status", "created",
                 "source_hash", "h1",
                 "rendered_text", "RULES",
@@ -53,12 +53,12 @@ class ContextProjectionStatusTest extends AbstractH2Test {
 
     @Test
     void missingStatusClearsSlotAndDropsLegacySources() {
-        contextService.appendEvent(SESSION, WS, USER, "context.source_changed", Map.of(
+        contextService.appendEvent(session, WS, USER, "context.source_changed", Map.of(
                 "status", "created",
                 "source_hash", "h1",
                 "rendered_text", "RULES",
                 "sources", Map.of("key", "AGENTS.md", "content", "RULES", "content_hash", "h1")));
-        contextService.appendEvent(SESSION, WS, USER, "context.source_changed", Map.of(
+        contextService.appendEvent(session, WS, USER, "context.source_changed", Map.of(
                 "status", "missing",
                 "l1_status", "missing",
                 "source_hash", "",
@@ -75,12 +75,12 @@ class ContextProjectionStatusTest extends AbstractH2Test {
 
     @Test
     void unavailableClearsSlotExplicitly() {
-        contextService.appendEvent(SESSION, WS, USER, "context.source_changed", Map.of(
+        contextService.appendEvent(session, WS, USER, "context.source_changed", Map.of(
                 "status", "created",
                 "source_hash", "h1",
                 "rendered_text", "RULES",
                 "sources", Map.of("key", "AGENTS.md", "content", "RULES", "content_hash", "h1")));
-        contextService.appendEvent(SESSION, WS, USER, "context.source_changed", Map.of(
+        contextService.appendEvent(session, WS, USER, "context.source_changed", Map.of(
                 "status", "unavailable",
                 "l1_status", "unavailable",
                 "source_hash", "",
@@ -94,7 +94,7 @@ class ContextProjectionStatusTest extends AbstractH2Test {
 
     @Test
     void legacyEnvEventLeavesEnvStatusKeyAbsent() {
-        contextService.appendEvent(SESSION, WS, USER, "context.env_updated", Map.of(
+        contextService.appendEvent(session, WS, USER, "context.env_updated", Map.of(
                 "branch", "main",
                 "head", "abc1234",
                 "is_repository", true));
@@ -108,7 +108,7 @@ class ContextProjectionStatusTest extends AbstractH2Test {
 
     @Test
     void newEnvEventCarriesAllFiveKeys() {
-        contextService.appendEvent(SESSION, WS, USER, "context.env_updated", Map.of(
+        contextService.appendEvent(session, WS, USER, "context.env_updated", Map.of(
                 "branch", "main",
                 "head", "abc1234",
                 "is_repository", true,
@@ -138,7 +138,7 @@ class ContextProjectionStatusTest extends AbstractH2Test {
         payload.put("env_platform", "windows");
         payload.put("env_shell", null);
         payload.put("env_observed_at", "2026-10-01T00:00:00Z");
-        contextService.appendEvent(SESSION, WS, USER, "context.env_updated", payload);
+        contextService.appendEvent(session, WS, USER, "context.env_updated", payload);
 
         ObjectNode epoch = epoch();
         assertThat(epoch.get("env_status").asText()).isEqualTo("unknown");

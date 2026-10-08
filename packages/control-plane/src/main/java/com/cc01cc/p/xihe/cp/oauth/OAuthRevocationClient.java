@@ -137,7 +137,9 @@ public class OAuthRevocationClient {
     private static String form(String... values) {
         StringBuilder body = new StringBuilder();
         for (int i = 0; i < values.length; i += 2) {
-            if (i > 0) body.append('&');
+            if (i > 0) {
+                body.append('&');
+            }
             body.append(URLEncoder.encode(values[i], StandardCharsets.UTF_8))
                     .append('=')
                     .append(URLEncoder.encode(values[i + 1], StandardCharsets.UTF_8));

@@ -31,14 +31,12 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -388,7 +386,7 @@ class SpawnLifecycleTest extends AbstractIntegrationTest {
     }
 
     /**
-     * spawn run 的 idempotency_key = parent OperationItem PK（生产路径固定），因此
+     * spawn run 的 idempotency_key = parent toolCallId（生产路径固定），因此
      * 该键可精确定位注入点，不影响同事务之前的任何写入，也不影响其他测试的 run。
      */
     private void installSpawnRunFailureTrigger(String idempotencyKey) {

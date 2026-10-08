@@ -53,7 +53,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * PLAN-0466 T3.1 / verify V1-V3: the audit read view, its routes, ACL tiers and
- * redaction matrix against a real PostgreSQL schema (V54 view included).
+ * redaction matrix against a real PostgreSQL schema (V55 view included).
  *
  * <p>Fixture: 9 entries for one owner — 4 chat_runs (one with terminal history, one
  * terminal without history, two in flight), 1 workspace_job (start → running →
@@ -156,7 +156,7 @@ class AuditReadIntegrationTest extends AbstractIntegrationTest {
         terminal.setPayload("{\"tokens\":10,\"marker\":\"" + HISTORY_PAYLOAD_MARKER + "\"}");
         chatRunHistoryRepository.saveAndFlush(terminal);
 
-        // terminal chat_run without any history row (pre-V50 shape: degrade branch)
+        // terminal chat_run without any history row (pre-V52 shape: degrade branch)
         historylessRunId = UUID.randomUUID();
         ChatRun bare = new ChatRun(historylessRunId.toString(), sessionId, userId, workspaceId,
                 "audit-chat-key-2", "hash", "provider", null, "workspace", "failed");

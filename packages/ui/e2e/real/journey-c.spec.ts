@@ -21,7 +21,7 @@ const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/journey-
 //   H2  — >500-char write_file approval lands via argumentsHash matching
 //   C1-C3 — refresh mid-approval recovers banner + modal; decide still works
 // H2/C tests need the deterministic fake LLM marker mode:
-//   XIHE_E2E_LLM_MODE=write_file mise run test:e2e-host -- e2e/real/journey-c.spec.ts
+//   XIHE_E2E_LLM_MODE=write_file mise run test:e2e:host -- e2e/real/journey-c.spec.ts
 // They self-skip under other modes.
 test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
     test.describe.configure({ mode: "serial" });

@@ -62,7 +62,9 @@ public class RequestQueue {
         int expired = 0;
         while (!queue.isEmpty()) {
             QueuedRequest req = queue.poll();
-            if (req == null) break;
+            if (req == null) {
+                break;
+            }
 
             if (Instant.now().getEpochSecond() - req.createdAt().getEpochSecond() > TTL_SECONDS) {
                 expired++;

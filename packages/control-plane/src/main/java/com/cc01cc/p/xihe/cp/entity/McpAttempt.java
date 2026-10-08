@@ -12,7 +12,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * One execution attempt of an {@link McpInvocation} (PLAN-0463 V49).
+ * One execution attempt of an {@link McpInvocation} (PLAN-0463 V50).
  *
  * <p>{@code stage=agent_tool} rows are written by the SSE relay;
  * {@code stage=cp_forward} rows are written by the MCP proxy dispatch.

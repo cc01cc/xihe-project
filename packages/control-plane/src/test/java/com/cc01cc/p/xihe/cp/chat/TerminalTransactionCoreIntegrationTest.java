@@ -31,7 +31,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.List;
@@ -103,7 +102,7 @@ class TerminalTransactionCoreIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void v44AndV50TerminalColumnsAreMappedOnAChainThatIncludesV45() {
+    void v44AndV52TerminalColumnsAreMappedOnAChainThatIncludesV45() {
         assertEquals(1, jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM information_schema.columns "
                         + "WHERE table_schema = current_schema() AND table_name = 'chat_runs' "
@@ -113,11 +112,11 @@ class TerminalTransactionCoreIntegrationTest extends AbstractIntegrationTest {
                 "SELECT count(*) FROM information_schema.columns "
                         + "WHERE table_schema = current_schema() AND table_name = 'chat_runs' "
                         + "AND column_name = 'waiting_on_run_id'",
-                Integer.class), "PLAN-0464 V50 moved the waiting link onto the child run");
+                Integer.class), "PLAN-0464 V52 moved the waiting link onto the child run");
         assertEquals(1, jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM information_schema.tables "
                         + "WHERE table_schema = current_schema() AND table_name = 'chat_run_history'",
-                Integer.class), "PLAN-0464 V50 added the ChatRun transition history");
+                Integer.class), "PLAN-0464 V52 added the ChatRun transition history");
         assertEquals(1, jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM flyway_schema_history WHERE version = '45' AND success = true",
                 Integer.class),

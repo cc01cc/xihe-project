@@ -11,7 +11,7 @@ const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 // 「UI 保存 openaiModel → 下一轮 chat 的回复里出现该模型名」即证明
 // UI → CP（user 层存储 + run payload overrides）→ Agent（per-run 合成）
 // → LLM 调用 的全链路生效。
-// 跑法：XIHE_E2E_LLM_MODE=success mise run test:e2e-host -- e2e/real/config-run-effective.spec.ts
+// 跑法：XIHE_E2E_LLM_MODE=success mise run test:e2e:host -- e2e/real/config-run-effective.spec.ts
 test.describe("@host PLAN-0307 V17 — UI config reaches the Agent run", () => {
     test.skip(LLM_MODE !== "success", "requires XIHE_E2E_LLM_MODE=success (fake LLM model echo)");
 

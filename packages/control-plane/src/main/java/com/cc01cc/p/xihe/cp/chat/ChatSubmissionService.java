@@ -19,6 +19,7 @@ import com.cc01cc.p.xihe.cp.repository.InboxRepository;
 import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionFollowUpItemRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
@@ -35,12 +36,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 
@@ -62,6 +59,7 @@ public class ChatSubmissionService {
     private final FileRepository fileRepository;
     private final McpInvocationRepository mcpInvocationRepository;
     private final SessionRepository sessionRepository;
+    private final SessionFollowUpItemRepository followUpItemRepository;
     private final AgentPrincipalRepository agentPrincipalRepository;
     private final WorkspaceAgentRepository workspaceAgentRepository;
     private final GrantPrincipalPathResolver principalPathResolver;
@@ -81,6 +79,7 @@ public class ChatSubmissionService {
                                  FileRepository fileRepository,
                                  McpInvocationRepository mcpInvocationRepository,
                                  SessionRepository sessionRepository,
+                                 SessionFollowUpItemRepository followUpItemRepository,
                                  AgentPrincipalRepository agentPrincipalRepository,
                                  WorkspaceAgentRepository workspaceAgentRepository,
                                  GrantPrincipalPathResolver principalPathResolver,
@@ -99,6 +98,7 @@ public class ChatSubmissionService {
         this.fileRepository = fileRepository;
         this.mcpInvocationRepository = mcpInvocationRepository;
         this.sessionRepository = sessionRepository;
+        this.followUpItemRepository = followUpItemRepository;
         this.agentPrincipalRepository = agentPrincipalRepository;
         this.workspaceAgentRepository = workspaceAgentRepository;
         this.principalPathResolver = principalPathResolver;
@@ -133,7 +133,21 @@ public class ChatSubmissionService {
         return persist(ChatRun.ORIGIN_USER_SUBMISSION, runId, sessionId, userId, workspaceId,
                 branchId, idempotencyKey, requestHash, provider, model, toolMode, providerConnectionId,
                 connectionRevision, leaseOwner, requestId, content, attachmentsJson, attachmentIds,
-                agentPrincipalId);
+                agentPrincipalId, false);
+    }
+
+    /** Creates a queue child atomically without treating its own outstanding item as a normal Chat conflict. */
+    @Transactional
+    public Submission createFollowUp(String runId, String sessionId, String userId, String workspaceId,
+                                    String branchId, String idempotencyKey, String requestHash, String provider,
+                                    String model, String toolMode, String providerConnectionId,
+                                    Long connectionRevision, String leaseOwner, String requestId,
+                                    String content, String attachmentsJson, List<String> attachmentIds,
+                                    String agentPrincipalId) {
+        return persist(ChatRun.ORIGIN_USER_SUBMISSION, runId, sessionId, userId, workspaceId,
+                branchId, idempotencyKey, requestHash, provider, model, toolMode, providerConnectionId,
+                connectionRevision, leaseOwner, requestId, content, attachmentsJson, attachmentIds,
+                agentPrincipalId, true);
     }
 
     @Transactional(readOnly = true)
@@ -292,7 +306,7 @@ public class ChatSubmissionService {
                 requestHash,
                 parentRun.getProvider(), parentRun.getModel(), parentRun.getToolMode(),
                 parentRun.getProviderConnectionId(), parentRun.getConnectionRevision(), null, requestId,
-                content, "[]", List.of(), childSession.getAgentPrincipalId());
+                content, "[]", List.of(), childSession.getAgentPrincipalId(), false);
         // PLAN-0464 T2.1: the waiting link lives on the child run row itself.
         ChatRun childRun = created.run();
         childRun.setWaitingOnRunId(parentRun.getId().toString());
@@ -444,12 +458,22 @@ public class ChatSubmissionService {
 
     private Submission persist(String origin, String runId, String sessionId, String userId, String workspaceId,
                                String requestedBranchId, String idempotencyKey, String requestHash,
-                               String provider, String model,
-                               String toolMode, String providerConnectionId, Long connectionRevision,
-                               String leaseOwner, String requestId, String content, String attachmentsJson,
-                               List<String> attachmentIds, String requestedPrincipalId) {
+                                String provider, String model,
+                                String toolMode, String providerConnectionId, Long connectionRevision,
+                                String leaseOwner, String requestId, String content, String attachmentsJson,
+                                List<String> attachmentIds, String requestedPrincipalId,
+                                boolean followUpAdmission) {
         Session session = bindOrValidateAgentSession(sessionId, userId, workspaceId, requestedPrincipalId);
-        rejectConcurrentSubmission(sessionId, userId, idempotencyKey);
+        if (session.getDeleteRequestedAt() != null) {
+            throw new CpApiException(HttpStatus.CONFLICT, "SESSION_DELETING",
+                    "Session deletion is in progress");
+        }
+        if (!followUpAdmission && followUpItemRepository.countBySessionIdAndStatusIn(
+                sessionId, SessionFollowUpItemRepository.OUTSTANDING_STATUSES) > 0) {
+            throw new CpApiException(HttpStatus.CONFLICT, "FOLLOW_UP_QUEUE_NOT_EMPTY",
+                    "Follow-up queue must be drained before sending a normal Chat message");
+        }
+        rejectConcurrentSubmission(sessionId, userId, idempotencyKey, followUpAdmission);
         if (requestedBranchId == null || requestedBranchId.isBlank()) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "branchId is required");
         }
@@ -522,7 +546,8 @@ public class ChatSubmissionService {
      * 幂等键与在途（非终态）run，命中都按 CHAT_IN_PROGRESS 409 拒绝——幂等键
      * 命中时让重试方下一次在 controller 层拿到 replay，而不是撞唯一约束 500。
      */
-    private void rejectConcurrentSubmission(String sessionId, String userId, String idempotencyKey) {
+    private void rejectConcurrentSubmission(String sessionId, String userId, String idempotencyKey,
+                                            boolean followUpAdmission) {
         if (idempotencyKey != null && chatRunRepository
                 .findByUserIdAndSessionIdAndIdempotencyKey(userId, sessionId, idempotencyKey).isPresent()) {
             throw new CpApiException(HttpStatus.CONFLICT, "CHAT_IN_PROGRESS",
@@ -532,6 +557,15 @@ public class ChatSubmissionService {
                 sessionId, ChatRunCancellationService.NON_TERMINAL_STATUSES)) {
             throw new CpApiException(HttpStatus.CONFLICT, "CHAT_IN_PROGRESS",
                     "A chat run is already active for this session");
+        }
+        // PLAN-0442 合规收窄（A类）：契约 §85 要求 Follow-up dispatcher 在 admission 前
+        // 确认“DB 无活动 Run/未过期 Run lease”；普通 Chat 的冻结基线（M0/design #6）只有
+        // 非终态单飞拒绝——terminal 后等待 releaseRun 清 lease 的毫秒窗口不构成“并发”，
+        // 把它一并拒绝会收紧普通 Chat 语义并打破既有 terminalize→二次 create 流程。
+        if (followUpAdmission && chatRunRepository
+                .existsBySessionIdAndLeaseOwnerIsNotNullAndLeaseExpiresAtAfter(sessionId, Instant.now())) {
+            throw new CpApiException(HttpStatus.CONFLICT, "CHAT_IN_PROGRESS",
+                    "The previous chat run is still releasing its session lease");
         }
     }
 
@@ -544,6 +578,11 @@ public class ChatSubmissionService {
                         && workspaceId.equals(candidate.getWorkspaceId())
                         && !candidate.isArchived())
                 .orElseThrow(ChatSubmissionService::agentSessionForbidden);
+        entityManager.refresh(session);
+        if (session.getDeleteRequestedAt() != null) {
+            throw new CpApiException(HttpStatus.CONFLICT, "SESSION_DELETING",
+                    "Session is being deleted");
+        }
 
         if (session.getAgentPrincipalId() == null) {
             if (requestedPrincipalId == null || requestedPrincipalId.isBlank()) {

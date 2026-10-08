@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.chat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
@@ -19,15 +20,26 @@ import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 import com.cc01cc.p.xihe.cp.status.RequestQueue;
 import com.cc01cc.p.xihe.cp.status.CircuitBreaker;
 import com.cc01cc.p.xihe.cp.provider.ProviderCredentialLeaseService;
-import com.cc01cc.p.xihe.cp.logging.LogRedactor;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.*;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.event.EventListener;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.BufferedReader;
@@ -52,6 +64,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ChatController {
 
     private static final Logger logger = LoggerFactory.getLogger(ChatController.class);
+    private static final String FOLLOW_UP_DISPATCH_RESERVATION_PREFIX = "follow-up-dispatch:";
 
     private final HttpClient agentHttpClient;
     private final ObjectMapper objectMapper;
@@ -59,6 +72,7 @@ public class ChatController {
     private final ApprovalService approvalService;
     private final com.cc01cc.p.xihe.cp.context.service.ContextService contextService;
     private final ChatSubmissionService chatSubmissionService;
+    private final FollowUpQueueService followUpQueueService;
     private final SessionService sessionService;
     private final AgentPrincipalService agentPrincipalService;
     private final MessageRepository messageRepository;
@@ -76,6 +90,7 @@ public class ChatController {
     private final com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService;
     private final com.cc01cc.p.xihe.cp.usage.UsageCostMapper usageCostMapper;
     private final com.cc01cc.p.xihe.cp.service.ContextTemplateSourceService contextTemplateSourceService;
+    private final ApplicationEventPublisher eventPublisher;
     private final Map<String, String> activeRuns = new ConcurrentHashMap<>();
 
     private static final java.time.Duration LEASE_TTL = java.time.Duration.ofMinutes(10);
@@ -109,6 +124,7 @@ public class ChatController {
             ApprovalService approvalService,
             com.cc01cc.p.xihe.cp.context.service.ContextService contextService,
             ChatSubmissionService chatSubmissionService,
+            FollowUpQueueService followUpQueueService,
             SessionService sessionService,
             AgentPrincipalService agentPrincipalService,
             MessageRepository messageRepository,
@@ -124,8 +140,9 @@ public class ChatController {
             ChatRunCancellationService chatRunCancellationService,
             ChatRunTerminalService chatRunTerminalService,
              com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService,
-             com.cc01cc.p.xihe.cp.usage.UsageCostMapper usageCostMapper,
-             com.cc01cc.p.xihe.cp.service.ContextTemplateSourceService contextTemplateSourceService) {
+              com.cc01cc.p.xihe.cp.usage.UsageCostMapper usageCostMapper,
+              com.cc01cc.p.xihe.cp.service.ContextTemplateSourceService contextTemplateSourceService,
+              ApplicationEventPublisher eventPublisher) {
         this.agentHttpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
@@ -134,6 +151,7 @@ public class ChatController {
         this.approvalService = approvalService;
         this.contextService = contextService;
         this.chatSubmissionService = chatSubmissionService;
+        this.followUpQueueService = followUpQueueService;
         this.sessionService = sessionService;
         this.agentPrincipalService = agentPrincipalService;
         this.messageRepository = messageRepository;
@@ -151,6 +169,7 @@ public class ChatController {
         this.contextSourceRefreshService = contextSourceRefreshService;
         this.usageCostMapper = usageCostMapper;
         this.contextTemplateSourceService = contextTemplateSourceService;
+        this.eventPublisher = eventPublisher;
 
         // Wire drain callback: when agent recovers, drain queued requests
         healthMonitor.setOnServiceRecovered(serviceName -> {
@@ -177,6 +196,175 @@ public class ChatController {
                         "Queued chat request could not be delivered"));
             }
         });
+    }
+
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @GetMapping("/api/v1/sessions/{sessionId}/follow-ups")
+    public ResponseEntity<FollowUpQueueSnapshot> getFollowUpQueue(@PathVariable String sessionId) {
+        return ResponseEntity.ok(followUpQueueService.snapshot(
+                sessionId, TenantContext.getUserId(), TenantContext.getWorkspaceId()));
+    }
+
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @DeleteMapping("/api/v1/sessions/{sessionId}/follow-ups/{itemId}")
+    public ResponseEntity<FollowUpQueueSnapshot> withdrawFollowUp(
+            @PathVariable String sessionId, @PathVariable UUID itemId) {
+        return ResponseEntity.ok(followUpQueueService.withdraw(
+                sessionId, TenantContext.getUserId(), TenantContext.getWorkspaceId(), itemId));
+    }
+
+    @EventListener
+    void onFollowUpQueueWakeup(FollowUpQueueWakeupEvent event) {
+        // Reserve the local single-flight slot across the Session-locked DB admission.
+        String reservationId = FOLLOW_UP_DISPATCH_RESERVATION_PREFIX + UUID.randomUUID();
+        if (activeRuns.putIfAbsent(event.sessionId(), reservationId) != null) {
+            return;
+        }
+        boolean retryAdmission = false;
+        try {
+            followUpQueueService.admitHead(event.sessionId(), admission -> {
+                Session session = admission.session();
+                com.cc01cc.p.xihe.cp.entity.SessionFollowUpItem item = admission.item();
+                Map<String, Integer> timeouts = objectMapper.convertValue(item.getToolTimeouts(),
+                        new TypeReference<LinkedHashMap<String, Integer>>() {});
+                String provider = session.getProviderConnectionId() == null
+                        ? item.getProvider() : session.getModelProvider();
+                String model = session.getProviderConnectionId() == null
+                        ? item.getModel() : session.getModelName();
+                String principalId = session.getAgentPrincipalId();
+                String branchId = item.getBranchId().toString();
+                String requestHash = ChatRequestHash.calculate(objectMapper, item.getContent(), provider, model,
+                        item.getToolMode(), admission.attachments().fileIds(), timeouts, principalId, branchId);
+                List<Map<String, Object>> attachmentRefs = new ArrayList<>();
+                for (File file : admission.attachments().files()) {
+                    Map<String, Object> ref = new LinkedHashMap<>();
+                    ref.put("fileId", file.getId().toString());
+                    ref.put("name", file.getFilename());
+                    ref.put("type", file.getMimeType());
+                    ref.put("size", file.getSizeBytes());
+                    attachmentRefs.add(ref);
+                }
+                String attachmentsJson;
+                try {
+                    attachmentsJson = objectMapper.writeValueAsString(attachmentRefs);
+                } catch (Exception e) {
+                    throw new IllegalStateException("Unable to serialize admitted Follow-up attachments", e);
+                }
+                String runId = UUID.randomUUID().toString();
+                ChatSubmissionService.Submission created = chatSubmissionService.createFollowUp(
+                        runId, event.sessionId(), session.getUserId(), session.getWorkspaceId(), branchId,
+                        item.getIdempotencyKey(), requestHash, provider, model, item.getToolMode(),
+                        session.getProviderConnectionId(), session.getConnectionRevision(), instanceId(),
+                        UUID.randomUUID().toString(), item.getContent(), attachmentsJson,
+                        admission.attachments().fileIds(), principalId);
+                return new FollowUpQueueService.ChildAdmission(
+                        created.run().getId(), created.userMessage().getId());
+            });
+        } catch (Exception e) {
+            logger.error("[LIFECYCLE] service=cp event=follow_up_queue_dispatch_failed "
+                            + "sessionId={} retryAttempt={} failureType={}",
+                    event.sessionId(), event.retryAttempt(), e.getClass().getSimpleName(), e);
+            retryAdmission = true;
+        } finally {
+            activeRuns.remove(event.sessionId(), reservationId);
+        }
+        if (retryAdmission) {
+            followUpQueueService.scheduleAdmissionRetry(event);
+        }
+    }
+
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PostMapping("/api/v1/sessions/{sessionId}/follow-ups")
+    public ResponseEntity<FollowUpQueueSnapshot> enqueueFollowUp(
+            @PathVariable String sessionId,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestBody FollowUpCreateRequest request) {
+        FollowUpQueueService.EnqueueResult result = followUpQueueService.enqueue(
+                sessionId, TenantContext.getUserId(), TenantContext.getWorkspaceId(),
+                idempotencyKey == null ? null : idempotencyKey.trim(), request);
+        return ResponseEntity.status(result.replayed() ? HttpStatus.OK : HttpStatus.ACCEPTED)
+                .body(result.snapshot());
+    }
+
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PostMapping("/api/v1/sessions/{sessionId}/follow-ups/continue")
+    public ResponseEntity<FollowUpQueueSnapshot> continueFollowUpQueue(@PathVariable String sessionId) {
+        FollowUpQueueService.ContinueResult result = followUpQueueService.continueQueue(
+                sessionId, TenantContext.getUserId(), TenantContext.getWorkspaceId());
+        return ResponseEntity.status(result.changed() ? HttpStatus.ACCEPTED : HttpStatus.OK)
+                .body(result.snapshot());
+    }
+
+    @EventListener
+    void onFollowUpChildAdmitted(FollowUpChildAdmittedEvent event) {
+        String runId = event.childRunId();
+        ChatRun run = chatRunRepository.findById(UUID.fromString(runId)).orElse(null);
+        if (run == null) {
+            logger.error("[LIFECYCLE] service=cp event=follow_up_child_dispatch_failed sessionId={} runId={} reason=run_missing",
+                    event.sessionId(), runId);
+            return;
+        }
+        try {
+            Message message = messageRepository.findById(UUID.fromString(run.getUserMessageId()))
+                    .orElseThrow(() -> new IllegalStateException("Admitted Follow-up Message is missing"));
+            List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachments =
+                    resolveAdmittedAttachments(message);
+            String localRun = activeRuns.get(event.sessionId());
+            boolean ownsReservation = localRun != null
+                    && localRun.startsWith(FOLLOW_UP_DISPATCH_RESERVATION_PREFIX)
+                    && activeRuns.replace(event.sessionId(), localRun, runId);
+            if (!ownsReservation && runId.equals(localRun)) {
+                return;
+            }
+            if (!ownsReservation && !acquireRun(event.sessionId(), runId)) {
+                failFollowUpDispatch(event.sessionId(), runId);
+                return;
+            }
+            logger.info("[LIFECYCLE] service=cp event=follow_up_child_dispatch_started sessionId={} runId={} queueItemId={} attachments={}",
+                    event.sessionId(), runId, event.queueItemId(), attachments.size());
+            execAsync(event.sessionId(), message.getContent(), run.getProvider(), run.getModel(), run.getToolMode(),
+                    event.toolTimeouts(), attachments, run.getUserId(), run.getWorkspaceId(),
+                    UUID.randomUUID().toString(), runId);
+        } catch (Exception e) {
+            logger.error("[LIFECYCLE] service=cp event=follow_up_child_dispatch_failed sessionId={} runId={} failureType={}",
+                    event.sessionId(), runId, e.getClass().getSimpleName(), e);
+            failFollowUpDispatch(event.sessionId(), runId);
+        }
+    }
+
+    private List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> resolveAdmittedAttachments(Message message)
+            throws java.io.IOException {
+        List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachments = new ArrayList<>();
+        if (message.getAttachments() == null || message.getAttachments().isBlank()) {
+            return attachments;
+        }
+        com.fasterxml.jackson.databind.JsonNode refs = objectMapper.readTree(message.getAttachments());
+        if (refs == null || !refs.isArray()) {
+            throw new IllegalStateException("Admitted Follow-up attachment refs are invalid");
+        }
+        for (com.fasterxml.jackson.databind.JsonNode ref : refs) {
+            UUID fileId = UUID.fromString(ref.path("fileId").asText());
+            File file = fileRepository.findById(fileId)
+                    .orElseThrow(() -> new IllegalStateException("Admitted Follow-up File is missing"));
+            attachments.add(new com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo(
+                    file.getId().toString(), file.getFilename(), file.getMimeType(), file.getSizeBytes(),
+                    "/api/v1/files/" + file.getId()));
+        }
+        return List.copyOf(attachments);
+    }
+
+    private void failFollowUpDispatch(String sessionId, String runId) {
+        try {
+            chatRunTerminalService.terminalize(new ChatRunTerminalService.TerminalRequest(
+                    runId, List.of("accepted"), "ambiguous", "ambiguous", "FOLLOW_UP_DISPATCH_FAILED",
+                    "The admitted Follow-up could not be dispatched; it will not be replayed",
+                    0, 0, ChatRunTerminalService.TerminalSource.RECONCILIATION, List.of()));
+        } catch (RuntimeException e) {
+            logger.error("[LIFECYCLE] service=cp event=follow_up_dispatch_failure_terminalization_failed sessionId={} runId={} failureType={}",
+                    sessionId, runId, e.getClass().getSimpleName(), e);
+        } finally {
+            releaseRun(sessionId, runId, "follow_up_dispatch_failed");
+        }
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
@@ -302,6 +490,10 @@ public class ChatController {
             session = sessionService.requireCurrent(sessionId, userId, workspaceId);
         } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+        if (session.getDeleteRequestedAt() != null) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.CONFLICT, "SESSION_DELETING", "Session deletion is in progress");
         }
         if (session.getProviderConnectionId() != null) {
             // A bound Session is authoritative. Do not allow the browser's display
@@ -1237,6 +1429,7 @@ public class ChatController {
     private void releaseRun(String sessionId, String runId, String reason) {
         boolean dbReleased = chatRunRepository.releaseLease(UUID.fromString(runId), instanceId()) > 0;
         boolean memoryReleased = activeRuns.remove(sessionId, runId);
+        eventPublisher.publishEvent(new FollowUpQueueWakeupEvent(sessionId));
         // PLAN-0352 T1.2：唤醒会话删除路径的 release 等待位（终态投递在此之后已完成）。
         chatRunCancellationService.onRunReleased(runId);
         if (dbReleased || memoryReleased) {

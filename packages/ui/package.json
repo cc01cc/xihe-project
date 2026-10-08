@@ -37,7 +37,6 @@
         "remark": "^15.0.1",
         "remark-gfm": "^4.0.1",
         "remark-math": "^6.0.0",
-        "shadcn-vue": "^2.8.2",
         "shiki": "^4.4.3",
         "tailwind-merge": "^3.7.0",
         "tailwind-variants": "^3.3.1",

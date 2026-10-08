@@ -37,10 +37,14 @@ public class WorkspaceEventController {
     }
 
     private long parseLastEventId(String value) {
-        if (value == null || value.isBlank()) return 0L;
+        if (value == null || value.isBlank()) {
+            return 0L;
+        }
         try {
             long parsed = Long.parseLong(value);
-            if (parsed < 0) throw new NumberFormatException("negative");
+            if (parsed < 0) {
+                throw new NumberFormatException("negative");
+            }
             return parsed;
         } catch (NumberFormatException error) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Last-Event-ID must be a non-negative integer");

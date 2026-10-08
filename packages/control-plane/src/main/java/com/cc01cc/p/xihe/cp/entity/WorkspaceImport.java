@@ -130,16 +130,26 @@ public class WorkspaceImport {
 
     public void applyRuntimeStatus(Map<String, Object> runtime) {
         Object statusValue = runtime.get("status");
-        if (statusValue instanceof String value) this.status = value;
+        if (statusValue instanceof String value) {
+            this.status = value;
+        }
         this.filesScanned = number(runtime.get("filesScanned"), filesScanned);
         this.filesCopied = number(runtime.get("filesCopied"), filesCopied);
         this.filesSkipped = number(runtime.get("filesSkipped"), filesSkipped);
         this.bytesCopied = number(runtime.get("bytesCopied"), bytesCopied);
         this.bytesSkipped = number(runtime.get("bytesSkipped"), bytesSkipped);
-        if (runtime.get("currentPath") instanceof String value) this.currentPath = value;
-        if (runtime.get("errorCode") instanceof String value) this.errorCode = value;
-        if (runtime.get("errorDetail") instanceof String value) this.errorDetail = value;
-        if ("running".equals(status) && startedAt == null) startedAt = Instant.now();
+        if (runtime.get("currentPath") instanceof String value) {
+            this.currentPath = value;
+        }
+        if (runtime.get("errorCode") instanceof String value) {
+            this.errorCode = value;
+        }
+        if (runtime.get("errorDetail") instanceof String value) {
+            this.errorDetail = value;
+        }
+        if ("running".equals(status) && startedAt == null) {
+            startedAt = Instant.now();
+        }
         if ("completed".equals(status) || "cancelled".equals(status) || "failed".equals(status)) {
             completedAt = completedAt == null ? Instant.now() : completedAt;
         }

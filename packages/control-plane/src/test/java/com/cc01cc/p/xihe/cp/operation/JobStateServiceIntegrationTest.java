@@ -22,7 +22,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Domain-owned MCP tool result materialization and Workspace Job state transitions. */
 class JobStateServiceIntegrationTest extends AbstractIntegrationTest {
@@ -71,9 +74,13 @@ class JobStateServiceIntegrationTest extends AbstractIntegrationTest {
         Map<String, Object> job = new LinkedHashMap<>();
         job.put("jobId", jobId);
         job.put("status", status);
-        if (exitCode != null) job.put("exitCode", exitCode);
+        if (exitCode != null) {
+            job.put("exitCode", exitCode);
+        }
         job.put("createdAt", "2026-09-18T00:00:00Z");
-        if (timeoutSecs != null) job.put("timeoutSecs", timeoutSecs);
+        if (timeoutSecs != null) {
+            job.put("timeoutSecs", timeoutSecs);
+        }
         return objectMapper.writeValueAsString(job);
     }
 

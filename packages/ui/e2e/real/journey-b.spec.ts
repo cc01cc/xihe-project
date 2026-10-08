@@ -1,6 +1,6 @@
 // PLAN-0353 D1 (Q1-A): journey-b evidence — manual workspace mutations.
 // B1: human-readable error while Runtime is down, then recovery after restart;
-// B2: the user-direct UI mutation lands in the Operation Ledger as actorType=user.
+// B2: the user-direct UI mutation lands as a direct-user MCP invocation.
 //
 // Host profile only. Run via:
 //   node scripts/e2e-host.mjs --retries=0 e2e/real/journey-b.spec.ts

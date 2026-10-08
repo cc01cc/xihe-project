@@ -13,7 +13,7 @@ import {
     type JourneyContext,
 } from "./helpers/journey";
 
-test.describe.configure({ mode: "serial", retries: 0 });
+test.describe.configure({ mode: "serial", retries: 0, timeout: 90000 });
 
 test.describe("@host Session branch path", () => {
     let journey: JourneyContext;

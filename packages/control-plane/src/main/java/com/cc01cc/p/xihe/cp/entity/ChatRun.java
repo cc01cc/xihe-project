@@ -112,9 +112,9 @@ public class ChatRun {
     private Instant leaseExpiresAt;
 
     /**
-     * PLAN-0464 T2.1 (V50): the spawn waiting link lives on the child run row —
+     * PLAN-0464 T2.1 (V52): the spawn waiting link lives on the child run row —
      * which parent run it waits for and which parent tool call the wait belongs
-     * to. Nullable: pre-V50 rows are never backfilled (design 风险画像).
+     * to. Nullable: pre-V52 rows are never backfilled (design 风险画像).
      */
     @Column(name = "waiting_on_run_id", columnDefinition = "uuid")
     @Convert(converter = UuidStringConverter.class)

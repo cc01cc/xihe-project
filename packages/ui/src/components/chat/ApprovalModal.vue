@@ -440,7 +440,12 @@ onBeforeUnmount(() => {
 
 <template>
     <BaseModal :show="show" :title="t('chat.approvalRequired')" @close="handleClose">
-        <div ref="approvalContent" class="approval-content" @keydown="handleContentKeydown">
+        <div
+            ref="approvalContent"
+            class="approval-content"
+            data-testid="approval-modal-content"
+            @keydown="handleContentKeydown"
+        >
             <template v-if="approval">
                 <p class="mb-4 text-sm text-muted-foreground">
                     {{ t("chat.approvalDescription") }}
@@ -990,8 +995,7 @@ onBeforeUnmount(() => {
 <style scoped>
 @media (max-width: 640px) {
     .approval-content {
-        max-height: calc(92vh - 4rem);
-        max-height: calc(92dvh - 4rem);
+        flex: 1 1 auto;
         min-height: 0;
         overflow-y: auto;
         overscroll-behavior: contain;
@@ -1002,12 +1006,13 @@ onBeforeUnmount(() => {
     }
 
     :deep([data-testid="modal-content"]) {
+        display: flex;
+        flex-direction: column;
         height: 92vh;
         height: 92dvh;
         max-height: 92dvh;
         max-width: none;
-        overflow-y: auto;
-        overscroll-behavior: contain;
+        overflow: hidden;
         border-radius: 1rem 1rem 0 0;
         padding: 1rem;
     }

@@ -32,7 +32,6 @@ import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 import java.time.temporal.ChronoUnit;
-import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -1079,7 +1078,9 @@ public class ApprovalService {
     }
 
     private Instant parseExpiresAt(Object raw) {
-        if (raw == null) return Instant.now().plus(5, ChronoUnit.MINUTES);
+        if (raw == null) {
+            return Instant.now().plus(5, ChronoUnit.MINUTES);
+        }
         try {
             return Instant.parse(String.valueOf(raw));
         } catch (Exception e) {

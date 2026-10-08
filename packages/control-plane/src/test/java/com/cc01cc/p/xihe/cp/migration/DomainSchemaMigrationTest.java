@@ -94,7 +94,7 @@ class DomainSchemaMigrationTest {
                 versions.add(rs.getString(1));
             }
         }
-        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7", "8", "9", "27", "28", "33", "36", "37", "38", "39", "40", "41", "42", "49", "50", "51", "52", "53", "54", "55")),
+        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7", "8", "9", "27", "28", "33", "36", "37", "38", "39", "40", "41", "42", "49", "50", "51", "52", "53", "54", "55", "56")),
                 "fresh database must apply the current migration chain: " + versions);
         assertEquals(versions.size(),
                 scalarInt("SELECT count(*) FROM flyway_schema_history WHERE success = true"));
@@ -253,8 +253,8 @@ class DomainSchemaMigrationTest {
                         + "WHERE table_schema = 'public' AND table_name = 'mcp_invocations' "
                         + "AND column_name = 'policy_summary'"));
         assertEquals(1, scalarInt(
-                "SELECT count(*) FROM flyway_schema_history WHERE version = '49' AND success = true"),
-                "V49 must be recorded as applied");
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '50' AND success = true"),
+                "V50 must be recorded as applied");
     }
 
     @Test
@@ -692,8 +692,8 @@ class DomainSchemaMigrationTest {
     @Test
     void freshChainKeepsTerminalAndChatRunWaitingFields() throws SQLException {
         assertEquals(1, scalarInt(
-                "SELECT count(*) FROM flyway_schema_history WHERE version = '55' AND success = true"),
-                "V55 must be recorded as applied on the fresh chain");
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '56' AND success = true"),
+                "V56 must be recorded as applied on the fresh chain");
         String indexDef = scalarString(
                 "SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' "
                         + "AND indexname = 'idx_chat_runs_waiting_on_run'");

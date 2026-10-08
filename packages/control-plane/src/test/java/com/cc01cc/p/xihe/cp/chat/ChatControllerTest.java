@@ -12,8 +12,15 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
-import org.springframework.http.*;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.TaskScheduler;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -58,12 +65,18 @@ import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.mockito.ArgumentCaptor;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
@@ -126,6 +139,15 @@ class ChatControllerTest extends AbstractH2Test {
 
     @Autowired
     private SseEmitterManager sseEmitterManager;
+
+    @Autowired
+    private ChatController chatController;
+
+    @MockitoSpyBean
+    private FollowUpQueueService followUpQueueService;
+
+    @MockitoSpyBean
+    private TaskScheduler taskScheduler;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -294,6 +316,122 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals("INVALID_REQUEST", response.getBody().get("code"));
         assertEquals(0, jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ?", Integer.class, sessionId));
+    }
+
+    @Test
+    void transientFollowUpAdmissionFailureSchedulesOneBoundedRetry() {
+        AtomicReference<Runnable> retryCallback = new AtomicReference<>();
+        ScheduledFuture<?> scheduled = Mockito.mock(ScheduledFuture.class);
+        Mockito.doAnswer(invocation -> {
+            retryCallback.set(invocation.getArgument(0));
+            return scheduled;
+        }).when(taskScheduler).schedule(Mockito.any(Runnable.class), Mockito.any(java.time.Instant.class));
+        Mockito.doThrow(new IllegalStateException("temporary admission failure"))
+                .when(followUpQueueService).admitHead(Mockito.eq(sessionId), Mockito.any());
+
+        chatController.onFollowUpQueueWakeup(new FollowUpQueueWakeupEvent(sessionId));
+
+        assertNotNull(retryCallback.get(), "a durable queued head should get one scheduled retry");
+        retryCallback.get().run();
+
+        Mockito.verify(followUpQueueService, Mockito.times(2))
+                .admitHead(Mockito.eq(sessionId), Mockito.any());
+        Mockito.verify(taskScheduler, Mockito.times(1))
+                .schedule(Mockito.any(Runnable.class), Mockito.any(java.time.Instant.class));
+    }
+
+    @Test
+    void failedFollowUpAdmissionSchedulesOneBoundedRetryAfterReleasingReservation() {
+        AtomicReference<Runnable> retryCallback = new AtomicReference<>();
+        ScheduledFuture<?> scheduledFuture = Mockito.mock(ScheduledFuture.class);
+        Mockito.doAnswer(invocation -> {
+            retryCallback.set(invocation.getArgument(0));
+            return scheduledFuture;
+        }).when(taskScheduler).schedule(Mockito.any(Runnable.class), Mockito.any(java.time.Instant.class));
+        Mockito.doThrow(new IllegalStateException("temporary admission failure"))
+                .when(followUpQueueService).admitHead(Mockito.eq(sessionId), Mockito.any());
+
+        chatController.onFollowUpQueueWakeup(new FollowUpQueueWakeupEvent(sessionId));
+
+        assertNotNull(retryCallback.get(), "the failed durable queue head must get one scheduled re-wakeup");
+        retryCallback.get().run();
+
+        Mockito.verify(followUpQueueService, Mockito.times(2))
+                .admitHead(Mockito.eq(sessionId), Mockito.any());
+        Mockito.verify(taskScheduler, Mockito.times(1))
+                .schedule(Mockito.any(Runnable.class), Mockito.any(java.time.Instant.class));
+    }
+
+    @Test
+    void followUpQueueRoutesEnforceIdempotencyCapacityAndNormalChatGate() {
+        String parentRunId = UUID.randomUUID().toString();
+        chatRunRepository.saveAndFlush(new ChatRun(parentRunId, sessionId, userId, workspaceId,
+                "follow-up-parent-" + UUID.randomUUID(), "a".repeat(64), "test-provider", "test-model",
+                "none", "running"));
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("Idempotency-Key", "follow-up-key-1");
+        Map<String, Object> request = new LinkedHashMap<>();
+        request.put("content", "continue the active task");
+        request.put("branchId", branchId);
+        request.put("toolMode", "none");
+        request.put("provider", "test-provider");
+        request.put("model", "test-model");
+
+        String queueUrl = baseUrl + "/api/v1/sessions/" + sessionId + "/follow-ups";
+        ResponseEntity<Map> created = restTemplate.exchange(
+                queueUrl, HttpMethod.POST, new HttpEntity<>(request, headers), Map.class);
+        assertEquals(HttpStatus.ACCEPTED, created.getStatusCode());
+        assertEquals(1, ((Number) created.getBody().get("outstandingCount")).intValue());
+
+        ResponseEntity<Map> replay = restTemplate.exchange(
+                queueUrl, HttpMethod.POST, new HttpEntity<>(request, headers), Map.class);
+        assertEquals(HttpStatus.OK, replay.getStatusCode());
+        assertEquals(1, ((Number) replay.getBody().get("outstandingCount")).intValue());
+
+        Map<String, Object> changedModel = new LinkedHashMap<>(request);
+        changedModel.put("model", "other-model");
+        ResponseEntity<Map> reusedKey = restTemplate.exchange(
+                queueUrl, HttpMethod.POST, new HttpEntity<>(changedModel, headers), Map.class);
+        assertEquals(HttpStatus.CONFLICT, reusedKey.getStatusCode());
+        assertEquals("IDEMPOTENCY_KEY_REUSED", reusedKey.getBody().get("code"));
+
+        for (int sequence = 2; sequence <= 5; sequence++) {
+            headers.set("Idempotency-Key", "follow-up-key-" + sequence);
+            ResponseEntity<Map> queued = restTemplate.exchange(
+                    queueUrl, HttpMethod.POST, new HttpEntity<>(request, headers), Map.class);
+            assertEquals(HttpStatus.ACCEPTED, queued.getStatusCode());
+        }
+        headers.set("Idempotency-Key", "follow-up-over-capacity");
+        ResponseEntity<Map> full = restTemplate.exchange(
+                queueUrl, HttpMethod.POST, new HttpEntity<>(request, headers), Map.class);
+        assertEquals(HttpStatus.CONFLICT, full.getStatusCode());
+        assertEquals("FOLLOW_UP_QUEUE_FULL", full.getBody().get("code"));
+
+        Map<String, Object> normalChat = Map.of(
+                "sessionId", sessionId,
+                "branchId", branchId,
+                "content", "must wait until Follow-up queue drains");
+        ResponseEntity<Map> blockedChat = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST, chatEntity(normalChat, headers), Map.class);
+        assertEquals(HttpStatus.CONFLICT, blockedChat.getStatusCode());
+        assertEquals("FOLLOW_UP_QUEUE_NOT_EMPTY", blockedChat.getBody().get("code"));
+
+        ResponseEntity<Map> snapshot = restTemplate.exchange(
+                queueUrl, HttpMethod.GET, new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.OK, snapshot.getStatusCode());
+        List<?> items = (List<?>) snapshot.getBody().get("items");
+        String firstItemId = (String) ((Map<?, ?>) items.get(0)).get("queueItemId");
+        ResponseEntity<Map> withdrawn = restTemplate.exchange(
+                queueUrl + "/" + firstItemId, HttpMethod.DELETE, new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.OK, withdrawn.getStatusCode());
+        assertEquals(4, ((Number) withdrawn.getBody().get("outstandingCount")).intValue());
+
+        ResponseEntity<Map> unchanged = restTemplate.exchange(
+                queueUrl + "/continue", HttpMethod.POST, new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.OK, unchanged.getStatusCode());
     }
 
     @Test

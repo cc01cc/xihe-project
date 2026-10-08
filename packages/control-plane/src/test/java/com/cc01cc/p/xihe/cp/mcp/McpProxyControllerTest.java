@@ -2,7 +2,6 @@ package com.cc01cc.p.xihe.cp.mcp;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterEach;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
@@ -19,7 +18,12 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @SpringBootTest
 @ActiveProfiles("h2")
@@ -34,7 +38,6 @@ class McpProxyControllerTest {
 
     @Autowired
     private com.cc01cc.p.xihe.cp.service.WorkspaceService workspaceService;
-
     @AfterEach
     void clearTenantContext() {
         TenantContext.clear();

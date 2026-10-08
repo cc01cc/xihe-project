@@ -63,7 +63,7 @@ spec/
 | execution job / scope / durable continuation | proposed | partial | CP durable-record + Runtime Job owners | CP Job API/durable record、Runtime Job backend、UI、Agent | A03-xihe | PLAN-0390; backend adapters PLAN-0392–0395; Workspace release PLAN-0391 |
 | configuration / env | proposed | partial | CP ConfigService owner | CP、Agent、Runtime、UI、Audit | A03-xihe | PLAN-0389；以现行配置模型整合历史来源 |
 | protocol | proposed | partial | 对应协议 owners | UI、CP、Agent、Runtime | A03-xihe | PLAN-0385；OpenAPI/inventory/schema 保持各自事实源 |
-| Operation Ledger data model | superseded | retired | replaced by ChatRun/MCP/Workspace Job/Approval owners | historical consumers only | A03-xihe | PLAN-0467 / V55；参见 retired SPEC 与 migration/recovery evidence |
+| Operation Ledger data model | superseded | retired | replaced by ChatRun/MCP/Workspace Job/Approval owners | historical consumers only | A03-xihe | PLAN-0467 / V56；参见 retired SPEC 与 migration/recovery evidence |
 
 ## 4. Agent 读取规则
 

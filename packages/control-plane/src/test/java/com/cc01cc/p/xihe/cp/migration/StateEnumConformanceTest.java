@@ -27,9 +27,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>The current state machines:</p>
  * <ol>
- *   <li>{@code workspace_jobs.status} — CHECK {@code ck_workspace_jobs_status} (V52)</li>
- *   <li>{@code mcp_invocations.status} — CHECK {@code ck_mcp_invocations_status} (V49)</li>
- *   <li>{@code mcp_attempts.status} — CHECK {@code ck_mcp_attempts_status} (V49)</li>
+ *   <li>{@code workspace_jobs.status} — CHECK {@code ck_workspace_jobs_status} (V53)</li>
+ *   <li>{@code mcp_invocations.status} — CHECK {@code ck_mcp_invocations_status} (V50)</li>
+ *   <li>{@code mcp_attempts.status} — CHECK {@code ck_mcp_attempts_status} (V50)</li>
  *   <li>{@code approval_requests.state} — CHECK {@code ck_approval_requests_state} (V1)</li>
  *   <li>{@code chat_runs.status} — no DB CHECK exists; the vocabulary is code-owned.</li>
  * </ol>
@@ -63,19 +63,19 @@ class StateEnumConformanceTest extends AbstractIntegrationTest {
     @Test
     void workspaceJobStatusSetEqualsTheFrozenMigrationVocabulary() {
         assertEquals(WORKSPACE_JOB_STATUSES, checkAllowedValues("ck_workspace_jobs_status"),
-                "workspace_jobs.status must keep exactly the V52 value set");
+                "workspace_jobs.status must keep exactly the V53 value set");
     }
 
     @Test
     void mcpInvocationStatusSetEqualsTheFrozenMigrationVocabulary() {
         assertEquals(MCP_INVOCATION_STATUSES, checkAllowedValues("ck_mcp_invocations_status"),
-                "mcp_invocations.status must keep exactly the V49 value set");
+                "mcp_invocations.status must keep exactly the V50 value set");
     }
 
     @Test
     void mcpAttemptStatusSetEqualsTheFrozenMigrationVocabulary() {
         assertEquals(MCP_ATTEMPT_STATUSES, checkAllowedValues("ck_mcp_attempts_status"),
-                "mcp_attempts.status must keep exactly the V49 value set");
+                "mcp_attempts.status must keep exactly the V50 value set");
     }
 
     @Test

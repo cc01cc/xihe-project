@@ -14,12 +14,20 @@ import java.util.UUID;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 public interface ChatRunRepository extends JpaRepository<ChatRun, UUID> {
     boolean existsBySessionId(String sessionId);
 
     boolean existsBySessionIdAndStatusIn(String sessionId, Collection<String> statuses);
+
+    boolean existsBySessionIdAndLeaseOwnerIsNotNullAndLeaseExpiresAtAfter(String sessionId, Instant after);
+
+    @Query("select max(r.leaseExpiresAt) from ChatRun r where r.sessionId = :sessionId "
+            + "and r.leaseOwner is not null and r.leaseExpiresAt > :after")
+    Instant findLatestLeaseExpiryAfter(
+            @Param("sessionId") String sessionId, @Param("after") Instant after);
 
     List<ChatRun> findBySessionIdInAndStatusIn(Collection<String> sessionIds, Collection<String> statuses);
 
@@ -115,8 +123,13 @@ public interface ChatRunRepository extends JpaRepository<ChatRun, UUID> {
             @Param("now") Instant now,
             @Param("activeStatuses") Collection<String> activeStatuses);
 
+    // PLAN-0442 A类修复：releaseRun 常在 afterCommit 事件回调中执行，此时外层
+    // 事务已完成但 synchronization/actual-transaction 标志仍在，REQUIRED 会“加入”
+    // 已完成事务导致 Hibernate 报 no transaction is in progress（lease 永远释放不掉、
+    // 连带 single-flight 与 queue wake 中断）。REQUIRES_NEW 会挂起完成态资源并开启
+    // 独立短事务，普通调用路径行为不变。
     @Modifying
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     @Query("update ChatRun r set r.leaseOwner = null, r.leaseExpiresAt = null "
             + "where r.id = :runId and r.leaseOwner = :owner")
     int releaseLease(

@@ -7,7 +7,14 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -73,14 +80,18 @@ public class ConfigController {
 
     private static boolean isAdmin() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth == null) return false;
+        if (auth == null) {
+            return false;
+        }
         return auth.getAuthorities().stream()
             .map(GrantedAuthority::getAuthority)
             .anyMatch(r -> r.equals("ROLE_ADMIN"));
     }
 
     private static String maskIfNotAdmin(String key, String value) {
-        if (value == null || value.isEmpty() || isAdmin()) return value;
+        if (value == null || value.isEmpty() || isAdmin()) {
+            return value;
+        }
         if (key.toLowerCase().contains("apikey") || key.toLowerCase().contains("secret")) {
             if (value.length() > 8) {
                 return value.substring(0, 3) + "****" + value.substring(value.length() - 4);
@@ -91,7 +102,9 @@ public class ConfigController {
     }
 
     private static UUID parseUuid(String value) {
-        if (value == null || value.isBlank()) return null;
+        if (value == null || value.isBlank()) {
+            return null;
+        }
         try {
             return UUID.fromString(value);
         } catch (IllegalArgumentException e) {

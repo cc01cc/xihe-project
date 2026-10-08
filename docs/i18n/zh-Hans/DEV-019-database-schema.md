@@ -7,7 +7,7 @@ sidebar_order: 19
 status: active
 created: 2026-09-07
 updated: 2026-10-08
-description: XH PostgreSQL 全量表结构速查：业务表按域分组、ER 关系、字段约束与索引、当前 V1~V55 升级迁移对照（PLAN-280 rebaseline 后）与本地查看方法
+description: XH PostgreSQL 全量表结构速查：业务表按域分组、ER 关系、字段约束与索引、当前 V1~V56 升级迁移对照（PLAN-280 rebaseline 后）与本地查看方法
 tags:
   - postgres
   - flyway
@@ -16,14 +16,14 @@ tags:
 
 # DEV-019: 数据库设计
 
-> 读者：新加入 XH 的后端 / 全栈开发者。内容：当前最终库表一览（结论先行），细节按域查表。Schema Source of Truth 是 `packages/control-plane/src/main/resources/db/migration` 的 V1~V55 Flyway 升级链；已删除的 Ledger 只留在历史迁移记录，JPA Entity 仅镜像当前 schema。前置阅读：[DEV-001](DEV-001-system-architecture.md)（四模块与 PG 定位）、[DEV-014](DEV-014-control-plane-architecture.md)（CP 通道）、[DEV-017](DEV-017-session-architecture.md)（会话语义）、[DEV-003](DEV-003-config-management.md)（Config 三层）。
+> 读者：新加入 XH 的后端 / 全栈开发者。内容：当前最终库表一览（结论先行），细节按域查表。Schema Source of Truth 是 `packages/control-plane/src/main/resources/db/migration` 的 V1~V56 Flyway 升级链；已删除的 Ledger 只留在历史迁移记录，JPA Entity 仅镜像当前 schema。前置阅读：[DEV-001](DEV-001-system-architecture.md)（四模块与 PG 定位）、[DEV-014](DEV-014-control-plane-architecture.md)（CP 通道）、[DEV-017](DEV-017-session-architecture.md)（会话语义）、[DEV-003](DEV-003-config-management.md)（Config 三层）。
 
 ## 1. 结论与使用规则
 
 | 结论 | 内容 |
 |------|------|
 | 数据库 | PostgreSQL 17 + pgvector，Docker 镜像 `pgvector/pgvector:pg17`，dev 端口 `12634`，库名/用户名 `xihe` |
-| 表数量 | 42 张业务表 + `flyway_schema_history`（Flyway 自维护） + 1 个只读 Audit view (`v_audit_entries`)，按 V55 fresh schema 盘点 |
+| 表数量 | 44 张业务表 + `flyway_schema_history`（Flyway 自维护） + 1 个只读 Audit view (`v_audit_entries`)，按 V56 fresh schema 盘点 |
 | 权威顺序 | Flyway SQL > JPA Entity > 本文档；`ddl-auto=validate`（PLAN-280），Flyway 是唯一 schema manager |
 | 主键风格 | 全部 PostgreSQL 原生 `UUID`（PLAN-280）；Java 侧 @Id 为 `UUID` 类型，FK 列为 `String` + `UuidStringConverter` |
 | 时间风格 | 当前 Flyway 链的时间列均为带时区类型：`TIMESTAMPTZ`（V21/V23 以等价的 `TIMESTAMP WITH TIME ZONE` 书写），默认值按各迁移定义；不存在裸 `TIMESTAMP` |
@@ -38,13 +38,13 @@ tags:
 | Compose PG 定义 | `docker-compose.yml`（`postgres` 服务，`./postgres-init:/docker-entrypoint-initdb.d:ro`） |
 | 扩展初始化 | `postgres-init/01-enable-pgvector.sql` |
 | 连接配置 | `packages/control-plane/src/main/resources/application.properties:12-24`（`datasource.url`、`flyway.locations=classpath:db/migration`） |
-| 迁移链 | `packages/control-plane/src/main/resources/db/migration/V1__init_schema.sql` 至 V55（当前 active upgrade chain；V55 removes retired Ledger tables） |
+| 迁移链 | `packages/control-plane/src/main/resources/db/migration/V1__init_schema.sql` 至 V56（当前 active upgrade chain；V56 removes retired Ledger tables） |
 | Entity 镜像 | `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/entity/` 与 `context/entity/`（按当前源码为准） |
 | Seed | `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/config/DataSeeder.java`（仅 seed `admin@xihe.local`，密码随机不落日志） |
 
-> **PLAN-280 rebaseline（2026-09-07）**：`V1__init_schema.sql` 是当前链的 schema 基线；V2–V55 在 active classpath 按顺序用于既有库升级。V55 是当前 schema 终点：移除 operation Ledger tables 与 Workspace Job transition anchor。统一原生 UUID、带时区时间类型、显式命名约束与 ON DELETE、`ddl-auto=validate`。更早的历史 V1~V22+U6 编号仍仅作 Git 历史溯源。`spring-boot-flyway` 模块缺失曾导致 Flyway 自动配置从未生效（schema 实际由 Hibernate 建），已在本轮修复。
+> **PLAN-280 rebaseline（2026-09-07）**：`V1__init_schema.sql` 是当前链的 schema 基线；V2–V56 在 active classpath 按顺序用于既有库升级。V56 是当前 schema 终点：移除 Operation Ledger tables 与 Workspace Job transition anchor。V49–V56 已按唯一连续版本整合 Follow-up、MCP、Approval、ChatRun、Workspace Job、Audit 与 Ledger retirement。统一原生 UUID、带时区时间类型、显式命名约束与 ON DELETE、`ddl-auto=validate`。更早的历史 V1~V22+U6 编号仍仅作 Git 历史溯源。`spring-boot-flyway` 模块缺失曾导致 Flyway 自动配置从未生效（schema 实际由 Hibernate 建），已在本轮修复。
 >
-> **版本标注约定**：§2/§3 各表括注与附录 A「旧链首次迁移」列的 `V<n>` 若注明“旧链”，仅用于迁移溯源；active 链统一以 §4 和 Flyway history（V1~V55）为准。逐表变更见 §4。
+> **版本标注约定**：§2/§3 各表括注与附录 A「旧链首次迁移」列的 `V<n>` 若注明“旧链”，仅用于迁移溯源；active 链统一以 §4 和 Flyway history（V1~V56）为准。逐表变更见 §4。
 
 ## 2. ER 关系（分域 erDiagram）
 
@@ -62,6 +62,7 @@ erDiagram
     users ||--o{ sessions : creates
     sessions ||--o{ messages : contains
     sessions ||--o{ chat_runs : runs
+    sessions ||--o{ session_follow_up_items : queues
     chat_runs ||--o{ messages : produces
     chat_runs ||--o{ approval_requests : requires
 ```
@@ -70,6 +71,7 @@ erDiagram
 - `workspace_users`：联合 PK `(workspace_id, user_id)`，多对多关联表
 - `chat_runs → messages`：经 `user_message_id`/`assistant_message_id` 逻辑关联（无 FK 约束）
 - `chat_runs → approval_requests`：`run_id` FK
+- `sessions → session_follow_up_items`：`ON DELETE CASCADE`（Session 删除零孤儿）；item 对 child Run/Message 为 `SET NULL`（PLAN-0442，见 §3.2）
 
 ### 2.2 Workspace 执行
 
@@ -176,7 +178,7 @@ erDiagram
     task_plans ||--o{ task_items : "steps (cascade)"
 ```
 
-- V55 后按域存储：MCP invocation、attempt 与 dispatch history 由 MCP execution domain 持有；Job 状态与 transition history 由 Workspace Job domain 持有。`approval_request_id` 是可空硬 FK，删除审批时 `SET NULL`，不级联删除 invocation。
+- V56 后按域存储：MCP invocation、attempt 与 dispatch history 由 MCP execution domain 持有；Job 状态与 transition history 由 Workspace Job domain 持有。`approval_request_id` 是可空硬 FK，删除审批时 `SET NULL`，不级联删除 invocation。
 - `task_plans`/`task_items` 为 run 任务连续性（`V6`，见 §3.8）；`task_plans.session_id` 无 FK，仅 run/workspace 建 FK。
 
 ## 3. 按域表详情
@@ -198,7 +200,7 @@ erDiagram
 
 > 索引：`idx_users_email (email)`
 
-### 3.2 协作（workspaces / workspace_users / sessions / messages / chat_runs / run_checkpoints / approval_requests）
+### 3.2 协作（workspaces / workspace_users / sessions / messages / chat_runs / run_checkpoints / approval_requests / session_follow_up_items）
 
 **workspaces**（`V1` + `V2/V11/V14`，Entity `entity/Workspace.java`）：`owner_id` 拥有者，`deleted_at` 软删后同 owner 可重建。
 
@@ -388,6 +390,34 @@ erDiagram
 > 索引：
 > - `idx_approval_requests_session_state (session_id, user_id, workspace_id, state, created_at)`
 > - `idx_approval_requests_run_state (run_id, state)`
+
+**session_follow_up_items**（`V49`，Entity `entity/SessionFollowUpItem.java`；PLAN-0442）：CP-owned per-Session durable Follow-up FIFO——admission 前入队 payload 的唯一事实源；child Run 创建后 item 只作队列投影，执行事实仍归 ChatRun。
+
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| id | UUID | PK | — |
+| session_id | UUID | NOT NULL FK `sessions(id)` `ON DELETE CASCADE` | 归属 Session；Session 删除零孤儿 |
+| queue_sequence | BIGINT | NOT NULL，`ck_..._queue_sequence > 0`，`(session_id, queue_sequence)` 唯一 | Session 内 FIFO 序号 |
+| idempotency_key | VARCHAR(128) | NOT NULL，`(session_id, idempotency_key)` 唯一 | 入队幂等键（Header `Idempotency-Key`；同键同 hash 幂等命中） |
+| request_hash | VARCHAR(64) | NOT NULL | 规范化请求 hash，同键异 payload 冲突检测 |
+| content | TEXT | nullable | 入队正文；admission 转交 child user Message 后清空 |
+| attachment_refs | JSONB | NOT NULL DEFAULT `[]`，`ck_..._attachment_refs_array` | File UUID 数组；admission 重验所有权 |
+| branch_id | UUID | NOT NULL | 入队时钉住的逻辑分支；admission 只重验存在性/可见性，不切换分支 |
+| tool_mode | VARCHAR(20) | NOT NULL DEFAULT `none`，`ck_..._tool_mode` | `none` / `workspace` |
+| tool_timeouts | JSONB | NOT NULL DEFAULT `{}`，`ck_..._tool_timeouts_object` | per-tool 覆盖超时 |
+| provider / model | VARCHAR(50/100) | `ck_..._provider_model_pair` 成对 NULL | per-入队覆盖，成对出现 |
+| status | VARCHAR(16) | NOT NULL DEFAULT `queued`，`ck_..._status` 五态 | `queued/paused/admitted/completed/withdrawn`；仅 `FollowUpQueueService` 写 |
+| pause_reason | VARCHAR(64) | nullable | `parent_cancelled/child_cancelled/child_ambiguous/child_missing/attachment_unavailable/branch_unavailable/session_binding_stale/continued_after_terminal` 等 |
+| anchor_run_id | UUID | FK `chat_runs(id)` `ON DELETE SET NULL` | 资格锚（terminal gate）；anchor 行删除置空 → admission 视为 stale 并暂停 |
+| pause_run_id | UUID | FK `chat_runs(id)` `ON DELETE SET NULL` | 触发暂停的 Run |
+| child_run_id | UUID | FK `chat_runs(id)` `ON DELETE SET NULL`，`uq_..._child_run_id` 部分唯一 | admission 后的 child Run（每 Session 至多一个 active child）；`SET NULL` 即 admitted-without-child 可达态，启动恢复暂停为 `child_missing` |
+| child_message_id | UUID | FK `messages(id)` `ON DELETE SET NULL` | child user Message 回链 |
+| created_at / updated_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | — |
+| admitted_at / completed_at / withdrawn_at | TIMESTAMPTZ | nullable | 生命周期时间戳 |
+
+> 索引：`uq_session_follow_up_items_child_run_id`（child 单飞，部分唯一）；`idx_session_follow_up_items_session_active_sequence (session_id, queue_sequence) WHERE status IN ('queued','paused','admitted')`（活跃队列扫描）。
+>
+> 语义注记：硬上限 5 统计全部未结束项（queued/paused/admitted），完成/撤回后释放；QueueItem 状态转换与 child ChatRun/Message 在同一事务原子写入，执行事实归 ChatRun；claim/withdraw 以 Session 行锁 + item 行锁串行（并发至多一方成功）。API 与状态机见 [`spec/session/chat-run-operation.md`](../../../spec/session/chat-run-operation.md) §Follow-up 队列 与 DEV-017 §1.3。
 
 ### 3.3 Workspace 执行（workspace_execution_specs）
 
@@ -705,20 +735,20 @@ erDiagram
 > - `idx_audit_logs_workspace_id (workspace_id)`
 > - `idx_audit_logs_action (action)`
 
-### 3.7 操作账本（历史 schema，V55 已退役）
+### 3.7 操作账本（历史 schema，V56 已退役）
 
-> **状态（PLAN-0467）**：以下六表字段/关系仅为 V1–V54 的升级历史，不是当前 schema。V55 已删除 `ledger_operations`、`operation_items`、`operation_attempts`、`operation_events`、`operation_extensions` 与 `diagnostic_artifacts`；Flyway 历史迁移仍保留以支持既有库升级。不可按本节重建或新增运行时引用。
+> **状态（PLAN-0467）**：以下六表字段/关系仅为 V1–V55 的升级历史，不是当前 schema。V56 已删除 `ledger_operations`、`operation_items`、`operation_attempts`、`operation_events`、`operation_extensions` 与 `diagnostic_artifacts`；Flyway 历史迁移仍保留以支持既有库升级。不可按本节重建或新增运行时引用。
 >
-> 切换点的完整 V54 快照及恢复演练见 workspace 根 `plans/PLAN-0467-xh-ledger-retirement/evidence/snapshot-restore.md`；V55 升级演练与 Workspace Job 行保留证据见 `evidence/migration-rehearsal.md`。
+> 切换点的完整 V55 快照及恢复演练见 workspace 根 `plans/PLAN-0467-xh-ledger-retirement/evidence/snapshot-restore.md`；V56 升级演练与 Workspace Job 行保留证据见 `evidence/migration-rehearsal.md`。
 
-| 旧表（V55 已删除） | 现行事实源 / 处置 |
+| 旧表（V56 已删除） | 现行事实源 / 处置 |
 |---|---|
 | `ledger_operations` | 不再设跨域根行；ChatRun 由 `chat_runs`/`chat_run_history` 持有，工具调用由 `mcp_invocations` 持有，Workspace Job 由 `workspace_jobs` 持有。无历史回填。 |
-| `operation_items` | 依事实归属到 ChatRun、MCP invocation、Workspace Job 或 `run_checkpoints`；V55 同批删除其 `workspace_jobs.operation_item_id` transition anchor。 |
+| `operation_items` | 依事实归属到 ChatRun、MCP invocation、Workspace Job 或 `run_checkpoints`；V56 同批删除其 `workspace_jobs.operation_item_id` transition anchor。 |
 | `operation_attempts` / `operation_events` | MCP 调用阶段与执行事实归 `mcp_attempts` / `mcp_dispatch_history`；审批归 `approval_requests` / `approval_history`；Job 状态变化归 `workspace_job_history`。 |
 | `operation_extensions` / `diagnostic_artifacts` | 不做跨域回填；按 owner 生命周期随对应 Session/Workspace 事实处理。受保护工件仍由其 domain-owned storage reference 管理。 |
 
-当前 schema 以本文件 §3.2–§3.6、§3.8–§3.9、`docs/api/openapi.yaml`、`docs/api/inventory.md` 与 V55 migration 为准。
+当前 schema 以本文件 §3.2–§3.6、§3.8–§3.9、`docs/api/openapi.yaml`、`docs/api/inventory.md` 与 V56 migration 为准。
 ### 3.8 任务连续性（task_plans / task_items）
 
 **task_plans**（`V6`，Entity `entity/TaskPlan.java`）：一次 run 的目标导向计划（PLAN-276 M1）。
@@ -753,7 +783,7 @@ erDiagram
 
 ### 3.9 Workspace Job（workspace_jobs / workspace_job_history）
 
-**workspace_jobs**（`V52`，Entity `entity/WorkspaceJob.java`）：Workspace Job 领域表（PLAN-0465 T1.1，PLAN-0462 decision #5/#7）。`id` 即 domain `jobId`（wire 唯一身份）；`state` JSONB 保存 Job state，`status`/`scope` 为同步查询列。V55 已移除只供迁移期双写的 `operation_item_id` anchor；不回填 Ledger 历史（decision #9）。
+**workspace_jobs**（`V53`，Entity `entity/WorkspaceJob.java`）：Workspace Job 领域表（PLAN-0465 T1.1，PLAN-0462 decision #5/#7）。`id` 即 domain `jobId`（wire 唯一身份）；`state` JSONB 保存 Job state，`status`/`scope` 为同步查询列。V56 已移除只供迁移期双写的 `operation_item_id` anchor；不回填 Ledger 历史（decision #9）。
 
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
@@ -776,7 +806,7 @@ erDiagram
 
 > 索引/唯一：`uq_workspace_jobs_session_idempotency (user_id, session_id, idempotency_key) WHERE session_id IS NOT NULL AND idempotency_key IS NOT NULL`；`uq_workspace_jobs_workspace_idempotency (user_id, workspace_id, idempotency_key) WHERE session_id IS NULL AND idempotency_key IS NOT NULL`（V36 语义）；`idx_workspace_jobs_workspace_created_at (workspace_id, created_at DESC)`（list + 0466 审计 VIEW 分页）；`idx_workspace_jobs_created_at (created_at)`（对账 sweep）；`idx_workspace_jobs_run_id` / `idx_workspace_jobs_session_id`（scope 收口等值探针）。
 
-**workspace_job_history**（`V53`，Entity `entity/WorkspaceJobHistory.java`）：单 Job append-only transition history（PLAN-0465 T1.3，PLAN-0462 decision #8）。只插入不更新；`sequence` 在 `workspace_jobs` 行锁内 max+1 分配；`job_id` FK `ON DELETE CASCADE`。
+**workspace_job_history**（`V54`，Entity `entity/WorkspaceJobHistory.java`）：单 Job append-only transition history（PLAN-0465 T1.3，PLAN-0462 decision #8）。只插入不更新；`sequence` 在 `workspace_jobs` 行锁内 max+1 分配；`job_id` FK `ON DELETE CASCADE`。
 
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|---|
@@ -791,7 +821,7 @@ erDiagram
 
 > 索引：`uq_workspace_job_history_job_sequence (job_id, sequence)`；`idx_workspace_job_history_job_created (job_id, created_at)`。
 
-## 4. 迁移对照（当前 active 升级链 V1~V55）
+## 4. 迁移对照（当前 active 升级链 V1~V56）
 
 > PLAN-280 destructive rebaseline 取代了当时的历史链（旧 V2~V22/U6 移出 active classpath，仅 Git 历史可追溯）；V15 起的 V15~V41 均为当前 active 链的 post-rebaseline migrations。本节保留历史编号解释，不把两套编号混用；表内 V2/V3/V4/V30 的旧名属于历史迁移文件名与原表名（V33 改名后保留）。
 
@@ -832,17 +862,21 @@ erDiagram
 | V33 | `V33__rename_session_operations_to_ledger_operations.sql` | `session_operations` RENAME `ledger_operations` + 14 项跟随改名（PK ×1、FK ×4、CHECK ×5、唯一索引 ×2、普通索引 ×2；PLAN-0351 DDL-12） | `ledger_operations` 及其约束/索引 |
 | V34 | `V34__operation_extensions_cascade.sql` | `operation_extensions` 两目标 FK `SET NULL` → `CASCADE`（CHECK 保留；PLAN-0367 DDL-13） | `operation_extensions` |
 | V35 | `V35__workspace_imports.sql` | Workspace 导入 durable 记录表（状态 `queued/running/completed/cancelled/failed`、`(owner_id, idempotency_key)` 唯一、workspace+created 索引与 active 部分索引；PLAN-0376） | `workspace_imports` |
-| V36 | `V36__workspace_job_idempotency.sql` | 历史 Ledger 上为 session-less Job root 增部分唯一索引；V52 将幂等约束迁至 `workspace_jobs`，V55 随 Ledger 表退役 | historical `ledger_operations` |
+| V36 | `V36__workspace_job_idempotency.sql` | 历史 Ledger 上为 session-less Job root 增部分唯一索引；V53 将幂等约束迁至 `workspace_jobs`，V56 随 Ledger 表退役 | historical `ledger_operations` |
 | V37 | `V37__session_provenance.sql` | `sessions` 增 nullable `spawned_from_session_id/spawned_from_run_id/spawned_at` 与两条非空部分查找索引（PLAN-0407 T1.1） | `sessions` |
 | V38 | `V38__authorization_grants.sql` | 新增 grants 主体权限表、source/read_state CHECK、subject 查找索引与每主体一份 default grant 部分唯一索引（PLAN-0407 T1.2） | `grants` |
 | V39 | `V39__chat_run_origin.sql` | `chat_runs.origin` 回填旧行为 `user_submission`，约束 `user_submission/spawn`；新增 spawn-only `(user_id,idempotency_key)` 部分唯一索引，保证父 durable event 全局幂等（PLAN-0407 T1.4） | `chat_runs` |
 | V40 | `V40__session_derivation_kind.sql` | `sessions.kind` 区分 `spawn/fork`；root provenance 全 NULL、派生四元组全 NOT NULL 的 CHECK；既有 V37 provenance 行在无 fork creator 的前置阶段回填为 spawn（PLAN-0407 T2.2） | `sessions` |
 | V41 | `V41__default_grant_bootstrap.sql` | 对既有 users 与 root Agent Sessions 补 source=default grant（USER/ADMIN 矩阵），自动默认 read_state=read，并为回填 grant 写 audit row（PLAN-0407 T2.4） | `grants` |
 | V48 | `V48__context_template_session_binding.sql` | **纯 schema（不含数据清理）**：`sessions` 增 `context_template_layer/id/version` 三列（NOT NULL DEFAULT 钉内置模板）与 CHECK（PLAN-0414 T1.1/T1.3），`chat_runs` 增 `context_template_snapshot` JSONB 对象 DEFAULT（T1.4 admission 原子快照）；存量清库是迁移前置运维动作 `dev:reset`（用户 2026-10-03 裁定「先清库，迁移里不该清」，V14 dev-state 可弃先例），迁移不携带 DELETE/拦截 | `sessions/chat_runs` |
-| V52 | `V52__workspace_jobs.sql` | Workspace Job 领域表（PLAN-0465 T1.1 / PLAN-0462 decision #5/#7）：domain `jobId` PK、V36 幂等唯一索引迁入、暂存的 `operation_item_id` dual-write anchor（由 V55 删除）、`status/scope` 查询列与时间索引；不回填旧行（decision #9） | `workspace_jobs` |
-| V53 | `V53__workspace_job_history.sql` | 单 Job append-only transition history（PLAN-0465 T1.3 / decision #8）：六事件 `start/running/settle/cancel/orphaned/interrupted`，per-job `sequence` 唯一，FK 级联 | `workspace_job_history` |
-| V54 | `V54__audit_entries_view.sql` | 四域 Audit read-only view，不回填或改写 owner tables | `v_audit_entries` |
-| V55 | `V55__retire_operation_ledger.sql` | 先从 `workspace_jobs` 删除 `operation_item_id` FK/index/column，再按 FK 依赖次序删除六张 Ledger 历史表；V54 pre-DROP snapshot hash 与恢复演练见 `plans/PLAN-0467-xh-ledger-retirement/evidence/` | `workspace_jobs` / retired Ledger tables |
+| V49 | `V49__session_follow_up_items.sql` | 新增 per-Session durable Follow-up FIFO 表：五态/工具模式/JSON 形态 CHECK、`(session_id, queue_sequence)` 与 `(session_id, idempotency_key)` 双唯一、`child_run_id` 部分唯一（active child 单飞）、四条 FK（session CASCADE；anchor/pause/child_run/child_message SET NULL）与活跃队列部分索引；无历史回填，既有 Session 起始空队列（PLAN-0442 T1.1） | `session_follow_up_items` |
+| V50 | `V50__mcp_execution_domain.sql` | MCP invocation、attempt 与 dispatch history 的执行域事实表（PLAN-0463）；`approval_request_id` 为 nullable FK，`ON DELETE SET NULL` | `mcp_invocations/mcp_attempts/mcp_dispatch_history` |
+| V51 | `V51__approval_history.sql` | Approval 决策 append-only history；保留与 MCP invocation 的 nullable `ON DELETE SET NULL` 关联 | `approval_history` |
+| V52 | `V52__chat_run_history_and_waiting_link.sql` | ChatRun 状态流转 history 与 child-run waiting link（PLAN-0464）；旧 Run 不回填 waiting link | `chat_run_history/chat_runs` |
+| V53 | `V53__workspace_jobs.sql` | Workspace Job 领域表（PLAN-0465 T1.1 / PLAN-0462 decision #5/#7）：domain `jobId` PK、V36 幂等唯一索引迁入、暂存的 `operation_item_id` dual-write anchor（由 V56 删除）、`status/scope` 查询列与时间索引；不回填旧行（decision #9） | `workspace_jobs` |
+| V54 | `V54__workspace_job_history.sql` | 单 Job append-only transition history（PLAN-0465 T1.3 / decision #8）：六事件 `start/running/settle/cancel/orphaned/interrupted`，per-job `sequence` 唯一，FK 级联 | `workspace_job_history` |
+| V55 | `V55__audit_entries_view.sql` | 四域 Audit read-only view，不回填或改写 owner tables | `v_audit_entries` |
+| V56 | `V56__retire_operation_ledger.sql` | 先从 `workspace_jobs` 删除 `operation_item_id` FK/index/column，再按 FK 依赖次序删除六张 Ledger 历史表；V55 pre-DROP snapshot hash 与恢复演练见 `plans/PLAN-0467-xh-ledger-retirement/evidence/` | `workspace_jobs` / retired Ledger tables |
 
 ## 5. 本地查看与运维
 
@@ -858,11 +892,11 @@ erDiagram
 | 重置 admin | `mise run reset-admin`（`scripts/reset-admin.ps1 -Password <pw>`，免重启，不删数据） |
 | 重建 dev 库 | `mise run dev:reset`（默认 dry-run，显式 `-Reset` 才执行，先备份） |
 
-> **当前链备注**：V21 的 `policy_revision` 是审批 grant 失效判断的 durable counter；V22/V23/V26 是 checkpoint 切片语义落地前的历史增量；V27 按 PLAN-0339 物理清空旧 `run_checkpoints` 行并重建 workspace slice rows；V28 按 PLAN-0357 删除 V4/V5 legacy snapshot 对象；V29 清空遗留单键源哈希；V30–V34 是 Ledger schema 历史增量，相关表于 V55 退役；V35–V41 落地 Workspace import、Session provenance/kind、authorization grants、ChatRun origin/幂等约束与 default grant backfill；V48 落地 Context Template binding；V49–V55 落地 MCP invocation、approval FK/history、Workspace Job/history、Audit view 与 Ledger retirement。具体历史变化以迁移 SQL 和 plan evidence 为准，禁止手工 DROP/回滚 active 链。
+> **当前链备注**：V21 的 `policy_revision` 是审批 grant 失效判断的 durable counter；V22/V23/V26 是 checkpoint 切片语义落地前的历史增量；V27 按 PLAN-0339 物理清空旧 `run_checkpoints` 行并重建 workspace slices；V28 按 PLAN-0357 删除 V4/V5 legacy snapshot 对象；V29 清空遗留单键源哈希；V30–V34 是 Ledger schema 历史增量，相关表于 V56 退役；V35–V41 落地 Workspace import、Session provenance/kind、authorization grants、ChatRun origin/幂等约束与 default grant backfill；V48 落地 Context Template binding；V49–V56 依次落地 Follow-up Queue、MCP invocation、Approval history、ChatRun history/waiting link、Workspace Job/history、Audit view 与 Ledger retirement。具体历史变化以迁移 SQL 和 plan evidence 为准，禁止手工 DROP/回滚 active 链。
 
 ## 附录 A：表—Entity—迁移三向对照
 
-> 「active 首次迁移」指当前 V1~V41 链中的出处；rebaseline 前的旧链编号仅作溯源备注，编号与 active 链不通用（见 §1 版本标注约定）。
+> 「active 首次迁移」指当前 V1~V56 链中的出处；rebaseline 前的旧链编号仅作溯源备注，编号与 active 链不通用（见 §1 版本标注约定）。
 
 | 表 | Entity | active 首次迁移 |
 |----|--------|-----------------|
@@ -873,6 +907,7 @@ erDiagram
 | messages | `entity/Message.java` + `MessageRole.java` | V1 |
 | files | `entity/File.java` | V1 |
 | chat_runs | `entity/ChatRun.java` | V1 |
+| session_follow_up_items | `entity/SessionFollowUpItem.java` | V49 |
 | grants | `entity/AuthorizationGrant.java` | V38 |
 | run_checkpoints | `entity/RunCheckpoint.java` | V27（V22/V23/V26 仅为历史增量） |
 | approval_requests | `entity/ChatApproval.java` | V1 |
@@ -892,12 +927,12 @@ erDiagram
 | policy_rules | `entity/PolicyRuleEntity.java` | V15 |
 | tool_faces | `entity/ToolFaceEntity.java` | V15 |
 | policy_revision | `entity/PolicyRevisionEntity.java` | V21 |
-| ledger_operations | 无当前 Entity（V55 删除） | V2/V33 历史，V55 DROP |
-| operation_items | 无当前 Entity（V55 删除） | V2 历史，V55 DROP |
-| operation_attempts | 无当前 Entity（V55 删除） | V2 历史，V55 DROP |
-| operation_events | 无当前 Entity（V55 删除） | V2 历史，V55 DROP |
-| operation_extensions | 无当前 Entity（V55 删除） | V2/V34 历史，V55 DROP |
-| diagnostic_artifacts | 无当前 Entity（V55 删除） | V2 历史，V55 DROP |
+| ledger_operations | 无当前 Entity（V56 删除） | V2/V33 历史，V56 DROP |
+| operation_items | 无当前 Entity（V56 删除） | V2 历史，V56 DROP |
+| operation_attempts | 无当前 Entity（V56 删除） | V2 历史，V56 DROP |
+| operation_events | 无当前 Entity（V56 删除） | V2 历史，V56 DROP |
+| operation_extensions | 无当前 Entity（V56 删除） | V2/V34 历史，V56 DROP |
+| diagnostic_artifacts | 无当前 Entity（V56 删除） | V2 历史，V56 DROP |
 | task_plans | `entity/TaskPlan.java` | V6 |
 | task_items | `entity/TaskItem.java` | V6 |
 | mcp_stdio_servers | `entity/McpStdioServer.java` | V12（自 config 域 `mcp` 迁出） |

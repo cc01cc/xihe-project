@@ -32,7 +32,7 @@
 | 授权、能力与人工审批 | CP/Security + Runtime capability | [Authorization](../security/authorization.md)、[Approval](../security/approval.md)、[Capability Boundary](../security/capability-boundary.md) | implemented（每个 MCP 工具调用过 gate，含 grant 复用与 user-direct 例外分支） | 模型计划不得扩大权限；允许执行 ≠ 本次操作已获批准 |
 | 进程资源、隔离和清理 | Runtime backend | [Sandbox](../workspace/sandbox-backend.md)、[Execution Job](../workspace/execution-job.md) | partial（job 运行时限配置已交付；Docker 后端能力线后置） | 进程时限、请求等待、job 时限三者分开 |
 | 事件、操作审计与敏感信息 | CP owner-domain history + Agent event adapter | [Audit](../security/audit.md)、[Event Stream](../protocol/event-stream.md) | implemented（owner-domain durable history、allowlisted event fields、paired audit projections） | 审计留痕 ≠ 把敏感原文当普通模型上下文 |
-| 人类停止与运行中接管 | UI → CP → Agent cancel | stop 归 [Agent execution](./execution.md) 与 CP ChatRun terminal semantics（DEV-014）；steering/follow-up 归 backlog BL-63 | partial（停止已接线；运行中纠偏与排队 follow-up 未实现，运行中提交按 409 拒绝） | stop ≠ steering；预算耗尽/反复失败时的接管处置语义未定义 |
+| 人类停止与运行中接管 | UI → CP → Agent cancel | stop 归 [Agent execution](./execution.md) 与 CP ChatRun terminal semantics（DEV-014）；排队 Follow-up 归 [ChatRun lifecycle](../session/chat-run-operation.md)；steering/Guidance 归 backlog BL-63 | partial（停止已接线；Run 中排队 Follow-up 经显式 Queue 动作入 durable 队列、Run 终态后 admission，队列未清空时普通发送按 409 `FOLLOW_UP_QUEUE_NOT_EMPTY` 拒绝；运行中纠偏 steering 未实现） | stop ≠ steering；预算耗尽/反复失败时的接管处置语义未定义 |
 | 显式规划器的步数、进度与重规划预算 | 无生产者（计划工具未落地） | 计划工具目标态见归档 PLAN-0330 `spec/task-plan.md`；生产者缺口 = backlog P0-2 | unimplemented（`taskplan.*` 事件、表与投影为脚手架，无真实生产者与 UI 消费者） | 计划记录 ≠ 执行编排器（TaskPlan 不驱动调度） |
 
 ## 规范条款与不变式
@@ -54,7 +54,7 @@
 | 语义重复/无进展检测 | 已证实缺口 | backlog BL-90（待立项；判定窗口与触发行为留立项裁定） |
 | ChatRun 内 LangGraph 图状态 checkpoint/恢复 | 未接线已证实、需求未证实 → 触发式后置 | backlog BL-91（观察；与 ExecutionJob 续跑、BL-24 区分） |
 | 计划执行预算/重规划上限 | 无生产者 → 触发式候选 | 已有登记 P0-2（PLAN-0330 后置），不新建 |
-| 人类接管 | cancel 已接线；steering/follow-up 已有 BL-63；风险动作审批归 approval SPEC | 不新建；预算耗尽/反复失败的处置并入 BL-89 范围 |
+| 人类接管 | cancel 已接线；follow-up queue 已交付（PLAN-0442，2026-10-06，BL-63 仅关闭该子项）；steering/Guidance 仍归 BL-63；风险动作审批归 approval SPEC | 不新建；预算耗尽/反复失败的处置并入 BL-89 范围 |
 
 以上编号以 XH backlog 台账唯一登记点为权威；本文只引用 ID，不复制条目正文。
 

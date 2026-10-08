@@ -14,7 +14,7 @@ Xihe Frontend Interface — Vue 3-based Agent runtime management UI.
 
 - **Vue 3** + Composition API
 - **Vite** — Build tool
-- **shadcn-vue** — UI component library
+- **shadcn-vue** — component patterns vendored locally; not a runtime package dependency
 - **Tailwind CSS** — Styling
 
 ## Development

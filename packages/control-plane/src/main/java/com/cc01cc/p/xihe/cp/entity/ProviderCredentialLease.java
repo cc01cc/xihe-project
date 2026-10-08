@@ -63,7 +63,9 @@ public class ProviderCredentialLease {
 
     @PrePersist
     protected void onCreate() {
-        if (createdAt == null) createdAt = Instant.now();
+        if (createdAt == null) {
+            createdAt = Instant.now();
+        }
     }
 
     public UUID getId() { return id; }

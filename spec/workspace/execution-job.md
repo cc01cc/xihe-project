@@ -15,7 +15,7 @@
 | `JobHandle` | Runtime backend 的 opaque handle；不作为 CP 业务 identity（契约见 [`../../../plans/PLAN-0390-XH-execution-job-backends/spec/job-handle-contract.md`](../../../plans/PLAN-0390-XH-execution-job-backends/spec/job-handle-contract.md)） |
 | ChatRun/Session | 可选 initiator/provenance；不决定所有 Job 的生命周期 |
 
-`jobId` 是唯一 canonical domain identity（`workspace_jobs.id`）。Runtime backend handle 用 `runtimeJobId` 表示，不可与 domain ID 混用。V52 的 `operation_item_id` transition anchor 已由 V55 删除；旧 Ledger 历史不回填。
+`jobId` 是唯一 canonical domain identity（`workspace_jobs.id`）。Runtime backend handle 用 `runtimeJobId` 表示，不可与 domain ID 混用。V53 的 `operation_item_id` transition anchor 已由 V56 删除；旧 Ledger 历史不回填。
 
 ## 2. Scope 与收口
 

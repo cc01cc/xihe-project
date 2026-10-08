@@ -445,7 +445,9 @@ public class ContextService {
             for (int i = recentStart; i < size; i++) {
                 String role = messages.get(i).path("role").asText("");
                 String content = messages.get(i).path("content").asText("");
-                if (content.isBlank()) continue;
+                if (content.isBlank()) {
+                    continue;
+                }
                 recent.add("[" + role + "] " + (content.length() > 200 ? content.substring(0, 200) : content));
             }
             for (int i = 0; i < recent.size(); i++) {
@@ -640,7 +642,9 @@ public class ContextService {
     /** Messages inside the keep-recent window (mirrors the projection tail). */
     private int countRecentWindow(ObjectNode context) {
         com.fasterxml.jackson.databind.JsonNode messages = context.get("messages");
-        if (messages == null || !messages.isArray()) return 0;
+        if (messages == null || !messages.isArray()) {
+            return 0;
+        }
         return Math.min(KEEP_RECENT_MESSAGES, messages.size());
     }
 
@@ -724,7 +728,9 @@ public class ContextService {
         // (the dead-code bug that stayed hidden while nothing called it).
         ObjectNode context = projectionService.projectUpTo(
                 sessionId, eventStoreService.getLatestSequence(sessionId), scope.visibility());
-        if (context == null) return false;
+        if (context == null) {
+            return false;
+        }
 
         // PLAN-0341 T1.3: recovery-band circuit. Open circuit pauses AUTO
         // compaction only; overflow force-compact bypasses this gate entirely.
@@ -777,14 +783,20 @@ public class ContextService {
         // count and tool-call volume thresholds remain the deterministic
         // backstop. They also gate the token signal below a minimum volume so
         // a single giant paste cannot thrash the gate.
-        if (messageCount >= MIN_MESSAGES_TO_COMPACTION && messageCount > 50) return true;
+        if (messageCount >= MIN_MESSAGES_TO_COMPACTION && messageCount > 50) {
+            return true;
+        }
 
         com.fasterxml.jackson.databind.JsonNode meta = context.get("metadata");
-        if (meta != null && meta.has("token_count") && meta.get("token_count").asInt(0) > 100000) return true;
+        if (meta != null && meta.has("token_count") && meta.get("token_count").asInt(0) > 100000) {
+            return true;
+        }
 
         if (meta != null && meta.has("tool_calls")) {
             com.fasterxml.jackson.databind.JsonNode toolCalls = meta.get("tool_calls");
-            if (toolCalls.isArray() && toolCalls.size() > 20) return true;
+            if (toolCalls.isArray() && toolCalls.size() > 20) {
+                return true;
+            }
         }
 
         return false;

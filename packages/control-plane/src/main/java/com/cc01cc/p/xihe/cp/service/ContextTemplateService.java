@@ -12,7 +12,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -320,7 +319,9 @@ public class ContextTemplateService {
 
     private ObjectNode parseEntries(Map<String, String> entries) {
         ObjectNode root = objectMapper.createObjectNode();
-        if (entries == null) return root;
+        if (entries == null) {
+            return root;
+        }
         entries.forEach((key, value) -> {
             try {
                 root.set(key, objectMapper.readTree(value));
@@ -332,7 +333,9 @@ public class ContextTemplateService {
     }
 
     private void normalize(ObjectNode root) {
-        if (!root.has("templates")) root.set("templates", objectMapper.createArrayNode());
+        if (!root.has("templates")) {
+            root.set("templates", objectMapper.createArrayNode());
+        }
     }
 
     private Map<String, String> normalizedEntries(Map<String, String> entries) {

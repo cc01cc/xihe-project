@@ -6,7 +6,12 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.*;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
@@ -64,7 +69,11 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 class ChatIntegrationTest extends AbstractIntegrationTest {
 
@@ -759,11 +768,15 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
         request.put("content", content);
         request.put("workspaceId", workspaceId);
         request.put("userId", userId);
-        if (requestedPrincipalId != null) request.put("agentPrincipalId", requestedPrincipalId);
+        if (requestedPrincipalId != null) {
+            request.put("agentPrincipalId", requestedPrincipalId);
+        }
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(authToken);
         headers.setContentType(MediaType.APPLICATION_JSON);
-        if (idempotencyKey != null) headers.set("Idempotency-Key", idempotencyKey);
+        if (idempotencyKey != null) {
+            headers.set("Idempotency-Key", idempotencyKey);
+        }
         return restTemplate.exchange(
                 baseUrl + "/api/v1/chat", HttpMethod.POST,
                 new HttpEntity<>(request, headers), Map.class);

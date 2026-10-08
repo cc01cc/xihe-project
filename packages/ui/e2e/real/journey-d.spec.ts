@@ -29,7 +29,7 @@ const EVIDENCE_DIR = evidenceDir("journey-d");
 //   D1 — multi-turn memory: turn-2 LLM response must reference turn-1's marker
 //   (M2/M3 tests will extend this spec with compaction assertions.)
 // D1 needs the deterministic fake LLM marker mode:
-//   XIHE_E2E_LLM_MODE=history-marker mise run test:e2e-host -- e2e/real/journey-d.spec.ts
+//   XIHE_E2E_LLM_MODE=history-marker mise run test:e2e:host -- e2e/real/journey-d.spec.ts
 // The fake LLM scans the full messages array it receives and echoes:
 //   XIHE-HIST-SEEN: <prior markers> | XIHE-HIST-CURRENT: <current marker>
 // M0 intentionally pins the CURRENT broken behavior: turn-2 sees no history,
@@ -229,7 +229,9 @@ test.describe("@host Journey D — context pipeline", () => {
                         entries?: Array<{ id?: string; status?: string; errorCode?: string }>;
                     };
                     const failed = body.entries?.find(
-                        (entry) => entry.status === "failed" && entry.errorCode === "LLM_TOOL_ROUTE_UNSUPPORTED",
+                        (entry) =>
+                            entry.status === "failed" &&
+                            entry.errorCode === "LLM_TOOL_ROUTE_UNSUPPORTED",
                     );
                     return failed ? "failed" : "pending";
                 },
@@ -245,7 +247,8 @@ test.describe("@host Journey D — context pipeline", () => {
             entries?: Array<{ id?: string; status?: string; errorCode?: string }>;
         };
         const failedRun = runEntries.entries?.find(
-            (entry) => entry.status === "failed" && entry.errorCode === "LLM_TOOL_ROUTE_UNSUPPORTED",
+            (entry) =>
+                entry.status === "failed" && entry.errorCode === "LLM_TOOL_ROUTE_UNSUPPORTED",
         );
         expect(failedRun?.id, "failed ChatRun audit entry must be visible").toBeTruthy();
 
@@ -277,7 +280,10 @@ test.describe("@host Journey D — context pipeline", () => {
             `${CP_URL}/api/v1/audit/entries?type=mcp_invocation&workspaceId=${wsId}&size=50`,
             { headers },
         );
-        expect(invocationRes.ok(), `MCP invocation audit list ${invocationRes.status()}`).toBeTruthy();
+        expect(
+            invocationRes.ok(),
+            `MCP invocation audit list ${invocationRes.status()}`,
+        ).toBeTruthy();
         const invocations = (await invocationRes.json()) as {
             entries?: Array<{ runId?: string; summary?: string; status?: string }>;
         };

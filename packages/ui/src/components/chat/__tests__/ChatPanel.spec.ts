@@ -7,8 +7,9 @@ import ApprovalModal from "../ApprovalModal.vue";
 import SessionDerivedStatePanel from "../SessionDerivedStatePanel.vue";
 import SSEStream from "../SSEStream.vue";
 import MessageList from "../MessageList.vue";
+import InputArea from "../InputArea.vue";
 import { i18n } from "../../../i18n";
-import { api } from "../../../composables/api";
+import { api, type ApiFollowUpQueueSnapshot } from "../../../composables/api";
 import { useAgentStore } from "../../../stores/agent";
 import { useChatStore } from "../../../stores/chat";
 import type { ApprovalRequest, SessionDerivedStateResponse } from "../../../types";
@@ -24,6 +25,10 @@ vi.mock("../../../composables/api", async (importOriginal) => {
             getMessages: vi.fn(),
             getSessionBranches: vi.fn(),
             createSessionBranch: vi.fn(),
+            getFollowUpQueue: vi.fn(),
+            enqueueFollowUp: vi.fn(),
+            withdrawFollowUp: vi.fn(),
+            continueFollowUpQueue: vi.fn(),
             getSessionDerivedState: vi.fn(),
             listSessionRuns: vi.fn(),
         },
@@ -35,6 +40,43 @@ const REQUEST_ID = "11111111-1111-4111-8111-111111111111";
 const STALE_REQUEST_ID = "22222222-2222-4222-8222-222222222222";
 const RUN_ID = "33333333-3333-4333-8333-333333333333";
 const ROOT_BRANCH_ID = "44444444-4444-4444-8444-444444444444";
+
+function followUpSnapshot(
+    overrides: Partial<ApiFollowUpQueueSnapshot> = {},
+): ApiFollowUpQueueSnapshot {
+    return {
+        sessionId: SESSION_ID,
+        queueState: "empty",
+        outstandingCount: 0,
+        capacityLimit: 5,
+        pauseReason: null,
+        items: [],
+        ...overrides,
+    };
+}
+
+function queuedFollowUpSnapshot(content: string): ApiFollowUpQueueSnapshot {
+    return followUpSnapshot({
+        queueState: "queued",
+        outstandingCount: 1,
+        items: [
+            {
+                queueItemId: "77777777-7777-4777-8777-777777777777",
+                queueSequence: 1,
+                status: "queued",
+                content,
+                attachments: [],
+                branchId: ROOT_BRANCH_ID,
+                anchorRunId: RUN_ID,
+                pauseReason: null,
+                childRunId: null,
+                childMessageId: null,
+                createdAt: "2026-10-06T00:00:00Z",
+                updatedAt: "2026-10-06T00:00:00Z",
+            },
+        ],
+    });
+}
 
 const approval: ApprovalRequest = {
     requestId: REQUEST_ID,
@@ -65,6 +107,7 @@ function mountPanel() {
                 InputArea: true,
                 MessageList: true,
                 SessionPolicyControls: true,
+                SessionContextTemplate: true,
                 ContextSourcesU1: true,
             },
         },
@@ -92,6 +135,10 @@ beforeEach(() => {
         ],
     });
     vi.mocked(api.createSessionBranch).mockReset();
+    vi.mocked(api.getFollowUpQueue).mockReset().mockResolvedValue(followUpSnapshot());
+    vi.mocked(api.enqueueFollowUp).mockReset();
+    vi.mocked(api.withdrawFollowUp).mockReset();
+    vi.mocked(api.continueFollowUpQueue).mockReset();
     vi.mocked(api.getSessionDerivedState).mockReset();
     vi.mocked(api.getSessionDerivedState).mockResolvedValue({
         sessionId: SESSION_ID,
@@ -458,5 +505,134 @@ describe("ChatPanel derived child state (PLAN-0408 M3)", () => {
             name: "Research child",
             status: "running",
         });
+    });
+});
+
+describe("ChatPanel Follow-up queue", () => {
+    it("reloads the owner Message when a child approval reveals admission", async () => {
+        const content = "run the next check";
+        const childRunId = "88888888-8888-4888-8888-888888888888";
+        const childMessageId = "99999999-9999-4999-8999-999999999999";
+        const queued = queuedFollowUpSnapshot(content).items[0]!;
+        const admitted = followUpSnapshot({
+            queueState: "queued",
+            outstandingCount: 1,
+            items: [
+                {
+                    ...queued,
+                    status: "admitted",
+                    content: null,
+                    childRunId,
+                    childMessageId,
+                },
+            ],
+        });
+        vi.mocked(api.getFollowUpQueue)
+            .mockResolvedValueOnce(followUpSnapshot())
+            .mockResolvedValue(admitted);
+        let admissionVisible = false;
+        vi.mocked(api.getMessages).mockImplementation(async () =>
+            admissionVisible
+                ? [
+                      {
+                          id: childMessageId,
+                          sessionId: SESSION_ID,
+                          role: "USER",
+                          content,
+                          createdAt: "2026-10-08T00:00:00Z",
+                          runId: childRunId,
+                          runStatus: null,
+                          terminalOutcome: null,
+                          errorCode: null,
+                          error: null,
+                          retryable: null,
+                      },
+                  ]
+                : [],
+        );
+
+        const wrapper = mountPanel();
+        await flushPromises();
+        admissionVisible = true;
+        useAgentStore().addApprovalRequest({
+            ...approval,
+            requestId: "abababab-abab-4bab-8bab-abababababab",
+            runId: childRunId,
+        });
+        await flushPromises();
+
+        expect(api.getFollowUpQueue).toHaveBeenCalledTimes(2);
+        expect(api.getMessages).toHaveBeenCalledWith(SESSION_ID, ROOT_BRANCH_ID);
+        expect(
+            wrapper.find('[data-testid="follow-up-item-status"]').attributes("data-status"),
+        ).toBe("admitted");
+        expect(wrapper.find('[data-testid="follow-up-queue-item"]').text()).toContain(content);
+    });
+
+    it("enqueues through CP with the selected branch and renders the authoritative snapshot", async () => {
+        const snapshot = queuedFollowUpSnapshot("run the next check");
+        vi.mocked(api.getFollowUpQueue)
+            .mockReset()
+            .mockResolvedValueOnce(followUpSnapshot())
+            .mockResolvedValue(snapshot);
+        vi.mocked(api.enqueueFollowUp).mockResolvedValue(snapshot);
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        wrapper.findComponent(InputArea).vm.$emit("queue", "run the next check", []);
+        await flushPromises();
+
+        expect(api.enqueueFollowUp).toHaveBeenCalledWith(
+            SESSION_ID,
+            expect.objectContaining({
+                content: "run the next check",
+                branchId: ROOT_BRANCH_ID,
+                toolMode: "none",
+            }),
+            expect.any(String),
+        );
+        expect(wrapper.find('[data-testid="follow-up-queue"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="follow-up-queue-item"]').text()).toContain(
+            "run the next check",
+        );
+        expect(wrapper.findComponent(InputArea).props("queueMode")).toBe(true);
+    });
+
+    it("shows explicit continuation while paused and sends the continue action", async () => {
+        const paused = queuedFollowUpSnapshot("resume the remaining steps");
+        paused.queueState = "paused";
+        paused.pauseReason = "parent_cancelled";
+        paused.items[0]!.status = "paused";
+        vi.mocked(api.getFollowUpQueue)
+            .mockResolvedValueOnce(paused)
+            .mockResolvedValue(followUpSnapshot());
+        vi.mocked(api.continueFollowUpQueue).mockResolvedValue(followUpSnapshot());
+
+        const wrapper = mountPanel();
+        await flushPromises();
+        expect(wrapper.find('[data-testid="follow-up-pause-reason"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="follow-up-continue-button"]').exists()).toBe(true);
+
+        await wrapper.find('[data-testid="follow-up-continue-button"]').trigger("click");
+        await flushPromises();
+        expect(api.continueFollowUpQueue).toHaveBeenCalledWith(SESSION_ID);
+    });
+
+    it("reuses the request key for an identical retry after an ambiguous network failure", async () => {
+        vi.mocked(api.enqueueFollowUp)
+            .mockRejectedValueOnce(new Error("connection lost"))
+            .mockResolvedValue(queuedFollowUpSnapshot("retry the same queue action"));
+        const wrapper = mountPanel();
+        await flushPromises();
+        const input = wrapper.findComponent(InputArea);
+
+        input.vm.$emit("queue", "retry the same queue action", []);
+        await flushPromises();
+        input.vm.$emit("queue", "retry the same queue action", []);
+        await flushPromises();
+
+        const calls = vi.mocked(api.enqueueFollowUp).mock.calls;
+        expect(calls).toHaveLength(2);
+        expect(calls[0]?.[2]).toBe(calls[1]?.[2]);
     });
 });

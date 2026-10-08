@@ -143,6 +143,52 @@ paths:
   /api/v1/sessions:
     get: { operationId: listSessions, security: [{ bearerAuth: [] }], responses: { '200': { description: Sessions } } }
     post: { operationId: createSession, security: [{ bearerAuth: [] }], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SessionCreateRequest' } } } }, responses: { '201': { description: Created Agent Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
+  /api/v1/sessions/{sessionId}/follow-ups:
+    get:
+      operationId: getFollowUpQueue
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Durable Session Follow-up queue, content: { application/json: { schema: { $ref: '#/components/schemas/FollowUpQueueSnapshot' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    post:
+      operationId: enqueueFollowUp
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
+        - { in: header, name: Idempotency-Key, required: true, schema: { type: string, minLength: 1, maxLength: 128 } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/FollowUpCreateRequest' } } } }
+      responses:
+        '202': { description: Follow-up queued, content: { application/json: { schema: { $ref: '#/components/schemas/FollowUpQueueSnapshot' } } } }
+        '200': { description: Idempotent replay, content: { application/json: { schema: { $ref: '#/components/schemas/FollowUpQueueSnapshot' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /api/v1/sessions/{sessionId}/follow-ups/{itemId}:
+    delete:
+      operationId: withdrawFollowUp
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: itemId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Current queue after withdrawal, content: { application/json: { schema: { $ref: '#/components/schemas/FollowUpQueueSnapshot' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /api/v1/sessions/{sessionId}/follow-ups/continue:
+    post:
+      operationId: continueFollowUpQueue
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '202': { description: Queue resumed, content: { application/json: { schema: { $ref: '#/components/schemas/FollowUpQueueSnapshot' } } } }
+        '200': { description: Queue is already active, content: { application/json: { schema: { $ref: '#/components/schemas/FollowUpQueueSnapshot' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /api/v1/sessions/{sessionId}/branches:
     get:
       operationId: listSessionBranches
@@ -374,7 +420,7 @@ paths:
         A new run is rejected with `403 FORBIDDEN` unless the persisted Session resolves to an active Agent principal
         bound to the current Workspace; identity is never inferred from the Session owner or request fields.
         An empty principal-null placeholder may be bound only when the request explicitly supplies `agentPrincipalId`;
-        the Session row is compare-and-set in the same transaction as the ChatRun, user Message and operation root.
+        the Session row is compare-and-set in the same transaction as the ChatRun and user Message.
         Historical/user-operation/tool-event Sessions cannot be bound by this path.
       security: [{ bearerAuth: [] }]
       parameters:
@@ -1850,6 +1896,9 @@ components:
     SessionForkRequest: { type: object, additionalProperties: false, required: [sourceBranchId, anchorMessageId], properties: { sourceBranchId: { type: string, format: uuid }, anchorMessageId: { type: string, format: uuid } } }
     SessionBranchCreateRequest: { type: object, additionalProperties: false, required: [sourceBranchId, anchorMessageId], properties: { sourceBranchId: { type: string, format: uuid, description: Selected branch path used to validate anchor visibility. }, anchorMessageId: { type: string, format: uuid } } }
     SessionBranchListResponse: { type: object, additionalProperties: false, required: [sessionId, items], properties: { sessionId: { type: string, format: uuid }, items: { type: array, items: { $ref: '#/components/schemas/SessionBranch' } } } }
+    FollowUpCreateRequest: { type: object, additionalProperties: false, required: [content, branchId], properties: { content: { type: string }, attachments: { type: array, items: { type: string, format: uuid } }, branchId: { type: string, format: uuid }, toolMode: { type: string, enum: [none, workspace], default: none }, toolTimeouts: { type: object, additionalProperties: { type: integer, minimum: 1, maximum: 30 } }, provider: { type: string }, model: { type: string } } }
+    FollowUpQueueSnapshot: { type: object, additionalProperties: false, required: [sessionId, queueState, outstandingCount, capacityLimit, items], properties: { sessionId: { type: string, format: uuid }, queueState: { type: string, enum: [empty, queued, paused] }, outstandingCount: { type: integer, minimum: 0 }, capacityLimit: { type: integer, const: 5 }, pauseReason: { type: [string, 'null'] }, items: { type: array, items: { $ref: '#/components/schemas/FollowUpItem' } } } }
+    FollowUpItem: { type: object, additionalProperties: false, required: [queueItemId, queueSequence, status, content, attachments, branchId, createdAt, updatedAt], properties: { queueItemId: { type: string, format: uuid }, queueSequence: { type: integer, format: int64 }, status: { type: string, enum: [queued, paused, admitted, completed, withdrawn] }, content: { type: [string, 'null'] }, attachments: { type: array, items: { type: object, additionalProperties: false, required: [id, name, type, size], properties: { id: { type: string, format: uuid }, name: { type: string }, type: { type: [string, 'null'] }, size: { type: integer, format: int64 }, url: { type: [string, 'null'] } } } }, branchId: { type: string, format: uuid }, anchorRunId: { type: [string, 'null'], format: uuid }, pauseReason: { type: [string, 'null'] }, childRunId: { type: [string, 'null'], format: uuid }, childMessageId: { type: [string, 'null'], format: uuid }, createdAt: { type: string, format: date-time }, updatedAt: { type: string, format: date-time } } }
     SessionBranch: { type: object, additionalProperties: false, required: [branchId, createdAt], properties: { branchId: { type: string, format: uuid }, parentBranchId: { type: [string, 'null'], format: uuid, description: Branch that owns the fork-point Message/Run; it can be an ancestor of the requested sourceBranchId. }, forkPointMessageId: { type: [string, 'null'], format: uuid }, forkPointRunId: { type: [string, 'null'], format: uuid }, createdAt: { type: string, format: date-time } } }
     SessionBranchCreatedResponse: { type: object, additionalProperties: false, required: [branchId, parentBranchId, forkPointMessageId], properties: { branchId: { type: string, format: uuid }, parentBranchId: { type: string, format: uuid }, forkPointMessageId: { type: string, format: uuid } } }
     SessionCompactRequest: { type: object, additionalProperties: false, required: [branchId], properties: { branchId: { type: string, format: uuid }, upToSequence: { type: integer, format: int64, minimum: 0 } } }

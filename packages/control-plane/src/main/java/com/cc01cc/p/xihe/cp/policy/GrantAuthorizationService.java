@@ -94,7 +94,9 @@ public class GrantAuthorizationService {
                     .orElseThrow(() -> new IllegalArgumentException("Agent principal is unavailable"));
             WorkspaceAgent binding = workspaceAgentRepository.findById(
                     new WorkspaceAgentId(principal.getId(), workspaceId)).orElse(null);
-            if (binding == null) return false;
+            if (binding == null) {
+                return false;
+            }
 
             List<AuthorizationGrant> principalGrants = grantRepository.findBySubjectTypeAndSubjectId(
                     GrantPrincipalPathResolver.AGENT_PRINCIPAL, principal.getId());

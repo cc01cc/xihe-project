@@ -1,7 +1,6 @@
 package com.cc01cc.p.xihe.cp.entity;
 
 import jakarta.persistence.Column;
-import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
@@ -11,7 +10,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Append-only transition history for the MCP execution domain (PLAN-0463 V49,
+ * Append-only transition history for the MCP execution domain (PLAN-0463 V50,
  * PLAN-0462 decision #8). Rows are never updated during an invocation's
  * lifetime; Session hard-delete removes its owned history. The sequence is
  * allocated per invocation inside the write transaction.

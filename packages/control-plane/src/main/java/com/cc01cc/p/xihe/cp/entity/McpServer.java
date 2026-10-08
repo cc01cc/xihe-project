@@ -1,6 +1,12 @@
 package com.cc01cc.p.xihe.cp.entity;
 
-import jakarta.persistence.*;
+import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
+import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -50,7 +56,9 @@ public class McpServer {
 
     @PrePersist
     protected void onCreate() {
-        if (id == null) id = java.util.UUID.randomUUID();
+        if (id == null) {
+            id = java.util.UUID.randomUUID();
+        }
         createdAt = Instant.now();
         updatedAt = Instant.now();
     }

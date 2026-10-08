@@ -119,6 +119,7 @@ public class ChatRunTerminalService {
     private final RunCheckpointService checkpoints;
     private final InboxRepository inboxes;
     private final SseEmitterManager sseEmitters;
+    private final FollowUpQueueService followUpQueueService;
 
     public ChatRunTerminalService(
             DbLockTimeout dbLockTimeout,
@@ -133,7 +134,8 @@ public class ChatRunTerminalService {
             JobScopeClosureService jobScopeClosureService,
             RunCheckpointService checkpoints,
             InboxRepository inboxes,
-            SseEmitterManager sseEmitters) {
+            SseEmitterManager sseEmitters,
+            FollowUpQueueService followUpQueueService) {
         this.dbLockTimeout = dbLockTimeout;
         this.datasourceUrl = datasourceUrl;
         this.entityManager = entityManager;
@@ -147,6 +149,7 @@ public class ChatRunTerminalService {
         this.checkpoints = checkpoints;
         this.inboxes = inboxes;
         this.sseEmitters = sseEmitters;
+        this.followUpQueueService = followUpQueueService;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -228,6 +231,7 @@ public class ChatRunTerminalService {
                     runId, parentLink.sessionId(), parentLink.runId());
         }
 
+        followUpQueueService.settleTerminal(sessionId.toString(), runId.toString(), request.status());
         requestCheckpointAfterCommit(runId.toString());
         // PLAN-0464 T1.2 (review round-1 #1): the run-scope Job收口 trigger is
         // now owned by the Chat terminal path. Both are best-effort after commit (Runtime is remote).

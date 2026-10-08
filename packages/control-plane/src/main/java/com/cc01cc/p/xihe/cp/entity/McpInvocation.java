@@ -12,7 +12,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * One MCP execution-domain invocation (PLAN-0463 V49, owner-matrix MCPX).
+ * One MCP execution-domain invocation (PLAN-0463 V50, owner-matrix MCPX).
  *
  * <p>Created at the Agent gate ({@code source=agent}) before grant context
  * validation, or best-effort for a user-direct mutation

@@ -467,6 +467,14 @@ describe("refreshRunRecovery tri-state (PLAN-292 M3 C2/C3)", () => {
                 },
             ],
         });
+        vi.mocked(api.getPendingApprovals).mockResolvedValueOnce([
+            {
+                sessionId: SESSION_ID,
+                workspaceId: "workspace-a",
+                count: 1,
+                oldestRequestedAt: "2026-10-08T00:00:00Z",
+            },
+        ]);
         const store = useChatStore();
         await store.refreshRunRecovery(SESSION_ID, RUN_ID);
         expect(store.runRecovery[SESSION_ID]?.state).toBe("resumed");
@@ -490,6 +498,14 @@ describe("refreshRunRecovery tri-state (PLAN-292 M3 C2/C3)", () => {
                 },
             ],
         });
+        vi.mocked(api.getPendingApprovals).mockResolvedValueOnce([
+            {
+                sessionId: SESSION_ID,
+                workspaceId: "workspace-a",
+                count: 1,
+                oldestRequestedAt: "2026-10-08T00:00:00Z",
+            },
+        ]);
         const store = useChatStore();
         await store.refreshRunRecovery(SESSION_ID, RUN_ID);
         expect(store.runRecovery[SESSION_ID]?.state).toBe("resumed");

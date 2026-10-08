@@ -13,7 +13,7 @@ import java.util.UUID;
 
 public interface McpInvocationRepository extends JpaRepository<McpInvocation, UUID> {
 
-    /** Agent idempotency key (V49 partial unique index on (run_id, tool_call_id)). */
+    /** Agent idempotency key (V50 partial unique index on (run_id, tool_call_id)). */
     Optional<McpInvocation> findByRunIdAndToolCallIdAndSource(
             String runId, String toolCallId, String source);
 

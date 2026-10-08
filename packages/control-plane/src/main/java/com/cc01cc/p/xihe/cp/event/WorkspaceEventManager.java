@@ -122,7 +122,9 @@ public class WorkspaceEventManager {
     /** Closes all listeners when the Workspace lifecycle reaches deletion. */
     public void completeWorkspace(String workspaceId, String reason) {
         WorkspaceChannel channel = channels.remove(workspaceId);
-        if (channel == null) return;
+        if (channel == null) {
+            return;
+        }
         for (Subscriber subscriber : channel.subscribers.values()) {
             if (remove(channel, subscriber, reason)) {
                 subscriber.emitter.complete();
@@ -151,7 +153,9 @@ public class WorkspaceEventManager {
     }
 
     private void send(WorkspaceChannel channel, Subscriber subscriber, WorkspaceEvent event) {
-        if (!isCurrent(channel, subscriber)) return;
+        if (!isCurrent(channel, subscriber)) {
+            return;
+        }
         try {
             subscriber.emitter.send(SseEmitter.event()
                     .id(Long.toString(event.sequence()))
@@ -176,7 +180,9 @@ public class WorkspaceEventManager {
     }
 
     private boolean remove(WorkspaceChannel channel, Subscriber subscriber, String reason) {
-        if (!subscriber.closed.compareAndSet(false, true)) return false;
+        if (!subscriber.closed.compareAndSet(false, true)) {
+            return false;
+        }
         cancelHeartbeat(subscriber);
         boolean removed = channel.subscribers.remove(subscriber.subscriptionId, subscriber);
         if (removed) {
@@ -229,7 +235,9 @@ public class WorkspaceEventManager {
     }
 
     private void validatePath(String path) {
-        if (path == null) return;
+        if (path == null) {
+            return;
+        }
         if (path.isBlank() || path.startsWith("/") || path.contains("\\") || path.matches("^[A-Za-z]:.*")
                 || java.util.Arrays.stream(path.split("/", -1)).anyMatch(".."::equals)) {
             throw new CpApiException(

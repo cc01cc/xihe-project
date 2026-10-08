@@ -139,9 +139,14 @@ description = "Run runtime unit tests only (no Docker needed)"
 dir = "packages/runtime"
 alias = "test:runtime:lib"
 
-[tasks."test:e2e"]
-run = "node scripts/e2e-real.mjs"
+[tasks."test:e2e:compose"]
+run = "node scripts/e2e-compose.mjs"
 description = "Run Compose-compatible end-to-end tests (auto-start/stop frozen Docker Compose)"
+alias = "test:e2e:compose"
+
+[tasks."test:e2e"]
+run = "node scripts/e2e-compose.mjs"
+description = "Deprecated alias of test:e2e:compose (Compose-compatible E2E)"
 alias = "test:e2e"
 
 [tasks."test:e2e:host"]
@@ -234,7 +239,7 @@ description = "Run all quality gates — lint + typecheck + build + test (Docker
 alias = "validate"
 
 [tasks."validate:full"]
-depends = ["validate", "test:runtime", "test:integration", "test:e2e"]
+depends = ["validate", "test:runtime", "test:integration", "test:e2e:compose"]
 description = "Run full validation + integration + E2E (requires Docker)"
 alias = "validate:full"
 

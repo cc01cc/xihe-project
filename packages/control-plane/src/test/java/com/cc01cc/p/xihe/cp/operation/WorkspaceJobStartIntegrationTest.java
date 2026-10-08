@@ -141,9 +141,15 @@ class WorkspaceJobStartIntegrationTest extends AbstractIntegrationTest {
         state.put("scope", scope);
         state.put("status", JobStateService.STATUS_RUNNING);
         state.put("jobId", runtimeJobId);
-        if (scopedSessionId != null) state.put("sessionId", scopedSessionId);
-        if (runId != null) state.put("runId", runId);
-        if (runtimeBootId != null) state.put("runtimeBootId", runtimeBootId);
+        if (scopedSessionId != null) {
+            state.put("sessionId", scopedSessionId);
+        }
+        if (runId != null) {
+            state.put("runId", runId);
+        }
+        if (runtimeBootId != null) {
+            state.put("runtimeBootId", runtimeBootId);
+        }
         try {
             row.setState(new ObjectMapper().writeValueAsString(state));
         } catch (Exception e) {

@@ -90,13 +90,23 @@ public class ContextTemplateSourceService {
         Set<String> fileNames = new LinkedHashSet<>();
         JsonNode names = config.path("fileNames");
         if (agentsOnly && names.isArray()) {
-            names.forEach(n -> { if (n.isTextual() && !n.asText().isBlank()) fileNames.add(fold(n.asText())); });
+            names.forEach(n -> {
+                if (n.isTextual() && !n.asText().isBlank()) {
+                    fileNames.add(fold(n.asText()));
+                }
+            });
         }
-        if (agentsOnly && fileNames.isEmpty()) fileNames.addAll(DEFAULT_AGENTS_FILES.stream().map(ContextTemplateSourceService::fold).toList());
+        if (agentsOnly && fileNames.isEmpty()) {
+            fileNames.addAll(DEFAULT_AGENTS_FILES.stream().map(ContextTemplateSourceService::fold).toList());
+        }
         List<Pattern> excludes = new ArrayList<>();
         JsonNode patterns = config.path("excludePatterns");
         if (patterns.isArray()) {
-            patterns.forEach(n -> { if (n.isTextual()) excludes.add(glob(n.asText())); });
+            patterns.forEach(n -> {
+                if (n.isTextual()) {
+                    excludes.add(glob(n.asText()));
+                }
+            });
         }
         ArrayDeque<Directory> queue = new ArrayDeque<>();
         queue.add(new Directory(".", 0));
@@ -147,28 +157,39 @@ public class ContextTemplateSourceService {
                 }
                 scannedEntries++;
                 String path = safeRelativePath(entry.path());
-                if (entry.symlink()) continue;
+                if (entry.symlink()) {
+                    continue;
+                }
                 if (path == null) {
                     status = "failed";
                     diagnostics.add("runtime_returned_invalid_path");
                     break;
                 }
                 String folded = fold(path);
-                if (excluded(excludes, folded)) continue;
+                if (excluded(excludes, folded)) {
+                    continue;
+                }
                 if (items.size() >= maxEntries) {
                     truncated = true;
                     diagnostics.add("entry_limit_reached");
                     break;
                 }
                 if (entry.directory()) {
-                    if (directory.depth() < maxDepth) queue.addLast(new Directory(path, directory.depth() + 1));
-                    else if (directory.depth() == maxDepth) truncated = true;
-                    if (!agentsOnly) items.add(path + "/");
+                    if (directory.depth() < maxDepth) {
+                        queue.addLast(new Directory(path, directory.depth() + 1));
+                    } else if (directory.depth() == maxDepth) {
+                        truncated = true;
+                    }
+                    if (!agentsOnly) {
+                        items.add(path + "/");
+                    }
                 } else if (includeFiles && (!agentsOnly || fileNames.contains(fold(entry.name())))) {
                     items.add(path);
                 }
             }
-            if ("failed".equals(status)) break;
+            if ("failed".equals(status)) {
+                break;
+            }
             if (items.size() >= maxEntries && !queue.isEmpty()) {
                 truncated = true;
                 diagnostics.add("entry_limit_reached");
@@ -197,13 +218,21 @@ public class ContextTemplateSourceService {
     }
 
     private static String safeRelativePath(String raw) {
-        if (raw == null || raw.isBlank()) return null;
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
         String path = raw.replace('\\', '/');
-        if (path.startsWith("/") || path.matches("^[A-Za-z]:.*")) return null;
+        if (path.startsWith("/") || path.matches("^[A-Za-z]:.*")) {
+            return null;
+        }
         List<String> parts = new ArrayList<>();
         for (String part : path.split("/+")) {
-            if (part.isEmpty() || ".".equals(part)) continue;
-            if ("..".equals(part)) return null;
+            if (part.isEmpty() || ".".equals(part)) {
+                continue;
+            }
+            if ("..".equals(part)) {
+                return null;
+            }
             parts.add(part);
         }
         return parts.isEmpty() ? null : String.join("/", parts);
@@ -221,10 +250,14 @@ public class ContextTemplateSourceService {
             if (c == '*' && i + 1 < normalized.length() && normalized.charAt(i + 1) == '*') {
                 regex.append(".*");
                 i++;
-            } else if (c == '*') regex.append("[^/]*");
-            else if (c == '?') regex.append("[^/]");
-            else {
-                if (".(){}+$^|[]\\".indexOf(c) >= 0) regex.append('\\');
+            } else if (c == '*') {
+                regex.append("[^/]*");
+            } else if (c == '?') {
+                regex.append("[^/]");
+            } else {
+                if (".(){}+$^|[]\\".indexOf(c) >= 0) {
+                    regex.append('\\');
+                }
                 regex.append(c);
             }
         }

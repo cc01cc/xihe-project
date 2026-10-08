@@ -191,7 +191,9 @@ public class ProviderCredentialLeaseService {
             List<String> manualModels) {}
 
     private List<String> parseManualModels(String raw) {
-        if (raw == null || raw.isBlank()) return List.of();
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
         try {
             return objectMapper.readValue(raw, new TypeReference<List<String>>() {});
         } catch (Exception e) {

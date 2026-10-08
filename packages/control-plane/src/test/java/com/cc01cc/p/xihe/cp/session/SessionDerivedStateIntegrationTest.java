@@ -37,7 +37,6 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** PLAN-0408 T2.2/T2.3 real HTTP projection and user-boundary coverage. */
 class SessionDerivedStateIntegrationTest extends AbstractIntegrationTest {

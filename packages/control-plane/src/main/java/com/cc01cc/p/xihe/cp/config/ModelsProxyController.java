@@ -8,7 +8,10 @@ import com.cc01cc.p.xihe.cp.provider.ProviderCredentialLeaseService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.*;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -95,7 +98,9 @@ public class ModelsProxyController {
     private List<Map<String, Object>> scopedDescriptors() {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
-        if (userId == null || userId.isBlank()) return List.of();
+        if (userId == null || userId.isBlank()) {
+            return List.of();
+        }
 
         String catalogRunId = UUID.randomUUID().toString();
         List<Map<String, Object>> descriptors = new ArrayList<>();

@@ -7,7 +7,7 @@
 --   2. chat_runs.waiting_on_run_id + waiting_tool_call_id — the spawn waiting
 --      link moves off operation_items (V44) onto the child ChatRun row.
 -- No backfill (design 风险画像 dataMigration: 新增 history 表 + waiting link 列,
--- 无回填): pre-V50 child runs keep a NULL waiting link and the terminal path
+-- 无回填): pre-V52 child runs keep a NULL waiting link and the terminal path
 -- treats that as legacy data instead of an invariant failure.
 
 CREATE TABLE chat_run_history (
