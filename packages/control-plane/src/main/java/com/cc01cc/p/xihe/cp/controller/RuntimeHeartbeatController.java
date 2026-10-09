@@ -19,10 +19,14 @@ public class RuntimeHeartbeatController {
 
     private static final Logger logger = LoggerFactory.getLogger(RuntimeHeartbeatController.class);
 
-    private volatile RuntimeHeartbeatRequest latestHeartbeat;
+    private final RuntimeHeartbeatState heartbeatState;
+
+    public RuntimeHeartbeatController(RuntimeHeartbeatState heartbeatState) {
+        this.heartbeatState = heartbeatState;
+    }
 
     @PostMapping("/heartbeat")
-    public ResponseEntity<?> receiveHeartbeat(@RequestBody RuntimeHeartbeatRequest request) {
+    public ResponseEntity<?> receiveHeartbeat(@RequestBody RuntimeHeartbeatState.RuntimeHeartbeatRequest request) {
         if (request.deviceId() == null || request.deviceId().isBlank()) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "deviceId is required");
@@ -32,20 +36,13 @@ public class RuntimeHeartbeatController {
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "status is required");
         }
 
-        RuntimeHeartbeatRequest observed = new RuntimeHeartbeatRequest(
+        RuntimeHeartbeatState.RuntimeHeartbeatRequest observed = new RuntimeHeartbeatState.RuntimeHeartbeatRequest(
                 request.deviceId(), request.status(), Instant.now());
-        latestHeartbeat = observed;
+        heartbeatState.record(observed);
         logger.info("[LIFECYCLE] service=cp event=runtimeHeartbeat deviceId={} status={}",
                 request.deviceId(), request.status());
         return ResponseEntity.ok(Map.of(
                 "status", "accepted",
                 "deviceId", request.deviceId()));
-    }
-
-    public RuntimeHeartbeatRequest latestHeartbeat() {
-        return latestHeartbeat;
-    }
-
-    public record RuntimeHeartbeatRequest(String deviceId, String status, Instant observedAt) {
     }
 }

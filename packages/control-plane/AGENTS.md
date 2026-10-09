@@ -18,7 +18,8 @@ Control Plane（CP）负责公开 API、认证/租户边界、策略与审批、
 - `mcp/`：MCP 代理、请求重写与工具面。
 - `operation/`：Workspace Job API/start/state/transition services（目录名仅是现有包路径）。
 - `event/`：Workspace 事件信封与 SSE 扇出（`WorkspaceEvent` 只携带相对路径，`WorkspaceEventManager` 负责按 workspace 订阅/发布、序列号定序与 `snapshot_required`）。
-- `runtime/`、`agent/`、`config/`：Runtime/Agent 客户端及配置/认证边界。
+- `runtime/`：CP 到 Runtime 的客户端；没有独立 `agent/` Java 包，Agent 调用适配位于所属能力包。
+- `context/`、`provider/`、`oauth/`、`config/`：Context EventStore/投影、Provider/OAuth 凭据能力及配置/认证边界。
 - `service/`、`entity/`、`repository/`：应用服务、持久化模型与仓储。
 
 Session、ChatRun、Workspace Job 与 MCP invocation 生命周期的项目级 proposed SPEC 见 `../../spec/`；Agent principal 与 Workspace 绑定契约见 `../../spec/agent/principal-workspace-binding.md`（PLAN-0374）。本文件和 DEV-014/OpenAPI/代码仍是当前实现事实源。
@@ -33,17 +34,24 @@ Session、ChatRun、Workspace Job 与 MCP invocation 生命周期的项目级 pr
 mvn -o -q test-compile
 mvn -o test -Dtest=ApprovalServiceTest
 mvn -o -q checkstyle:check
+mvn -o -q test "-Dtest=CpArchitectureRuleProbeTest"
+mvn -o -q test "-Dtest=CpArchitectureTest"
 ```
 
 `-Dtest=...` 替换为具体测试类（必要时加 `#method`）。完整 `mvn -o test` 只在测试波次或里程碑执行；不要把全量测试当作每次小改的默认门禁。
 
 `mvn checkstyle:check` 对 `checkstyle.xml` 全部规则按 severity=error 阻断（POM `violationSeverity=error` + `failOnViolation=true`）；基线为 0 违规，任何新增违规都会使命令失败。规则与项目约定的对齐取舍（单行 getter、测试方法下划线命名、logger 常量白名单）见 PLAN-0458 evidence，不得未经裁定回退为 warning 或加全局抑制。
 
+ArchUnit 1.5.1 仅在 test scope。`CpArchitectureRuleProbeTest` 验证分类、正反向 bytecode 与逻辑归属，不代表生产边界已符合；`CpArchitectureTest` 严格检查实际生产类型，不使用存量忽略。当前重构基线会因既有违规失败，报告写入 `target/cp-architecture/baseline.json`；不得为求绿删除导入、冻结豁免或改为只跑探针。按领域切片修复后重新检查。归属图的类型循环诊断不直接宣称状态 writer 环，完整强连接分组与有上限的循环示例分开记录。
+
+Compiler、Checkstyle 和架构规则用途互补。PMD 候选已实际试跑，但当前插件组合因依赖安全公告与维护成本未采用，POM 无其 profile/plugin，不作为默认构建门；不得用自动解析默认 PMD 全规则替代本包已确认检查。
+
 ## API 与跨层契约
 
 - 公开接口统一 `/api/v1`、Bearer 认证、`TenantContext` 租户隔离与 RFC 9457 Problem Details（含 `code`、`requestId`）。
 - 服务间接口统一 `/internal/v1` 与 Bearer service auth；禁止把公开 token 或用户上下文混作服务认证。
 - Branch-aware context（PLAN-0410/V43）：internal snapshot 接受 `?branchId`/`?runId`（并存不一致 409、未知/外 Session 404、缺省=root），events 请求体禁带 `branch_id`（correlation 由 CP 派生）；分支只过滤上下文、不替代授权；公开 `ChatRequest.branchId`/compact `branchId`/branch CRUD/`BRANCH_LOCK` 归 PLAN-0409。内部面见 [`DEV-014 §8d`](../../docs/i18n/zh-Hans/DEV-014-control-plane-architecture.md)。
+- Context read/replay 的 events 使用显式read DTO，不直接返回Entity；对象payload与nullable键及整批错误见OpenAPI `ContextEventReadView`。replay原事务成功提交后映射，响应映射失败不新增projection回滚。定向真实CP+PG→实际Python客户端测试为 `ContextEventReadContractIntegrationTest`，通过非敏感property `xihe.context.python` 或 `PLAN0470_AGENT_PYTHON` 指定已准备的Python3.12/httpx环境；不自动安装或skip依赖。
 - Route、OpenAPI、调用方 inventory、SSE/AgentEvent、Flyway durable record 必须在同一变更波次同步；以 [`inventory.md`](../../docs/api/inventory.md) 为清单，不复制完整规范。
 - 审批、checkpoint、revert 的当前契约以 [`DEV-014-control-plane-architecture.md`](../../docs/i18n/zh-Hans/DEV-014-control-plane-architecture.md)、[`DEV-015-runtime-architecture.md`](../../docs/i18n/zh-Hans/DEV-015-runtime-architecture.md) 与 inventory 为准；本文件只列边界，禁止在此重复完整字段/状态机规格。
 

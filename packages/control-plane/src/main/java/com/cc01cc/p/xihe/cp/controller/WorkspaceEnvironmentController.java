@@ -5,7 +5,6 @@ import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceExecutionSpec;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeJobClient;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeWorkspaceFileClient;
 import com.cc01cc.p.xihe.cp.service.WorkspaceExecutionSpecService;
@@ -32,35 +31,31 @@ import org.springframework.web.client.RestTemplate;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 @RestController
 public class WorkspaceEnvironmentController {
 
     private static final Logger logger = LoggerFactory.getLogger(WorkspaceEnvironmentController.class);
 
-    private final WorkspaceRepository workspaceRepository;
     private final WorkspaceService workspaceService;
     private final WorkspaceExecutionSpecService executionSpecService;
-    private final RuntimeHeartbeatController heartbeatController;
+    private final RuntimeHeartbeatState heartbeatState;
     private final RuntimeJobClient runtimeJobClient;
     private final RestTemplate restTemplate;
     private final String runtimeUrl;
     private final String serviceToken;
 
     public WorkspaceEnvironmentController(
-            WorkspaceRepository workspaceRepository,
             WorkspaceService workspaceService,
             WorkspaceExecutionSpecService executionSpecService,
-            RuntimeHeartbeatController heartbeatController,
+            RuntimeHeartbeatState heartbeatState,
             RuntimeJobClient runtimeJobClient,
             RestTemplate restTemplate,
             @Value("${cp.mcp.runtime-url:http://localhost:12633}") String runtimeUrl,
             @Value("${cp.agent-api-token:dev-token-not-secure}") String serviceToken) {
-        this.workspaceRepository = workspaceRepository;
         this.workspaceService = workspaceService;
         this.executionSpecService = executionSpecService;
-        this.heartbeatController = heartbeatController;
+        this.heartbeatState = heartbeatState;
         this.runtimeJobClient = runtimeJobClient;
         this.restTemplate = restTemplate;
         this.runtimeUrl = runtimeUrl;
@@ -72,7 +67,7 @@ public class WorkspaceEnvironmentController {
     public ResponseEntity<?> getEnvironment(
             @PathVariable String workspaceId,
             Authentication authentication) {
-        Workspace workspace = workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId)).orElse(null);
+        Workspace workspace = workspaceService.findActiveWorkspace(workspaceId).orElse(null);
         if (workspace == null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(Map.of("code", "WORKSPACE_NOT_FOUND", "detail", "Workspace not found"));
@@ -92,7 +87,7 @@ public class WorkspaceEnvironmentController {
         } catch (com.cc01cc.p.xihe.cp.config.CpApiException ignored) {
             // no spec yet; treat as unassigned
         }
-        RuntimeHeartbeatController.RuntimeHeartbeatRequest heartbeat = heartbeatController.latestHeartbeat();
+        RuntimeHeartbeatState.RuntimeHeartbeatRequest heartbeat = heartbeatState.latest();
         Map<String, Object> workspaceRuntime = readWorkspaceRuntimeStatus(workspaceId);
         String materializationStatus = workspaceRuntime.getOrDefault("status", "unbound").toString();
 

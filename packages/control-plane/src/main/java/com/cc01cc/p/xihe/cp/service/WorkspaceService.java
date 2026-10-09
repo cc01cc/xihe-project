@@ -192,11 +192,16 @@ public class WorkspaceService {
 
     @Transactional(readOnly = true)
     public Workspace requireActiveWorkspace(String workspaceId) {
-        return workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId))
+        return findActiveWorkspace(workspaceId)
                 .orElseThrow(() -> new CpApiException(
                         org.springframework.http.HttpStatus.NOT_FOUND,
                         "WORKSPACE_NOT_FOUND",
                         "Workspace not found"));
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<Workspace> findActiveWorkspace(String workspaceId) {
+        return workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId));
     }
 
     @Transactional(readOnly = true)
