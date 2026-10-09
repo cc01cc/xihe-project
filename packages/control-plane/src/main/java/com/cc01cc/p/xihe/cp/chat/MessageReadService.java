@@ -18,6 +18,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 
 /** Read-side message listing and response projection. */
 @Service
@@ -56,6 +58,12 @@ public class MessageReadService {
             }
         }
         return result;
+    }
+
+    Optional<DispatchMessage> findDispatchMessage(String messageId) {
+        return messageRepository.findById(UUID.fromString(messageId))
+                .map(message -> new DispatchMessage(
+                        message.getSessionId(), message.getRunId(), message.getContent(), message.getAttachments()));
     }
 
     private boolean isVisibleOnPath(Message message, String sessionId, String workspaceId,
@@ -151,5 +159,8 @@ public class MessageReadService {
         }
         logger.info("[LIFECYCLE] service=cp event=job_summary_loaded runId={} count={}", runId, summaries.size());
         return summaries;
+    }
+
+    record DispatchMessage(String sessionId, String runId, String content, String attachments) {
     }
 }

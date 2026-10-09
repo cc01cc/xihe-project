@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /** Read-side ChatRun projections used by the public Chat API. */
@@ -77,5 +78,28 @@ public class ChatRunReadService {
         body.put("size", size);
         body.put("runs", items);
         return body;
+    }
+
+    /** Current durable Run status, or null when the Run no longer exists. */
+    public String statusOrNull(String runId) {
+        if (runId == null || runId.isBlank()) {
+            return null;
+        }
+        return chatRunRepository.findById(UUID.fromString(runId))
+                .map(ChatRun::getStatus)
+                .orElse(null);
+    }
+
+    Optional<DispatchRun> findDispatchRun(String runId) {
+        return chatRunRepository.findById(UUID.fromString(runId))
+                .map(run -> new DispatchRun(
+                        run.getId().toString(), run.getSessionId(), run.getUserId(), run.getWorkspaceId(),
+                        run.getOrigin(), run.getStatus(), run.getUserMessageId(), run.getProvider(),
+                        run.getModel(), run.getToolMode()));
+    }
+
+    record DispatchRun(String id, String sessionId, String userId, String workspaceId, String origin,
+                       String status, String userMessageId, String provider, String model,
+                       String toolMode) {
     }
 }

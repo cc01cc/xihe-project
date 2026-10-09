@@ -173,6 +173,46 @@ public class ChatAttachmentService {
         return file;
     }
 
+    public List<AttachmentInfo> resolveForChatSubmission(List<String> fileIds, String sessionId,
+                                                         String workspaceId, String userId,
+                                                         String sessionUserId) {
+        List<AttachmentInfo> attachments = new ArrayList<>(fileIds.size());
+        for (String fileId : fileIds) {
+            File file = fileRepository.findById(UUID.fromString(fileId)).orElse(null);
+            if (file == null) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "ATTACHMENT_NOT_FOUND", "Attachment not found");
+            }
+            if (!sessionId.equals(file.getSessionId())
+                    || !workspaceId.equals(file.getWorkspaceId())
+                    || !userId.equals(file.getUserId())
+                    || !userId.equals(sessionUserId)) {
+                throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Attachment does not belong to session");
+            }
+            attachments.add(new AttachmentInfo(file.getId().toString(), file.getFilename(), file.getMimeType(),
+                    file.getSizeBytes(), "/api/v1/files/" + file.getId()));
+        }
+        return List.copyOf(attachments);
+    }
+
+    public List<AttachmentInfo> resolveAdmittedMessageAttachments(String attachmentsJson) throws IOException {
+        if (attachmentsJson == null || attachmentsJson.isBlank()) {
+            return List.of();
+        }
+        com.fasterxml.jackson.databind.JsonNode refs = objectMapper.readTree(attachmentsJson);
+        if (refs == null || !refs.isArray()) {
+            throw new IllegalStateException("Admitted Follow-up attachment refs are invalid");
+        }
+        List<AttachmentInfo> attachments = new ArrayList<>();
+        for (com.fasterxml.jackson.databind.JsonNode ref : refs) {
+            UUID fileId = UUID.fromString(ref.path("fileId").asText());
+            File file = fileRepository.findById(fileId)
+                    .orElseThrow(() -> new IllegalStateException("Admitted Follow-up File is missing"));
+            attachments.add(new AttachmentInfo(file.getId().toString(), file.getFilename(), file.getMimeType(),
+                    file.getSizeBytes(), "/api/v1/files/" + file.getId()));
+        }
+        return List.copyOf(attachments);
+    }
+
     @Transactional
     public void deleteSessionAttachments(String sessionId) {
         List<File> files = fileRepository.findBySessionIdOrderByIdAsc(sessionId);

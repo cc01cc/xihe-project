@@ -865,6 +865,40 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(sessionId, capturedSessionId[0]);
     }
 
+    @Test
+    void chat_preservesAttachmentNotFoundAndOwnershipErrors() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        Map<String, Object> request = new LinkedHashMap<>();
+        request.put("sessionId", sessionId);
+        request.put("content", "Attachment ownership check");
+        request.put("workspaceId", workspaceId);
+        request.put("userId", userId);
+        request.put("attachments", List.of(UUID.randomUUID().toString()));
+
+        ResponseEntity<Map> missing = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST,
+                chatEntity(request, headers), Map.class);
+        assertEquals(HttpStatus.BAD_REQUEST, missing.getStatusCode());
+        assertEquals("ATTACHMENT_NOT_FOUND", missing.getBody().get("code"));
+
+        com.cc01cc.p.xihe.cp.entity.File otherSessionFile =
+                new com.cc01cc.p.xihe.cp.entity.File(userId, "other-session.txt", "unused-path");
+        otherSessionFile.setWorkspaceId(workspaceId);
+        otherSessionFile.setSessionId(UUID.randomUUID().toString());
+        otherSessionFile.setMimeType("text/plain");
+        otherSessionFile.setSizeBytes(1);
+        otherSessionFile = fileRepository.save(otherSessionFile);
+        request.put("attachments", List.of(otherSessionFile.getId().toString()));
+
+        ResponseEntity<Map> forbidden = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST,
+                chatEntity(request, headers), Map.class);
+        assertEquals(HttpStatus.FORBIDDEN, forbidden.getStatusCode());
+        assertEquals("FORBIDDEN", forbidden.getBody().get("code"));
+    }
+
     // ── PLAN-0308 M1 T1.9：run 请求 per-call 超时（`toolTimeouts`） ─────────────
 
     @Test

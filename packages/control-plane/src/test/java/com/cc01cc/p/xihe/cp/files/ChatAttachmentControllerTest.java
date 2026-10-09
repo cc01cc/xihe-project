@@ -22,6 +22,8 @@ import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.entity.File;
+import com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
@@ -44,6 +46,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("h2")
@@ -63,6 +66,9 @@ class ChatAttachmentControllerTest extends AbstractH2Test {
 
     @Autowired
     private FileRepository fileRepository;
+
+    @Autowired
+    private ChatAttachmentService chatAttachmentService;
 
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
@@ -151,6 +157,30 @@ class ChatAttachmentControllerTest extends AbstractH2Test {
         assertEquals(0, ((List<?>) result.get("failed")).size());
 
         assertFalse(fileRepository.findBySessionId(sessionId).isEmpty());
+    }
+
+    @Test
+    void admittedMessageAttachmentReferencesResolveToMetadataOnly() throws IOException {
+        File file = new File(userId, "admitted.txt", "unused-path");
+        file.setWorkspaceId(workspaceId);
+        file.setSessionId(sessionId);
+        file.setMimeType("text/plain");
+        file.setSizeBytes(17);
+        file = fileRepository.save(file);
+
+        List<AttachmentInfo> resolved = chatAttachmentService.resolveAdmittedMessageAttachments(
+                "[{\"fileId\":\"" + file.getId() + "\",\"name\":\"admitted.txt\"}]");
+
+        assertEquals(1, resolved.size());
+        assertEquals(file.getId().toString(), resolved.get(0).getId());
+        assertEquals("admitted.txt", resolved.get(0).getName());
+        assertEquals("text/plain", resolved.get(0).getType());
+        assertEquals(17, resolved.get(0).getSize());
+        assertEquals("/api/v1/files/" + file.getId(), resolved.get(0).getUrl());
+        assertThrows(IllegalStateException.class, () -> chatAttachmentService.resolveAdmittedMessageAttachments("{}"));
+        assertThrows(IllegalStateException.class,
+                () -> chatAttachmentService.resolveAdmittedMessageAttachments(
+                        "[{\"fileId\":\"" + UUID.randomUUID() + "\"}]"));
     }
 
     @Test
