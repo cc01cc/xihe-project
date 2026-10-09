@@ -195,7 +195,7 @@ public class ChatRunTerminalService {
                         || !parentLink.runId().equals(session.getSpawnedFromRunId())))) {
             throw terminalInvariant("Run and Session ownership changed while acquiring terminal locks", runId);
         }
-        if (isTerminal(run.getStatus())) {
+        if (isTerminalStatus(run.getStatus())) {
             return new TerminalResult(Outcome.LOST, run.getStatus());
         }
         if (!request.expectedStatuses().contains(run.getStatus())) {
@@ -266,7 +266,7 @@ public class ChatRunTerminalService {
             return new ParentLink(parentSessionId, parentRunId, null, true, false, null);
         }
         String childStatus = chatRuns.findStatusById(childRunId).orElse(null);
-        if (isTerminal(childStatus)) {
+        if (isTerminalStatus(childStatus)) {
             // Already settled (replay/duplicate settle) — LOST, not an invariant breach.
             return new ParentLink(parentSessionId, parentRunId, null, false, true, childStatus);
         }
@@ -456,7 +456,7 @@ public class ChatRunTerminalService {
         }
     }
 
-    private static boolean isTerminal(String status) {
+    static boolean isTerminalStatus(String status) {
         return List.of("succeeded", "partial", "failed", "cancelled", "ambiguous").contains(status);
     }
 }

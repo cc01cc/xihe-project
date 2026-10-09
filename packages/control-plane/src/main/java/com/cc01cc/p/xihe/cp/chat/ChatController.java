@@ -10,7 +10,6 @@ import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.Session;
-import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.cc01cc.p.xihe.cp.status.HealthMonitor;
@@ -73,7 +72,6 @@ public class ChatController {
     private final FollowUpQueueService followUpQueueService;
     private final SessionService sessionService;
     private final AgentPrincipalService agentPrincipalService;
-    private final ChatRunRepository chatRunRepository;
     private final ChatAttachmentService chatAttachmentService;
     private final HealthMonitor healthMonitor;
     private final RequestQueue requestQueue;
@@ -85,6 +83,7 @@ public class ChatController {
     private final ChatRunCancellationService chatRunCancellationService;
     private final ChatRunTerminalService chatRunTerminalService;
     private final ChatRunReadService chatRunReadService;
+    private final ChatRunLifecycleService chatRunLifecycleService;
     private final MessageReadService messageReadService;
     private final com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService;
     private final com.cc01cc.p.xihe.cp.usage.UsageCostMapper usageCostMapper;
@@ -99,9 +98,6 @@ public class ChatController {
      * PLAN-0328 M2 W3: statuses whose transition ends the Run and therefore must
      * pass through the single ChatRunTerminalService owner.
      */
-    private static final List<String> TERMINAL_RUN_STATUSES = List.of(
-            "succeeded", "failed", "partial", "ambiguous", "cancelled");
-
     /**
      * PLAN-0307 T2.7 (decision #3): domains with per-run Agent consumers, delivered
      * as payload overrides. rag/embedding are process-level consumers covered by the
@@ -126,7 +122,6 @@ public class ChatController {
             FollowUpQueueService followUpQueueService,
             SessionService sessionService,
             AgentPrincipalService agentPrincipalService,
-            ChatRunRepository chatRunRepository,
             ChatAttachmentService chatAttachmentService,
             ChatActiveRunRegistry activeRunRegistry,
             HealthMonitor healthMonitor,
@@ -139,6 +134,7 @@ public class ChatController {
             ChatRunCancellationService chatRunCancellationService,
             ChatRunTerminalService chatRunTerminalService,
             ChatRunReadService chatRunReadService,
+            ChatRunLifecycleService chatRunLifecycleService,
             MessageReadService messageReadService,
              com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService,
               com.cc01cc.p.xihe.cp.usage.UsageCostMapper usageCostMapper,
@@ -155,7 +151,6 @@ public class ChatController {
         this.followUpQueueService = followUpQueueService;
         this.sessionService = sessionService;
         this.agentPrincipalService = agentPrincipalService;
-        this.chatRunRepository = chatRunRepository;
         this.chatAttachmentService = chatAttachmentService;
         this.activeRunRegistry = activeRunRegistry;
         this.healthMonitor = healthMonitor;
@@ -168,6 +163,7 @@ public class ChatController {
         this.chatRunCancellationService = chatRunCancellationService;
         this.chatRunTerminalService = chatRunTerminalService;
         this.chatRunReadService = chatRunReadService;
+        this.chatRunLifecycleService = chatRunLifecycleService;
         this.messageReadService = messageReadService;
         this.contextSourceRefreshService = contextSourceRefreshService;
         this.usageCostMapper = usageCostMapper;
@@ -987,7 +983,7 @@ public class ChatController {
                 //    delivery emit-once in both orders.
                 String currentRunStatus = runStatus(runId);
                 boolean durableTerminal = terminalCommitted
-                        || (currentRunStatus != null && TERMINAL_RUN_STATUSES.contains(currentRunStatus));
+                        || (currentRunStatus != null && ChatRunTerminalService.isTerminalStatus(currentRunStatus));
                 boolean cancelOwnsTerminal = "cancelling".equals(currentRunStatus);
                 if ((durableTerminal || cancelOwnsTerminal)
                         && terminalSent.compareAndSet(false, true)) {
@@ -1196,8 +1192,8 @@ public class ChatController {
     private boolean transitionRun(String runId, List<String> expectedStatuses, String status,
                                   String outcome, String errorCode, String errorDetail,
                                   int tokenCount, int assistantChars) {
-        return transitionRun(runId, expectedStatuses, status, outcome, errorCode, errorDetail,
-                tokenCount, assistantChars, null);
+        return chatRunLifecycleService.transition(runId, expectedStatuses, status, outcome,
+                errorCode, errorDetail, tokenCount, assistantChars, null);
     }
 
     /**
@@ -1208,29 +1204,8 @@ public class ChatController {
     private boolean transitionRun(String runId, List<String> expectedStatuses, String status,
                                   String outcome, String errorCode, String errorDetail,
                                   int tokenCount, int assistantChars, Object usagePayload) {
-        if (runId == null || runId.isBlank()) {
-            return false;
-        }
-        if (TERMINAL_RUN_STATUSES.contains(status)) {
-            ChatRunTerminalService.TerminalResult result = chatRunTerminalService.terminalize(
-                    new ChatRunTerminalService.TerminalRequest(runId, expectedStatuses, status,
-                            outcome, errorCode, errorDetail, tokenCount, assistantChars,
-                            ChatRunTerminalService.TerminalSource.STREAM, usagePayload));
-            if (!result.committed()) {
-                logger.debug("[LIFECYCLE] service=cp event=chat_run_transition_ignored runId={} targetStatus={} outcome={}",
-                        runId, status, result.outcome());
-            }
-            return result.committed();
-        }
-        int updated = chatRunRepository.transition(
-                UUID.fromString(runId), expectedStatuses, status, outcome, errorCode, errorDetail,
-                tokenCount, assistantChars);
-        if (updated == 0) {
-            logger.debug("[LIFECYCLE] service=cp event=chat_run_transition_ignored runId={} targetStatus={}",
-                    runId, status);
-            return false;
-        }
-        return true;
+        return chatRunLifecycleService.transition(runId, expectedStatuses, status, outcome,
+                errorCode, errorDetail, tokenCount, assistantChars, usagePayload);
     }
 
     private String safeErrorCode(String code) {
@@ -1317,16 +1292,15 @@ public class ChatController {
     }
 
     private boolean acquireLeaseForExistingRun(String runId) {
-        return chatRunRepository.tryAcquireLease(
+        return chatRunLifecycleService.tryAcquireLease(
                 UUID.fromString(runId),
                 instanceId(),
                 Instant.now().plus(LEASE_TTL),
-                Instant.now(),
-                ChatRunRepository.ACTIVE_LEASE_STATUSES) > 0;
+                Instant.now()) > 0;
     }
 
     private void releaseRun(String sessionId, String runId, String reason) {
-        boolean dbReleased = chatRunRepository.releaseLease(UUID.fromString(runId), instanceId()) > 0;
+        boolean dbReleased = chatRunLifecycleService.releaseLease(UUID.fromString(runId), instanceId()) > 0;
         boolean memoryReleased = activeRunRegistry.remove(sessionId, runId);
         eventPublisher.publishEvent(new FollowUpQueueWakeupEvent(sessionId));
         // PLAN-0352 T1.2：唤醒会话删除路径的 release 等待位（终态投递在此之后已完成）。
