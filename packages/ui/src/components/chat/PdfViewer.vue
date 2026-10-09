@@ -21,16 +21,16 @@ const emit = defineEmits<{
     "update:chunkIndex": [index: number];
 }>();
 
-const pageNum = ref(1);
-const scale = ref(1.0);
-const chunkLoading = ref(false);
-const chunkError = ref<string | null>(null);
-const chunkContent = ref<string | ArrayBuffer | null>(null);
-const authStore = useAuthStore();
+const pageNum = ref(1),
+    scale = ref(1.0),
+    chunkLoading = ref(false),
+    chunkError = ref<string | null>(null);
+const chunkContent = ref<string | ArrayBuffer | null>(null),
+    authStore = useAuthStore();
 
 function base64ToUint8Array(base64: string): Uint8Array {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
+    const binary = atob(base64),
+        bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) {
         bytes[i] = binary.charCodeAt(i);
     }

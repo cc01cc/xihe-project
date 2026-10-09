@@ -20,8 +20,8 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const authStore = useAuthStore();
-const checkpointStore = useCheckpointStore();
+const authStore = useAuthStore(),
+    checkpointStore = useCheckpointStore();
 
 const record = computed(() => {
     const workspaceId = authStore.currentWorkspaceId;

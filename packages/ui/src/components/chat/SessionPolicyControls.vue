@@ -24,8 +24,8 @@ function isPolicyMode(value: string): value is SessionPolicyMode {
     return policyModes.includes(value as SessionPolicyMode);
 }
 
-const state = computed(() => policyStore.getState(props.sessionId));
-const mode = computed(() => state.value?.mode ?? null);
+const state = computed(() => policyStore.getState(props.sessionId)),
+    mode = computed(() => state.value?.mode ?? null);
 const modeLabel = computed(() =>
     mode.value ? t(modeLabelKeys[mode.value]) : t("chat.approvalModeUnavailable"),
 );

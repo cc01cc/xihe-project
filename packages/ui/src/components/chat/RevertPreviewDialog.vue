@@ -32,12 +32,12 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
-const loading = ref(false);
-const loadError = ref<string | null>(null);
-const preview = ref<CheckpointPreview | null>(null);
-const typeConflictAck = ref(false);
-const expanded = ref(false);
-const cancelButton = ref<HTMLButtonElement | null>(null);
+const loading = ref(false),
+    loadError = ref<string | null>(null),
+    preview = ref<CheckpointPreview | null>(null);
+const typeConflictAck = ref(false),
+    expanded = ref(false),
+    cancelButton = ref<HTMLButtonElement | null>(null);
 const retryButton = ref<HTMLButtonElement | null>(null);
 let loadGeneration = 0;
 
@@ -84,8 +84,8 @@ function focusCancel() {
 }
 
 async function loadPreview() {
-    const workspaceId = props.workspaceId;
-    const sliceRef = props.sliceRef;
+    const workspaceId = props.workspaceId,
+        sliceRef = props.sliceRef;
     if (!workspaceId || !sliceRef) return;
     const generation = ++loadGeneration;
     loading.value = true;

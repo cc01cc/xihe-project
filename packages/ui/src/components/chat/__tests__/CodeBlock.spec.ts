@@ -21,8 +21,8 @@ describe("CodeBlock", () => {
 
     it("copy button changes text on click", async () => {
         const { default: CodeBlock } = await import("../CodeBlock.vue");
-        const wrapper = mount(CodeBlock, { props: { code: "test", lang: "text" } });
-        const btn = wrapper.findAll("button")[1];
+        const wrapper = mount(CodeBlock, { props: { code: "test", lang: "text" } }),
+            btn = wrapper.findAll("button")[1];
         expect(btn.text()).toBe("chat.copy");
         await btn.trigger("click");
         expect(btn.text()).toBe("chat.copied");

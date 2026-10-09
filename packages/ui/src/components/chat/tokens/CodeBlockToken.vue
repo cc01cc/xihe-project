@@ -17,8 +17,8 @@ const props = defineProps<{
 const { isStreaming } = useMarkdownContext();
 const highlightedHtml = ref("");
 
-const lang = computed(() => props.token.lang ?? "text");
-const code = computed(() => props.token.text ?? "");
+const lang = computed(() => props.token.lang ?? "text"),
+    code = computed(() => props.token.text ?? "");
 
 function syncHighlight() {
     try {

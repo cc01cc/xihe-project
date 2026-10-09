@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref } from "vue";
 
-const model = defineModel<string>("modelValue", { required: true });
-const emit = defineEmits<{ close: [] }>();
+const model = defineModel<string>("modelValue", { required: true }),
+    emit = defineEmits<{ close: [] }>();
 const inputRef = ref<HTMLInputElement | null>(null);
 void inputRef;
 </script>

@@ -11,10 +11,10 @@ import type { Message, ToolCall } from "../../types";
 import ChatPanel from "./ChatPanel.vue";
 import { workspacePath } from "../../lib/routes";
 
-const route = useRoute();
-const router = useRouter();
-const sessionStore = useSessionStore();
-const chatStore = useChatStore();
+const route = useRoute(),
+    router = useRouter(),
+    sessionStore = useSessionStore(),
+    chatStore = useChatStore();
 const auth = useAuthStore();
 
 const routeSessionId = computed(() => {

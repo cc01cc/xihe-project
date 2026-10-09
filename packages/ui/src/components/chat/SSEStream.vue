@@ -27,17 +27,16 @@ const emit = defineEmits<{
     derivedStateRefresh: [];
 }>();
 
-const chatStore = useChatStore();
-const agentStore = useAgentStore();
-const configStore = useConfigStore();
+const chatStore = useChatStore(),
+    agentStore = useAgentStore(),
+    configStore = useConfigStore();
 const { t } = useI18n();
 const { handleToolCall } = useWorkspaceAgentSync();
 
 const { isConnected, isStreaming, connect, sendMessage, disconnect } = useSSE(
     computed(() => props.sessionId),
 );
-let activeRunId: string | undefined;
-let activeBranchId: string | undefined;
+let activeRunId: string | undefined, activeBranchId: string | undefined;
 
 watch(
     () => props.sessionId,
@@ -217,8 +216,8 @@ async function handleSend(
         }
     }
 
-    const binding = configStore.getEffectiveModel(sessionId);
-    const model = binding?.model ?? "";
+    const binding = configStore.getEffectiveModel(sessionId),
+        model = binding?.model ?? "";
     const result = await sendMessage({
         content,
         branchId: options.branchId,
@@ -255,8 +254,8 @@ function waitForConnection(timeoutMs: number): Promise<boolean> {
 }
 
 function stopStreaming() {
-    const sessionId = props.sessionId;
-    const runId = activeRunId ?? chatStore.getSessionRunId(sessionId);
+    const sessionId = props.sessionId,
+        runId = activeRunId ?? chatStore.getSessionRunId(sessionId);
     activeRunId = undefined;
     if (runId && sessionId === props.sessionId) {
         void api

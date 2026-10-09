@@ -5,10 +5,10 @@ import { i18n } from "../../../i18n";
 import type { ApiFollowUpItem, ApiFollowUpQueueSnapshot } from "../../../composables/api";
 import type { Message } from "../../../types";
 
-const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-const ROOT_BRANCH_ID = "44444444-4444-4444-8444-444444444444";
-const RUN_ID = "33333333-3333-4333-8333-333333333333";
-const CHILD_RUN_ID = "55555555-5555-4555-8555-555555555555";
+const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    ROOT_BRANCH_ID = "44444444-4444-4444-8444-444444444444";
+const RUN_ID = "33333333-3333-4333-8333-333333333333",
+    CHILD_RUN_ID = "55555555-5555-4555-8555-555555555555";
 
 function queueItem(overrides: Partial<ApiFollowUpItem> = {}): ApiFollowUpItem {
     return {

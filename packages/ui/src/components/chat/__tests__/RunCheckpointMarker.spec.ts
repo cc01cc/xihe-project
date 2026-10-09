@@ -6,9 +6,9 @@ import RunCheckpointMarker from "../RunCheckpointMarker.vue";
 import { api } from "../../../composables/api";
 import { useCheckpointStore } from "../../../stores/checkpoint";
 
-const WORKSPACE_ID = "workspace-a";
-const RUN_ID = "run-a";
-const SESSION_ID = "session-a";
+const WORKSPACE_ID = "workspace-a",
+    RUN_ID = "run-a",
+    SESSION_ID = "session-a";
 const SLICE_REF = "refs/xihe/workspace/slice-a";
 vi.mock("../../../composables/api", async (importOriginal) => {
     const actual = await importOriginal<typeof import("../../../composables/api")>();

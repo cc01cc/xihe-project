@@ -35,10 +35,10 @@ vi.mock("../../../composables/api", async (importOriginal) => {
     };
 });
 
-const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-const REQUEST_ID = "11111111-1111-4111-8111-111111111111";
-const STALE_REQUEST_ID = "22222222-2222-4222-8222-222222222222";
-const RUN_ID = "33333333-3333-4333-8333-333333333333";
+const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    REQUEST_ID = "11111111-1111-4111-8111-111111111111";
+const STALE_REQUEST_ID = "22222222-2222-4222-8222-222222222222",
+    RUN_ID = "33333333-3333-4333-8333-333333333333";
 const ROOT_BRANCH_ID = "44444444-4444-4444-8444-444444444444";
 
 function followUpSnapshot(
@@ -366,8 +366,8 @@ describe("ChatPanel approval dismiss and reopen pill (PLAN-0404)", () => {
     });
 
     it("drops the local dismiss record once the pending approval disappears", async () => {
-        const wrapper = mountPanel();
-        const store = useAgentStore();
+        const wrapper = mountPanel(),
+            store = useAgentStore();
         store.addApprovalRequest(approval);
         await nextTick();
         await flushPromises();
@@ -510,8 +510,8 @@ describe("ChatPanel derived child state (PLAN-0408 M3)", () => {
 
 describe("ChatPanel Follow-up queue", () => {
     it("reloads the owner Message when a child approval reveals admission", async () => {
-        const content = "run the next check";
-        const childRunId = "88888888-8888-4888-8888-888888888888";
+        const content = "run the next check",
+            childRunId = "88888888-8888-4888-8888-888888888888";
         const childMessageId = "99999999-9999-4999-8999-999999999999";
         const queued = queuedFollowUpSnapshot(content).items[0]!;
         const admitted = followUpSnapshot({
