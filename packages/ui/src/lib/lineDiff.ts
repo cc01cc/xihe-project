@@ -15,13 +15,13 @@ export interface LineDiffResult {
  * inline diff, so both sides are cut at `maxLines` and the caller surfaces `truncated`.
  */
 export function computeLineDiff(oldText: string, newText: string, maxLines = 400): LineDiffResult {
-    const oldLinesAll = oldText.split("\n");
-    const newLinesAll = newText.split("\n");
-    const truncated = oldLinesAll.length > maxLines || newLinesAll.length > maxLines;
-    const oldLines = oldLinesAll.slice(0, maxLines);
-    const newLines = newLinesAll.slice(0, maxLines);
-    const n = oldLines.length;
-    const m = newLines.length;
+    const oldLinesAll = oldText.split("\n"),
+        newLinesAll = newText.split("\n"),
+        truncated = oldLinesAll.length > maxLines || newLinesAll.length > maxLines,
+        oldLines = oldLinesAll.slice(0, maxLines),
+        newLines = newLinesAll.slice(0, maxLines),
+        n = oldLines.length,
+        m = newLines.length;
 
     const lcs: Uint32Array[] = [];
     for (let i = 0; i <= n; i += 1) lcs.push(new Uint32Array(m + 1));
@@ -35,8 +35,8 @@ export function computeLineDiff(oldText: string, newText: string, maxLines = 400
     }
 
     const rows: LineDiffRow[] = [];
-    let i = 0;
-    let j = 0;
+    let i = 0,
+        j = 0;
     while (i < n && j < m) {
         if (oldLines[i] === newLines[j]) {
             rows.push({ type: "context", text: oldLines[i] });

@@ -3,12 +3,12 @@ import { expect, it } from "vitest";
 
 const uiRequire = createRequire(import.meta.url);
 // Resolve through Vite's actual optional Stylus dependency chain.
-const viteRequire = createRequire(uiRequire.resolve("vite"));
-const stylusRequire = createRequire(viteRequire.resolve("stylus"));
-const cssRequire = createRequire(stylusRequire.resolve("css"));
-const sourceMapPath = cssRequire.resolve("source-map-resolve");
-const sourceMapRequire = createRequire(sourceMapPath);
-const sourceMapResolver = sourceMapRequire(".");
+const viteRequire = createRequire(uiRequire.resolve("vite")),
+    stylusRequire = createRequire(viteRequire.resolve("stylus")),
+    cssRequire = createRequire(stylusRequire.resolve("css")),
+    sourceMapPath = cssRequire.resolve("source-map-resolve"),
+    sourceMapRequire = createRequire(sourceMapPath),
+    sourceMapResolver = sourceMapRequire(".");
 
 it("keeps the nested CommonJS source-map decoder callable", () => {
     let readUrl: string | undefined;

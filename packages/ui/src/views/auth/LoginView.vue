@@ -6,16 +6,16 @@ import { useAuthStore } from "../../stores/auth";
 import { useConfigStore } from "../../stores/config";
 import { Sun } from "@lucide/vue";
 
-const { t } = useI18n();
-const router = useRouter();
-const route = useRoute();
-const auth = useAuthStore();
-const config = useConfigStore();
+const { t } = useI18n(),
+    router = useRouter(),
+    route = useRoute(),
+    auth = useAuthStore(),
+    config = useConfigStore();
 
-const email = ref("");
-const password = ref("");
-const errorMsg = ref<string | null>(null);
-const loading = ref(false);
+const email = ref(""),
+    password = ref(""),
+    errorMsg = ref<string | null>(null),
+    loading = ref(false);
 
 async function handleSubmit() {
     if (!email.value || !password.value) return;

@@ -60,8 +60,8 @@ describe("getMessageScrollerScrollable", () => {
             scrollHeight: 300,
             scrollTop: 16,
         });
-        const content = createElement("div");
-        const item = createElement("div");
+        const content = createElement("div"),
+            item = createElement("div");
         item.dataset.messageId = "1";
         item.getBoundingClientRect = () => ({
             top: -6,
@@ -103,8 +103,8 @@ describe("getMessageScrollerScrollable", () => {
             scrollHeight: 300,
             scrollTop: 0,
         });
-        const content = createElement("div");
-        const item = createElement("div");
+        const content = createElement("div"),
+            item = createElement("div");
         item.dataset.messageId = "1";
         item.getBoundingClientRect = () => ({
             top: 0,
@@ -143,11 +143,11 @@ describe("getMessageScrollerScrollable", () => {
 
 describe("getMessageScrollerItems", () => {
     it("returns all HTMLElement children except spacer", () => {
-        const content = createElement("div");
-        const item1 = createElement("div");
-        const item2 = createElement("div");
-        const text = document.createTextNode("text");
-        const spacer = createElement("div");
+        const content = createElement("div"),
+            item1 = createElement("div"),
+            item2 = createElement("div"),
+            text = document.createTextNode("text"),
+            spacer = createElement("div");
         spacer.dataset.slot = "message-scroller-spacer";
 
         content.append(item1, item2, text, spacer);
@@ -224,9 +224,9 @@ describe("getLastScrollAnchor", () => {
 
 describe("getFirstVisibleMessageItem", () => {
     it("returns first item within viewport bounds", () => {
-        const content = createElement("div");
-        const viewport = createElement("div", { clientHeight: 100, scrollTop: 0 });
-        const item = createElement("div");
+        const content = createElement("div"),
+            viewport = createElement("div", { clientHeight: 100, scrollTop: 0 }),
+            item = createElement("div");
         item.dataset.messageId = "1";
         item.getBoundingClientRect = () => ({
             top: 10,
@@ -258,8 +258,8 @@ describe("getFirstVisibleMessageItem", () => {
 
 describe("getElementTop", () => {
     it("computes offset top relative to viewport", () => {
-        const element = createElement("div");
-        const viewport = createElement("div");
+        const element = createElement("div"),
+            viewport = createElement("div");
         element.getBoundingClientRect = () => ({
             top: 50,
             bottom: 70,
@@ -289,8 +289,8 @@ describe("getElementTop", () => {
 
 describe("getElementViewportTop", () => {
     it("returns element top offset relative to viewport top", () => {
-        const element = createElement("div");
-        const viewport = createElement("div");
+        const element = createElement("div"),
+            viewport = createElement("div");
         element.getBoundingClientRect = () => ({
             top: 30,
             bottom: 50,
@@ -320,9 +320,9 @@ describe("getElementViewportTop", () => {
 
 describe("getTailSpacerHeight", () => {
     it("returns positive gap when content ends above viewport bottom", () => {
-        const content = createElement("div");
-        const viewport = createElement("div", { clientHeight: 100, scrollTop: 0 });
-        const item = createElement("div");
+        const content = createElement("div"),
+            viewport = createElement("div", { clientHeight: 100, scrollTop: 0 }),
+            item = createElement("div");
         item.dataset.messageId = "1";
         item.getBoundingClientRect = () => ({
             top: 0,
@@ -354,9 +354,9 @@ describe("getTailSpacerHeight", () => {
 
 describe("getContentBottom", () => {
     it("computes content bottom from last item relative to viewport", () => {
-        const content = createElement("div");
-        const viewport = createElement("div");
-        const item = createElement("div");
+        const content = createElement("div"),
+            viewport = createElement("div"),
+            item = createElement("div");
         item.dataset.messageId = "1";
         item.getBoundingClientRect = () => ({
             top: 0,

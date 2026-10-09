@@ -14,9 +14,9 @@ import type {
     PolicyToolFaceView,
 } from "../../types";
 
-const { t } = useI18n();
-const authStore = useAuthStore();
-const policyAdmin = usePolicyAdminStore();
+const { t } = useI18n(),
+    authStore = useAuthStore(),
+    policyAdmin = usePolicyAdminStore();
 
 const BUILTIN_ACTION_CLASSES = [
     "read",
@@ -33,30 +33,30 @@ const scopeOptions = computed<PolicyToolFaceQueryScope[]>(() =>
 );
 const activeScope = ref<PolicyToolFaceQueryScope>("workspace");
 
-const classifyTarget = ref<PolicyToolFaceView | null>(null);
-const classifyActionClass = ref("");
-const classifyShape = ref<ApprovalPolicyShape>("opaque");
-const classifyValidation = ref<string | null>(null);
+const classifyTarget = ref<PolicyToolFaceView | null>(null),
+    classifyActionClass = ref(""),
+    classifyShape = ref<ApprovalPolicyShape>("opaque"),
+    classifyValidation = ref<string | null>(null);
 
 const scopeLabels: Record<PolicyToolFaceQueryScope, string> = {
-    workspace: "settings.toolFacesScopeWorkspace",
-    instance: "settings.toolFacesScopeInstance",
-};
-const sourceLabels: Record<string, string> = {
-    builtin: "settings.toolFacesSourceBuiltin",
-    instance: "settings.toolFacesSourceInstance",
-    workspace: "settings.toolFacesSourceWorkspace",
-};
-const shapeLabels: Record<ApprovalPolicyShape, string> = {
-    structured: "chat.approvalShapeStructured",
-    interpreter: "chat.approvalShapeInterpreter",
-    opaque: "chat.approvalShapeOpaque",
-};
+        workspace: "settings.toolFacesScopeWorkspace",
+        instance: "settings.toolFacesScopeInstance",
+    },
+    sourceLabels: Record<string, string> = {
+        builtin: "settings.toolFacesSourceBuiltin",
+        instance: "settings.toolFacesSourceInstance",
+        workspace: "settings.toolFacesSourceWorkspace",
+    },
+    shapeLabels: Record<ApprovalPolicyShape, string> = {
+        structured: "chat.approvalShapeStructured",
+        interpreter: "chat.approvalShapeInterpreter",
+        opaque: "chat.approvalShapeOpaque",
+    };
 
 const canClassify = computed(() =>
-    activeScope.value === "instance" ? authStore.isAdmin : authStore.canClassifyTools,
-);
-const actionClassSuggestions = computed(() => [...new Set<string>(BUILTIN_ACTION_CLASSES)].sort());
+        activeScope.value === "instance" ? authStore.isAdmin : authStore.canClassifyTools,
+    ),
+    actionClassSuggestions = computed(() => [...new Set<string>(BUILTIN_ACTION_CLASSES)].sort());
 
 function isUnclassified(face: PolicyToolFaceView): boolean {
     return face.actionClass === UNCLASSIFIED;

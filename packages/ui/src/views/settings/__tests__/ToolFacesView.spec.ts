@@ -39,9 +39,9 @@ vi.mock("../../../composables/api", async (importOriginal) => {
     };
 });
 
-const FACE_ID = "88888888-8888-4888-8888-888888888888";
-const USER_ID = "user-1";
-const WORKSPACE_ID = "workspace-1";
+const FACE_ID = "88888888-8888-4888-8888-888888888888",
+    USER_ID = "user-1",
+    WORKSPACE_ID = "workspace-1";
 
 const builtinFace: PolicyToolFaceView = {
     id: null,
@@ -81,8 +81,8 @@ function seedIdentity(options: { admin?: boolean; workspaceOwner?: boolean } = {
 }
 
 async function mountView() {
-    const { default: ToolFacesView } = await import("../ToolFacesView.vue");
-    const wrapper = mount(ToolFacesView, { global: { plugins: [i18n] } });
+    const { default: ToolFacesView } = await import("../ToolFacesView.vue"),
+        wrapper = mount(ToolFacesView, { global: { plugins: [i18n] } });
     await flushPromises();
     return wrapper;
 }
@@ -114,11 +114,10 @@ describe("ToolFacesView", () => {
 
     it("highlights unclassified rows with the default ask label", async () => {
         seedIdentity();
-        const wrapper = await mountView();
-
-        const highlight = wrapper.find(
-            '[data-testid="settings-tool-face-unclassified-mcp__third_party__do"]',
-        );
+        const wrapper = await mountView(),
+            highlight = wrapper.find(
+                '[data-testid="settings-tool-face-unclassified-mcp__third_party__do"]',
+            );
         expect(highlight.text()).toContain("默认 ask");
         expect(highlight.text()).toContain("未分类");
     });

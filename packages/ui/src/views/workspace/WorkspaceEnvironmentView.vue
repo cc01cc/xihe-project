@@ -17,22 +17,22 @@ import type {
 
 type Environment = Awaited<ReturnType<typeof api.getWorkspaceEnvironment>>;
 
-const route = useRoute();
-const auth = useAuthStore();
-const { t } = useI18n();
-const environment = ref<Environment | null>(null);
-const jobs = ref<WorkspaceJob[]>([]);
-const loading = ref(false);
-const error = ref("");
-const preparing = ref(false);
-const prepareError = ref("");
-const selectedExecutionMode = ref<"docker" | "windows-mxc" | "windows-host">("docker");
-const changingExecutionMode = ref(false);
-const pollTimer = ref<ReturnType<typeof setInterval> | null>(null);
-const workspaceId = computed(() => {
-    const fromRoute = String(route.params.workspaceId ?? "").trim();
-    return fromRoute || auth.currentWorkspaceId || "";
-});
+const route = useRoute(),
+    auth = useAuthStore(),
+    { t } = useI18n(),
+    environment = ref<Environment | null>(null),
+    jobs = ref<WorkspaceJob[]>([]),
+    loading = ref(false),
+    error = ref(""),
+    preparing = ref(false),
+    prepareError = ref(""),
+    selectedExecutionMode = ref<"docker" | "windows-mxc" | "windows-host">("docker"),
+    changingExecutionMode = ref(false),
+    pollTimer = ref<ReturnType<typeof setInterval> | null>(null),
+    workspaceId = computed(() => {
+        const fromRoute = String(route.params.workspaceId ?? "").trim();
+        return fromRoute || auth.currentWorkspaceId || "";
+    });
 
 const STATUS_META: Record<string, { cls: string; recovery: string }> = {
     ready: {
@@ -168,10 +168,10 @@ function jobErrorText(job: WorkspaceJob): string {
 
 // PLAN-0396：Job 可用性来自 Runtime capabilities（CP 透出），不再与
 // `executionMode === 'docker'` 绑定；不可用/未知时给显式原因并禁用入口。
-const jobCapability = computed(() => environment.value?.jobCapability);
-const jobStartAvailable = computed(
-    () => Boolean(jobCapability.value?.canStart) && jobCapability.value?.available === true,
-);
+const jobCapability = computed(() => environment.value?.jobCapability),
+    jobStartAvailable = computed(
+        () => Boolean(jobCapability.value?.canStart) && jobCapability.value?.available === true,
+    );
 const jobStartReason = computed(() => {
     const capability = jobCapability.value;
     if (!capability) return "Job 启动能力未知（Runtime 未上报）";

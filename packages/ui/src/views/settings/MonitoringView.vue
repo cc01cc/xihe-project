@@ -21,11 +21,11 @@ interface ServiceStatus {
     details?: string;
 }
 
-const services = ref<ServiceStatus[]>([]);
-const overallStatus = ref<string>("loading");
-const lastUpdated = ref<number>(0);
-const loading = ref(false);
-const error = ref<string | null>(null);
+const services = ref<ServiceStatus[]>([]),
+    overallStatus = ref<string>("loading"),
+    lastUpdated = ref<number>(0),
+    loading = ref(false),
+    error = ref<string | null>(null);
 let timer: ReturnType<typeof setInterval> | null = null;
 
 async function fetchStatus() {

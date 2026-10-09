@@ -15,14 +15,14 @@ import type {
     AuditTimelineEvent,
 } from "../../types";
 
-const { t, te } = useI18n();
-const auditStore = useAuditStore();
-const statusFilter = ref<string>("");
-const typeFilter = ref<AuditEntryType | "">("");
-const selectedEntryId = ref<string | null>(null);
+const { t, te } = useI18n(),
+    auditStore = useAuditStore(),
+    statusFilter = ref<string>(""),
+    typeFilter = ref<AuditEntryType | "">(""),
+    selectedEntryId = ref<string | null>(null);
 
-const detail = computed(() => auditStore.selectedDetail);
-const entry = computed(() => detail.value?.entry ?? null);
+const detail = computed(() => auditStore.selectedDetail),
+    entry = computed(() => detail.value?.entry ?? null);
 
 const typeOptions: { value: AuditEntryType; label: string }[] = [
     { value: "chat_run", label: "settings.auditTypeChatRun" },
@@ -61,11 +61,9 @@ const statusByType: Record<AuditEntryType, string[]> = {
 };
 
 const allStatuses = computed(() => {
-    const seen = new Set<string>();
-    const values: string[] = [];
-    const groups = typeFilter.value
-        ? [statusByType[typeFilter.value]]
-        : Object.values(statusByType);
+    const seen = new Set<string>(),
+        values: string[] = [],
+        groups = typeFilter.value ? [statusByType[typeFilter.value]] : Object.values(statusByType);
     for (const group of groups) {
         for (const status of group) {
             if (!seen.has(status)) {

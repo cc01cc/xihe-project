@@ -118,10 +118,9 @@ describe("WorkspaceEnvironmentView job projection", () => {
             }),
         ] as never);
 
-        const wrapper = await mountView();
-
-        const secondary = wrapper.findAll('[data-testid="workspace-job-secondary"]');
-        const statuses = wrapper.findAll('[data-testid="workspace-job-status"]');
+        const wrapper = await mountView(),
+            secondary = wrapper.findAll('[data-testid="workspace-job-secondary"]'),
+            statuses = wrapper.findAll('[data-testid="workspace-job-status"]');
         expect(secondary).toHaveLength(2);
         expect(statuses).toHaveLength(2);
 
@@ -165,9 +164,8 @@ describe("WorkspaceEnvironmentView job-start capability (PLAN-0396)", () => {
     it("disables start with an explicit reason when the runtime never reported", async () => {
         mockedApi.getWorkspaceEnvironment.mockResolvedValue(environment("windows-host") as never);
 
-        const wrapper = await mountView();
-
-        const hint = wrapper.get('[data-testid="workspace-job-start-hint"]');
+        const wrapper = await mountView(),
+            hint = wrapper.get('[data-testid="workspace-job-start-hint"]');
         expect(hint.attributes("aria-disabled")).toBe("true");
         expect(hint.text()).toContain("能力未知");
     });
@@ -183,9 +181,8 @@ describe("WorkspaceEnvironmentView job-start capability (PLAN-0396)", () => {
             },
         } as never);
 
-        const wrapper = await mountView();
-
-        const hint = wrapper.get('[data-testid="workspace-job-start-hint"]');
+        const wrapper = await mountView(),
+            hint = wrapper.get('[data-testid="workspace-job-start-hint"]');
         expect(hint.attributes("aria-disabled")).toBe("true");
         expect(hint.text()).toContain("RUNTIME_UNREACHABLE");
         expect(hint.text()).not.toContain("尚无启动器");
@@ -204,9 +201,8 @@ describe("WorkspaceEnvironmentView job-start capability (PLAN-0396)", () => {
             },
         } as never);
 
-        const wrapper = await mountView();
-
-        const hint = wrapper.get('[data-testid="workspace-job-start-hint"]');
+        const wrapper = await mountView(),
+            hint = wrapper.get('[data-testid="workspace-job-start-hint"]');
         expect(hint.attributes("aria-disabled")).toBe("false");
         expect(hint.text()).toContain("windows-host");
         expect(hint.text()).toContain("无隔离");
@@ -223,9 +219,8 @@ describe("WorkspaceEnvironmentView job-start capability (PLAN-0396)", () => {
             },
         } as never);
 
-        const wrapper = await mountView();
-
-        const hint = wrapper.get('[data-testid="workspace-job-start-hint"]');
+        const wrapper = await mountView(),
+            hint = wrapper.get('[data-testid="workspace-job-start-hint"]');
         expect(hint.attributes("aria-disabled")).toBe("false");
         expect(hint.text()).toContain("windows-mxc");
         expect(hint.text()).toContain("沙盒隔离");

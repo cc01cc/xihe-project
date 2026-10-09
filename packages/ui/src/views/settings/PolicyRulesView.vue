@@ -11,9 +11,9 @@ import { useAuthStore } from "../../stores/auth";
 import { usePolicyAdminStore, type PolicyRuleDraft } from "../../stores/policyAdmin";
 import type { ApprovalPolicyEffect, PolicyRuleLayer, PolicyRuleView } from "../../types";
 
-const { t } = useI18n();
-const authStore = useAuthStore();
-const policyAdmin = usePolicyAdminStore();
+const { t } = useI18n(),
+    authStore = useAuthStore(),
+    policyAdmin = usePolicyAdminStore();
 
 const BUILTIN_ACTION_CLASSES = [
     "read",
@@ -25,27 +25,27 @@ const BUILTIN_ACTION_CLASSES = [
 ] as const;
 
 const layerOptions = computed<PolicyRuleLayer[]>(() =>
-    authStore.isAdmin ? ["instance", "user", "workspace"] : ["user", "workspace"],
-);
-const activeLayer = ref<PolicyRuleLayer>(authStore.isAdmin ? "instance" : "user");
+        authStore.isAdmin ? ["instance", "user", "workspace"] : ["user", "workspace"],
+    ),
+    activeLayer = ref<PolicyRuleLayer>(authStore.isAdmin ? "instance" : "user");
 
-const rules = computed(() => policyAdmin.rulesByLayer[activeLayer.value]);
-const rulesLoading = computed(() => policyAdmin.rulesLoading[activeLayer.value]);
-const rulesError = computed(() => policyAdmin.rulesError[activeLayer.value]);
-const rulesForbidden = computed(() => policyAdmin.rulesForbidden[activeLayer.value]);
-const conflicts = computed(() => policyAdmin.conflictsByLayer[activeLayer.value]);
-const conflictsError = computed(() => policyAdmin.conflictsError[activeLayer.value]);
+const rules = computed(() => policyAdmin.rulesByLayer[activeLayer.value]),
+    rulesLoading = computed(() => policyAdmin.rulesLoading[activeLayer.value]),
+    rulesError = computed(() => policyAdmin.rulesError[activeLayer.value]),
+    rulesForbidden = computed(() => policyAdmin.rulesForbidden[activeLayer.value]),
+    conflicts = computed(() => policyAdmin.conflictsByLayer[activeLayer.value]),
+    conflictsError = computed(() => policyAdmin.conflictsError[activeLayer.value]);
 
-const expandedDomains = ref<Set<string>>(new Set());
-const deleteTarget = ref<PolicyRuleView | null>(null);
+const expandedDomains = ref<Set<string>>(new Set()),
+    deleteTarget = ref<PolicyRuleView | null>(null);
 
-const createActionClass = ref("");
-const createResource = ref("");
-const createEffect = ref<ApprovalPolicyEffect>("allow");
-const createPriority = ref(0);
-const createLocked = ref(false);
-const createValidation = ref<string | null>(null);
-const createError = ref<string | null>(null);
+const createActionClass = ref(""),
+    createResource = ref(""),
+    createEffect = ref<ApprovalPolicyEffect>("allow"),
+    createPriority = ref(0),
+    createLocked = ref(false),
+    createValidation = ref<string | null>(null),
+    createError = ref<string | null>(null);
 
 const actionClassSuggestions = computed(() => {
     const classes = new Set<string>(BUILTIN_ACTION_CLASSES);
@@ -60,21 +60,21 @@ const canSubmitCreate = computed(
 );
 
 const layerLabels: Record<PolicyRuleLayer, string> = {
-    instance: "chat.approvalLayerInstance",
-    user: "chat.approvalLayerUser",
-    workspace: "chat.approvalLayerWorkspace",
-};
-const sourceLayerLabels: Record<string, string> = {
-    builtin: "chat.approvalLayerBuiltin",
-    instance: "chat.approvalLayerInstance",
-    user: "chat.approvalLayerUser",
-    workspace: "chat.approvalLayerWorkspace",
-};
-const effectLabels: Record<ApprovalPolicyEffect, string> = {
-    allow: "settings.policyEffectAllow",
-    ask: "settings.policyEffectAsk",
-    deny: "settings.policyEffectDeny",
-};
+        instance: "chat.approvalLayerInstance",
+        user: "chat.approvalLayerUser",
+        workspace: "chat.approvalLayerWorkspace",
+    },
+    sourceLayerLabels: Record<string, string> = {
+        builtin: "chat.approvalLayerBuiltin",
+        instance: "chat.approvalLayerInstance",
+        user: "chat.approvalLayerUser",
+        workspace: "chat.approvalLayerWorkspace",
+    },
+    effectLabels: Record<ApprovalPolicyEffect, string> = {
+        allow: "settings.policyEffectAllow",
+        ask: "settings.policyEffectAsk",
+        deny: "settings.policyEffectDeny",
+    };
 
 function layerLabel(layer: string): string {
     return sourceLayerLabels[layer] ? t(sourceLayerLabels[layer]) : layer;
@@ -127,8 +127,8 @@ async function refresh() {
 }
 
 async function submitCreate() {
-    const actionClass = createActionClass.value.trim();
-    const resource = createResource.value.trim();
+    const actionClass = createActionClass.value.trim(),
+        resource = createResource.value.trim();
     if (!actionClass || !resource) {
         createValidation.value = t("settings.policyCreateValidation");
         return;

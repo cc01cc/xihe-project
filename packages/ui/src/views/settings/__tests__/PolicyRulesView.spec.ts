@@ -42,8 +42,8 @@ vi.mock("../../../composables/api", async (importOriginal) => {
     };
 });
 
-const RULE_ID = "77777777-7777-4777-8777-777777777777";
-const WORKSPACE_OWNER = "user-1";
+const RULE_ID = "77777777-7777-4777-8777-777777777777",
+    WORKSPACE_OWNER = "user-1";
 
 const conflictedRule: PolicyRuleView = {
     id: RULE_ID,
@@ -70,8 +70,8 @@ function seedUser(role?: string) {
 }
 
 async function mountView() {
-    const { default: PolicyRulesView } = await import("../PolicyRulesView.vue");
-    const wrapper = mount(PolicyRulesView, { global: { plugins: [i18n] } });
+    const { default: PolicyRulesView } = await import("../PolicyRulesView.vue"),
+        wrapper = mount(PolicyRulesView, { global: { plugins: [i18n] } });
     await flushPromises();
     return wrapper;
 }

@@ -5,15 +5,15 @@ import { useRouter } from "vue-router";
 import { useAuthStore } from "../../stores/auth";
 import { Sun } from "@lucide/vue";
 
-const { t } = useI18n();
-const router = useRouter();
-const auth = useAuthStore();
+const { t } = useI18n(),
+    router = useRouter(),
+    auth = useAuthStore();
 
-const email = ref("");
-const password = ref("");
-const confirmPassword = ref("");
-const localError = ref<string | null>(null);
-const loading = ref(false);
+const email = ref(""),
+    password = ref(""),
+    confirmPassword = ref(""),
+    localError = ref<string | null>(null),
+    loading = ref(false);
 
 const passwordMismatch = computed(() => {
     return !!(confirmPassword.value && password.value !== confirmPassword.value);
@@ -27,8 +27,8 @@ async function handleSubmit() {
     }
     loading.value = true;
     localError.value = null;
-    const name = email.value.includes("@") ? email.value.split("@")[0] : email.value;
-    const ok = await auth.register(email.value, password.value, name);
+    const name = email.value.includes("@") ? email.value.split("@")[0] : email.value,
+        ok = await auth.register(email.value, password.value, name);
     loading.value = false;
     if (ok) {
         router.push("/workspace");
