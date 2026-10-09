@@ -70,8 +70,8 @@ describe("ConfigDomainPanel", () => {
         });
         await expandPanel(wrapper);
 
-        const inputs = wrapper.findAll("input");
-        const selects = wrapper.findAll("select");
+        const inputs = wrapper.findAll("input"),
+            selects = wrapper.findAll("select");
         expect(selects[0].element.value).toBe("deepseek");
         expect(inputs[0].element.value).toBe("sk-xxx");
         expect(inputs[1].element.value).toBe("gpt-4");
@@ -99,8 +99,8 @@ describe("ConfigDomainPanel", () => {
 
         expect(wrapper.find("input").exists()).toBe(false);
         expect(wrapper.find("select").exists()).toBe(false);
-        const spans = wrapper.findAll(".flex-1.text-sm");
-        const passwordSpan = spans.find((s) => s.text().includes("****"));
+        const spans = wrapper.findAll(".flex-1.text-sm"),
+            passwordSpan = spans.find((s) => s.text().includes("****"));
         expect(passwordSpan).toBeTruthy();
         expect(passwordSpan!.text()).toBe("sk-****5678");
     });
@@ -179,11 +179,11 @@ describe("ConfigDomainPanel", () => {
     });
 
     it("TC9: json fields render a textarea and are emitted verbatim", async () => {
-        const jsonSchema: DomainField[] = [{ key: "defaults", label: "Defaults", type: "json" }];
-        const wrapper = mountPanel({
-            schema: jsonSchema,
-            entries: { defaults: '{"softThresholdPct":0.8}' },
-        });
+        const jsonSchema: DomainField[] = [{ key: "defaults", label: "Defaults", type: "json" }],
+            wrapper = mountPanel({
+                schema: jsonSchema,
+                entries: { defaults: '{"softThresholdPct":0.8}' },
+            });
         await expandPanel(wrapper);
 
         const textarea = wrapper.find("textarea");

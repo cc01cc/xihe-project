@@ -24,9 +24,9 @@ describe("BaseModal", () => {
 
     it("renders close button with aria-label", () => {
         const wrapper = mount(BaseModal, {
-            props: { show: true, title: "Test" },
-        });
-        const closeBtn = wrapper.find('button[aria-label="Close"]');
+                props: { show: true, title: "Test" },
+            }),
+            closeBtn = wrapper.find('button[aria-label="Close"]');
         expect(closeBtn.exists()).toBe(true);
     });
 });

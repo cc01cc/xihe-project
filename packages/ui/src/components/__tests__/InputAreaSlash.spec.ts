@@ -40,8 +40,8 @@ function mountInput() {
 
 describe("InputArea slash commands", () => {
     it("shows command menu when / is typed", async () => {
-        const wrapper = mountInput();
-        const textarea = wrapper.find("textarea");
+        const wrapper = mountInput(),
+            textarea = wrapper.find("textarea");
         await textarea.setValue("/");
         await textarea.trigger("input");
         expect(wrapper.text()).toContain("/search");
@@ -49,8 +49,8 @@ describe("InputArea slash commands", () => {
     });
 
     it("hides command menu after space is typed", async () => {
-        const wrapper = mountInput();
-        const textarea = wrapper.find("textarea");
+        const wrapper = mountInput(),
+            textarea = wrapper.find("textarea");
         await textarea.setValue("/search");
         await textarea.trigger("input");
         expect(wrapper.text()).toContain("/search");
@@ -60,8 +60,8 @@ describe("InputArea slash commands", () => {
     });
 
     it("filters commands as user types", async () => {
-        const wrapper = mountInput();
-        const textarea = wrapper.find("textarea");
+        const wrapper = mountInput(),
+            textarea = wrapper.find("textarea");
         await textarea.setValue("/exp");
         await textarea.trigger("input");
         expect(wrapper.text()).toContain("/export");
@@ -69,8 +69,8 @@ describe("InputArea slash commands", () => {
     });
 
     it("closes menu on Escape", async () => {
-        const wrapper = mountInput();
-        const textarea = wrapper.find("textarea");
+        const wrapper = mountInput(),
+            textarea = wrapper.find("textarea");
         await textarea.setValue("/");
         await textarea.trigger("input");
         expect(wrapper.text()).toContain("/search");
@@ -79,8 +79,8 @@ describe("InputArea slash commands", () => {
     });
 
     it("triggers send when /help is selected", async () => {
-        const wrapper = mountInput();
-        const textarea = wrapper.find("textarea");
+        const wrapper = mountInput(),
+            textarea = wrapper.find("textarea");
         await textarea.setValue("/help");
         await textarea.trigger("input");
         await textarea.trigger("keydown", { key: "Enter" });

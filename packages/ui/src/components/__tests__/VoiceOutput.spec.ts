@@ -44,11 +44,11 @@ describe("VoiceOutput", () => {
     });
 
     it("calls stop on click when already speaking", async () => {
-        const cancelSpy = vi.spyOn(window.speechSynthesis, "cancel");
-        const wrapper = mount(VoiceOutput, {
-            props: { text: "Hello" },
-            global: { plugins: [createI18nInstance()] },
-        });
+        const cancelSpy = vi.spyOn(window.speechSynthesis, "cancel"),
+            wrapper = mount(VoiceOutput, {
+                props: { text: "Hello" },
+                global: { plugins: [createI18nInstance()] },
+            });
         wrapper.vm.isSpeaking = true;
         await wrapper.vm.$nextTick();
         await wrapper.find("button").trigger("click");

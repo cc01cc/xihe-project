@@ -16,27 +16,27 @@ describe("ConfirmModal", () => {
 
     it("emits confirm on confirm button click", async () => {
         const wrapper = mount(ConfirmModal, {
-            props: { show: true, title: "Confirm" },
-        });
-        const confirmBtn = wrapper.findAll("button").filter((b) => b.text().includes("Confirm"));
+                props: { show: true, title: "Confirm" },
+            }),
+            confirmBtn = wrapper.findAll("button").filter((b) => b.text().includes("Confirm"));
         if (confirmBtn.length) await confirmBtn[0].trigger("click");
         expect(wrapper.emitted("confirm")).toBeTruthy();
     });
 
     it("emits cancel on cancel button click", async () => {
         const wrapper = mount(ConfirmModal, {
-            props: { show: true, title: "Confirm" },
-        });
-        const cancelBtn = wrapper.findAll("button").filter((b) => b.text().includes("Cancel"));
+                props: { show: true, title: "Confirm" },
+            }),
+            cancelBtn = wrapper.findAll("button").filter((b) => b.text().includes("Cancel"));
         if (cancelBtn.length) await cancelBtn[0].trigger("click");
         expect(wrapper.emitted("cancel")).toBeTruthy();
     });
 
     it("auto-closes after 1.5s on confirm", async () => {
         const wrapper = mount(ConfirmModal, {
-            props: { show: true, title: "Confirm" },
-        });
-        const confirmBtn = wrapper.findAll("button").filter((b) => b.text().includes("Confirm"));
+                props: { show: true, title: "Confirm" },
+            }),
+            confirmBtn = wrapper.findAll("button").filter((b) => b.text().includes("Confirm"));
         if (confirmBtn.length) await confirmBtn[0].trigger("click");
         expect(wrapper.emitted("confirm")).toBeTruthy();
         vi.advanceTimersByTime(1500);

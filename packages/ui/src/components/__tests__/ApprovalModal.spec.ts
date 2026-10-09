@@ -17,10 +17,10 @@ vi.mock("../../composables/api", async (importOriginal) => {
     };
 });
 
-const REQUEST_ID = "11111111-1111-4111-8111-111111111111";
-const SECOND_REQUEST_ID = "22222222-2222-4222-8222-222222222222";
-const RUN_ID = "33333333-3333-4333-8333-333333333333";
-const SESSION_ID = "44444444-4444-4444-8444-444444444444";
+const REQUEST_ID = "11111111-1111-4111-8111-111111111111",
+    SECOND_REQUEST_ID = "22222222-2222-4222-8222-222222222222",
+    RUN_ID = "33333333-3333-4333-8333-333333333333",
+    SESSION_ID = "44444444-4444-4444-8444-444444444444";
 
 const i18n = createI18n({
     legacy: false,
@@ -257,8 +257,8 @@ describe("ApprovalModal", () => {
     });
 
     it("focuses once and emits a structured once decision", async () => {
-        const wrapper = mountModal({ approval: baseApproval, show: true });
-        const onceButton = wrapper.find<HTMLButtonElement>('[data-testid="approval-approve"]');
+        const wrapper = mountModal({ approval: baseApproval, show: true }),
+            onceButton = wrapper.find<HTMLButtonElement>('[data-testid="approval-approve"]');
         expect(onceButton.exists()).toBe(true);
         await onceButton.trigger("click");
 
@@ -346,8 +346,8 @@ describe("ApprovalModal", () => {
     });
 
     it("keeps surface Enter as exactly one allow-once decision", async () => {
-        const wrapper = mountModal({ approval: baseApproval, show: true });
-        const content = wrapper.find(".approval-content");
+        const wrapper = mountModal({ approval: baseApproval, show: true }),
+            content = wrapper.find(".approval-content");
 
         await content.trigger("keydown", { key: "Enter" });
         await content.trigger("keydown", { key: "Enter" });
@@ -451,13 +451,13 @@ describe("ApprovalModal", () => {
 
     it("traps focus within its own teleported modal when another modal is open", async () => {
         const mountAttached = (requestId: string) =>
-            mount(ApprovalModal, {
-                props: { approval: { ...baseApproval, requestId }, show: true },
-                attachTo: document.body,
-                global: { plugins: [i18n] },
-            });
-        const first = mountAttached(REQUEST_ID);
-        const second = mountAttached(SECOND_REQUEST_ID);
+                mount(ApprovalModal, {
+                    props: { approval: { ...baseApproval, requestId }, show: true },
+                    attachTo: document.body,
+                    global: { plugins: [i18n] },
+                }),
+            first = mountAttached(REQUEST_ID),
+            second = mountAttached(SECOND_REQUEST_ID);
         await nextTick();
 
         const secondLast = second.find('[data-testid="approval-reject"]');
@@ -472,10 +472,10 @@ describe("ApprovalModal", () => {
     });
 
     it("disables every decision and emits no duplicate event while busy", async () => {
-        const wrapper = mountModal({ approval: baseApproval, show: true, busy: true });
-        const decisionButtons = wrapper
-            .findAll("button")
-            .filter((button) => button.attributes("data-testid")?.startsWith("approval-"));
+        const wrapper = mountModal({ approval: baseApproval, show: true, busy: true }),
+            decisionButtons = wrapper
+                .findAll("button")
+                .filter((button) => button.attributes("data-testid")?.startsWith("approval-"));
         expect(decisionButtons.length).toBeGreaterThan(0);
         expect(decisionButtons.every((button) => button.attributes("disabled") !== undefined)).toBe(
             true,

@@ -58,20 +58,20 @@ describe("InputToolbar", () => {
     });
 
     it("passes props to dynamic action components", async () => {
-        const onClick = vi.fn();
-        const wrapper = mount(InputToolbar, {
-            props: {
-                actions: [
-                    {
-                        key: "clickable",
-                        position: "right",
-                        component: "button",
-                        props: { class: "custom-btn", onClick },
-                        icon: markRaw(IconComponent),
-                    },
-                ],
-            },
-        });
+        const onClick = vi.fn(),
+            wrapper = mount(InputToolbar, {
+                props: {
+                    actions: [
+                        {
+                            key: "clickable",
+                            position: "right",
+                            component: "button",
+                            props: { class: "custom-btn", onClick },
+                            icon: markRaw(IconComponent),
+                        },
+                    ],
+                },
+            });
 
         const btn = wrapper.find("button.custom-btn");
         expect(btn.exists()).toBe(true);

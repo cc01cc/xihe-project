@@ -3,8 +3,8 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
 import McpStdioServerList from "../settings/McpStdioServerList.vue";
 
-const getStdioServers = vi.fn();
-const getMcpServerStatus = vi.fn();
+const getStdioServers = vi.fn(),
+    getMcpServerStatus = vi.fn();
 vi.mock("../../composables/api", async (importOriginal) => {
     const actual = await importOriginal<typeof import("../../composables/api")>();
     return {

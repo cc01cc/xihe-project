@@ -22,8 +22,8 @@ describe("VoiceInput", () => {
     });
 
     it("renders voice input button", async () => {
-        const { default: VoiceInput } = await import("../../components/multimodal/VoiceInput.vue");
-        const wrapper = mount(VoiceInput, { global: { plugins: [createI18nInstance()] } });
+        const { default: VoiceInput } = await import("../../components/multimodal/VoiceInput.vue"),
+            wrapper = mount(VoiceInput, { global: { plugins: [createI18nInstance()] } });
         expect(wrapper.find("button").exists()).toBe(true);
     });
 });

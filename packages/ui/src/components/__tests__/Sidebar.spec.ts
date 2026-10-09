@@ -95,9 +95,9 @@ describe("Sidebar", () => {
         expect(store.sessions.length).toBe(0);
         const spy = vi.spyOn(globalThis, "fetch");
 
-        const wrapper = await mountSidebar();
-        const buttons = wrapper.findAll("button");
-        const newChatBtn = buttons.find((b) => b.text().trim() === "新建对话");
+        const wrapper = await mountSidebar(),
+            buttons = wrapper.findAll("button"),
+            newChatBtn = buttons.find((b) => b.text().trim() === "新建对话");
         expect(newChatBtn).toBeDefined();
         await newChatBtn!.trigger("click");
         await flushPromises();
@@ -116,11 +116,11 @@ describe("Sidebar", () => {
     it("clicking new chat shows toast when no current workspace is set", async () => {
         const auth = useAuthStore();
         auth.$patch({ token: "mock", user: { id: "u-1", email: "x@xihe.local" } });
-        const store = useSessionStore();
-        const spy = vi.spyOn(globalThis, "fetch");
-        const wrapper = await mountSidebar();
-        const buttons = wrapper.findAll("button");
-        const newChatBtn = buttons.find((b) => b.text().trim() === "新建对话");
+        const store = useSessionStore(),
+            spy = vi.spyOn(globalThis, "fetch"),
+            wrapper = await mountSidebar(),
+            buttons = wrapper.findAll("button"),
+            newChatBtn = buttons.find((b) => b.text().trim() === "新建对话");
         await newChatBtn!.trigger("click");
         await flushPromises();
 
@@ -143,10 +143,10 @@ describe("Sidebar", () => {
             status: 200,
             json: () => Promise.resolve({ id: "ws-late", name: "Late Workspace", ownerId: "u-1" }),
         } as Response);
-        const store = useSessionStore();
-        const wrapper = await mountSidebar();
-        const buttons = wrapper.findAll("button");
-        const newChatBtn = buttons.find((b) => b.text().trim() === "新建对话");
+        const store = useSessionStore(),
+            wrapper = await mountSidebar(),
+            buttons = wrapper.findAll("button"),
+            newChatBtn = buttons.find((b) => b.text().trim() === "新建对话");
         await newChatBtn!.trigger("click");
         await flushPromises();
 
@@ -165,8 +165,8 @@ describe("Sidebar", () => {
 
     it("renders session time group headers when sessions exist", async () => {
         mockAuth();
-        const store = useSessionStore();
-        const spy = vi.spyOn(globalThis, "fetch");
+        const store = useSessionStore(),
+            spy = vi.spyOn(globalThis, "fetch");
         spy.mockResolvedValueOnce({
             ok: true,
             status: 201,

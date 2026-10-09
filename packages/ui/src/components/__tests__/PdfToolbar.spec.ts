@@ -12,25 +12,25 @@ describe("PdfToolbar", () => {
 
     it("disables prev button on first page", () => {
         const wrapper = mount(PdfToolbar, {
-            props: { pageNum: 1, totalPages: 5, scale: 1.0 },
-        });
-        const buttons = wrapper.findAll("button");
+                props: { pageNum: 1, totalPages: 5, scale: 1.0 },
+            }),
+            buttons = wrapper.findAll("button");
         expect(buttons[0].attributes("disabled")).toBeDefined();
     });
 
     it("disables next button on last page", () => {
         const wrapper = mount(PdfToolbar, {
-            props: { pageNum: 5, totalPages: 5, scale: 1.0 },
-        });
-        const buttons = wrapper.findAll("button");
+                props: { pageNum: 5, totalPages: 5, scale: 1.0 },
+            }),
+            buttons = wrapper.findAll("button");
         expect(buttons[1].attributes("disabled")).toBeDefined();
     });
 
     it("enables prev button after first page", () => {
         const wrapper = mount(PdfToolbar, {
-            props: { pageNum: 3, totalPages: 5, scale: 1.0 },
-        });
-        const buttons = wrapper.findAll("button");
+                props: { pageNum: 3, totalPages: 5, scale: 1.0 },
+            }),
+            buttons = wrapper.findAll("button");
         expect(buttons[0].attributes("disabled")).toBeUndefined();
         expect(buttons[1].attributes("disabled")).toBeUndefined();
     });
@@ -53,9 +53,9 @@ describe("PdfToolbar", () => {
 
     it("renders zoom select with 5 options", () => {
         const wrapper = mount(PdfToolbar, {
-            props: { pageNum: 1, totalPages: 5, scale: 1.0 },
-        });
-        const options = wrapper.findAll("option");
+                props: { pageNum: 1, totalPages: 5, scale: 1.0 },
+            }),
+            options = wrapper.findAll("option");
         expect(options.length).toBe(5);
         expect(options[2].text()).toContain("100%");
     });

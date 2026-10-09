@@ -22,8 +22,8 @@ describe("ImageUpload", () => {
     });
 
     it("accepts image files only", async () => {
-        const wrapper = mount(ImageUpload, { global: { plugins: [createI18nInstance()] } });
-        const input = wrapper.find('input[type="file"]');
+        const wrapper = mount(ImageUpload, { global: { plugins: [createI18nInstance()] } }),
+            input = wrapper.find('input[type="file"]');
         expect(input.attributes("accept")).toContain("image/");
     });
 
@@ -39,9 +39,9 @@ describe("ImageUpload", () => {
             }
         } as typeof Image;
 
-        const wrapper = mount(ImageUpload, { global: { plugins: [createI18nInstance()] } });
-        const input = wrapper.find('input[type="file"]');
-        const file = new File(["test"], "test.png", { type: "image/png" });
+        const wrapper = mount(ImageUpload, { global: { plugins: [createI18nInstance()] } }),
+            input = wrapper.find('input[type="file"]'),
+            file = new File(["test"], "test.png", { type: "image/png" });
         Object.defineProperty(input.element, "files", { value: [file] });
         await input.trigger("change");
 

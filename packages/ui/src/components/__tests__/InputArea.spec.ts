@@ -91,8 +91,8 @@ describe("InputArea", () => {
     });
 
     it("textarea has placeholder text", () => {
-        const wrapper = mountInputArea();
-        const textarea = wrapper.find("textarea");
+        const wrapper = mountInputArea(),
+            textarea = wrapper.find("textarea");
         expect(textarea.attributes("placeholder")).toBeDefined();
     });
 
@@ -102,8 +102,8 @@ describe("InputArea", () => {
     });
 
     it("queues with Enter while streaming and keeps Stop separate", async () => {
-        const wrapper = mountInputArea({ isStreaming: true, queueMode: true });
-        const textarea = wrapper.find('[data-testid="chat-input"]');
+        const wrapper = mountInputArea({ isStreaming: true, queueMode: true }),
+            textarea = wrapper.find('[data-testid="chat-input"]');
         await textarea.setValue("run this after the active task");
         await textarea.trigger("keydown", { key: "Enter", shiftKey: false, isComposing: false });
 
@@ -124,23 +124,23 @@ describe("InputArea", () => {
 
     it("preserves failed Follow-up attachments and retries only uploads not already cached", async () => {
         const uploaded: AttachmentFile = {
-            id: "local-file-id",
-            fileId: "server-file-id",
-            name: "retry.txt",
-            type: "text/plain",
-            size: 4,
-            url: "",
-            state: "done",
-        };
-        const retried: AttachmentFile = {
-            id: "local-failed-id",
-            fileId: "server-failed-id",
-            name: "failed.txt",
-            type: "text/plain",
-            size: 5,
-            url: "",
-            state: "done",
-        };
+                id: "local-file-id",
+                fileId: "server-file-id",
+                name: "retry.txt",
+                type: "text/plain",
+                size: 4,
+                url: "",
+                state: "done",
+            },
+            retried: AttachmentFile = {
+                id: "local-failed-id",
+                fileId: "server-failed-id",
+                name: "failed.txt",
+                type: "text/plain",
+                size: 5,
+                url: "",
+                state: "done",
+            };
         mockedUpload
             .mockResolvedValueOnce({
                 success: [uploaded],
@@ -178,23 +178,23 @@ describe("InputArea", () => {
 
     it("reuploads attachments for each ordinary Chat send attempt", async () => {
         const uploaded: AttachmentFile = {
-            id: "local-file-id",
-            fileId: "server-file-id",
-            name: "retry.txt",
-            type: "text/plain",
-            size: 4,
-            url: "",
-            state: "done",
-        };
-        const secondUploaded: AttachmentFile = {
-            id: "local-file-id-2",
-            fileId: "server-file-id-2",
-            name: "failed.txt",
-            type: "text/plain",
-            size: 5,
-            url: "",
-            state: "done",
-        };
+                id: "local-file-id",
+                fileId: "server-file-id",
+                name: "retry.txt",
+                type: "text/plain",
+                size: 4,
+                url: "",
+                state: "done",
+            },
+            secondUploaded: AttachmentFile = {
+                id: "local-file-id-2",
+                fileId: "server-file-id-2",
+                name: "failed.txt",
+                type: "text/plain",
+                size: 5,
+                url: "",
+                state: "done",
+            };
         mockedUpload.mockResolvedValue({ success: [uploaded, secondUploaded], failed: [] });
         const wrapper = mountInputArea();
         await wrapper.find('[data-testid="chat-input"]').setValue("send with this file");

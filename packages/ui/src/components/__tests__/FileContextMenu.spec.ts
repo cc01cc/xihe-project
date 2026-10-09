@@ -27,8 +27,8 @@ vi.mock("vue-sonner", () => ({
     toast: { success: vi.fn(), error: vi.fn() },
 }));
 
-const dirWithDot: FileNode = { path: "src/v1.2", name: "v1.2", type: "directory" };
-const fileNoExt: FileNode = { path: "Makefile", name: "Makefile", type: "file" };
+const dirWithDot: FileNode = { path: "src/v1.2", name: "v1.2", type: "directory" },
+    fileNoExt: FileNode = { path: "Makefile", name: "Makefile", type: "file" };
 
 function mountMenu(node: FileNode) {
     return mount(FileNodeMenu, {
@@ -96,10 +96,10 @@ describe("FileNodeMenu delete toast semantics (B-2)", () => {
         await new Promise((r) => setTimeout(r, 0));
         const menu = document.body.querySelector('[data-testid="file-context-menu"]');
         expect(menu).toBeTruthy();
-        const items = Array.from(menu!.querySelectorAll('[role="menuitem"]'));
-        const target = items.find((b) => (b.textContent ?? "").trim().startsWith(label)) as
-            | HTMLElement
-            | undefined;
+        const items = Array.from(menu!.querySelectorAll('[role="menuitem"]')),
+            target = items.find((b) => (b.textContent ?? "").trim().startsWith(label)) as
+                | HTMLElement
+                | undefined;
         expect(target).toBeTruthy();
         // Programmatic selection path: dispatch the press sequence the platform
         // would produce, with hover + focus established first so the menu's

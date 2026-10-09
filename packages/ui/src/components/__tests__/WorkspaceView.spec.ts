@@ -34,8 +34,8 @@ vi.mock("../../composables/api", async (importOriginal) => {
 
 const mockedApi = vi.mocked(api, true);
 
-const SESSION_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-const SESSION_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const SESSION_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    SESSION_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 const i18n = createI18n({
     legacy: false,
