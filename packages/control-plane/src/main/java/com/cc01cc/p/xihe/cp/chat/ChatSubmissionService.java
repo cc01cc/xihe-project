@@ -188,6 +188,12 @@ public class ChatSubmissionService {
                 existingRun.getTerminalOutcome(), existingRun.getErrorCode()));
     }
 
+    public void persistRunStatus(ChatRun run, String status) {
+        // Keep the status save at the same repository transaction boundary as the Controller path.
+        run.setStatus(status);
+        chatRunRepository.save(run);
+    }
+
     @Transactional(readOnly = true)
     public SpawnInvocation prepareSpawnInvocation(String parentRunId, String toolCallId) {
         requireUuid(parentRunId, "parentRunId");

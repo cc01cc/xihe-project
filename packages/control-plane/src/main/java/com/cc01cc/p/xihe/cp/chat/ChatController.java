@@ -554,8 +554,7 @@ public class ChatController {
 
             // Agent down with a previously ready LLM -> queue transport recovery.
             if (transportOnlyFailure) {
-                chatRun.setStatus("queued");
-                chatRunRepository.save(chatRun);
+                chatSubmissionService.persistRunStatus(chatRun, "queued");
                 boolean queued = requestQueue.enqueue(
                         sessionId, content, provider, model, toolMode, attachmentInfos,
                         userId, workspaceId, requestId, runId, perCallTimeouts.values());
@@ -572,8 +571,7 @@ public class ChatController {
                         "reason", "agent_down"
                     ));
                 }
-                chatRun.setStatus("accepted");
-                chatRunRepository.save(chatRun);
+                chatSubmissionService.persistRunStatus(chatRun, "accepted");
             }
 
             execAsync(sessionId, content, provider, model, toolMode, perCallTimeouts.values(),

@@ -117,6 +117,9 @@ class ChatControllerTest extends AbstractH2Test {
     private ChatRunRepository chatRunRepository;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.status.RequestQueue requestQueue;
+
+    @Autowired
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
@@ -591,6 +594,44 @@ class ChatControllerTest extends AbstractH2Test {
             assertEquals(before, messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).size());
         } finally {
             AGENT_HEALTH.set("{\"status\":\"ok\",\"liveness\":\"up\",\"llmReady\":\"ready\",\"configRevision\":\"test-revision\"}");
+            AGENT_AVAILABLE.set(true);
+            healthMonitor.pollHealth();
+        }
+    }
+
+    @Test
+    void chat_whenTransportFailsAfterReadyQueuesAndPersistsQueuedRunStatus() {
+        requestQueue.clear();
+        AGENT_HEALTH.set("{\"status\":\"ok\",\"liveness\":\"up\",\"llmReady\":\"ready\",\"configRevision\":\"test-revision\"}");
+        AGENT_AVAILABLE.set(true);
+        healthMonitor.pollHealth();
+        AGENT_AVAILABLE.set(false);
+        healthMonitor.pollHealth();
+        String idempotencyKey = "transport-queue-status-" + UUID.randomUUID();
+        try {
+            Map<String, Object> request = Map.of(
+                    "sessionId", sessionId,
+                    "content", "Queue after a transport-only failure",
+                    "workspaceId", workspaceId,
+                    "userId", userId,
+                    "branchId", branchId);
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth(authToken);
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set("Idempotency-Key", idempotencyKey);
+
+            ResponseEntity<Map> response = restTemplate.exchange(
+                    baseUrl + "/api/v1/chat", HttpMethod.POST, chatEntity(request, headers), Map.class);
+
+            assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+            assertEquals("queued", response.getBody().get("status"));
+            ChatRun run = chatRunRepository.findByUserIdAndSessionIdAndIdempotencyKey(
+                    userId, sessionId, idempotencyKey).orElseThrow();
+            assertEquals("queued", run.getStatus());
+            assertEquals(run.getId().toString(), response.getBody().get("runId"));
+            assertEquals(1, requestQueue.size());
+        } finally {
+            requestQueue.clear();
             AGENT_AVAILABLE.set(true);
             healthMonitor.pollHealth();
         }
