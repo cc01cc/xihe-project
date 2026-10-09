@@ -52,20 +52,20 @@ describe("useWorkspaceSSE", () => {
         const onEvent = vi.fn();
         useWorkspaceSSE("ws-1", { onEvent });
         await flushPromises();
-        const options = vi.mocked(chatTransport.sendMessages).mock.calls[0][1];
-        const event = (sequence: number) =>
-            options.onmessage?.({
-                id: String(sequence),
-                event: "file_changed",
-                data: JSON.stringify({
-                    workspaceId: "ws-1",
-                    sequence,
-                    kind: "file_changed",
-                    path: "src/main.ts",
-                    changeType: "modified",
-                    source: "runtime",
-                }),
-            });
+        const options = vi.mocked(chatTransport.sendMessages).mock.calls[0][1],
+            event = (sequence: number) =>
+                options.onmessage?.({
+                    id: String(sequence),
+                    event: "file_changed",
+                    data: JSON.stringify({
+                        workspaceId: "ws-1",
+                        sequence,
+                        kind: "file_changed",
+                        path: "src/main.ts",
+                        changeType: "modified",
+                        source: "runtime",
+                    }),
+                });
 
         await event(1);
         await event(3);

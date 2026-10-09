@@ -37,8 +37,8 @@ describe("logger", () => {
     });
 
     it("should provide useLogger composable", async () => {
-        const { useLogger } = await import("../../lib/logger");
-        const l = useLogger();
+        const { useLogger } = await import("../../lib/logger"),
+            l = useLogger();
         expect(l).toBeDefined();
     });
 

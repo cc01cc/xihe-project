@@ -1,20 +1,20 @@
 import { ref } from "vue";
 import type { MessagePart } from "../types";
 
-const THINK_OPEN = "<think>";
-const THINK_CLOSE = "</think>";
-const ARTIFACT_OPEN_REGEX = /^<artifact\b([^>]*)>/;
-const ARTIFACT_CLOSE = "</artifact>";
-const CITATION_REGEX = /\[(\d+)]/g;
+const THINK_OPEN = "<think>",
+    THINK_CLOSE = "</think>",
+    ARTIFACT_OPEN_REGEX = /^<artifact\b([^>]*)>/,
+    ARTIFACT_CLOSE = "</artifact>",
+    CITATION_REGEX = /\[(\d+)]/g;
 
 function parseArtifactAttrs(attrs: string): {
     identifier: string;
     artifactType: string;
     title: string;
 } {
-    const idMatch = attrs.match(/identifier=["']([^"']+)["']/);
-    const typeMatch = attrs.match(/type=["']([^"']+)["']/);
-    const titleMatch = attrs.match(/title=["']([^"']+)["']/);
+    const idMatch = attrs.match(/identifier=["']([^"']+)["']/),
+        typeMatch = attrs.match(/type=["']([^"']+)["']/),
+        titleMatch = attrs.match(/title=["']([^"']+)["']/);
     return {
         identifier: idMatch?.[1] ?? "",
         artifactType: typeMatch?.[1] ?? "",
@@ -29,14 +29,14 @@ function parseArtifactAttrs(attrs: string): {
  */
 export function parseRawToParts(raw: string): MessagePart[] {
     const output: MessagePart[] = [];
-    let remaining = raw;
-    let textAccum = "";
+    let remaining = raw,
+        textAccum = "";
 
     function flushText() {
         if (!textAccum) return;
         const parts: MessagePart[] = [];
-        let lastIndex = 0;
-        let m: RegExpExecArray | null;
+        let lastIndex = 0,
+            m: RegExpExecArray | null;
         const re = CITATION_REGEX;
         re.lastIndex = 0;
         while ((m = re.exec(textAccum)) !== null) {
@@ -54,10 +54,10 @@ export function parseRawToParts(raw: string): MessagePart[] {
     }
 
     while (remaining.length > 0) {
-        const thinkIdx = remaining.indexOf(THINK_OPEN);
-        const artifactIdx = remaining.indexOf("<artifact");
-        const closeThinkIdx = remaining.indexOf(THINK_CLOSE);
-        const closeArtifactIdx = remaining.indexOf(ARTIFACT_CLOSE);
+        const thinkIdx = remaining.indexOf(THINK_OPEN),
+            artifactIdx = remaining.indexOf("<artifact"),
+            closeThinkIdx = remaining.indexOf(THINK_CLOSE),
+            closeArtifactIdx = remaining.indexOf(ARTIFACT_CLOSE);
 
         // Determine what comes first
         const upcoming: Array<{
@@ -88,8 +88,8 @@ export function parseRawToParts(raw: string): MessagePart[] {
         switch (first.kind) {
             case "think-open": {
                 flushText();
-                const afterOpen = remaining.slice(THINK_OPEN.length);
-                const endIdx = afterOpen.indexOf(THINK_CLOSE);
+                const afterOpen = remaining.slice(THINK_OPEN.length),
+                    endIdx = afterOpen.indexOf(THINK_CLOSE);
                 if (endIdx !== -1) {
                     const content = afterOpen.slice(0, endIdx);
                     output.push({ type: "reasoning", content });
@@ -105,9 +105,9 @@ export function parseRawToParts(raw: string): MessagePart[] {
                 flushText();
                 const m = ARTIFACT_OPEN_REGEX.exec(remaining);
                 if (m) {
-                    const attrs = parseArtifactAttrs(m[1]);
-                    const innerStart = m[0].length;
-                    const endIdx = remaining.indexOf(ARTIFACT_CLOSE, innerStart);
+                    const attrs = parseArtifactAttrs(m[1]),
+                        innerStart = m[0].length,
+                        endIdx = remaining.indexOf(ARTIFACT_CLOSE, innerStart);
                     if (endIdx !== -1) {
                         const content = remaining.slice(innerStart, endIdx);
                         output.push({ type: "artifact", ...attrs, content });
@@ -147,8 +147,8 @@ export function parseRawToParts(raw: string): MessagePart[] {
 }
 
 export function useStreamParser() {
-    const parts = ref<MessagePart[]>([]);
-    const raw = ref("");
+    const parts = ref<MessagePart[]>([]),
+        raw = ref("");
 
     function handleToken(token: string, hint?: "reasoning" | "text") {
         if (hint === "reasoning") {
@@ -162,8 +162,8 @@ export function useStreamParser() {
         }
 
         if (hint === "text") {
-            const clean = token.replace(/<\/?think>/g, "");
-            const last = parts.value.length > 0 ? parts.value[parts.value.length - 1] : null;
+            const clean = token.replace(/<\/?think>/g, ""),
+                last = parts.value.length > 0 ? parts.value[parts.value.length - 1] : null;
             if (last?.type === "text") {
                 last.content += clean;
             } else {

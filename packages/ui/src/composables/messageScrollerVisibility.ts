@@ -6,8 +6,8 @@ import type {
     MessageScrollerVisibilityState,
 } from "@/lib/messageScrollerTypes";
 
-export const MessageScrollerContextKey = Symbol("MessageScrollerContext");
-export const MessageScrollerItemContextKey = Symbol("MessageScrollerItemContext");
+export const MessageScrollerContextKey = Symbol("MessageScrollerContext"),
+    MessageScrollerItemContextKey = Symbol("MessageScrollerItemContext");
 
 export function provideMessageScrollerContext(context: MessageScrollerContextValue) {
     provide(MessageScrollerContextKey, context);
@@ -48,8 +48,8 @@ export function useMessageScroller() {
 }
 
 export function useMessageScrollerScrollable() {
-    const { stateStore } = useMessageScrollerContext();
-    const snapshot = shallowRef<MessageScrollerScrollable>(stateStore.getSnapshot());
+    const { stateStore } = useMessageScrollerContext(),
+        snapshot = shallowRef<MessageScrollerScrollable>(stateStore.getSnapshot());
 
     stateStore.subscribe(() => {
         snapshot.value = stateStore.getSnapshot();
@@ -67,8 +67,8 @@ export function useMessageScrollerScrollable() {
 }
 
 export function useMessageScrollerVisibility() {
-    const { observeVisibility, unobserveVisibility, visibilityStore } = useMessageScrollerContext();
-    const snapshot = ref<MessageScrollerVisibilityState>(visibilityStore.getSnapshot());
+    const { observeVisibility, unobserveVisibility, visibilityStore } = useMessageScrollerContext(),
+        snapshot = ref<MessageScrollerVisibilityState>(visibilityStore.getSnapshot());
 
     const subscribe = (listener: () => void) =>
         visibilityStore.subscribe(listener, observeVisibility, unobserveVisibility);

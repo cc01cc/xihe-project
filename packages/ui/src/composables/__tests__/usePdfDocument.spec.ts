@@ -14,8 +14,8 @@ vi.mock("pdfjs-dist", () => ({
 
 describe("usePdfDocument", () => {
     it("exports a function and handles null source", async () => {
-        const { usePdfDocument } = await import("../../composables/usePdfDocument");
-        const result = usePdfDocument(null);
+        const { usePdfDocument } = await import("../../composables/usePdfDocument"),
+            result = usePdfDocument(null);
         expect(typeof result.loading).toBe("object");
         expect(result.loading.value).toBe(false);
         expect(result.numPages.value).toBe(0);

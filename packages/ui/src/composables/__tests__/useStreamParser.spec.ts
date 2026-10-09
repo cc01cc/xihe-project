@@ -5,20 +5,20 @@ import { useStreamParser } from "../useStreamParser";
 
 function mountStreamParser() {
     const TestComponent = defineComponent({
-        setup() {
-            const parser = useStreamParser();
-            return { parser };
-        },
-        template: "<div />",
-    });
-    const wrapper = mount(TestComponent);
+            setup() {
+                const parser = useStreamParser();
+                return { parser };
+            },
+            template: "<div />",
+        }),
+        wrapper = mount(TestComponent);
     return wrapper;
 }
 
 describe("useStreamParser", () => {
     it("routes reasoning hint to reasoning part", () => {
-        const wrapper = mountStreamParser();
-        const { handleToken, parts, finalize } = wrapper.vm.parser;
+        const wrapper = mountStreamParser(),
+            { handleToken, parts, finalize } = wrapper.vm.parser;
         handleToken("思考内容", "reasoning");
         finalize();
         expect(parts.value).toHaveLength(1);
@@ -26,8 +26,8 @@ describe("useStreamParser", () => {
     });
 
     it("routes text hint to text part", () => {
-        const wrapper = mountStreamParser();
-        const { handleToken, parts, finalize } = wrapper.vm.parser;
+        const wrapper = mountStreamParser(),
+            { handleToken, parts, finalize } = wrapper.vm.parser;
         handleToken("Hello", "text");
         finalize();
         expect(parts.value).toHaveLength(1);
@@ -35,8 +35,8 @@ describe("useStreamParser", () => {
     });
 
     it("merges consecutive reasoning tokens with hint", () => {
-        const wrapper = mountStreamParser();
-        const { handleToken, parts, finalize } = wrapper.vm.parser;
+        const wrapper = mountStreamParser(),
+            { handleToken, parts, finalize } = wrapper.vm.parser;
         handleToken("思考A", "reasoning");
         handleToken("思考B", "reasoning");
         finalize();
@@ -45,8 +45,8 @@ describe("useStreamParser", () => {
     });
 
     it("merges consecutive text tokens with hint", () => {
-        const wrapper = mountStreamParser();
-        const { handleToken, parts, finalize } = wrapper.vm.parser;
+        const wrapper = mountStreamParser(),
+            { handleToken, parts, finalize } = wrapper.vm.parser;
         handleToken("Hello ", "text");
         handleToken("world", "text");
         finalize();
@@ -55,8 +55,8 @@ describe("useStreamParser", () => {
     });
 
     it("handles interleaved reasoning and text by hint", () => {
-        const wrapper = mountStreamParser();
-        const { handleToken, parts, finalize } = wrapper.vm.parser;
+        const wrapper = mountStreamParser(),
+            { handleToken, parts, finalize } = wrapper.vm.parser;
         handleToken("Answer: ", "text");
         handleToken("thinking deeply", "reasoning");
         handleToken(" done", "text");
@@ -68,8 +68,8 @@ describe("useStreamParser", () => {
     });
 
     it("extracts think block without hint", () => {
-        const wrapper = mountStreamParser();
-        const { handleToken, parts, finalize } = wrapper.vm.parser;
+        const wrapper = mountStreamParser(),
+            { handleToken, parts, finalize } = wrapper.vm.parser;
         handleToken("Before <think>思考内容</think> After");
         finalize();
         expect(parts.value).toHaveLength(3);
@@ -79,8 +79,8 @@ describe("useStreamParser", () => {
     });
 
     it("handles unclosed think block without hint", () => {
-        const wrapper = mountStreamParser();
-        const { handleToken, parts } = wrapper.vm.parser;
+        const wrapper = mountStreamParser(),
+            { handleToken, parts } = wrapper.vm.parser;
         handleToken("Before <think>未关闭");
         expect(parts.value).toHaveLength(2);
         expect(parts.value[0]).toEqual({ type: "text", content: "Before " });
@@ -88,8 +88,8 @@ describe("useStreamParser", () => {
     });
 
     it("closes unclosed think on finalize and falls back to text", () => {
-        const wrapper = mountStreamParser();
-        const { handleToken, parts, finalize } = wrapper.vm.parser;
+        const wrapper = mountStreamParser(),
+            { handleToken, parts, finalize } = wrapper.vm.parser;
         handleToken("Before <think>未关闭");
         finalize();
         expect(parts.value).toHaveLength(2);
@@ -98,8 +98,8 @@ describe("useStreamParser", () => {
     });
 
     it("extracts citation markers", () => {
-        const wrapper = mountStreamParser();
-        const { handleToken, parts, finalize } = wrapper.vm.parser;
+        const wrapper = mountStreamParser(),
+            { handleToken, parts, finalize } = wrapper.vm.parser;
         handleToken("Some text [1] and [42] more");
         finalize();
         expect(parts.value.length).toBeGreaterThanOrEqual(3);
@@ -109,8 +109,8 @@ describe("useStreamParser", () => {
     });
 
     it("extracts artifact block", () => {
-        const wrapper = mountStreamParser();
-        const { handleToken, parts, finalize } = wrapper.vm.parser;
+        const wrapper = mountStreamParser(),
+            { handleToken, parts, finalize } = wrapper.vm.parser;
         handleToken(
             'text <artifact identifier="a1" type="code" title="test">code content</artifact> after',
         );
@@ -128,8 +128,8 @@ describe("useStreamParser", () => {
     });
 
     it("handles streaming artifact block", () => {
-        const wrapper = mountStreamParser();
-        const { handleToken, parts, finalize } = wrapper.vm.parser;
+        const wrapper = mountStreamParser(),
+            { handleToken, parts, finalize } = wrapper.vm.parser;
         handleToken('<artifact identifier="a1" type="text" title="doc">');
         expect(parts.value).toHaveLength(1);
         expect(parts.value[0].type).toBe("artifact");
@@ -151,8 +151,8 @@ describe("useStreamParser", () => {
     });
 
     it("handles mixed think and artifact", () => {
-        const wrapper = mountStreamParser();
-        const { handleToken, parts, finalize } = wrapper.vm.parser;
+        const wrapper = mountStreamParser(),
+            { handleToken, parts, finalize } = wrapper.vm.parser;
         handleToken(
             '<think>推理</think>正文<artifact identifier="a1" type="code" title="x">代码</artifact>',
         );
@@ -164,15 +164,15 @@ describe("useStreamParser", () => {
     });
 
     it("handles empty input", () => {
-        const wrapper = mountStreamParser();
-        const { parts, finalize } = wrapper.vm.parser;
+        const wrapper = mountStreamParser(),
+            { parts, finalize } = wrapper.vm.parser;
         finalize();
         expect(parts.value).toHaveLength(0);
     });
 
     it("handles plain text without any tags", () => {
-        const wrapper = mountStreamParser();
-        const { handleToken, parts, finalize } = wrapper.vm.parser;
+        const wrapper = mountStreamParser(),
+            { handleToken, parts, finalize } = wrapper.vm.parser;
         handleToken("Just some plain text");
         finalize();
         expect(parts.value).toHaveLength(1);
@@ -180,8 +180,8 @@ describe("useStreamParser", () => {
     });
 
     it("resets state correctly", () => {
-        const wrapper = mountStreamParser();
-        const { handleToken, parts, reset } = wrapper.vm.parser;
+        const wrapper = mountStreamParser(),
+            { handleToken, parts, reset } = wrapper.vm.parser;
         handleToken("Hello", "text");
         expect(parts.value).toHaveLength(1);
         reset();

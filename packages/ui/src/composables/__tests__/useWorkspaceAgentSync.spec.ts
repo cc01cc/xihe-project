@@ -4,8 +4,8 @@ import { setActivePinia, createPinia } from "pinia";
 describe("useWorkspaceAgentSync", () => {
     it("returns handleToolCall function", async () => {
         setActivePinia(createPinia());
-        const { useWorkspaceAgentSync } = await import("../../composables/useWorkspaceAgentSync");
-        const sync = useWorkspaceAgentSync();
+        const { useWorkspaceAgentSync } = await import("../../composables/useWorkspaceAgentSync"),
+            sync = useWorkspaceAgentSync();
         expect(typeof sync.handleToolCall).toBe("function");
     });
 

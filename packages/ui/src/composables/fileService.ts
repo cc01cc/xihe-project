@@ -11,8 +11,8 @@ async function runtimeReadFile(
     workspaceId: string,
     opts?: { max_bytes?: number },
 ): Promise<ReadFilePreviewResult> {
-    const { content } = await api.readFile(path, workspaceId);
-    const maxBytes = opts?.max_bytes;
+    const { content } = await api.readFile(path, workspaceId),
+        maxBytes = opts?.max_bytes;
     return maxBytes !== undefined && content.length > maxBytes
         ? { content: content.slice(0, maxBytes), truncated: true }
         : { content, truncated: false };

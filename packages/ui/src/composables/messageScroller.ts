@@ -89,10 +89,10 @@ export function useMessageScrollerController({
     }
 
     function writeStateAttributes(state: MessageScrollerScrollable) {
-        const root = rootRef.value;
-        const viewport = viewportRef.value;
-        const scrollable = [state.start && "start", state.end && "end"].filter(Boolean).join(" ");
-        const autoScrolling = autoscrollingRef.value;
+        const root = rootRef.value,
+            viewport = viewportRef.value,
+            scrollable = [state.start && "start", state.end && "end"].filter(Boolean).join(" "),
+            autoScrolling = autoscrollingRef.value;
 
         for (const element of [root, viewport]) {
             if (!element) {
@@ -189,15 +189,15 @@ export function useMessageScrollerController({
     });
 
     function restorePrependedAnchor() {
-        const anchor = prependRestoreRef.value;
-        const viewport = viewportRef.value;
+        const anchor = prependRestoreRef.value,
+            viewport = viewportRef.value;
 
         if (!anchor || !viewport || !anchor.element.isConnected) {
             return false;
         }
 
-        const nextViewportTop = getElementViewportTop(anchor.element, viewport);
-        const delta = nextViewportTop - anchor.viewportTop;
+        const nextViewportTop = getElementViewportTop(anchor.element, viewport),
+            delta = nextViewportTop - anchor.viewportTop;
 
         if (Math.abs(delta) <= 0.5) {
             return false;
@@ -212,8 +212,8 @@ export function useMessageScrollerController({
     }
 
     function capturePrependAnchor() {
-        const content = contentRef.value;
-        const viewport = viewportRef.value;
+        const content = contentRef.value,
+            viewport = viewportRef.value;
 
         if (!content || !viewport) {
             prependRestoreRef.value = null;
@@ -260,23 +260,23 @@ export function useMessageScrollerController({
         let handled = false;
 
         if (defaultScrollPosition === "last-anchor") {
-            const content = contentRef.value;
-            const viewport = viewportRef.value;
-            const anchor =
-                content && viewport
-                    ? getLastScrollAnchor(getMessageScrollerItems(content, spacerRef.value))
-                    : null;
+            const content = contentRef.value,
+                viewport = viewportRef.value,
+                anchor =
+                    content && viewport
+                        ? getLastScrollAnchor(getMessageScrollerItems(content, spacerRef.value))
+                        : null;
 
             if (!content || !viewport || !anchor) {
                 handled = scrollToEnd({ behavior: "auto" });
             } else {
-                const anchorTop = getElementTop(anchor, viewport);
-                const contentBottom = getContentBottom({
-                    content,
-                    spacer: spacerRef.value,
-                    viewport,
-                });
-                const lastTurnFits = contentBottom - anchorTop <= viewport.clientHeight;
+                const anchorTop = getElementTop(anchor, viewport),
+                    contentBottom = getContentBottom({
+                        content,
+                        spacer: spacerRef.value,
+                        viewport,
+                    }),
+                    lastTurnFits = contentBottom - anchorTop <= viewport.clientHeight;
 
                 handled = lastTurnFits
                     ? scrollToEnd({ behavior: "auto" })
@@ -305,9 +305,9 @@ export function useMessageScrollerController({
             return;
         }
 
-        const items = getMessageScrollerItems(content, spacerRef.value);
-        const previousItemCount = itemCountRef.value;
-        const previousFirstItem = firstItemRef.value;
+        const items = getMessageScrollerItems(content, spacerRef.value),
+            previousItemCount = itemCountRef.value,
+            previousFirstItem = firstItemRef.value;
 
         itemCountRef.value = items.length;
         firstItemRef.value = items[0] ?? null;
@@ -332,9 +332,9 @@ export function useMessageScrollerController({
             }
 
             const previousFirstItemIndex = previousFirstItem
-                ? items.indexOf(previousFirstItem)
-                : -1;
-            const didPrepend = preserveScrollOnPrependRef.value && previousFirstItemIndex > 0;
+                    ? items.indexOf(previousFirstItem)
+                    : -1,
+                didPrepend = preserveScrollOnPrependRef.value && previousFirstItemIndex > 0;
 
             if (didPrepend) {
                 restorePrependedAnchor();

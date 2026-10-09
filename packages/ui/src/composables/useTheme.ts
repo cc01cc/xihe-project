@@ -9,9 +9,8 @@ export function useTheme() {
         storageKey: "xihe-theme",
     });
 
-    const storedTheme = useLocalStorage<"light" | "dark" | "system">("xihe-theme", "system");
-
-    const theme = ref<"light" | "dark">(colorMode.value === "dark" ? "dark" : "light");
+    const storedTheme = useLocalStorage<"light" | "dark" | "system">("xihe-theme", "system"),
+        theme = ref<"light" | "dark">(colorMode.value === "dark" ? "dark" : "light");
 
     watchEffect(() => {
         if (colorMode.value === "dark") {

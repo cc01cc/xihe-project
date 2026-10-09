@@ -160,8 +160,8 @@ export function useMessageScrollerCommands({
         }: MessageScrollerScrollOptions = {},
         { keepPreviousPeek = false }: { keepPreviousPeek?: boolean } = {},
     ) {
-        const content = contentRef.value;
-        const viewport = viewportRef.value;
+        const content = contentRef.value,
+            viewport = viewportRef.value;
 
         if (!content || !viewport || !content.contains(element)) {
             return false;

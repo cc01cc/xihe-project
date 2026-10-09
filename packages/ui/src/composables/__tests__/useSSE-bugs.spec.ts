@@ -36,8 +36,8 @@ describe("BUG-1: /chat Content-Type mismatch", () => {
         const { sendMessage } = useSSE("test-session");
         await sendMessage({ content: "Hello world", branchId: BRANCH_ID });
 
-        const [endpoint, options] = fetchSpy.mock.calls[0];
-        const body = options.body;
+        const [endpoint, options] = fetchSpy.mock.calls[0],
+            body = options.body;
 
         expect(endpoint).toBe("/api/v1/chat");
         expect(body).not.toBeInstanceOf(FormData);
@@ -55,8 +55,8 @@ describe("BUG-1: /chat Content-Type mismatch", () => {
         const { sendMessage } = useSSE("test-session");
         await sendMessage({ content: "Hello", branchId: BRANCH_ID });
 
-        const [, options] = fetchSpy.mock.calls[0];
-        const headers = options.headers || {};
+        const [, options] = fetchSpy.mock.calls[0],
+            headers = options.headers || {};
         expect(headers["Content-Type"]).toBe("application/json");
     });
 });
@@ -109,8 +109,8 @@ describe("BUG-4: attachments must be sent as fileId array", () => {
             attachments: ["file-id-1"],
         });
 
-        const [, options] = fetchSpy.mock.calls[0];
-        const body = options.body;
+        const [, options] = fetchSpy.mock.calls[0],
+            body = options.body;
 
         expect(body).not.toBeInstanceOf(FormData);
         expect(typeof body).toBe("string");
@@ -150,8 +150,8 @@ describe("BUG-6: /chat 409 when SSE subscription is missing", () => {
         });
         vi.stubGlobal("fetch", fetchSpy);
 
-        const onError = vi.fn();
-        const { connect, sendMessage, error } = useSSE("test-session");
+        const onError = vi.fn(),
+            { connect, sendMessage, error } = useSSE("test-session");
         connect({ onError });
         await sendMessage({ content: "Hello", branchId: BRANCH_ID });
 
