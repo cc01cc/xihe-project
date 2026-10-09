@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import type { APIRequestContext, Page } from "@playwright/test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -34,10 +35,7 @@ test.describe("@host Workspace import", () => {
      * the auto-created default workspace is fresh, and the access token's workspace context
      * matches the page the import dialog is opened from.
      */
-    async function registerUser(
-        request: import("@playwright/test").APIRequestContext,
-        tag: string,
-    ): Promise<ImportUser> {
+    async function registerUser(request: APIRequestContext, tag: string): Promise<ImportUser> {
         const response = await request.post(`${CP_URL}/api/v1/auth/register`, {
             data: {
                 email: `workspace-import-${tag}-${Date.now()}@test.com`,
@@ -56,7 +54,7 @@ test.describe("@host Workspace import", () => {
         return user;
     }
 
-    function seedPage(page: import("@playwright/test").Page, user: ImportUser) {
+    function seedPage(page: Page, user: ImportUser) {
         page.addInitScript((token) => localStorage.setItem("xihe-token", token), user.token);
         page.addInitScript(
             (raw) => localStorage.setItem("xihe-user", raw),
@@ -78,7 +76,7 @@ test.describe("@host Workspace import", () => {
     }
 
     async function startImportFrom(
-        page: import("@playwright/test").Page,
+        page: Page,
         user: ImportUser,
         source: string,
         options: { read?: boolean } = {},

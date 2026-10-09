@@ -4,7 +4,8 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
 import { ensureAgentWorkspaceBinding, getRootBranchId } from "./helpers/journey";
-import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
+import { test, expect } from "@playwright/test";
+import type { APIRequestContext, Page } from "@playwright/test";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
@@ -134,7 +135,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
         suiteSessionId = ((await sessionRes.json()) as { id: string }).id;
     });
 
-    function seedPage(page: import("@playwright/test").Page, token: string, wsId: string) {
+    function seedPage(page: Page, token: string, wsId: string) {
         page.addInitScript((t) => localStorage.setItem("xihe-token", t), token);
         page.addInitScript(
             (raw) => localStorage.setItem("xihe-user", raw),

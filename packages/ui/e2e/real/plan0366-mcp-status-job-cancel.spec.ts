@@ -5,6 +5,7 @@ import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
 import { ensureAgentWorkspaceBinding, getRootBranchId } from "./helpers/journey";
 import { test, expect } from "@playwright/test";
+import type { APIRequestContext, Page } from "@playwright/test";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
@@ -119,7 +120,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         suiteSessionId = ((await sessionRes.json()) as { id: string }).id;
     });
 
-    function seedPage(page: import("@playwright/test").Page, token: string, wsId: string) {
+    function seedPage(page: Page, token: string, wsId: string) {
         page.addInitScript((t) => localStorage.setItem("xihe-token", t), token);
         page.addInitScript(
             (raw) => localStorage.setItem("xihe-user", raw),
@@ -132,10 +133,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         page.addInitScript(() => localStorage.setItem("xihe-language", "zh-CN"));
     }
 
-    async function putStdioServers(
-        request: import("@playwright/test").APIRequestContext,
-        servers: Record<string, unknown>,
-    ) {
+    async function putStdioServers(request: APIRequestContext, servers: Record<string, unknown>) {
         const current = await request.get(`${CP_URL}/api/v1/workspaces/${sharedWs}/stdio-servers`, {
             headers: sharedHeaders,
         });
@@ -151,7 +149,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         ).toBeTruthy();
     }
 
-    async function triggerMcpToolsList(request: import("@playwright/test").APIRequestContext) {
+    async function triggerMcpToolsList(request: APIRequestContext) {
         const mcpHeaders = {
             ...sharedHeaders,
             Accept: "application/json, text/event-stream",
@@ -182,9 +180,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
     }
 
     /** 工作区会话 id（新用户唯一会话）。 */
-    async function resolveSessionId(
-        request: import("@playwright/test").APIRequestContext,
-    ): Promise<string> {
+    async function resolveSessionId(request: APIRequestContext): Promise<string> {
         const res = await request.get(`${CP_URL}/api/v1/sessions`, { headers: sharedHeaders });
         expect(res.ok()).toBeTruthy();
         const body = (await res.json()) as { sessions?: Array<{ id: string }> },
@@ -197,10 +193,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
      * PLAN-0464/0465：ChatRun 不再有 chat operation root，run 收敛以
      * `GET /chat/runs/{runId}` 为关联面（messages DTO 每条消息带 runId）。
      */
-    async function latestRunId(
-        request: import("@playwright/test").APIRequestContext,
-        sessionId: string,
-    ): Promise<string> {
+    async function latestRunId(request: APIRequestContext, sessionId: string): Promise<string> {
         const branchId = await getRootBranchId(request, sessionId, sharedHeaders);
         const res = await request.get(
             `${CP_URL}/api/v1/sessions/${sessionId}/messages?branchId=${branchId}`,
@@ -213,7 +206,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
     }
 
     async function awaitLatestChatRunTerminal(
-        request: import("@playwright/test").APIRequestContext,
+        request: APIRequestContext,
         sessionId: string,
     ): Promise<string> {
         let runId = "";
@@ -271,7 +264,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
 
     /** 会话消息里的 job 档案摘要（顺序 = 工具调用顺序）。 */
     async function jobSummaries(
-        request: import("@playwright/test").APIRequestContext,
+        request: APIRequestContext,
         sessionId: string,
     ): Promise<Array<{ jobId: string; workspaceId?: string; status?: string }>> {
         const branchId = await getRootBranchId(request, sessionId, sharedHeaders);
@@ -301,7 +294,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
     }
 
     /** 反复批准直至确定性 follow-up 文本出现（一次 run 两个 start 工具 = 两次审批）。 */
-    async function approveUntil(page: import("@playwright/test").Page, doneText: string) {
+    async function approveUntil(page: Page, doneText: string) {
         const modal = page.locator('[data-testid="modal-content"]');
         const approve = modal.locator('[data-testid="approval-approve"]');
         await expect

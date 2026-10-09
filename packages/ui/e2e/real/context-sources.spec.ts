@@ -1,6 +1,7 @@
 import path from "node:path";
 import { mkdirSync } from "node:fs";
 import { test, expect } from "@playwright/test";
+import type { APIRequestContext } from "@playwright/test";
 import {
     ensureAgentWorkspaceBinding,
     evidenceDir,
@@ -34,10 +35,7 @@ test.describe("@host PLAN-0340 U1/U2 context sources", () => {
         sharedWs = ctx.workspaceId;
     });
 
-    async function writeAgents(
-        request: import("@playwright/test").APIRequestContext,
-        body: string,
-    ): Promise<void> {
+    async function writeAgents(request: APIRequestContext, body: string): Promise<void> {
         const res = await request.post(
             `${RUNTIME_URL}/internal/v1/runtime/workspaces/${sharedWs}/files/write/AGENTS.md`,
             {

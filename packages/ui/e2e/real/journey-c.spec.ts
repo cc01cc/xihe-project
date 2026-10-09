@@ -3,6 +3,7 @@ import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
 import { awaitLatestChatRunCompleted, ensureAgentWorkspaceBinding } from "./helpers/journey";
 import { test, expect } from "@playwright/test";
+import type { Page } from "@playwright/test";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 // e2e-host passes XIHE_WORKSPACE_HOST_ROOT to the runtime process but not to
@@ -49,7 +50,7 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
         };
     });
 
-    function seedPage(page: import("@playwright/test").Page, token: string, wsId: string) {
+    function seedPage(page: Page, token: string, wsId: string) {
         page.addInitScript((t) => localStorage.setItem("xihe-token", t), token);
         page.addInitScript(
             (raw) => localStorage.setItem("xihe-user", raw),
@@ -63,7 +64,7 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
 
     // 新建对话 switches sessions asynchronously and clears the input — fill with
     // a retry until the send button reflects the non-empty input.
-    async function sendChat(page: import("@playwright/test").Page, text: string) {
+    async function sendChat(page: Page, text: string) {
         const input = page.locator('[data-testid="chat-input"]');
         const send = page.locator('[data-testid="chat-send-button"]');
         for (let i = 0; i < 6; i++) {

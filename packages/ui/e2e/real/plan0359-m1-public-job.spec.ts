@@ -4,6 +4,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { generateE2EPassword } from "./helpers/password";
 import { test, expect } from "@playwright/test";
+import type { APIRequestContext, Page } from "@playwright/test";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan0359-m1-public-job");
@@ -12,7 +13,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
     test.describe.configure({ mode: "serial" });
     test.setTimeout(240000);
 
-    async function register(request: import("@playwright/test").APIRequestContext, tag: string) {
+    async function register(request: APIRequestContext, tag: string) {
         const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
         const response = await request.post(`${CP_URL}/api/v1/auth/register`, {
             data: {
@@ -34,7 +35,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
     }
 
     async function createBoundWorkspace(
-        request: import("@playwright/test").APIRequestContext,
+        request: APIRequestContext,
         tag: string,
         executionMode: "windows-host" | "windows-mxc",
         allowUnavailable = false,
@@ -96,7 +97,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
     }
 
     async function startJob(
-        request: import("@playwright/test").APIRequestContext,
+        request: APIRequestContext,
         token: string,
         workspaceId: string,
         body: Record<string, unknown>,
@@ -112,11 +113,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
         });
     }
 
-    async function listJobs(
-        request: import("@playwright/test").APIRequestContext,
-        token: string,
-        workspaceId: string,
-    ) {
+    async function listJobs(request: APIRequestContext, token: string, workspaceId: string) {
         const response = await request.get(`${CP_URL}/api/v1/workspaces/${workspaceId}/jobs`, {
             headers: { Authorization: `Bearer ${token}` },
         });
@@ -127,12 +124,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
         return (await response.json()) as Array<Record<string, unknown>>;
     }
 
-    function seedPage(
-        page: import("@playwright/test").Page,
-        token: string,
-        workspaceId: string,
-        name: string,
-    ) {
+    function seedPage(page: Page, token: string, workspaceId: string, name: string) {
         page.addInitScript((value) => localStorage.setItem("xihe-token", value), token);
         page.addInitScript(
             (value) => localStorage.setItem("xihe-user", value),

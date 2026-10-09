@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
@@ -31,7 +32,7 @@ const providerCatalog = {
     ],
 };
 
-async function mockSettingsApis(page: import("@playwright/test").Page) {
+async function mockSettingsApis(page: Page) {
     await page.route("**/api/v1/events**", (route) =>
         route.fulfill({
             status: 200,

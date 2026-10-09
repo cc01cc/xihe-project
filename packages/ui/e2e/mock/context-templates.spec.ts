@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import path from "node:path";
 import fs from "node:fs";
@@ -41,7 +42,7 @@ function template(version: number, name: string) {
     };
 }
 
-async function shoot(page: import("@playwright/test").Page, name: string) {
+async function shoot(page: Page, name: string) {
     fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
     const viewport = (process.env.XIHE_E2E_VIEWPORT ?? "1920x1080").replace(/\D/g, "-");
     await page.screenshot({

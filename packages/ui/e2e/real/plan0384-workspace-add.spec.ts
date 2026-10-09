@@ -3,6 +3,7 @@ import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
 import { actionableErrors, collectPageErrors } from "./helpers/console";
 import { test, expect } from "@playwright/test";
+import type { Page } from "@playwright/test";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan0384-add-workspace");
@@ -92,7 +93,7 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
         sharedAuth = refreshedBody.accessToken as string;
     });
 
-    function seedPage(page: import("@playwright/test").Page) {
+    function seedPage(page: Page) {
         page.addInitScript((t) => localStorage.setItem("xihe-token", t), sharedAuth);
         page.addInitScript(
             (raw) => localStorage.setItem("xihe-user", raw),

@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { expectPlatformScreenshot } from "../helpers/visual";
 
@@ -36,7 +37,7 @@ const approvalEvent = (
     },
 });
 
-async function installApprovalSSE(page: import("@playwright/test").Page) {
+async function installApprovalSSE(page: Page) {
     await page.addInitScript(
         ({ sessionId, runId }: { sessionId: string; runId: string }) => {
             const pending: unknown[] = [];
@@ -112,11 +113,7 @@ async function installApprovalSSE(page: import("@playwright/test").Page) {
     );
 }
 
-async function installDecisionRoute(
-    page: import("@playwright/test").Page,
-    status: number,
-    body: Record<string, unknown>,
-) {
+async function installDecisionRoute(page: Page, status: number, body: Record<string, unknown>) {
     const calls: Array<{ requestId: string; body: Record<string, unknown> }> = [];
     await page.route("**/api/v1/chat/approvals/**", async (route) => {
         const payload = route.request().postDataJSON() as Record<string, unknown> | null;
@@ -135,7 +132,7 @@ async function installDecisionRoute(
 }
 
 async function installPendingRoute(
-    page: import("@playwright/test").Page,
+    page: Page,
     summaries: Array<{
         sessionId: string;
         workspaceId: string;
@@ -152,7 +149,7 @@ async function installPendingRoute(
     });
 }
 
-async function installPolicyModeRoute(page: import("@playwright/test").Page) {
+async function installPolicyModeRoute(page: Page) {
     await page.route("**/api/v1/policy/mode*", async (route) => {
         const url = new URL(route.request().url());
         const body =
@@ -173,21 +170,18 @@ async function installPolicyModeRoute(page: import("@playwright/test").Page) {
     });
 }
 
-async function openApprovalChat(page: import("@playwright/test").Page) {
+async function openApprovalChat(page: Page) {
     await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
     await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({ timeout: 10000 });
 }
 
-async function pushApproval(
-    page: import("@playwright/test").Page,
-    payload: Record<string, unknown>,
-) {
+async function pushApproval(page: Page, payload: Record<string, unknown>) {
     await page.evaluate((data) => {
         (window as unknown as Record<string, unknown>).__pushApprovalEvent!(data);
     }, payload);
 }
 
-function viewportTag(page: import("@playwright/test").Page): string {
+function viewportTag(page: Page): string {
     const size = page.viewportSize();
     return size ? `${size.width}x${size.height}` : "default";
 }

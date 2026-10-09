@@ -1,10 +1,11 @@
 import { test, expect } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { resolve } from "node:path";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 
 const SESSION_ID = "liveness-session";
 
-async function installLivenessSSE(page: import("@playwright/test").Page) {
+async function installLivenessSSE(page: Page) {
     await page.addInitScript(() => {
         let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
         const encode = (value: string) => new TextEncoder().encode(value);
@@ -64,7 +65,7 @@ async function installLivenessSSE(page: import("@playwright/test").Page) {
     });
 }
 
-async function push(page: import("@playwright/test").Page, name: string, data: unknown) {
+async function push(page: Page, name: string, data: unknown) {
     await page.evaluate(
         ([eventName, payload]) => {
             (window as unknown as Record<string, unknown>).__pushLivenessEvent!(
@@ -76,7 +77,7 @@ async function push(page: import("@playwright/test").Page, name: string, data: u
     );
 }
 
-async function startRun(page: import("@playwright/test").Page) {
+async function startRun(page: Page) {
     await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
     await expect(page.locator("textarea")).toBeVisible({ timeout: 10000 });
     await page.locator("textarea").fill("run a long task");
@@ -87,8 +88,7 @@ async function startRun(page: import("@playwright/test").Page) {
 }
 
 const evidenceDir = resolve(process.cwd(), "../../../.local/plan-0323");
-const messageError = (page: import("@playwright/test").Page) =>
-    page.locator('[data-testid="message-error"]');
+const messageError = (page: Page) => page.locator('[data-testid="message-error"]');
 
 test.describe("SSE liveness timer (S-1)", () => {
     test.beforeEach(async ({ page }) => {
