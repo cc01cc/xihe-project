@@ -25,8 +25,8 @@ import com.cc01cc.p.xihe.cp.policy.ToolShape;
 import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpStdioServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpToolAliasRepository;
-import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
+import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy;
 
 import java.time.Instant;
@@ -68,7 +68,8 @@ class JobTimeoutClampTest {
     private McpServerRepository mcpServerRepository;
     private McpToolAliasRepository aliasRepository;
     private WorkspaceService workspaceService;
-    private SessionRepository sessionRepository;
+    private SessionService sessionService;
+    private McpProxyCatalogService catalogService;
     private ConfigService configService;
     private AgentSpawnExecutionService agentSpawnExecutionService;
     private McpProxyController controller;
@@ -86,7 +87,9 @@ class JobTimeoutClampTest {
         mcpServerRepository = mock(McpServerRepository.class);
         aliasRepository = mock(McpToolAliasRepository.class);
         workspaceService = mock(WorkspaceService.class);
-        sessionRepository = mock(SessionRepository.class);
+        sessionService = mock(SessionService.class);
+        catalogService = new McpProxyCatalogService(
+                stdioServerRepository, mcpServerRepository, aliasRepository);
         configService = mock(ConfigService.class);
         agentSpawnExecutionService = mock(AgentSpawnExecutionService.class);
 
@@ -94,9 +97,8 @@ class JobTimeoutClampTest {
 
         controller = new McpProxyController(
                 requestRewriter, policyEngine,
-                auditLogger, approvalService, objectMapper, sseEmitterManager, stdioServerRepository,
-                mcpServerRepository, aliasRepository,
-                workspaceService, sessionRepository,
+                auditLogger, approvalService, objectMapper, sseEmitterManager, catalogService,
+                workspaceService, sessionService,
                 mock(JobStateService.class),
                 configService,
                 new ToolTimeoutPolicy(),

@@ -26,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -208,6 +209,15 @@ public class SessionService {
                         UUID.fromString(sessionId), userId, workspaceId)
                 .orElseThrow(() -> new CpApiException(
                         HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found"));
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<String> findMcpSessionOwner(UUID sessionId, String workspaceId, String userId) {
+        return sessionRepository.findById(sessionId)
+                .filter(session -> !session.isArchived()
+                        && workspaceId.equals(session.getWorkspaceId())
+                        && (userId == null || userId.equals(session.getUserId())))
+                .map(Session::getUserId);
     }
 
     @Transactional

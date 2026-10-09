@@ -27,22 +27,15 @@ import com.cc01cc.p.xihe.cp.chat.AgentSpawnExecutionService;
 import com.cc01cc.p.xihe.cp.chat.ChatSubmissionService;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
-import com.cc01cc.p.xihe.cp.entity.McpServer;
-import com.cc01cc.p.xihe.cp.entity.McpStdioServer;
-import com.cc01cc.p.xihe.cp.entity.McpToolAlias;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
-import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
 import com.cc01cc.p.xihe.cp.policy.PolicyContext;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
 import com.cc01cc.p.xihe.cp.policy.PolicyVerdict;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
-import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
-import com.cc01cc.p.xihe.cp.repository.McpStdioServerRepository;
-import com.cc01cc.p.xihe.cp.repository.McpToolAliasRepository;
-import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
+import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.cc01cc.p.xihe.cp.policy.SafePolicySummary;
 import com.cc01cc.p.xihe.cp.operation.JobStateService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
@@ -156,9 +149,7 @@ public class McpProxyController {
     private final ApprovalService approvalService;
     private final ObjectMapper objectMapper;
     private final SseEmitterManager sse;
-    private final McpStdioServerRepository stdioServers;
-    private final McpServerRepository mcpServers;
-    private final McpToolAliasRepository aliases;
+    private final McpProxyCatalogService catalogService;
     private final ConfigService configService;
     private final ToolTimeoutPolicy toolTimeoutPolicy;
     private final org.springframework.core.env.Environment environment;
@@ -172,7 +163,7 @@ public class McpProxyController {
 
     private final Map<String, McpSessionBinding> mcpSessionBindings = new ConcurrentHashMap<>();
     private final WorkspaceService workspaceService;
-    private final SessionRepository sessionRepository;
+    private final SessionService sessionService;
     private final JobStateService jobStateService;
     private final AgentSpawnExecutionService agentSpawnExecutionService;
     private final McpInvocationService mcpInvocationService;
@@ -184,11 +175,9 @@ public class McpProxyController {
             ApprovalService approvalService,
             ObjectMapper objectMapper,
             SseEmitterManager sse,
-            McpStdioServerRepository stdioServers,
-            McpServerRepository mcpServers,
-            McpToolAliasRepository aliases,
+            McpProxyCatalogService catalogService,
             WorkspaceService workspaceService,
-            SessionRepository sessionRepository,
+            SessionService sessionService,
             JobStateService jobStateService,
             ConfigService configService,
             ToolTimeoutPolicy toolTimeoutPolicy,
@@ -205,11 +194,9 @@ public class McpProxyController {
         this.approvalService = approvalService;
         this.objectMapper = objectMapper;
         this.sse = sse;
-        this.stdioServers = stdioServers;
-        this.mcpServers = mcpServers;
-        this.aliases = aliases;
+        this.catalogService = catalogService;
         this.workspaceService = workspaceService;
-        this.sessionRepository = sessionRepository;
+        this.sessionService = sessionService;
         this.jobStateService = jobStateService;
         this.configService = configService;
         this.toolTimeoutPolicy = toolTimeoutPolicy;
@@ -305,17 +292,17 @@ public class McpProxyController {
             }
 
             // PLAN-0307 decision #27: stdio carriers come from mcp_stdio_servers.
-            List<McpStdioServer> stdio = new ArrayList<>();
+            List<McpProxyCatalogService.StdioServerView> stdio = new ArrayList<>();
             try {
-                stdio.addAll(stdioServers.findByWorkspaceIdOrderByNameAsc(wsId));
+                stdio.addAll(catalogService.listStdioServers(wsId));
             } catch (Exception e) {
                 logger.warn("Stdio server list failed, skipping stdio merge: {}", e.getMessage());
             }
-            for (McpStdioServer server : stdio) {
-                if (!server.isEnabled()) {
+            for (McpProxyCatalogService.StdioServerView server : stdio) {
+                if (!server.enabled()) {
                     continue;
                 }
-                String serverId = server.getName();
+                String serverId = server.name();
                 ResponseEntity<String> stdioResp = forwardToRuntime(
                         wsId, serverId, body, headers, sessionId, access);
                 mergeStdioServerTools(wsId, serverId, stdioResp, mapping, allTools, seenNames);
@@ -324,55 +311,57 @@ public class McpProxyController {
             // PLAN-242 M2: merge enabled remote servers (sorted for determinism),
             // then sticky-issue names and persist alias rows (never promoted).
             long generation = nextGeneration(wsId);
-            Map<String, McpToolAlias> known = new HashMap<>();
+            Map<String, McpProxyCatalogService.ToolAliasView> known = new HashMap<>();
             try {
-                for (McpToolAlias alias : aliases.findByWorkspaceId(UUID.fromString(wsId))) {
-                    known.put(alias.getServerId() + "\0" + alias.getBackendName(), alias);
+                for (McpProxyCatalogService.ToolAliasView alias : catalogService.listAliases(wsId)) {
+                    known.put(alias.serverId() + "\0" + alias.backendName(), alias);
                 }
             } catch (Exception e) {
                 logger.warn("Tool alias load failed, continuing without stickiness: {}", e.getMessage());
             }
-            List<McpServer> remotes = new ArrayList<>();
+            List<McpProxyCatalogService.RemoteServerView> remotes = new ArrayList<>();
             try {
-                remotes.addAll(mcpServers.findByWorkspaceIdAndEnabledTrue(wsId));
+                remotes.addAll(catalogService.listEnabledRemoteServers(wsId));
             } catch (Exception e) {
                 logger.warn("Remote server list failed, skipping remote merge: {}", e.getMessage());
             }
-            remotes.sort(Comparator.comparing(McpServer::getId));
-            for (McpServer server : remotes) {
+            remotes.sort(Comparator.comparing(McpProxyCatalogService.RemoteServerView::id));
+            for (McpProxyCatalogService.RemoteServerView server : remotes) {
                 for (Map<String, Object> tool : fetchRemoteTools(wsId, server, sessionId, access)) {
                     String backend = (String) tool.get("name");
                     if (backend == null || backend.isEmpty()) {
                         continue;
                     }
-                    String key = server.getId() + "\0" + backend;
-                    McpToolAlias alias = known.get(key);
-                    String issued = alias == null ? null : alias.getIssuedName();
+                    String key = server.id() + "\0" + backend;
+                    McpProxyCatalogService.ToolAliasView alias = known.get(key);
+                    String issued = alias == null ? null : alias.issuedName();
                     // Sticky reuse only when the bare name is still ours; otherwise
                     // re-issue (a newer stdio/system tool claimed the bare name).
                     if (issued != null && !issued.contains("__")
-                            && mapping.containsKey(issued) && !server.getId().equals(mapping.get(issued))) {
+                            && mapping.containsKey(issued) && !server.id().equals(mapping.get(issued))) {
                         issued = null;
                     }
                     if (issued == null) {
-                        issued = stickyIssuedName(server.getId().toString(), backend, !seenNames.contains(backend));
+                        issued = stickyIssuedName(server.id(), backend, !seenNames.contains(backend));
                         try {
-                            McpToolAlias row = new McpToolAlias(wsId, issued, server.getId().toString(), backend, generation);
-                            aliases.save(row);
+                            McpProxyCatalogService.ToolAliasView row = new McpProxyCatalogService.ToolAliasView(
+                                    wsId, issued, server.id(), backend, generation);
+                            catalogService.saveAlias(row);
                             known.put(key, row);
                         } catch (Exception e) {
                             logger.warn("Tool alias persist failed, continuing in-memory: {}", e.getMessage());
                         }
                     } else if (alias != null) {
                         try {
-                            alias.setGeneration(generation);
-                            aliases.save(alias);
+                            catalogService.saveAlias(new McpProxyCatalogService.ToolAliasView(
+                                    alias.workspaceId(), alias.issuedName(), alias.serverId(),
+                                    alias.backendName(), generation));
                         } catch (Exception e) {
                             logger.warn("Tool alias touch failed: {}", e.getMessage());
                         }
                     }
                     if (!mapping.containsKey(issued)) {
-                        mapping.put(issued, server.getId().toString());
+                        mapping.put(issued, server.id());
                         Map<String, Object> published = new HashMap<>(tool);
                         published.put("name", issued);
                         allTools.add(published);
@@ -700,7 +689,7 @@ public class McpProxyController {
 
         // Policy already evaluated above for all tool types (including __system__).
         // Route by server type: remote or local (system).
-        Optional<McpServer> remote = remoteServer(wsId, serverId);
+        Optional<McpProxyCatalogService.RemoteServerView> remote = remoteServer(wsId, serverId);
         if (remote.isPresent()) {
             return forwardRemoteToRuntime(
                     wsId, remote.get(), rewritten, headers, sessionId, access, forwardWait, policySummary);
@@ -1082,7 +1071,7 @@ public class McpProxyController {
             // PLAN-242 M2: McpServer rows win over stdio config keys. A serverId
             // present in the table is a remote MCP server, never a bridge.
             if (serverId != null) {
-                Optional<McpServer> remote = remoteServer(wsId, serverId);
+                Optional<McpProxyCatalogService.RemoteServerView> remote = remoteServer(wsId, serverId);
                 if (remote.isPresent()) {
                     return forwardRemoteToRuntime(
                             wsId, remote.get(), body, headers, sessionId, access, forwardWait, policySummary);
@@ -1529,10 +1518,9 @@ public class McpProxyController {
     }
 
     /** PLAN-242 M2: a serverId backed by an enabled McpServer row is remote. */
-    private Optional<McpServer> remoteServer(String wsId, String serverId) {
+    private Optional<McpProxyCatalogService.RemoteServerView> remoteServer(String wsId, String serverId) {
         try {
-            return mcpServers.findById(UUID.fromString(serverId))
-                    .filter(server -> wsId.equals(server.getWorkspaceId()) && server.isEnabled());
+            return catalogService.findEnabledRemoteServer(wsId, serverId);
         } catch (Exception e) {
             logger.warn("Remote server lookup failed, falling back to stdio: {}", e.getMessage());
             return Optional.empty();
@@ -1554,13 +1542,13 @@ public class McpProxyController {
     }
 
     private ResponseEntity<String> forwardRemoteToRuntime(
-            String wsId, McpServer server, String body, HttpHeaders headers,
+            String wsId, McpProxyCatalogService.RemoteServerView server, String body, HttpHeaders headers,
             String sessionId, AccessContext access) {
         return forwardRemoteToRuntime(wsId, server, body, headers, sessionId, access, (ForwardWait) null, null);
     }
 
     private ResponseEntity<String> forwardRemoteToRuntime(
-            String wsId, McpServer server, String body, HttpHeaders headers,
+            String wsId, McpProxyCatalogService.RemoteServerView server, String body, HttpHeaders headers,
             String sessionId, AccessContext access, ForwardWait forwardWait, String policySummary) {
         long waitSeconds = forwardWait == null
                 ? forwardTimeoutS
@@ -1571,10 +1559,10 @@ public class McpProxyController {
         attachPolicySummary(dispatch, policySummary);
         try {
             ObjectNode request = objectMapper.createObjectNode();
-            request.put("endpoint", server.getEndpoint());
+            request.put("endpoint", server.endpoint());
             request.put("userId", access.userId());
             request.put("scope", REMOTE_SCOPE);
-            request.put("authMode", server.getAuthMode() == null ? "oauth" : server.getAuthMode());
+            request.put("authMode", server.authMode() == null ? "oauth" : server.authMode());
             if ("tools/list".equals(method)) {
                 request.put("tool", "");
                 request.set("arguments", objectMapper.createObjectNode());
@@ -1584,8 +1572,9 @@ public class McpProxyController {
                 if (issued == null || issued.isEmpty()) {
                     return problem(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Tool name is required");
                 }
-                String backend = aliases.findByWorkspaceIdAndIssuedName(UUID.fromString(wsId), issued)
-                        .map(McpToolAlias::getBackendName).orElseGet(() -> backendFromIssued(issued));
+                String backend = catalogService.findAliasByIssuedName(wsId, issued)
+                        .map(McpProxyCatalogService.ToolAliasView::backendName)
+                        .orElseGet(() -> backendFromIssued(issued));
                 JsonNode params;
                 try {
                     params = objectMapper.readTree(body).path("params");
@@ -1603,7 +1592,7 @@ public class McpProxyController {
             }
 
             String target = runtimeBaseUrl + "/internal/v1/runtime/remote-mcp/"
-                    + wsId + "/" + server.getId() + "/call";
+                    + wsId + "/" + server.id() + "/call";
             HttpRequest.Builder forwardBuilder = HttpRequest.newBuilder()
                     .uri(URI.create(target))
                     .header("Content-Type", "application/json")
@@ -1633,7 +1622,7 @@ public class McpProxyController {
             HttpHeaders responseHeaders = new HttpHeaders();
             responseHeaders.set("Content-Type", MediaType.APPLICATION_JSON_VALUE);
             audit.record(sessionId, method, "allow",
-                    aliasDetail(server.getId().toString(), request.path("tool").asText(""), currentGeneration(wsId)));
+                    aliasDetail(server.id(), request.path("tool").asText(""), currentGeneration(wsId)));
             if (forwardWait != null) {
                 logger.info(
                         "[LIFECYCLE] service=cp event=tool_forward_result tool={} toolCallId={} runId={}"
@@ -1662,7 +1651,7 @@ public class McpProxyController {
                         timeout ? "self" : "unknown", e.getMessage());
             }
             logger.error("Remote MCP forward failed: wsId={} server={} method={}",
-                    wsId, server.getId(), method, e);
+                    wsId, server.id(), method, e);
             audit.record(sessionId, method, "error", e.getMessage());
             return problem(HttpStatus.BAD_GATEWAY, "REMOTE_MCP_UNAVAILABLE", "Remote MCP request failed");
         }
@@ -1670,13 +1659,13 @@ public class McpProxyController {
 
     @SuppressWarnings("unchecked")
     private List<Map<String, Object>> fetchRemoteTools(
-            String wsId, McpServer server, String sessionId, AccessContext access) {
+            String wsId, McpProxyCatalogService.RemoteServerView server, String sessionId, AccessContext access) {
         String listBody = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1,\"params\":{}}";
         ResponseEntity<String> resp = forwardRemoteToRuntime(
                 wsId, server, listBody, new HttpHeaders(), sessionId, access);
         if (resp == null || !resp.getStatusCode().is2xxSuccessful() || resp.getBody() == null) {
             logger.warn("Remote tools/list failed: wsId={} server={} status={}",
-                    wsId, server.getId(), resp == null ? "null" : resp.getStatusCode());
+                    wsId, server.id(), resp == null ? "null" : resp.getStatusCode());
             return Collections.emptyList();
         }
         try {
@@ -1687,7 +1676,7 @@ public class McpProxyController {
             }
         } catch (Exception e) {
             logger.warn("Remote tools/list parse failed: wsId={} server={}: {}",
-                    wsId, server.getId(), e.getMessage());
+                    wsId, server.id(), e.getMessage());
         }
         return Collections.emptyList();
     }
@@ -1809,16 +1798,17 @@ public class McpProxyController {
             }
 
             if (applicationSessionId != null) {
-                Session session = sessionRepository.findById(applicationSessionUuid).orElse(null);
-                if (!matchesSession(session, workspaceId, null)) {
+                Optional<String> sessionOwner = sessionService.findMcpSessionOwner(
+                        applicationSessionUuid, workspaceId, null);
+                if (sessionOwner.isEmpty()) {
                     return AuthorizationResult.failure(problem(
                             HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found"));
                 }
-                if (claimedUserId != null && !claimedUserId.equals(session.getUserId())) {
+                if (claimedUserId != null && !claimedUserId.equals(sessionOwner.orElseThrow())) {
                     return AuthorizationResult.failure(problem(
                             HttpStatus.FORBIDDEN, "FORBIDDEN", "Session owner does not match user context"));
                 }
-                userId = session.getUserId();
+                userId = sessionOwner.orElseThrow();
             } else {
                 if (claimedUserId != null) {
                     return AuthorizationResult.failure(problem(
@@ -1845,8 +1835,7 @@ public class McpProxyController {
                         HttpStatus.FORBIDDEN, "FORBIDDEN", "User context does not match authenticated user"));
             }
             if (applicationSessionId != null) {
-                Session session = sessionRepository.findById(applicationSessionUuid).orElse(null);
-                if (!matchesSession(session, workspaceId, userId)) {
+                if (sessionService.findMcpSessionOwner(applicationSessionUuid, workspaceId, userId).isEmpty()) {
                     return AuthorizationResult.failure(problem(
                             HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found"));
                 }
@@ -1883,13 +1872,6 @@ public class McpProxyController {
     private boolean isInternalService(Authentication authentication) {
         return authentication != null && authentication.getAuthorities().stream()
                 .anyMatch(authority -> "ROLE_INTERNAL_SERVICE".equals(authority.getAuthority()));
-    }
-
-    private boolean matchesSession(Session session, String workspaceId, String userId) {
-        return session != null
-                && !session.isArchived()
-                && workspaceId.equals(session.getWorkspaceId())
-                && (userId == null || userId.equals(session.getUserId()));
     }
 
     private String headerValue(HttpHeaders headers, String name) {

@@ -162,6 +162,25 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void mcpSessionOwnerReadPreservesInternalAndUserPredicates() {
+        Session session = new Session(workspaceId, userId, "MCP Session");
+        session.setId(UUID.randomUUID());
+        sessionRepository.saveAndFlush(session);
+
+        assertEquals(userId, sessionService.findMcpSessionOwner(session.getId(), workspaceId, null).orElseThrow());
+        assertEquals(userId, sessionService.findMcpSessionOwner(
+                session.getId(), workspaceId, userId).orElseThrow());
+        assertTrue(sessionService.findMcpSessionOwner(
+                session.getId(), workspaceId, "other-user").isEmpty());
+        assertTrue(sessionService.findMcpSessionOwner(
+                session.getId(), UUID.randomUUID().toString(), null).isEmpty());
+
+        session.setArchived(true);
+        sessionRepository.saveAndFlush(session);
+        assertTrue(sessionService.findMcpSessionOwner(session.getId(), workspaceId, null).isEmpty());
+    }
+
+    @Test
     void listSessions_returnsUserSessions() {
         String sid1 = UUID.randomUUID().toString();
         String sid2 = UUID.randomUUID().toString();

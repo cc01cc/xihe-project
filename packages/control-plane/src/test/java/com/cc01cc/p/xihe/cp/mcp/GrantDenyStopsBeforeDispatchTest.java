@@ -14,7 +14,7 @@ import com.cc01cc.p.xihe.cp.policy.ToolShape;
 import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpStdioServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpToolAliasRepository;
-import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy;
 import org.junit.jupiter.api.AfterEach;
@@ -75,6 +75,8 @@ class GrantDenyStopsBeforeDispatchTest {
         sseEmitterManager = mock(SseEmitterManager.class);
 
         var timeoutRepo = mock(McpServerRepository.class);
+        var stdioRepository = mock(McpStdioServerRepository.class);
+        var aliasRepository = mock(McpToolAliasRepository.class);
         var timeoutConfig = mock(com.cc01cc.p.xihe.cp.config.ConfigService.class);
         var timeoutPolicy = new ToolTimeoutPolicy();
         toolTimeoutService = new McpToolTimeoutService(timeoutRepo, timeoutConfig, timeoutPolicy);
@@ -82,9 +84,8 @@ class GrantDenyStopsBeforeDispatchTest {
         controller = new McpProxyController(
                 requestRewriter, policyEngine,
                 auditLogger, approvalService, new com.fasterxml.jackson.databind.ObjectMapper(),
-                sseEmitterManager, mock(McpStdioServerRepository.class),
-                timeoutRepo, mock(McpToolAliasRepository.class),
-                mock(WorkspaceService.class), mock(SessionRepository.class),
+                sseEmitterManager, new McpProxyCatalogService(stdioRepository, timeoutRepo, aliasRepository),
+                mock(WorkspaceService.class), mock(SessionService.class),
                 mock(com.cc01cc.p.xihe.cp.operation.JobStateService.class),
                 timeoutConfig,
                 timeoutPolicy,
