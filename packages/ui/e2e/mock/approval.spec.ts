@@ -2,10 +2,10 @@ import { test, expect } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { expectPlatformScreenshot } from "../helpers/visual";
 
-const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-const SECOND_SESSION_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-const WORKSPACE_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
-const RUN_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    SECOND_SESSION_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const WORKSPACE_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    RUN_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const REQUEST_ID = "11111111-1111-4111-8111-111111111111";
 
 const approvalEvent = (
@@ -503,8 +503,8 @@ test.describe("Chat approval flow", () => {
 
     test("shows auto mode warning and closes it through the mode control", async ({ page }) => {
         await page.unroute("**/api/v1/policy/mode*");
-        let mode: "auto" | "manual" = "auto";
-        let postResponse: Record<string, unknown> | null = null;
+        let mode: "auto" | "manual" = "auto",
+            postResponse: Record<string, unknown> | null = null;
         await page.route("**/api/v1/policy/mode*", async (route) => {
             if (route.request().method() === "POST") {
                 const body = route.request().postDataJSON() as { mode?: string } | null;

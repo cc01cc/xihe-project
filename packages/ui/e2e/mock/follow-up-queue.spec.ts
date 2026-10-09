@@ -1,9 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 
-const WORKSPACE_ID = "workspace-1";
-const SESSION_ID = "follow-up-session";
-const RUN_ID = "33333333-3333-4333-8333-333333333333";
+const WORKSPACE_ID = "workspace-1",
+    SESSION_ID = "follow-up-session",
+    RUN_ID = "33333333-3333-4333-8333-333333333333";
 const ROOT_BRANCH_ID = "00000000-0000-4000-8000-000000000001";
 const QUEUE_URL = `**/api/v1/sessions/${SESSION_ID}/follow-ups**`;
 
@@ -96,8 +96,8 @@ async function setupFollowUpChat(page: Page, initial: QueueSnapshot = emptyQueue
         });
     });
     await page.route("**/api/v1/sessions**", async (route) => {
-        const request = route.request();
-        const pathname = new URL(request.url()).pathname;
+        const request = route.request(),
+            pathname = new URL(request.url()).pathname;
         if (request.method() === "GET" && pathname === "/api/v1/sessions") {
             await route.fulfill({
                 status: 200,
@@ -139,8 +139,8 @@ async function setupFollowUpChat(page: Page, initial: QueueSnapshot = emptyQueue
         });
     });
     await page.route(QUEUE_URL, async (route) => {
-        const request = route.request();
-        const pathname = new URL(request.url()).pathname;
+        const request = route.request(),
+            pathname = new URL(request.url()).pathname;
         if (request.method() === "GET") {
             await route.fulfill({
                 status: 200,

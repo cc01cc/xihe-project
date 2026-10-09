@@ -493,8 +493,8 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
     });
 
     test("PDF opens through the application FileEditor path", async ({ page }) => {
-        const pageErrors: string[] = [];
-        const consoleErrors: string[] = [];
+        const pageErrors: string[] = [],
+            consoleErrors: string[] = [];
         page.on("pageerror", (error) => pageErrors.push(error.message));
         page.on("console", (message) => {
             if (message.type() === "error") consoleErrors.push(message.text());
@@ -620,8 +620,8 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
         await setupMockAuth(page);
         await setupMockSessions(page, { sessions: [{ id: "session-1", title: "Session 1" }] });
         await page.addInitScript(() => {
-            const track = { stop() {} };
-            const stream = { getVideoTracks: () => [track], getTracks: () => [track] };
+            const track = { stop() {} },
+                stream = { getVideoTracks: () => [track], getTracks: () => [track] };
             Object.defineProperty(navigator.mediaDevices, "getDisplayMedia", {
                 configurable: true,
                 value: async () => stream,

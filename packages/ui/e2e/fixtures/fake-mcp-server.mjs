@@ -2,10 +2,10 @@ import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 
 const port = Number(process.env.XIHE_FAKE_MCP_PORT ?? 13641);
-const accessToken = process.env.XIHE_FAKE_MCP_ACCESS_TOKEN ?? "";
-const sessions = new Map();
-const disconnectedSessions = new Set();
-const requestStates = new Map();
+const accessToken = process.env.XIHE_FAKE_MCP_ACCESS_TOKEN ?? "",
+    sessions = new Map();
+const disconnectedSessions = new Set(),
+    requestStates = new Map();
 
 function json(response, status, body, headers = {}) {
     response.writeHead(status, { "Content-Type": "application/json", ...headers });
@@ -28,8 +28,8 @@ const server = createServer(async (request, response) => {
         if (sessionId && !sessions.has(sessionId)) {
             return json(response, 404, { error: "unknown_session" });
         }
-        const session = sessionId ? sessions.get(sessionId) : null;
-        const lastEventId = request.headers["last-event-id"];
+        const session = sessionId ? sessions.get(sessionId) : null,
+            lastEventId = request.headers["last-event-id"];
         if (session && lastEventId && lastEventId !== session.lastEventId) {
             return json(response, 409, {
                 error: "event_id_mismatch",

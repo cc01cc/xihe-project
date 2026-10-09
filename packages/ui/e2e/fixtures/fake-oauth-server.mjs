@@ -2,9 +2,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 
 const port = Number(process.env.XIHE_FAKE_OAUTH_PORT ?? 13640);
-const accessToken = process.env.XIHE_FAKE_MCP_ACCESS_TOKEN ?? "";
-const codes = new Map();
-const tokens = new Map();
+const accessToken = process.env.XIHE_FAKE_MCP_ACCESS_TOKEN ?? "",
+    codes = new Map(),
+    tokens = new Map();
 
 function json(response, status, body) {
     response.writeHead(status, { "Content-Type": "application/json" });
@@ -28,8 +28,8 @@ const server = createServer(async (request, response) => {
     }
 
     if (url.pathname === "/authorize") {
-        const redirectUri = url.searchParams.get("redirect_uri");
-        const state = url.searchParams.get("state");
+        const redirectUri = url.searchParams.get("redirect_uri"),
+            state = url.searchParams.get("state");
         const codeChallenge = url.searchParams.get("code_challenge");
         if (!redirectUri || !state || !codeChallenge) {
             return json(response, 400, { error: "invalid_request" });
@@ -50,8 +50,8 @@ const server = createServer(async (request, response) => {
     }
 
     if (url.pathname === "/token" && request.method === "POST") {
-        const body = await readBody(request);
-        const params = new URLSearchParams(body);
+        const body = await readBody(request),
+            params = new URLSearchParams(body);
         if (params.get("grant_type") === "refresh_token") {
             if (!tokens.has(params.get("refresh_token"))) {
                 return json(response, 400, { error: "invalid_grant" });
@@ -68,8 +68,8 @@ const server = createServer(async (request, response) => {
             });
         }
 
-        const code = codes.get(params.get("code"));
-        const verifier = params.get("code_verifier");
+        const code = codes.get(params.get("code")),
+            verifier = params.get("code_verifier");
         const expectedChallenge = verifier
             ? createHash("sha256").update(verifier).digest("base64url")
             : "";

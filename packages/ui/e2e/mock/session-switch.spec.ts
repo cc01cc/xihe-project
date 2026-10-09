@@ -2,9 +2,9 @@ import { test, expect } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 
 test.describe("Session switch between chat and workspace", () => {
-    const sessionId = "switch-session";
-    const sessionTitle = "Switch Test";
-    const userMessage = "Hello from chat";
+    const sessionId = "switch-session",
+        sessionTitle = "Switch Test",
+        userMessage = "Hello from chat";
     const workspaceId = "workspace-1";
 
     test.beforeEach(async ({ page }) => {
@@ -59,13 +59,13 @@ test.describe("Session switch between chat and workspace", () => {
     test("workspace routes keep sessions isolated and resubscribe workspace events", async ({
         page,
     }) => {
-        const firstWorkspace = "workspace-1";
-        const secondWorkspace = "workspace-2";
-        const firstSession = "workspace-one-session";
-        const secondSession = "workspace-two-session";
-        const firstMessage = "Message from workspace one";
-        const secondMessage = "Message from workspace two";
-        const workspaceEvents: string[] = [];
+        const firstWorkspace = "workspace-1",
+            secondWorkspace = "workspace-2",
+            firstSession = "workspace-one-session";
+        const secondSession = "workspace-two-session",
+            firstMessage = "Message from workspace one";
+        const secondMessage = "Message from workspace two",
+            workspaceEvents: string[] = [];
         page.on("request", (request) => {
             if (
                 request.url().includes("/api/v1/workspaces/") &&
@@ -121,9 +121,9 @@ test.describe("Session switch between chat and workspace", () => {
     test("switching away from an in-flight run detaches and replays on return", async ({
         page,
     }) => {
-        const firstWorkspace = "workspace-1";
-        const secondWorkspace = "workspace-2";
-        const firstSession = "in-flight-session";
+        const firstWorkspace = "workspace-1",
+            secondWorkspace = "workspace-2",
+            firstSession = "in-flight-session";
         const secondSession = "other-workspace-session";
         await setupMockAuth(page, { sse: { tokens: ["replayed response"], delayMs: 200 } });
         await setupMockSessions(page, {

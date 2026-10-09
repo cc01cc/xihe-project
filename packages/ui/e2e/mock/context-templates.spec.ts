@@ -15,8 +15,8 @@ const EVIDENCE_DIR = path.resolve(
     "../../../../../plans/PLAN-0414-XH-context-template-and-components/evidence/browser",
 );
 
-const TEMPLATE_ID = "11111111-1111-4111-8111-111111111111";
-const COMPONENT_ID = "22222222-2222-4222-8222-222222222222";
+const TEMPLATE_ID = "11111111-1111-4111-8111-111111111111",
+    COMPONENT_ID = "22222222-2222-4222-8222-222222222222";
 
 function template(version: number, name: string) {
     return {
