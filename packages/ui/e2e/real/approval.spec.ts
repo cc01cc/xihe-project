@@ -15,8 +15,8 @@ const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 test.describe.configure({ mode: "serial", retries: 0 });
 
 function seedUserGrant(userId: string, workspaceId: string) {
-    const container = process.env.XIHE_E2E_PG_CONTAINER;
-    const database = process.env.XIHE_E2E_PG_DATABASE;
+    const container = process.env.XIHE_E2E_PG_CONTAINER,
+        database = process.env.XIHE_E2E_PG_DATABASE;
     const dbUser = process.env.XIHE_E2E_PG_USER;
     if (!container || !database || !dbUser) {
         throw new Error(
@@ -64,8 +64,8 @@ async function createBoundAgent(
 ): Promise<string> {
     const { userId, workspaceId, headers, name, actionClass } = options;
     seedUserGrant(userId, workspaceId);
-    const roleId = randomUUID();
-    const templateId = randomUUID();
+    const roleId = randomUUID(),
+        templateId = randomUUID();
     const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
         headers,
         data: {
@@ -150,9 +150,9 @@ test("@host Chat approval — approve, reject and persistence in one flow", asyn
     expect([200, 201], `register failed: ${reg.status()} ${await reg.text()}`).toContain(
         reg.status(),
     );
-    const auth = await reg.json();
-    const authToken: string = auth.accessToken;
-    const wsId: string = auth.workspaceId;
+    const auth = await reg.json(),
+        authToken: string = auth.accessToken,
+        wsId: string = auth.workspaceId;
     const authHeaders = {
         Authorization: `Bearer ${authToken}`,
         "Content-Type": "application/json",
@@ -224,8 +224,8 @@ test("@host Chat approval — approve, reject and persistence in one flow", asyn
     expect(sessionsRes.ok()).toBeTruthy();
     const sessions = (await sessionsRes.json()) as { sessions: Array<{ id: string }> };
     expect(sessions.sessions.length).toBeGreaterThan(0);
-    const sid = sessions.sessions[0].id;
-    const branchId = await getRootBranchId(request, sid, authHeaders);
+    const sid = sessions.sessions[0].id,
+        branchId = await getRootBranchId(request, sid, authHeaders);
     const messagesRes = await request.get(
         `${CP_URL}/api/v1/sessions/${sid}/messages?branchId=${branchId}`,
         { headers: authHeaders },

@@ -14,8 +14,8 @@ import { generateE2EPassword } from "./helpers/password";
 test.describe.configure({ mode: "serial", retries: 0 });
 
 function seedUserGrants(userId: string, workspaceId: string) {
-    const container = process.env.XIHE_E2E_PG_CONTAINER;
-    const database = process.env.XIHE_E2E_PG_DATABASE;
+    const container = process.env.XIHE_E2E_PG_CONTAINER,
+        database = process.env.XIHE_E2E_PG_DATABASE;
     const dbUser = process.env.XIHE_E2E_PG_USER;
     if (!container || !database || !dbUser) {
         throw new Error("isolated PostgreSQL fixture metadata is unavailable; run via e2e-host");
@@ -50,8 +50,8 @@ function seedUserGrants(userId: string, workspaceId: string) {
 }
 
 function queryIsolatedPostgres(sql: string): string {
-    const container = process.env.XIHE_E2E_PG_CONTAINER;
-    const database = process.env.XIHE_E2E_PG_DATABASE;
+    const container = process.env.XIHE_E2E_PG_CONTAINER,
+        database = process.env.XIHE_E2E_PG_DATABASE;
     const dbUser = process.env.XIHE_E2E_PG_USER;
     if (!container || !database || !dbUser) {
         throw new Error("isolated PostgreSQL fixture metadata is unavailable; run via e2e-host");
@@ -96,8 +96,8 @@ test("@host PLAN-0387 T3.2 — CP checks durable Agent MCP tool-call provenance"
     const userId = ((await me.json()) as { id: string }).id;
     seedUserGrants(userId, workspaceId);
 
-    const roleId = randomUUID();
-    const templateId = randomUUID();
+    const roleId = randomUUID(),
+        templateId = randomUUID();
     const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
         headers,
         data: {

@@ -34,8 +34,8 @@ const EVIDENCE_DIR = evidenceDir("plan-0372-real-compat");
 // Fresh journey users carry no grants; the template/principal/binding writes
 // below need them (same fixture as session-branch/approval specs).
 function seedUserGrant(userId: string, workspaceId: string) {
-    const container = process.env.XIHE_E2E_PG_CONTAINER;
-    const database = process.env.XIHE_E2E_PG_DATABASE;
+    const container = process.env.XIHE_E2E_PG_CONTAINER,
+        database = process.env.XIHE_E2E_PG_DATABASE;
     const dbUser = process.env.XIHE_E2E_PG_USER;
     if (!container || !database || !dbUser) {
         throw new Error(
@@ -87,8 +87,8 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
             "requires XIHE_E2E_REAL_ROUTE=openai-compat (runner imports the OpenAI-compatible provider config)",
         );
         mkdirSync(EVIDENCE_DIR, { recursive: true });
-        const ctx = await registerJourneyUser(request, "real-compat");
-        const wsId = ctx.workspaceId;
+        const ctx = await registerJourneyUser(request, "real-compat"),
+            wsId = ctx.workspaceId;
         const headers = { ...ctx.headers, "X-Workspace-Id": wsId };
         // PLAN-0372 (BL-28): per-run workspace binding; the restart contract in
         // this mode carries XIHE_OPENAI_API_KEY (same real key, never printed).
@@ -105,9 +105,9 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
         expect(meRes.ok(), await meRes.text()).toBeTruthy();
         const userId = ((await meRes.json()) as { id: string }).id;
         seedUserGrant(userId, wsId);
-        const setupHeaders = { ...headers, "X-Workspace-Id": wsId };
-        const roleId = randomUUID();
-        const templateId = randomUUID();
+        const setupHeaders = { ...headers, "X-Workspace-Id": wsId },
+            roleId = randomUUID(),
+            templateId = randomUUID();
         const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
             headers: setupHeaders,
             data: {
@@ -174,8 +174,8 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
 
         // The session was created above; use it directly instead of racing the
         // session list (2026-10-02 review: the poll could pick another session).
-        const sessionId = seededSessionId;
-        const branchId = await getRootBranchId(request, sessionId, headers);
+        const sessionId = seededSessionId,
+            branchId = await getRootBranchId(request, sessionId, headers);
         await expect
             .poll(
                 async () => {

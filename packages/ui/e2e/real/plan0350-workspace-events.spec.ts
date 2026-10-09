@@ -15,11 +15,11 @@ test.describe("@host PLAN-0350 workspace file events", () => {
     test.describe.configure({ mode: "serial" });
     test.setTimeout(240000);
 
-    let ownerAuth: string;
-    let otherAuth: string;
-    let wsId = "";
-    let hostPath = "";
-    let pageErrors: string[] = [];
+    let ownerAuth: string,
+        otherAuth: string,
+        wsId = "",
+        hostPath = "",
+        pageErrors: string[] = [];
 
     test.beforeEach(async ({ page }) => {
         pageErrors = collectPageErrors(page);
@@ -53,8 +53,8 @@ test.describe("@host PLAN-0350 workspace file events", () => {
     }
 
     test.beforeAll(async ({ request }) => {
-        const owner = await registerUser(request, "owner");
-        const other = await registerUser(request, "other");
+        const owner = await registerUser(request, "owner"),
+            other = await registerUser(request, "other");
         otherAuth = other.accessToken;
         mkdirSync(EVIDENCE_DIR, { recursive: true });
 
@@ -142,8 +142,8 @@ test.describe("@host PLAN-0350 workspace file events", () => {
                         w.__ws.state = "no-body";
                         return;
                     }
-                    const reader = res.body.getReader();
-                    const decoder = new TextDecoder();
+                    const reader = res.body.getReader(),
+                        decoder = new TextDecoder();
                     for (;;) {
                         const { value, done } = await reader.read();
                         if (done) break;

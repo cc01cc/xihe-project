@@ -78,8 +78,8 @@ const pages: HealthPage[] = [
 ];
 
 test.describe("UI Health — Console, Overflow, Hit-Test", () => {
-    let authToken = "";
-    let workspaceId = "";
+    let authToken = "",
+        workspaceId = "";
 
     test.beforeAll(async ({ request }) => {
         const r = await request.post(`${CP_URL}/api/v1/auth/register`, {
@@ -104,10 +104,10 @@ test.describe("UI Health — Console, Overflow, Hit-Test", () => {
         test(`${p.hostOnly ? "@host " : ""}${p.name}: zero console errors, zero pageerrors, no horizontal overflow`, async ({
             page,
         }) => {
-            const path = p.path.replace("{workspaceId}", workspaceId);
-            const consoleErrors: string[] = [];
-            const pageErrors: string[] = [];
-            const failedResponses: string[] = [];
+            const path = p.path.replace("{workspaceId}", workspaceId),
+                consoleErrors: string[] = [];
+            const pageErrors: string[] = [],
+                failedResponses: string[] = [];
             page.on("console", (msg) => {
                 if (msg.type() === "error") consoleErrors.push(msg.text());
             });

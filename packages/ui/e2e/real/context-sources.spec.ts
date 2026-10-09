@@ -25,8 +25,7 @@ test.describe("@host PLAN-0340 U1/U2 context sources", () => {
     test.describe.configure({ mode: "serial" });
     test.setTimeout(180000);
 
-    let sharedAuth: string;
-    let sharedWs: string;
+    let sharedAuth: string, sharedWs: string;
 
     test.beforeAll(async ({ request }) => {
         mkdirSync(EVIDENCE_DIR, { recursive: true });

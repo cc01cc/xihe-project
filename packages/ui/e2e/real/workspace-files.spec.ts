@@ -7,8 +7,8 @@ import { expectPlatformScreenshot } from "../helpers/visual";
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 
 test.describe("@host Workspace — File Panel & Delete Flow", () => {
-    let authToken = "";
-    let wsId = "";
+    let authToken = "",
+        wsId = "";
 
     test.beforeAll(async ({ request }) => {
         const r = await request.post(`${CP_URL}/api/v1/auth/register`, {

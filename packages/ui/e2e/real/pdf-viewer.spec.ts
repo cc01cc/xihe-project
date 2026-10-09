@@ -7,8 +7,8 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { expectPlatformScreenshot } from "../helpers/visual";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __filename = fileURLToPath(import.meta.url),
+    __dirname = path.dirname(__filename);
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const SAMPLE_PDF = path.resolve(__dirname, "../assets/sample.pdf");
@@ -44,8 +44,8 @@ test.describe("PdfViewer — Real Backend", () => {
 
     test("PdfViewer renders page controls with sample PDF", async ({ page }) => {
         // Read sample PDF, encode as data URI
-        const pdfBytes = fs.readFileSync(SAMPLE_PDF);
-        const b64 = pdfBytes.toString("base64");
+        const pdfBytes = fs.readFileSync(SAMPLE_PDF),
+            b64 = pdfBytes.toString("base64");
         const dataUri = `data:application/pdf;base64,${b64}`;
 
         await page.goto("/workspace");

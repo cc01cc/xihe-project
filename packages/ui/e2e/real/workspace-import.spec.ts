@@ -16,10 +16,10 @@ test.describe("@host Workspace import", () => {
     test.describe.configure({ mode: "serial" });
     test.setTimeout(240000);
 
-    let sourceDir = "";
-    let oversizedFile = "";
-    const bulkDirs: string[] = [];
-    const users: ImportUser[] = [];
+    let sourceDir = "",
+        oversizedFile = "";
+    const bulkDirs: string[] = [],
+        users: ImportUser[] = [];
 
     function hostRoot(): string {
         if (process.env.XIHE_WORKSPACE_HOST_ROOT)

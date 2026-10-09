@@ -16,8 +16,8 @@ import {
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 
 function queryIsolatedPostgres(sql: string): string {
-    const container = process.env.XIHE_E2E_PG_CONTAINER;
-    const database = process.env.XIHE_E2E_PG_DATABASE;
+    const container = process.env.XIHE_E2E_PG_CONTAINER,
+        database = process.env.XIHE_E2E_PG_DATABASE;
     const user = process.env.XIHE_E2E_PG_USER;
     if (!container || !database || !user) {
         throw new Error(

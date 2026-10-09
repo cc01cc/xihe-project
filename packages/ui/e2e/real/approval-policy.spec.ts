@@ -86,8 +86,8 @@ async function resolvedApprovalMode(request: APIRequestContext, auth: Auth): Pro
         { headers: authHeaders(auth) },
     );
     expect(response.ok(), await response.text()).toBe(true);
-    const body = (await response.json()) as Record<string, unknown>;
-    const value = body.mode;
+    const body = (await response.json()) as Record<string, unknown>,
+        value = body.mode;
     return typeof value === "string" ? value : "";
 }
 

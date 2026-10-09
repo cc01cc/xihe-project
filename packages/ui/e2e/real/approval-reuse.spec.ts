@@ -40,13 +40,13 @@ import {
     type JourneyContext,
 } from "./helpers/journey";
 
-const RUN_ID = process.env.XIHE_E2E_RUN_ID ?? "";
-const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "";
+const RUN_ID = process.env.XIHE_E2E_RUN_ID ?? "",
+    LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "";
 const PROFILE = process.env.XIHE_E2E_PROFILE ?? "all";
 
 // 隔离栈命名公式与 scripts/e2e-host.mjs:51/54/84 一致。
-const COMPACT_RUN_ID = RUN_ID.replace(/[^a-z0-9]/gi, "");
-const PG_CONTAINER = `xihe-e2e-host-${COMPACT_RUN_ID}-postgres-1`;
+const COMPACT_RUN_ID = RUN_ID.replace(/[^a-z0-9]/gi, ""),
+    PG_CONTAINER = `xihe-e2e-host-${COMPACT_RUN_ID}-postgres-1`;
 const PG_DATABASE = `xihe_e2e_${RUN_ID.replace(/[^a-z0-9]/gi, "_")}`;
 const PROJECT_DIR = path.resolve(process.cwd(), "../..");
 const HOST_ROOT = path.join(PROJECT_DIR, ".tmp", "e2e-host", RUN_ID);
@@ -200,8 +200,8 @@ async function sendMarkerTurn(
 ): Promise<PhaseTurn> {
     await awaitSessionIdle(request, headers);
 
-    const input = page.locator('[data-testid="chat-input"]');
-    const send = page.locator('[data-testid="chat-send-button"]');
+    const input = page.locator('[data-testid="chat-input"]'),
+        send = page.locator('[data-testid="chat-send-button"]');
     // 审批专属标识（Audit 2 B6）：通用 `modal-content` 会被任何弹窗命中而误判为"出现了审批卡"；
     // 以审批操作按钮的存在作为卡出现判据。
     const modal = page
@@ -280,16 +280,15 @@ test("@host 审批复用护栏：once 对照组 3/3、session 复用 1 行 + gra
 }) => {
     test.setTimeout(900000);
 
-    let ctx: JourneyContext;
-    let sessionId: string;
+    let ctx: JourneyContext, sessionId: string;
     const phaseTurns: Record<"A" | "B" | "C", PhaseTurn[]> = { A: [], B: [], C: [] };
 
-    const pathA = "pl0337-guard-a-once.txt";
-    const pathB = "pl0337-guard-b-session.txt";
-    const pathC = "pl0337-guard-c-auto.txt";
+    const pathA = "pl0337-guard-a-once.txt",
+        pathB = "pl0337-guard-b-session.txt",
+        pathC = "pl0337-guard-c-auto.txt";
     // 内容用于验证"真实落盘"（排除残留同名文件造成的假绿），组间互不相同。
-    const CONTENT_A = "pl0337 guard group A once-tier probe";
-    const CONTENT_B = "pl0337 guard group B session-tier probe";
+    const CONTENT_A = "pl0337 guard group A once-tier probe",
+        CONTENT_B = "pl0337 guard group B session-tier probe";
     const CONTENT_C = "pl0337 guard group C auto-mode probe";
 
     await test.step("准备：注册单 workspace + 单会话（Agent 单 workspace 绑定）", async () => {
@@ -401,8 +400,8 @@ test("@host 审批复用护栏：once 对照组 3/3、session 复用 1 行 + gra
     expect
         .soft(approvalRowScalar(sessionId, pathB, "reuse_scope"), "B 组首轮档位必须落成 session")
         .toBe("session");
-    const actions = auditActionsForSession(sessionId);
-    const grantReused = countAction(actions, "grant_reused");
+    const actions = auditActionsForSession(sessionId),
+        grantReused = countAction(actions, "grant_reused");
     expect
         .soft(grantReused, "B 组第 2/3 次调用必须命中 CP 侧 grant 复用（审计 action=grant_reused）")
         .toBe(2);

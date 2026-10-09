@@ -21,11 +21,11 @@ test.describe("@host PLAN-0384 MXC unavailable branch", () => {
     test.describe.configure({ mode: "serial" });
     test.setTimeout(180000);
 
-    let auth: string;
-    let seedWs = "";
-    let hostRoot = "";
-    let targetDir = "";
-    let pageErrors: string[] = [];
+    let auth: string,
+        seedWs = "",
+        hostRoot = "",
+        targetDir = "",
+        pageErrors: string[] = [];
 
     test.beforeEach(async ({ page }) => {
         pageErrors = collectPageErrors(page);
@@ -165,8 +165,8 @@ test.describe("@host PLAN-0384 MXC unavailable branch", () => {
             (req) => req.url().endsWith("/api/v1/workspaces") && req.method() === "POST",
         );
         await page.locator('[data-testid="workspace-create-submit"]').click();
-        const request = await createRequest;
-        const payload = request.postDataJSON() as Record<string, unknown>;
+        const request = await createRequest,
+            payload = request.postDataJSON() as Record<string, unknown>;
         expect(payload.executionMode).toBe("windows-host");
         expect(payload.hostPath).toBe(targetDir);
         await expect(page.locator('[data-testid="workspace-create-dialog"]')).toBeHidden({

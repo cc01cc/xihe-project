@@ -31,9 +31,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
     test.setTimeout(360000);
 
     // PLAN-290 约束：Agent 每进程只绑定一个 workspace，全部用例共享同一注册用户/工作区。
-    let sharedAuth: string;
-    let sharedWs: string;
-    let sharedHeaders: Record<string, string>;
+    let sharedAuth: string, sharedWs: string, sharedHeaders: Record<string, string>;
     /** cad8e727 后会话必须挂 agentPrincipalId：套件级 bootstrap 出的共享会话。 */
     let suiteSessionId = "";
 
@@ -65,8 +63,8 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         const userId = ((await me.json()) as { id: string }).id;
         seedUserGrant(userId, sharedWs);
 
-        const roleId = randomUUID();
-        const templateId = randomUUID();
+        const roleId = randomUUID(),
+            templateId = randomUUID();
         const rolePermissions = JSON.stringify([
             { actionClass: "read", resource: "*" },
             { actionClass: "write", resource: "*" },
@@ -189,8 +187,8 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
     ): Promise<string> {
         const res = await request.get(`${CP_URL}/api/v1/sessions`, { headers: sharedHeaders });
         expect(res.ok()).toBeTruthy();
-        const body = (await res.json()) as { sessions?: Array<{ id: string }> };
-        const id = body.sessions?.[0]?.id;
+        const body = (await res.json()) as { sessions?: Array<{ id: string }> },
+            id = body.sessions?.[0]?.id;
         expect(id, "workspace chat session").toBeTruthy();
         return id!;
     }
@@ -256,8 +254,8 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
 
     /** S5 domain history：直接查 `workspace_job_history`（PLAN-0462 decision #8）。 */
     function queryIsolatedPostgres(sql: string): string {
-        const container = process.env.XIHE_E2E_PG_CONTAINER;
-        const database = process.env.XIHE_E2E_PG_DATABASE;
+        const container = process.env.XIHE_E2E_PG_CONTAINER,
+            database = process.env.XIHE_E2E_PG_DATABASE;
         const user = process.env.XIHE_E2E_PG_USER;
         if (!container || !database || !user) {
             throw new Error(
@@ -485,8 +483,8 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         });
         const summaries = await jobSummaries(request, sessionId);
         expect(summaries.length, "two same-run job archives").toBe(2);
-        const targetJobId = summaries[0].jobId;
-        const controlJobId = summaries[1].jobId;
+        const targetJobId = summaries[0].jobId,
+            controlJobId = summaries[1].jobId;
         const toggles = page
             .locator('[data-testid="tool-card-toggle"]')
             .filter({ hasText: "start_background_process" });
@@ -649,8 +647,8 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
  * 复制自 session-branch.spec.ts seedUserGrant（isolated runner 提供 PG fixture env）。
  */
 function seedUserGrant(userId: string, workspaceId: string) {
-    const container = process.env.XIHE_E2E_PG_CONTAINER;
-    const database = process.env.XIHE_E2E_PG_DATABASE;
+    const container = process.env.XIHE_E2E_PG_CONTAINER,
+        database = process.env.XIHE_E2E_PG_DATABASE;
     const dbUser = process.env.XIHE_E2E_PG_USER;
     if (!container || !database || !dbUser) {
         throw new Error(

@@ -11,8 +11,8 @@ import {
     sendChat,
 } from "./helpers/journey";
 
-const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
-const EVIDENCE_DIR = evidenceDir("journey-d-overflow");
+const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock",
+    EVIDENCE_DIR = evidenceDir("journey-d-overflow");
 
 // PLAN-0341 V2 (T2.2): fake-llm mode=overflow refuses the first completion
 // with context_length_exceeded until a compacted SUM system message is
@@ -22,9 +22,7 @@ test.describe("@host Journey D — overflow retry (CTX-1)", () => {
     test.describe.configure({ mode: "serial" });
     test.setTimeout(240000);
 
-    let sharedAuth: string;
-    let sharedWs: string;
-    let sharedHeaders: Record<string, string>;
+    let sharedAuth: string, sharedWs: string, sharedHeaders: Record<string, string>;
 
     test.beforeAll(async ({ request }) => {
         const ctx = await registerJourneyUser(request, "journey-ovf");
@@ -58,8 +56,8 @@ test.describe("@host Journey D — overflow retry (CTX-1)", () => {
         await expect(assistant).toBeVisible({ timeout: 30000 });
 
         // U3 toast marker (PLAN-0340/spec/ui-surfaces.md) + V9 computed style.
-        const overflowToast = page.getByText(/上下文超限|Context limit exceeded/);
-        const toastEl = overflowToast.first();
+        const overflowToast = page.getByText(/上下文超限|Context limit exceeded/),
+            toastEl = overflowToast.first();
         await expect(toastEl).toBeVisible({ timeout: 15000 });
         const toastBox = await toastEl.boundingBox();
         expect(toastBox, "U3 toast layout box").toBeTruthy();

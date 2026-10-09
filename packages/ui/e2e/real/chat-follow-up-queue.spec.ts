@@ -14,8 +14,8 @@ const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 test.describe.configure({ mode: "serial", retries: 0 });
 
 function seedUserGrant(userId: string, workspaceId: string) {
-    const container = process.env.XIHE_E2E_PG_CONTAINER;
-    const database = process.env.XIHE_E2E_PG_DATABASE;
+    const container = process.env.XIHE_E2E_PG_CONTAINER,
+        database = process.env.XIHE_E2E_PG_DATABASE;
     const dbUser = process.env.XIHE_E2E_PG_USER;
     if (!container || !database || !dbUser) {
         throw new Error(
@@ -57,8 +57,8 @@ async function createBoundAgent(
     headers: Record<string, string>,
 ): Promise<string> {
     seedUserGrant(userId, workspaceId);
-    const roleId = randomUUID();
-    const templateId = randomUUID();
+    const roleId = randomUUID(),
+        templateId = randomUUID();
     const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
         headers,
         data: {
@@ -197,8 +197,8 @@ async function bootstrapSession(request: APIRequestContext, page: Page): Promise
     const sessions = ((await sessionResponse.json()) as { sessions: Array<{ id: string }> })
         .sessions;
     expect(sessions.length).toBeGreaterThan(0);
-    const sessionId = sessions[0]!.id;
-    const branchId = await getRootBranchId(request, sessionId, headers);
+    const sessionId = sessions[0]!.id,
+        branchId = await getRootBranchId(request, sessionId, headers);
     return { headers, sessionId, branchId, principalId };
 }
 
@@ -215,9 +215,9 @@ test("@host Follow-up is durably admitted and dispatched after parent approval",
 }) => {
     requireApprovalMode();
     test.setTimeout(240_000);
-    const pageErrors: Error[] = [];
-    const consoleErrorCount = { value: 0 };
-    const requestFailures: string[] = [];
+    const pageErrors: Error[] = [],
+        consoleErrorCount = { value: 0 },
+        requestFailures: string[] = [];
     const browserMessageIds = new Set<string>();
     page.on("pageerror", (error) => pageErrors.push(error));
     page.on("console", (message) => {
@@ -428,9 +428,9 @@ test("@host Follow-up queue stays durable and reachable on a mobile viewport", a
 }) => {
     requireApprovalMode();
     test.setTimeout(240_000);
-    const pageErrors: Error[] = [];
-    const consoleErrorCount = { value: 0 };
-    const requestFailures: string[] = [];
+    const pageErrors: Error[] = [],
+        consoleErrorCount = { value: 0 },
+        requestFailures: string[] = [];
     page.on("pageerror", (error) => pageErrors.push(error));
     page.on("console", (message) => {
         if (message.type() === "error") consoleErrorCount.value++;

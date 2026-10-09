@@ -150,8 +150,8 @@ function killPidTree(pid: number): void {
 }
 
 async function agentHealthOk(): Promise<{ ok: boolean; llmReady: string }> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2000);
+    const controller = new AbortController(),
+        timer = setTimeout(() => controller.abort(), 2000);
     try {
         const response = await fetch(`http://127.0.0.1:${AGENT_PORT}/internal/v1/agent/health`, {
             signal: controller.signal,
@@ -284,8 +284,8 @@ export function seedPage(page: import("@playwright/test").Page, ctx: JourneyCont
  *    user bubble appears.
  */
 export async function sendChat(page: import("@playwright/test").Page, text: string): Promise<void> {
-    const input = page.locator('[data-testid="chat-input"]');
-    const send = page.locator('[data-testid="chat-send-button"]');
+    const input = page.locator('[data-testid="chat-input"]'),
+        send = page.locator('[data-testid="chat-send-button"]');
     // Each retry re-fills: a stale Vue mount (session switch / remount after
     // ensureChatReady) can drop the earlier input event, leaving the button
     // disabled with DOM value set but no v-model update.

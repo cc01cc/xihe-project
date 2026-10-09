@@ -93,8 +93,8 @@ test.describe("PLAN-247 Chat availability @host", () => {
             const auth = await register(request, "missing-credentials");
             await openChat(page, auth);
 
-            const text = `missing-${Date.now()}`;
-            const textarea = page.locator("textarea");
+            const text = `missing-${Date.now()}`,
+                textarea = page.locator("textarea");
             await textarea.fill(text);
             await page.keyboard.press("Enter");
 
@@ -120,15 +120,15 @@ test.describe("PLAN-247 Chat availability @host", () => {
             const auth = await register(request, "invalid-credentials");
             await openChat(page, auth);
 
-            const text = `invalid-${Date.now()}`;
-            const textarea = page.locator("textarea");
+            const text = `invalid-${Date.now()}`,
+                textarea = page.locator("textarea");
             await textarea.fill(text);
             await page.keyboard.press("Enter");
 
             await expect(page.getByText(/LLM_CREDENTIALS_INVALID/)).toBeVisible({ timeout: 10000 });
             await expect(textarea).toHaveValue(text);
-            const id = await sessionId(request, auth);
-            const stored = await messages(request, auth, id);
+            const id = await sessionId(request, auth),
+                stored = await messages(request, auth, id);
             expect(stored.some((message: { role?: string }) => message.role === "ASSISTANT")).toBe(
                 false,
             );
@@ -145,8 +145,8 @@ test.describe("PLAN-247 Chat availability @host", () => {
             page,
             request,
         }) => {
-            const auth = await register(request, "fake-success");
-            const mcpRequests: string[] = [];
+            const auth = await register(request, "fake-success"),
+                mcpRequests: string[] = [];
             page.on("request", (outgoing) => {
                 if (/\/api\/v1\/mcp|tools\/list/.test(outgoing.url()))
                     mcpRequests.push(outgoing.url());
@@ -291,8 +291,8 @@ test.describe("PLAN-247 Chat availability @host", () => {
             const auth = await register(request, "ambiguous-disconnect");
             await openChat(page, auth);
 
-            const id = await sessionId(request, auth);
-            const text = `disconnect-${Date.now()}`;
+            const id = await sessionId(request, auth),
+                text = `disconnect-${Date.now()}`;
             await page.locator("textarea").fill(text);
             await page.keyboard.press("Enter");
             await expect

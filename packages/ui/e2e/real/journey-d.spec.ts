@@ -13,8 +13,8 @@ import {
     sendChat,
 } from "./helpers/journey";
 
-const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
-const REAL_ROUTE = process.env.XIHE_E2E_REAL_ROUTE ?? "native";
+const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock",
+    REAL_ROUTE = process.env.XIHE_E2E_REAL_ROUTE ?? "native";
 // e2e-host passes XIHE_WORKSPACE_HOST_ROOT to the runtime process but not to
 // the Playwright process; the isolated root is derived from the run id
 // (e2e-host.mjs `hostRoot`, see journey-c.spec.ts).
@@ -40,9 +40,7 @@ test.describe("@host Journey D — context pipeline", () => {
 
     // Agent keeps ONE MCP workspace binding per process — share a single
     // registered user/workspace across the describe (journey-a/b/c pattern).
-    let sharedAuth: string;
-    let sharedWs: string;
-    let sharedHeaders: Record<string, string>;
+    let sharedAuth: string, sharedWs: string, sharedHeaders: Record<string, string>;
 
     test.beforeAll(async ({ request }) => {
         const ctx = await registerJourneyUser(request, "journey-d");
@@ -66,8 +64,8 @@ test.describe("@host Journey D — context pipeline", () => {
             !!process.env.XIHE_E2E_REAL_XIAOMI_KEY,
             "fixture marker envelope is fixture-only; real runs use D1-real",
         );
-        const authToken = sharedAuth;
-        const wsId = sharedWs;
+        const authToken = sharedAuth,
+            wsId = sharedWs;
         mkdirSync(EVIDENCE_DIR, { recursive: true });
         const marker1 = `T1${Date.now().toString(36).toUpperCase()}`;
         const marker2 = `T2${Date.now().toString(36).toUpperCase()}`;
@@ -145,9 +143,9 @@ test.describe("@host Journey D — context pipeline", () => {
         // contract as mock now — rebind its single MCP workspace to this spec's
         // registered workspace before the first workspace chat.
         await ensureAgentWorkspaceBinding(sharedWs);
-        const authToken = sharedAuth;
-        const wsId = sharedWs;
-        const headers = sharedHeaders;
+        const authToken = sharedAuth,
+            wsId = sharedWs,
+            headers = sharedHeaders;
         mkdirSync(EVIDENCE_DIR, { recursive: true });
         const fileName = `xh-real-boundary-${Date.now().toString(36)}.txt`;
 
@@ -317,9 +315,9 @@ test.describe("@host Journey D — context pipeline", () => {
             !!process.env.XIHE_E2E_REAL_XIAOMI_KEY,
             "fixture marker envelope is fixture-only; real runs use D1-real",
         );
-        const authToken = sharedAuth;
-        const wsId = sharedWs;
-        const headers = sharedHeaders;
+        const authToken = sharedAuth,
+            wsId = sharedWs,
+            headers = sharedHeaders;
         mkdirSync(EVIDENCE_DIR, { recursive: true });
         const markerA = `A${Date.now().toString(36).toUpperCase()}`;
         const markerB = `B${Date.now().toString(36).toUpperCase()}`;

@@ -19,9 +19,7 @@ test.describe("@host PLAN-0390 workspace job start", () => {
     test.describe.configure({ mode: "serial" });
     test.setTimeout(240000);
 
-    let sharedAuth: string;
-    let sharedWs: string;
-    let sharedHeaders: Record<string, string>;
+    let sharedAuth: string, sharedWs: string, sharedHeaders: Record<string, string>;
 
     test.beforeAll(async ({ request }) => {
         const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
@@ -99,8 +97,8 @@ test.describe("@host PLAN-0390 workspace job start", () => {
         const marker = `xihe0390-${Date.now()}`;
         // Runtime 的 background wrapper 用 `sh -c "$command" xihe-shell "$@"` 执行：
         // `command` 是 shell 命令字符串，不能传 `sh` 当命令（会立即退出、零输出）。
-        const command = `echo ${marker}; sleep 8`;
-        const key = `plan0390-${Date.now()}`;
+        const command = `echo ${marker}; sleep 8`,
+            key = `plan0390-${Date.now()}`;
 
         // 1) 首次 start → 202，durable Job 进入 running（真实 Docker 容器）
         const first = await startJob(request, command, key);
@@ -221,8 +219,8 @@ test.describe("@host PLAN-0390 workspace job start", () => {
         expect(started.status(), `start failed: ${started.status()} ${await started.text()}`).toBe(
             202,
         );
-        const job = (await started.json()) as Record<string, unknown>;
-        const jobId = String(job.jobId);
+        const job = (await started.json()) as Record<string, unknown>,
+            jobId = String(job.jobId);
         // 容器输出目录键 = Runtime backend handle（direct-attach 下等于 domain jobId，
         // Docker 容器后端由容器侧生成——本 spec 默认 Docker 后端）。
         const runtimeJobId = String(job.runtimeJobId);

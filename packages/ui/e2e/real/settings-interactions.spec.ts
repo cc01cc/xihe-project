@@ -55,8 +55,8 @@ test.describe("@host Settings — Tier Tabs & Interactions", () => {
         const toast = page.locator("[data-sonner-toast]").first();
         await expect(toast).toBeVisible({ timeout: 8000 });
 
-        const saveBox = await saveBtn.boundingBox();
-        const toastBox = await toast.boundingBox();
+        const saveBox = await saveBtn.boundingBox(),
+            toastBox = await toast.boundingBox();
         if (saveBox && toastBox) {
             const overlap = !(
                 toastBox.x + toastBox.width < saveBox.x ||

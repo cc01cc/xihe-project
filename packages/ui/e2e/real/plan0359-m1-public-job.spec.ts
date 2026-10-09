@@ -79,8 +79,8 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
             });
             return null;
         }
-        const workspace = await created.json();
-        const workspaceId = String(workspace.id);
+        const workspace = await created.json(),
+            workspaceId = String(workspace.id);
 
         const refreshed = await request.post(`${CP_URL}/api/v1/auth/refresh`, {
             data: { refreshToken: auth.refreshToken },
@@ -177,8 +177,8 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
             [200, 202],
             `job start failed: ${running.status()} ${await running.text()}`,
         ).toContain(running.status());
-        const projection = await running.json();
-        const jobId = String(projection.jobId ?? "");
+        const projection = await running.json(),
+            jobId = String(projection.jobId ?? "");
         expect(jobId).toBeTruthy();
 
         await expect
@@ -247,8 +247,8 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
         );
 
         if (started.status() === 202 || started.status() === 200) {
-            const projection = await started.json();
-            const jobId = String(projection.jobId ?? "");
+            const projection = await started.json(),
+                jobId = String(projection.jobId ?? "");
             let mxcStatus = "";
             await expect
                 .poll(
@@ -355,8 +355,8 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
             [200, 202],
             `boundary start failed: ${started.status()} ${await started.text()}`,
         ).toContain(started.status());
-        const projection = await started.json();
-        const jobId = String(projection.jobId ?? "");
+        const projection = await started.json(),
+            jobId = String(projection.jobId ?? "");
         expect(jobId).toBeTruthy();
 
         let finalStatus = "";

@@ -16,9 +16,9 @@ test.describe("@host PLAN-0396 workspace job capability", () => {
     test.describe.configure({ mode: "serial" });
     test.setTimeout(240000);
 
-    let sharedAuth: string;
-    let directWs = "";
-    let hostPath = "";
+    let sharedAuth: string,
+        directWs = "",
+        hostPath = "";
 
     test.beforeAll(async ({ request }) => {
         const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();

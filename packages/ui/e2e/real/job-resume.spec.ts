@@ -57,9 +57,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
     test.setTimeout(240000);
 
     // PLAN-290 约束：Agent 每进程只绑定一个 workspace，测试共享同一注册用户/工作区。
-    let sharedAuth: string;
-    let sharedWs: string;
-    let sharedHeaders: Record<string, string>;
+    let sharedAuth: string, sharedWs: string, sharedHeaders: Record<string, string>;
     /** cad8e727 后会话必须挂 agentPrincipalId：套件级 bootstrap 出的共享会话。 */
     let suiteSessionId = "";
 
@@ -87,8 +85,8 @@ test.describe("@host PLAN-0344 durable job resume", () => {
         const userId = ((await me.json()) as { id: string }).id;
         seedUserGrant(userId, sharedWs);
 
-        const roleId = randomUUID();
-        const templateId = randomUUID();
+        const roleId = randomUUID(),
+            templateId = randomUUID();
         const rolePermissions = [
             { actionClass: "read", resource: "*" },
             { actionClass: "write", resource: "*" },
@@ -297,8 +295,8 @@ test.describe("@host PLAN-0344 durable job resume", () => {
             .find((job) => job.toolName === "start_background_process");
         // PLAN-0465 decision #7：jobSummary 身份 = domain jobId（itemId 已移除）。
         expect(summary?.jobId, "jobSummary archived in the messages DTO").toBeTruthy();
-        const jobId = summary?.jobId ?? "";
-        const jobWorkspaceId = summary?.workspaceId ?? sharedWs;
+        const jobId = summary?.jobId ?? "",
+            jobWorkspaceId = summary?.workspaceId ?? sharedWs;
 
         await page.goto("/workspace/" + sharedWs + "/chat/" + sessionId, { waitUntil: "load" });
         const card = page
@@ -373,8 +371,8 @@ test.describe("@host PLAN-0344 durable job resume", () => {
  * CREATE_ACCOUNT / CREATE_TEMPLATE / MANAGE_WORKSPACE_AGENTS。
  */
 function seedUserGrant(userId: string, workspaceId: string) {
-    const container = process.env.XIHE_E2E_PG_CONTAINER;
-    const database = process.env.XIHE_E2E_PG_DATABASE;
+    const container = process.env.XIHE_E2E_PG_CONTAINER,
+        database = process.env.XIHE_E2E_PG_DATABASE;
     const dbUser = process.env.XIHE_E2E_PG_USER;
     if (!container || !database || !dbUser) {
         throw new Error(

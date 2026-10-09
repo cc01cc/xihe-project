@@ -30,9 +30,7 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
     // PLAN-290 constraint: the Agent keeps ONE MCP workspace binding per process
     // — every test must share a single registered user/workspace (journey-a did
     // the same). Unique file names keep the runs independent.
-    let sharedAuth: string;
-    let sharedWs: string;
-    let sharedHeaders: Record<string, string>;
+    let sharedAuth: string, sharedWs: string, sharedHeaders: Record<string, string>;
 
     test.beforeAll(async ({ request }) => {
         const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
@@ -80,8 +78,8 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
     test("T6: opening a raster image renders the ImagePreview via binary-safe read", async ({
         page,
     }) => {
-        const authToken = sharedAuth;
-        const wsId = sharedWs;
+        const authToken = sharedAuth,
+            wsId = sharedWs;
         mkdirSync(EVIDENCE_DIR, { recursive: true });
         // 1x1 transparent PNG — a real binary that read_to_string cannot carry.
         // Seed it through the CP upload API so the file lands in the workspace
@@ -129,12 +127,12 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
         // PLAN-0369: rebind the Agent when this spec's workspace differs from the
         // previously bound one (no-op when it already matches).
         await ensureAgentWorkspaceBinding(sharedWs);
-        const authToken = sharedAuth;
-        const wsId = sharedWs;
-        const headers = sharedHeaders;
+        const authToken = sharedAuth,
+            wsId = sharedWs,
+            headers = sharedHeaders;
         mkdirSync(EVIDENCE_DIR, { recursive: true });
-        const hostDir = path.join(HOST_ROOT, wsId);
-        const fileName = `journey-c-big-${Date.now()}.md`;
+        const hostDir = path.join(HOST_ROOT, wsId),
+            fileName = `journey-c-big-${Date.now()}.md`;
         // >500 chars single line: forces the approval preview truncation that used
         // to 409 after approval (PLAN-290 §7 grant-vs-preview debt).
         const content = Array.from(
@@ -191,12 +189,12 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
         // PLAN-0369: rebind the Agent when this spec's workspace differs from the
         // previously bound one (no-op when it already matches).
         await ensureAgentWorkspaceBinding(sharedWs);
-        const authToken = sharedAuth;
-        const wsId = sharedWs;
-        const headers = sharedHeaders;
+        const authToken = sharedAuth,
+            wsId = sharedWs,
+            headers = sharedHeaders;
         mkdirSync(EVIDENCE_DIR, { recursive: true });
-        const hostDir = path.join(HOST_ROOT, wsId);
-        const fileName = `journey-c-recover-${Date.now()}.md`;
+        const hostDir = path.join(HOST_ROOT, wsId),
+            fileName = `journey-c-recover-${Date.now()}.md`;
         const content = "recovered after refresh";
 
         seedPage(page, authToken, wsId);
@@ -253,12 +251,12 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
         // PLAN-0369: rebind the Agent when this spec's workspace differs from the
         // previously bound one (no-op when it already matches).
         await ensureAgentWorkspaceBinding(sharedWs);
-        const authToken = sharedAuth;
-        const wsId = sharedWs;
-        const headers = sharedHeaders;
+        const authToken = sharedAuth,
+            wsId = sharedWs,
+            headers = sharedHeaders;
         mkdirSync(EVIDENCE_DIR, { recursive: true });
-        const hostDir = path.join(HOST_ROOT, wsId);
-        const fileName = `journey-c-reject-${Date.now()}.md`;
+        const hostDir = path.join(HOST_ROOT, wsId),
+            fileName = `journey-c-reject-${Date.now()}.md`;
 
         seedPage(page, authToken, wsId);
         await page.goto("/workspace/" + wsId, { waitUntil: "load" });
