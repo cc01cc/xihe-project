@@ -21,18 +21,18 @@ export const useAgentStore = defineStore("agent", () => {
     const toolCalls = ref<ToolCall[]>([]);
     // Endpoint summaries intentionally stay separate from full approval requests:
     // they contain no tool arguments and are safe for shell-level indicators.
-    const pendingApprovalSummaries = ref<PendingApprovalSummary[]>([]);
-    const pendingApprovalsLoading = ref(false);
-    const pendingApprovalsError = ref<string | null>(null);
-    const resolvedApprovals = ref<Record<string, ApprovalRequest>>({});
-    const pendingSummaryScopeWorkspaceId = ref<string | null>(null);
-    let storeGeneration = 0;
-    let approvalEpoch = 0;
+    const pendingApprovalSummaries = ref<PendingApprovalSummary[]>([]),
+        pendingApprovalsLoading = ref(false),
+        pendingApprovalsError = ref<string | null>(null),
+        resolvedApprovals = ref<Record<string, ApprovalRequest>>({}),
+        pendingSummaryScopeWorkspaceId = ref<string | null>(null);
+    let storeGeneration = 0,
+        approvalEpoch = 0;
     const sessionApprovalEpochs = new Map<string, number>();
-    let pendingRefresh: Promise<PendingApprovalSummary[]> | null = null;
-    let pendingRefreshController: AbortController | null = null;
-    const decisionPromises = new Map<string, Promise<ChatApprovalDecisionResponse>>();
-    const decisionTokens = new Map<string, symbol>();
+    let pendingRefresh: Promise<PendingApprovalSummary[]> | null = null,
+        pendingRefreshController: AbortController | null = null;
+    const decisionPromises = new Map<string, Promise<ChatApprovalDecisionResponse>>(),
+        decisionTokens = new Map<string, symbol>();
 
     function getApprovalEpoch(sessionId: string): string {
         return `${approvalEpoch}:${sessionApprovalEpochs.get(sessionId) ?? 0}`;
@@ -196,8 +196,8 @@ export const useAgentStore = defineStore("agent", () => {
         }
         if (pendingRefresh) return pendingRefresh;
 
-        const generation = storeGeneration;
-        const controller = new AbortController();
+        const generation = storeGeneration,
+            controller = new AbortController();
         const request = (async () => {
             pendingApprovalsLoading.value = true;
             pendingApprovalsError.value = null;
@@ -249,9 +249,9 @@ export const useAgentStore = defineStore("agent", () => {
                 .map((summary) => summary.sessionId),
         );
         for (let index = agentState.value.pendingApprovals.length - 1; index >= 0; index -= 1) {
-            const request = agentState.value.pendingApprovals[index];
-            const requestInScope =
-                workspaceId === undefined ? true : request.workspaceId === workspaceId;
+            const request = agentState.value.pendingApprovals[index],
+                requestInScope =
+                    workspaceId === undefined ? true : request.workspaceId === workspaceId;
             if (requestInScope && !pendingSessions.has(request.sessionId)) {
                 removeApprovalRequest(request.requestId, "dispatch_unknown");
             }
@@ -269,8 +269,8 @@ export const useAgentStore = defineStore("agent", () => {
         const existing = decisionPromises.get(requestId);
         if (existing) return existing;
 
-        const token = Symbol(requestId);
-        const generation = storeGeneration;
+        const token = Symbol(requestId),
+            generation = storeGeneration;
         const request = (async () => {
             try {
                 const response = await api.decideChatApproval(requestId, decision);

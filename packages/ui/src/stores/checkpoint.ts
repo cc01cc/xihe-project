@@ -20,11 +20,11 @@ function errorMessage(cause: unknown, fallback: string): string {
 }
 
 export const useCheckpointStore = defineStore("checkpoint", () => {
-    const records = ref<Record<string, WorkspaceCheckpointRecord>>({});
-    const eventRecords = ref<Record<string, WorkspaceCheckpointEvent>>({});
-    const workspaceErrors = ref<Record<string, string>>({});
-    const inFlight = new Map<string, Promise<WorkspaceCheckpointRecord[] | null>>();
-    const loadedWorkspaces = new Set<string>();
+    const records = ref<Record<string, WorkspaceCheckpointRecord>>({}),
+        eventRecords = ref<Record<string, WorkspaceCheckpointEvent>>({}),
+        workspaceErrors = ref<Record<string, string>>({}),
+        inFlight = new Map<string, Promise<WorkspaceCheckpointRecord[] | null>>(),
+        loadedWorkspaces = new Set<string>();
     let storeGeneration = 0;
 
     function key(workspaceId: string, id: string): string {

@@ -10,8 +10,8 @@ export interface KnowledgeDoc {
 }
 
 export const useKnowledgeStore = defineStore("knowledge", () => {
-    const documents = ref<KnowledgeDoc[]>([]);
-    const loading = ref(false);
+    const documents = ref<KnowledgeDoc[]>([]),
+        loading = ref(false);
 
     async function upload(file: File, chunkSize = 1000, chunkOverlap = 200) {
         const form = new FormData();

@@ -70,18 +70,18 @@ export interface ConfigImportReport {
     warnings: string[];
 }
 
-const MODEL_CACHE_KEY = "xihe-model-cache";
-const SESSION_MODELS_KEY = "xihe-session-models";
-const MODEL_FAVORITES_KEY = "xihe-model-favorites";
-const MERGED_CONFIG_KEY = "xihe-config-merged";
+const MODEL_CACHE_KEY = "xihe-model-cache",
+    SESSION_MODELS_KEY = "xihe-session-models",
+    MODEL_FAVORITES_KEY = "xihe-model-favorites",
+    MERGED_CONFIG_KEY = "xihe-config-merged";
 
 export const useConfigStore = defineStore("config", () => {
     const mergedConfig = useLocalStorage<Record<string, Record<string, string>>>(
         MERGED_CONFIG_KEY,
         {},
     );
-    const loading = ref(false);
-    const error = ref<string | null>(null);
+    const loading = ref(false),
+        error = ref<string | null>(null);
 
     /** Per-layer raw entries for the three settings entries (T2.17). */
     const layerConfig = ref<Record<ConfigLayer, Record<string, Record<string, string>>>>({
@@ -93,13 +93,13 @@ export const useConfigStore = defineStore("config", () => {
     /** domain -> key -> env-effective value when an env overlay wins (decision #22). */
     const envOverridden = ref<Record<string, Record<string, string>>>({});
 
-    const modelCache = useLocalStorage<ModelCache>(MODEL_CACHE_KEY, { models: {}, providers: {} });
-    const sessionModels = useLocalStorage<Record<string, SessionModelBinding>>(
-        SESSION_MODELS_KEY,
-        {},
-    );
-    const modelFavorites = useLocalStorage<ModelFavorite[]>(MODEL_FAVORITES_KEY, []);
-    const modelError = ref<string | null>(null);
+    const modelCache = useLocalStorage<ModelCache>(MODEL_CACHE_KEY, { models: {}, providers: {} }),
+        sessionModels = useLocalStorage<Record<string, SessionModelBinding>>(
+            SESSION_MODELS_KEY,
+            {},
+        ),
+        modelFavorites = useLocalStorage<ModelFavorite[]>(MODEL_FAVORITES_KEY, []),
+        modelError = ref<string | null>(null);
 
     function findProviderForModel(modelId: string): string | undefined {
         for (const provider of Object.keys(modelCache.value.providers ?? {})) {
@@ -253,8 +253,8 @@ export const useConfigStore = defineStore("config", () => {
         const llmProvider = mergedConfig.value["llm-provider"] ?? {};
 
         // PLAN-0307 decision #16/#37: model parameters moved to llm-provider.
-        const defaultModel = llmProvider.defaultModel;
-        const defaultProvider = llmProvider.defaultProvider;
+        const defaultModel = llmProvider.defaultModel,
+            defaultProvider = llmProvider.defaultProvider;
 
         if (defaultModel) {
             const provider = defaultProvider || findProviderForModel(defaultModel);

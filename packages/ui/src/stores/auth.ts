@@ -33,15 +33,15 @@ export const useAuthStore = defineStore("auth", () => {
         }
     }
 
-    const token = ref<string | null>(localStorage.getItem("xihe-token"));
-    const user = ref<User | null>(readUser());
-    const workspace = ref<ApiWorkspace | null>(readWorkspace());
-    const loading = ref(false);
-    const error = ref<string | null>(null);
+    const token = ref<string | null>(localStorage.getItem("xihe-token")),
+        user = ref<User | null>(readUser()),
+        workspace = ref<ApiWorkspace | null>(readWorkspace()),
+        loading = ref(false),
+        error = ref<string | null>(null);
 
-    const isAuthenticated = computed(() => !!token.value);
-    const userName = computed(() => user.value?.name ?? user.value?.email ?? "User");
-    const isAdmin = computed(() => user.value?.role === "ADMIN");
+    const isAuthenticated = computed(() => !!token.value),
+        userName = computed(() => user.value?.name ?? user.value?.email ?? "User"),
+        isAdmin = computed(() => user.value?.role === "ADMIN");
     /**
      * PLAN-0328 decision #56: tool classification is limited to workspace OWNER / instance ADMIN.
      * The client only uses this to decide whether to offer the affordance — the CP enforces the

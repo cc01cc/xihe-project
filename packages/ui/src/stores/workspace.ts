@@ -44,14 +44,14 @@ function isRuntimeArtifact(name: string): boolean {
 }
 
 export const useWorkspaceStore = defineStore("workspace", () => {
-    const sessionStore = useSessionStore();
-    const authStore = useAuthStore();
+    const sessionStore = useSessionStore(),
+        authStore = useAuthStore();
 
-    const sessionId = computed<string | null>(() => sessionStore.currentSessionId);
-    const sessionAttachments = computed(() => sessionStore.currentSessionAttachments);
-    const sessionFileContext = computed(() => sessionStore.currentSessionFileContext);
-    const sessionAgents = computed(() => sessionStore.currentAgentIds);
-    const workspaceId = computed(() => authStore.currentWorkspaceId);
+    const sessionId = computed<string | null>(() => sessionStore.currentSessionId),
+        sessionAttachments = computed(() => sessionStore.currentSessionAttachments),
+        sessionFileContext = computed(() => sessionStore.currentSessionFileContext),
+        sessionAgents = computed(() => sessionStore.currentAgentIds),
+        workspaceId = computed(() => authStore.currentWorkspaceId);
 
     function requireWorkspaceId(): string {
         if (!workspaceId.value) {
@@ -65,21 +65,21 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         return workspaceId.value;
     }
 
-    const fileTree = ref<FileNode[]>([]);
-    const expandedPaths = ref<Set<string>>(new Set());
-    const loading = ref(false);
-    const treeError = ref<string | null>(null);
-    const loadedWorkspaceId = ref<string | null>(null);
+    const fileTree = ref<FileNode[]>([]),
+        expandedPaths = ref<Set<string>>(new Set()),
+        loading = ref(false),
+        treeError = ref<string | null>(null),
+        loadedWorkspaceId = ref<string | null>(null);
     // PLAN-0365 (root cause C): bumped by refresh requests that arrive while a
     // load is in flight; the in-flight load re-runs itself instead of the
     // refresh being swallowed by the `loading` early-return.
     let loadTreePending = 0;
 
-    const openFiles = ref<Map<string, OpenFile>>(new Map());
-    const activeFilePath = ref<string | null>(null);
+    const openFiles = ref<Map<string, OpenFile>>(new Map()),
+        activeFilePath = ref<string | null>(null);
 
-    const showImportDialog = ref(false);
-    const uploadQueue = ref<UploadItem[]>([]);
+    const showImportDialog = ref(false),
+        uploadQueue = ref<UploadItem[]>([]);
 
     const activeFile = computed(() => {
         if (!activeFilePath.value) return null;
@@ -95,14 +95,14 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         const res = await api.listDirectory(dirPath, requireWorkspaceId());
         const entries = (res?.entries ?? []).filter((entry: any) => !isRuntimeArtifact(entry.name));
         const dirs = entries
-            .filter((e: any) => e.type === "directory")
-            .sort((a: any, b: any) => a.name.localeCompare(b.name));
-        const files = entries
-            .filter((e: any) => e.type === "file")
-            .sort((a: any, b: any) => a.name.localeCompare(b.name));
+                .filter((e: any) => e.type === "directory")
+                .sort((a: any, b: any) => a.name.localeCompare(b.name)),
+            files = entries
+                .filter((e: any) => e.type === "file")
+                .sort((a: any, b: any) => a.name.localeCompare(b.name));
         for (const dir of dirs) {
-            const childPath = dirPath ? `${dirPath}/${dir.name}` : dir.name;
-            const children = await fetchDirectoryTree(childPath);
+            const childPath = dirPath ? `${dirPath}/${dir.name}` : dir.name,
+                children = await fetchDirectoryTree(childPath);
             if (dir.name === "logs" && children.length === 0) continue;
             nodes.push({
                 name: dir.name,
@@ -236,24 +236,24 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             return;
         }
         try {
-            const size = findFileSize(path);
-            const name = path.split("/").pop() || path;
-            const ext = name.split(".").pop()?.toLowerCase() || "";
+            const size = findFileSize(path),
+                name = path.split("/").pop() || path,
+                ext = name.split(".").pop()?.toLowerCase() || "";
             // PLAN-292 T6: images land as data URLs so FileEditor's ImagePreview
             // branch is reachable. svg is text — read via the guarded text path and
             // wrap as a utf8 data URL; raster images use the binary-safe tool.
             if (ext === "svg") {
-                const res = await readFilePreview(path, size, requireWorkspaceId());
-                const svg: OpenFile = {
-                    path,
-                    name,
-                    content: `data:image/svg+xml;utf8,${encodeURIComponent(res.content)}`,
-                    originalContent: res.content,
-                    language: detectLanguage(path),
-                    modified: false,
-                    loading: false,
-                    truncated: res.truncated,
-                };
+                const res = await readFilePreview(path, size, requireWorkspaceId()),
+                    svg: OpenFile = {
+                        path,
+                        name,
+                        content: `data:image/svg+xml;utf8,${encodeURIComponent(res.content)}`,
+                        originalContent: res.content,
+                        language: detectLanguage(path),
+                        modified: false,
+                        loading: false,
+                        truncated: res.truncated,
+                    };
                 openFiles.value.set(path, svg);
                 activeFilePath.value = path;
                 return;
@@ -277,17 +277,17 @@ export const useWorkspaceStore = defineStore("workspace", () => {
                 activeFilePath.value = path;
                 return;
             }
-            const res = await readFilePreview(path, size, requireWorkspaceId());
-            const file: OpenFile = {
-                path,
-                name,
-                content: res.content,
-                originalContent: res.content,
-                language: detectLanguage(path),
-                modified: false,
-                loading: false,
-                truncated: res.truncated,
-            };
+            const res = await readFilePreview(path, size, requireWorkspaceId()),
+                file: OpenFile = {
+                    path,
+                    name,
+                    content: res.content,
+                    originalContent: res.content,
+                    language: detectLanguage(path),
+                    modified: false,
+                    loading: false,
+                    truncated: res.truncated,
+                };
             openFiles.value.set(path, file);
             activeFilePath.value = path;
         } catch (e) {
@@ -407,8 +407,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
     function humanizeFileError(e: unknown, fallback: string): string {
         if (e instanceof ApiError) {
-            const code = e.problem.code;
-            const mapped = humanizeErrorCode(code, e.problem.detail);
+            const code = e.problem.code,
+                mapped = humanizeErrorCode(code, e.problem.detail);
             if (mapped && mapped !== `${code}: ${e.problem.detail}`) return mapped;
             if (e.problem.detail) return `${fallback}: ${e.problem.detail}`;
         }
@@ -418,8 +418,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     /** Reload the tree while keeping the current expansion state (M3 task 3.4). */
     async function refreshAfterMutation(keepExpandedDir?: string) {
         if (keepExpandedDir) {
-            const next = new Set(expandedPaths.value);
-            const parts = keepExpandedDir.split("/");
+            const next = new Set(expandedPaths.value),
+                parts = keepExpandedDir.split("/");
             let current = "";
             for (const part of parts) {
                 if (!part) continue;
@@ -447,8 +447,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             treeError.value = "Invalid name: must be non-empty and contain no path separators";
             return false;
         }
-        const slash = oldPath.lastIndexOf("/");
-        const newPath = slash >= 0 ? `${oldPath.substring(0, slash + 1)}${trimmed}` : trimmed;
+        const slash = oldPath.lastIndexOf("/"),
+            newPath = slash >= 0 ? `${oldPath.substring(0, slash + 1)}${trimmed}` : trimmed;
         if (newPath === oldPath) return true;
         try {
             await api.moveFile(oldPath, newPath, requireWorkspaceId());
@@ -473,8 +473,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
 
     async function moveNode(from: string, toDir: string): Promise<boolean> {
-        const name = from.split("/").pop() || from;
-        const to = toDir ? `${toDir}/${name}` : name;
+        const name = from.split("/").pop() || from,
+            to = toDir ? `${toDir}/${name}` : name;
         if (to === from) return true;
         try {
             await api.moveFile(from, to, requireWorkspaceId());
@@ -490,13 +490,13 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
 
     async function duplicateNode(path: string): Promise<boolean> {
-        const slash = path.lastIndexOf("/");
-        const dir = slash >= 0 ? path.substring(0, slash) : "";
-        const base = slash >= 0 ? path.substring(slash + 1) : path;
-        const dot = base.lastIndexOf(".");
-        const copyName =
-            dot > 0 ? `${base.substring(0, dot)}-copy${base.substring(dot)}` : `${base}-copy`;
-        const to = dir ? `${dir}/${copyName}` : copyName;
+        const slash = path.lastIndexOf("/"),
+            dir = slash >= 0 ? path.substring(0, slash) : "",
+            base = slash >= 0 ? path.substring(slash + 1) : path,
+            dot = base.lastIndexOf("."),
+            copyName =
+                dot > 0 ? `${base.substring(0, dot)}-copy${base.substring(dot)}` : `${base}-copy`,
+            to = dir ? `${dir}/${copyName}` : copyName;
         try {
             await api.copyFile(path, to, requireWorkspaceId());
             await refreshAfterMutation(dir);
@@ -641,8 +641,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
                     formData.append("splitPreference", "true");
                     await apiPost("/api/v1/files/upload", formData);
                 } else if (isTextualFile(item.file)) {
-                    const text = await item.file.text();
-                    const fullPath = targetDir ? `${targetDir}/${item.name}` : item.name;
+                    const text = await item.file.text(),
+                        fullPath = targetDir ? `${targetDir}/${item.name}` : item.name;
                     await api.writeFile(fullPath, text, requireWorkspaceId());
                 } else {
                     // Binary files must preserve raw bytes: route through the CP upload
@@ -673,8 +673,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
     async function loadFullContent(path: string) {
         try {
-            const res = await api.readFile(path, requireWorkspaceId());
-            const file = openFiles.value.get(path);
+            const res = await api.readFile(path, requireWorkspaceId()),
+                file = openFiles.value.get(path);
             if (file) {
                 file.content = res.content;
                 file.originalContent = res.content;

@@ -23,9 +23,9 @@ function createState(): SessionPolicyState {
 }
 
 export const usePolicyStore = defineStore("policy", () => {
-    const states = ref<Record<string, SessionPolicyState>>({});
-    const loadPromises = new Map<string, Promise<void>>();
-    const mutationGenerations = new Map<string, number>();
+    const states = ref<Record<string, SessionPolicyState>>({}),
+        loadPromises = new Map<string, Promise<void>>(),
+        mutationGenerations = new Map<string, number>();
 
     function getState(sessionId: string): SessionPolicyState | undefined {
         return states.value[sessionId];
@@ -81,8 +81,8 @@ export const usePolicyStore = defineStore("policy", () => {
         sessionId: string,
         mode: SessionPolicyMode,
     ): Promise<SessionPolicyModeState> {
-        const state = stateFor(sessionId);
-        const generation = (mutationGenerations.get(sessionId) ?? 0) + 1;
+        const state = stateFor(sessionId),
+            generation = (mutationGenerations.get(sessionId) ?? 0) + 1;
         mutationGenerations.set(sessionId, generation);
         state.changing = true;
         state.error = null;

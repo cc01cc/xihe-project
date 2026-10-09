@@ -108,16 +108,16 @@ describe("workspace store deleteNode (B-2 failure semantics)", () => {
 
     it("returns false and records treeError on 404 (no throw, no fake success)", async () => {
         mockedApi.deleteFile.mockRejectedValue(problemError(404, "FILE_NOT_FOUND"));
-        const store = useWorkspaceStore();
-        const result = await store.deleteNode("missing.txt");
+        const store = useWorkspaceStore(),
+            result = await store.deleteNode("missing.txt");
         expect(result).toBe(false);
         expect(store.treeError).toContain("删除失败");
     });
 
     it("returns false and records treeError on 500", async () => {
         mockedApi.deleteFile.mockRejectedValue(problemError(500, "RUNTIME_ERROR"));
-        const store = useWorkspaceStore();
-        const result = await store.deleteNode("x.txt");
+        const store = useWorkspaceStore(),
+            result = await store.deleteNode("x.txt");
         expect(result).toBe(false);
         expect(store.treeError).toContain("沙盒未就绪");
     });
@@ -132,16 +132,16 @@ describe("workspace store createFile (Q-3 same-mode fix)", () => {
     it("returns true on success", async () => {
         mockedApi.writeFile.mockResolvedValue({ success: true });
         mockedApi.listDirectory.mockResolvedValue({ entries: [] });
-        const store = useWorkspaceStore();
-        const result = await store.createFile("src", "new.ts");
+        const store = useWorkspaceStore(),
+            result = await store.createFile("src", "new.ts");
         expect(result).toBe(true);
         expect(mockedApi.writeFile).toHaveBeenCalledWith("src/new.ts", "", "ws-test");
     });
 
     it("returns false and records treeError on failure", async () => {
         mockedApi.writeFile.mockRejectedValue(problemError(400, "INVALID_REQUEST"));
-        const store = useWorkspaceStore();
-        const result = await store.createFile("", "bad");
+        const store = useWorkspaceStore(),
+            result = await store.createFile("", "bad");
         expect(result).toBe(false);
         expect(store.treeError).toContain("创建文件失败");
     });
@@ -258,8 +258,8 @@ describe("workspace store openFile preview routing (PLAN-292 T6)", () => {
     });
 
     it("wraps svg text content as a utf8 data URL without the binary path", async () => {
-        const store = useWorkspaceStore();
-        const { readFilePreview } = await import("../../composables/fileService");
+        const store = useWorkspaceStore(),
+            { readFilePreview } = await import("../../composables/fileService");
         vi.mocked(readFilePreview).mockResolvedValue({
             content: '<svg xmlns="http://www.w3.org/2000/svg"/>',
             truncated: false,
@@ -276,8 +276,8 @@ describe("workspace store openFile preview routing (PLAN-292 T6)", () => {
     });
 
     it("keeps text files on the size-guarded text preview path", async () => {
-        const store = useWorkspaceStore();
-        const { readFilePreview } = await import("../../composables/fileService");
+        const store = useWorkspaceStore(),
+            { readFilePreview } = await import("../../composables/fileService");
         vi.mocked(readFilePreview).mockResolvedValue({ content: "hello", truncated: false });
 
         await store.openFile("docs/note.md");

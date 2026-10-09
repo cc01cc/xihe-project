@@ -13,10 +13,10 @@ import { useAgentStore } from "./agent";
 import { useCheckpointStore } from "./checkpoint";
 
 function getTimeGroup(dateStr: string): "today" | "yesterday" | "earlier" {
-    const date = new Date(dateStr);
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const yesterday = new Date(today);
+    const date = new Date(dateStr),
+        now = new Date(),
+        today = new Date(now.getFullYear(), now.getMonth(), now.getDate()),
+        yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
 
     if (date >= today) return "today";
@@ -53,14 +53,14 @@ function toSession(record: ApiSession): Session {
 export const useSessionStore = defineStore("session", () => {
     // Session metadata is a server projection. localStorage must not resurrect a
     // session after a user switch or make up an ID before the CP responds.
-    const sessions = ref<Session[]>([]);
-    const currentSessionId = ref<string | null>(null);
-    const searchQuery = ref("");
-    const loading = ref(false);
-    const error = ref<string | null>(null);
-    let loadPromise: Promise<Session[]> | null = null;
-    let createPromise: Promise<Session> | null = null;
-    let storeGeneration = 0;
+    const sessions = ref<Session[]>([]),
+        currentSessionId = ref<string | null>(null),
+        searchQuery = ref(""),
+        loading = ref(false),
+        error = ref<string | null>(null);
+    let loadPromise: Promise<Session[]> | null = null,
+        createPromise: Promise<Session> | null = null,
+        storeGeneration = 0;
 
     // Cross-view state that is intentionally not persisted via localStorage.
     // PLAN-030 will implement the backend session-scoped attachment store.
@@ -131,8 +131,8 @@ export const useSessionStore = defineStore("session", () => {
 
     async function loadSessions(): Promise<Session[]> {
         if (loadPromise) return loadPromise;
-        const generation = storeGeneration;
-        const currentAtLoadStart = currentSessionId.value;
+        const generation = storeGeneration,
+            currentAtLoadStart = currentSessionId.value;
         loading.value = true;
         error.value = null;
         loadPromise = (async () => {
@@ -166,8 +166,8 @@ export const useSessionStore = defineStore("session", () => {
     }
 
     async function loadSession(id: string): Promise<Session> {
-        const response = await api.getSession(id);
-        const session = toSession(response);
+        const response = await api.getSession(id),
+            session = toSession(response);
         upsertSession(session);
         return session;
     }
@@ -181,8 +181,8 @@ export const useSessionStore = defineStore("session", () => {
     async function createSession(agentPrincipalId: string, title = "New Chat"): Promise<Session> {
         if (createPromise) return createPromise;
         createPromise = (async () => {
-            const response = await api.createSession(agentPrincipalId, title);
-            const session = toSession(response);
+            const response = await api.createSession(agentPrincipalId, title),
+                session = toSession(response);
             upsertSession(session);
             currentSessionId.value = session.id;
             error.value = null;

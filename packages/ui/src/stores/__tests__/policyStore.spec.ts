@@ -35,11 +35,11 @@ describe("usePolicyStore", () => {
 
     it("only lets the newest mode mutation clear changing state", async () => {
         let resolveFirst:
-            | ((value: { sessionId: string; mode: "auto"; scope: "session" }) => void)
-            | undefined;
-        let resolveSecond:
-            | ((value: { sessionId: string; mode: "manual"; scope: "session" }) => void)
-            | undefined;
+                | ((value: { sessionId: string; mode: "auto"; scope: "session" }) => void)
+                | undefined,
+            resolveSecond:
+                | ((value: { sessionId: string; mode: "manual"; scope: "session" }) => void)
+                | undefined;
         vi.mocked(api.setPolicyMode)
             .mockImplementationOnce(
                 () =>
@@ -53,9 +53,9 @@ describe("usePolicyStore", () => {
                         resolveSecond = resolve;
                     }),
             );
-        const store = usePolicyStore();
-        const first = store.change(SESSION_A, "auto");
-        const second = store.change(SESSION_A, "manual");
+        const store = usePolicyStore(),
+            first = store.change(SESSION_A, "auto"),
+            second = store.change(SESSION_A, "manual");
 
         resolveFirst?.({ sessionId: SESSION_A, mode: "auto", scope: "session" });
         await first;
