@@ -155,7 +155,9 @@ async function latestChatRunStatus(
     request: APIRequestContext,
     headers: Record<string, string>,
 ): Promise<string> {
-    const res = await request.get(`${CP_URL}/api/v1/audit/entries?type=chat_run&size=1`, { headers });
+    const res = await request.get(`${CP_URL}/api/v1/audit/entries?type=chat_run&size=1`, {
+        headers,
+    });
     if (!res.ok()) return `http-${res.status()}`;
     const body = (await res.json()) as { entries?: Array<{ status?: string }> };
     return body.entries?.[0]?.status ?? "none";

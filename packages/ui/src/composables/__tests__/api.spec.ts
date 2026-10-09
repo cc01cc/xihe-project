@@ -8,14 +8,14 @@ import {
 } from "../api";
 
 let fetchSpy: ReturnType<typeof vi.spyOn>;
-const TEST_PASSWORD = `ui-test-${globalThis.crypto.randomUUID()}`;
-const INVALID_PASSWORD = `ui-invalid-${globalThis.crypto.randomUUID()}`;
-const APPROVAL_ID = "11111111-1111-4111-8111-111111111111";
-const APPROVAL_ID_2 = "22222222-2222-4222-8222-222222222222";
-const RUN_ID = "33333333-3333-4333-8333-333333333333";
-const RUN_ID_2 = "44444444-4444-4444-8444-444444444444";
-const SESSION_ID = "55555555-5555-4555-8555-555555555555";
-const WORKSPACE_ID = "66666666-6666-4666-8666-666666666666";
+const TEST_PASSWORD = `ui-test-${globalThis.crypto.randomUUID()}`,
+    INVALID_PASSWORD = `ui-invalid-${globalThis.crypto.randomUUID()}`,
+    APPROVAL_ID = "11111111-1111-4111-8111-111111111111",
+    APPROVAL_ID_2 = "22222222-2222-4222-8222-222222222222",
+    RUN_ID = "33333333-3333-4333-8333-333333333333",
+    RUN_ID_2 = "44444444-4444-4444-8444-444444444444",
+    SESSION_ID = "55555555-5555-4555-8555-555555555555",
+    WORKSPACE_ID = "66666666-6666-4666-8666-666666666666";
 
 beforeEach(() => {
     localStorage.clear();
@@ -521,8 +521,8 @@ describe("api.getPendingApprovals", () => {
                     }),
             );
 
-            const request = api.getPendingApprovals();
-            const rejected = expect(request).rejects.toMatchObject({ name: "AbortError" });
+            const request = api.getPendingApprovals(),
+                rejected = expect(request).rejects.toMatchObject({ name: "AbortError" });
             await vi.advanceTimersByTimeAsync(5000);
 
             await rejected;
@@ -702,8 +702,8 @@ describe("api.getChatRunStatus approval recovery", () => {
                 }),
         } as Response);
 
-        const nested = await api.getChatRunStatus(RUN_ID);
-        const topLevel = await api.getChatRunStatus(RUN_ID_2);
+        const nested = await api.getChatRunStatus(RUN_ID),
+            topLevel = await api.getChatRunStatus(RUN_ID_2);
 
         expect(nested.pendingApprovals[0]?.policy).toMatchObject({
             mode: "manual",
@@ -787,8 +787,8 @@ describe("api.getHealth", () => {
     });
 });
 
-const RULE_ID = "77777777-7777-4777-8777-777777777777";
-const FACE_ID = "88888888-8888-4888-8888-888888888888";
+const RULE_ID = "77777777-7777-4777-8777-777777777777",
+    FACE_ID = "88888888-8888-4888-8888-888888888888";
 
 describe("api policy admin (PLAN-0328)", () => {
     it("lists policy domains with the effective layer and rule counts", async () => {
@@ -1082,19 +1082,6 @@ const OPERATION_POLICY = {
     reused: null,
 };
 
-// A plain non-auto ask verdict: the same key set with no allowedBy.
-const OPERATION_ASK_POLICY = {
-    effect: "ask",
-    sourceLayer: "builtin",
-    matchedRule: null,
-    reason: "exec requires approval",
-    mode: "manual",
-    allowedBy: null,
-    actionClass: "exec",
-    shape: "structured",
-    reused: null,
-};
-
 describe("normalizeSafePolicySummary", () => {
     it("returns undefined for absent or non-object projections", () => {
         expect(normalizeSafePolicySummary(undefined)).toBeUndefined();
@@ -1110,7 +1097,9 @@ describe("normalizeSafePolicySummary", () => {
     });
 
     it("rejects uppercase or unknown enums, blank required text and non-string nullable fields", () => {
-        expect(normalizeSafePolicySummary({ ...OPERATION_POLICY, effect: "ALLOW" })).toBeUndefined();
+        expect(
+            normalizeSafePolicySummary({ ...OPERATION_POLICY, effect: "ALLOW" }),
+        ).toBeUndefined();
         expect(
             normalizeSafePolicySummary({ ...OPERATION_POLICY, sourceLayer: "cloud" }),
         ).toBeUndefined();
@@ -1119,9 +1108,15 @@ describe("normalizeSafePolicySummary", () => {
             normalizeSafePolicySummary({ ...OPERATION_POLICY, mode: "future-mode" }),
         ).toBeUndefined();
         expect(normalizeSafePolicySummary({ ...OPERATION_POLICY, reason: "" })).toBeUndefined();
-        expect(normalizeSafePolicySummary({ ...OPERATION_POLICY, actionClass: "" })).toBeUndefined();
-        expect(normalizeSafePolicySummary({ ...OPERATION_POLICY, matchedRule: 42 })).toBeUndefined();
-        expect(normalizeSafePolicySummary({ ...OPERATION_POLICY, allowedBy: false })).toBeUndefined();
+        expect(
+            normalizeSafePolicySummary({ ...OPERATION_POLICY, actionClass: "" }),
+        ).toBeUndefined();
+        expect(
+            normalizeSafePolicySummary({ ...OPERATION_POLICY, matchedRule: 42 }),
+        ).toBeUndefined();
+        expect(
+            normalizeSafePolicySummary({ ...OPERATION_POLICY, allowedBy: false }),
+        ).toBeUndefined();
     });
 
     it("rejects projections that omit nullable keys instead of fabricating defaults", () => {
@@ -1133,8 +1128,12 @@ describe("normalizeSafePolicySummary", () => {
     });
 
     it("keeps the optional nullable reused annotation and never invents it", () => {
-        expect(normalizeSafePolicySummary({ ...OPERATION_POLICY, reused: true })?.reused).toBe(true);
-        expect(normalizeSafePolicySummary({ ...OPERATION_POLICY, reused: null })?.reused).toBeNull();
+        expect(normalizeSafePolicySummary({ ...OPERATION_POLICY, reused: true })?.reused).toBe(
+            true,
+        );
+        expect(
+            normalizeSafePolicySummary({ ...OPERATION_POLICY, reused: null })?.reused,
+        ).toBeNull();
 
         // V19 snapshots predate `reused`: the key stays absent instead of becoming `false`.
         const legacySnapshot: Record<string, unknown> = { ...OPERATION_POLICY };

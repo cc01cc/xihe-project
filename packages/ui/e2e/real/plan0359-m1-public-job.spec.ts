@@ -185,16 +185,18 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
             .poll(
                 async () => {
                     const jobs = await listJobs(request, workspace.token, workspace.workspaceId);
-                    return jobs.find((job) => String(job.jobId) === jobId)
-                        ?.status;
+                    return jobs.find((job) => String(job.jobId) === jobId)?.status;
                 },
                 { timeout: 30000 },
             )
             .toMatch(/running|pending/);
 
-        const cancel = await request.post(`${CP_URL}/api/v1/workspaces/${workspace.workspaceId}/jobs/${jobId}/cancel`, {
-            headers: { Authorization: `Bearer ${workspace.token}` },
-        });
+        const cancel = await request.post(
+            `${CP_URL}/api/v1/workspaces/${workspace.workspaceId}/jobs/${jobId}/cancel`,
+            {
+                headers: { Authorization: `Bearer ${workspace.token}` },
+            },
+        );
         expect(
             cancel.ok(),
             `cancel failed: ${cancel.status()} ${await cancel.text()}`,
@@ -206,8 +208,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
             .poll(
                 async () => {
                     const jobs = await listJobs(request, workspace.token, workspace.workspaceId);
-                    return jobs.find((job) => String(job.jobId) === jobId)
-                        ?.status;
+                    return jobs.find((job) => String(job.jobId) === jobId)?.status;
                 },
                 { timeout: 30000 },
             )
@@ -258,8 +259,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
                             workspace.workspaceId,
                         );
                         mxcStatus = String(
-                            jobs.find((job) => String(job.jobId) === jobId)
-                                ?.status ?? "",
+                            jobs.find((job) => String(job.jobId) === jobId)?.status ?? "",
                         );
                         return mxcStatus;
                     },
@@ -290,9 +290,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
                                     workspace.token,
                                     workspace.workspaceId,
                                 );
-                                return jobs.find(
-                                    (job) => String(job.jobId) === jobId,
-                                )?.status;
+                                return jobs.find((job) => String(job.jobId) === jobId)?.status;
                             },
                             { timeout: 30000 },
                         )
@@ -367,8 +365,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
                 async () => {
                     const jobs = await listJobs(request, workspace.token, workspace.workspaceId);
                     finalStatus = String(
-                        jobs.find((job) => String(job.jobId) === jobId)
-                            ?.status ?? "",
+                        jobs.find((job) => String(job.jobId) === jobId)?.status ?? "",
                     );
                     return finalStatus;
                 },

@@ -20,7 +20,9 @@ function queryIsolatedPostgres(sql: string): string {
     const database = process.env.XIHE_E2E_PG_DATABASE;
     const user = process.env.XIHE_E2E_PG_USER;
     if (!container || !database || !user) {
-        throw new Error("isolated PostgreSQL fixture metadata is unavailable; run through scripts/e2e-host.mjs");
+        throw new Error(
+            "isolated PostgreSQL fixture metadata is unavailable; run through scripts/e2e-host.mjs",
+        );
     }
     return execFileSync(
         process.platform === "win32" ? "docker.exe" : "docker",
@@ -124,7 +126,9 @@ test.describe("@host PLAN-0343 — usage line in session header", () => {
         const storedUsage = queryIsolatedPostgres(
             `SELECT payload->'usage'->>'inputTokens' || '|' || payload->'usage'->>'outputTokens' || '|' || payload->'usage'->>'totalTokens' FROM context_events WHERE event_type='llm.usage' AND correlation_id='${runId}'::text`,
         );
-        expect(storedUsage, "one durable usage event for the completed run").toMatch(/^\d+\|\d+\|\d+$/);
+        expect(storedUsage, "one durable usage event for the completed run").toMatch(
+            /^\d+\|\d+\|\d+$/,
+        );
     });
 
     test("console has no fatal errors from the usage channel", async () => {

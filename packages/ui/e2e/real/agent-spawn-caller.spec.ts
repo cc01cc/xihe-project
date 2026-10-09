@@ -788,9 +788,11 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
             ),
         ).toBe(parentRunsBeforeClaim + 1);
         expect(claimedRunId()).toBe(claimRunId);
-        expect(scalarCount(
-            `SELECT count(*) FROM mcp_invocations WHERE session_id = '${parentSessionId}'::uuid`,
-        )).toBe(parentInvocationsBeforeClaim);
+        expect(
+            scalarCount(
+                `SELECT count(*) FROM mcp_invocations WHERE session_id = '${parentSessionId}'::uuid`,
+            ),
+        ).toBe(parentInvocationsBeforeClaim);
 
         await expect
             .poll(

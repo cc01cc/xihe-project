@@ -369,8 +369,7 @@ onMounted(() => {
                         {{ t("settings.auditPrevious") }}
                     </button>
                     <span
-                        >{{ auditStore.page + 1 }} /
-                        {{ Math.max(auditStore.totalPages, 1) }}</span
+                        >{{ auditStore.page + 1 }} / {{ Math.max(auditStore.totalPages, 1) }}</span
                     >
                     <button
                         type="button"

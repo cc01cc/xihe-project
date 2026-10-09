@@ -239,7 +239,13 @@ test("@host PLAN-0387 T3.2 — CP checks durable Agent MCP tool-call provenance"
         }>;
     };
     const invocation = invocations.entries.find((item) => item.runId === runId);
-    expect(invocation).toMatchObject({ runId, sessionId, workspaceId, source: "agent", summary: "write_file" });
+    expect(invocation).toMatchObject({
+        runId,
+        sessionId,
+        workspaceId,
+        source: "agent",
+        summary: "write_file",
+    });
     expect(invocation?.toolCallId).toBeTruthy();
     const detailResponse = await request.get(
         `${CP_URL}/api/v1/audit/entries/mcp_invocation/${invocation!.id}`,
