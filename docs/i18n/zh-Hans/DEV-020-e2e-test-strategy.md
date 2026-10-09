@@ -75,10 +75,12 @@ e2e/
 
 </details>
 
+> 🧊 **lane 冻结（2026-10-07 用户裁定；2026-10-09 mise 已注释）**：`real/compose` lane 及其 `mise run test:e2e:compose` / `test:e2e` 已随 docker 服务化冻结停用（只有 PostgreSQL 保留容器，服务全 host）。下表 compose 行保留作历史参考；实际验收走 `real/host` lane（`mise run test:e2e:host`）。
+
 | 层 | 外部依赖 | 启动方式 | 用例数 |
 |----|---------|---------|--------|
 | mock | 无 | `webServer` 自动启动 Vite dev | 数量随用例扩展变化 |
-| real / compose | Docker Compose 的 CP/Agent/Runtime/PG + host UI | `mise run test:e2e:compose` 自动管理 Compose | 默认排除 `@host` 用例 |
+| real / compose | Docker Compose 的 CP/Agent/Runtime/PG + host UI | `mise run test:e2e:compose` 自动管理 Compose **[已冻结 2026-10-07]** | 默认排除 `@host` 用例 |
 | real / host | Windows native CP/Agent/Runtime/UI + 每轮隔离 PostgreSQL/host root/Sandbox | Host E2E runner 按每轮 `e2eRunId` 编排隔离环境 | 执行 `@host` 用例；禁止连接长期 dev DB |
 
 ### 1.2 Playwright 配置
@@ -99,7 +101,7 @@ deviceScaleFactor: 2            // Retina 级别截图
 
 xihe 使用单个浏览器 project（chromium），通过 `XIHE_E2E_PROFILE` 区分运行拓扑：
 
-- `compose`：由 `scripts/e2e-compose.mjs`（任务 `test:e2e:compose`，旧名 `test:e2e`/`e2e-real.mjs`）启动 frozen Compose，只执行 Compose 可支持用例，排除 `@host`。
+- `compose`：**[已冻结 2026-10-07]** 由 `scripts/e2e-compose.mjs`（任务 `test:e2e:compose`，旧名 `test:e2e`/`e2e-real.mjs`）启动 frozen Compose，只执行 Compose 可支持用例，排除 `@host`。任务已在 mise.toml 注释，禁止用于验收。
 - `host`：以每轮隔离的 host 环境执行 `@host` 用例，覆盖 Runtime-created Sandbox 和 WorkspaceStorage；成功、失败和中断都必须 teardown 并反向断言无残留。
 - 未设置 profile：不做过滤，供人工诊断使用；不能将该结果作为标准 Compose 或 host 门禁。
 

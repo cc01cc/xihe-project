@@ -153,6 +153,7 @@ mise run test:cp
 mise run dev:runtime
 mise run test:runtime
 
+# [FROZEN 2026-10-07 — do not run; use dev:host for daily development]
 mise run test:e2e:compose
 mise run validate:full
 ```
@@ -251,7 +252,7 @@ curl -X POST http://localhost:12631/api/v1/config/import \
   -d @config.import.local.jsonc
 ```
 
-`mise run dev:host` does **not** import config or create/update Provider Connections. After CP is ready, explicitly run `mise run dev:host:import-config` (or `mise run xihe -- config import <file>`) for non-secret JSONC settings. The one-off `mise run dev:full` Compose script retains its separate legacy, environment-triggered import behavior.
+`mise run dev:host` does **not** import config or create/update Provider Connections. After CP is ready, explicitly run `mise run dev:host:import-config` (or `mise run xihe -- config import <file>`) for non-secret JSONC settings. The one-off `mise run dev:full` Compose script **is frozen (2026-10-07: only PostgreSQL remains in Docker; services run on host) and commented out in mise.toml**; it retains its separate legacy, environment-triggered import behavior for historical reference only.
 
 JSONC supports comments and trailing commas; you can directly copy MCP configuration snippets from Claude Desktop / Cursor.
 

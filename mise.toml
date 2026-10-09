@@ -1,3 +1,20 @@
+# ============================================================================
+# 冻结说明（2026-10-07 用户裁定；2026-10-09 强调并已注释任务）
+#
+# XH 的 Docker 构建与服务容器化全部暂缓、冻结：只有 PostgreSQL 保留为
+# Docker 容器，CP / Agent / Runtime / UI 一律以宿主进程运行。
+#   日常开发：mise run dev:host
+#   验收/隔离 E2E：mise run test:e2e:host（PG 容器 + 全 host 服务）
+#
+# 已注释冻结的 docker 相关任务（解冻必须经用户明确裁定，并同步
+# AGENTS.md / DEV-002 / DEV-020 后恢复）：
+#   dev:full、dev:backend、test:e2e:compose、test:e2e、image:workspace:build
+# 保留：dev:host:start:pg（仅 PostgreSQL 容器，属冻结口径允许项）。
+#
+# 误触记录（2026-10-09）：曾误启 test:e2e:compose 触发三镜像构建；
+# runtime 构建中止、agent 镜像已删除、无容器/卷/网络残留。
+# ============================================================================
+
 [env]
 NODE_OPTIONS = "--max-old-space-size=2048"
 
@@ -44,15 +61,17 @@ depends = ["dev:ui"]
 description = "Start the UI development server (backend must be running)"
 alias = "dev"
 
-[tasks."dev:full"]
-run = "bash scripts/dev-all.sh"
-description = "Start all 4 modules via Docker + UI on host (Ctrl+C cleans up containers)"
-alias = "dev:full"
+# [FROZEN 2026-10-07] 服务容器化冻结，见文件头冻结说明
+# [tasks."dev:full"]
+# run = "bash scripts/dev-all.sh"
+# description = "Start all 4 modules via Docker + UI on host (Ctrl+C cleans up containers)"
+# alias = "dev:full"
 
-[tasks."dev:backend"]
-run = "bash -c 'trap \"docker compose down\" EXIT; docker compose up --build runtime control-plane agent postgres'"
-description = "Start runtime, agent, control plane via Docker Compose"
-alias = "dev:backend"
+# [FROZEN 2026-10-07] 服务容器化冻结，见文件头冻结说明
+# [tasks."dev:backend"]
+# run = "bash -c 'trap \"docker compose down\" EXIT; docker compose up --build runtime control-plane agent postgres'"
+# description = "Start runtime, agent, control plane via Docker Compose"
+# alias = "dev:backend"
 
 [tasks."dev:ui"]
 run = "node ../../scripts/dev-ui-host.mjs --mode dev --host 127.0.0.1 --port 12630 --strictPort"
@@ -139,15 +158,17 @@ description = "Run runtime unit tests only (no Docker needed)"
 dir = "packages/runtime"
 alias = "test:runtime:lib"
 
-[tasks."test:e2e:compose"]
-run = "node scripts/e2e-compose.mjs"
-description = "Run Compose-compatible end-to-end tests (auto-start/stop frozen Docker Compose)"
-alias = "test:e2e:compose"
+# [FROZEN 2026-10-07] Compose lane 冻结，见文件头冻结说明
+# [tasks."test:e2e:compose"]
+# run = "node scripts/e2e-compose.mjs"
+# description = "Run Compose-compatible end-to-end tests (auto-start/stop frozen Docker Compose)"
+# alias = "test:e2e:compose"
 
-[tasks."test:e2e"]
-run = "node scripts/e2e-compose.mjs"
-description = "Deprecated alias of test:e2e:compose (Compose-compatible E2E)"
-alias = "test:e2e"
+# [FROZEN 2026-10-07] Compose lane 冻结（旧名一并冻结），见文件头冻结说明
+# [tasks."test:e2e"]
+# run = "node scripts/e2e-compose.mjs"
+# description = "Deprecated alias of test:e2e:compose (Compose-compatible E2E)"
+# alias = "test:e2e"
 
 [tasks."test:e2e:host"]
 run = "node scripts/e2e-host.mjs"
@@ -239,8 +260,8 @@ description = "Run all quality gates — lint + typecheck + build + test (Docker
 alias = "validate"
 
 [tasks."validate:full"]
-depends = ["validate", "test:runtime", "test:integration", "test:e2e:compose"]
-description = "Run full validation + integration + E2E (requires Docker)"
+depends = ["validate", "test:runtime", "test:integration"]
+description = "Run full validation + integration (Compose E2E frozen — see file-top freeze note; PG container only)"
 alias = "validate:full"
 
 [tasks."dev:host"]
@@ -322,10 +343,11 @@ dir = "packages/ui"
 env = { XIHE_ENV = "dev" }
 alias = "dev:host:start:ui"
 
-[tasks."image:workspace:build"]
-run = "docker build -t xihe/workspace -f docker/images/workspace/Dockerfile ."
-description = "Build the xihe/workspace Docker image (multi-stage)"
-alias = "image:workspace:build"
+# [FROZEN 2026-10-07] docker 构建冻结，见文件头冻结说明（现存镜像可继续被 Runtime 使用）
+# [tasks."image:workspace:build"]
+# run = "docker build -t xihe/workspace -f docker/images/workspace/Dockerfile ."
+# description = "Build the xihe/workspace Docker image (multi-stage)"
+# alias = "image:workspace:build"
 
 [tasks."reset-admin"]
 run = "pwsh -NoProfile -File scripts/reset-admin.ps1"

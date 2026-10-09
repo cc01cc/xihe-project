@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 
-test.describe("Workspace environment status", () => {
+test.describe("@host Workspace environment status", () => {
     test("shows assignment, storage and Runtime observation", async ({ page, request }) => {
         const suffix = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
         const registration = await request.post(`${CP_URL}/api/v1/auth/register`, {
