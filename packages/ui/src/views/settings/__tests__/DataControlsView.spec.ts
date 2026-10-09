@@ -19,7 +19,10 @@ vi.mock("vue-router", () => ({
             redirectedFrom: undefined,
             meta: {},
         }) as RouteLocationNormalizedLoaded,
-    useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+    useRouter: () => ({
+        push: vi.fn<(location: unknown) => Promise<void>>(),
+        replace: vi.fn<(location: unknown) => Promise<void>>(),
+    }),
     RouterLink: { template: "<a><slot /></a>" },
 }));
 
@@ -29,8 +32,9 @@ vi.mock("../../../composables/api", async (importOriginal) => {
         ...actual,
         api: {
             ...actual.api,
-            getWorkspaceCheckpointRetention: vi.fn(),
-            cleanupWorkspaceCheckpoints: vi.fn(),
+            getWorkspaceCheckpointRetention:
+                vi.fn<typeof apiModule.api.getWorkspaceCheckpointRetention>(),
+            cleanupWorkspaceCheckpoints: vi.fn<typeof apiModule.api.cleanupWorkspaceCheckpoints>(),
         },
     };
 });
@@ -78,8 +82,8 @@ function createI18nInstance() {
 
 beforeEach(() => {
     setActivePinia(createPinia());
-    globalThis.URL.createObjectURL = vi.fn(() => "blob:mock");
-    globalThis.URL.revokeObjectURL = vi.fn();
+    globalThis.URL.createObjectURL = vi.fn<() => string>(() => "blob:mock");
+    globalThis.URL.revokeObjectURL = vi.fn<(url: string) => void>(() => undefined);
 });
 
 describe("DataControlsView", () => {

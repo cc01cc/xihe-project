@@ -14,7 +14,13 @@ const WORKSPACE_ID = "workspace-a",
 
 vi.mock("../../composables/api", async (importOriginal) => {
     const actual = await importOriginal<typeof apiModule>();
-    return { ...actual, api: { ...actual.api, listWorkspaceCheckpoints: vi.fn() } };
+    return {
+        ...actual,
+        api: {
+            ...actual.api,
+            listWorkspaceCheckpoints: vi.fn<typeof apiModule.api.listWorkspaceCheckpoints>(),
+        },
+    };
 });
 const mockedApi = vi.mocked(api);
 

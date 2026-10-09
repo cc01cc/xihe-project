@@ -1,8 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 
-const mockGetDocument = vi.fn((..._args: any[]) => ({
-    promise: Promise.resolve({ numPages: 3 }),
-}));
+const mockGetDocument = vi.fn<(..._args: unknown[]) => { promise: Promise<{ numPages: number }> }>(
+    (..._args: unknown[]) => ({
+        promise: Promise.resolve({ numPages: 3 }),
+    }),
+);
 vi.mock("pdfjs-dist", () => ({
     default: {
         GlobalWorkerOptions: { workerSrc: "" },

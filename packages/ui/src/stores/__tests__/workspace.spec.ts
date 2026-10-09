@@ -3,6 +3,7 @@ import { setActivePinia, createPinia } from "pinia";
 import { useWorkspaceStore } from "../workspace";
 import { ApiError, api } from "../../composables/api";
 import type * as apiModule from "../../composables/api";
+import type * as fileServiceModule from "../../composables/fileService";
 
 vi.mock("../../composables/api", async (importOriginal) => {
     const actual = await importOriginal<typeof apiModule>();
@@ -10,20 +11,20 @@ vi.mock("../../composables/api", async (importOriginal) => {
         ...actual,
         api: {
             ...actual.api,
-            deleteFile: vi.fn(),
-            writeFile: vi.fn(),
-            readFile: vi.fn(),
-            readFileRange: vi.fn(),
-            listDirectory: vi.fn(),
-            moveFile: vi.fn(),
-            copyFile: vi.fn(),
-            createDirectory: vi.fn(),
+            deleteFile: vi.fn<typeof apiModule.api.deleteFile>(),
+            writeFile: vi.fn<typeof apiModule.api.writeFile>(),
+            readFile: vi.fn<typeof apiModule.api.readFile>(),
+            readFileRange: vi.fn<typeof apiModule.api.readFileRange>(),
+            listDirectory: vi.fn<typeof apiModule.api.listDirectory>(),
+            moveFile: vi.fn<typeof apiModule.api.moveFile>(),
+            copyFile: vi.fn<typeof apiModule.api.copyFile>(),
+            createDirectory: vi.fn<typeof apiModule.api.createDirectory>(),
         },
     };
 });
 
 vi.mock("../../composables/fileService", () => ({
-    readFilePreview: vi.fn(),
+    readFilePreview: vi.fn<typeof fileServiceModule.readFilePreview>(),
 }));
 
 vi.mock("../session", () => ({
@@ -32,7 +33,7 @@ vi.mock("../session", () => ({
         currentSessionAttachments: [],
         currentSessionFileContext: undefined,
         currentAgentIds: [],
-        setFileContext: vi.fn(),
+        setFileContext: vi.fn<(file: unknown) => void>(),
     }),
 }));
 

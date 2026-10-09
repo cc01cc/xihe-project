@@ -15,8 +15,8 @@ vi.mock("../../composables/api", async (importOriginal) => {
         ...actual,
         api: {
             ...actual.api,
-            getPendingApprovals: vi.fn(),
-            decideChatApproval: vi.fn(),
+            getPendingApprovals: vi.fn<typeof apiModule.api.getPendingApprovals>(),
+            decideChatApproval: vi.fn<typeof apiModule.api.decideChatApproval>(),
         },
     };
 });

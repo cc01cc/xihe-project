@@ -15,7 +15,10 @@ vi.mock("vue-router", () => ({
 }));
 
 vi.mock("vue-sonner", () => ({
-    toast: { success: vi.fn(), error: vi.fn() },
+    toast: {
+        success: vi.fn<(message?: unknown) => string | number>(),
+        error: vi.fn<(message?: unknown) => string | number>(),
+    },
 }));
 
 vi.mock("../../../composables/api", async (importOriginal) => {
@@ -24,8 +27,8 @@ vi.mock("../../../composables/api", async (importOriginal) => {
         ...actual,
         api: {
             ...actual.api,
-            getWorkspaceEnvironment: vi.fn(),
-            getWorkspaceJobs: vi.fn(),
+            getWorkspaceEnvironment: vi.fn<typeof apiModule.api.getWorkspaceEnvironment>(),
+            getWorkspaceJobs: vi.fn<typeof apiModule.api.getWorkspaceJobs>(),
         },
     };
 });

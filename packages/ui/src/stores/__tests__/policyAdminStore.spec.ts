@@ -15,13 +15,13 @@ vi.mock("../../composables/api", async (importOriginal) => {
         ...actual,
         api: {
             ...actual.api,
-            listPolicyDomains: vi.fn(),
-            listPolicyRules: vi.fn(),
-            listPolicyRuleConflicts: vi.fn(),
-            createPolicyRule: vi.fn(),
-            deletePolicyRule: vi.fn(),
-            listPolicyToolFaces: vi.fn(),
-            upsertPolicyToolFace: vi.fn(),
+            listPolicyDomains: vi.fn<typeof apiModule.api.listPolicyDomains>(),
+            listPolicyRules: vi.fn<typeof apiModule.api.listPolicyRules>(),
+            listPolicyRuleConflicts: vi.fn<typeof apiModule.api.listPolicyRuleConflicts>(),
+            createPolicyRule: vi.fn<typeof apiModule.api.createPolicyRule>(),
+            deletePolicyRule: vi.fn<typeof apiModule.api.deletePolicyRule>(),
+            listPolicyToolFaces: vi.fn<typeof apiModule.api.listPolicyToolFaces>(),
+            upsertPolicyToolFace: vi.fn<typeof apiModule.api.upsertPolicyToolFace>(),
         },
     };
 });
@@ -142,7 +142,7 @@ describe("usePolicyAdminStore", () => {
                 priority: 0,
                 locked: true,
             }),
-        ).rejects.toThrow();
+        ).rejects.toThrow("locked rules require ADMIN");
 
         expect(store.rulesForbidden.instance).toBe(true);
         expect(store.rulesError.instance).toBeNull();
@@ -201,7 +201,7 @@ describe("usePolicyAdminStore", () => {
                 actionClass: "read",
                 shape: "structured",
             }),
-        ).rejects.toThrow();
+        ).rejects.toThrow("built-in face cannot be overridden");
 
         expect(store.toolFacesForbidden).toBe(true);
         expect(store.toolFacesError).toContain("FORBIDDEN");

@@ -10,8 +10,10 @@ vi.mock("../../composables/api", async (importOriginal) => {
         ...actual,
         api: {
             ...actual.api,
-            getChatRunStatus: vi.fn(),
-            getPendingApprovals: vi.fn().mockResolvedValue([]),
+            getChatRunStatus: vi.fn<typeof apiModule.api.getChatRunStatus>(),
+            getPendingApprovals: vi
+                .fn<typeof apiModule.api.getPendingApprovals>()
+                .mockResolvedValue([]),
         },
     };
 });

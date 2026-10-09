@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
 import { flushPromises } from "@vue/test-utils";
 import { chatTransport } from "@/services/chatTransport";
+import type { ChatTransportState } from "@/services/chatTransport";
+import type * as useSSEModule from "../useSSE";
 import { useSSE } from "../useSSE";
 import { useAgentStore } from "../../stores/agent";
 import { useAuthStore } from "../../stores/auth";
@@ -19,9 +21,13 @@ const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
 
 vi.mock("@/services/chatTransport", () => ({
     chatTransport: {
-        sendMessages: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn(),
-        getState: vi.fn(() => ({ isConnected: false, isConnecting: false })),
+        sendMessages: vi
+            .fn<typeof useSSEModule.chatTransport.sendMessages>()
+            .mockResolvedValue(undefined),
+        stop: vi.fn<typeof useSSEModule.chatTransport.stop>(),
+        getState: vi
+            .fn<typeof useSSEModule.chatTransport.getState>()
+            .mockReturnValue({ isConnected: false, isConnecting: false } as ChatTransportState),
     },
 }));
 
@@ -105,7 +111,7 @@ describe("useSSE", () => {
 
     it("reports initial and reconnect open as durable-state refresh signals", async () => {
         const transport = createTransportController(),
-            onOpen = vi.fn(),
+            onOpen = vi.fn<NonNullable<useSSEModule.SSECallbacks["onOpen"]>>(),
             { connect } = useSSE(SESSION_ID);
         connect({ onOpen });
         await flushPromises();
@@ -119,7 +125,8 @@ describe("useSSE", () => {
 
     it("dispatches derived_state_changed only as a refresh hint", async () => {
         const transport = createTransportController(),
-            onDerivedStateChanged = vi.fn(),
+            onDerivedStateChanged =
+                vi.fn<NonNullable<useSSEModule.SSECallbacks["onDerivedStateChanged"]>>(),
             { connect } = useSSE(SESSION_ID);
         connect({ onDerivedStateChanged });
         await flushPromises();
@@ -154,7 +161,7 @@ describe("useSSE", () => {
     it("emits tokens via onToken callback", async () => {
         const transport = createTransportController(),
             { connect } = useSSE(SESSION_ID),
-            onToken = vi.fn();
+            onToken = vi.fn<NonNullable<useSSEModule.SSECallbacks["onToken"]>>();
         connect({ onToken });
         await flushPromises();
         await transport.simulateMessage("token", JSON.stringify({ content: "hello" }));
@@ -164,7 +171,7 @@ describe("useSSE", () => {
     it("does not start content lifecycle before the first token", async () => {
         const transport = createTransportController(),
             { connect } = useSSE(SESSION_ID),
-            onStart = vi.fn();
+            onStart = vi.fn<NonNullable<useSSEModule.SSECallbacks["onStart"]>>();
         connect({ onStart });
         await flushPromises();
 
@@ -178,7 +185,7 @@ describe("useSSE", () => {
     it("emits status via onStatus callback", async () => {
         const transport = createTransportController(),
             { connect } = useSSE(SESSION_ID),
-            onStatus = vi.fn();
+            onStatus = vi.fn<NonNullable<useSSEModule.SSECallbacks["onStatus"]>>();
         connect({ onStatus });
         await flushPromises();
         await transport.simulateMessage("status", JSON.stringify({ status: "executing" }));
@@ -326,7 +333,7 @@ describe("useSSE", () => {
     it("emits done via onDone callback and stops streaming flag", async () => {
         const transport = createTransportController(),
             { connect, isStreaming } = useSSE(SESSION_ID),
-            onDone = vi.fn();
+            onDone = vi.fn<NonNullable<useSSEModule.SSECallbacks["onDone"]>>();
         connect({ onDone });
         await flushPromises();
         await transport.simulateMessage("done", "");
@@ -337,7 +344,7 @@ describe("useSSE", () => {
     it("emits error via onError callback when connect fails", async () => {
         vi.mocked(chatTransport.sendMessages).mockRejectedValueOnce(new Error("connect failed"));
         const { connect } = useSSE(SESSION_ID),
-            onError = vi.fn();
+            onError = vi.fn<NonNullable<useSSEModule.SSECallbacks["onError"]>>();
         connect({ onError });
         await flushPromises();
         expect(onError).toHaveBeenCalledWith(
@@ -351,7 +358,7 @@ describe("useSSE", () => {
     it("does not emit transport retry errors via onError callback", async () => {
         const transport = createTransportController(),
             { connect } = useSSE(SESSION_ID),
-            onError = vi.fn();
+            onError = vi.fn<NonNullable<useSSEModule.SSECallbacks["onError"]>>();
         connect({ onError });
         await flushPromises();
         await transport.simulateError("network failure");
@@ -546,16 +553,16 @@ describe("stream liveness timer (S-1)", () => {
     async function startStreamingRun() {
         const transport = createTransportController(),
             sse = useSSE(SESSION_ID),
-            onError = vi.fn(),
-            onDone = vi.fn();
+            onError = vi.fn<NonNullable<useSSEModule.SSECallbacks["onError"]>>(),
+            onDone = vi.fn<NonNullable<useSSEModule.SSECallbacks["onDone"]>>();
         sse.connect({ onError, onDone });
         await flushPromises();
         vi.stubGlobal(
             "fetch",
-            vi.fn().mockResolvedValue({
+            vi.fn<(input: string, init?: RequestInit) => Promise<Response>>().mockResolvedValue({
                 ok: true,
                 json: async () => ({ runId: RUN_ID }),
-            }),
+            } as Response),
         );
         await sse.sendMessage({ content: "hello", branchId: BRANCH_ID });
         await transport.simulateMessage("token", JSON.stringify({ content: "hi" }));
@@ -591,15 +598,15 @@ describe("stream liveness timer (S-1)", () => {
 
     it("times out as error when nothing arrives before the first token", async () => {
         const sse = useSSE(SESSION_ID),
-            onError = vi.fn();
+            onError = vi.fn<NonNullable<useSSEModule.SSECallbacks["onError"]>>();
         sse.connect({ onError });
         await flushPromises();
         vi.stubGlobal(
             "fetch",
-            vi.fn().mockResolvedValue({
+            vi.fn<(input: string, init?: RequestInit) => Promise<Response>>().mockResolvedValue({
                 ok: true,
                 json: async () => ({ runId: RUN_ID }),
-            }),
+            } as Response),
         );
         await sse.sendMessage({ content: "hello", branchId: BRANCH_ID });
 
@@ -616,7 +623,7 @@ describe("stream liveness timer (S-1)", () => {
     it("does not arm the timer while idle", async () => {
         const transport = createTransportController(),
             { connect } = useSSE(SESSION_ID),
-            onError = vi.fn();
+            onError = vi.fn<NonNullable<useSSEModule.SSECallbacks["onError"]>>();
         connect({ onError });
         await flushPromises();
 

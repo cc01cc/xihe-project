@@ -30,8 +30,10 @@ function mockFetch(response: {
     ok: boolean;
     status: number;
     json?: () => Promise<unknown>;
-}): ReturnType<typeof vi.fn> {
-    return vi.fn().mockResolvedValue(response);
+}): ReturnType<typeof vi.fn<(input: string, init?: RequestInit) => Promise<Response>>> {
+    return vi.fn<(input: string, init?: RequestInit) => Promise<Response>>(
+        (_input: string, _init?: RequestInit) => Promise.resolve(response as Response),
+    );
 }
 
 beforeEach(() => {
@@ -182,7 +184,9 @@ describe("uploadAttachments", () => {
     });
 
     it("marks all valid files failed on network error", async () => {
-        const fetchSpy = vi.fn().mockRejectedValue(new Error("Network failure"));
+        const fetchSpy = vi.fn<(input: string, init?: RequestInit) => Promise<Response>>(() =>
+            Promise.reject(new Error("Network failure")),
+        );
         vi.stubGlobal("fetch", fetchSpy);
 
         const result = await uploadAttachments("session-1", [

@@ -25,7 +25,10 @@ vi.mock("vue-router", () => ({
             redirectedFrom: undefined,
             meta: {},
         }) as RouteLocationNormalizedLoaded,
-    useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+    useRouter: () => ({
+        push: vi.fn<(location: unknown) => Promise<void>>(),
+        replace: vi.fn<(location: unknown) => Promise<void>>(),
+    }),
     RouterLink: { template: "<a><slot /></a>" },
 }));
 
@@ -35,8 +38,8 @@ vi.mock("../../../composables/api", async (importOriginal) => {
         ...actual,
         api: {
             ...actual.api,
-            listAuditEntries: vi.fn(),
-            getAuditEntry: vi.fn(),
+            listAuditEntries: vi.fn<typeof apiModule.api.listAuditEntries>(),
+            getAuditEntry: vi.fn<typeof apiModule.api.getAuditEntry>(),
         },
     };
 });

@@ -20,12 +20,19 @@ vi.mock("vue-router", () => ({
             redirectedFrom: undefined,
             meta: {},
         }) as RouteLocationNormalizedLoaded,
-    useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+    useRouter: () => ({
+        push: vi.fn<(location: unknown) => Promise<void>>(),
+        replace: vi.fn<(location: unknown) => Promise<void>>(),
+    }),
     RouterLink: { template: "<a><slot /></a>" },
 }));
 
 vi.mock("vue-sonner", () => ({
-    toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+    toast: {
+        success: vi.fn<(message?: unknown) => string | number>(),
+        error: vi.fn<(message?: unknown) => string | number>(),
+        warning: vi.fn<(message?: unknown) => string | number>(),
+    },
 }));
 
 vi.mock("../../../composables/api", async (importOriginal) => {
@@ -34,8 +41,8 @@ vi.mock("../../../composables/api", async (importOriginal) => {
         ...actual,
         api: {
             ...actual.api,
-            listPolicyToolFaces: vi.fn(),
-            upsertPolicyToolFace: vi.fn(),
+            listPolicyToolFaces: vi.fn<typeof apiModule.api.listPolicyToolFaces>(),
+            upsertPolicyToolFace: vi.fn<typeof apiModule.api.upsertPolicyToolFace>(),
         },
     };
 });

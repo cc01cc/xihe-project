@@ -3,11 +3,12 @@ import { setActivePinia, createPinia } from "pinia";
 import { useAuthStore } from "../auth";
 import { useAgentStore } from "../agent";
 import type { User } from "../../types";
+import type * as apiModule from "../../composables/api";
 
 vi.mock("../../composables/api", () => ({
     api: {
-        login: vi.fn(),
-        register: vi.fn(),
+        login: vi.fn<typeof apiModule.login>(),
+        register: vi.fn<typeof apiModule.register>(),
     },
 }));
 

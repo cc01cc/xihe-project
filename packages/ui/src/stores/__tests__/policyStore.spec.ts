@@ -12,8 +12,8 @@ vi.mock("../../composables/api", async (importOriginal) => {
         ...actual,
         api: {
             ...actual.api,
-            getPolicyMode: vi.fn(),
-            setPolicyMode: vi.fn(),
+            getPolicyMode: vi.fn<typeof apiModule.api.getPolicyMode>(),
+            setPolicyMode: vi.fn<typeof apiModule.api.setPolicyMode>(),
         },
     };
 });
