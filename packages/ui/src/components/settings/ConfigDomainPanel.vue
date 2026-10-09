@@ -32,8 +32,8 @@ const emit = defineEmits<{
     reset: [key: string];
 }>();
 
-const expanded = ref(false);
-const editing = ref<Record<string, string>>({});
+const expanded = ref(false),
+    editing = ref<Record<string, string>>({});
 
 function toggle() {
     expanded.value = !expanded.value;

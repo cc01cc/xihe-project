@@ -20,9 +20,9 @@ export interface ImportData {
 }
 
 const { t } = useI18n();
-const showModal = ref(false);
-const importData = ref<ImportData | null>(null);
-const previewError = ref<string | null>(null);
+const showModal = ref(false),
+    importData = ref<ImportData | null>(null),
+    previewError = ref<string | null>(null);
 const parsing = ref(false);
 
 watch(
@@ -38,9 +38,9 @@ async function parseFile(file: File) {
     parsing.value = true;
     previewError.value = null;
     try {
-        const text = await file.text();
-        const json = JSON.parse(text);
-        const chats = json.chats;
+        const text = await file.text(),
+            json = JSON.parse(text),
+            chats = json.chats;
         if (!Array.isArray(chats)) throw new Error("Invalid import format: missing chats array");
         let messageCount = 0;
         for (const chat of chats) {

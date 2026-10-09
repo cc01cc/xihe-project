@@ -35,15 +35,15 @@ const emit = defineEmits<{
     deleted: [];
 }>();
 
-const auth = useAuthStore();
-const name = ref("");
-const description = ref("");
-const saving = ref(false);
-const error = ref("");
-const confirmDeleteOpen = ref(false);
-const deleteConfirmName = ref("");
-const deleting = ref(false);
-const deleteError = ref("");
+const auth = useAuthStore(),
+    name = ref(""),
+    description = ref(""),
+    saving = ref(false),
+    error = ref("");
+const confirmDeleteOpen = ref(false),
+    deleteConfirmName = ref(""),
+    deleting = ref(false),
+    deleteError = ref("");
 
 watch(
     () => props.open,

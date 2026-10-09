@@ -40,10 +40,10 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const router = useRouter();
-const ws = useWorkspaceStore();
-const sessionStore = useSessionStore();
-const auth = useAuthStore();
+const router = useRouter(),
+    ws = useWorkspaceStore(),
+    sessionStore = useSessionStore(),
+    auth = useAuthStore();
 
 const breadcrumb = computed(() => {
     const active = ws.activeFilePath;
@@ -65,8 +65,8 @@ function handleRefresh() {
 }
 
 function switchToChat() {
-    const id = sessionStore.currentSessionId;
-    const workspaceId = props.workspaceId || auth.currentWorkspaceId;
+    const id = sessionStore.currentSessionId,
+        workspaceId = props.workspaceId || auth.currentWorkspaceId;
     if (id && workspaceId) router.push(workspaceChatPath(workspaceId, id));
 }
 

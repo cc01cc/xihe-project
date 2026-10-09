@@ -22,19 +22,19 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const authStore = useAuthStore();
-const actionClasses = ["read", "write", "delete", "exec", "network", "credential"] as const;
+const authStore = useAuthStore(),
+    actionClasses = ["read", "write", "delete", "exec", "network", "credential"] as const;
 const agents = ref<WorkspaceAgentBinding[]>([]);
-const templates = ref<Array<{ layer: string; template: AgentTemplateSummary }>>([]);
-const loading = ref(false);
-const saving = ref(false);
-const error = ref("");
-const status = ref("");
-const name = ref("");
-const templateId = ref("");
+const templates = ref<Array<{ layer: string; template: AgentTemplateSummary }>>([]),
+    loading = ref(false);
+const saving = ref(false),
+    error = ref(""),
+    status = ref(""),
+    name = ref(""),
+    templateId = ref("");
 const createdPrincipal = ref<AgentPrincipalCreateResponse | null>(null);
-const permissions = ref<WorkspaceAgentPermission[]>([]);
-const editingPrincipalId = ref<string | null>(null);
+const permissions = ref<WorkspaceAgentPermission[]>([]),
+    editingPrincipalId = ref<string | null>(null);
 const unbindConfirmationId = ref<string | null>(null);
 
 watch(

@@ -12,8 +12,8 @@ const emit = defineEmits<{
     "update:modelValue": [value: string];
 }>();
 
-const text = ref(props.modelValue);
-const showSource = ref(false);
+const text = ref(props.modelValue),
+    showSource = ref(false);
 
 watch(
     () => props.modelValue,

@@ -8,8 +8,8 @@ import { workspaceChatPath, workspacePath } from "../../lib/routes";
 
 const router = useRouter();
 const { t } = useI18n();
-const sessionStore = useSessionStore();
-const auth = useAuthStore();
+const sessionStore = useSessionStore(),
+    auth = useAuthStore();
 
 function goBack() {
     const id = sessionStore.currentSessionId;

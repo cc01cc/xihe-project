@@ -4,8 +4,8 @@ import { LoaderCircle, RefreshCw, Search, X } from "@lucide/vue";
 import { useWorkspaceStore } from "../../stores/workspace";
 import FileTree from "./FileTree.vue";
 
-const ws = useWorkspaceStore();
-const searchQuery = ref("");
+const ws = useWorkspaceStore(),
+    searchQuery = ref("");
 
 onMounted(() => {
     void ws.loadTree();

@@ -28,17 +28,17 @@ const props = withDefaults(
     },
 );
 
-const providers = ref<ProviderDefinition[]>([]);
-const connections = ref<ProviderConnection[]>([]);
-const search = ref("");
-const loading = ref(false);
-const modalOpen = ref(false);
-const formOpen = ref(false);
-const selectedProvider = ref<ProviderDefinition | null>(null);
-const editingConnection = ref<ProviderConnection | null>(null);
-const formScope = ref<"USER" | "WORKSPACE">("USER");
-const saving = ref(false);
-const verifyingId = ref<string | null>(null);
+const providers = ref<ProviderDefinition[]>([]),
+    connections = ref<ProviderConnection[]>([]),
+    search = ref("");
+const loading = ref(false),
+    modalOpen = ref(false),
+    formOpen = ref(false);
+const selectedProvider = ref<ProviderDefinition | null>(null),
+    editingConnection = ref<ProviderConnection | null>(null);
+const formScope = ref<"USER" | "WORKSPACE">("USER"),
+    saving = ref(false),
+    verifyingId = ref<string | null>(null);
 const pickerSearch = ref("");
 
 const form = reactive({
@@ -87,8 +87,8 @@ function pickerGroupLabel(provider: ProviderDefinition): string {
 }
 
 const pickerGroups = computed(() => {
-    const groups: Array<{ label: string; items: ProviderDefinition[] }> = [];
-    const labels = ["原生协议", "OpenAI 兼容", "本地与自定义"];
+    const groups: Array<{ label: string; items: ProviderDefinition[] }> = [],
+        labels = ["原生协议", "OpenAI 兼容", "本地与自定义"];
     for (const label of labels) {
         const items = selectableProviders.value.filter(
             (provider) => pickerGroupLabel(provider) === label,

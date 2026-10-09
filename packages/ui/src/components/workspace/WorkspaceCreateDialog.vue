@@ -56,25 +56,25 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const auth = useAuthStore();
 
-const step = ref<Step>("select_storage_mode");
-const storageMode = ref<WorkspaceStorageMode>("managed_import");
-const executionMode = ref<WorkspaceDirectAttachExecutionMode>("windows-mxc");
-const name = ref("");
-const description = ref("");
-const saving = ref(false);
-const submitError = ref("");
-const idempotencyKey = ref<string | null>(null);
+const step = ref<Step>("select_storage_mode"),
+    storageMode = ref<WorkspaceStorageMode>("managed_import");
+const executionMode = ref<WorkspaceDirectAttachExecutionMode>("windows-mxc"),
+    name = ref(""),
+    description = ref("");
+const saving = ref(false),
+    submitError = ref(""),
+    idempotencyKey = ref<string | null>(null);
 
 // Source browser (Runtime-visible directory tree).
-const sourcePath = ref("");
-const sourceEntries = ref<SourceEntry[]>([]);
-const sourceLoading = ref(false);
-const sourceError = ref("");
+const sourcePath = ref(""),
+    sourceEntries = ref<SourceEntry[]>([]),
+    sourceLoading = ref(false),
+    sourceError = ref("");
 const selectedHostPath = ref("");
 
 // Runtime capability preflight (direct-attach only).
-const preflightLoading = ref(false);
-const preflightError = ref("");
+const preflightLoading = ref(false),
+    preflightError = ref("");
 const mxcPreflight = ref<WorkspaceCapabilityPreflight | null>(null);
 const hostPreflight = ref<WorkspaceCapabilityPreflight | null>(null);
 
