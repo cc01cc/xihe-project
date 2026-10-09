@@ -761,9 +761,9 @@ public class ChatController {
                     logger.warn("[LIFECYCLE] service=cp event=chat_pre_run_compaction_failed sessionId={} runId={} error={}",
                             sessionId, runId, gateError.getMessage());
                 }
-                ChatRun persistedRun = chatRunRepository.findById(UUID.fromString(runId))
+                ChatRunReadService.ExecutionRun persistedRun = chatRunReadService.findExecutionRun(runId)
                         .orElseThrow(() -> new IllegalStateException("Chat run not found"));
-                boolean refreshRootAgentsMd = shouldRefreshRootAgentsMd(persistedRun);
+                boolean refreshRootAgentsMd = shouldRefreshRootAgentsMd(persistedRun.context());
                 // PLAN-0340/0415: the source policy is fixed by the admission
                 // template. per_chat_run refreshes each turn; per_session pins
                 // the first successful source snapshot for this Session.
@@ -789,21 +789,19 @@ public class ChatController {
                     }
                 }
                 transitionRun(runId, List.of("accepted", "queued"), "running", null, null, null, 0, 0);
-                String effectiveProvider = persistedRun.getProvider() == null
-                        ? provider : persistedRun.getProvider();
-                String effectiveModel = persistedRun.getModel() == null
-                        ? model : persistedRun.getModel();
+                String effectiveProvider = persistedRun.provider() == null ? provider : persistedRun.provider();
+                String effectiveModel = persistedRun.model() == null ? model : persistedRun.model();
                 ProviderCredentialLeaseService.IssuedLease credentialLease = null;
-                if (persistedRun.getProviderConnectionId() != null) {
+                if (persistedRun.providerConnectionId() != null) {
                     credentialLease = credentialLeases.issue(
                             userId,
                             workspaceId,
                             sessionId,
                             runId,
-                            persistedRun.getProviderConnectionId(),
+                            persistedRun.providerConnectionId(),
                             effectiveProvider,
                             effectiveModel,
-                            persistedRun.getConnectionRevision());
+                            persistedRun.connectionRevision());
                 }
                 Map<String, Object> agentRequest = new java.util.LinkedHashMap<>();
                 agentRequest.put("sessionId", sessionId);
@@ -822,8 +820,8 @@ public class ChatController {
                 }
                 if (credentialLease != null) {
                     agentRequest.put("credentialLease", credentialLease.token());
-                    agentRequest.put("providerConnectionId", persistedRun.getProviderConnectionId());
-                    agentRequest.put("connectionRevision", persistedRun.getConnectionRevision());
+                    agentRequest.put("providerConnectionId", persistedRun.providerConnectionId());
+                    agentRequest.put("connectionRevision", persistedRun.connectionRevision());
                 }
                 // PLAN-0415 M1: only the admission-frozen template snapshot and,
                 // when present, the CP-selected model instructions cross to Agent.
@@ -833,8 +831,9 @@ public class ChatController {
                 if (boundSession.getAgentPrincipalId() == null || boundSession.getAgentPrincipalId().isBlank()) {
                     throw new IllegalStateException("ChatRun Session is missing its AgentPrincipal binding");
                 }
-                agentRequest.put("contextTemplateSnapshot", persistedRun.getContextTemplateSnapshot());
-                Map<String, Object> componentSources = contextTemplateSourceService.resolve(persistedRun, boundSession);
+                agentRequest.put("contextTemplateSnapshot", persistedRun.context().contextTemplateSnapshot());
+                Map<String, Object> componentSources =
+                        contextTemplateSourceService.resolve(persistedRun.context(), boundSession);
                 if (!componentSources.isEmpty()) {
                     agentRequest.put("componentSources", componentSources);
                 }
@@ -1046,8 +1045,9 @@ public class ChatController {
         }
     }
 
-    private boolean shouldRefreshRootAgentsMd(ChatRun run) {
-        com.fasterxml.jackson.databind.JsonNode snapshot = run.getContextTemplateSnapshot();
+    private boolean shouldRefreshRootAgentsMd(
+            com.cc01cc.p.xihe.cp.service.ContextTemplateSourceService.RunContext run) {
+        com.fasterxml.jackson.databind.JsonNode snapshot = run.contextTemplateSnapshot();
         com.fasterxml.jackson.databind.JsonNode components = snapshot == null
                 ? null : snapshot.path("template").path("components");
         // Pre-template/legacy ChatRuns retain the existing per-run refresh.
@@ -1077,7 +1077,7 @@ public class ChatController {
         if (!hasRootComponent) {
             return false;
         }
-        return hasPerSession && !contextSourceRefreshService.hasSuccessfulSessionL1Snapshot(run.getSessionId());
+        return hasPerSession && !contextSourceRefreshService.hasSuccessfulSessionL1Snapshot(run.sessionId());
     }
 
     /**

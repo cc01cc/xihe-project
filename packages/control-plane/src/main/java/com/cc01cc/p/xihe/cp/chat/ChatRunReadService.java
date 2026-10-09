@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.chat;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.service.ContextTemplateSourceService;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -101,5 +102,17 @@ public class ChatRunReadService {
     record DispatchRun(String id, String sessionId, String userId, String workspaceId, String origin,
                        String status, String userMessageId, String provider, String model,
                        String toolMode) {
+    }
+
+    Optional<ExecutionRun> findExecutionRun(String runId) {
+        return chatRunRepository.findById(UUID.fromString(runId))
+                .map(run -> new ExecutionRun(run.getProvider(), run.getModel(), run.getProviderConnectionId(),
+                        run.getConnectionRevision(), new ContextTemplateSourceService.RunContext(
+                        run.getSessionId(), run.getWorkspaceId(), run.getUserId(),
+                        run.getContextTemplateSnapshot())));
+    }
+
+    record ExecutionRun(String provider, String model, String providerConnectionId, Long connectionRevision,
+                        ContextTemplateSourceService.RunContext context) {
     }
 }

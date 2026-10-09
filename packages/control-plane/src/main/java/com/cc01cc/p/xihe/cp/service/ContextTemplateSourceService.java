@@ -1,6 +1,5 @@
 package com.cc01cc.p.xihe.cp.service;
 
-import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
@@ -40,17 +39,17 @@ public class ContextTemplateSourceService {
         this.objectMapper = objectMapper;
     }
 
-    public Map<String, Object> resolve(ChatRun run, Session session) {
+    public Map<String, Object> resolve(RunContext run, Session session) {
         Map<String, Object> result = new LinkedHashMap<>();
         if (run == null) {
             return Map.of();
         }
         boolean validBinding = session != null && session.getId() != null
-                && run.getSessionId().equals(session.getId().toString())
-                && run.getWorkspaceId().equals(session.getWorkspaceId())
-                && run.getUserId().equals(session.getUserId());
-        JsonNode components = run.getContextTemplateSnapshot() == null ? null
-                : run.getContextTemplateSnapshot().path("template").path("components");
+                && run.sessionId().equals(session.getId().toString())
+                && run.workspaceId().equals(session.getWorkspaceId())
+                && run.userId().equals(session.getUserId());
+        JsonNode components = run.contextTemplateSnapshot() == null ? null
+                : run.contextTemplateSnapshot().path("template").path("components");
         if (components == null || !components.isArray()) {
             return result;
         }
@@ -71,7 +70,7 @@ public class ContextTemplateSourceService {
         return result;
     }
 
-    private Map<String, Object> resolveTree(JsonNode config, String type, ChatRun run, Session session,
+    private Map<String, Object> resolveTree(JsonNode config, String type, RunContext run, Session session,
                                             boolean validBinding, int[] remainingRequests) {
         List<String> items = new ArrayList<>();
         List<String> diagnostics = new ArrayList<>();
@@ -111,7 +110,7 @@ public class ContextTemplateSourceService {
         ArrayDeque<Directory> queue = new ArrayDeque<>();
         queue.add(new Directory(".", 0));
         int scannedEntries = 0;
-        PolicyContext policy = policyEngine.loadContext(run.getUserId(), run.getWorkspaceId(), run.getSessionId());
+        PolicyContext policy = policyEngine.loadContext(run.userId(), run.workspaceId(), run.sessionId());
         while (!queue.isEmpty()) {
             if (remainingRequests[0] <= 0) {
                 truncated = true;
@@ -128,14 +127,14 @@ public class ContextTemplateSourceService {
                 diagnostics.add("policy_request_invalid");
                 break;
             }
-            if (!policyEngine.allowsByGrant(policy, "list_directory", policyBody, run.getSessionId(),
-                    run.getUserId(), run.getWorkspaceId(), false)) {
+            if (!policyEngine.allowsByGrant(policy, "list_directory", policyBody, run.sessionId(),
+                    run.userId(), run.workspaceId(), false)) {
                 status = "failed";
                 diagnostics.add("authorization_denied");
                 break;
             }
             var verdict = policyEngine.evaluateVerdict(policy, "list_directory", policyBody,
-                    run.getSessionId(), null, run.getUserId(), run.getWorkspaceId());
+                    run.sessionId(), null, run.userId(), run.workspaceId());
             if (verdict.effect() != PolicyEffect.ALLOW) {
                 status = verdict.effect() == PolicyEffect.ASK ? "approval_required" : "failed";
                 diagnostics.add(verdict.effect() == PolicyEffect.ASK ? "policy_approval_required" : "policy_denied");
@@ -266,6 +265,11 @@ public class ContextTemplateSourceService {
 
     private static String fold(String value) {
         return value.replace('\\', '/').toLowerCase(Locale.ROOT);
+    }
+
+    /** Immutable run identifiers and frozen snapshot; consumers must treat the JsonNode as read-only. */
+    public record RunContext(String sessionId, String workspaceId, String userId,
+                             JsonNode contextTemplateSnapshot) {
     }
 
     private record Directory(String path, int depth) { }
