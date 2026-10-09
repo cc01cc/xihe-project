@@ -41,6 +41,8 @@ target/
 .env.local
 .env.*.local
 config.import.local.jsonc
+# 本地 mise 覆盖（冻结守卫等本地任务，勿提交）
+mise.local.toml
 # PLAN-0307 T2.25: exported config snapshots may contain plaintext credentials
 config.export*.jsonc
 *.log

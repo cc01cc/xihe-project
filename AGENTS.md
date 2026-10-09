@@ -19,13 +19,13 @@
 
 - 使用 `mise install` 和 `mise run setup` 安装固定工具链与依赖；前置条件及模块命令见 DEV-002。
 - 日常 host 开发运行 `mise run dev:host`：仅 PostgreSQL 在 Docker 中，CP、Agent、Runtime、UI 由 mise 原生启动；该命令不导入配置或创建 Provider Connection。项目开发/运维命令见 DEV-002 与 `mise run xihe -- --help`。
-- `mise run dev:full` 仅用于一次性 Compose 场景，不替代 host E2E 或 Runtime 创建的 Workspace/Sandbox 验证。
+- **docker 冻结（2026-10-07 用户裁定，2026-10-09 强化）**：XH 的 Docker 构建与服务容器化全部暂缓——只有 PostgreSQL 保留为容器，CP/Agent/Runtime/UI 全部 host。`mise run dev:full` / `dev:backend` / `test:e2e:compose` / `test:e2e` / `image:workspace:build` 已在 `mise.toml` 注释冻结（文件头有冻结说明与解冻条件），禁止误启；日常用 `mise run dev:host`，隔离 E2E 用 `mise run test:e2e:host`。
 - `mise run dev:reset` 默认 dry-run；显式重置前检查备份与数据范围。`reset-admin` 输出临时开发密码，不得写入脚本、源码或日志。
 
 ## Commands
 
 - 单文件/包级命令见对应包指南；里程碑和 PLAN 收尾运行 `mise run validate`，仅按改动边界增加集成/E2E profile（DEV-020/021/022/023）。
-- Compose E2E 使用 `mise run test:e2e:compose`（旧名 `test:e2e` 保留为 deprecated 别名）；Sandbox/host E2E 使用 `mise run test:e2e:host`，由 host runner 管理每轮隔离环境。清理/就绪要求见 [`DEV-020`](docs/i18n/zh-Hans/DEV-020-e2e-test-strategy.md) / [`DEV-021`](docs/i18n/zh-Hans/DEV-021-integration-test-strategy.md)。
+- Compose E2E（`mise run test:e2e:compose`，旧名 `test:e2e`）**已冻结注释（2026-10-07 docker 冻结裁定）**，不得用于验收或临时验证；Sandbox/host E2E 使用 `mise run test:e2e:host`，由 host runner 管理每轮隔离环境。清理/就绪要求见 [`DEV-020`](docs/i18n/zh-Hans/DEV-020-e2e-test-strategy.md) / [`DEV-021`](docs/i18n/zh-Hans/DEV-021-integration-test-strategy.md)。
 - 环境搭建、模块任务、资源清理和全栈排障见 [`DEV-002`](docs/i18n/zh-Hans/DEV-002-developer-guide.md)。
 - 根 `README.md`（英文 GitHub 门面）与 `docs/i18n/zh-Hans/README.md`（中文文档页）独立维护；架构图、Quick Start 命令、端口和技术栈摘要同批同步，功能状态表仅在中文版维护。`scripts/sync-readmes.sh` 只管理包 README symlink，不管理根 README。
 
