@@ -38,6 +38,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
 
@@ -163,6 +164,28 @@ public class ChatSubmissionService {
             chatRunRepository.save(run);
         });
         return assistantMessage.getId().toString();
+    }
+
+    public Optional<SubmissionReplay> findSubmissionReplay(String userId, String sessionId,
+                                                            String idempotencyKey, String requestHash) {
+        ChatRun existingRun = chatRunRepository
+                .findByUserIdAndSessionIdAndIdempotencyKey(userId, sessionId, idempotencyKey)
+                .orElse(null);
+        if (existingRun == null) {
+            return Optional.empty();
+        }
+        if (!ChatRun.ORIGIN_USER_SUBMISSION.equals(existingRun.getOrigin())) {
+            throw new CpApiException(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_CONFLICT",
+                    "Idempotency-Key belongs to a derived run");
+        }
+        if (!requestHash.equals(existingRun.getRequestHash())) {
+            throw new CpApiException(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_CONFLICT",
+                    "Idempotency-Key was already used for a different request");
+        }
+        return Optional.of(new SubmissionReplay(existingRun.getStatus(), existingRun.getOrigin(),
+                existingRun.getSessionId(), existingRun.getId(), existingRun.getProviderConnectionId(),
+                existingRun.getConnectionRevision(), existingRun.getUserMessageId(),
+                existingRun.getTerminalOutcome(), existingRun.getErrorCode()));
     }
 
     @Transactional(readOnly = true)
@@ -687,6 +710,10 @@ public class ChatSubmissionService {
 
     /** PLAN-0464 T1.1: the ChatRun row is the only durable root of a submission. */
     public record Submission(ChatRun run, Message userMessage) {}
+
+    public record SubmissionReplay(String status, String origin, String sessionId, UUID runId,
+                                   String providerConnectionId, Long connectionRevision,
+                                   String messageId, String terminalOutcome, String errorCode) {}
 
     public record SpawnResult(String sessionId, String runId, String principalId, String workspaceId) {}
 

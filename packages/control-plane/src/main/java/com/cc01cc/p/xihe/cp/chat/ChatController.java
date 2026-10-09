@@ -519,23 +519,14 @@ public class ChatController {
 
         String requestHash = requestHash(content, provider, model, toolMode, attachmentIds,
                 perCallTimeouts.values(), agentPrincipalId, branchId);
-        ChatRun existingRun = chatRunRepository
-                .findByUserIdAndSessionIdAndIdempotencyKey(userId, sessionId, idempotencyKey)
-                .orElse(null);
-        if (existingRun != null) {
-            if (!ChatRun.ORIGIN_USER_SUBMISSION.equals(existingRun.getOrigin())) {
-                return ProblemDetailsHandler.problemResponse(
-                        HttpStatus.CONFLICT,
-                        "IDEMPOTENCY_KEY_CONFLICT",
-                        "Idempotency-Key belongs to a derived run");
+        try {
+            var replay = chatSubmissionService.findSubmissionReplay(
+                    userId, sessionId, idempotencyKey, requestHash);
+            if (replay.isPresent()) {
+                return ResponseEntity.accepted().body(runResponse(replay.orElseThrow()));
             }
-            if (!requestHash.equals(existingRun.getRequestHash())) {
-                return ProblemDetailsHandler.problemResponse(
-                        HttpStatus.CONFLICT,
-                        "IDEMPOTENCY_KEY_CONFLICT",
-                        "Idempotency-Key was already used for a different request");
-            }
-            return ResponseEntity.accepted().body(runResponse(existingRun));
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
 
         if (!acquireRun(sessionId, runId)) {
@@ -1412,22 +1403,22 @@ public class ChatController {
                 toolMode, attachmentIds, toolTimeouts, agentPrincipalId, branchId);
     }
 
-    private Map<String, Object> runResponse(ChatRun run) {
+    private Map<String, Object> runResponse(ChatSubmissionService.SubmissionReplay run) {
         Map<String, Object> response = new LinkedHashMap<>();
-        response.put("status", run.getStatus());
-        response.put("origin", run.getOrigin());
-        response.put("sessionId", run.getSessionId());
-        response.put("runId", run.getId());
-        response.put("providerConnectionId", run.getProviderConnectionId());
-        response.put("connectionRevision", run.getConnectionRevision());
-        if (run.getUserMessageId() != null) {
-            response.put("messageId", run.getUserMessageId());
+        response.put("status", run.status());
+        response.put("origin", run.origin());
+        response.put("sessionId", run.sessionId());
+        response.put("runId", run.runId());
+        response.put("providerConnectionId", run.providerConnectionId());
+        response.put("connectionRevision", run.connectionRevision());
+        if (run.messageId() != null) {
+            response.put("messageId", run.messageId());
         }
-        if (run.getTerminalOutcome() != null) {
-            response.put("outcome", run.getTerminalOutcome());
+        if (run.terminalOutcome() != null) {
+            response.put("outcome", run.terminalOutcome());
         }
-        if (run.getErrorCode() != null) {
-            response.put("errorCode", run.getErrorCode());
+        if (run.errorCode() != null) {
+            response.put("errorCode", run.errorCode());
         }
         return response;
     }
