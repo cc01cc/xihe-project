@@ -7,6 +7,7 @@ import WorkspaceView from "../workspace/WorkspaceView.vue";
 import WorkspaceAgentManagementDialog from "../workspace/WorkspaceAgentManagementDialog.vue";
 import { useSessionStore } from "../../stores/session";
 import { api } from "../../composables/api";
+import type * as apiModule from "../../composables/api";
 
 vi.mock("vue-router", () => ({
     useRoute: () => ({
@@ -18,7 +19,7 @@ vi.mock("vue-router", () => ({
 }));
 
 vi.mock("../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {

@@ -2,9 +2,10 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
 import { useWorkspaceStore } from "../workspace";
 import { ApiError, api } from "../../composables/api";
+import type * as apiModule from "../../composables/api";
 
 vi.mock("../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {

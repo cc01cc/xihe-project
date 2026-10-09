@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { api } from "../../composables/api";
+import type * as apiModule from "../../composables/api";
 import { usePolicyStore } from "../policy";
 
 const SESSION_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
 vi.mock("../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {

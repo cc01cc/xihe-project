@@ -10,12 +10,13 @@ import MessageList from "../MessageList.vue";
 import InputArea from "../InputArea.vue";
 import { i18n } from "../../../i18n";
 import { api, type ApiFollowUpQueueSnapshot } from "../../../composables/api";
+import type * as apiModule from "../../../composables/api";
 import { useAgentStore } from "../../../stores/agent";
 import { useChatStore } from "../../../stores/chat";
 import type { ApprovalRequest, SessionDerivedStateResponse } from "../../../types";
 
 vi.mock("../../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {

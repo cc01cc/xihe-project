@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
 import { api } from "../../composables/api";
+import type * as apiModule from "../../composables/api";
 import { useChatStore } from "../chat";
 
 vi.mock("../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {

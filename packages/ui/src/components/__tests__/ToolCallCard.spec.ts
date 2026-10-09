@@ -2,11 +2,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
 import ToolCallCard from "../chat/ToolCallCard.vue";
+import type * as apiModule from "../../composables/api";
 
 const getJobOutput = vi.fn(),
     cancelJob = vi.fn();
 vi.mock("../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {

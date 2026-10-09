@@ -3,13 +3,14 @@ import { mount, type VueWrapper } from "@vue/test-utils";
 import { nextTick } from "vue";
 import { toast } from "vue-sonner";
 import { api, ApiError } from "../../composables/api";
+import type * as apiModule from "../../composables/api";
 import type { WorkspaceDirectAttachExecutionMode } from "../../types";
 import WorkspaceCreateDialog from "../workspace/WorkspaceCreateDialog.vue";
 import WorkspaceSettingsDialog from "../workspace/WorkspaceSettingsDialog.vue";
 import { i18n } from "../../i18n";
 
 vi.mock("../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {

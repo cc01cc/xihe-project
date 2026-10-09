@@ -2,11 +2,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
 import McpStdioServerList from "../settings/McpStdioServerList.vue";
+import type * as apiModule from "../../composables/api";
 
 const getStdioServers = vi.fn(),
     getMcpServerStatus = vi.fn();
 vi.mock("../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {

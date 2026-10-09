@@ -1,7 +1,6 @@
 <script setup lang="ts" generic="T extends Record<string, any>">
+import { computed, type HTMLAttributes } from "vue";
 import { TreeItem, type TreeItemEmits, type TreeItemProps } from "reka-ui";
-import type { HTMLAttributes } from "vue";
-import { computed } from "vue";
 import { cn } from "@/lib/utils";
 
 defineOptions({

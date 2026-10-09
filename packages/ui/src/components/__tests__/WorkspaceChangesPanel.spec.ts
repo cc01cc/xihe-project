@@ -4,12 +4,13 @@ import { setActivePinia, createPinia } from "pinia";
 import { createI18n } from "vue-i18n";
 import WorkspaceChangesPanel from "../workspace/WorkspaceChangesPanel.vue";
 import { ApiError, api } from "../../composables/api";
+import type * as apiModule from "../../composables/api";
 import type { WorkspaceCheckpoint, WorkspaceGitStatus } from "../../types";
 
 const WORKSPACE_ID = "workspace-a",
     SLICE_REF = "refs/xihe/workspace/slice-a";
 vi.mock("../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {

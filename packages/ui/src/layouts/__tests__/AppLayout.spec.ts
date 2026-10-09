@@ -4,12 +4,13 @@ import { createMemoryHistory, createRouter } from "vue-router";
 import { createI18n } from "vue-i18n";
 import { createPinia, setActivePinia } from "pinia";
 import { api } from "../../composables/api";
+import type * as apiModule from "../../composables/api";
 import { useAuthStore } from "../../stores/auth";
 import { useSessionStore } from "../../stores/session";
 import AppLayout from "../AppLayout.vue";
 
 vi.mock("../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {

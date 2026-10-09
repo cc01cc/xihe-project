@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { ApiError, api } from "../../composables/api";
+import type * as apiModule from "../../composables/api";
 import { usePolicyAdminStore } from "../policyAdmin";
 import type { PolicyRuleView, PolicyToolFaceView } from "../../types";
 
@@ -9,7 +10,7 @@ const RULE_ID = "77777777-7777-4777-8777-777777777777",
     WORKSPACE_ID = "workspace-1";
 
 vi.mock("../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {

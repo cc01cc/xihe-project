@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 import { i18n } from "../../../i18n";
 import { ApiError, api } from "../../../composables/api";
+import type * as apiModule from "../../../composables/api";
 import type { PolicyRuleView } from "../../../types";
 
 vi.mock("vue-router", () => ({
@@ -28,7 +29,7 @@ vi.mock("vue-sonner", () => ({
 }));
 
 vi.mock("../../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {

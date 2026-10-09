@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { ApiError, api } from "../../composables/api";
+import type * as apiModule from "../../composables/api";
 import { useAgentStore } from "../agent";
 import type { ApprovalRequest } from "../../types";
 
@@ -17,7 +18,7 @@ const REQUEST_ID = "11111111-1111-4111-8111-111111111111",
     OTHER_WORKSPACE_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 vi.mock("../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {

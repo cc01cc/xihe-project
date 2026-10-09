@@ -4,6 +4,7 @@ import { setActivePinia, createPinia } from "pinia";
 import { createI18n } from "vue-i18n";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 import { api } from "../../../composables/api";
+import type * as apiModule from "../../../composables/api";
 
 vi.mock("vue-router", () => ({
     useRoute: () =>
@@ -23,7 +24,7 @@ vi.mock("vue-router", () => ({
 }));
 
 vi.mock("../../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {

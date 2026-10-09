@@ -3,6 +3,7 @@ import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { setActivePinia, createPinia } from "pinia";
 import WorkspaceEnvironmentView from "../WorkspaceEnvironmentView.vue";
 import { api } from "../../../composables/api";
+import type * as apiModule from "../../../composables/api";
 import { i18n } from "../../../i18n";
 
 vi.mock("vue-router", () => ({
@@ -18,7 +19,7 @@ vi.mock("vue-sonner", () => ({
 }));
 
 vi.mock("../../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {
