@@ -190,6 +190,17 @@ public class ChatAttachmentService {
     }
 
     @Transactional
+    public void detachMessageFiles(String messageId) {
+        for (File candidate : fileRepository.findByMessageIdOrderByIdAsc(messageId)) {
+            File file = fileRepository.findByIdForUpdate(candidate.getId()).orElse(null);
+            if (file != null && messageId.equals(file.getMessageId())) {
+                file.setMessageId(null);
+                fileRepository.save(file);
+            }
+        }
+    }
+
+    @Transactional
     public File copyForFork(UUID sourceFileId, String sourceSessionId, String sourceMessageId,
                             String childSessionId, String childMessageId, String userId, String workspaceId) {
         File source = fileRepository.findByIdAndSessionIdForUpdate(sourceFileId, sourceSessionId)

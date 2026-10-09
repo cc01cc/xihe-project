@@ -502,6 +502,15 @@ class ChatControllerTest extends AbstractH2Test {
                 baseUrl + "/api/v1/chat/runs/" + run.getId(), HttpMethod.GET,
                 new HttpEntity<>(headers), Map.class);
         assertEquals(ChatRun.ORIGIN_USER_SUBMISSION, recovered.getBody().get("origin"));
+        ResponseEntity<Map> runList = restTemplate.exchange(
+                baseUrl + "/api/v1/chat/sessions/" + sessionId + "/runs",
+                HttpMethod.GET, new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.OK, runList.getStatusCode());
+        assertEquals(sessionId, runList.getBody().get("sessionId"));
+        List<Map<String, Object>> runItems = (List<Map<String, Object>>) runList.getBody().get("runs");
+        assertEquals(1, runItems.size());
+        assertEquals(run.getId().toString(), runItems.getFirst().get("runId"));
+        assertEquals("succeeded", runItems.getFirst().get("status"));
         // PLAN-0464 T1.1: ChatRun is the only root — the submit response carries
         // no operationId and the terminal writes exactly one history row.
         assertNull(response.getBody().get("operationId"));

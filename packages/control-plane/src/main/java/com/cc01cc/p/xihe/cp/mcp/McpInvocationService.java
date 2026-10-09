@@ -21,7 +21,9 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -71,6 +73,19 @@ public class McpInvocationService {
     }
 
     private record InvocationScope(String runId, String sessionId, String workspaceId, String userId) {}
+
+    /** Returns only the provenance projection needed to label a Run's Workspace Jobs. */
+    public Map<String, String> toolNamesByCallForRun(String runId) {
+        Map<String, String> toolNamesByCall = new LinkedHashMap<>();
+        for (McpInvocation invocation : invocations.findByRunIdOrderByCreatedAtAsc(runId)) {
+            if (invocation.getToolCallId() != null && invocation.getToolName() != null) {
+                toolNamesByCall.putIfAbsent(
+                        invocation.getToolCallId().toLowerCase(java.util.Locale.ROOT),
+                        invocation.getToolName());
+            }
+        }
+        return Map.copyOf(toolNamesByCall);
+    }
 
     /**
      * T1.2 gate path: create (or idempotently return) the {@code source=agent}

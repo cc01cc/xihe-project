@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.chat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
@@ -86,6 +87,7 @@ public class ChatController {
     private final com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy;
     private final ChatRunCancellationService chatRunCancellationService;
     private final ChatRunTerminalService chatRunTerminalService;
+    private final ChatRunReadService chatRunReadService;
     private final com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService;
     private final com.cc01cc.p.xihe.cp.usage.UsageCostMapper usageCostMapper;
     private final com.cc01cc.p.xihe.cp.service.ContextTemplateSourceService contextTemplateSourceService;
@@ -139,6 +141,7 @@ public class ChatController {
             com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy,
             ChatRunCancellationService chatRunCancellationService,
             ChatRunTerminalService chatRunTerminalService,
+            ChatRunReadService chatRunReadService,
              com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService,
               com.cc01cc.p.xihe.cp.usage.UsageCostMapper usageCostMapper,
               com.cc01cc.p.xihe.cp.service.ContextTemplateSourceService contextTemplateSourceService,
@@ -167,6 +170,7 @@ public class ChatController {
         this.toolTimeoutPolicy = toolTimeoutPolicy;
         this.chatRunCancellationService = chatRunCancellationService;
         this.chatRunTerminalService = chatRunTerminalService;
+        this.chatRunReadService = chatRunReadService;
         this.contextSourceRefreshService = contextSourceRefreshService;
         this.usageCostMapper = usageCostMapper;
         this.contextTemplateSourceService = contextTemplateSourceService;
@@ -643,29 +647,11 @@ public class ChatController {
         } catch (IllegalArgumentException e) {
             return ProblemDetailsHandler.problemResponse(HttpStatus.NOT_FOUND, "RUN_NOT_FOUND", "Chat run not found");
         }
-        ChatRun run = chatRunRepository.findById(runUuid).orElse(null);
-        if (run == null) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.NOT_FOUND, "RUN_NOT_FOUND", "Chat run not found");
+        try {
+            return ResponseEntity.ok(chatRunReadService.getStatus(runUuid, runId, userId, workspaceId));
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
-        if (!userId.equals(run.getUserId()) || !workspaceId.equals(run.getWorkspaceId())) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", "Chat run does not belong to current user/workspace");
-        }
-        boolean leaseExpired = run.getLeaseExpiresAt() != null
-                && run.getLeaseExpiresAt().isBefore(java.time.Instant.now());
-        List<Map<String, Object>> pendingApprovals = approvalService.findActiveForRun(runId, userId, workspaceId);
-        String status = run.getStatus();
-        String effectiveStatus = !pendingApprovals.isEmpty() && ("running".equals(status) || "cancelling".equals(status))
-                ? "awaiting_approval"
-                : status;
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("runId", runId);
-        body.put("sessionId", run.getSessionId());
-        body.put("origin", run.getOrigin());
-        body.put("status", effectiveStatus);
-        body.put("terminalOutcome", run.getTerminalOutcome());
-        body.put("leaseExpired", leaseExpired);
-        body.put("pendingApprovals", pendingApprovals);
-        return ResponseEntity.ok(body);
     }
 
     // ── PLAN-0464 T2.1: session-scoped run list (waiting/status read surface) ──
@@ -691,30 +677,8 @@ public class ChatController {
         Session session = sessionService.requireCurrent(sessionId, userId, workspaceId);
         int safePage = Math.max(page, 0);
         int safeSize = Math.min(Math.max(size, 1), 200);
-        List<ChatRun> runs = chatRunRepository.findBySessionIdOrderByCreatedAtDescIdDesc(
-                session.getId().toString(),
-                org.springframework.data.domain.PageRequest.of(safePage, safeSize));
-        List<Map<String, Object>> items = new ArrayList<>(runs.size());
-        for (ChatRun run : runs) {
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("runId", run.getId().toString());
-            item.put("sessionId", run.getSessionId());
-            item.put("origin", run.getOrigin());
-            item.put("status", run.getStatus());
-            item.put("terminalOutcome", run.getTerminalOutcome());
-            item.put("errorCode", run.getErrorCode());
-            item.put("createdAt", run.getCreatedAt() == null ? null : run.getCreatedAt().toString());
-            item.put("terminalAt", run.getTerminalAt() == null ? null : run.getTerminalAt().toString());
-            item.put("waitingOnRunId", run.getWaitingOnRunId());
-            item.put("waitingToolCallId", run.getWaitingToolCallId());
-            items.add(item);
-        }
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("sessionId", session.getId().toString());
-        body.put("page", safePage);
-        body.put("size", safeSize);
-        body.put("runs", items);
-        return ResponseEntity.ok(body);
+        return ResponseEntity.ok(chatRunReadService.listSessionRuns(
+                session.getId().toString(), safePage, safeSize));
     }
 
     // ── PLAN-275 M1 Task 1.3: Cancel contract ──────────────────────────────
