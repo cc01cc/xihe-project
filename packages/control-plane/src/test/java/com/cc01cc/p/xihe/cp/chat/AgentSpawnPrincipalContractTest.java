@@ -42,6 +42,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 import java.util.List;
 import java.util.Map;
@@ -119,7 +120,7 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
     @Autowired
     private PlatformTransactionManager transactionManager;
 
-    @MockitoBean
+    @MockitoSpyBean
     private ChatController chatController;
 
     @MockitoBean
@@ -560,12 +561,13 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
         WireMockServer runtime = new WireMockServer(options().dynamicPort());
         runtime.start();
         String originalRuntimeUrl = (String) ReflectionTestUtils.getField(mcpProxyController, "runtimeBaseUrl");
+        Object timeoutService = ReflectionTestUtils.getField(mcpProxyController, "toolTimeoutService");
         @SuppressWarnings("unchecked")
         Map<String, Map<String, String>> toolCache =
-                (Map<String, Map<String, String>>) ReflectionTestUtils.getField(mcpProxyController, "toolServerCache");
+                (Map<String, Map<String, String>>) ReflectionTestUtils.getField(timeoutService, "toolServerCache");
         @SuppressWarnings("unchecked")
         Map<String, Instant> cacheTimestamps =
-                (Map<String, Instant>) ReflectionTestUtils.getField(mcpProxyController, "cacheTimestamps");
+                (Map<String, Instant>) ReflectionTestUtils.getField(timeoutService, "cacheTimestamps");
         Map<String, String> oldWorkspaceCache = toolCache.put(workspaceId,
                 new ConcurrentHashMap<>(Map.of("read_file", "__system__", "list_directory", "__system__")));
         Instant oldCacheTimestamp = cacheTimestamps.put(workspaceId, Instant.now());

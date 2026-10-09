@@ -72,6 +72,7 @@ class JobTimeoutClampTest {
     private ConfigService configService;
     private AgentSpawnExecutionService agentSpawnExecutionService;
     private McpProxyController controller;
+    private McpToolTimeoutService toolTimeoutService;
 
     @BeforeEach
     void setUp() {
@@ -89,6 +90,8 @@ class JobTimeoutClampTest {
         configService = mock(ConfigService.class);
         agentSpawnExecutionService = mock(AgentSpawnExecutionService.class);
 
+        toolTimeoutService = new McpToolTimeoutService(mcpServerRepository, configService, new ToolTimeoutPolicy());
+
         controller = new McpProxyController(
                 requestRewriter, policyEngine,
                 auditLogger, approvalService, objectMapper, sseEmitterManager, stdioServerRepository,
@@ -99,7 +102,8 @@ class JobTimeoutClampTest {
                 new ToolTimeoutPolicy(),
                 new org.springframework.mock.env.MockEnvironment(),
                 agentSpawnExecutionService,
-                mock(com.cc01cc.p.xihe.cp.mcp.McpInvocationService.class)
+                mock(com.cc01cc.p.xihe.cp.mcp.McpInvocationService.class),
+                toolTimeoutService
         );
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 
@@ -465,9 +469,9 @@ class JobTimeoutClampTest {
     @SuppressWarnings("unchecked")
     private void seedToolCache(String tool, String serverId) {
         Map<String, Map<String, String>> cache =
-                (Map<String, Map<String, String>>) ReflectionTestUtils.getField(controller, "toolServerCache");
+                (Map<String, Map<String, String>>) ReflectionTestUtils.getField(toolTimeoutService, "toolServerCache");
         Map<String, Instant> timestamps =
-                (Map<String, Instant>) ReflectionTestUtils.getField(controller, "cacheTimestamps");
+                (Map<String, Instant>) ReflectionTestUtils.getField(toolTimeoutService, "cacheTimestamps");
         cache.put(TEST_WS_UUID, new ConcurrentHashMap<>(Map.of(tool, serverId)));
         timestamps.put(TEST_WS_UUID, Instant.now());
     }

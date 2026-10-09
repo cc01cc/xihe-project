@@ -62,6 +62,7 @@ class GrantDenyStopsBeforeDispatchTest {
     private ApprovalService approvalService;
     private SseEmitterManager sseEmitterManager;
     private McpProxyController controller;
+    private McpToolTimeoutService toolTimeoutService;
     private com.sun.net.httpserver.HttpServer runtimeStub;
     private final AtomicInteger runtimeHits = new AtomicInteger();
 
@@ -73,18 +74,24 @@ class GrantDenyStopsBeforeDispatchTest {
         approvalService = mock(ApprovalService.class);
         sseEmitterManager = mock(SseEmitterManager.class);
 
+        var timeoutRepo = mock(McpServerRepository.class);
+        var timeoutConfig = mock(com.cc01cc.p.xihe.cp.config.ConfigService.class);
+        var timeoutPolicy = new ToolTimeoutPolicy();
+        toolTimeoutService = new McpToolTimeoutService(timeoutRepo, timeoutConfig, timeoutPolicy);
+
         controller = new McpProxyController(
                 requestRewriter, policyEngine,
                 auditLogger, approvalService, new com.fasterxml.jackson.databind.ObjectMapper(),
                 sseEmitterManager, mock(McpStdioServerRepository.class),
-                mock(McpServerRepository.class), mock(McpToolAliasRepository.class),
+                timeoutRepo, mock(McpToolAliasRepository.class),
                 mock(WorkspaceService.class), mock(SessionRepository.class),
                 mock(com.cc01cc.p.xihe.cp.operation.JobStateService.class),
-                mock(com.cc01cc.p.xihe.cp.config.ConfigService.class),
-                new ToolTimeoutPolicy(),
+                timeoutConfig,
+                timeoutPolicy,
                 new org.springframework.mock.env.MockEnvironment(),
                 mock(AgentSpawnExecutionService.class),
-                mock(com.cc01cc.p.xihe.cp.mcp.McpInvocationService.class));
+                mock(com.cc01cc.p.xihe.cp.mcp.McpInvocationService.class),
+                toolTimeoutService);
         ReflectionTestUtils.setField(controller, "sessionIdHmacSecret", "test-only-key");
 
         runtimeStub = com.sun.net.httpserver.HttpServer.create(
@@ -127,9 +134,9 @@ class GrantDenyStopsBeforeDispatchTest {
                         "manual", "should never be evaluated after an authorization deny"));
 
         Map<String, Map<String, String>> cache =
-                (Map<String, Map<String, String>>) ReflectionTestUtils.getField(controller, "toolServerCache");
+                (Map<String, Map<String, String>>) ReflectionTestUtils.getField(toolTimeoutService, "toolServerCache");
         Map<String, Instant> timestamps =
-                (Map<String, Instant>) ReflectionTestUtils.getField(controller, "cacheTimestamps");
+                (Map<String, Instant>) ReflectionTestUtils.getField(toolTimeoutService, "cacheTimestamps");
         cache.put(TEST_WS_UUID, new ConcurrentHashMap<>(Map.of("write_file", "__system__")));
         timestamps.put(TEST_WS_UUID, Instant.now());
 

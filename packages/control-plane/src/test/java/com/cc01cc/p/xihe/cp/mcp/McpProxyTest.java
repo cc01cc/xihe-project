@@ -74,6 +74,7 @@ class McpProxyTest {
     private McpInvocationService mcpInvocationService;
     private AgentSpawnExecutionService agentSpawnExecutionService;
     private McpProxyController controller;
+    private McpToolTimeoutService toolTimeoutService;
     private org.springframework.mock.env.MockEnvironment environment;
 
     @Test
@@ -95,7 +96,7 @@ class McpProxyTest {
                 .filter(tool -> "spawn_agent".equals(tool.get("name")))
                 .findFirst().orElseThrow();
         Map<String, Map<String, String>> cache = (Map<String, Map<String, String>>)
-                ReflectionTestUtils.getField(controller, "toolServerCache");
+                ReflectionTestUtils.getField(toolTimeoutService, "toolServerCache");
         assertEquals("__cp__", cache.get(TEST_WS_UUID).get("spawn_agent"));
         Map<String, Object> schema = (Map<String, Object>) spawnTool.get("inputSchema");
         assertEquals(java.util.List.of("prompt"), schema.get("required"));
@@ -136,7 +137,7 @@ class McpProxyTest {
                 eq(sessionId), eq("user-1"), eq(TEST_WS_UUID))).thenReturn(invocation);
         when(agentSpawnExecutionService.execute(any(), any())).thenReturn(child);
         Map<String, Map<String, String>> cache = (Map<String, Map<String, String>>)
-                ReflectionTestUtils.getField(controller, "toolServerCache");
+                ReflectionTestUtils.getField(toolTimeoutService, "toolServerCache");
         cache.put(TEST_WS_UUID, new ConcurrentHashMap<>(Map.of("spawn_agent", "__cp__")));
         HttpHeaders headers = new HttpHeaders();
         headers.set("X-Xihe-Approval-Request-Id", approvalId);
@@ -177,17 +178,22 @@ class McpProxyTest {
         agentSpawnExecutionService = mock(AgentSpawnExecutionService.class);
         environment = new org.springframework.mock.env.MockEnvironment();
 
+        var configService = mock(com.cc01cc.p.xihe.cp.config.ConfigService.class);
+        var toolTimeoutPolicy = new com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy();
+        toolTimeoutService = new McpToolTimeoutService(mcpServerRepository, configService, toolTimeoutPolicy);
+
         controller = new McpProxyController(
                 requestRewriter, policyEngine,
                 auditLogger, approvalService, objectMapper, sseEmitterManager, stdioServerRepository,
                 mcpServerRepository, aliasRepository,
                 workspaceService, sessionRepository,
                 mock(com.cc01cc.p.xihe.cp.operation.JobStateService.class),
-                mock(com.cc01cc.p.xihe.cp.config.ConfigService.class),
-                new com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy(),
+                configService,
+                toolTimeoutPolicy,
                 environment,
                 agentSpawnExecutionService,
-                mcpInvocationService
+                mcpInvocationService,
+                toolTimeoutService
         );
         ReflectionTestUtils.setField(controller, "sessionIdHmacSecret", "test-only-key");
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
@@ -544,9 +550,9 @@ class McpProxyTest {
                         "manual", "mutation requires approval"));
 
         Map<String, Map<String, String>> cache =
-                (Map<String, Map<String, String>>) ReflectionTestUtils.getField(controller, "toolServerCache");
+                (Map<String, Map<String, String>>) ReflectionTestUtils.getField(toolTimeoutService, "toolServerCache");
         Map<String, Instant> timestamps =
-                (Map<String, Instant>) ReflectionTestUtils.getField(controller, "cacheTimestamps");
+                (Map<String, Instant>) ReflectionTestUtils.getField(toolTimeoutService, "cacheTimestamps");
         cache.put(TEST_WS_UUID, new ConcurrentHashMap<>(Map.of("write_file", "__system__")));
         timestamps.put(TEST_WS_UUID, Instant.now());
 
@@ -740,9 +746,9 @@ class McpProxyTest {
                         "manual", "mutation requires approval"));
 
         Map<String, Map<String, String>> cache =
-                (Map<String, Map<String, String>>) ReflectionTestUtils.getField(controller, "toolServerCache");
+                (Map<String, Map<String, String>>) ReflectionTestUtils.getField(toolTimeoutService, "toolServerCache");
         Map<String, Instant> timestamps =
-                (Map<String, Instant>) ReflectionTestUtils.getField(controller, "cacheTimestamps");
+                (Map<String, Instant>) ReflectionTestUtils.getField(toolTimeoutService, "cacheTimestamps");
         cache.put(TEST_WS_UUID, new ConcurrentHashMap<>(Map.of("write_file", "__system__")));
         timestamps.put(TEST_WS_UUID, Instant.now());
 
@@ -1041,9 +1047,9 @@ class McpProxyTest {
                 eq("grant-1"), eq("u-1"), eq(TEST_WS_UUID), eq("sess-1"), eq("write_file"), eq(body)))
                 .thenReturn(true);
         Map<String, Map<String, String>> cache =
-                (Map<String, Map<String, String>>) ReflectionTestUtils.getField(controller, "toolServerCache");
+                (Map<String, Map<String, String>>) ReflectionTestUtils.getField(toolTimeoutService, "toolServerCache");
         Map<String, Instant> timestamps =
-                (Map<String, Instant>) ReflectionTestUtils.getField(controller, "cacheTimestamps");
+                (Map<String, Instant>) ReflectionTestUtils.getField(toolTimeoutService, "cacheTimestamps");
         cache.put(TEST_WS_UUID, new ConcurrentHashMap<>(Map.of("write_file", "__system__")));
         timestamps.put(TEST_WS_UUID, Instant.now());
 
@@ -1085,9 +1091,9 @@ class McpProxyTest {
     @SuppressWarnings("unchecked")
     private void seedToolCache(String tool, String serverId) {
         Map<String, Map<String, String>> cache =
-                (Map<String, Map<String, String>>) ReflectionTestUtils.getField(controller, "toolServerCache");
+                (Map<String, Map<String, String>>) ReflectionTestUtils.getField(toolTimeoutService, "toolServerCache");
         Map<String, Instant> timestamps =
-                (Map<String, Instant>) ReflectionTestUtils.getField(controller, "cacheTimestamps");
+                (Map<String, Instant>) ReflectionTestUtils.getField(toolTimeoutService, "cacheTimestamps");
         cache.put(TEST_WS_UUID, new ConcurrentHashMap<>(Map.of(tool, serverId)));
         timestamps.put(TEST_WS_UUID, Instant.now());
     }
@@ -1103,7 +1109,7 @@ class McpProxyTest {
         when(mcpServerRepository.findById(server.getId())).thenReturn(java.util.Optional.of(server));
         seedToolCache("fake_echo", server.getId().toString());
 
-        Map<String, Object> payload = controller.toolTimeoutPayload(
+        Map<String, Object> payload = toolTimeoutService.toolTimeoutPayload(
                 TEST_WS_UUID, "u-1", Map.of("fake_echo", 25, "execute_command", 25));
 
         Map<String, Object> waits = (Map<String, Object>) payload.get("toolWaits");
@@ -1130,7 +1136,7 @@ class McpProxyTest {
         when(mcpServerRepository.findById(server.getId())).thenReturn(java.util.Optional.of(server));
         seedToolCache("fake_echo", server.getId().toString());
 
-        Map<String, Object> payload = controller.toolTimeoutPayload(TEST_WS_UUID, "u-1", Map.of());
+        Map<String, Object> payload = toolTimeoutService.toolTimeoutPayload(TEST_WS_UUID, "u-1", Map.of());
 
         Map<String, Object> waits = (Map<String, Object>) payload.get("toolWaits");
         Map<String, Object> origins = (Map<String, Object>) payload.get("toolWaitOrigins");
@@ -1153,7 +1159,7 @@ class McpProxyTest {
         when(mcpServerRepository.findById(server.getId())).thenReturn(java.util.Optional.of(server));
         seedToolCache("fake_echo", server.getId().toString());
 
-        Map<String, Object> payload = controller.toolTimeoutPayload(TEST_WS_UUID, "u-1", Map.of());
+        Map<String, Object> payload = toolTimeoutService.toolTimeoutPayload(TEST_WS_UUID, "u-1", Map.of());
 
         // 无有效配置行 → 不下发 per-tool 条目，Agent 回落系统工具统一值（预算默认 30 + 4）。
         assertEquals(34L, ((Number) payload.get("systemToolWait")).longValue());

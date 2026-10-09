@@ -81,7 +81,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 public class McpProxyController {
 
     private static final Logger logger = LoggerFactory.getLogger(McpProxyController.class);
-    private static final Duration CACHE_TTL = Duration.ofMinutes(5);
+    private final McpToolTimeoutService toolTimeoutService;
     private static final String HMAC_ALGORITHM = "HmacSHA256";
     private static final String CP_MCP_SERVER_ID = "__cp__";
     private static final String SPAWN_AGENT_TOOL = ChatSubmissionService.SPAWN_TOOL_NAME;
@@ -150,8 +150,6 @@ public class McpProxyController {
             throw new IllegalStateException("XIHE_MCP_SESSION_ID_HMAC_SECRET must be configured");
         }
     }
-    /** T3.1 评审修复：遗留超限 remote 配置只告警一次，避免逐请求重复刷 WARN。 */
-    private final Set<String> warnedRemoteTimeouts = ConcurrentHashMap.newKeySet();
     private final RequestRewriter rewriter;
     private final PolicyEngine policy;
     private final AuditLogger audit;
@@ -172,9 +170,6 @@ public class McpProxyController {
     @Value("${cp.agent-api-token:dev-token-not-secure}")
     private String runtimeServiceToken;
 
-    private final Map<String, Map<String, String>> toolServerCache = new ConcurrentHashMap<>();
-    private final Map<String, Instant> cacheTimestamps = new ConcurrentHashMap<>();
-    private final Map<String, String> runtimeSessionByGatewaySession = new ConcurrentHashMap<>();
     private final Map<String, McpSessionBinding> mcpSessionBindings = new ConcurrentHashMap<>();
     private final WorkspaceService workspaceService;
     private final SessionRepository sessionRepository;
@@ -199,7 +194,8 @@ public class McpProxyController {
             ToolTimeoutPolicy toolTimeoutPolicy,
             org.springframework.core.env.Environment environment,
             AgentSpawnExecutionService agentSpawnExecutionService,
-            McpInvocationService mcpInvocationService) {
+            McpInvocationService mcpInvocationService,
+            McpToolTimeoutService toolTimeoutService) {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
@@ -220,6 +216,7 @@ public class McpProxyController {
         this.environment = environment;
         this.agentSpawnExecutionService = agentSpawnExecutionService;
         this.mcpInvocationService = mcpInvocationService;
+        this.toolTimeoutService = toolTimeoutService;
     }
 
     @PostMapping("/api/v1/mcp")
@@ -293,12 +290,11 @@ public class McpProxyController {
 
     private ResponseEntity<String> handleToolsList(
             String wsId, String body, HttpHeaders headers, String sessionId, AccessContext access) {
-        refreshCacheIfNeeded(wsId);
-        Map<String, String> mapping = toolServerCache.getOrDefault(wsId, Collections.emptyMap());
+        Map<String, String> mapping = toolTimeoutService.mappingFor(wsId);
 
         try {
             List<Map<String, Object>> allTools = new ArrayList<>(populateSystemTools(wsId, headers, access));
-            mapping = toolServerCache.getOrDefault(wsId, Collections.emptyMap());
+            mapping = toolTimeoutService.mappingFor(wsId);
 
             // 2. Call each STDIO server's tools/list
             Set<String> seenNames = new HashSet<>();
@@ -386,8 +382,7 @@ public class McpProxyController {
                 }
             }
 
-            toolServerCache.put(wsId, mapping);
-            cacheTimestamps.put(wsId, Instant.now());
+            toolTimeoutService.putMapping(wsId, mapping);
 
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("tools", allTools);
@@ -450,7 +445,7 @@ public class McpProxyController {
 
     private List<Map<String, Object>> populateSystemTools(
             String wsId, HttpHeaders headers, AccessContext access) {
-        Map<String, String> mapping = toolServerCache.computeIfAbsent(wsId, k -> new ConcurrentHashMap<>());
+        Map<String, String> mapping = toolTimeoutService.mappingForUpdate(wsId);
         List<Map<String, Object>> result = new ArrayList<>();
         if (access != null && access.internalService()) {
             mapping.put(SPAWN_AGENT_TOOL, CP_MCP_SERVER_ID);
@@ -518,13 +513,12 @@ public class McpProxyController {
             return problem(HttpStatus.FORBIDDEN, "FORBIDDEN", "Tool execution is not permitted");
         }
 
-        refreshCacheIfNeeded(wsId);
-        Map<String, String> mapping = toolServerCache.getOrDefault(wsId, Collections.emptyMap());
+        Map<String, String> mapping = toolTimeoutService.mappingFor(wsId);
         String serverId = mapping.get(toolName);
 
         if (serverId == null) {
             populateSystemTools(wsId, headers, access);
-            mapping = toolServerCache.getOrDefault(wsId, Collections.emptyMap());
+            mapping = toolTimeoutService.mappingFor(wsId);
             serverId = mapping.get(toolName);
         }
 
@@ -650,7 +644,7 @@ public class McpProxyController {
                                 + ToolTimeoutPolicy.MAX_BUDGET_SECONDS);
             }
         }
-        Integer configSeconds = resolveConfigTimeoutSeconds(wsId, serverId, access.userId());
+        Integer configSeconds = toolTimeoutService.resolveConfigTimeoutSeconds(wsId, serverId, access.userId());
         ToolTimeoutPolicy.ToolWaits waits = toolTimeoutPolicy.resolve(
                 perCallSeconds == null ? null : perCallSeconds.intValue(), configSeconds);
         HttpHeaders mutable = stripOutboundPolicyHeaders(headers);
@@ -825,48 +819,6 @@ public class McpProxyController {
     }
 
     /**
-     * 配置侧预算输入（spec S1）：remote 行 → {@code tool_timeout_s}；
-     * 系统工具 → {@code agent-runtime.systemToolTimeoutS}（决策 #22a/#24）。
-     */
-    private Integer resolveConfigTimeoutSeconds(String wsId, String serverId, String userId) {
-        if (serverId != null && !"__system__".equals(serverId)) {
-            Optional<McpServer> server = remoteServer(wsId, serverId);
-            if (server.isPresent()) {
-                Integer configured = server.get().getToolTimeoutS();
-                if (configured != null && configured > 0) {
-                    if (configured <= ToolTimeoutPolicy.MAX_BUDGET_SECONDS) {
-                        return configured;
-                    }
-                    // T3.1：数据库预算与 per-call 同顶 30s；遗留大值告警一次，并回落到
-                    // **系统工具预算**（而非代码默认）——保证 Agent/CP/Runtime 三跳取同一
-                    // 来源；此前落 null 会让 Agent 用 systemToolWait 而 CP/Runtime 用默认值，
-                    // 内层被外层提前掐断（评审 WARNING）。
-                    if (warnedRemoteTimeouts.add(serverId + "=" + configured)) {
-                        logger.warn(
-                                "Remote MCP server {} tool_timeout_s={} exceeds MAX_BUDGET_SECONDS={}; falling back to system tool budget",
-                                serverId, configured, ToolTimeoutPolicy.MAX_BUDGET_SECONDS);
-                    }
-                }
-            }
-        }
-        return resolveSystemTimeoutSeconds(wsId, userId);
-    }
-
-    private Integer resolveSystemTimeoutSeconds(String wsId, String userId) {
-        try {
-            String raw = configService.resolve(
-                    ToolTimeoutPolicy.SYSTEM_TOOL_DOMAIN,
-                    ToolTimeoutPolicy.SYSTEM_TOOL_KEY,
-                    uuidOrNull(userId),
-                    uuidOrNull(wsId));
-            return toolTimeoutPolicy.parseConfigSeconds(raw);
-        } catch (Exception e) {
-            logger.warn("system tool timeout config unavailable: {}", e.getMessage());
-            return null;
-        }
-    }
-
-    /**
      * 输出上限授权（决策 #31②）：config 键 {@code agent-runtime.toolOutputLimitBytes}；
      * 未配置 → null（不下发头，Runtime 侧沿用调用方值 / 沙盒默认）。
      */
@@ -1033,57 +985,6 @@ public class McpProxyController {
             logger.warn("Job timeout override failed, forwarding unchanged: {}", e.getMessage());
             return payload;
         }
-    }
-
-    /**
-     * PLAN-0308 M1（spec S2.1）：为 run payload 组装下发片段——
-     * {@code toolWaits}（remote 工具的 Agent 最终值）、{@code toolWaitOrigins}、
-     * {@code systemToolWait}（系统工具统一值）、{@code budgetCoverage}（冷缓存可见化，决策 #23）。
-     * T1.9 增补：{@code toolTimeouts}（原始 per-call 值，供 Agent 随工具调用附带入站头）。
-     * 计算只在 CP；Agent/Runtime 只消费。
-     */
-    public Map<String, Object> toolTimeoutPayload(
-            String wsId, String userId, Map<String, Integer> perCallTimeouts) {
-        Map<String, Integer> perCall = perCallTimeouts == null ? Map.of() : perCallTimeouts;
-        refreshCacheIfNeeded(wsId);
-        Map<String, String> mapping = toolServerCache.getOrDefault(wsId, Collections.emptyMap());
-        Map<String, Long> waits = new LinkedHashMap<>();
-        Map<String, String> origins = new LinkedHashMap<>();
-        for (Map.Entry<String, String> entry : mapping.entrySet()) {
-            Integer perCallSeconds = perCall.get(entry.getKey());
-            Integer configSeconds = resolveConfigTimeoutSeconds(wsId, entry.getValue(), userId);
-            if (perCallSeconds == null && configSeconds == null) {
-                continue;
-            }
-            ToolTimeoutPolicy.ToolWaits resolved = toolTimeoutPolicy.resolve(perCallSeconds, configSeconds);
-            waits.put(entry.getKey(), resolved.agentSeconds());
-            origins.put(entry.getKey(), resolved.origin());
-        }
-        // per-call 条目可能不在映射里（冷缓存 / 系统工具）：显式补条目，使 Agent 取到 per-call
-        // 最终值而不是落回系统工具统一值（决策 #27/#28）。
-        for (Map.Entry<String, Integer> entry : perCall.entrySet()) {
-            if (waits.containsKey(entry.getKey())) {
-                continue;
-            }
-            ToolTimeoutPolicy.ToolWaits resolved = toolTimeoutPolicy.resolve(entry.getValue(), null);
-            waits.put(entry.getKey(), resolved.agentSeconds());
-            origins.put(entry.getKey(), resolved.origin());
-        }
-        Integer systemSeconds = resolveConfigTimeoutSeconds(wsId, "__system__", userId);
-        long systemWait = toolTimeoutPolicy.resolve(null, systemSeconds).agentSeconds();
-
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("toolWaits", waits);
-        payload.put("toolWaitOrigins", origins);
-        payload.put("systemToolWait", systemWait);
-        if (!perCall.isEmpty()) {
-            payload.put("toolTimeouts", new LinkedHashMap<>(perCall));
-        }
-        payload.put("budgetCoverage", mapping.isEmpty() ? "partial" : "full");
-        logger.info(
-                "[LIFECYCLE] service=cp event=tool_timeout_payload wsId={} tools={} perCall={} systemWait={}s coverage={}",
-                wsId, waits.size(), perCall.size(), systemWait, payload.get("budgetCoverage"));
-        return payload;
     }
 
     private static UUID uuidOrNull(String value) {
@@ -1840,14 +1741,6 @@ public class McpProxyController {
             logger.warn("Failed to read JSON-RPC id from request: {}", e.getMessage());
         }
         return objectMapper.getNodeFactory().numberNode(1);
-    }
-
-    private void refreshCacheIfNeeded(String wsId) {        Instant lastRefresh = cacheTimestamps.get(wsId);
-        if (lastRefresh == null || Duration.between(lastRefresh, Instant.now()).compareTo(CACHE_TTL) > 0) {
-            toolServerCache.remove(wsId);
-            toolServerCache.put(wsId, new ConcurrentHashMap<>());
-            cacheTimestamps.put(wsId, Instant.now());
-        }
     }
 
     /**

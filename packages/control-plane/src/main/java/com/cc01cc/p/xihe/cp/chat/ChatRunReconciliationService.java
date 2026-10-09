@@ -30,17 +30,17 @@ public class ChatRunReconciliationService {
             "dispatching");
 
     private final ChatRunRepository chatRunRepository;
-    private final ChatController chatController;
+    private final ChatActiveRunRegistry activeRunRegistry;
     private final ChatRunTerminalService terminalService;
     private final Duration grace;
 
     public ChatRunReconciliationService(
             ChatRunRepository chatRunRepository,
-            ChatController chatController,
+            ChatActiveRunRegistry activeRunRegistry,
             ChatRunTerminalService terminalService,
             @Value("${cp.chat.reconcile-grace-seconds:600}") long graceSeconds) {
         this.chatRunRepository = chatRunRepository;
-        this.chatController = chatController;
+        this.activeRunRegistry = activeRunRegistry;
         this.terminalService = terminalService;
         this.grace = Duration.ofSeconds(graceSeconds);
     }
@@ -59,7 +59,7 @@ public class ChatRunReconciliationService {
         int skippedActive = 0;
         for (ChatRun run : stale) {
             String runId = run.getId().toString();
-            if (chatController.isRunActiveLocally(runId)) {
+            if (activeRunRegistry.isRunActiveLocally(runId)) {
                 skippedActive++;
                 continue;
             }

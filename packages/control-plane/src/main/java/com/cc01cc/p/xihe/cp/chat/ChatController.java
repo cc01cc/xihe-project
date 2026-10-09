@@ -57,7 +57,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @RestController
@@ -83,7 +82,7 @@ public class ChatController {
     private final ProviderCredentialLeaseService credentialLeases;
     private final ConfigService configService;
     private final com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder mcpRelayToolRecorder;
-    private final com.cc01cc.p.xihe.cp.mcp.McpProxyController mcpProxyController;
+    private final com.cc01cc.p.xihe.cp.mcp.McpToolTimeoutService mcpToolTimeoutService;
     private final com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy;
     private final ChatRunCancellationService chatRunCancellationService;
     private final ChatRunTerminalService chatRunTerminalService;
@@ -91,7 +90,7 @@ public class ChatController {
     private final com.cc01cc.p.xihe.cp.usage.UsageCostMapper usageCostMapper;
     private final com.cc01cc.p.xihe.cp.service.ContextTemplateSourceService contextTemplateSourceService;
     private final ApplicationEventPublisher eventPublisher;
-    private final Map<String, String> activeRuns = new ConcurrentHashMap<>();
+    private final ChatActiveRunRegistry activeRunRegistry;
 
     private static final java.time.Duration LEASE_TTL = java.time.Duration.ofMinutes(10);
     private static final String INSTANCE_ID = UUID.randomUUID().toString();
@@ -130,12 +129,13 @@ public class ChatController {
             MessageRepository messageRepository,
             FileRepository fileRepository,
             ChatRunRepository chatRunRepository,
+            ChatActiveRunRegistry activeRunRegistry,
             HealthMonitor healthMonitor,
             RequestQueue requestQueue,
             ProviderCredentialLeaseService credentialLeases,
             ConfigService configService,
             com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder mcpRelayToolRecorder,
-            com.cc01cc.p.xihe.cp.mcp.McpProxyController mcpProxyController,
+            com.cc01cc.p.xihe.cp.mcp.McpToolTimeoutService mcpToolTimeoutService,
             com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy,
             ChatRunCancellationService chatRunCancellationService,
             ChatRunTerminalService chatRunTerminalService,
@@ -157,12 +157,13 @@ public class ChatController {
         this.messageRepository = messageRepository;
         this.fileRepository = fileRepository;
         this.chatRunRepository = chatRunRepository;
+        this.activeRunRegistry = activeRunRegistry;
         this.healthMonitor = healthMonitor;
         this.requestQueue = requestQueue;
         this.credentialLeases = credentialLeases;
         this.configService = configService;
         this.mcpRelayToolRecorder = mcpRelayToolRecorder;
-        this.mcpProxyController = mcpProxyController;
+        this.mcpToolTimeoutService = mcpToolTimeoutService;
         this.toolTimeoutPolicy = toolTimeoutPolicy;
         this.chatRunCancellationService = chatRunCancellationService;
         this.chatRunTerminalService = chatRunTerminalService;
@@ -217,7 +218,7 @@ public class ChatController {
     void onFollowUpQueueWakeup(FollowUpQueueWakeupEvent event) {
         // Reserve the local single-flight slot across the Session-locked DB admission.
         String reservationId = FOLLOW_UP_DISPATCH_RESERVATION_PREFIX + UUID.randomUUID();
-        if (activeRuns.putIfAbsent(event.sessionId(), reservationId) != null) {
+        if (activeRunRegistry.putIfAbsent(event.sessionId(), reservationId) != null) {
             return;
         }
         boolean retryAdmission = false;
@@ -266,7 +267,7 @@ public class ChatController {
                     event.sessionId(), event.retryAttempt(), e.getClass().getSimpleName(), e);
             retryAdmission = true;
         } finally {
-            activeRuns.remove(event.sessionId(), reservationId);
+            activeRunRegistry.remove(event.sessionId(), reservationId);
         }
         if (retryAdmission) {
             followUpQueueService.scheduleAdmissionRetry(event);
@@ -309,10 +310,10 @@ public class ChatController {
                     .orElseThrow(() -> new IllegalStateException("Admitted Follow-up Message is missing"));
             List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachments =
                     resolveAdmittedAttachments(message);
-            String localRun = activeRuns.get(event.sessionId());
+            String localRun = activeRunRegistry.get(event.sessionId());
             boolean ownsReservation = localRun != null
                     && localRun.startsWith(FOLLOW_UP_DISPATCH_RESERVATION_PREFIX)
-                    && activeRuns.replace(event.sessionId(), localRun, runId);
+                    && activeRunRegistry.replace(event.sessionId(), localRun, runId);
             if (!ownsReservation && runId.equals(localRun)) {
                 return;
             }
@@ -763,6 +764,13 @@ public class ChatController {
         );
     }
 
+    @EventListener
+    void onSpawnRunDispatchRequested(SpawnRunDispatchRequestedEvent event) {
+        boolean dispatched = dispatchSpawnRun(event.childRunId());
+        logger.info("[LIFECYCLE] service=cp event=spawn_dispatch_result parentRunId={} childRunId={} dispatched={}",
+                event.parentRunId(), event.childRunId(), dispatched);
+    }
+
     /** Dispatches a committed spawn Run through the same local worker and lease path as user Runs. */
     public boolean dispatchSpawnRun(String runId) {
         UUID runUuid = UUID.fromString(runId);
@@ -788,11 +796,11 @@ public class ChatController {
         }
 
         String sessionId = run.getSessionId();
-        if (activeRuns.putIfAbsent(sessionId, runId) != null) {
+        if (activeRunRegistry.putIfAbsent(sessionId, runId) != null) {
             return false;
         }
         if (!acquireLeaseForExistingRun(runId)) {
-            activeRuns.remove(sessionId, runId);
+            activeRunRegistry.remove(sessionId, runId);
             return false;
         }
         try {
@@ -818,7 +826,7 @@ public class ChatController {
             AtomicBoolean approvalInFlight = new AtomicBoolean(false);
             try {
                 // PLAN-294 M3 (decisions #4/#18): pre-run compaction gate —
-                // inside the session serialization scope (activeRuns), the
+                // inside the session serialization scope (activeRunRegistry), the
                 // gate compresses history before the run consumes it. Context
                 // service owns the cooldown/anti-thrash rules.
                 try {
@@ -934,7 +942,7 @@ public class ChatController {
                 }
                 // PLAN-0308 M1（spec S2.1）：CP 计算好的等待值随 run 下发（Agent 只消费）；
                 // per-call 原始值（T1.9）同批下发，供 Agent 随工具调用附带入站头。
-                agentRequest.putAll(mcpProxyController.toolTimeoutPayload(workspaceId, userId, toolTimeouts));
+                agentRequest.putAll(mcpToolTimeoutService.toolTimeoutPayload(workspaceId, userId, toolTimeouts));
                 if (!attachments.isEmpty()) {
                     List<Map<String, Object>> agentAttachments = new ArrayList<>();
                     for (com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo info : attachments) {
@@ -1396,25 +1404,12 @@ public class ChatController {
     }
 
     private boolean acquireRun(String sessionId, String runId) {
-        String current = activeRuns.get(sessionId);
+        String current = activeRunRegistry.get(sessionId);
         if (current != null && !current.equals(runId)) {
             return false;
         }
-        activeRuns.put(sessionId, runId);
+        activeRunRegistry.put(sessionId, runId);
         return true;
-    }
-
-    void restoreActiveRun(String sessionId, String runId) {
-        activeRuns.put(sessionId, runId);
-    }
-
-    String activeRunId(String sessionId) {
-        return activeRuns.get(sessionId);
-    }
-
-    /** PLAN-0317 T2.7：该 run 是否正由本进程处理（周期对账的防误伤保护）。 */
-    boolean isRunActiveLocally(String runId) {
-        return runId != null && activeRuns.containsValue(runId);
     }
 
     private boolean acquireLeaseForExistingRun(String runId) {
@@ -1428,7 +1423,7 @@ public class ChatController {
 
     private void releaseRun(String sessionId, String runId, String reason) {
         boolean dbReleased = chatRunRepository.releaseLease(UUID.fromString(runId), instanceId()) > 0;
-        boolean memoryReleased = activeRuns.remove(sessionId, runId);
+        boolean memoryReleased = activeRunRegistry.remove(sessionId, runId);
         eventPublisher.publishEvent(new FollowUpQueueWakeupEvent(sessionId));
         // PLAN-0352 T1.2：唤醒会话删除路径的 release 等待位（终态投递在此之后已完成）。
         chatRunCancellationService.onRunReleased(runId);

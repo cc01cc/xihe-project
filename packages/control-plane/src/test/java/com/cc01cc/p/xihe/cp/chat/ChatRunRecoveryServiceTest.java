@@ -43,7 +43,7 @@ class ChatRunRecoveryServiceTest {
 
     private ChatRunRepository chatRunRepository;
     private ChatApprovalRepository approvalRepository;
-    private ChatController chatController;
+    private ChatActiveRunRegistry activeRunRegistry;
     private ChatRunTerminalService terminalService;
     private RunCheckpointService runCheckpointService;
     private ChatRunHistoryWriter historyWriter;
@@ -53,7 +53,7 @@ class ChatRunRecoveryServiceTest {
     void setUp() {
         chatRunRepository = mock(ChatRunRepository.class);
         approvalRepository = mock(ChatApprovalRepository.class);
-        chatController = mock(ChatController.class);
+        activeRunRegistry = mock(ChatActiveRunRegistry.class);
         terminalService = mock(ChatRunTerminalService.class);
         runCheckpointService = mock(RunCheckpointService.class);
         historyWriter = mock(ChatRunHistoryWriter.class);
@@ -65,7 +65,7 @@ class ChatRunRecoveryServiceTest {
         when(chatRunRepository.findByStatus("cancelling")).thenReturn(List.of());
         when(chatRunRepository.findRecoverableRuns(any())).thenReturn(List.of());
         when(chatRunRepository.findTerminalRunsWithoutCheckpoint(any(), any())).thenReturn(List.of());
-        service = new ChatRunRecoveryService(chatRunRepository, approvalRepository, chatController,
+        service = new ChatRunRecoveryService(chatRunRepository, approvalRepository, activeRunRegistry,
                 terminalService, historyWriter, runCheckpointService);
     }
 
@@ -111,7 +111,7 @@ class ChatRunRecoveryServiceTest {
         service.reconcileOnStartup();
 
         assertEquals("awaiting_approval", active.getStatus());
-        verify(chatController).restoreActiveRun(SESSION_ID, RUN_ID);
+        verify(activeRunRegistry).restoreActiveRun(SESSION_ID, RUN_ID);
     }
 
     @Test
@@ -154,7 +154,7 @@ class ChatRunRecoveryServiceTest {
                 chatRunRepository, new ObjectMapper(),
                 mock(com.cc01cc.p.xihe.cp.chat.SseEmitterManager.class));
         ChatRunRecoveryService recovery = new ChatRunRecoveryService(chatRunRepository,
-                approvalRepository, chatController, terminalService, historyWriter, realService);
+                approvalRepository, activeRunRegistry, terminalService, historyWriter, realService);
         try {
             recovery.captureRecoveredRuns();
             recovery.captureRecoveredRuns();
