@@ -150,6 +150,21 @@ public class ChatSubmissionService {
                 agentPrincipalId, true);
     }
 
+    /** Persists an assistant response and links it to its Run in the existing order. */
+    public String persistAssistantResponse(String sessionId, String runId, String assistantContent) {
+        // Preserve the existing repository commit boundaries by keeping this method non-transactional.
+        Message assistantMessage = new Message(sessionId, MessageRole.ASSISTANT, assistantContent);
+        assistantMessage.setRunId(runId);
+        var ownerRun = chatRunRepository.findById(UUID.fromString(runId));
+        ownerRun.ifPresent(run -> assistantMessage.setBranchId(run.getBranchId()));
+        messageRepository.save(assistantMessage);
+        ownerRun.ifPresent(run -> {
+            run.setAssistantMessageId(assistantMessage.getId().toString());
+            chatRunRepository.save(run);
+        });
+        return assistantMessage.getId().toString();
+    }
+
     @Transactional(readOnly = true)
     public SpawnInvocation prepareSpawnInvocation(String parentRunId, String toolCallId) {
         requireUuid(parentRunId, "parentRunId");

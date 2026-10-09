@@ -9,10 +9,8 @@ import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Message;
-import com.cc01cc.p.xihe.cp.entity.MessageRole;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
-import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.cc01cc.p.xihe.cp.status.HealthMonitor;
@@ -75,7 +73,6 @@ public class ChatController {
     private final FollowUpQueueService followUpQueueService;
     private final SessionService sessionService;
     private final AgentPrincipalService agentPrincipalService;
-    private final MessageRepository messageRepository;
     private final ChatRunRepository chatRunRepository;
     private final ChatAttachmentService chatAttachmentService;
     private final HealthMonitor healthMonitor;
@@ -129,7 +126,6 @@ public class ChatController {
             FollowUpQueueService followUpQueueService,
             SessionService sessionService,
             AgentPrincipalService agentPrincipalService,
-            MessageRepository messageRepository,
             ChatRunRepository chatRunRepository,
             ChatAttachmentService chatAttachmentService,
             ChatActiveRunRegistry activeRunRegistry,
@@ -159,7 +155,6 @@ public class ChatController {
         this.followUpQueueService = followUpQueueService;
         this.sessionService = sessionService;
         this.agentPrincipalService = agentPrincipalService;
-        this.messageRepository = messageRepository;
         this.chatRunRepository = chatRunRepository;
         this.chatAttachmentService = chatAttachmentService;
         this.activeRunRegistry = activeRunRegistry;
@@ -974,19 +969,10 @@ public class ChatController {
                         requestId, sessionId, runId, assistantContent == null ? 0 : assistantContent.length());
 
                 if (assistantContent != null && !assistantContent.isBlank()) {
-                    Message assistantMessage = new Message(sessionId, MessageRole.ASSISTANT, assistantContent);
-                    assistantMessage.setRunId(runId);
-                    // PLAN-0410 T1.3: bind the assistant message to the durable
-                    // branch of its Run before insert (root while M1 has no selector).
-                    var ownerRun = chatRunRepository.findById(UUID.fromString(runId));
-                    ownerRun.ifPresent(run -> assistantMessage.setBranchId(run.getBranchId()));
-                    messageRepository.save(assistantMessage);
-                    ownerRun.ifPresent(run -> {
-                        run.setAssistantMessageId(assistantMessage.getId().toString());
-                        chatRunRepository.save(run);
-                    });
+                    String assistantMessageId = chatSubmissionService.persistAssistantResponse(
+                            sessionId, runId, assistantContent);
                     logger.info("[LIFECYCLE] service=cp event=chat_assistant_persisted requestId={} sessionId={} runId={} messageId={} assistantChars={}",
-                            requestId, sessionId, runId, assistantMessage.getId(), assistantContent.length());
+                            requestId, sessionId, runId, assistantMessageId, assistantContent.length());
                 }
 
                 String outcome = relayResult.outcome();
