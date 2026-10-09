@@ -34,7 +34,8 @@ class WorkspaceJobControllerTest {
         workspaceJobStartService = Mockito.mock(WorkspaceJobStartService.class);
         workspaceService = Mockito.mock(WorkspaceService.class);
         controller = new WorkspaceJobController(jobStateService, workspaceJobStartService,
-                workspaceService, Mockito.mock(RuntimeJobClient.class));
+                Mockito.mock(WorkspaceJobCancellationService.class), workspaceService,
+                Mockito.mock(RuntimeJobClient.class));
         TenantContext.setUserId("user-1");
     }
 

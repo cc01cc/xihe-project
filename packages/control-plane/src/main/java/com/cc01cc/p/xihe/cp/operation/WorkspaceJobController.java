@@ -39,15 +39,18 @@ public class WorkspaceJobController {
 
     private final JobStateService jobStateService;
     private final WorkspaceJobStartService workspaceJobStartService;
+    private final WorkspaceJobCancellationService workspaceJobCancellationService;
     private final WorkspaceService workspaceService;
     private final RuntimeJobClient runtimeJobClient;
 
     public WorkspaceJobController(JobStateService jobStateService,
                                   WorkspaceJobStartService workspaceJobStartService,
+                                  WorkspaceJobCancellationService workspaceJobCancellationService,
                                   WorkspaceService workspaceService,
                                   RuntimeJobClient runtimeJobClient) {
         this.jobStateService = jobStateService;
         this.workspaceJobStartService = workspaceJobStartService;
+        this.workspaceJobCancellationService = workspaceJobCancellationService;
         this.workspaceService = workspaceService;
         this.runtimeJobClient = runtimeJobClient;
     }
@@ -188,43 +191,14 @@ public class WorkspaceJobController {
         }
         try {
             workspaceService.requireAccessibleWorkspace(workspaceId, userId);
-            JobStateService.JobArchive archive = jobStateService.findOwned(domainJobId, workspaceId)
-                    .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "JOB_ARCHIVE_NOT_FOUND",
-                            "No job archive for this job"));
-            if (archive.terminal()) {
-                // 已终态：不改写事实、不调 Runtime（幂等 200 + 原状态）。
-                return ResponseEntity.ok(cancelBody(domainJobId, archive.status(), false));
-            }
-            RuntimeJobClient.JobCancelResult result =
-                    runtimeJobClient.cancelJob(archive.workspaceId(), archive.jobId());
-            if (!result.reachable()) {
-                return ProblemDetailsHandler.problemResponse(
-                        HttpStatus.BAD_GATEWAY, "RUNTIME_UNAVAILABLE", "Runtime job cancel failed");
-            }
-            if (result.errorCode() != null && result.statusCode() != 404) {
-                return runtimeProblem(result.errorCode(), result.reason(), result.requestId(),
-                        result.statusCode());
-            }
-            if (!result.found()) {
-                // Runtime 已无该 job：fail-closed 落 orphaned（不臆造已取消）。
-                Map<String, Object> incoming = new LinkedHashMap<>();
-                incoming.put("status", "orphaned");
-                incoming.put("cancelReason", "job_missing");
-                jobStateService.upsertById(domainJobId, incoming);
-                return ResponseEntity.ok(cancelBody(domainJobId, "orphaned", true));
-            }
-            if ("failed".equals(result.status())) {
-                // 四阶段后进程仍存活：终止未确认，不改档案。
-                return ProblemDetailsHandler.problemResponse(
-                        HttpStatus.BAD_GATEWAY, "JOB_CANCEL_UNCONFIRMED",
-                        "Job termination was not confirmed");
-            }
-            Map<String, Object> incoming = new LinkedHashMap<>();
-            incoming.put("status", "cancelled");
-            incoming.put("cancelReason", "user_cancel");
-            jobStateService.upsertById(domainJobId, incoming);
-            return ResponseEntity.ok(cancelBody(domainJobId, "cancelled", true));
+            WorkspaceJobCancellationService.CancelOutcome outcome =
+                    workspaceJobCancellationService.cancel(domainJobId, workspaceId);
+            return ResponseEntity.ok(cancelBody(domainJobId, outcome.status(), outcome.changed()));
         } catch (CpApiException e) {
+            if (e.getRequestId() != null) {
+                return ProblemDetailsHandler.problemResponse(
+                        e.getStatus(), e.getCode(), e.getMessage(), e.getRequestId());
+            }
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
     }

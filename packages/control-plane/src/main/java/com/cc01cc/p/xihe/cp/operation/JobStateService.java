@@ -315,6 +315,14 @@ public class JobStateService {
         }
     }
 
+    /** Uses the same canonical writer, but lets a request caller report durable transition failure. */
+    public void upsertByIdOrThrow(UUID workspaceJobId, Map<String, Object> incoming) {
+        if (workspaceJobId == null || incoming == null || incoming.isEmpty()) {
+            throw new IllegalArgumentException("workspaceJobId and incoming state are required");
+        }
+        self().upsertByIdInNewTx(workspaceJobId, incoming);
+    }
+
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void upsertByIdInNewTx(UUID workspaceJobId, Map<String, Object> incoming) {
         dbLockTimeout.apply();
