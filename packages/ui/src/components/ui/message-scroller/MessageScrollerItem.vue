@@ -8,8 +8,8 @@ const props = defineProps<{
     class?: string;
 }>();
 
-const registerMessage = useMessageScrollerItemContext();
-const elementRef = ref<HTMLDivElement | null>(null);
+const registerMessage = useMessageScrollerItemContext(),
+    elementRef = ref<HTMLDivElement | null>(null);
 
 watch(
     [() => props.messageId, () => elementRef.value],

@@ -95,8 +95,8 @@ describe("AppLayout pending approval indicators", () => {
                 oldestRequestedAt: "2026-09-14T12:00:00Z",
             },
         ]);
-        const router = createTestRouter();
-        const wrapper = await mountLayout(router);
+        const router = createTestRouter(),
+            wrapper = await mountLayout(router);
 
         expect(wrapper.find('[data-testid="global-pending-approval-banner"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="global-pending-approval-banner"]').text()).toContain(

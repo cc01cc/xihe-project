@@ -9,13 +9,13 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const isDragOver = ref(false);
-const fileInput = ref<HTMLInputElement | null>(null);
+const isDragOver = ref(false),
+    fileInput = ref<HTMLInputElement | null>(null);
 
 function maxDimension(file: File, maxSize: number): Promise<Blob> {
     return new Promise((resolve, reject) => {
-        const img = new Image();
-        const url = URL.createObjectURL(file);
+        const img = new Image(),
+            url = URL.createObjectURL(file);
         img.onload = () => {
             URL.revokeObjectURL(url);
             let { width, height } = img;

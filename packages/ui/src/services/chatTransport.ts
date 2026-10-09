@@ -48,8 +48,8 @@ class ChatTransportImpl {
     }
 
     async sendMessages(sessionId: string, options: ChatTransportOptions): Promise<void> {
-        const current = this.getState(sessionId);
-        const existing = this.connectionPromises.get(sessionId);
+        const current = this.getState(sessionId),
+            existing = this.connectionPromises.get(sessionId);
         if (existing && (current.isConnected || current.isConnecting)) {
             return existing;
         }
@@ -250,8 +250,8 @@ class ChatTransportImpl {
 
     private scheduleReconnect(sessionId: string, options: ChatTransportOptions): void {
         if (this.reconnectTimers.has(sessionId) || this.intentionalStops.has(sessionId)) return;
-        const attempt = this.nextReconnectAttempt(sessionId);
-        const delayMs = this.retryDelay(attempt);
+        const attempt = this.nextReconnectAttempt(sessionId),
+            delayMs = this.retryDelay(attempt);
         logger.info("chat_sse_reconnect_scheduled", { sessionId, attempt, delayMs });
         const timer = setTimeout(() => {
             this.reconnectTimers.delete(sessionId);
@@ -276,8 +276,8 @@ class ChatTransportImpl {
     }
 
     private nextReconnectAttempt(sessionId: string): number {
-        const current = this.getState(sessionId).reconnectAttempt;
-        const attempt = current + 1;
+        const current = this.getState(sessionId).reconnectAttempt,
+            attempt = current + 1;
         this.setState(sessionId, { reconnectAttempt: attempt });
         return attempt;
     }

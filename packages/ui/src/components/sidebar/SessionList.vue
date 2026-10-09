@@ -84,8 +84,8 @@ async function handleFork(id: string) {
         const serverMessages = await api.getMessages(id, sourceBranchId);
         let anchorMessageId: string | undefined;
         for (let index = serverMessages.length - 1; index >= 0; index -= 1) {
-            const message = serverMessages[index]!;
-            const role = message.role.toLowerCase();
+            const message = serverMessages[index]!,
+                role = message.role.toLowerCase();
             if (
                 visibleRoles.get(message.id) === role &&
                 (role === "user" || role === "assistant") &&

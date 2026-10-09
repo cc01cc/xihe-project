@@ -19,8 +19,8 @@ const emit = defineEmits<{
     "update:width": [value: number];
 }>();
 
-const router = useRouter();
-const route = useRoute();
+const router = useRouter(),
+    route = useRoute();
 const { t } = useI18n();
 const auth = useAuthStore();
 
@@ -48,8 +48,8 @@ function toggleSidebar() {
 
 function handleResizeStart(e: MouseEvent) {
     e.preventDefault();
-    const startX = e.clientX;
-    const startWidth = props.width;
+    const startX = e.clientX,
+        startWidth = props.width;
 
     function onMouseMove(ev: MouseEvent) {
         const newWidth = Math.min(360, Math.max(220, startWidth + (ev.clientX - startX)));
