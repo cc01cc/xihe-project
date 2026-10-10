@@ -242,6 +242,23 @@ class WorkspaceJobCancelIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void preservesRuntimeProblemRequestIdAndKeepsArchiveRunning() {
+        String jobId = UUID.randomUUID().toString();
+        UUID domainJobId = newJob(jobId, "running");
+        when(runtimeJobClient.cancelJob(workspaceId, jobId))
+                .thenReturn(new RuntimeJobClient.JobCancelResult(
+                        true, true, null, "RUNTIME_ERROR", "cancel rejected", "runtime-request-1", 422));
+
+        ResponseEntity<Map> response = postCancel(domainJobId, authToken);
+
+        assertEquals(422, response.getStatusCode().value());
+        assertEquals("RUNTIME_ERROR", response.getBody().get("code"));
+        assertEquals("runtime-request-1", response.getBody().get("requestId"));
+        assertEquals("running", jobStateService.findByJobId(domainJobId).orElseThrow().status());
+        assertTrue(jobHistory(domainJobId).isEmpty());
+    }
+
+    @Test
     void hidesForeignAndMissingArchivesWithoutAudit() {
         String jobId = UUID.randomUUID().toString();
         UUID domainJobId = newJob(jobId, "running");

@@ -27,7 +27,7 @@ public class ContextService {
     private final EventStoreService eventStoreService;
     private final ContextProjectionService projectionService;
     private final ObjectMapper objectMapper;
-    private final com.cc01cc.p.xihe.cp.chat.SseEmitterManager sseManager;
+    private final CompactionNoticePort compactionNotice;
     private final SummaryProvider summaryProvider;
     private final UsageCostMapper usageCostMapper;
     private final ConstraintExtractor constraintExtractor;
@@ -36,7 +36,7 @@ public class ContextService {
     public ContextService(EventStoreService eventStoreService,
                           ContextProjectionService projectionService,
                           ObjectMapper objectMapper,
-                          com.cc01cc.p.xihe.cp.chat.SseEmitterManager sseManager,
+                          CompactionNoticePort compactionNotice,
                           SummaryProvider summaryProvider,
                           UsageCostMapper usageCostMapper,
                           ConstraintExtractor constraintExtractor,
@@ -44,7 +44,7 @@ public class ContextService {
         this.eventStoreService = eventStoreService;
         this.objectMapper = objectMapper;
         this.projectionService = projectionService;
-        this.sseManager = sseManager;
+        this.compactionNotice = compactionNotice;
         this.summaryProvider = summaryProvider;
         this.usageCostMapper = usageCostMapper;
         this.constraintExtractor = constraintExtractor;
@@ -203,6 +203,17 @@ public class ContextService {
     @Transactional(readOnly = true)
     public Long getLatestSequence(String sessionId) {
         return eventStoreService.getLatestSequence(sessionId);
+    }
+
+    /**
+     * PLAN-0470 (decision #15): one Context-owned cleanup entry for the Session
+     * deletion path — projections first, then events (the pre-existing order).
+     * Joins the caller's transaction; adds no rollback/compensation semantics.
+     */
+    @Transactional
+    public void deleteSessionData(String sessionId) {
+        projectionService.deleteSessionProjection(sessionId);
+        eventStoreService.deleteSessionEvents(sessionId);
     }
 
     @Transactional
@@ -484,15 +495,10 @@ public class ContextService {
                 "bandLimit", bandLimit,
                 "trigger", trigger == null ? "auto" : trigger
         ), scope.runId(), scope.branchId());
-        // PLAN-0341 U4: surface the circuit to the session UI.
-        try {
-            sseManager.send(sessionId, "context_compaction_circuit", Map.of(
-                    "type", "context_compaction_circuit",
-                    "state", "open",
-                    "reason", "recovery_band"));
-        } catch (Exception e) {
-            logger.debug("Failed to emit compaction circuit SSE: {}", e.getMessage());
-        }
+        // PLAN-0341 U4 / PLAN-0470 #24/D1b: surface the circuit to the session
+        // UI through the narrow notice port; the notice impl owns the wire
+        // payload and never throws, so this call carries no try/catch.
+        compactionNotice.sendCompactionNotice(sessionId, "open", "recovery_band");
     }
 
     /**
@@ -857,14 +863,9 @@ public class ContextService {
                         "state", "closed",
                         "reason", "significant_growth"
                 ), scope.runId(), scope.branchId());
-        try {
-            sseManager.send(sessionId, "context_compaction_circuit", Map.of(
-                    "type", "context_compaction_circuit",
-                    "state", "closed",
-                    "reason", "significant_growth"));
-        } catch (Exception e) {
-            logger.debug("Failed to emit compaction circuit SSE: {}", e.getMessage());
-        }
+        // PLAN-0470 #24/D1b: wire payload and failure handling live in the
+        // notice implementation.
+        compactionNotice.sendCompactionNotice(sessionId, "closed", "significant_growth");
     }
 
     private String computeSha256(String data) {

@@ -1,9 +1,9 @@
 package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import org.springframework.context.ApplicationEventPublisher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -16,12 +16,12 @@ public class AgentSpawnExecutionService {
     private static final Logger logger = LoggerFactory.getLogger(AgentSpawnExecutionService.class);
 
     private final ChatSubmissionService submissions;
-    private final ObjectProvider<ChatController> chatControllerProvider;
+    private final ApplicationEventPublisher eventPublisher;
 
     public AgentSpawnExecutionService(ChatSubmissionService submissions,
-                                      ObjectProvider<ChatController> chatControllerProvider) {
+                                      ApplicationEventPublisher eventPublisher) {
         this.submissions = submissions;
-        this.chatControllerProvider = chatControllerProvider;
+        this.eventPublisher = eventPublisher;
     }
 
     public ChatSubmissionService.SpawnInvocation prepareMcpInvocation(
@@ -51,9 +51,8 @@ public class AgentSpawnExecutionService {
         ChatSubmissionService.SpawnResult result = submissions.createSpawnFromParent(
                 invocation.parentRunId(), invocation.toolCallId(), authorization);
         try {
-            boolean dispatched = chatControllerProvider.getObject().dispatchSpawnRun(result.runId());
-            logger.info("[LIFECYCLE] service=cp event=spawn_dispatch_result parentRunId={} childRunId={} dispatched={}",
-                    invocation.parentRunId(), result.runId(), dispatched);
+            eventPublisher.publishEvent(new SpawnRunDispatchRequestedEvent(
+                    invocation.parentRunId(), result.runId()));
         } catch (RuntimeException e) {
             logger.error("[LIFECYCLE] service=cp event=spawn_dispatch_failed parentRunId={} childRunId={} failureType={}",
                     invocation.parentRunId(), result.runId(), e.getClass().getSimpleName(), e);

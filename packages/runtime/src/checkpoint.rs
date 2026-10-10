@@ -319,6 +319,12 @@ pub struct ShadowGit {
     host_root: PathBuf,
     git_binary: String,
     locks: StdMutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// PLAN-0470 (decision #17): per-workspace effective work-tree overrides.
+    /// Handlers refresh these from the validated `ExecutionSpec`/materialized
+    /// instance path before each operation, so direct-attach workspaces whose
+    /// `hostPath` is not `<hostRoot>/<workspaceId>` capture/restore the real
+    /// directory. Empty map falls back to the legacy `<hostRoot>/<workspaceId>`.
+    work_tree_overrides: StdMutex<HashMap<String, PathBuf>>,
     active_capture_locks: Arc<AtomicUsize>,
     active_restore_locks: Arc<AtomicUsize>,
     probe_cache: StdMutex<ProbeCache>,
@@ -333,6 +339,7 @@ impl ShadowGit {
             host_root: host_root.into(),
             git_binary: "git".to_string(),
             locks: StdMutex::new(HashMap::new()),
+            work_tree_overrides: StdMutex::new(HashMap::new()),
             active_capture_locks: Arc::new(AtomicUsize::new(0)),
             active_restore_locks: Arc::new(AtomicUsize::new(0)),
             probe_cache: StdMutex::new(ProbeCache::default()),
@@ -379,10 +386,39 @@ impl ShadowGit {
             .join(format!("{workspace_id}.git")))
     }
 
-    /// `<hostRoot>/<workspaceId>` (same layout as `storage::resolve_host_path`).
+    /// Effective workspace work tree: the validated ExecutionSpec/materialized
+    /// path registered by the handler (PLAN-0470 decision #17), falling back to
+    /// the legacy `<hostRoot>/<workspaceId>` layout when no override is set.
     pub fn work_tree(&self, workspace_id: &str) -> Result<PathBuf> {
         validate_workspace_id(workspace_id)?;
+        let overrides = self
+            .work_tree_overrides
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(path) = overrides.get(workspace_id) {
+            return Ok(path.clone());
+        }
         Ok(self.host_root.join(workspace_id))
+    }
+
+    /// Registers the effective work tree for one workspace (callers refresh it
+    /// from the registry before every checkpoint operation).
+    pub fn set_work_tree_override(&self, workspace_id: &str, path: PathBuf) {
+        if validate_workspace_id(workspace_id).is_err() {
+            return;
+        }
+        self.work_tree_overrides
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(workspace_id.to_string(), path);
+    }
+
+    /// Drops a stale override (workspace destroyed or no longer materialized).
+    pub fn clear_work_tree_override(&self, workspace_id: &str) {
+        self.work_tree_overrides
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(workspace_id);
     }
 
     /// Cached host-git probe (`git --version` ≥ 2.20). Failures are retried after a
@@ -1789,6 +1825,33 @@ mod tests {
         assert!(engine.try_lock_restore("ws1").is_some());
         drop(capture);
         assert_eq!(engine.active_capture_locks(), 0);
+    }
+
+    #[test]
+    fn work_tree_override_uses_registered_path_and_falls_back_to_host_root() {
+        let temp = TempDir::new().expect("tempdir");
+        let engine = ShadowGit::new(temp.path());
+        assert_eq!(
+            engine.work_tree("ws1").expect("legacy path"),
+            temp.path().join("ws1")
+        );
+
+        let direct = temp.path().join("direct-attach").join("ws1");
+        engine.set_work_tree_override("ws1", direct.clone());
+        assert_eq!(engine.work_tree("ws1").expect("override path"), direct);
+
+        engine.clear_work_tree_override("ws1");
+        assert_eq!(
+            engine.work_tree("ws1").expect("fallback path"),
+            temp.path().join("ws1")
+        );
+
+        // Invalid identifiers never install an override.
+        engine.set_work_tree_override("../escape", direct);
+        assert!(
+            engine.work_tree("../escape").is_err(),
+            "invalid id must not resolve"
+        );
     }
 
     #[tokio::test]

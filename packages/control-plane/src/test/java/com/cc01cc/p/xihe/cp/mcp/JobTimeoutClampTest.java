@@ -25,8 +25,8 @@ import com.cc01cc.p.xihe.cp.policy.ToolShape;
 import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpStdioServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpToolAliasRepository;
-import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
+import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy;
 
 import java.time.Instant;
@@ -68,10 +68,12 @@ class JobTimeoutClampTest {
     private McpServerRepository mcpServerRepository;
     private McpToolAliasRepository aliasRepository;
     private WorkspaceService workspaceService;
-    private SessionRepository sessionRepository;
+    private SessionService sessionService;
+    private McpProxyCatalogService catalogService;
     private ConfigService configService;
     private AgentSpawnExecutionService agentSpawnExecutionService;
     private McpProxyController controller;
+    private McpToolTimeoutService toolTimeoutService;
 
     @BeforeEach
     void setUp() {
@@ -85,21 +87,25 @@ class JobTimeoutClampTest {
         mcpServerRepository = mock(McpServerRepository.class);
         aliasRepository = mock(McpToolAliasRepository.class);
         workspaceService = mock(WorkspaceService.class);
-        sessionRepository = mock(SessionRepository.class);
+        sessionService = mock(SessionService.class);
+        catalogService = new McpProxyCatalogService(
+                stdioServerRepository, mcpServerRepository, aliasRepository);
         configService = mock(ConfigService.class);
         agentSpawnExecutionService = mock(AgentSpawnExecutionService.class);
 
+        toolTimeoutService = new McpToolTimeoutService(mcpServerRepository, configService, new ToolTimeoutPolicy());
+
         controller = new McpProxyController(
                 requestRewriter, policyEngine,
-                auditLogger, approvalService, objectMapper, sseEmitterManager, stdioServerRepository,
-                mcpServerRepository, aliasRepository,
-                workspaceService, sessionRepository,
+                auditLogger, approvalService, objectMapper, sseEmitterManager, catalogService,
+                workspaceService, sessionService,
                 mock(JobStateService.class),
                 configService,
                 new ToolTimeoutPolicy(),
                 new org.springframework.mock.env.MockEnvironment(),
                 agentSpawnExecutionService,
-                mock(com.cc01cc.p.xihe.cp.mcp.McpInvocationService.class)
+                mock(com.cc01cc.p.xihe.cp.mcp.McpInvocationService.class),
+                toolTimeoutService
         );
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 
@@ -465,9 +471,9 @@ class JobTimeoutClampTest {
     @SuppressWarnings("unchecked")
     private void seedToolCache(String tool, String serverId) {
         Map<String, Map<String, String>> cache =
-                (Map<String, Map<String, String>>) ReflectionTestUtils.getField(controller, "toolServerCache");
+                (Map<String, Map<String, String>>) ReflectionTestUtils.getField(toolTimeoutService, "toolServerCache");
         Map<String, Instant> timestamps =
-                (Map<String, Instant>) ReflectionTestUtils.getField(controller, "cacheTimestamps");
+                (Map<String, Instant>) ReflectionTestUtils.getField(toolTimeoutService, "cacheTimestamps");
         cache.put(TEST_WS_UUID, new ConcurrentHashMap<>(Map.of(tool, serverId)));
         timestamps.put(TEST_WS_UUID, Instant.now());
     }

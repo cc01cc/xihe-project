@@ -40,6 +40,15 @@ public class ContextProjectionService {
     }
 
     /**
+     * PLAN-0470 (decision #15): session-scoped projection cleanup owned by
+     * Context; runs inside the caller's Session deletion transaction.
+     */
+    @Transactional
+    public long deleteSessionProjection(String sessionId) {
+        return projectionRepository.deleteBySessionId(sessionId);
+    }
+
+    /**
      * PLAN-0410 T2.1: Session-root scoped read (the pre-branch default; a
      * Session without a root row can only hold Session/global events).
      */

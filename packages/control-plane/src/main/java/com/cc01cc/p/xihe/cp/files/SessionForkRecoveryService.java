@@ -1,7 +1,6 @@
 package com.cc01cc.p.xihe.cp.files;
 
 import com.cc01cc.p.xihe.cp.entity.SessionForkRequest;
-import com.cc01cc.p.xihe.cp.repository.SessionForkRequestRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -29,14 +28,14 @@ public class SessionForkRecoveryService {
     private static final Duration CLEANUP_RETRY_AFTER = Duration.ofMinutes(1);
     private static final int RECOVERY_BATCH_SIZE = 32;
 
-    private final SessionForkRequestRepository forkRequests;
+    private final com.cc01cc.p.xihe.cp.service.SessionForkRecoveryWriter forkWriter;
     private final ChatAttachmentService attachments;
     private final String datasourceUrl;
 
-    public SessionForkRecoveryService(SessionForkRequestRepository forkRequests,
+    public SessionForkRecoveryService(com.cc01cc.p.xihe.cp.service.SessionForkRecoveryWriter forkWriter,
                                       ChatAttachmentService attachments,
                                       @Value("${spring.datasource.url:}") String datasourceUrl) {
-        this.forkRequests = forkRequests;
+        this.forkWriter = forkWriter;
         this.attachments = attachments;
         this.datasourceUrl = datasourceUrl;
     }
@@ -59,7 +58,7 @@ public class SessionForkRecoveryService {
             return;
         }
         Instant now = Instant.now();
-        List<SessionForkRequest> recoverable = forkRequests.lockRecoverableRows(
+        List<SessionForkRequest> recoverable = forkWriter.lockRecoverableRows(
                 now.minus(COPYING_STALE_AFTER), now.minus(CLEANUP_RETRY_AFTER), RECOVERY_BATCH_SIZE);
         for (SessionForkRequest request : recoverable) {
             recoverOne(request);
@@ -68,7 +67,7 @@ public class SessionForkRecoveryService {
 
     @Transactional
     public boolean retryCleanup(UUID childSessionId) {
-        SessionForkRequest request = forkRequests.findByChildSessionIdForUpdate(childSessionId)
+        SessionForkRequest request = forkWriter.findByChildSessionIdForUpdate(childSessionId)
                 .orElseThrow(() -> new IllegalStateException("Fork request not found"));
         if (SessionForkRequest.COMPLETED.equals(request.getState())) {
             return true;

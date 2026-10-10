@@ -43,6 +43,9 @@ class LookupAskGateTest extends AbstractIntegrationTest {
     private AuthService authService;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.service.WorkspaceService workspaceService;
+
+    @Autowired
     private PolicyEngine policyEngine;
 
     @Autowired
@@ -147,9 +150,14 @@ class LookupAskGateTest extends AbstractIntegrationTest {
     }
 
     private void register() {
-        AuthResponse registered = authService.register(new RegisterRequest(
+        // PLAN-0470 #25: register orchestration moved to AuthController; the
+        // fixture reproduces the entry sequence (registerUser -> default
+        // Workspace -> issueTokens) directly.
+        com.cc01cc.p.xihe.cp.entity.User user = authService.registerUser(new RegisterRequest(
                 "lookup-ask-" + UUID.randomUUID() + "@test.com", "gate-test-password",
                 "Lookup ask gate"));
+        AuthResponse registered = authService.issueTokens(user, workspaceService
+                .getOrCreateDefaultWorkspace(user.getId().toString()).getId().toString());
         userId = registered.getUser().getId();
         workspaceId = registered.getWorkspaceId();
     }

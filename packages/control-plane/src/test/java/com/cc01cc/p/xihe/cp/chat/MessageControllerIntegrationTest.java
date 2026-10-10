@@ -21,6 +21,7 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
+import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
@@ -35,6 +36,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class MessageControllerIntegrationTest extends AbstractIntegrationTest {
@@ -50,6 +52,9 @@ class MessageControllerIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private MessageRepository messageRepository;
+
+    @Autowired
+    private FileRepository fileRepository;
 
     @Autowired
     private WorkspaceUserRepository workspaceUserRepository;
@@ -110,14 +115,13 @@ class MessageControllerIntegrationTest extends AbstractIntegrationTest {
     @Test
     void deleteMessage_hardDeletesAndLeavesOrphanAttachment() {
         com.cc01cc.p.xihe.cp.entity.File file = new com.cc01cc.p.xihe.cp.entity.File(userId, "msg.txt", "/tmp/msg.txt");
-        file.setId(UUID.randomUUID());
         file.setWorkspaceId(workspaceId);
         file.setSessionId(sessionId);
         file.setMessageId(message.getId().toString());
         file.setMimeType("text/plain");
         file.setSizeBytes(0);
+        fileRepository.saveAndFlush(file);
 
-        // We don't have a file repo autowired here, skip DB attachment for this test
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(authToken);
         ResponseEntity<Map> response = restTemplate.exchange(
@@ -127,5 +131,6 @@ class MessageControllerIntegrationTest extends AbstractIntegrationTest {
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(message.getId().toString(), response.getBody().get("deleted"));
         assertFalse(messageRepository.findById(message.getId()).isPresent());
+        assertNull(fileRepository.findById(file.getId()).orElseThrow().getMessageId());
     }
 }

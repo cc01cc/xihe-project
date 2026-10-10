@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.operation;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
+import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeJobClient;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.junit.jupiter.api.AfterEach;
@@ -34,7 +35,8 @@ class WorkspaceJobControllerTest {
         workspaceJobStartService = Mockito.mock(WorkspaceJobStartService.class);
         workspaceService = Mockito.mock(WorkspaceService.class);
         controller = new WorkspaceJobController(jobStateService, workspaceJobStartService,
-                workspaceService, Mockito.mock(RuntimeJobClient.class));
+                Mockito.mock(WorkspaceJobCancellationService.class), workspaceService,
+                Mockito.mock(RuntimeJobClient.class));
         TenantContext.setUserId("user-1");
     }
 
@@ -79,14 +81,15 @@ class WorkspaceJobControllerTest {
                         "session", null, null, "ui", null));
 
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
-        verify(workspaceJobStartService, Mockito.never()).start(any(), any(), any(), any());
+        verify(workspaceJobStartService, Mockito.never()).start(any(), any(), any(), any(), any());
     }
 
     @Test
     void startReturnsAcceptedForNewJob() {
         Map<String, Object> job = Map.of("jobId", "f3b6f0c1-0000-4000-8000-000000000002",
                 "status", "running");
-        when(workspaceJobStartService.start(eq("workspace-1"), eq("user-1"), any(), eq("key-1")))
+        workspaceWithMode("docker");
+        when(workspaceJobStartService.start(eq("workspace-1"), eq("user-1"), any(), eq("key-1"), eq("docker")))
                 .thenReturn(new WorkspaceJobStartService.StartOutcome(job, false));
 
         ResponseEntity<?> response = controller.start("workspace-1", "key-1",
@@ -101,7 +104,8 @@ class WorkspaceJobControllerTest {
     void startReturnsOkForIdempotentReplay() {
         Map<String, Object> job = Map.of("jobId", "f3b6f0c1-0000-4000-8000-000000000003",
                 "status", "running");
-        when(workspaceJobStartService.start(eq("workspace-1"), eq("user-1"), any(), eq("key-1")))
+        workspaceWithMode("docker");
+        when(workspaceJobStartService.start(eq("workspace-1"), eq("user-1"), any(), eq("key-1"), eq("docker")))
                 .thenReturn(new WorkspaceJobStartService.StartOutcome(job, true));
 
         ResponseEntity<?> response = controller.start("workspace-1", "key-1",
@@ -114,7 +118,8 @@ class WorkspaceJobControllerTest {
 
     @Test
     void startMapsBackendLaunchPendingTo501() {
-        when(workspaceJobStartService.start(eq("workspace-1"), eq("user-1"), any(), eq("key-1")))
+        workspaceWithMode("docker");
+        when(workspaceJobStartService.start(eq("workspace-1"), eq("user-1"), any(), eq("key-1"), eq("docker")))
                 .thenThrow(new CpApiException(HttpStatus.NOT_IMPLEMENTED, "JOB_BACKEND_LAUNCH_PENDING",
                         "not available"));
 
@@ -128,7 +133,8 @@ class WorkspaceJobControllerTest {
 
     @Test
     void startPreservesRuntimeProblemRequestId() {
-        when(workspaceJobStartService.start(eq("workspace-1"), eq("user-1"), any(), eq("key-2")))
+        workspaceWithMode("docker");
+        when(workspaceJobStartService.start(eq("workspace-1"), eq("user-1"), any(), eq("key-2"), eq("docker")))
                 .thenThrow(new CpApiException(HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_PATH",
                         "cwd rejected", "runtime-request-1"));
 
@@ -139,5 +145,12 @@ class WorkspaceJobControllerTest {
         assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, response.getStatusCode());
         assertEquals("runtime-request-1", ((Map<?, ?>) response.getBody()).get("requestId"));
         assertEquals("INVALID_PATH", ((Map<?, ?>) response.getBody()).get("code"));
+    }
+
+    /** PLAN-0470 #26: the start entry resolves executionMode itself; seed the access-check return. */
+    private void workspaceWithMode(String executionMode) {
+        Workspace workspace = new Workspace();
+        workspace.setExecutionMode(executionMode);
+        when(workspaceService.requireAccessibleWorkspace("workspace-1", "user-1")).thenReturn(workspace);
     }
 }

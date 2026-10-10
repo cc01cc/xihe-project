@@ -10,7 +10,7 @@ import { test, expect, type APIRequestContext, type Locator, type Page } from "@
  *
  * Scenarios (all assertions are request/response/persistence/visible-result):
  *   S1  L1 write_file  : approve → file on host → capture → workspace list → UI preview (no raw
- *                        contents in the payload) → UI revert → 已恢复到此前 marker + ledger item.
+ *                        contents in the payload) → UI revert → localized checkpoint marker + ledger item.
  *   S2  L2 exec/shell  : command writes through the shell; captured change set includes the file.
  *   S3  post-slice edit: the file is edited through the UI file panel after the run; preview
  *                        lists the restore action and the target slice replaces the edit.
@@ -441,7 +441,9 @@ async function revertThroughUi(
             .locator('[data-testid="run-checkpoint-marker"][data-checkpoint-kind="captured"]')
             .last(),
     ).toBeVisible({ timeout: 15000 });
-    await expect(page.getByTestId("run-checkpoint-reverted").last()).toContainText("已恢复到此前");
+    await expect(page.getByTestId("run-checkpoint-reverted").last()).toContainText(
+        "已恢复到该切片",
+    );
     return { previewBodies, resultBodies };
 }
 

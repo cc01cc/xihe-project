@@ -527,7 +527,9 @@ class ForkPropagationTest extends AbstractIntegrationTest {
     }
 
     private static List<UUID> sessionIds(GrantPrincipalPathResolver.AgentPath path) {
-        return path.sessionPath().stream().map(Session::getId).collect(Collectors.toList());
+        return path.sessionPath().stream()
+                .map(com.cc01cc.p.xihe.cp.service.SessionReadService.SessionPathView::id)
+                .collect(Collectors.toList());
     }
 
     private static boolean messagesContain(Throwable failure, String needle) {

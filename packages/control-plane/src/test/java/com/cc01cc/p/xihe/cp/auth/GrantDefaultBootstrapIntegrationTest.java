@@ -48,6 +48,9 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
     private AuthService authService;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.service.WorkspaceService workspaceService;
+
+    @Autowired
     private GrantDefaultService grantDefaultService;
 
     @Autowired
@@ -125,10 +128,17 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         }
     }
 
+    /** PLAN-0470 #25: reproduces the AuthController register orchestration for fixtures. */
+    private AuthResponse register(RegisterRequest request) {
+        User user = authService.registerUser(request);
+        return authService.issueTokens(user, workspaceService
+                .getOrCreateDefaultWorkspace(user.getId().toString()).getId().toString());
+    }
+
     @Test
     void userAndRootSessionCreationMaterializeAuditedDefaultGrantsIdempotently() {
         String email = "grant-default-" + UUID.randomUUID() + "@test.com";
-        AuthResponse registered = authService.register(new RegisterRequest(email, "grant-test-password", "Grant test"));
+        AuthResponse registered = register(new RegisterRequest(email, "grant-test-password", "Grant test"));
         userId = registered.getUser().getId();
         workspaceId = registered.getWorkspaceId();
         User user = userRepository.findById(UUID.fromString(userId)).orElseThrow();
@@ -192,7 +202,7 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
     @Test
     void registeredUserDefaultGrantIsMinimalAndEvaluatorScopesItToOwnWorkspaceOnly() {
         String email = "grant-minimal-" + UUID.randomUUID() + "@test.com";
-        AuthResponse registered = authService.register(
+        AuthResponse registered = register(
                 new RegisterRequest(email, "grant-test-password", "Minimal set test"));
         userId = registered.getUser().getId();
         workspaceId = registered.getWorkspaceId();
@@ -233,7 +243,7 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
     @Test
     void attachmentUploadCreatesRootSessionWithoutAgentDefaultGrant() throws IOException {
         String email = "grant-attachment-" + UUID.randomUUID() + "@test.com";
-        AuthResponse registered = authService.register(new RegisterRequest(email, "grant-test-password", "Attachment grant test"));
+        AuthResponse registered = register(new RegisterRequest(email, "grant-test-password", "Attachment grant test"));
         userId = registered.getUser().getId();
         workspaceId = registered.getWorkspaceId();
         sessionId = UUID.randomUUID().toString();
@@ -263,7 +273,7 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void importCommitsSuccessfulChatsAndRollsBackOnlyFailedChat() {
-        AuthResponse registered = authService.register(new RegisterRequest(
+        AuthResponse registered = register(new RegisterRequest(
                 "grant-import-" + UUID.randomUUID() + "@test.com", "grant-test-password", "Import grant test"));
         userId = registered.getUser().getId();
         workspaceId = registered.getWorkspaceId();
@@ -307,7 +317,7 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void concurrentDefaultEnsureCreatesOneGrantAndOneAudit() throws Exception {
-        AuthResponse registered = authService.register(new RegisterRequest(
+        AuthResponse registered = register(new RegisterRequest(
                 "grant-concurrent-" + UUID.randomUUID() + "@test.com", "grant-test-password", "Concurrent grant test"));
         userId = registered.getUser().getId();
         workspaceId = registered.getWorkspaceId();

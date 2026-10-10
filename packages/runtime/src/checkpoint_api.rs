@@ -174,6 +174,17 @@ impl CheckpointService {
         &self.engine
     }
 
+    /// PLAN-0470 (decision #17): refresh the effective work tree from the
+    /// validated ExecutionSpec/materialized instance path before an operation.
+    pub fn set_work_tree(&self, workspace_id: &str, path: PathBuf) {
+        self.engine.set_work_tree_override(workspace_id, path);
+    }
+
+    /// Drops a stale work-tree override for a destroyed/unmaterialized workspace.
+    pub fn clear_work_tree(&self, workspace_id: &str) {
+        self.engine.clear_work_tree_override(workspace_id);
+    }
+
     /// Capture the workspace as one checkpoint slice (the single capture point).
     ///
     /// Idempotent per `(workspace, run)` within this process: a replay whose slice

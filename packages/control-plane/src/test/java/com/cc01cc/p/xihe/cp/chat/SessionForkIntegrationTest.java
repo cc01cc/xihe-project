@@ -1028,7 +1028,9 @@ class SessionForkIntegrationTest extends AbstractIntegrationTest {
     }
 
     private static List<UUID> sessionIds(GrantPrincipalPathResolver.AgentPath path) {
-        return path.sessionPath().stream().map(Session::getId).toList();
+        return path.sessionPath().stream()
+                .map(com.cc01cc.p.xihe.cp.service.SessionReadService.SessionPathView::id)
+                .toList();
     }
 
     private record Source(Session session, String branchId, String runId, String anchorMessageId,

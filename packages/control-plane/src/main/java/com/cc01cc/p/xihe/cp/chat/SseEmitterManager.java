@@ -16,13 +16,19 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
+import com.cc01cc.p.xihe.cp.context.service.CompactionNoticePort;
+
 /**
  * SseEmitterManager manages one reusable SSE connection per UI session.
  * A connection generation protects a newer emitter from stale callbacks
  * belonging to a replaced connection.
+ *
+ * <p>PLAN-0470 #24/D1b: also implements {@link CompactionNoticePort} so the
+ * Context domain can surface compaction-circuit notices without depending on
+ * this concrete class; wire format is unchanged.
  */
 @Component
-public class SseEmitterManager {
+public class SseEmitterManager implements CompactionNoticePort {
 
     private static final long HEARTBEAT_INTERVAL_MS = 15_000L;
     private static final Logger logger = LoggerFactory.getLogger(SseEmitterManager.class);
@@ -84,6 +90,24 @@ public class SseEmitterManager {
             logger.debug("[LIFECYCLE] service=cp event=chat_sse_unavailable sessionId={} eventName={} errorCode=SSE_SUBSCRIPTION_REQUIRED",
                     sessionId, eventName);
             return false;
+        }
+    }
+
+    /**
+     * PLAN-0470 #24/D1b: preserves the exact wire contract used by
+     * {@code ContextService} — event {@code context_compaction_circuit} with a
+     * {@code type/state/reason} payload. Failures are logged here and never
+     * thrown, matching the previous inline try/catch at the call sites.
+     */
+    @Override
+    public void sendCompactionNotice(String sessionId, String state, String reason) {
+        try {
+            send(sessionId, "context_compaction_circuit", Map.of(
+                    "type", "context_compaction_circuit",
+                    "state", state,
+                    "reason", reason));
+        } catch (Exception e) {
+            logger.debug("Failed to emit compaction circuit SSE: {}", e.getMessage());
         }
     }
 

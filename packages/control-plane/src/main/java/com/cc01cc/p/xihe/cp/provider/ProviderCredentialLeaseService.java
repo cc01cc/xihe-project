@@ -2,7 +2,7 @@ package com.cc01cc.p.xihe.cp.provider;
 
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.entity.ProviderCredentialLease;
-import com.cc01cc.p.xihe.cp.oauth.EnvelopeEncryptionService;
+import com.cc01cc.p.xihe.cp.crypto.EnvelopeEncryptionService;
 import com.cc01cc.p.xihe.cp.repository.ProviderCredentialLeaseRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.fasterxml.jackson.core.type.TypeReference;

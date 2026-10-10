@@ -42,7 +42,7 @@ public class SessionController {
     private final SessionForkService sessionForkService;
     private final com.cc01cc.p.xihe.cp.service.SessionDerivedStateService derivedStateService;
     private final ContextService contextService;
-    private final ChatController chatController;
+    private final ChatActiveRunRegistry activeRunRegistry;
     private final ChatRunCancellationService chatRunCancellationService;
     private final SseEmitterManager sseEmitterManager;
     private final com.cc01cc.p.xihe.cp.operation.JobScopeClosureService jobScopeClosureService;
@@ -51,7 +51,7 @@ public class SessionController {
                              SessionForkService sessionForkService,
                              com.cc01cc.p.xihe.cp.service.SessionDerivedStateService derivedStateService,
                              ContextService contextService,
-                             ChatController chatController,
+                             ChatActiveRunRegistry activeRunRegistry,
                              ChatRunCancellationService chatRunCancellationService,
                              SseEmitterManager sseEmitterManager,
                              com.cc01cc.p.xihe.cp.operation.JobScopeClosureService jobScopeClosureService) {
@@ -59,7 +59,7 @@ public class SessionController {
         this.sessionForkService = sessionForkService;
         this.derivedStateService = derivedStateService;
         this.contextService = contextService;
-        this.chatController = chatController;
+        this.activeRunRegistry = activeRunRegistry;
         this.chatRunCancellationService = chatRunCancellationService;
         this.sseEmitterManager = sseEmitterManager;
         this.jobScopeClosureService = jobScopeClosureService;
@@ -130,7 +130,7 @@ public class SessionController {
         // PLAN-294 D.4-8 (decision #15/#18): a manual compaction must not
         // tear context out from under an active run (appendix E.4 "no tools
         // in flight during compaction").
-        if (chatController.activeRunId(sessionId) != null) {
+        if (activeRunRegistry.activeRunId(sessionId) != null) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.CONFLICT, "BRANCH_LOCK",
                     "A chat run is already active for this session; compaction is deferred until it finishes");

@@ -2,13 +2,12 @@ package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
-import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceUserId;
 import com.cc01cc.p.xihe.cp.event.WorkspaceEventManager;
 import com.cc01cc.p.xihe.cp.operation.JobStateService;
-import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -59,7 +58,7 @@ public class WorkspaceService {
 
     private final WorkspaceRepository workspaceRepository;
     private final WorkspaceUserRepository workspaceUserRepository;
-    private final UserRepository userRepository;
+    private final com.cc01cc.p.xihe.cp.auth.AuthService authService;
     private final WorkspaceExecutionSpecService executionSpecService;
     private final RestTemplate restTemplate;
     private final String runtimeUrl;
@@ -71,7 +70,7 @@ public class WorkspaceService {
 
     public WorkspaceService(WorkspaceRepository workspaceRepository,
                             WorkspaceUserRepository workspaceUserRepository,
-                            UserRepository userRepository,
+                            com.cc01cc.p.xihe.cp.auth.AuthService authService,
                             WorkspaceExecutionSpecService executionSpecService,
                             @Qualifier("runtimeCleanupRestTemplate") RestTemplate restTemplate,
                             @Value("${cp.mcp.runtime-url:http://localhost:12633}") String runtimeUrl,
@@ -82,7 +81,7 @@ public class WorkspaceService {
                             AuditLogger auditLogger) {
         this.workspaceRepository = workspaceRepository;
         this.workspaceUserRepository = workspaceUserRepository;
-        this.userRepository = userRepository;
+        this.authService = authService;
         this.executionSpecService = executionSpecService;
         this.restTemplate = restTemplate;
         this.runtimeUrl = runtimeUrl;
@@ -95,18 +94,19 @@ public class WorkspaceService {
 
     /**
      * Returns the user's first active membership, creating the default resource only when none exists.
-     * The user row lock serializes concurrent login/register responses for the same account.
+     * The user row lock (PLAN-0470 #25/D2a, provided by Auth's
+     * {@code lockAndConfirmUserExists}) serializes concurrent login/register
+     * responses for the same account; the lock is held until this transaction
+     * ends, same as the previous in-service findByIdForUpdate.
      */
     @Transactional
     public Workspace getOrCreateDefaultWorkspace(String userId) {
-        User user = userRepository.findByIdForUpdate(UUID.fromString(userId))
-                .orElseThrow(() -> new CpApiException(
-                        org.springframework.http.HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "User not found"));
-        List<Workspace> existing = workspaceRepository.findActiveByMemberUserId(user.getId());
+        authService.lockAndConfirmUserExists(userId);
+        List<Workspace> existing = workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId));
         if (!existing.isEmpty()) {
             return existing.get(0);
         }
-        return createWorkspaceLocked("Default Workspace", null, user.getId().toString());
+        return createWorkspaceLocked("Default Workspace", null, userId);
     }
 
     /** Creates an active workspace for a user; users may own multiple active workspaces. */
@@ -192,11 +192,16 @@ public class WorkspaceService {
 
     @Transactional(readOnly = true)
     public Workspace requireActiveWorkspace(String workspaceId) {
-        return workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId))
+        return findActiveWorkspace(workspaceId)
                 .orElseThrow(() -> new CpApiException(
                         org.springframework.http.HttpStatus.NOT_FOUND,
                         "WORKSPACE_NOT_FOUND",
                         "Workspace not found"));
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<Workspace> findActiveWorkspace(String workspaceId) {
+        return workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId));
     }
 
     @Transactional(readOnly = true)
@@ -217,6 +222,26 @@ public class WorkspaceService {
         return workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId)).isPresent()
                 && userId != null
                 && workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId), UUID.fromString(userId)).isPresent();
+    }
+
+    /**
+     * PLAN-0470 #20: entry-layer access gate for the OAuth orchestration
+     * entries. Preserves the pre-#20 semantics exactly: lookup ignores
+     * deletedAt and either the workspace owner or any member passes; failures
+     * keep the historical {@code workspace_not_found} /
+     * {@code workspace_forbidden} codes that the OAuth entry maps to its
+     * existing 400/401 responses. OAuth's credential service itself no longer
+     * touches Workspace data.
+     */
+    @Transactional(readOnly = true)
+    public void requireOwnerOrMemberAccess(String workspaceId, String userId) {
+        Workspace workspace = workspaceRepository.findById(UUID.fromString(workspaceId))
+                .orElseThrow(() -> new IllegalArgumentException("workspace_not_found"));
+        boolean owner = userId.equals(workspace.getOwnerId());
+        boolean member = workspaceUserRepository.existsById(new WorkspaceUserId(workspaceId, userId));
+        if (!owner && !member) {
+            throw new IllegalArgumentException("workspace_forbidden");
+        }
     }
 
     @Transactional(readOnly = true)

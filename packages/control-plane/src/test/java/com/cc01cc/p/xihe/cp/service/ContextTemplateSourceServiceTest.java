@@ -1,6 +1,5 @@
 package com.cc01cc.p.xihe.cp.service;
 
-import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.policy.PolicyContext;
 import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
@@ -138,8 +137,8 @@ class ContextTemplateSourceServiceTest {
                 + "\"config\":{\"root\":\"session_workspace\",\"maxDepth\":2,\"includeFiles\":true,\"maxEntries\":2000}},"
                 + "{\"instanceId\":\"" + secondId + "\",\"type\":\"workspace_tree\",\"enabled\":true,"
                 + "\"config\":{\"root\":\"session_workspace\",\"maxDepth\":2,\"includeFiles\":true,\"maxEntries\":2000}}]}}";
-        ChatRun run = new ChatRun(RUN_ID, SESSION_ID, USER, WORKSPACE, "key", "hash", null, null, "workspace", "accepted");
-        run.setContextTemplateSnapshot(mapper.readTree(snapshot));
+        ContextTemplateSourceService.RunContext run = new ContextTemplateSourceService.RunContext(
+                SESSION_ID, WORKSPACE, USER, mapper.readTree(snapshot));
         Session session = new Session(WORKSPACE, USER, "bounded tree");
         session.setId(UUID.fromString(SESSION_ID));
 
@@ -154,8 +153,8 @@ class ContextTemplateSourceServiceTest {
     private Map<String, Object> resolve(String type, String config) throws Exception {
         String snapshot = "{\"template\":{\"components\":[{\"instanceId\":\"component-1\","
                 + "\"type\":\"" + type + "\",\"enabled\":true,\"config\":" + config + "}]}}";
-        ChatRun run = new ChatRun(RUN_ID, SESSION_ID, USER, WORKSPACE, "key", "hash", null, null, "none", "accepted");
-        run.setContextTemplateSnapshot(mapper.readTree(snapshot));
+        ContextTemplateSourceService.RunContext run = new ContextTemplateSourceService.RunContext(
+                SESSION_ID, WORKSPACE, USER, mapper.readTree(snapshot));
         Session session = new Session(WORKSPACE, USER, "tree test");
         session.setId(UUID.fromString(SESSION_ID));
         return (Map<String, Object>) new ContextTemplateSourceService(runtime, policy, mapper)

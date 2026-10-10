@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.context.summary;
 
-import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
+import com.cc01cc.p.xihe.cp.chat.ApprovalService;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,7 +16,9 @@ import java.util.List;
  * <p>Approval decisions and explicit user constraints are code-extracted and
  * kept verbatim; they never participate in the LLM summarizer's take-data
  * (invariant I3). Moved out of ContextService unchanged when the SummaryProvider
- * seam landed (PLAN-0354 T1.1).
+ * seam landed (PLAN-0354 T1.1). PLAN-0470 (decision #18): decided approvals are
+ * read through the Approval owner service's bounded view — Context never
+ * touches {@code ChatApprovalRepository} directly.
  */
 @Component
 public class ConstraintExtractor {
@@ -30,10 +32,10 @@ public class ConstraintExtractor {
                     + "do not|don't|never|must always|must not|forbid|stop)\\b[^.\\n。！!？?]{0,120}",
             java.util.regex.Pattern.CASE_INSENSITIVE);
 
-    private final ChatApprovalRepository approvalRepository;
+    private final ApprovalService approvalService;
 
-    public ConstraintExtractor(ChatApprovalRepository approvalRepository) {
-        this.approvalRepository = approvalRepository;
+    public ConstraintExtractor(ApprovalService approvalService) {
+        this.approvalService = approvalService;
     }
 
     /** Verbatim constraints: prior carry-forward + user spans + decided approvals. */
@@ -69,17 +71,16 @@ public class ConstraintExtractor {
         }
         // ② Decided approvals (verbatim tool/action + decision).
         try {
-            var decided = approvalRepository.findBySessionIdAndStateInOrderByCreatedAtDesc(
-                    sessionId, List.of("approved", "rejected", "expired"));
+            var decided = approvalService.listDecidedForConstraints(sessionId);
             for (var approval : decided) {
                 if (out.size() >= CONSTRAINTS_MAX) {
                     break;
                 }
-                String decision = Boolean.TRUE.equals(approval.getApproved()) ? "approved"
-                        : Boolean.FALSE.equals(approval.getApproved()) ? "denied"
-                        : approval.getState();
-                String line = "[" + decision + "] " + approval.getTool() + ": "
-                        + truncate(approval.getAction(), 120);
+                String decision = Boolean.TRUE.equals(approval.approved()) ? "approved"
+                        : Boolean.FALSE.equals(approval.approved()) ? "denied"
+                        : approval.state();
+                String line = "[" + decision + "] " + approval.tool() + ": "
+                        + truncate(approval.action(), 120);
                 out.add(line);
             }
         } catch (Exception e) {

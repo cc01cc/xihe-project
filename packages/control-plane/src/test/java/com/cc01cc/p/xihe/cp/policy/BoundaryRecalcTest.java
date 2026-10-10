@@ -262,8 +262,14 @@ class BoundaryRecalcTest extends AbstractIntegrationTest {
         Session session = new Session(workspaceId.toString(), userId, "unit session");
         session.setId(UUID.fromString(sessionId));
         session.setAgentPermissionsSnapshot(atoms("read", "write", "SPAWN_AGENT"));
+        com.cc01cc.p.xihe.cp.service.SessionReadService.SessionPathView sessionPathView =
+                new com.cc01cc.p.xihe.cp.service.SessionReadService.SessionPathView(
+                        session.getId(), session.getUserId(), session.getWorkspaceId(),
+                        session.getAgentPrincipalId(), session.getSpawnedFromSessionId(),
+                        session.getSpawnedFromRunId(), session.getSpawnedAt(), session.getKind(),
+                        session.getAgentPermissionsSnapshot());
         when(resolver.resolveAgent(userId, workspaceId.toString(), sessionId))
-                .thenReturn(new GrantPrincipalPathResolver.AgentPath(principalId, List.of(session)));
+                .thenReturn(new GrantPrincipalPathResolver.AgentPath(principalId, List.of(sessionPathView)));
 
         GrantAuthorizationService service = new GrantAuthorizationService(grantRepository,
                 principalRepository, bindingRepository, resolver, new GrantIntersectionEvaluator(),

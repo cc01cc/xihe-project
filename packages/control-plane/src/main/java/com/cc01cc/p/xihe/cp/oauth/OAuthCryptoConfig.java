@@ -8,6 +8,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 
+import com.cc01cc.p.xihe.cp.crypto.EnvelopeEncryptionService;
+
 @Configuration
 public class OAuthCryptoConfig {
 

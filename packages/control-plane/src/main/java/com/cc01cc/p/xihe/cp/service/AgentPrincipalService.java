@@ -1,9 +1,9 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
+import com.cc01cc.p.xihe.cp.auth.AuthService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
-import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
@@ -11,12 +11,10 @@ import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.ToolShape;
 import com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
+import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
-import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -32,15 +30,25 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
-/** Lifecycle writes for stable Agent principals and Workspace-local permission caps. */
+/**
+ * Lifecycle writes for stable Agent principals and Workspace-local permission caps.
+ *
+ * <p>PLAN-0470 #22: User/Workspace identity reads go through the Auth and
+ * Workspace narrow entries; the agent-principal default grant write is owned
+ * by Policy ({@link GrantDefaultService#createAgentPrincipalGrant}). Direct
+ * User/WorkspaceUser/Workspace/Grant-repository access is limited to this
+ * service's own AgentPrincipal/WorkspaceAgent tables plus the Policy grant
+ * <em>reads</em> used for permission ceilings (reads stay until a dedicated
+ * Policy query seam is approved).
+ */
 @Service
 public class AgentPrincipalService {
 
     private final AgentPrincipalRepository agentPrincipalRepository;
     private final AuthorizationGrantRepository grantRepository;
-    private final UserRepository userRepository;
-    private final WorkspaceRepository workspaceRepository;
-    private final WorkspaceUserRepository workspaceUserRepository;
+    private final AuthService authService;
+    private final WorkspaceService workspaceService;
+    private final GrantDefaultService grantDefaultService;
     private final WorkspaceAgentRepository workspaceAgentRepository;
     private final GrantIntersectionEvaluator evaluator;
     private final AuditLogger auditLogger;
@@ -49,19 +57,19 @@ public class AgentPrincipalService {
 
     public AgentPrincipalService(AgentPrincipalRepository agentPrincipalRepository,
                                  AuthorizationGrantRepository grantRepository,
-                                 UserRepository userRepository,
-                                 WorkspaceRepository workspaceRepository,
-                                 WorkspaceUserRepository workspaceUserRepository,
-                                  WorkspaceAgentRepository workspaceAgentRepository,
-                                  GrantIntersectionEvaluator evaluator,
-                                  AuditLogger auditLogger,
-                                  ObjectMapper objectMapper,
-                                  AgentTemplateService agentTemplateService) {
+                                 AuthService authService,
+                                 WorkspaceService workspaceService,
+                                 GrantDefaultService grantDefaultService,
+                                 WorkspaceAgentRepository workspaceAgentRepository,
+                                 GrantIntersectionEvaluator evaluator,
+                                 AuditLogger auditLogger,
+                                 ObjectMapper objectMapper,
+                                 AgentTemplateService agentTemplateService) {
         this.agentPrincipalRepository = agentPrincipalRepository;
         this.grantRepository = grantRepository;
-        this.userRepository = userRepository;
-        this.workspaceRepository = workspaceRepository;
-        this.workspaceUserRepository = workspaceUserRepository;
+        this.authService = authService;
+        this.workspaceService = workspaceService;
+        this.grantDefaultService = grantDefaultService;
         this.workspaceAgentRepository = workspaceAgentRepository;
         this.evaluator = evaluator;
         this.auditLogger = auditLogger;
@@ -102,8 +110,10 @@ public class AgentPrincipalService {
     public AgentPrincipal createPrincipal(String actorUserId, String name, String templateId,
                                           JsonNode templateSnapshot) {
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
-        userRepository.findById(actorId).orElseThrow(() -> new CpApiException(
-                HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "Agent principal creator was not found"));
+        if (!authService.userExists(actorId)) {
+            throw new CpApiException(
+                    HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "Agent principal creator was not found");
+        }
         if (name == null || name.isBlank() || templateSnapshot == null || !templateSnapshot.isObject()) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_AGENT_PRINCIPAL",
                     "A name and server-resolved template snapshot are required");
@@ -128,18 +138,12 @@ public class AgentPrincipalService {
         principal.setCreatedByUserId(actorId.toString());
         AgentPrincipal savedPrincipal = agentPrincipalRepository.saveAndFlush(principal);
 
-        AuthorizationGrant grant = new AuthorizationGrant();
-        grant.setId(UUID.randomUUID());
-        grant.setSubjectType(GrantPrincipalPathResolver.AGENT_PRINCIPAL);
-        grant.setSubjectId(savedPrincipal.getId());
-        grant.setGranterType(GrantPrincipalPathResolver.USER);
-        grant.setGranterId(actorId);
-        grant.setSource(templateId == null ? "default" : "template");
-        grant.setRoleName(optionalText(templateSnapshot, "roleName"));
-        grant.setTemplateName(optionalText(templateSnapshot, "templateName"));
-        grant.setReadState("read");
-        grant.setPermissions(grantPermissions);
-        grantRepository.saveAndFlush(grant);
+        // PLAN-0470 #22: the grant write itself is Policy-owned.
+        grantDefaultService.createAgentPrincipalGrant(savedPrincipal.getId(), actorId,
+                templateId == null ? "default" : "template",
+                optionalText(templateSnapshot, "roleName"),
+                optionalText(templateSnapshot, "templateName"),
+                grantPermissions);
 
         ObjectNode detail = objectMapper.createObjectNode();
         detail.put("authorizationAction", "CREATE_ACCOUNT");
@@ -158,9 +162,7 @@ public class AgentPrincipalService {
                                           JsonNode requestedPermissions) {
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         requireUser(actorId);
-        workspaceRepository.findByIdAndDeletedAtIsNull(workspaceId)
-                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND,
-                        "WORKSPACE_NOT_FOUND", "Workspace not found"));
+        workspaceService.requireActiveWorkspace(workspaceId.toString());
         requireWorkspaceMember(actorId, workspaceId);
         requireWorkspaceAgentManagement(actorId, workspaceId);
         AgentPrincipal principal = requireActivePrincipal(principalId);
@@ -207,9 +209,7 @@ public class AgentPrincipalService {
     public boolean unbindWorkspace(String actorUserId, UUID workspaceId, UUID principalId) {
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         requireUser(actorId);
-        workspaceRepository.findByIdAndDeletedAtIsNull(workspaceId)
-                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND,
-                        "WORKSPACE_NOT_FOUND", "Workspace not found"));
+        workspaceService.requireActiveWorkspace(workspaceId.toString());
         requireWorkspaceMember(actorId, workspaceId);
         requireWorkspaceAgentManagement(actorId, workspaceId);
         AgentPrincipal principal = agentPrincipalRepository.findById(principalId)
@@ -235,9 +235,7 @@ public class AgentPrincipalService {
     public List<WorkspaceAgentView> listWorkspaceAgents(String actorUserId, UUID workspaceId) {
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         requireUser(actorId);
-        workspaceRepository.findByIdAndDeletedAtIsNull(workspaceId)
-                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND,
-                        "WORKSPACE_NOT_FOUND", "Workspace not found"));
+        workspaceService.requireActiveWorkspace(workspaceId.toString());
         requireWorkspaceMember(actorId, workspaceId);
 
         return workspaceAgentRepository.findByIdWorkspaceId(workspaceId).stream()
@@ -254,16 +252,29 @@ public class AgentPrincipalService {
     public JsonNode resolveSessionCap(String principalIdValue, String workspaceIdValue) {
         UUID principalId = parseUuid(principalIdValue, "INVALID_AGENT_PRINCIPAL");
         UUID workspaceId = parseUuid(workspaceIdValue, "INVALID_WORKSPACE");
-        AgentPrincipal principal = requireActivePrincipal(principalId);
-        WorkspaceAgent binding = workspaceAgentRepository.findById(new WorkspaceAgentId(principalId, workspaceId))
-                .orElseThrow(() -> new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
-                        "Agent principal is not bound to this Workspace"));
+        ActiveWorkspaceBinding binding = requireActiveWorkspaceBinding(principalId, workspaceId);
+        AgentPrincipal principal = binding.principal();
         Set<GrantIntersectionEvaluator.PermissionAtom> principalPermissions = evaluator.union(
                 grantRepository.findBySubjectTypeAndSubjectId(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principal.getId()));
         Set<GrantIntersectionEvaluator.PermissionAtom> bindingPermissions = parsePermissions(
-                binding.getPermissionsSnapshot());
+                binding.workspaceAgent().getPermissionsSnapshot());
         return toJson(retainCovered(bindingPermissions, principalPermissions));
+    }
+
+    @Transactional(readOnly = true)
+    public void requireActiveWorkspaceBinding(String principalIdValue, String workspaceIdValue) {
+        UUID principalId = parseUuid(principalIdValue, "INVALID_AGENT_PRINCIPAL");
+        UUID workspaceId = parseUuid(workspaceIdValue, "INVALID_WORKSPACE");
+        requireActiveWorkspaceBinding(principalId, workspaceId);
+    }
+
+    private ActiveWorkspaceBinding requireActiveWorkspaceBinding(UUID principalId, UUID workspaceId) {
+        AgentPrincipal principal = requireActivePrincipal(principalId);
+        WorkspaceAgent binding = workspaceAgentRepository.findById(new WorkspaceAgentId(principalId, workspaceId))
+                .orElseThrow(() -> new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                        "Agent principal is not bound to this Workspace"));
+        return new ActiveWorkspaceBinding(principal, binding);
     }
 
     @Transactional(readOnly = true)
@@ -309,14 +320,17 @@ public class AgentPrincipalService {
     }
 
     private void requireUser(UUID userId) {
-        userRepository.findById(userId).orElseThrow(() -> new CpApiException(
-                HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "User not found"));
+        if (!authService.userExists(userId)) {
+            throw new CpApiException(
+                    HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "User not found");
+        }
     }
 
     private void requireWorkspaceMember(UUID userId, UUID workspaceId) {
-        workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(workspaceId, userId)
-                .orElseThrow(() -> new CpApiException(HttpStatus.FORBIDDEN,
-                        "WORKSPACE_ACCESS_DENIED", "Workspace membership is required"));
+        if (!workspaceService.isWorkspaceMember(workspaceId.toString(), userId.toString())) {
+            throw new CpApiException(HttpStatus.FORBIDDEN,
+                    "WORKSPACE_ACCESS_DENIED", "Workspace membership is required");
+        }
     }
 
     private void requireWorkspaceAgentManagement(UUID actorId, UUID workspaceId) {
@@ -413,4 +427,6 @@ public class AgentPrincipalService {
 
     public record WorkspaceAgentView(UUID principalId, String name, String templateId,
                                      String templateName, Instant createdAt, JsonNode permissions) {}
+
+    private record ActiveWorkspaceBinding(AgentPrincipal principal, WorkspaceAgent workspaceAgent) {}
 }

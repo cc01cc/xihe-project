@@ -482,6 +482,14 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
         Session parentSession =
                 sessionRepository.findById(UUID.fromString(parent.parentSessionId)).orElseThrow();
 
+        ResponseEntity<Map<String, Object>> missing = cancelViaController(UUID.randomUUID().toString());
+        assertEquals(HttpStatus.NOT_FOUND, missing.getStatusCode());
+        assertEquals("RUN_NOT_FOUND", missing.getBody().get("code"));
+        ResponseEntity<Map<String, Object>> forbidden = cancelViaController(parent.parentRunId, "other-user");
+        assertEquals(HttpStatus.FORBIDDEN, forbidden.getStatusCode());
+        assertEquals("FORBIDDEN", forbidden.getBody().get("code"));
+        assertEquals("running", runStatus(parent.parentRunId()), "owner rejection must not claim cancellation");
+
         ResponseEntity<Map<String, Object>> accepted = cancelViaController(parent.parentRunId);
         assertEquals(HttpStatus.OK, accepted.getStatusCode());
         assertEquals("cancel_accepted", accepted.getBody().get("status"));
@@ -606,12 +614,16 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
     }
 
     private ResponseEntity<Map<String, Object>> cancelViaController(String runId) {
-        TenantContext.setUserId(userId);
+        return cancelViaController(runId, userId);
+    }
+
+    private ResponseEntity<Map<String, Object>> cancelViaController(String runId, String requestUserId) {
+        TenantContext.setUserId(requestUserId);
         TenantContext.setWorkspaceId(workspaceId);
         // @PreAuthorize 走方法级安全拦截，直接调用 bean 也需要 SecurityContext。
         org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
                 new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
-                        userId, null,
+                        requestUserId, null,
                         List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority(
                                 "ROLE_USER"))));
         try {

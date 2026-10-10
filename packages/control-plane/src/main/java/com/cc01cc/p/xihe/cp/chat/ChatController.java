@@ -2,24 +2,22 @@ package com.cc01cc.p.xihe.cp.chat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
-import com.cc01cc.p.xihe.cp.entity.File;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Message;
-import com.cc01cc.p.xihe.cp.entity.MessageRole;
 import com.cc01cc.p.xihe.cp.entity.Session;
-import com.cc01cc.p.xihe.cp.repository.FileRepository;
-import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
-import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 import com.cc01cc.p.xihe.cp.status.RequestQueue;
 import com.cc01cc.p.xihe.cp.status.CircuitBreaker;
 import com.cc01cc.p.xihe.cp.provider.ProviderCredentialLeaseService;
+import com.cc01cc.p.xihe.cp.files.ChatAttachmentService;
+import com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,7 +55,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @RestController
@@ -75,23 +72,24 @@ public class ChatController {
     private final FollowUpQueueService followUpQueueService;
     private final SessionService sessionService;
     private final AgentPrincipalService agentPrincipalService;
-    private final MessageRepository messageRepository;
-    private final FileRepository fileRepository;
-    private final ChatRunRepository chatRunRepository;
+    private final ChatAttachmentService chatAttachmentService;
     private final HealthMonitor healthMonitor;
     private final RequestQueue requestQueue;
     private final ProviderCredentialLeaseService credentialLeases;
     private final ConfigService configService;
     private final com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder mcpRelayToolRecorder;
-    private final com.cc01cc.p.xihe.cp.mcp.McpProxyController mcpProxyController;
+    private final com.cc01cc.p.xihe.cp.mcp.McpToolTimeoutService mcpToolTimeoutService;
     private final com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy;
     private final ChatRunCancellationService chatRunCancellationService;
     private final ChatRunTerminalService chatRunTerminalService;
+    private final ChatRunReadService chatRunReadService;
+    private final ChatRunLifecycleService chatRunLifecycleService;
+    private final MessageReadService messageReadService;
     private final com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService;
     private final com.cc01cc.p.xihe.cp.usage.UsageCostMapper usageCostMapper;
     private final com.cc01cc.p.xihe.cp.service.ContextTemplateSourceService contextTemplateSourceService;
     private final ApplicationEventPublisher eventPublisher;
-    private final Map<String, String> activeRuns = new ConcurrentHashMap<>();
+    private final ChatActiveRunRegistry activeRunRegistry;
 
     private static final java.time.Duration LEASE_TTL = java.time.Duration.ofMinutes(10);
     private static final String INSTANCE_ID = UUID.randomUUID().toString();
@@ -100,9 +98,6 @@ public class ChatController {
      * PLAN-0328 M2 W3: statuses whose transition ends the Run and therefore must
      * pass through the single ChatRunTerminalService owner.
      */
-    private static final List<String> TERMINAL_RUN_STATUSES = List.of(
-            "succeeded", "failed", "partial", "ambiguous", "cancelled");
-
     /**
      * PLAN-0307 T2.7 (decision #3): domains with per-run Agent consumers, delivered
      * as payload overrides. rag/embedding are process-level consumers covered by the
@@ -127,18 +122,20 @@ public class ChatController {
             FollowUpQueueService followUpQueueService,
             SessionService sessionService,
             AgentPrincipalService agentPrincipalService,
-            MessageRepository messageRepository,
-            FileRepository fileRepository,
-            ChatRunRepository chatRunRepository,
+            ChatAttachmentService chatAttachmentService,
+            ChatActiveRunRegistry activeRunRegistry,
             HealthMonitor healthMonitor,
             RequestQueue requestQueue,
             ProviderCredentialLeaseService credentialLeases,
             ConfigService configService,
             com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder mcpRelayToolRecorder,
-            com.cc01cc.p.xihe.cp.mcp.McpProxyController mcpProxyController,
+            com.cc01cc.p.xihe.cp.mcp.McpToolTimeoutService mcpToolTimeoutService,
             com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy,
             ChatRunCancellationService chatRunCancellationService,
             ChatRunTerminalService chatRunTerminalService,
+            ChatRunReadService chatRunReadService,
+            ChatRunLifecycleService chatRunLifecycleService,
+            MessageReadService messageReadService,
              com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService,
               com.cc01cc.p.xihe.cp.usage.UsageCostMapper usageCostMapper,
               com.cc01cc.p.xihe.cp.service.ContextTemplateSourceService contextTemplateSourceService,
@@ -154,18 +151,20 @@ public class ChatController {
         this.followUpQueueService = followUpQueueService;
         this.sessionService = sessionService;
         this.agentPrincipalService = agentPrincipalService;
-        this.messageRepository = messageRepository;
-        this.fileRepository = fileRepository;
-        this.chatRunRepository = chatRunRepository;
+        this.chatAttachmentService = chatAttachmentService;
+        this.activeRunRegistry = activeRunRegistry;
         this.healthMonitor = healthMonitor;
         this.requestQueue = requestQueue;
         this.credentialLeases = credentialLeases;
         this.configService = configService;
         this.mcpRelayToolRecorder = mcpRelayToolRecorder;
-        this.mcpProxyController = mcpProxyController;
+        this.mcpToolTimeoutService = mcpToolTimeoutService;
         this.toolTimeoutPolicy = toolTimeoutPolicy;
         this.chatRunCancellationService = chatRunCancellationService;
         this.chatRunTerminalService = chatRunTerminalService;
+        this.chatRunReadService = chatRunReadService;
+        this.chatRunLifecycleService = chatRunLifecycleService;
+        this.messageReadService = messageReadService;
         this.contextSourceRefreshService = contextSourceRefreshService;
         this.usageCostMapper = usageCostMapper;
         this.contextTemplateSourceService = contextTemplateSourceService;
@@ -217,7 +216,7 @@ public class ChatController {
     void onFollowUpQueueWakeup(FollowUpQueueWakeupEvent event) {
         // Reserve the local single-flight slot across the Session-locked DB admission.
         String reservationId = FOLLOW_UP_DISPATCH_RESERVATION_PREFIX + UUID.randomUUID();
-        if (activeRuns.putIfAbsent(event.sessionId(), reservationId) != null) {
+        if (activeRunRegistry.putIfAbsent(event.sessionId(), reservationId) != null) {
             return;
         }
         boolean retryAdmission = false;
@@ -236,12 +235,12 @@ public class ChatController {
                 String requestHash = ChatRequestHash.calculate(objectMapper, item.getContent(), provider, model,
                         item.getToolMode(), admission.attachments().fileIds(), timeouts, principalId, branchId);
                 List<Map<String, Object>> attachmentRefs = new ArrayList<>();
-                for (File file : admission.attachments().files()) {
+                for (AttachmentInfo attachment : admission.attachments().references()) {
                     Map<String, Object> ref = new LinkedHashMap<>();
-                    ref.put("fileId", file.getId().toString());
-                    ref.put("name", file.getFilename());
-                    ref.put("type", file.getMimeType());
-                    ref.put("size", file.getSizeBytes());
+                    ref.put("fileId", attachment.getId());
+                    ref.put("name", attachment.getName());
+                    ref.put("type", attachment.getType());
+                    ref.put("size", attachment.getSize());
                     attachmentRefs.add(ref);
                 }
                 String attachmentsJson;
@@ -266,7 +265,7 @@ public class ChatController {
                     event.sessionId(), event.retryAttempt(), e.getClass().getSimpleName(), e);
             retryAdmission = true;
         } finally {
-            activeRuns.remove(event.sessionId(), reservationId);
+            activeRunRegistry.remove(event.sessionId(), reservationId);
         }
         if (retryAdmission) {
             followUpQueueService.scheduleAdmissionRetry(event);
@@ -298,21 +297,21 @@ public class ChatController {
     @EventListener
     void onFollowUpChildAdmitted(FollowUpChildAdmittedEvent event) {
         String runId = event.childRunId();
-        ChatRun run = chatRunRepository.findById(UUID.fromString(runId)).orElse(null);
+        ChatRunReadService.DispatchRun run = chatRunReadService.findDispatchRun(runId).orElse(null);
         if (run == null) {
             logger.error("[LIFECYCLE] service=cp event=follow_up_child_dispatch_failed sessionId={} runId={} reason=run_missing",
                     event.sessionId(), runId);
             return;
         }
         try {
-            Message message = messageRepository.findById(UUID.fromString(run.getUserMessageId()))
+            MessageReadService.DispatchMessage message = messageReadService.findDispatchMessage(run.userMessageId())
                     .orElseThrow(() -> new IllegalStateException("Admitted Follow-up Message is missing"));
             List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachments =
-                    resolveAdmittedAttachments(message);
-            String localRun = activeRuns.get(event.sessionId());
+                    resolveAdmittedAttachments(message.attachments());
+            String localRun = activeRunRegistry.get(event.sessionId());
             boolean ownsReservation = localRun != null
                     && localRun.startsWith(FOLLOW_UP_DISPATCH_RESERVATION_PREFIX)
-                    && activeRuns.replace(event.sessionId(), localRun, runId);
+                    && activeRunRegistry.replace(event.sessionId(), localRun, runId);
             if (!ownsReservation && runId.equals(localRun)) {
                 return;
             }
@@ -322,8 +321,8 @@ public class ChatController {
             }
             logger.info("[LIFECYCLE] service=cp event=follow_up_child_dispatch_started sessionId={} runId={} queueItemId={} attachments={}",
                     event.sessionId(), runId, event.queueItemId(), attachments.size());
-            execAsync(event.sessionId(), message.getContent(), run.getProvider(), run.getModel(), run.getToolMode(),
-                    event.toolTimeouts(), attachments, run.getUserId(), run.getWorkspaceId(),
+            execAsync(event.sessionId(), message.content(), run.provider(), run.model(), run.toolMode(),
+                    event.toolTimeouts(), attachments, run.userId(), run.workspaceId(),
                     UUID.randomUUID().toString(), runId);
         } catch (Exception e) {
             logger.error("[LIFECYCLE] service=cp event=follow_up_child_dispatch_failed sessionId={} runId={} failureType={}",
@@ -332,25 +331,9 @@ public class ChatController {
         }
     }
 
-    private List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> resolveAdmittedAttachments(Message message)
+    private List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> resolveAdmittedAttachments(String attachmentsJson)
             throws java.io.IOException {
-        List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachments = new ArrayList<>();
-        if (message.getAttachments() == null || message.getAttachments().isBlank()) {
-            return attachments;
-        }
-        com.fasterxml.jackson.databind.JsonNode refs = objectMapper.readTree(message.getAttachments());
-        if (refs == null || !refs.isArray()) {
-            throw new IllegalStateException("Admitted Follow-up attachment refs are invalid");
-        }
-        for (com.fasterxml.jackson.databind.JsonNode ref : refs) {
-            UUID fileId = UUID.fromString(ref.path("fileId").asText());
-            File file = fileRepository.findById(fileId)
-                    .orElseThrow(() -> new IllegalStateException("Admitted Follow-up File is missing"));
-            attachments.add(new com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo(
-                    file.getId().toString(), file.getFilename(), file.getMimeType(), file.getSizeBytes(),
-                    "/api/v1/files/" + file.getId()));
-        }
-        return List.copyOf(attachments);
+        return chatAttachmentService.resolveAdmittedMessageAttachments(attachmentsJson);
     }
 
     private void failFollowUpDispatch(String sessionId, String runId) {
@@ -503,30 +486,19 @@ public class ChatController {
         }
 
         List<String> attachmentIds = extractAttachmentIds(request);
-        List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachmentInfos = new ArrayList<>();
-        if (!attachmentIds.isEmpty()) {
-            for (String fileId : attachmentIds) {
-                File file = fileRepository.findById(UUID.fromString(fileId)).orElse(null);
-                if (file == null) {
-                    return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "ATTACHMENT_NOT_FOUND", "Attachment not found");
-                }
-                if (!sessionId.equals(file.getSessionId())
-                        || !workspaceId.equals(file.getWorkspaceId())
-                        || !userId.equals(file.getUserId())
-                        || !userId.equals(session.getUserId())) {
-                    return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", "Attachment does not belong to session");
-                }
-                attachmentInfos.add(new com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo(
-                    file.getId().toString(), file.getFilename(), file.getMimeType(), file.getSizeBytes(), "/api/v1/files/" + file.getId()
-                ));
-            }
+        List<AttachmentInfo> attachmentInfos;
+        try {
+            attachmentInfos = chatAttachmentService.resolveForChatSubmission(
+                    attachmentIds, sessionId, workspaceId, userId, session.getUserId());
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
 
         String attachmentsJson = null;
         if (!attachmentInfos.isEmpty()) {
             try {
                 List<Map<String, Object>> refs = new ArrayList<>();
-                for (com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo info : attachmentInfos) {
+                for (AttachmentInfo info : attachmentInfos) {
                     Map<String, Object> ref = new java.util.LinkedHashMap<>();
                     ref.put("fileId", info.getId());
                     ref.put("name", info.getName());
@@ -543,23 +515,14 @@ public class ChatController {
 
         String requestHash = requestHash(content, provider, model, toolMode, attachmentIds,
                 perCallTimeouts.values(), agentPrincipalId, branchId);
-        ChatRun existingRun = chatRunRepository
-                .findByUserIdAndSessionIdAndIdempotencyKey(userId, sessionId, idempotencyKey)
-                .orElse(null);
-        if (existingRun != null) {
-            if (!ChatRun.ORIGIN_USER_SUBMISSION.equals(existingRun.getOrigin())) {
-                return ProblemDetailsHandler.problemResponse(
-                        HttpStatus.CONFLICT,
-                        "IDEMPOTENCY_KEY_CONFLICT",
-                        "Idempotency-Key belongs to a derived run");
+        try {
+            var replay = chatSubmissionService.findSubmissionReplay(
+                    userId, sessionId, idempotencyKey, requestHash);
+            if (replay.isPresent()) {
+                return ResponseEntity.accepted().body(runResponse(replay.orElseThrow()));
             }
-            if (!requestHash.equals(existingRun.getRequestHash())) {
-                return ProblemDetailsHandler.problemResponse(
-                        HttpStatus.CONFLICT,
-                        "IDEMPOTENCY_KEY_CONFLICT",
-                        "Idempotency-Key was already used for a different request");
-            }
-            return ResponseEntity.accepted().body(runResponse(existingRun));
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
 
         if (!acquireRun(sessionId, runId)) {
@@ -587,8 +550,7 @@ public class ChatController {
 
             // Agent down with a previously ready LLM -> queue transport recovery.
             if (transportOnlyFailure) {
-                chatRun.setStatus("queued");
-                chatRunRepository.save(chatRun);
+                chatSubmissionService.persistRunStatus(chatRun, "queued");
                 boolean queued = requestQueue.enqueue(
                         sessionId, content, provider, model, toolMode, attachmentInfos,
                         userId, workspaceId, requestId, runId, perCallTimeouts.values());
@@ -605,8 +567,7 @@ public class ChatController {
                         "reason", "agent_down"
                     ));
                 }
-                chatRun.setStatus("accepted");
-                chatRunRepository.save(chatRun);
+                chatSubmissionService.persistRunStatus(chatRun, "accepted");
             }
 
             execAsync(sessionId, content, provider, model, toolMode, perCallTimeouts.values(),
@@ -642,29 +603,11 @@ public class ChatController {
         } catch (IllegalArgumentException e) {
             return ProblemDetailsHandler.problemResponse(HttpStatus.NOT_FOUND, "RUN_NOT_FOUND", "Chat run not found");
         }
-        ChatRun run = chatRunRepository.findById(runUuid).orElse(null);
-        if (run == null) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.NOT_FOUND, "RUN_NOT_FOUND", "Chat run not found");
+        try {
+            return ResponseEntity.ok(chatRunReadService.getStatus(runUuid, runId, userId, workspaceId));
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
-        if (!userId.equals(run.getUserId()) || !workspaceId.equals(run.getWorkspaceId())) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", "Chat run does not belong to current user/workspace");
-        }
-        boolean leaseExpired = run.getLeaseExpiresAt() != null
-                && run.getLeaseExpiresAt().isBefore(java.time.Instant.now());
-        List<Map<String, Object>> pendingApprovals = approvalService.findActiveForRun(runId, userId, workspaceId);
-        String status = run.getStatus();
-        String effectiveStatus = !pendingApprovals.isEmpty() && ("running".equals(status) || "cancelling".equals(status))
-                ? "awaiting_approval"
-                : status;
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("runId", runId);
-        body.put("sessionId", run.getSessionId());
-        body.put("origin", run.getOrigin());
-        body.put("status", effectiveStatus);
-        body.put("terminalOutcome", run.getTerminalOutcome());
-        body.put("leaseExpired", leaseExpired);
-        body.put("pendingApprovals", pendingApprovals);
-        return ResponseEntity.ok(body);
     }
 
     // ── PLAN-0464 T2.1: session-scoped run list (waiting/status read surface) ──
@@ -690,30 +633,8 @@ public class ChatController {
         Session session = sessionService.requireCurrent(sessionId, userId, workspaceId);
         int safePage = Math.max(page, 0);
         int safeSize = Math.min(Math.max(size, 1), 200);
-        List<ChatRun> runs = chatRunRepository.findBySessionIdOrderByCreatedAtDescIdDesc(
-                session.getId().toString(),
-                org.springframework.data.domain.PageRequest.of(safePage, safeSize));
-        List<Map<String, Object>> items = new ArrayList<>(runs.size());
-        for (ChatRun run : runs) {
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("runId", run.getId().toString());
-            item.put("sessionId", run.getSessionId());
-            item.put("origin", run.getOrigin());
-            item.put("status", run.getStatus());
-            item.put("terminalOutcome", run.getTerminalOutcome());
-            item.put("errorCode", run.getErrorCode());
-            item.put("createdAt", run.getCreatedAt() == null ? null : run.getCreatedAt().toString());
-            item.put("terminalAt", run.getTerminalAt() == null ? null : run.getTerminalAt().toString());
-            item.put("waitingOnRunId", run.getWaitingOnRunId());
-            item.put("waitingToolCallId", run.getWaitingToolCallId());
-            items.add(item);
-        }
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("sessionId", session.getId().toString());
-        body.put("page", safePage);
-        body.put("size", safeSize);
-        body.put("runs", items);
-        return ResponseEntity.ok(body);
+        return ResponseEntity.ok(chatRunReadService.listSessionRuns(
+                session.getId().toString(), safePage, safeSize));
     }
 
     // ── PLAN-275 M1 Task 1.3: Cancel contract ──────────────────────────────
@@ -729,20 +650,15 @@ public class ChatController {
             return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
         }
 
-        ChatRun run = chatRunRepository.findById(UUID.fromString(runId)).orElse(null);
-        if (run == null) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.NOT_FOUND, "RUN_NOT_FOUND", "Chat run not found");
-        }
-        if (!userId.equals(run.getUserId()) || !workspaceId.equals(run.getWorkspaceId())) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", "Chat run does not belong to current user/workspace");
-        }
-
         String reason = request != null ? (String) request.getOrDefault("reason", "user_requested") : "user_requested";
         // PLAN-0407 T2.5：序列化认领（条件更新，与 spawn 的 parent Run 行锁同一行）
         // → 认领获胜者收口根 run → 沿 kind=spawn 停止传播 + 有界等待。
-        ChatRunCancellationService.CancelClaim claim =
-                chatRunCancellationService.cancelSerialized(
-                        runId, run.getSessionId(), userId, workspaceId, reason);
+        ChatRunCancellationService.CancelClaim claim;
+        try {
+            claim = chatRunCancellationService.cancelForCurrentOwner(runId, userId, workspaceId, reason);
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
         return switch (claim.outcome()) {
             case CLAIMED, ALREADY_CANCELLING ->
                     ResponseEntity.ok(Map.of("status", "cancel_accepted", "runId", runId));
@@ -763,41 +679,47 @@ public class ChatController {
         );
     }
 
+    @EventListener
+    void onSpawnRunDispatchRequested(SpawnRunDispatchRequestedEvent event) {
+        boolean dispatched = dispatchSpawnRun(event.childRunId());
+        logger.info("[LIFECYCLE] service=cp event=spawn_dispatch_result parentRunId={} childRunId={} dispatched={}",
+                event.parentRunId(), event.childRunId(), dispatched);
+    }
+
     /** Dispatches a committed spawn Run through the same local worker and lease path as user Runs. */
     public boolean dispatchSpawnRun(String runId) {
-        UUID runUuid = UUID.fromString(runId);
-        ChatRun run = chatRunRepository.findById(runUuid).orElse(null);
-        if (run == null || !ChatRun.ORIGIN_SPAWN.equals(run.getOrigin()) || !"accepted".equals(run.getStatus())) {
+        ChatRunReadService.DispatchRun run = chatRunReadService.findDispatchRun(runId).orElse(null);
+        if (run == null || !ChatRun.ORIGIN_SPAWN.equals(run.origin()) || !"accepted".equals(run.status())) {
             return false;
         }
         Session session;
         try {
-            session = sessionService.requireCurrent(run.getSessionId(), run.getUserId(), run.getWorkspaceId());
+            session = sessionService.requireCurrent(run.sessionId(), run.userId(), run.workspaceId());
         } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
             throw new IllegalStateException("Committed spawn Session is no longer dispatchable", e);
         }
-        Message userMessage = run.getUserMessageId() == null
-                ? null : messageRepository.findById(UUID.fromString(run.getUserMessageId())).orElse(null);
+        MessageReadService.DispatchMessage userMessage = run.userMessageId() == null
+                ? null : messageReadService.findDispatchMessage(run.userMessageId()).orElse(null);
         if (session == null || userMessage == null
                 || !Session.KIND_SPAWN.equals(session.getKind())
-                || !run.getId().toString().equals(userMessage.getRunId())
-                || !run.getSessionId().equals(userMessage.getSessionId())
-                || !run.getUserId().equals(session.getUserId())
-                || !run.getWorkspaceId().equals(session.getWorkspaceId())) {
+                || !run.id().equals(userMessage.runId())
+                || !run.sessionId().equals(userMessage.sessionId())
+                || !run.userId().equals(session.getUserId())
+                || !run.workspaceId().equals(session.getWorkspaceId())) {
             throw new IllegalStateException("Committed spawn Run is missing its child Session or user Message");
         }
 
-        String sessionId = run.getSessionId();
-        if (activeRuns.putIfAbsent(sessionId, runId) != null) {
+        String sessionId = run.sessionId();
+        if (activeRunRegistry.putIfAbsent(sessionId, runId) != null) {
             return false;
         }
         if (!acquireLeaseForExistingRun(runId)) {
-            activeRuns.remove(sessionId, runId);
+            activeRunRegistry.remove(sessionId, runId);
             return false;
         }
         try {
-            execAsync(sessionId, userMessage.getContent(), run.getProvider(), run.getModel(), run.getToolMode(),
-                    Map.of(), List.of(), run.getUserId(), run.getWorkspaceId(), runId, runId);
+            execAsync(sessionId, userMessage.content(), run.provider(), run.model(), run.toolMode(),
+                    Map.of(), List.of(), run.userId(), run.workspaceId(), runId, runId);
             return true;
         } catch (RuntimeException e) {
             releaseRun(sessionId, runId, "spawn_dispatch_handoff_failed");
@@ -818,7 +740,7 @@ public class ChatController {
             AtomicBoolean approvalInFlight = new AtomicBoolean(false);
             try {
                 // PLAN-294 M3 (decisions #4/#18): pre-run compaction gate —
-                // inside the session serialization scope (activeRuns), the
+                // inside the session serialization scope (activeRunRegistry), the
                 // gate compresses history before the run consumes it. Context
                 // service owns the cooldown/anti-thrash rules.
                 try {
@@ -835,9 +757,9 @@ public class ChatController {
                     logger.warn("[LIFECYCLE] service=cp event=chat_pre_run_compaction_failed sessionId={} runId={} error={}",
                             sessionId, runId, gateError.getMessage());
                 }
-                ChatRun persistedRun = chatRunRepository.findById(UUID.fromString(runId))
+                ChatRunReadService.ExecutionRun persistedRun = chatRunReadService.findExecutionRun(runId)
                         .orElseThrow(() -> new IllegalStateException("Chat run not found"));
-                boolean refreshRootAgentsMd = shouldRefreshRootAgentsMd(persistedRun);
+                boolean refreshRootAgentsMd = shouldRefreshRootAgentsMd(persistedRun.context());
                 // PLAN-0340/0415: the source policy is fixed by the admission
                 // template. per_chat_run refreshes each turn; per_session pins
                 // the first successful source snapshot for this Session.
@@ -863,21 +785,19 @@ public class ChatController {
                     }
                 }
                 transitionRun(runId, List.of("accepted", "queued"), "running", null, null, null, 0, 0);
-                String effectiveProvider = persistedRun.getProvider() == null
-                        ? provider : persistedRun.getProvider();
-                String effectiveModel = persistedRun.getModel() == null
-                        ? model : persistedRun.getModel();
+                String effectiveProvider = persistedRun.provider() == null ? provider : persistedRun.provider();
+                String effectiveModel = persistedRun.model() == null ? model : persistedRun.model();
                 ProviderCredentialLeaseService.IssuedLease credentialLease = null;
-                if (persistedRun.getProviderConnectionId() != null) {
+                if (persistedRun.providerConnectionId() != null) {
                     credentialLease = credentialLeases.issue(
                             userId,
                             workspaceId,
                             sessionId,
                             runId,
-                            persistedRun.getProviderConnectionId(),
+                            persistedRun.providerConnectionId(),
                             effectiveProvider,
                             effectiveModel,
-                            persistedRun.getConnectionRevision());
+                            persistedRun.connectionRevision());
                 }
                 Map<String, Object> agentRequest = new java.util.LinkedHashMap<>();
                 agentRequest.put("sessionId", sessionId);
@@ -896,8 +816,8 @@ public class ChatController {
                 }
                 if (credentialLease != null) {
                     agentRequest.put("credentialLease", credentialLease.token());
-                    agentRequest.put("providerConnectionId", persistedRun.getProviderConnectionId());
-                    agentRequest.put("connectionRevision", persistedRun.getConnectionRevision());
+                    agentRequest.put("providerConnectionId", persistedRun.providerConnectionId());
+                    agentRequest.put("connectionRevision", persistedRun.connectionRevision());
                 }
                 // PLAN-0415 M1: only the admission-frozen template snapshot and,
                 // when present, the CP-selected model instructions cross to Agent.
@@ -907,8 +827,9 @@ public class ChatController {
                 if (boundSession.getAgentPrincipalId() == null || boundSession.getAgentPrincipalId().isBlank()) {
                     throw new IllegalStateException("ChatRun Session is missing its AgentPrincipal binding");
                 }
-                agentRequest.put("contextTemplateSnapshot", persistedRun.getContextTemplateSnapshot());
-                Map<String, Object> componentSources = contextTemplateSourceService.resolve(persistedRun, boundSession);
+                agentRequest.put("contextTemplateSnapshot", persistedRun.context().contextTemplateSnapshot());
+                Map<String, Object> componentSources =
+                        contextTemplateSourceService.resolve(persistedRun.context(), boundSession);
                 if (!componentSources.isEmpty()) {
                     agentRequest.put("componentSources", componentSources);
                 }
@@ -934,7 +855,7 @@ public class ChatController {
                 }
                 // PLAN-0308 M1（spec S2.1）：CP 计算好的等待值随 run 下发（Agent 只消费）；
                 // per-call 原始值（T1.9）同批下发，供 Agent 随工具调用附带入站头。
-                agentRequest.putAll(mcpProxyController.toolTimeoutPayload(workspaceId, userId, toolTimeouts));
+                agentRequest.putAll(mcpToolTimeoutService.toolTimeoutPayload(workspaceId, userId, toolTimeouts));
                 if (!attachments.isEmpty()) {
                     List<Map<String, Object>> agentAttachments = new ArrayList<>();
                     for (com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo info : attachments) {
@@ -1032,19 +953,10 @@ public class ChatController {
                         requestId, sessionId, runId, assistantContent == null ? 0 : assistantContent.length());
 
                 if (assistantContent != null && !assistantContent.isBlank()) {
-                    Message assistantMessage = new Message(sessionId, MessageRole.ASSISTANT, assistantContent);
-                    assistantMessage.setRunId(runId);
-                    // PLAN-0410 T1.3: bind the assistant message to the durable
-                    // branch of its Run before insert (root while M1 has no selector).
-                    var ownerRun = chatRunRepository.findById(UUID.fromString(runId));
-                    ownerRun.ifPresent(run -> assistantMessage.setBranchId(run.getBranchId()));
-                    messageRepository.save(assistantMessage);
-                    ownerRun.ifPresent(run -> {
-                        run.setAssistantMessageId(assistantMessage.getId().toString());
-                        chatRunRepository.save(run);
-                    });
+                    String assistantMessageId = chatSubmissionService.persistAssistantResponse(
+                            sessionId, runId, assistantContent);
                     logger.info("[LIFECYCLE] service=cp event=chat_assistant_persisted requestId={} sessionId={} runId={} messageId={} assistantChars={}",
-                            requestId, sessionId, runId, assistantMessage.getId(), assistantContent.length());
+                            requestId, sessionId, runId, assistantMessageId, assistantContent.length());
                 }
 
                 String outcome = relayResult.outcome();
@@ -1071,7 +983,7 @@ public class ChatController {
                 //    delivery emit-once in both orders.
                 String currentRunStatus = runStatus(runId);
                 boolean durableTerminal = terminalCommitted
-                        || (currentRunStatus != null && TERMINAL_RUN_STATUSES.contains(currentRunStatus));
+                        || (currentRunStatus != null && ChatRunTerminalService.isTerminalStatus(currentRunStatus));
                 boolean cancelOwnsTerminal = "cancelling".equals(currentRunStatus);
                 if ((durableTerminal || cancelOwnsTerminal)
                         && terminalSent.compareAndSet(false, true)) {
@@ -1129,8 +1041,9 @@ public class ChatController {
         }
     }
 
-    private boolean shouldRefreshRootAgentsMd(ChatRun run) {
-        com.fasterxml.jackson.databind.JsonNode snapshot = run.getContextTemplateSnapshot();
+    private boolean shouldRefreshRootAgentsMd(
+            com.cc01cc.p.xihe.cp.service.ContextTemplateSourceService.RunContext run) {
+        com.fasterxml.jackson.databind.JsonNode snapshot = run.contextTemplateSnapshot();
         com.fasterxml.jackson.databind.JsonNode components = snapshot == null
                 ? null : snapshot.path("template").path("components");
         // Pre-template/legacy ChatRuns retain the existing per-run refresh.
@@ -1160,7 +1073,7 @@ public class ChatController {
         if (!hasRootComponent) {
             return false;
         }
-        return hasPerSession && !contextSourceRefreshService.hasSuccessfulSessionL1Snapshot(run.getSessionId());
+        return hasPerSession && !contextSourceRefreshService.hasSuccessfulSessionL1Snapshot(run.sessionId());
     }
 
     /**
@@ -1269,12 +1182,7 @@ public class ChatController {
      * owned by this relay or by another path (cancellation settle / recovery).
      */
     private String runStatus(String runId) {
-        if (runId == null || runId.isBlank()) {
-            return null;
-        }
-        return chatRunRepository.findById(UUID.fromString(runId))
-                .map(ChatRun::getStatus)
-                .orElse(null);
+        return chatRunReadService.statusOrNull(runId);
     }
 
     /**
@@ -1284,8 +1192,8 @@ public class ChatController {
     private boolean transitionRun(String runId, List<String> expectedStatuses, String status,
                                   String outcome, String errorCode, String errorDetail,
                                   int tokenCount, int assistantChars) {
-        return transitionRun(runId, expectedStatuses, status, outcome, errorCode, errorDetail,
-                tokenCount, assistantChars, null);
+        return chatRunLifecycleService.transition(runId, expectedStatuses, status, outcome,
+                errorCode, errorDetail, tokenCount, assistantChars, null);
     }
 
     /**
@@ -1296,29 +1204,8 @@ public class ChatController {
     private boolean transitionRun(String runId, List<String> expectedStatuses, String status,
                                   String outcome, String errorCode, String errorDetail,
                                   int tokenCount, int assistantChars, Object usagePayload) {
-        if (runId == null || runId.isBlank()) {
-            return false;
-        }
-        if (TERMINAL_RUN_STATUSES.contains(status)) {
-            ChatRunTerminalService.TerminalResult result = chatRunTerminalService.terminalize(
-                    new ChatRunTerminalService.TerminalRequest(runId, expectedStatuses, status,
-                            outcome, errorCode, errorDetail, tokenCount, assistantChars,
-                            ChatRunTerminalService.TerminalSource.STREAM, usagePayload));
-            if (!result.committed()) {
-                logger.debug("[LIFECYCLE] service=cp event=chat_run_transition_ignored runId={} targetStatus={} outcome={}",
-                        runId, status, result.outcome());
-            }
-            return result.committed();
-        }
-        int updated = chatRunRepository.transition(
-                UUID.fromString(runId), expectedStatuses, status, outcome, errorCode, errorDetail,
-                tokenCount, assistantChars);
-        if (updated == 0) {
-            logger.debug("[LIFECYCLE] service=cp event=chat_run_transition_ignored runId={} targetStatus={}",
-                    runId, status);
-            return false;
-        }
-        return true;
+        return chatRunLifecycleService.transition(runId, expectedStatuses, status, outcome,
+                errorCode, errorDetail, tokenCount, assistantChars, usagePayload);
     }
 
     private String safeErrorCode(String code) {
@@ -1396,39 +1283,25 @@ public class ChatController {
     }
 
     private boolean acquireRun(String sessionId, String runId) {
-        String current = activeRuns.get(sessionId);
+        String current = activeRunRegistry.get(sessionId);
         if (current != null && !current.equals(runId)) {
             return false;
         }
-        activeRuns.put(sessionId, runId);
+        activeRunRegistry.put(sessionId, runId);
         return true;
     }
 
-    void restoreActiveRun(String sessionId, String runId) {
-        activeRuns.put(sessionId, runId);
-    }
-
-    String activeRunId(String sessionId) {
-        return activeRuns.get(sessionId);
-    }
-
-    /** PLAN-0317 T2.7：该 run 是否正由本进程处理（周期对账的防误伤保护）。 */
-    boolean isRunActiveLocally(String runId) {
-        return runId != null && activeRuns.containsValue(runId);
-    }
-
     private boolean acquireLeaseForExistingRun(String runId) {
-        return chatRunRepository.tryAcquireLease(
+        return chatRunLifecycleService.tryAcquireLease(
                 UUID.fromString(runId),
                 instanceId(),
                 Instant.now().plus(LEASE_TTL),
-                Instant.now(),
-                ChatRunRepository.ACTIVE_LEASE_STATUSES) > 0;
+                Instant.now()) > 0;
     }
 
     private void releaseRun(String sessionId, String runId, String reason) {
-        boolean dbReleased = chatRunRepository.releaseLease(UUID.fromString(runId), instanceId()) > 0;
-        boolean memoryReleased = activeRuns.remove(sessionId, runId);
+        boolean dbReleased = chatRunLifecycleService.releaseLease(UUID.fromString(runId), instanceId()) > 0;
+        boolean memoryReleased = activeRunRegistry.remove(sessionId, runId);
         eventPublisher.publishEvent(new FollowUpQueueWakeupEvent(sessionId));
         // PLAN-0352 T1.2：唤醒会话删除路径的 release 等待位（终态投递在此之后已完成）。
         chatRunCancellationService.onRunReleased(runId);
@@ -1502,22 +1375,22 @@ public class ChatController {
                 toolMode, attachmentIds, toolTimeouts, agentPrincipalId, branchId);
     }
 
-    private Map<String, Object> runResponse(ChatRun run) {
+    private Map<String, Object> runResponse(ChatSubmissionService.SubmissionReplay run) {
         Map<String, Object> response = new LinkedHashMap<>();
-        response.put("status", run.getStatus());
-        response.put("origin", run.getOrigin());
-        response.put("sessionId", run.getSessionId());
-        response.put("runId", run.getId());
-        response.put("providerConnectionId", run.getProviderConnectionId());
-        response.put("connectionRevision", run.getConnectionRevision());
-        if (run.getUserMessageId() != null) {
-            response.put("messageId", run.getUserMessageId());
+        response.put("status", run.status());
+        response.put("origin", run.origin());
+        response.put("sessionId", run.sessionId());
+        response.put("runId", run.runId());
+        response.put("providerConnectionId", run.providerConnectionId());
+        response.put("connectionRevision", run.connectionRevision());
+        if (run.messageId() != null) {
+            response.put("messageId", run.messageId());
         }
-        if (run.getTerminalOutcome() != null) {
-            response.put("outcome", run.getTerminalOutcome());
+        if (run.terminalOutcome() != null) {
+            response.put("outcome", run.terminalOutcome());
         }
-        if (run.getErrorCode() != null) {
-            response.put("errorCode", run.getErrorCode());
+        if (run.errorCode() != null) {
+            response.put("errorCode", run.errorCode());
         }
         return response;
     }

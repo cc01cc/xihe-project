@@ -33,20 +33,20 @@ public class ChatRunRecoveryService {
 
     private final ChatRunRepository chatRunRepository;
     private final ChatApprovalRepository approvalRepository;
-    private final ChatController chatController;
+    private final ChatActiveRunRegistry activeRunRegistry;
     private final ChatRunTerminalService terminalService;
     private final ChatRunHistoryWriter historyWriter;
     private final RunCheckpointService runCheckpointService;
 
     public ChatRunRecoveryService(ChatRunRepository chatRunRepository,
                                   ChatApprovalRepository approvalRepository,
-                                  ChatController chatController,
+                                  ChatActiveRunRegistry activeRunRegistry,
                                   ChatRunTerminalService terminalService,
                                   ChatRunHistoryWriter historyWriter,
                                   RunCheckpointService runCheckpointService) {
         this.chatRunRepository = chatRunRepository;
         this.approvalRepository = approvalRepository;
-        this.chatController = chatController;
+        this.activeRunRegistry = activeRunRegistry;
         this.terminalService = terminalService;
         this.historyWriter = historyWriter;
         this.runCheckpointService = runCheckpointService;
@@ -76,7 +76,7 @@ public class ChatRunRecoveryService {
                             ChatRunHistory.SOURCE_RECOVERY, "system",
                             run.getId(), UUID.fromString(run.getSessionId()), fromStatus,
                             "awaiting_approval", null, null, null);
-                    chatController.restoreActiveRun(run.getSessionId(), run.getId().toString());
+                    activeRunRegistry.restoreActiveRun(run.getSessionId(), run.getId().toString());
                     restored++;
                     logger.info("[LIFECYCLE] service=cp event=chat_run_recovered runId={} sessionId={} status=awaiting_approval reason=live_approval",
                             run.getId(), run.getSessionId());

@@ -2,8 +2,8 @@ package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
-import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
+import com.cc01cc.p.xihe.cp.service.SessionReadService;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
@@ -103,8 +103,8 @@ public class GrantAuthorizationService {
             List<Set<GrantIntersectionEvaluator.PermissionAtom>> permissionPath = new ArrayList<>();
             permissionPath.add(evaluator.union(principalGrants));
             permissionPath.add(evaluator.parse(binding.getPermissionsSnapshot()));
-            for (Session session : path.sessionPath()) {
-                permissionPath.add(evaluator.parse(session.getAgentPermissionsSnapshot()));
+            for (SessionReadService.SessionPathView session : path.sessionPath()) {
+                permissionPath.add(evaluator.parse(session.agentPermissionsSnapshot()));
             }
             return evaluator.allows(request, permissionPath);
         } catch (IllegalArgumentException e) {

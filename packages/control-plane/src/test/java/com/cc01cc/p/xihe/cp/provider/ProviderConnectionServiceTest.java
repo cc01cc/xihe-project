@@ -2,7 +2,7 @@ package com.cc01cc.p.xihe.cp.provider;
 
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
-import com.cc01cc.p.xihe.cp.oauth.EnvelopeEncryptionService;
+import com.cc01cc.p.xihe.cp.crypto.EnvelopeEncryptionService;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionAuditRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderCredentialLeaseRepository;
@@ -12,14 +12,19 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.time.Instant;
+import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ProviderConnectionServiceTest {
@@ -63,6 +68,57 @@ class ProviderConnectionServiceTest {
         assertNotEquals("sk-test-key", connection.getCredentialCiphertext());
         assertEquals("sk-test-key", encryption.decrypt(
                 connection.getCredentialCiphertext(), "deepseek|USER|user-1|" + connection.getId()));
+    }
+
+    @Test
+    void modelDescriptorUseCaseFiltersAndDeduplicatesReadyConnections() {
+        ProviderConnectionService visibleConnections = mock(ProviderConnectionService.class);
+        ProviderCredentialLeaseService leases = mock(ProviderCredentialLeaseService.class);
+        ProviderCatalogService providerCatalog = mock(ProviderCatalogService.class);
+        ProviderModelDescriptorService descriptorService = new ProviderModelDescriptorService(
+                visibleConnections, leases, providerCatalog);
+
+        UUID connectionId = UUID.randomUUID();
+        ProviderConnection active = mock(ProviderConnection.class);
+        when(active.isEnabled()).thenReturn(true);
+        when(active.getStatus()).thenReturn(ProviderConnection.STATUS_READY);
+        when(active.getProviderId()).thenReturn("deepseek");
+        when(active.getId()).thenReturn(connectionId);
+        when(active.getOwnerType()).thenReturn(ProviderConnection.OWNER_USER);
+        when(active.getRevision()).thenReturn(7L);
+
+        ProviderConnection duplicateProvider = mock(ProviderConnection.class);
+        when(duplicateProvider.isEnabled()).thenReturn(true);
+        when(duplicateProvider.getStatus()).thenReturn(ProviderConnection.STATUS_READY);
+        when(duplicateProvider.getProviderId()).thenReturn("deepseek");
+
+        ProviderConnection disabled = mock(ProviderConnection.class);
+        when(disabled.isEnabled()).thenReturn(false);
+        when(disabled.getProviderId()).thenReturn("disabled-provider");
+
+        when(visibleConnections.listVisibleEntities()).thenReturn(List.of(active, duplicateProvider, disabled));
+        when(leases.issue("user-1", "workspace-1", null, null,
+                connectionId.toString(), "deepseek", "*"))
+                .thenReturn(new ProviderCredentialLeaseService.IssuedLease(
+                        "lease-only-for-test", Instant.EPOCH));
+        ObjectNode definition = new ObjectMapper().createObjectNode();
+        definition.put("id", "deepseek");
+        definition.put("displayName", "DeepSeek");
+        when(providerCatalog.require("deepseek")).thenReturn(definition);
+
+        List<Map<String, Object>> result = descriptorService.scopedModelDescriptors("user-1", "workspace-1");
+
+        assertEquals(1, result.size());
+        Map<String, Object> descriptor = result.get(0);
+        assertEquals("lease-only-for-test", descriptor.get("lease"));
+        assertEquals(connectionId, descriptor.get("connectionId"));
+        assertEquals("deepseek", descriptor.get("providerId"));
+        assertEquals("DeepSeek", descriptor.get("displayName"));
+        assertEquals("USER", descriptor.get("scope"));
+        assertEquals(7L, descriptor.get("connectionRevision"));
+        assertFalse(descriptor.containsKey("apiKey"));
+        verify(leases).issue("user-1", "workspace-1", null, null,
+                connectionId.toString(), "deepseek", "*");
     }
 
     // ------------------------------------------------------------------

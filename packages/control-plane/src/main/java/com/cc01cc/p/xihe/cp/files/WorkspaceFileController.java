@@ -1,14 +1,10 @@
 package com.cc01cc.p.xihe.cp.files;
 
+import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
-import com.cc01cc.p.xihe.cp.entity.File;
-import com.cc01cc.p.xihe.cp.entity.Session;
-import com.cc01cc.p.xihe.cp.repository.FileRepository;
-import com.cc01cc.p.xihe.cp.repository.SessionRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeWorkspaceFileClient;
+import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.Resource;
@@ -27,7 +23,6 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.util.Map;
-import java.util.UUID;
 
 /**
  * Workspace file endpoints always go through the Runtime. CP no longer reads
@@ -42,22 +37,16 @@ public class WorkspaceFileController {
     private static final Logger logger = LoggerFactory.getLogger(WorkspaceFileController.class);
     private static final long MAX_UPLOAD_SIZE = RuntimeWorkspaceFileClient.MAX_WORKSPACE_FILE_BYTES;
 
-    private final FileRepository fileRepository;
-    private final SessionRepository sessionRepository;
-    private final WorkspaceRepository workspaceRepository;
-    private final WorkspaceUserRepository workspaceUserRepository;
+    private final ChatAttachmentService chatAttachmentService;
+    private final WorkspaceService workspaceService;
     private final RuntimeWorkspaceFileClient runtimeFileClient;
 
     public WorkspaceFileController(
-            FileRepository fileRepository,
-            SessionRepository sessionRepository,
-            WorkspaceRepository workspaceRepository,
-            WorkspaceUserRepository workspaceUserRepository,
+            ChatAttachmentService chatAttachmentService,
+            WorkspaceService workspaceService,
             RuntimeWorkspaceFileClient runtimeFileClient) {
-        this.fileRepository = fileRepository;
-        this.sessionRepository = sessionRepository;
-        this.workspaceRepository = workspaceRepository;
-        this.workspaceUserRepository = workspaceUserRepository;
+        this.chatAttachmentService = chatAttachmentService;
+        this.workspaceService = workspaceService;
         this.runtimeFileClient = runtimeFileClient;
     }
 
@@ -71,41 +60,29 @@ public class WorkspaceFileController {
                     HttpStatus.FORBIDDEN, "FORBIDDEN", "File access denied");
         }
         try {
-            File file = fileRepository.findById(UUID.fromString(fileId)).orElse(null);
-            if (file == null) {
+            var attachment = chatAttachmentService.findWorkspaceAttachmentForDownload(
+                    fileId, userId, workspaceId);
+            if (attachment.isEmpty()) {
                 return ProblemDetailsHandler.problemResponse(
                         HttpStatus.NOT_FOUND, "FILE_NOT_FOUND", "File not found");
             }
-            Session session = file.getSessionId() == null
-                    ? null : sessionRepository.findById(UUID.fromString(file.getSessionId())).orElse(null);
-            if (session == null
-                    || session.isArchived()
-                    || !workspaceId.equals(session.getWorkspaceId())
-                    || !userId.equals(session.getUserId())
-                    || !workspaceId.equals(file.getWorkspaceId())
-                    || !userId.equals(file.getUserId())) {
-                return ProblemDetailsHandler.problemResponse(
-                        HttpStatus.FORBIDDEN, "FORBIDDEN", "File access denied");
-            }
-            if (workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId)).isEmpty()
-                    || workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId), UUID.fromString(userId)).isEmpty()) {
-                return ProblemDetailsHandler.problemResponse(
-                        HttpStatus.FORBIDDEN, "FORBIDDEN", "File access denied");
-            }
             // Chat attachments live in CP session storage (cp.attachments-base-path),
             // not in workspace storage; serving them does not cross the Runtime boundary.
-            java.io.File physical = new java.io.File(file.getStoragePath());
+            var download = attachment.orElseThrow();
+            java.io.File physical = download.storagePath().toFile();
             if (!physical.exists() || !physical.isFile()) {
                 logger.warn("Attachment physical file missing: fileId={}", fileId);
                 return ProblemDetailsHandler.problemResponse(
                         HttpStatus.NOT_FOUND, "FILE_NOT_FOUND", "File not found");
             }
             Resource resource = new org.springframework.core.io.FileSystemResource(physical);
-            String contentType = file.getMimeType() != null ? file.getMimeType() : "application/octet-stream";
+            String contentType = download.mimeType() != null ? download.mimeType() : "application/octet-stream";
             return ResponseEntity.ok()
                     .header(HttpHeaders.ACCEPT_RANGES, "bytes")
                     .contentType(MediaType.parseMediaType(contentType))
                     .body(resource);
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         } catch (Exception e) {
             logger.error("Failed to serve attachment fileId={}", fileId, e);
             return ProblemDetailsHandler.problemResponse(
@@ -124,7 +101,7 @@ public class WorkspaceFileController {
                 return ProblemDetailsHandler.problemResponse(
                         HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
             }
-            if (workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(UUID.fromString(wsId), UUID.fromString(userId)).isEmpty()) {
+            if (!workspaceService.isWorkspaceMember(wsId, userId)) {
                 return ProblemDetailsHandler.problemResponse(
                         HttpStatus.NOT_FOUND, "WORKSPACE_NOT_FOUND", "Workspace not found");
             }

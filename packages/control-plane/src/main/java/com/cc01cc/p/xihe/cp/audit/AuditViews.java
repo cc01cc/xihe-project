@@ -62,6 +62,15 @@ public final class AuditViews {
         return view;
     }
 
+    /** Shared public/internal response envelope for the same filtered detail view. */
+    public static Map<String, Object> envelope(AuditReadService.AuditDetail detail) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("entry", detail.entry());
+        body.put("timeline", detail.timeline());
+        body.put("attempts", detail.attempts());
+        return body;
+    }
+
     // ---------------------------------------------------------------------
     // Timeline projections (one per history table; payload TEXT is never projected)
     // ---------------------------------------------------------------------

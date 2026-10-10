@@ -5,18 +5,14 @@ import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceExecutionSpec;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeJobClient;
+import com.cc01cc.p.xihe.cp.runtime.RuntimeWorkspaceClient;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeWorkspaceFileClient;
 import com.cc01cc.p.xihe.cp.service.WorkspaceExecutionSpecService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -26,45 +22,33 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.RestTemplate;
 
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 @RestController
 public class WorkspaceEnvironmentController {
 
     private static final Logger logger = LoggerFactory.getLogger(WorkspaceEnvironmentController.class);
 
-    private final WorkspaceRepository workspaceRepository;
     private final WorkspaceService workspaceService;
     private final WorkspaceExecutionSpecService executionSpecService;
-    private final RuntimeHeartbeatController heartbeatController;
+    private final RuntimeHeartbeatState heartbeatState;
     private final RuntimeJobClient runtimeJobClient;
-    private final RestTemplate restTemplate;
-    private final String runtimeUrl;
-    private final String serviceToken;
+    private final RuntimeWorkspaceClient runtimeWorkspaceClient;
 
     public WorkspaceEnvironmentController(
-            WorkspaceRepository workspaceRepository,
             WorkspaceService workspaceService,
             WorkspaceExecutionSpecService executionSpecService,
-            RuntimeHeartbeatController heartbeatController,
+            RuntimeHeartbeatState heartbeatState,
             RuntimeJobClient runtimeJobClient,
-            RestTemplate restTemplate,
-            @Value("${cp.mcp.runtime-url:http://localhost:12633}") String runtimeUrl,
-            @Value("${cp.agent-api-token:dev-token-not-secure}") String serviceToken) {
-        this.workspaceRepository = workspaceRepository;
+            RuntimeWorkspaceClient runtimeWorkspaceClient) {
         this.workspaceService = workspaceService;
         this.executionSpecService = executionSpecService;
-        this.heartbeatController = heartbeatController;
+        this.heartbeatState = heartbeatState;
         this.runtimeJobClient = runtimeJobClient;
-        this.restTemplate = restTemplate;
-        this.runtimeUrl = runtimeUrl;
-        this.serviceToken = serviceToken;
+        this.runtimeWorkspaceClient = runtimeWorkspaceClient;
     }
 
     @GetMapping("/api/v1/workspaces/{workspaceId}/environment")
@@ -72,7 +56,7 @@ public class WorkspaceEnvironmentController {
     public ResponseEntity<?> getEnvironment(
             @PathVariable String workspaceId,
             Authentication authentication) {
-        Workspace workspace = workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId)).orElse(null);
+        Workspace workspace = workspaceService.findActiveWorkspace(workspaceId).orElse(null);
         if (workspace == null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(Map.of("code", "WORKSPACE_NOT_FOUND", "detail", "Workspace not found"));
@@ -92,7 +76,7 @@ public class WorkspaceEnvironmentController {
         } catch (com.cc01cc.p.xihe.cp.config.CpApiException ignored) {
             // no spec yet; treat as unassigned
         }
-        RuntimeHeartbeatController.RuntimeHeartbeatRequest heartbeat = heartbeatController.latestHeartbeat();
+        RuntimeHeartbeatState.RuntimeHeartbeatRequest heartbeat = heartbeatState.latest();
         Map<String, Object> workspaceRuntime = readWorkspaceRuntimeStatus(workspaceId);
         String materializationStatus = workspaceRuntime.getOrDefault("status", "unbound").toString();
 
@@ -260,28 +244,20 @@ public class WorkspaceEnvironmentController {
     }
 
     private Map<String, Object> readWorkspaceRuntimeStatus(String workspaceId) {
-        try {
-            HttpHeaders headers = new HttpHeaders();
-            headers.setBearerAuth(serviceToken);
-            ResponseEntity<Map> response = restTemplate.exchange(
-                    runtimeUrl + "/internal/v1/runtime/workspaces/" + workspaceId + "/status",
-                    org.springframework.http.HttpMethod.GET,
-                    new HttpEntity<>(headers),
-                    Map.class);
-            Map<String, Object> body = response.getBody();
-            if (body == null) {
-                return Map.of("status", "unbound");
-            }
-            Map<String, Object> result = new LinkedHashMap<>(body);
-            result.put("status", mapRuntimeState(body.get("state")));
-            return result;
-        } catch (HttpClientErrorException.NotFound e) {
+        // PLAN-0470: Runtime HTTP mechanics live in RuntimeWorkspaceClient; the
+        // adapter only maps the outcome into the environment projection.
+        RuntimeWorkspaceClient.RuntimeStatusResult result =
+                runtimeWorkspaceClient.fetchStatusDetailed(workspaceId);
+        if (result.unbound()) {
             return Map.of("status", "unbound");
-        } catch (Exception e) {
-            logger.warn("Workspace Runtime status unavailable workspaceId={}: {}",
-                    workspaceId, e.getMessage());
+        }
+        if (result.unreachable()) {
             return runtimeStatusUnavailableView();
         }
+        Map<String, Object> body = result.body();
+        Map<String, Object> view = new LinkedHashMap<>(body);
+        view.put("status", mapRuntimeState(body.get("state")));
+        return view;
     }
 
     /**
@@ -339,41 +315,23 @@ public class WorkspaceEnvironmentController {
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
-        try {
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            headers.setBearerAuth(serviceToken);
-            ResponseEntity<Map> response = restTemplate.postForEntity(
-                    runtimeUrl + "/internal/v1/runtime/workspaces/" + workspaceId + "/materialize",
-                    new HttpEntity<>(Map.of(), headers),
-                    Map.class);
-            if (!response.getStatusCode().is2xxSuccessful()) {
-                logger.warn("Runtime materialize rejected workspaceId={} status={}",
-                        workspaceId, response.getStatusCode());
-                return ProblemDetailsHandler.problemResponse(
-                        HttpStatus.BAD_GATEWAY, "RUNTIME_UNAVAILABLE", "Runtime rejected the materialize request");
-            }
-            Object body = response.getBody();
-            return ResponseEntity.accepted().body(body == null ? Map.of("status", "accepted") : body);
-        } catch (HttpClientErrorException e) {
-            // PLAN-0345 (decision #11): pass Runtime Problem status/code/detail
-            // through unchanged — destroying-conflict (409 WORKSPACE_DESTROYING)
-            // must never collapse into 502 RUNTIME_UNAVAILABLE.
-            Map<String, Object> runtimeProblem = e.getResponseBodyAs(Map.class);
-            String code = runtimeProblem != null && runtimeProblem.get("code") instanceof String c
-                    ? c
-                    : "RUNTIME_ERROR";
-            String detail = runtimeProblem != null && runtimeProblem.get("detail") instanceof String d
-                    ? d
-                    : e.getMessage();
-            logger.warn("Runtime materialize problem workspaceId={} status={} code={}",
-                    workspaceId, e.getStatusCode(), code);
-            return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.valueOf(e.getStatusCode().value()), code, detail);
-        } catch (Exception e) {
-            logger.warn("Runtime materialize failed workspaceId={}: {}", workspaceId, e.getMessage());
+        RuntimeWorkspaceClient.MaterializeResult result = runtimeWorkspaceClient.materialize(workspaceId);
+        if (result.unreachable()) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.BAD_GATEWAY, "RUNTIME_UNAVAILABLE", "Runtime is unreachable");
         }
+        if ("RUNTIME_REJECTED".equals(result.problemCode())) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_GATEWAY, "RUNTIME_UNAVAILABLE", result.problemDetail());
+        }
+        if (result.problemCode() != null) {
+            // PLAN-0345 (decision #11): pass Runtime Problem status/code/detail
+            // through unchanged — destroying-conflict (409 WORKSPACE_DESTROYING)
+            // must never collapse into 502 RUNTIME_UNAVAILABLE.
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.valueOf(result.httpStatus()), result.problemCode(), result.problemDetail());
+        }
+        Object body = result.body();
+        return ResponseEntity.accepted().body(body == null ? Map.of("status", "accepted") : body);
     }
 }

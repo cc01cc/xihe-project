@@ -14,7 +14,6 @@ import com.cc01cc.p.xihe.cp.files.ChatAttachmentService;
 import com.cc01cc.p.xihe.cp.files.SessionForkRecoveryService;
 import com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
-import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionForkRequestRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
@@ -57,7 +56,6 @@ public class SessionForkService {
     private final SessionRepository sessions;
     private final SessionForkRequestRepository forkRequests;
     private final MessageRepository messages;
-    private final FileRepository files;
     private final ChatRunRepository runs;
     private final EventStoreService eventStore;
     private final ContextService contextService;
@@ -73,7 +71,6 @@ public class SessionForkService {
                               SessionRepository sessions,
                               SessionForkRequestRepository forkRequests,
                               MessageRepository messages,
-                              FileRepository files,
                               ChatRunRepository runs,
                               EventStoreService eventStore,
                               ContextService contextService,
@@ -89,7 +86,6 @@ public class SessionForkService {
         this.sessions = sessions;
         this.forkRequests = forkRequests;
         this.messages = messages;
-        this.files = files;
         this.runs = runs;
         this.eventStore = eventStore;
         this.contextService = contextService;
@@ -327,7 +323,7 @@ public class SessionForkService {
             List<String> sourceMessageIds = sourceMessages.stream()
                     .map(message -> message.getId().toString())
                     .toList();
-            for (File sourceFile : files.findByMessageIdsForUpdateOrderByIdAsc(sourceMessageIds)) {
+            for (File sourceFile : attachmentService.lockForForkCopy(sourceMessageIds)) {
                 sourceFilesByMessage.computeIfAbsent(UUID.fromString(sourceFile.getMessageId()), ignored -> new ArrayList<>())
                         .add(sourceFile);
             }

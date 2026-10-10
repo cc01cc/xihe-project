@@ -15,7 +15,6 @@ import com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo;
 import com.cc01cc.p.xihe.cp.files.dto.BatchUploadResult;
 import com.cc01cc.p.xihe.cp.files.dto.UploadFailure;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
-import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 
@@ -80,7 +79,7 @@ public class ChatAttachmentService {
     private final String attachmentsBasePath;
     private final Set<String> allowedExtensions;
     private final FileRepository fileRepository;
-    private final SessionRepository sessionRepository;
+    private final com.cc01cc.p.xihe.cp.service.SessionAttachmentAnchorService sessionAnchor;
     private final WorkspaceRepository workspaceRepository;
     private final WorkspaceUserRepository workspaceUserRepository;
     private final ObjectMapper objectMapper;
@@ -89,14 +88,14 @@ public class ChatAttachmentService {
             @Value("${cp.attachments-base-path:/data/xihe/attachments}") String attachmentsBasePath,
             @Value("${cp.attachments.allowed-extensions:png,jpg,jpeg,gif,webp,svg,bmp,pdf,doc,docx,txt,md,json,csv,xls,xlsx,ppt,pptx,mp3,wav,m4a,ogg,flac,aac,mp4,webm,mov,avi,mkv}") String allowedExtensionsConfig,
             FileRepository fileRepository,
-            SessionRepository sessionRepository,
+            com.cc01cc.p.xihe.cp.service.SessionAttachmentAnchorService sessionAnchor,
             WorkspaceRepository workspaceRepository,
             WorkspaceUserRepository workspaceUserRepository,
             ObjectMapper objectMapper) {
         this.attachmentsBasePath = attachmentsBasePath;
         this.allowedExtensions = parseAllowedExtensions(allowedExtensionsConfig);
         this.fileRepository = fileRepository;
-        this.sessionRepository = sessionRepository;
+        this.sessionAnchor = sessionAnchor;
         this.workspaceRepository = workspaceRepository;
         this.workspaceUserRepository = workspaceUserRepository;
         this.objectMapper = objectMapper;
@@ -173,6 +172,69 @@ public class ChatAttachmentService {
         return file;
     }
 
+    public Optional<WorkspaceAttachmentDownload> findWorkspaceAttachmentForDownload(
+            String fileId, String userId, String workspaceId) {
+        File file = fileRepository.findById(UUID.fromString(fileId)).orElse(null);
+        if (file == null) {
+            return Optional.empty();
+        }
+        // Session ownership (archived / workspace / user mismatch) is enforced by the
+        // session-domain anchor; null means missing or unowned — collapse to forbidden.
+        Session session = sessionAnchor.findOwnedSession(file.getSessionId(), workspaceId, userId);
+        if (session == null
+                || !workspaceId.equals(file.getWorkspaceId())
+                || !userId.equals(file.getUserId())
+                || workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId)).isEmpty()
+                || workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(
+                        UUID.fromString(workspaceId), UUID.fromString(userId)).isEmpty()) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "File access denied");
+        }
+        return Optional.of(new WorkspaceAttachmentDownload(
+                Paths.get(file.getStoragePath()), file.getMimeType()));
+    }
+
+    public record WorkspaceAttachmentDownload(Path storagePath, String mimeType) {}
+
+    public List<AttachmentInfo> resolveForChatSubmission(List<String> fileIds, String sessionId,
+                                                         String workspaceId, String userId,
+                                                         String sessionUserId) {
+        List<AttachmentInfo> attachments = new ArrayList<>(fileIds.size());
+        for (String fileId : fileIds) {
+            File file = fileRepository.findById(UUID.fromString(fileId)).orElse(null);
+            if (file == null) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "ATTACHMENT_NOT_FOUND", "Attachment not found");
+            }
+            if (!sessionId.equals(file.getSessionId())
+                    || !workspaceId.equals(file.getWorkspaceId())
+                    || !userId.equals(file.getUserId())
+                    || !userId.equals(sessionUserId)) {
+                throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Attachment does not belong to session");
+            }
+            attachments.add(new AttachmentInfo(file.getId().toString(), file.getFilename(), file.getMimeType(),
+                    file.getSizeBytes(), "/api/v1/files/" + file.getId()));
+        }
+        return List.copyOf(attachments);
+    }
+
+    public List<AttachmentInfo> resolveAdmittedMessageAttachments(String attachmentsJson) throws IOException {
+        if (attachmentsJson == null || attachmentsJson.isBlank()) {
+            return List.of();
+        }
+        com.fasterxml.jackson.databind.JsonNode refs = objectMapper.readTree(attachmentsJson);
+        if (refs == null || !refs.isArray()) {
+            throw new IllegalStateException("Admitted Follow-up attachment refs are invalid");
+        }
+        List<AttachmentInfo> attachments = new ArrayList<>();
+        for (com.fasterxml.jackson.databind.JsonNode ref : refs) {
+            UUID fileId = UUID.fromString(ref.path("fileId").asText());
+            File file = fileRepository.findById(fileId)
+                    .orElseThrow(() -> new IllegalStateException("Admitted Follow-up File is missing"));
+            attachments.add(new AttachmentInfo(file.getId().toString(), file.getFilename(), file.getMimeType(),
+                    file.getSizeBytes(), "/api/v1/files/" + file.getId()));
+        }
+        return List.copyOf(attachments);
+    }
+
     @Transactional
     public void deleteSessionAttachments(String sessionId) {
         List<File> files = fileRepository.findBySessionIdOrderByIdAsc(sessionId);
@@ -186,10 +248,50 @@ public class ChatAttachmentService {
             fileRepository.delete(file);
             logger.info("Session attachment deleted session={} fileId={}", sessionId, file.getId());
         }
+        fileRepository.deleteBySessionId(sessionId);
         deleteDirectoryIfEmpty(Paths.get(attachmentsBasePath, sessionId));
     }
 
     @Transactional
+    public void detachMessageFiles(String messageId) {
+        for (File candidate : fileRepository.findByMessageIdOrderByIdAsc(messageId)) {
+            File file = fileRepository.findByIdForUpdate(candidate.getId()).orElse(null);
+            if (file != null && messageId.equals(file.getMessageId())) {
+                file.setMessageId(null);
+                fileRepository.save(file);
+            }
+        }
+    }
+
+    /**
+     * PLAN-0470 (decision #23): ChatSubmission links admitted attachments to
+     * the freshly created user Message through the Files owner. Joins the
+     * caller's ChatSubmission transaction — a Message save failure rolls the
+     * link updates back with it. No physical file is deleted and no HTTP
+     * response field changes; the "attachment disappeared" failure text is
+     * preserved from the previous direct write.
+     */
+    @Transactional
+    public void linkToMessage(List<String> attachmentIds, String messageId) {
+        for (String fileId : attachmentIds) {
+            File file = fileRepository.findById(UUID.fromString(fileId))
+                    .orElseThrow(() -> new IllegalStateException("Attachment disappeared during Chat submission"));
+            file.setMessageId(messageId);
+            fileRepository.save(file);
+        }
+    }
+
+    /**
+     * PLAN-0470 (T3.2): lock the source attachment rows for a fork copy so the
+     * fork coordinator does not inject {@code FileRepository} directly. Returns
+     * the locked rows ordered by id; ownership is asserted by the caller's
+     * already-authenticated session scope.
+     */
+    @Transactional
+    public List<File> lockForForkCopy(List<String> messageIds) {
+        return fileRepository.findByMessageIdsForUpdateOrderByIdAsc(messageIds);
+    }
+
     public File copyForFork(UUID sourceFileId, String sourceSessionId, String sourceMessageId,
                             String childSessionId, String childMessageId, String userId, String workspaceId) {
         File source = fileRepository.findByIdAndSessionIdForUpdate(sourceFileId, sourceSessionId)
@@ -295,25 +397,17 @@ public class ChatAttachmentService {
         return MAX_FILE_SIZE;
     }
 
+    // Session existence + ownership write/check lives in the session-domain anchor
+    // (PLAN-0470 T3.2); this files service no longer touches SessionRepository.
     private void ensureSessionExists(String sessionId, String workspaceId, String userId) {
-        Optional<Session> existing = sessionRepository.findById(UUID.fromString(sessionId));
-        if (existing.isPresent()) {
-            requireOwnedSession(existing.get(), workspaceId, userId);
-            return;
-        }
-        Session session = new Session(workspaceId, userId, "Attachment Upload");
-        session.setId(UUID.fromString(sessionId));
-        sessionRepository.save(session);
-        logger.info("Session created for attachments session={} workspace={}", sessionId, workspaceId);
+        sessionAnchor.ensureExistsForAttachment(sessionId, workspaceId, userId);
     }
 
     private Session requireOwnedSession(String sessionId, String workspaceId, String userId) {
-        Session session = sessionRepository.findById(UUID.fromString(sessionId))
+        // Two distinct failures preserved from the pre-refactor contract: a missing
+        // row is "not found", an archived/mismatched row is "access denied".
+        Session session = sessionAnchor.findExistingSession(sessionId)
                 .orElseThrow(() -> new IllegalArgumentException("Session not found"));
-        return requireOwnedSession(session, workspaceId, userId);
-    }
-
-    private Session requireOwnedSession(Session session, String workspaceId, String userId) {
         if (session.isArchived()
                 || !workspaceId.equals(session.getWorkspaceId())
                 || !userId.equals(session.getUserId())) {

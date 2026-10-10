@@ -3,7 +3,7 @@ package com.cc01cc.p.xihe.cp.context.summary;
 import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.provider.ProviderCredentialLeaseService;
-import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.service.SessionReadService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.BeforeEach;
@@ -35,14 +35,14 @@ class LlmSummaryProviderTest {
     private static final String USER_ID = "33333333-3333-3333-3333-333333333333";
 
     private final ConfigService configService = mock(ConfigService.class);
-    private final SessionRepository sessionRepository = mock(SessionRepository.class);
+    private final SessionReadService sessionReadService = mock(SessionReadService.class);
     private final ProviderCredentialLeaseService credentialLeases = mock(ProviderCredentialLeaseService.class);
     private final ConstraintExtractor constraintExtractor = mock(ConstraintExtractor.class);
     private final AgentSummarizeClient agentClient = mock(AgentSummarizeClient.class);
     private final RuleBasedSummaryProvider ruleProvider = new RuleBasedSummaryProvider(constraintExtractor);
 
     private final LlmSummaryProvider provider = new LlmSummaryProvider(
-            configService, sessionRepository, credentialLeases, ruleProvider,
+            configService, sessionReadService, credentialLeases, ruleProvider,
             constraintExtractor, agentClient, new ObjectMapper());
 
     @BeforeEach
@@ -199,7 +199,13 @@ class LlmSummaryProviderTest {
     }
 
     private void givenSession(Session session) {
-        when(sessionRepository.findById(UUID.fromString(SESSION_ID))).thenReturn(Optional.of(session));
+        SessionReadService.SummaryRoutingView view = new SessionReadService.SummaryRoutingView(
+                session.getProviderConnectionId(),
+                session.getConnectionRevision(),
+                session.getModelProvider(),
+                session.getModelName());
+        when(sessionReadService.findSummaryRouting(UUID.fromString(SESSION_ID)))
+                .thenReturn(Optional.of(view));
     }
 
     private void givenLease() {

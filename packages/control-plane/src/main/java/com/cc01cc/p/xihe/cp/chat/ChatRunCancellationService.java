@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.chat;
 
 import jakarta.persistence.EntityManager;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
+import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.McpInvocation;
 import com.cc01cc.p.xihe.cp.entity.Session;
@@ -13,6 +14,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -144,6 +146,18 @@ public class ChatRunCancellationService {
     }
 
     public record CancelClaim(CancelOutcome outcome, String status) {}
+
+    public CancelClaim cancelForCurrentOwner(String runId, String userId, String workspaceId, String reason) {
+        ChatRun run = chatRunRepository.findById(UUID.fromString(runId)).orElse(null);
+        if (run == null) {
+            throw new CpApiException(HttpStatus.NOT_FOUND, "RUN_NOT_FOUND", "Chat run not found");
+        }
+        if (!userId.equals(run.getUserId()) || !workspaceId.equals(run.getWorkspaceId())) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                    "Chat run does not belong to current user/workspace");
+        }
+        return cancelSerialized(runId, run.getSessionId(), userId, workspaceId, reason);
+    }
 
     /**
      * PLAN-0407 T2.5b：所有 cancellation caller 先锁 Session，再锁并刷新 Run；

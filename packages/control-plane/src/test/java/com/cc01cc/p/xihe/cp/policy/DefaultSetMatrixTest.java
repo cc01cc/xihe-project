@@ -67,6 +67,9 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
     private AuthService authService;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.service.WorkspaceService workspaceService;
+
+    @Autowired
     private GrantAuthorizationService grantAuthorizationService;
 
     @Autowired
@@ -223,9 +226,12 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
     }
 
     private void register() {
-        AuthResponse registered = authService.register(new RegisterRequest(
+        // PLAN-0470 #25: reproduces the AuthController register orchestration.
+        com.cc01cc.p.xihe.cp.entity.User user = authService.registerUser(new RegisterRequest(
                 "default-matrix-" + UUID.randomUUID() + "@test.com", "matrix-test-password",
                 "Default matrix test"));
+        AuthResponse registered = authService.issueTokens(user, workspaceService
+                .getOrCreateDefaultWorkspace(user.getId().toString()).getId().toString());
         userId = registered.getUser().getId();
         workspaceId = registered.getWorkspaceId();
     }

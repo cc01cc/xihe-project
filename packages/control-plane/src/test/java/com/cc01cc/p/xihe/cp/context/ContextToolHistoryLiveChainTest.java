@@ -409,7 +409,7 @@ class ContextToolHistoryLiveChainTest extends AbstractH2Test {
         JsonNode events = serviceGet("/internal/v1/context/" + id + "/events?afterSequence=0");
         int count = 0;
         for (JsonNode event : events) {
-            if (eventType.equals(event.path("eventType").asText())) {
+            if (eventType.equals(event.path("type").asText())) {
                 count++;
             }
         }
@@ -431,20 +431,11 @@ class ContextToolHistoryLiveChainTest extends AbstractH2Test {
     private int countEventSchemaVersion(JsonNode events, String eventType, boolean v2) {
         int count = 0;
         for (JsonNode event : events) {
-            if (!eventType.equals(event.path("eventType").asText())) {
+            if (!eventType.equals(event.path("type").asText())) {
                 continue;
             }
             JsonNode payload = event.path("payload");
-            // ContextEvent stores JSONB in a String field for H2/PostgreSQL
-            // parity, so the REST view serializes payload as JSON text.
-            if (payload.isTextual()) {
-                try {
-                    payload = objectMapper.readTree(payload.asText());
-                } catch (Exception malformedPayload) {
-                    throw new AssertionError("Malformed context event payload: " + payload.asText(),
-                            malformedPayload);
-                }
-            }
+            assertThat(payload.isObject()).as("Context event read DTO payload must be an object").isTrue();
             boolean hasV2Schema = payload.path("schemaVersion").asInt(-1) == 2;
             if (hasV2Schema == v2) {
                 count++;

@@ -117,6 +117,9 @@ class ChatControllerTest extends AbstractH2Test {
     private ChatRunRepository chatRunRepository;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.status.RequestQueue requestQueue;
+
+    @Autowired
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
@@ -502,6 +505,15 @@ class ChatControllerTest extends AbstractH2Test {
                 baseUrl + "/api/v1/chat/runs/" + run.getId(), HttpMethod.GET,
                 new HttpEntity<>(headers), Map.class);
         assertEquals(ChatRun.ORIGIN_USER_SUBMISSION, recovered.getBody().get("origin"));
+        ResponseEntity<Map> runList = restTemplate.exchange(
+                baseUrl + "/api/v1/chat/sessions/" + sessionId + "/runs",
+                HttpMethod.GET, new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.OK, runList.getStatusCode());
+        assertEquals(sessionId, runList.getBody().get("sessionId"));
+        List<Map<String, Object>> runItems = (List<Map<String, Object>>) runList.getBody().get("runs");
+        assertEquals(1, runItems.size());
+        assertEquals(run.getId().toString(), runItems.getFirst().get("runId"));
+        assertEquals("succeeded", runItems.getFirst().get("status"));
         // PLAN-0464 T1.1: ChatRun is the only root — the submit response carries
         // no operationId and the terminal writes exactly one history row.
         assertNull(response.getBody().get("operationId"));
@@ -582,6 +594,44 @@ class ChatControllerTest extends AbstractH2Test {
             assertEquals(before, messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).size());
         } finally {
             AGENT_HEALTH.set("{\"status\":\"ok\",\"liveness\":\"up\",\"llmReady\":\"ready\",\"configRevision\":\"test-revision\"}");
+            AGENT_AVAILABLE.set(true);
+            healthMonitor.pollHealth();
+        }
+    }
+
+    @Test
+    void chat_whenTransportFailsAfterReadyQueuesAndPersistsQueuedRunStatus() {
+        requestQueue.clear();
+        AGENT_HEALTH.set("{\"status\":\"ok\",\"liveness\":\"up\",\"llmReady\":\"ready\",\"configRevision\":\"test-revision\"}");
+        AGENT_AVAILABLE.set(true);
+        healthMonitor.pollHealth();
+        AGENT_AVAILABLE.set(false);
+        healthMonitor.pollHealth();
+        String idempotencyKey = "transport-queue-status-" + UUID.randomUUID();
+        try {
+            Map<String, Object> request = Map.of(
+                    "sessionId", sessionId,
+                    "content", "Queue after a transport-only failure",
+                    "workspaceId", workspaceId,
+                    "userId", userId,
+                    "branchId", branchId);
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth(authToken);
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set("Idempotency-Key", idempotencyKey);
+
+            ResponseEntity<Map> response = restTemplate.exchange(
+                    baseUrl + "/api/v1/chat", HttpMethod.POST, chatEntity(request, headers), Map.class);
+
+            assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+            assertEquals("queued", response.getBody().get("status"));
+            ChatRun run = chatRunRepository.findByUserIdAndSessionIdAndIdempotencyKey(
+                    userId, sessionId, idempotencyKey).orElseThrow();
+            assertEquals("queued", run.getStatus());
+            assertEquals(run.getId().toString(), response.getBody().get("runId"));
+            assertEquals(1, requestQueue.size());
+        } finally {
+            requestQueue.clear();
             AGENT_AVAILABLE.set(true);
             healthMonitor.pollHealth();
         }
@@ -854,6 +904,40 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(workspaceId, agentRequest.get("workspaceId"));
         assertEquals(workspaceId, capturedWorkspaceId[0]);
         assertEquals(sessionId, capturedSessionId[0]);
+    }
+
+    @Test
+    void chat_preservesAttachmentNotFoundAndOwnershipErrors() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        Map<String, Object> request = new LinkedHashMap<>();
+        request.put("sessionId", sessionId);
+        request.put("content", "Attachment ownership check");
+        request.put("workspaceId", workspaceId);
+        request.put("userId", userId);
+        request.put("attachments", List.of(UUID.randomUUID().toString()));
+
+        ResponseEntity<Map> missing = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST,
+                chatEntity(request, headers), Map.class);
+        assertEquals(HttpStatus.BAD_REQUEST, missing.getStatusCode());
+        assertEquals("ATTACHMENT_NOT_FOUND", missing.getBody().get("code"));
+
+        com.cc01cc.p.xihe.cp.entity.File otherSessionFile =
+                new com.cc01cc.p.xihe.cp.entity.File(userId, "other-session.txt", "unused-path");
+        otherSessionFile.setWorkspaceId(workspaceId);
+        otherSessionFile.setSessionId(UUID.randomUUID().toString());
+        otherSessionFile.setMimeType("text/plain");
+        otherSessionFile.setSizeBytes(1);
+        otherSessionFile = fileRepository.save(otherSessionFile);
+        request.put("attachments", List.of(otherSessionFile.getId().toString()));
+
+        ResponseEntity<Map> forbidden = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST,
+                chatEntity(request, headers), Map.class);
+        assertEquals(HttpStatus.FORBIDDEN, forbidden.getStatusCode());
+        assertEquals("FORBIDDEN", forbidden.getBody().get("code"));
     }
 
     // ── PLAN-0308 M1 T1.9：run 请求 per-call 超时（`toolTimeouts`） ─────────────

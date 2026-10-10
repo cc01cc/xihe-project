@@ -94,7 +94,7 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
     @Autowired private SessionService sessionService;
     @Autowired private ChatRunCancellationService cancellationService;
     @Autowired private ChatRunRecoveryService recoveryService;
-    @Autowired private ChatController chatController;
+    @Autowired private ChatActiveRunRegistry activeRunRegistry;
     @Autowired private ChatSubmissionService submissionService;
     @Autowired private BranchPathService branchPathService;
     @Autowired private ObjectMapper objectMapper;
@@ -265,7 +265,7 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
                 request(fixture.parent(), "succeeded", "success", null,
                         ChatRunTerminalService.TerminalSource.STREAM)).committed());
         ChatRunReconciliationService reconciler = new ChatRunReconciliationService(
-                chatRunRepository, chatController, terminalService, -1);
+                chatRunRepository, activeRunRegistry, terminalService, -1);
 
         reconciler.reconcileStaleRuns();
 

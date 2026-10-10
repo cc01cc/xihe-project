@@ -67,6 +67,9 @@ class BareExecutionApprovalTest extends AbstractIntegrationTest {
     private AuthService authService;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.service.WorkspaceService workspaceService;
+
+    @Autowired
     private PolicyEngine policyEngine;
 
     @Autowired
@@ -74,6 +77,9 @@ class BareExecutionApprovalTest extends AbstractIntegrationTest {
 
     @Autowired
     private McpProxyController mcpProxyController;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.mcp.McpToolTimeoutService mcpToolTimeoutService;
 
     @Autowired
     private WorkspaceRepository workspaceRepository;
@@ -229,14 +235,18 @@ class BareExecutionApprovalTest extends AbstractIntegrationTest {
     /**
      * Real MCP gate invocation: seeds only the tool-name cache, everything else (grant gate,
      * verdict, approval service, durable row) is the production wiring.
+     *
+     * <p>PLAN-0470 batch note: the tool-name cache moved to
+     * {@code McpToolTimeoutService} in 3994a50e; the reflection target here
+     * was stale on HEAD and is corrected to the owning service.
      */
     @SuppressWarnings("unchecked")
     private ResponseEntity<String> callGate(String body) throws Exception {
         Map<String, Map<String, String>> cache =
                 (Map<String, Map<String, String>>) ReflectionTestUtils.getField(
-                        mcpProxyController, "toolServerCache");
+                        mcpToolTimeoutService, "toolServerCache");
         Map<String, Instant> timestamps =
-                (Map<String, Instant>) ReflectionTestUtils.getField(mcpProxyController, "cacheTimestamps");
+                (Map<String, Instant>) ReflectionTestUtils.getField(mcpToolTimeoutService, "cacheTimestamps");
         cache.put(workspaceId, new ConcurrentHashMap<>(Map.of("write_file", "__system__")));
         timestamps.put(workspaceId, Instant.now());
 
@@ -266,9 +276,12 @@ class BareExecutionApprovalTest extends AbstractIntegrationTest {
 
     /** Registration default + stable principal/binding/Session caps + bare workspace + manual mode. */
     private void bareWorkspaceFixture() {
-        AuthResponse registered = authService.register(new RegisterRequest(
+        // PLAN-0470 #25: reproduces the AuthController register orchestration.
+        com.cc01cc.p.xihe.cp.entity.User user = authService.registerUser(new RegisterRequest(
                 "bare-execution-" + UUID.randomUUID() + "@test.com", "grant-test-password",
                 "Bare execution test"));
+        AuthResponse registered = authService.issueTokens(user, workspaceService
+                .getOrCreateDefaultWorkspace(user.getId().toString()).getId().toString());
         userId = registered.getUser().getId();
         workspaceId = registered.getWorkspaceId();
 

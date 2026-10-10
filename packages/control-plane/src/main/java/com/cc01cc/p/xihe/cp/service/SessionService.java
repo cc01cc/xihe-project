@@ -6,26 +6,23 @@ import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.SessionForkRequest;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
+import com.cc01cc.p.xihe.cp.context.service.ContextService;
 import com.cc01cc.p.xihe.cp.files.ChatAttachmentService;
+import com.cc01cc.p.xihe.cp.mcp.McpInvocationService;
+import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.policy.SessionPolicyState;
 import com.cc01cc.p.xihe.cp.provider.ProviderConnectionService;
-import com.cc01cc.p.xihe.cp.repository.FileRepository;
-import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
-import com.cc01cc.p.xihe.cp.repository.McpAttemptRepository;
-import com.cc01cc.p.xihe.cp.repository.McpDispatchHistoryRepository;
-import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionBranchRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionForkRequestRepository;
-import com.cc01cc.p.xihe.cp.context.repository.ContextProjectionRepository;
-import com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -35,60 +32,51 @@ public class SessionService {
     private final SessionForkRequestRepository forkRequestRepository;
     private final SessionBranchRepository sessionBranchRepository;
     private final MessageRepository messageRepository;
-    private final McpAttemptRepository mcpAttemptRepository;
-    private final McpDispatchHistoryRepository mcpDispatchHistoryRepository;
-    private final McpInvocationRepository mcpInvocationRepository;
-    private final FileRepository fileRepository;
-    private final EventStoreRepository eventStoreRepository;
-    private final ContextProjectionRepository contextProjectionRepository;
     private final WorkspaceService workspaceService;
     private final ChatAttachmentService chatAttachmentService;
     private final ProviderConnectionService providerConnectionService;
     private final SessionPolicyState sessionPolicyState;
-    private final AuthorizationGrantRepository authorizationGrantRepository;
     private final DbLockTimeout dbLockTimeout;
     private final AgentPrincipalService agentPrincipalService;
     private final ContextTemplateService contextTemplateService;
     private final EntityManager entityManager;
+    // PLAN-0470 (decision #15): cross-domain Session cleanup goes through the
+    // Context/MCP/Policy owner services inside this delete transaction — the
+    // Session coordinator never injects their repositories.
+    private final ContextService contextService;
+    private final McpInvocationService mcpInvocationService;
+    private final GrantDefaultService grantDefaultService;
 
     public SessionService(SessionRepository sessionRepository,
                           SessionForkRequestRepository forkRequestRepository,
                           SessionBranchRepository sessionBranchRepository,
                           MessageRepository messageRepository,
-                          McpAttemptRepository mcpAttemptRepository,
-                          McpDispatchHistoryRepository mcpDispatchHistoryRepository,
-                          McpInvocationRepository mcpInvocationRepository,
-                          FileRepository fileRepository,
-                          EventStoreRepository eventStoreRepository,
-                          ContextProjectionRepository contextProjectionRepository,
                           WorkspaceService workspaceService,
                           ChatAttachmentService chatAttachmentService,
                           ProviderConnectionService providerConnectionService,
                           SessionPolicyState sessionPolicyState,
-                           AuthorizationGrantRepository authorizationGrantRepository,
-                           DbLockTimeout dbLockTimeout,
-                           AgentPrincipalService agentPrincipalService,
-                           ContextTemplateService contextTemplateService,
-                           EntityManager entityManager) {
+                          DbLockTimeout dbLockTimeout,
+                          AgentPrincipalService agentPrincipalService,
+                          ContextTemplateService contextTemplateService,
+                          EntityManager entityManager,
+                          ContextService contextService,
+                          McpInvocationService mcpInvocationService,
+                          GrantDefaultService grantDefaultService) {
         this.sessionRepository = sessionRepository;
         this.forkRequestRepository = forkRequestRepository;
         this.sessionBranchRepository = sessionBranchRepository;
         this.messageRepository = messageRepository;
-        this.mcpAttemptRepository = mcpAttemptRepository;
-        this.mcpDispatchHistoryRepository = mcpDispatchHistoryRepository;
-        this.mcpInvocationRepository = mcpInvocationRepository;
-        this.fileRepository = fileRepository;
-        this.eventStoreRepository = eventStoreRepository;
-        this.contextProjectionRepository = contextProjectionRepository;
         this.workspaceService = workspaceService;
         this.chatAttachmentService = chatAttachmentService;
         this.providerConnectionService = providerConnectionService;
         this.sessionPolicyState = sessionPolicyState;
-        this.authorizationGrantRepository = authorizationGrantRepository;
         this.dbLockTimeout = dbLockTimeout;
         this.agentPrincipalService = agentPrincipalService;
         this.contextTemplateService = contextTemplateService;
         this.entityManager = entityManager;
+        this.contextService = contextService;
+        this.mcpInvocationService = mcpInvocationService;
+        this.grantDefaultService = grantDefaultService;
     }
 
     @Transactional(readOnly = true)
@@ -208,6 +196,15 @@ public class SessionService {
                         UUID.fromString(sessionId), userId, workspaceId)
                 .orElseThrow(() -> new CpApiException(
                         HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found"));
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<String> findMcpSessionOwner(UUID sessionId, String workspaceId, String userId) {
+        return sessionRepository.findById(sessionId)
+                .filter(session -> !session.isArchived()
+                        && workspaceId.equals(session.getWorkspaceId())
+                        && (userId == null || userId.equals(session.getUserId())))
+                .map(Session::getUserId);
     }
 
     @Transactional
@@ -346,17 +343,15 @@ public class SessionService {
 
         // Delete metadata and context rows explicitly so this remains correct on old live schemas.
         chatAttachmentService.deleteSessionAttachments(sessionId);
-        fileRepository.deleteBySessionId(sessionId);
         // Fork Message rows retain parent Run IDs only as nullable lineage; do not leave them dangling.
         messageRepository.clearRunReferencesToSession(sessionId);
         messageRepository.deleteBySessionId(sessionId);
-        contextProjectionRepository.deleteBySessionId(sessionId);
-        eventStoreRepository.deleteBySessionId(sessionId);
-        // V50 has restrictive FKs; remove leaf history, then attempts, then invocations.
-        mcpDispatchHistoryRepository.deleteBySessionId(sessionId);
-        mcpAttemptRepository.deleteBySessionId(sessionId);
-        mcpInvocationRepository.deleteBySessionId(sessionId);
-        authorizationGrantRepository.deleteBySubjectTypeAndSubjectId("agent", lockedSession.getId());
+        // PLAN-0470 (decision #15): Context/MCP/Policy rows are removed by their
+        // owner services inside this same transaction — same order as before
+        // (projections → events → MCP history → attempts → invocations → grants).
+        contextService.deleteSessionData(sessionId);
+        mcpInvocationService.deleteSessionHistories(sessionId);
+        grantDefaultService.deleteSessionAgentGrants(lockedSession.getId());
         sessionRepository.delete(lockedSession);
         // T1.7: session mode, L4 rules and reuse fingerprints must not outlive the session.
         sessionPolicyState.clear(sessionId);

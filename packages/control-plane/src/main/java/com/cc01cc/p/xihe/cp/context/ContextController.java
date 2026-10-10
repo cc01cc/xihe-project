@@ -1,12 +1,10 @@
 package com.cc01cc.p.xihe.cp.context;
 
-import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
+import com.cc01cc.p.xihe.cp.context.service.ContextAccessService;
 import com.cc01cc.p.xihe.cp.context.service.ContextService;
 import com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
-import com.cc01cc.p.xihe.cp.repository.SessionRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,7 +21,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
-import java.util.UUID;
 import java.util.Map;
 
 @RestController
@@ -34,17 +31,17 @@ public class ContextController {
 
     private final ContextService contextService;
     private final ContextSourceRefreshService sourceRefreshService;
-    private final WorkspaceUserRepository workspaceUserRepository;
-    private final SessionRepository sessionRepository;
+    private final ContextAccessService accessService;
+    private final ContextEventResponseMapper responseMapper;
 
     public ContextController(ContextService contextService,
                              ContextSourceRefreshService sourceRefreshService,
-                             WorkspaceUserRepository workspaceUserRepository,
-                             SessionRepository sessionRepository) {
+                             ContextAccessService accessService,
+                             ContextEventResponseMapper responseMapper) {
         this.contextService = contextService;
         this.sourceRefreshService = sourceRefreshService;
-        this.workspaceUserRepository = workspaceUserRepository;
-        this.sessionRepository = sessionRepository;
+        this.accessService = accessService;
+        this.responseMapper = responseMapper;
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN', 'INTERNAL_SERVICE')")
@@ -162,7 +159,8 @@ public class ContextController {
             return forbidden();
         }
         var events = contextService.readEvents(sessionId, afterSequence);
-        return ResponseEntity.ok(events);
+        var response = responseMapper.events(events);
+        return ResponseEntity.ok(response);
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN', 'INTERNAL_SERVICE')")
@@ -186,7 +184,9 @@ public class ContextController {
         Long afterSequence = Long.valueOf(body.getOrDefault("afterSequence", "0").toString());
         var result = contextService.replay(
                 sessionId, resolveWorkspaceId(sessionId), resolveUserId(sessionId), afterSequence);
-        return ResponseEntity.ok(result);
+        // The service transaction completes before response mapping begins.
+        var response = responseMapper.replay(result);
+        return ResponseEntity.ok(response);
     }
 
     /**
@@ -236,35 +236,15 @@ public class ContextController {
     }
 
     private boolean verifyAccess(String sessionId) {
-        String userId = resolveUserId(sessionId);
-        String workspaceId = resolveWorkspaceId(sessionId);
-        if (userId == null || workspaceId == null) {
-            return false;
-        }
-        // Workspace membership is required. Session ownership is not verified here
-        // because the session may be created concurrently by the Agent module.
-        return workspaceUserRepository
-                .findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId), UUID.fromString(userId))
-                .isPresent();
+        return accessService.verifyAccess(sessionId);
     }
 
     private String resolveUserId(String sessionId) {
-        String tokenUserId = TenantContext.getUserId();
-        if (tokenUserId != null) {
-            return tokenUserId;
-        }
-        // Internal service calls carry no JWT; resolve from the Session row.
-        // No implicit default: unknown session means no user context.
-        return sessionRepository.findById(UUID.fromString(sessionId)).map(s -> s.getUserId()).orElse(null);
+        return accessService.resolveUserId(sessionId);
     }
 
     private String resolveWorkspaceId(String sessionId) {
-        String tokenWorkspaceId = TenantContext.getWorkspaceId();
-        if (tokenWorkspaceId != null) {
-            return tokenWorkspaceId;
-        }
-        // No silent "default" workspace fallback; unknown session fails access check.
-        return sessionRepository.findById(UUID.fromString(sessionId)).map(s -> s.getWorkspaceId()).orElse(null);
+        return accessService.resolveWorkspaceId(sessionId);
     }
 
     private ResponseEntity<?> forbidden() {

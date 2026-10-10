@@ -142,14 +142,15 @@ class ToolHistoryCrossModuleIntegrationTest extends AbstractWireMockTest {
         assertEquals("art-http-1", messages.get(1).path("artifact_ref").asText());
         assertEquals("completed", messages.get(1).path("status").asText());
 
-        // V15 对账：事件 payload 与 snapshot 同源一致（payload 列为 JSON 字符串，先解析）。
+        // V15: read DTO payload is an object even though the persistence column is JSON text.
         ResponseEntity<String> eventsResponse = restTemplate.exchange(
                 url("/internal/v1/context/" + sessionId + "/events?afterSequence=0"),
                 HttpMethod.GET, entityWithAuth(null, SERVICE_TOKEN), String.class);
         JsonNode events = objectMapper.readTree(eventsResponse.getBody());
         assertEquals(2, events.size());
-        assertEquals("tool.result", events.get(1).path("eventType").asText());
-        JsonNode storedPayload = objectMapper.readTree(events.get(1).path("payload").asText());
+        assertEquals("tool.result", events.get(1).path("type").asText());
+        JsonNode storedPayload = events.get(1).path("payload");
+        assertTrue(storedPayload.isObject(), "read DTO payload must not be double-encoded JSON");
         assertEquals(preview, storedPayload.path("result").path("preview").asText());
 
         // V10：下一轮恢复 = 再取 snapshot 得到等价序列，且无新增事件（不重执行、不重复注入）。

@@ -2,9 +2,8 @@ package com.cc01cc.p.xihe.cp.context;
 
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
+import com.cc01cc.p.xihe.cp.context.service.ContextAccessService;
 import com.cc01cc.p.xihe.cp.context.service.ContextService;
-import com.cc01cc.p.xihe.cp.repository.SessionRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -17,7 +16,6 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.UUID;
 
 /**
  * PLAN-0340 U1/U2 public read surface: source summary metadata only (no body).
@@ -27,15 +25,12 @@ import java.util.UUID;
 public class ContextPublicController {
 
     private final ContextService contextService;
-    private final SessionRepository sessionRepository;
-    private final WorkspaceUserRepository workspaceUserRepository;
+    private final ContextAccessService contextAccessService;
 
     public ContextPublicController(ContextService contextService,
-                                   SessionRepository sessionRepository,
-                                   WorkspaceUserRepository workspaceUserRepository) {
+                                   ContextAccessService contextAccessService) {
         this.contextService = contextService;
-        this.sessionRepository = sessionRepository;
-        this.workspaceUserRepository = workspaceUserRepository;
+        this.contextAccessService = contextAccessService;
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
@@ -43,21 +38,16 @@ public class ContextPublicController {
     public ResponseEntity<?> sources(@PathVariable String sessionId) {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
-        if (userId == null || workspaceId == null) {
+        HttpStatus access = contextAccessService.checkPublicAccess(userId, workspaceId, sessionId);
+        if (access == HttpStatus.UNAUTHORIZED) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
         }
-        var session = sessionRepository.findById(UUID.fromString(sessionId)).orElse(null);
-        if (session == null
-                || !userId.equals(session.getUserId())
-                || !workspaceId.equals(session.getWorkspaceId())) {
+        if (access == HttpStatus.NOT_FOUND) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found");
         }
-        boolean member = workspaceUserRepository
-                .findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId), UUID.fromString(userId))
-                .isPresent();
-        if (!member) {
+        if (access == HttpStatus.FORBIDDEN) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.FORBIDDEN, "FORBIDDEN", "Access denied");
         }

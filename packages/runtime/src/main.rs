@@ -133,6 +133,20 @@ impl AppState {
             .ensure_workspace_identity(workspace_id)
             .await
     }
+
+    /// PLAN-0470 (decision #17): point the checkpoint engine at the validated
+    /// ExecutionSpec/materialized path for this workspace before any checkpoint
+    /// operation; falls back to the legacy `<hostRoot>/<workspaceId>` layout
+    /// when the workspace is not materialized in this Runtime process.
+    pub async fn refresh_checkpoint_work_tree(&self, workspace_id: &str) {
+        match self.registry.get(workspace_id).await {
+            Some(instance) => {
+                self.checkpoints
+                    .set_work_tree(workspace_id, PathBuf::from(&instance.workspace_path));
+            }
+            None => self.checkpoints.clear_work_tree(workspace_id),
+        }
+    }
 }
 
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
@@ -2185,6 +2199,7 @@ async fn workspace_materialize_handler(
         // materialization. After a checkpoint cleanup the shadow refs are gone
         // while the workspace stays Ready, so this fast path must still
         // bootstrap a fresh C0 slice (best-effort, same as the spawn path).
+        app.refresh_checkpoint_work_tree(&ws_id).await;
         match app
             .checkpoints
             .capture(&ws_id, C0_RUN_ID, "materialize", "materialize", false)
@@ -2227,6 +2242,7 @@ async fn workspace_materialize_handler(
                 // error, ...) only logs and never blocks or fails
                 // materialization; the reserved run id `c0` passes the regular
                 // run-id validation unchanged.
+                app_clone.refresh_checkpoint_work_tree(&ws_id_clone).await;
                 match app_clone
                     .checkpoints
                     .capture(&ws_id_clone, C0_RUN_ID, "materialize", "materialize", false)
@@ -2447,6 +2463,7 @@ async fn capture_checkpoint_handler(
     State(app): State<Arc<AppState>>,
     AxumJson(request): AxumJson<CaptureCheckpointRequest>,
 ) -> Response {
+    app.refresh_checkpoint_work_tree(&ws_id).await;
     match app
         .checkpoints
         .capture(
@@ -2478,6 +2495,7 @@ async fn checkpoint_gc_handler(
     Path(ws_id): Path<String>,
     State(app): State<Arc<AppState>>,
 ) -> Response {
+    app.refresh_checkpoint_work_tree(&ws_id).await;
     match app.checkpoints.gc(&ws_id).await {
         Ok(outcome) => AxumJson(outcome).into_response(),
         Err(GcFailure::Validation { detail }) => checkpoint_problem_response(
@@ -2583,6 +2601,7 @@ async fn restore_preview_handler(
     State(app): State<Arc<AppState>>,
     AxumJson(request): AxumJson<RestorePreviewRequest>,
 ) -> Response {
+    app.refresh_checkpoint_work_tree(&ws_id).await;
     match app
         .checkpoints
         .restore_preview(&ws_id, &request.slice_ref)
@@ -2606,6 +2625,7 @@ async fn restore_execute_handler(
     State(app): State<Arc<AppState>>,
     AxumJson(request): AxumJson<RestoreExecuteRequest>,
 ) -> Response {
+    app.refresh_checkpoint_work_tree(&ws_id).await;
     match app
         .checkpoints
         .restore_execute(
@@ -2676,6 +2696,7 @@ async fn checkpoint_blob_handler(
             "blob query requires sliceRef and path",
         );
     };
+    app.refresh_checkpoint_work_tree(&ws_id).await;
     match app
         .checkpoints
         .slice_blob(&ws_id, &query.slice_ref, &query.path)
@@ -2727,6 +2748,7 @@ async fn workspace_git_status_handler(
     Path(ws_id): Path<String>,
     State(app): State<Arc<AppState>>,
 ) -> Response {
+    app.refresh_checkpoint_work_tree(&ws_id).await;
     match app.checkpoints.git_status(&ws_id).await {
         Ok(status) => AxumJson(status).into_response(),
         Err(failure) => git_status_failure_response(failure),
@@ -2816,6 +2838,7 @@ async fn workspace_git_facts_handler(
     Path(ws_id): Path<String>,
     State(app): State<Arc<AppState>>,
 ) -> Response {
+    app.refresh_checkpoint_work_tree(&ws_id).await;
     match app.checkpoints.git_facts(&ws_id).await {
         Ok(git) => {
             let (cwd, platform, shell) =
@@ -4682,6 +4705,44 @@ mod checkpoint_handler_tests {
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(body["code"], "CHECKPOINT_UNAVAILABLE");
         assert_eq!(body["reason"], "WORKSPACE_UNKNOWN");
+    }
+
+    /// PLAN-0470 (decision #17): a validated direct-attach workspace captures
+    /// its registered ExecutionSpec path, not `<hostRoot>/<workspaceId>`.
+    #[tokio::test]
+    async fn checkpoint_capture_uses_registered_workspace_path() {
+        let temp = TempDir::new().expect("fixture tempdir");
+        let direct = temp.path().join("direct-attach-ws");
+        std::fs::create_dir_all(&direct).expect("fixture direct-attach dir");
+        std::fs::write(direct.join("a.txt"), "one").expect("seed workspace file");
+        let service = CheckpointService::new(temp.path());
+        if !require_git(&service).await {
+            return;
+        }
+        let shadow = service.engine().shadow_git_dir(WS).expect("shadow dir");
+        let state = state_with(service).await;
+        state
+            .lifecycle
+            .register_ready(
+                WS,
+                direct.to_str().expect("utf8 path"),
+                SecurityProfile::Strict,
+                1,
+                &"0".repeat(64),
+            )
+            .await
+            .expect("register direct-attach workspace");
+
+        // The legacy `<hostRoot>/<workspaceId>` directory intentionally does not
+        // exist, so only the registered direct-attach path can produce a slice.
+        assert!(!temp.path().join(WS).is_dir());
+        let (status, body) = capture_checkpoint(&state, WS, "run-1", false).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(shadow.is_dir(), "shadow repo is keyed by workspace id");
+        assert!(
+            direct.join("a.txt").is_file(),
+            "capture did not touch the workspace"
+        );
     }
 
     /// Malformed identifiers → 400 before any git work.

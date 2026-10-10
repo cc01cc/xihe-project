@@ -1,10 +1,8 @@
 package com.cc01cc.p.xihe.cp.operation;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
-import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceJob;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeJobClient;
-import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -31,6 +29,9 @@ import static org.mockito.Mockito.when;
 /**
  * PLAN-0465 T1.2：start 编排在 `workspace_jobs` 域上的契约——
  * 幂等重读（V36 语义）→ 原子 domain row → 派发 → 失败收口。
+ *
+ * <p>PLAN-0470 #26：Workspace access/executionMode 由编排入口先行解析并作为参数
+ * 传入；本单测直接传 executionMode，不再 mock WorkspaceService。</p>
  */
 class WorkspaceJobStartServiceTest {
 
@@ -39,7 +40,6 @@ class WorkspaceJobStartServiceTest {
     private static final String USER_ID = "33333333-3333-3333-3333-333333333333";
 
     private JobStateService jobStateService;
-    private WorkspaceService workspaceService;
     private RuntimeJobClient runtimeJobClient;
     private ApplicationContext applicationContext;
     private WorkspaceJobStartService service;
@@ -47,22 +47,15 @@ class WorkspaceJobStartServiceTest {
     @BeforeEach
     void setUp() {
         jobStateService = Mockito.mock(JobStateService.class);
-        workspaceService = Mockito.mock(WorkspaceService.class);
         runtimeJobClient = Mockito.mock(RuntimeJobClient.class);
         applicationContext = Mockito.mock(ApplicationContext.class);
         service = new WorkspaceJobStartService(jobStateService,
-                workspaceService, runtimeJobClient, applicationContext);
+                runtimeJobClient, applicationContext);
         when(applicationContext.getBean(WorkspaceJobStartService.class)).thenReturn(service);
 
         // Default: no idempotent row exists, and the domain row is inserted.
         when(jobStateService.findForReplay(any(), any(), any(), any()))
                 .thenReturn(Optional.empty());
-    }
-
-    private void workspace(String executionMode) {
-        Workspace workspace = new Workspace();
-        workspace.setExecutionMode(executionMode);
-        when(workspaceService.requireAccessibleWorkspace(WORKSPACE_ID, USER_ID)).thenReturn(workspace);
     }
 
     private static WorkspaceJobStartService.StartRequest request() {
@@ -81,7 +74,7 @@ class WorkspaceJobStartServiceTest {
     @Test
     void rejectsMissingIdempotencyKey() {
         CpApiException error = assertThrows(CpApiException.class,
-                () -> service.start(WORKSPACE_ID, USER_ID, request(), " "));
+                () -> service.start(WORKSPACE_ID, USER_ID, request(), " ", "docker"));
         assertEquals("IDEMPOTENCY_KEY_REQUIRED", error.getCode());
     }
 
@@ -90,20 +83,19 @@ class WorkspaceJobStartServiceTest {
         CpApiException error = assertThrows(CpApiException.class,
                 () -> service.start(WORKSPACE_ID, USER_ID,
                         new WorkspaceJobStartService.StartRequest(" ", List.of(), null, 0L,
-                                "workspace", null, null, "ui", null), "key-1"));
+                                "workspace", null, null, "ui", null), "key-1", "docker"));
         assertEquals("INVALID_REQUEST", error.getCode());
     }
 
     @Test
     void windowsHostDispatchUsesRuntimeWithoutFallback() {
-        workspace("windows-host");
         when(runtimeJobClient.startJob(any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new RuntimeJobClient.JobStartResult(true, true, false, "host-job", null));
         when(jobStateService.wireViewById(any()))
                 .thenReturn(Optional.of(Map.of("jobId", "domain-1", "status", "running")));
 
         WorkspaceJobStartService.StartOutcome outcome =
-                service.start(WORKSPACE_ID, USER_ID, request(), "key-1");
+                service.start(WORKSPACE_ID, USER_ID, request(), "key-1", "windows-host");
 
         assertFalse(outcome.replayed());
         assertEquals("domain-1", outcome.job().get("jobId"));
@@ -120,7 +112,6 @@ class WorkspaceJobStartServiceTest {
 
     @Test
     void idempotentReplayReturnsExistingProjectionWithoutDispatch() {
-        workspace("docker");
         WorkspaceJob existing = new WorkspaceJob();
         existing.setId(UUID.randomUUID());
         existing.setWorkspaceId(UUID.fromString(WORKSPACE_ID));
@@ -132,7 +123,7 @@ class WorkspaceJobStartServiceTest {
         when(jobStateService.wireView(existing)).thenReturn(projection);
 
         WorkspaceJobStartService.StartOutcome outcome =
-                service.start(WORKSPACE_ID, USER_ID, request(), "key-1");
+                service.start(WORKSPACE_ID, USER_ID, request(), "key-1", "docker");
 
         assertTrue(outcome.replayed());
         assertEquals(projection, outcome.job());
@@ -141,7 +132,6 @@ class WorkspaceJobStartServiceTest {
 
     @Test
     void sameKeyDifferentInputHashIsRejected() {
-        workspace("docker");
         WorkspaceJob existing = new WorkspaceJob();
         existing.setId(UUID.randomUUID());
         existing.setWorkspaceId(UUID.fromString(WORKSPACE_ID));
@@ -150,7 +140,7 @@ class WorkspaceJobStartServiceTest {
                 .thenReturn(Optional.of(existing));
 
         CpApiException error = assertThrows(CpApiException.class,
-                () -> service.start(WORKSPACE_ID, USER_ID, request(), "key-1"));
+                () -> service.start(WORKSPACE_ID, USER_ID, request(), "key-1", "docker"));
 
         assertEquals("JOB_IDEMPOTENCY_CONFLICT", error.getCode());
         verify(runtimeJobClient, never()).startJob(any(), any(), any(), any(), any(), any(), any());
@@ -158,7 +148,6 @@ class WorkspaceJobStartServiceTest {
 
     @Test
     void successfulDispatchMarksRunningAndStoresBootId() {
-        workspace("docker");
         when(runtimeJobClient.startJob(any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new RuntimeJobClient.JobStartResult(true, true, false, "job-1", null));
         when(runtimeJobClient.runtimeBootId()).thenReturn("boot-1");
@@ -166,7 +155,7 @@ class WorkspaceJobStartServiceTest {
                 .thenReturn(Optional.of(Map.of("jobId", "domain-2", "status", "running")));
 
         WorkspaceJobStartService.StartOutcome outcome =
-                service.start(WORKSPACE_ID, USER_ID, request(), "key-1");
+                service.start(WORKSPACE_ID, USER_ID, request(), "key-1", "docker");
 
         assertFalse(outcome.replayed());
         UUID jobId = captureCreatedRowId();
@@ -189,12 +178,11 @@ class WorkspaceJobStartServiceTest {
 
     @Test
     void unreachableRuntimeMarksInterruptedAndFails() {
-        workspace("docker");
         when(runtimeJobClient.startJob(any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new RuntimeJobClient.JobStartResult(false, false, false, null, null));
 
         CpApiException error = assertThrows(CpApiException.class,
-                () -> service.start(WORKSPACE_ID, USER_ID, request(), "key-1"));
+                () -> service.start(WORKSPACE_ID, USER_ID, request(), "key-1", "docker"));
 
         assertEquals("RUNTIME_UNAVAILABLE", error.getCode());
         assertEquals(502, error.getStatus().value());
@@ -207,13 +195,12 @@ class WorkspaceJobStartServiceTest {
 
     @Test
     void runtimeBackendPendingFailsDurableJobWithoutFallback() {
-        workspace("windows-mxc");
         when(runtimeJobClient.startJob(any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new RuntimeJobClient.JobStartResult(true, false, true, null,
                         "JOB_BACKEND_LAUNCH_PENDING"));
 
         CpApiException error = assertThrows(CpApiException.class,
-                () -> service.start(WORKSPACE_ID, USER_ID, request(), "key-1"));
+                () -> service.start(WORKSPACE_ID, USER_ID, request(), "key-1", "windows-mxc"));
 
         assertEquals("JOB_BACKEND_LAUNCH_PENDING", error.getCode());
         UUID jobId = captureCreatedRowId();

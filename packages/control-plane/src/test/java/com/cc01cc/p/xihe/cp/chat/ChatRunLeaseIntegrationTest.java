@@ -215,7 +215,7 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
 
         ChatRun restored = chatRunRepository.findById(run.getId()).orElseThrow();
         assertEquals("awaiting_approval", restored.getStatus());
-        assertEquals(run.getId().toString(), chatController.activeRunId(sessionId));
+        assertEquals(run.getId().toString(), activeRunRegistry.activeRunId(sessionId));
         assertEquals("dispatch_unknown", approvalRepository.findById(unknown.getRequestId()).orElseThrow().getState());
         verify(approvalAgentClient, never()).respond(anyString(), anyBoolean(), anyString(), any());
     }
@@ -276,19 +276,19 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
         ChatRun marked = chatRunRepository.findById(run.getId()).orElseThrow();
         assertEquals("ambiguous", marked.getStatus());
         assertEquals("CP_RESTARTED", marked.getErrorCode());
-        assertNull(chatController.activeRunId(sessionId));
+        assertNull(activeRunRegistry.activeRunId(sessionId));
         assertEquals("expired", approvalRepository.findById(expired.getRequestId()).orElseThrow().getState());
     }
 
     private ChatRunRecoveryService reconciliationService() {
-        return new ChatRunRecoveryService(chatRunRepository, approvalRepository, chatController,
+        return new ChatRunRecoveryService(chatRunRepository, approvalRepository, activeRunRegistry,
                 chatRunTerminalService, historyWriter, runCheckpointService);
     }
 
     // ── PLAN-0317 T2.7：周期对账（grace=-1 让所有测试 run 立即进入候选） ──────
 
     private ChatRunReconciliationService staleRunReconciler() {
-        return new ChatRunReconciliationService(chatRunRepository, chatController, chatRunTerminalService, -1);
+        return new ChatRunReconciliationService(chatRunRepository, activeRunRegistry, chatRunTerminalService, -1);
     }
 
     @Test
@@ -318,7 +318,7 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
     @Test
     void locallyActiveRunIsNotReconciled() {
         ChatRun run = runWithLease("running", null, null);
-        chatController.restoreActiveRun(sessionId, run.getId().toString());
+        activeRunRegistry.restoreActiveRun(sessionId, run.getId().toString());
 
         staleRunReconciler().reconcileStaleRuns();
 
@@ -501,6 +501,9 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private ChatController chatController;
+
+    @Autowired
+    private ChatActiveRunRegistry activeRunRegistry;
 
     @Autowired
     private ChatRunCancellationService chatRunCancellationService;

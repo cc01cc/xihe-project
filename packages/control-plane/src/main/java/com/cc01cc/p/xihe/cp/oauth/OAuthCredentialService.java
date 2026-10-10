@@ -10,7 +10,6 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Optional;
-import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,14 +20,10 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
+import com.cc01cc.p.xihe.cp.crypto.EnvelopeEncryptionService;
 import com.cc01cc.p.xihe.cp.entity.OAuthCredential;
-import com.cc01cc.p.xihe.cp.entity.McpServer;
-import com.cc01cc.p.xihe.cp.entity.Workspace;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUserId;
+import com.cc01cc.p.xihe.cp.mcp.McpProxyCatalogService;
 import com.cc01cc.p.xihe.cp.repository.OAuthCredentialRepository;
-import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -43,9 +38,7 @@ public class OAuthCredentialService {
     private final EnvelopeEncryptionService encryption;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
-    private final WorkspaceRepository workspaceRepository;
-    private final WorkspaceUserRepository workspaceUserRepository;
-    private final McpServerRepository mcpServerRepository;
+    private final McpProxyCatalogService mcpProxyCatalogService;
     private final DbLockTimeout dbLockTimeout;
     private final OAuthTokenBroker broker;
     private final OAuthRevocationClient revocationClient;
@@ -58,9 +51,7 @@ public class OAuthCredentialService {
             OAuthCredentialRepository repository,
             EnvelopeEncryptionService encryption,
             ObjectMapper objectMapper,
-            WorkspaceRepository workspaceRepository,
-            WorkspaceUserRepository workspaceUserRepository,
-            McpServerRepository mcpServerRepository,
+            McpProxyCatalogService mcpProxyCatalogService,
             DbLockTimeout dbLockTimeout,
             @Lazy OAuthTokenBroker broker,
             OAuthRevocationClient revocationClient) {
@@ -68,9 +59,7 @@ public class OAuthCredentialService {
         this.repository = repository;
         this.encryption = encryption;
         this.objectMapper = objectMapper;
-        this.workspaceRepository = workspaceRepository;
-        this.workspaceUserRepository = workspaceUserRepository;
-        this.mcpServerRepository = mcpServerRepository;
+        this.mcpProxyCatalogService = mcpProxyCatalogService;
         this.dbLockTimeout = dbLockTimeout;
         this.broker = broker;
         this.revocationClient = revocationClient;
@@ -78,7 +67,6 @@ public class OAuthCredentialService {
     }
 
     public AuthorizationStart start(StartRequest request) {
-        ensureWorkspaceAccess(request.userId(), request.workspaceId());
         validateEndpoints(request);
         registerOrValidateServer(request);
         PkceSessionService.PendingSession session = pkce.start(
@@ -142,11 +130,15 @@ public class OAuthCredentialService {
      * wait beyond {@code cp.lock-timeout-ms} surfaces as
      * {@code CannotAcquireLockException} (503 {@code OPERATION_LOCK_TIMEOUT})
      * and is intentionally not caught here.
+     *
+     * <p>PLAN-0470 #20: Workspace access is checked at the orchestration
+     * entry (the internal token endpoint), not here; this method only keeps
+     * the MCP-server-enabled precondition.
      */
     @Transactional
     public RefreshResult refreshLocked(String userId, String workspaceId, String serverId, String requestedScope) {
         try {
-            ensureWorkspaceServerAccess(userId, workspaceId, serverId);
+            ensureWorkspaceServerEnabled(workspaceId, serverId);
         } catch (IllegalArgumentException e) {
             throw new OAuthBrokerException(OAuthBrokerException.Kind.REAUTH_REQUIRED, e.getMessage(), e);
         }
@@ -182,7 +174,7 @@ public class OAuthCredentialService {
 
     @Transactional
     public boolean revoke(String userId, String workspaceId, String serverId) {
-        ensureWorkspaceServerAccess(userId, workspaceId, serverId);
+        ensureWorkspaceServerEnabled(workspaceId, serverId);
         dbLockTimeout.apply();
         Optional<OAuthCredential> credential = repository.findForUpdate(userId, workspaceId, serverId);
         // Cache invalidation + revocation epoch happen before any early return so a
@@ -335,20 +327,9 @@ public class OAuthCredentialService {
         return userId + ":" + workspaceId + ":" + serverId;
     }
 
-    private void ensureWorkspaceServerAccess(String userId, String workspaceId, String serverId) {
-        ensureWorkspaceAccess(userId, workspaceId);
-        mcpServerRepository.findById(UUID.fromString(serverId))
-                .filter(server -> workspaceId.equals(server.getWorkspaceId()) && server.isEnabled())
-                .orElseThrow(() -> new IllegalArgumentException("mcp_server_not_found"));
-    }
-
-    private void ensureWorkspaceAccess(String userId, String workspaceId) {
-        Workspace workspace = workspaceRepository.findById(UUID.fromString(workspaceId))
-                .orElseThrow(() -> new IllegalArgumentException("workspace_not_found"));
-        boolean owner = userId.equals(workspace.getOwnerId());
-        boolean member = workspaceUserRepository.existsById(new WorkspaceUserId(workspaceId, userId));
-        if (!owner && !member) {
-            throw new IllegalArgumentException("workspace_forbidden");
+    private void ensureWorkspaceServerEnabled(String workspaceId, String serverId) {
+        if (!mcpProxyCatalogService.isWorkspaceEnabledServer(workspaceId, serverId)) {
+            throw new IllegalArgumentException("mcp_server_not_found");
         }
     }
 
@@ -359,21 +340,8 @@ public class OAuthCredentialService {
         if (request.remoteEndpoint() == null || request.remoteEndpoint().isBlank()) {
             throw new IllegalArgumentException("remoteEndpoint must not be blank");
         }
-        OAuthCredentialService.this.mcpServerRepository.findById(UUID.fromString(request.serverId())).ifPresentOrElse(server -> {
-            if (!request.workspaceId().equals(server.getWorkspaceId())) {
-                throw new IllegalArgumentException("mcp_server_forbidden");
-            }
-            if (!server.isEnabled()) {
-                throw new IllegalArgumentException("mcp_server_disabled");
-            }
-            server.setEndpoint(request.remoteEndpoint());
-            mcpServerRepository.save(server);
-        }, () -> {
-            McpServer server = new McpServer(request.workspaceId(), request.serverId(), request.remoteEndpoint());
-            server.setId(UUID.fromString(request.serverId()));
-            server.setEnabled(true);
-            mcpServerRepository.save(server);
-        });
+        mcpProxyCatalogService.registerOrValidateRemoteServer(
+                request.workspaceId(), request.serverId(), request.remoteEndpoint());
     }
 
     private void validateEndpoints(StartRequest request) {

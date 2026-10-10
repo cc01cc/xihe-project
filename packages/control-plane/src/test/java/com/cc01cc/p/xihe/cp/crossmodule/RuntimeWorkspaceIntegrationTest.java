@@ -21,21 +21,35 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.AuditLog;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceJob;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceJobHistory;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.UserRole;
+import com.cc01cc.p.xihe.cp.event.WorkspaceEventManager;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
+import com.cc01cc.p.xihe.cp.operation.JobStateService;
 import com.cc01cc.p.xihe.cp.repository.AuditLogRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceJobHistoryRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceJobRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.web.client.RestTemplate;
 
+import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.nio.file.Path;
 
@@ -58,8 +72,28 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
     @Autowired
     private AuditLogRepository auditLogRepository;
 
+    @Autowired
+    private WorkspaceJobRepository workspaceJobRepository;
+
+    @Autowired
+    private WorkspaceJobHistoryRepository workspaceJobHistoryRepository;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @MockitoSpyBean
+    private JobStateService jobStateService;
+
+    @MockitoSpyBean
+    private WorkspaceEventManager workspaceEventManager;
+
+    @MockitoSpyBean
+    @Qualifier("runtimeCleanupRestTemplate")
+    private RestTemplate runtimeCleanupRestTemplate;
+
     private Workspace createdWorkspace;
     private UUID createdOwnerId;
+    private UUID createdJobId;
 
     @TempDir
     private Path tempWorkspace;
@@ -74,6 +108,12 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         // Absolute request counts are asserted with wireMock.verify below, so
         // the request journal must stay scoped to one test.
         wireMock.resetRequests();
+        if (createdJobId != null) {
+            workspaceJobHistoryRepository.deleteAll(
+                    workspaceJobHistoryRepository.findByJobIdOrderBySequenceAsc(createdJobId));
+            workspaceJobRepository.deleteById(createdJobId);
+            createdJobId = null;
+        }
         if (createdWorkspace != null) {
             workspaceUserRepository.deleteAll(
                     workspaceUserRepository.findByIdWorkspaceId(createdWorkspace.getId()));
@@ -84,6 +124,32 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
             userRepository.deleteById(createdOwnerId);
             createdOwnerId = null;
         }
+    }
+
+    private String createWorkspaceOwner(String prefix) {
+        String email = prefix + "-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
+        User owner = userRepository.save(new User(email, "hash", UserRole.USER, "Job Owner"));
+        createdOwnerId = owner.getId();
+        return owner.getId().toString();
+    }
+
+    private UUID createRunningWorkspaceJob(String workspaceId, String userId, String runtimeJobId) {
+        WorkspaceJob job = new WorkspaceJob();
+        job.setId(UUID.randomUUID());
+        job.setWorkspaceId(UUID.fromString(workspaceId));
+        job.setUserId(UUID.fromString(userId));
+        job.setSource("system");
+        job.setScope("workspace");
+        job.setStatus("running");
+        Map<String, Object> initialState = new LinkedHashMap<>();
+        initialState.put("jobId", runtimeJobId);
+        initialState.put("status", "running");
+        initialState.put("scope", "workspace");
+        initialState.put("source", "system");
+        initialState.put("startedAt", Instant.now().toString());
+        jobStateService.createJob(job, initialState);
+        createdJobId = job.getId();
+        return createdJobId;
     }
 
     @Test
@@ -204,22 +270,105 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
     }
 
     @Test
+    void deleteWorkspaceRunsRuntimeThenOrphansJobsThenCompletesEvents() {
+        String ownerId = createWorkspaceOwner("delete-order");
+        createdWorkspace = workspaceService.createWorkspace(
+                "del-order-" + UUID.randomUUID().toString().substring(0, 8), ownerId);
+        String workspaceId = createdWorkspace.getId().toString();
+        String storageRef = createdWorkspace.getStorageRef();
+        String runtimeJobId = "runtime-job-" + UUID.randomUUID();
+        UUID jobId = createRunningWorkspaceJob(workspaceId, ownerId, runtimeJobId);
+
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/workspaces/delete"))
+                .willReturn(aResponse().withHeader("Content-Type", "application/json")
+                        .withBody("{\"jobsEnumerationFailed\":false,\"jobIds\":[\""
+                                + runtimeJobId + "\"]}")));
+
+        org.mockito.Mockito.doAnswer(invocation -> {
+            assertTrue(workspaceRepository.findByIdAndDeletedAtIsNull(createdWorkspace.getId()).isEmpty(),
+                    "Workspace soft-delete must commit before Runtime cleanup starts");
+            assertEquals("running", jobStateService.findByJobId(jobId).orElseThrow().status(),
+                    "Job reconciliation must wait for Runtime cleanup response");
+            return invocation.callRealMethod();
+        }).when(runtimeCleanupRestTemplate).postForEntity(
+                org.mockito.ArgumentMatchers.argThat((String url) ->
+                        url.endsWith("/internal/v1/runtime/workspaces/delete")),
+                org.mockito.ArgumentMatchers.any(org.springframework.http.HttpEntity.class),
+                org.mockito.ArgumentMatchers.eq(String.class));
+
+        org.mockito.Mockito.doAnswer(invocation -> {
+            wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/runtime/workspaces/delete"))
+                    .withRequestBody(matchingJsonPath("$.workspaceId", equalTo(workspaceId)))
+                    .withRequestBody(matchingJsonPath("$.storageRef", equalTo(storageRef))));
+            return invocation.callRealMethod();
+        }).when(jobStateService).markOrphanedForWorkspace(
+                org.mockito.ArgumentMatchers.eq(workspaceId), org.mockito.ArgumentMatchers.any());
+
+        org.mockito.Mockito.doAnswer(invocation -> {
+            assertEquals("orphaned", jdbcTemplate.queryForObject(
+                    "select status from workspace_jobs where id = ?", String.class, jobId));
+            assertEquals(JobStateService.REASON_DESTROY_ORPHAN, jdbcTemplate.queryForObject(
+                    "select cancel_reason from workspace_jobs where id = ?", String.class, jobId));
+            assertEquals(1, jdbcTemplate.queryForObject(
+                    "select count(*) from workspace_job_history where job_id = ? and event_type = ?",
+                    Integer.class, jobId, WorkspaceJobHistory.EVENT_ORPHANED));
+            return invocation.callRealMethod();
+        }).when(workspaceEventManager).completeWorkspace(workspaceId, "workspace_deleted");
+
+        workspaceService.deleteWorkspace(workspaceId, ownerId);
+
+        Workspace deleted = workspaceRepository.findById(createdWorkspace.getId()).orElseThrow();
+        assertNotNull(deleted.getDeletedAt());
+        assertEquals(storageRef, deleted.getStorageRef(), "WorkspaceStorage reference is retained");
+        JobStateService.JobArchive archive = jobStateService.findByJobId(jobId).orElseThrow();
+        assertEquals("orphaned", archive.status());
+        List<WorkspaceJobHistory> history = workspaceJobHistoryRepository.findByJobIdOrderBySequenceAsc(jobId);
+        assertEquals(2, history.size());
+        assertEquals(WorkspaceJobHistory.EVENT_START, history.getFirst().getEventType());
+        assertEquals(WorkspaceJobHistory.EVENT_ORPHANED, history.getLast().getEventType());
+        org.mockito.Mockito.verify(workspaceEventManager).completeWorkspace(workspaceId, "workspace_deleted");
+    }
+
+    @Test
     void deleteWorkspaceSucceedsAndDefersCleanupWhenRuntimeUnavailable() {
         // STO-1: the delete transaction commits unconditionally; a failing Runtime
         // cleanup is best-effort and reconciled later by Runtime orphan cleanup.
         wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/workspaces/delete"))
                 .willReturn(aResponse().withStatus(500)));
 
-        String ownerId = UUID.randomUUID().toString();
+        String ownerId = createWorkspaceOwner("offline-ws");
         createdWorkspace = workspaceService.createWorkspace(
                 "offline-ws-" + UUID.randomUUID().toString().substring(0, 8), ownerId);
         String workspaceId = createdWorkspace.getId().toString();
+        UUID jobId = createRunningWorkspaceJob(workspaceId, ownerId, "offline-job-" + UUID.randomUUID());
 
         assertDoesNotThrow(() -> workspaceService.deleteWorkspace(workspaceId, ownerId));
 
         assertTrue(workspaceRepository.findByIdAndDeletedAtIsNull(createdWorkspace.getId()).isEmpty(),
                 "DB delete is authoritative even when Runtime cleanup fails");
+        assertEquals("orphaned", jobStateService.findByJobId(jobId).orElseThrow().status(),
+                "Runtime outage returns null enumeration and must fail closed for active Job rows");
+        assertEquals(WorkspaceJobHistory.EVENT_ORPHANED,
+                workspaceJobHistoryRepository.findByJobIdOrderBySequenceAsc(jobId).getLast().getEventType());
         wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/runtime/workspaces/delete")));
+    }
+
+    @Test
+    void deleteWorkspaceFailsClosedWhenRuntimeCannotEnumerateJobs() {
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/workspaces/delete"))
+                .willReturn(aResponse().withHeader("Content-Type", "application/json")
+                        .withBody("{\"jobsEnumerationFailed\":true}")));
+        String ownerId = createWorkspaceOwner("enumeration-failed");
+        createdWorkspace = workspaceService.createWorkspace(
+                "enum-failed-" + UUID.randomUUID().toString().substring(0, 8), ownerId);
+        UUID jobId = createRunningWorkspaceJob(
+                createdWorkspace.getId().toString(), ownerId, "enumeration-job-" + UUID.randomUUID());
+
+        workspaceService.deleteWorkspace(createdWorkspace.getId().toString(), ownerId);
+
+        assertEquals("orphaned", jobStateService.findByJobId(jobId).orElseThrow().status());
+        assertEquals(WorkspaceJobHistory.EVENT_ORPHANED,
+                workspaceJobHistoryRepository.findByJobIdOrderBySequenceAsc(jobId).getLast().getEventType());
     }
 
     @Test

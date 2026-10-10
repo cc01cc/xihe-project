@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 14
 status: active
 created: 2026-09-03
-updated: 2026-10-08
+updated: 2026-10-09
 ---
 
 # DEV-014: CP 架构
@@ -25,6 +25,8 @@ flowchart LR
     CP -->|"/mcp · /stdio"| RT["Runtime"]
     RT -.->|"POST /internal/v1/runtime/workspaces/{id}/events"| CP
 ```
+
+**本地架构校验（PLAN-0470 M2）**：CP 增加 test-scope ArchUnit 1.5.1，检查实际生产 Controller、应用组件及持久化类型的依赖，合成正反探针与生产检查分开。在 `packages/control-plane/` 执行 `mvn -o -q test "-Dtest=CpArchitectureTest"`，报告为 `target/cp-architecture/baseline.json`；探针入口为 `CpArchitectureRuleProbeTest`。初始严格规则仍因存量依赖失败，不表示当前源码已符合目标。逻辑归属图记录完整类型强连接分组，不把带上限的示例数当作总循环数，也不把 DTO/错误类型依赖环直接等同状态 writer 环。Compiler/Checkstyle 原用途与 error 级别不变。PMD 候选经实际局部试跑和依赖审计后未采用，未接入默认构建或生产 classpath。
 
 ## 1. 三通道
 
@@ -146,6 +148,8 @@ flowchart LR
 
 - **schema**：V43 `session_branches`（每 Session 恰一 root，partial unique；anchor composite FK 限定同 Session/同 parent branch）；`messages`/`chat_runs`/`context_projections` 增 `branch_id NOT NULL`、`context_events` 增 `branch_id NULL`；读模型唯一键改为 `(session_id, projection_type, branch_id)`。字段与索引以 `spec/field-matrix.md` 为准。
 - **读路径**：`GET /internal/v1/context/{id}/snapshot` 增 `?branchId`/`?runId`——并存必须一致（409 `BRANCH_RUN_MISMATCH`）、未知/外 Session 404、**缺省两者 = legacy root snapshot**（fail-closed 只针对给了解析不了的选择器）。可见集 = Session/global（两槽 NULL）∪ 每层祖先段 `sequence ≤ child.fork_point_sequence` ∪ 当前 branch。
+- **Event read view（PLAN-0470）**：`GET /internal/v1/context/{id}/events?afterSequence=` 返回固定七字段 read DTO：聚合id、sequence、type、对象payload、created_at、显式可空关联/因果键；具体snake_case字段与schema以OpenAPI的 `ContextEventReadView` 为准。不返回Entity id/userId/workspaceId/branchId，不改变append或branch派生规则。
+- **Replay 响应与事务**：仅replay.events使用同一read view，原snapshot/envelope保持。原用例事务成功返回后映射DTO，映射失败为整批500/INTERNAL_ERROR，不返回部分结果、不伪造对象、不额外回滚已提交projection；原用例自身失败仍遵守原事务。局部decoder不得把JSON原message/cause写入通用错误日志，实际CP→Agent客户端和DB前后状态验证见该片集成测试。
 - **写路径**：`events`/`events/batch` 接收 `correlation_id`，CP 校验同 Session 可解析 ChatRun 后派生 `branch_id`（解析失败零 Event row）；请求体出现 `branch_id` → 400 `INVALID_REQUEST`；`compact` body 可带 `branchId`。correlation 与显式 branch 冲突 → 409。
 - **服务**：`BranchPathService`（`resolveAnchor`/`resolvePath`/`resolveVisibility`/`deriveBranchForRun`，全部 fail-closed，不静默回退 root）；`ContextService.resolveScopeBranch` 是 compaction/usage/circuit/snapshot 的单一 scope 解析点，兄弟分支互不污染。
 - **Fork seed（PLAN-0410 T3.6）**：`ContextService.buildForkSeed` 同时按 source branch visibility 与 terminal anchor cursor 生成 normalized `messages` + 可选 SUM；PLAN-0381 M3：seed 消息整对象拷贝，携带 `tool_calls/tool_call_id/tool_name/status/truncated/artifact_ref/…` 配对字段（role/content 校验保持 fail-closed，child 投影配对不丢）；`latestCompaction` 服从同一 upper bound。Child `session.forked` 是 Session/global root event，CP 读模型应用 seed 且 compaction cursor 使用 child event sequence；parent L1 不复制，由 child pre-run refresh 重建。
