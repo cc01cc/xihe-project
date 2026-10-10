@@ -11,7 +11,7 @@ from loguru import logger
 from mcp.shared.exceptions import MCPError
 from mcp.types import TextContent
 
-from xihe_agent import main
+import xihe_agent.app_state as main
 from xihe_agent.adapters import mcp_client as mcp_client_module
 from xihe_agent.adapters.approval_tool import (
     ApprovalAgentTool,

@@ -11,7 +11,8 @@ from xihe_agent.agent_runner import LangGraphRunner
 from xihe_agent.cancel_registry import RunCancelRegistry
 from xihe_agent.interfaces.agent_runner import AgentEvent, RunnerConfig
 from xihe_agent.interfaces.message import TextMessage
-from xihe_agent.main import app, run_cancel_registry
+from xihe_agent.app_state import run_cancel_registry
+from xihe_agent.main import app
 
 # ── RunCancelRegistry (accepted / unknown / failed) ─────────────────────────
 

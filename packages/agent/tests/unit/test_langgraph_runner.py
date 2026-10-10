@@ -9,6 +9,7 @@ import pytest
 from langchain_core.messages import ToolMessage
 
 import xihe_agent.agent_runner.langgraph_runner as langgraph_runner_module
+import xihe_agent.agent_runner.tool_adapter as tool_adapter_module
 from xihe_agent.adapters.approval_tool import ApprovalAgentTool
 from xihe_agent.adapters.sse_adapter import LangGraphEventAdapter
 from xihe_agent.agent_runner import LangGraphRunner
@@ -20,7 +21,7 @@ from xihe_agent.interfaces.message import TextMessage
 from xihe_agent.interfaces.tool import ToolSpec
 from xihe_agent.llm.base import MockChatModel, create_llm
 
-LCToolAdapter = langgraph_runner_module.LCToolAdapter
+LCToolAdapter = tool_adapter_module.LCToolAdapter
 
 
 class FakeTool:
@@ -373,7 +374,7 @@ def test_args_schema_maps_json_types_and_validates_numeric_args():
         },
     )
 
-    schema = langgraph_runner_module._build_args_schema(spec)
+    schema = tool_adapter_module._build_args_schema(spec)
     model = schema(command="sleep 45", timeout=90, args=["x"], flag=True)
 
     assert model.command == "sleep 45"
@@ -396,7 +397,7 @@ def test_args_schema_keeps_string_fields_strict_for_numbers():
     )
 
     with pytest.raises(Exception):
-        langgraph_runner_module._build_args_schema(spec)(path=123)
+        tool_adapter_module._build_args_schema(spec)(path=123)
 
 
 def test_args_schema_accepts_numeric_strings_for_integer_fields():
@@ -411,7 +412,7 @@ def test_args_schema_accepts_numeric_strings_for_integer_fields():
         },
     )
 
-    assert langgraph_runner_module._build_args_schema(spec)(offset="90").offset == 90
+    assert tool_adapter_module._build_args_schema(spec)(offset="90").offset == 90
 
 
 # ── PLAN-0342 M1：诊断回灌接线（artifact / 信封 / 去重 / 触发边界） ──────────
@@ -523,7 +524,7 @@ async def test_arun_survives_diagnostics_extraction_failure(monkeypatch):
     def explode(*args, **kwargs):
         raise RuntimeError("extractor exploded")
 
-    monkeypatch.setattr(langgraph_runner_module, "extract_diagnostics", explode)
+    monkeypatch.setattr(tool_adapter_module, "extract_diagnostics", explode)
 
     text, artifact = await adapter._arun(command="cargo", args=["build"])
 
@@ -553,8 +554,8 @@ async def test_arun_bounds_non_command_tool_results_to_preview_limit():
     assert giant[:200] in text
     assert giant[-200:] not in text  # 大输出正文不再进模型
 
-    preview, meta = langgraph_runner_module.bound_tool_preview(giant, None)
-    assert len(preview) <= langgraph_runner_module.RESULT_PREVIEW_LIMIT
+    preview, meta = tool_adapter_module.bound_tool_preview(giant, None)
+    assert len(preview) <= tool_adapter_module.RESULT_PREVIEW_LIMIT
     assert meta == {
         "truncated": True,
         "sizeBytes": len(giant.encode("utf-8")),
@@ -618,7 +619,7 @@ async def test_tool_result_event_payload_carries_bundle_only_when_triggered():
 
 
 def test_command_text_joins_command_and_args():
-    assert langgraph_runner_module._command_text({"command": "cargo", "args": ["test", "-q"]}) == "cargo test -q"
-    assert langgraph_runner_module._command_text({"command": "make"}) == "make"
-    assert langgraph_runner_module._command_text({}) is None
-    assert langgraph_runner_module._command_text({"command": "   "}) is None
+    assert tool_adapter_module._command_text({"command": "cargo", "args": ["test", "-q"]}) == "cargo test -q"
+    assert tool_adapter_module._command_text({"command": "make"}) == "make"
+    assert tool_adapter_module._command_text({}) is None
+    assert tool_adapter_module._command_text({"command": "   "}) is None

@@ -11,7 +11,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import xihe_agent.agent_runner.langgraph_runner as langgraph_runner_module
-from xihe_agent.agent_runner.langgraph_runner import (
+import xihe_agent.agent_runner.tool_adapter as tool_adapter_module
+from xihe_agent.agent_runner.tool_adapter import (
     EVENT_WRITER_V2_ENV,
     RESULT_PREVIEW_LIMIT,
     LCToolAdapter,
@@ -20,10 +21,10 @@ from xihe_agent.context.diagnostics import extract_command_result
 from xihe_agent.interfaces.context import AgentContext
 from xihe_agent.interfaces.tool import ToolSpec
 
-STDOUT_FIELD = langgraph_runner_module.COMMAND_STDOUT_PREVIEW_CHARS
-STDERR_FIELD = langgraph_runner_module.COMMAND_STDERR_PREVIEW_CHARS
-bound_tool_preview = langgraph_runner_module.bound_tool_preview
-build_tool_event_result = langgraph_runner_module.build_tool_event_result
+STDOUT_FIELD = tool_adapter_module.COMMAND_STDOUT_PREVIEW_CHARS
+STDERR_FIELD = tool_adapter_module.COMMAND_STDERR_PREVIEW_CHARS
+bound_tool_preview = tool_adapter_module.bound_tool_preview
+build_tool_event_result = tool_adapter_module.build_tool_event_result
 
 
 def _cmd(

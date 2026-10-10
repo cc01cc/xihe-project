@@ -14,7 +14,7 @@ import pytest
 from loguru import logger
 from mcp.types import TextContent
 
-from xihe_agent import main
+import xihe_agent.app_state as main
 from xihe_agent.adapters.mcp_client import MCPAgentTool, _resolve_tool_wait
 from xihe_agent.interfaces.context import AgentContext
 

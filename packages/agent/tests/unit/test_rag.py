@@ -2,7 +2,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from xihe_agent import main
+import xihe_agent.app_state as main
+from xihe_agent.api import rag as rag_api
 from xihe_agent.rag.chunking import chunk_document, split_into_paragraphs
 
 
@@ -52,7 +53,7 @@ class TestRagConfigDefaults:
         }
         monkeypatch.setattr(main.config_client, "get", lambda domain, key: values.get((domain, key)))
 
-        assert main._rag_config_defaults() == {
+        assert rag_api._rag_config_defaults() == {
             "chunkSize": 2048,
             "chunkOverlap": 256,
             "topK": 9,
@@ -62,7 +63,7 @@ class TestRagConfigDefaults:
     def test_defaults_fall_back_when_unset(self, monkeypatch):
         monkeypatch.setattr(main.config_client, "get", lambda domain, key: None)
 
-        assert main._rag_config_defaults() == {
+        assert rag_api._rag_config_defaults() == {
             "chunkSize": 1000,
             "chunkOverlap": 200,
             "topK": 5,

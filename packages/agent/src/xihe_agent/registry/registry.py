@@ -1,32 +1,15 @@
 from pathlib import Path
 from typing import Any
 
-from langchain.agents import create_agent as create_react_agent
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.tools import BaseTool
 from loguru import logger
 
-from xihe_agent.adapters.mcp_client import MCPAgentTool
-from xihe_agent.agent_runner.langgraph_runner import LCToolAdapter
-from xihe_agent.interfaces.context import AgentContext
+from xihe_agent.agent_runner.graph_builder import adapt_agent_tools, build_react_graph
 from xihe_agent.interfaces.tool import BaseAgentTool
 from xihe_agent.registry import RegistryEntry, WorkerConfig, WorkerStatus
 from xihe_agent.registry.loader import parse_markdown_worker, scan_workers_dir
 
 DEFAULT_WORKERS_DIR = "./agents"
-
-
-def _adapt_tools(tools: list[BaseAgentTool]) -> list[BaseTool]:
-    """Adapt ``BaseAgentTool`` instances to LangChain ``BaseTool`` for create_react_agent."""
-    adapted: list[BaseTool] = []
-    for tool in tools:
-        if isinstance(tool, MCPAgentTool):
-            adapted.append(tool.base_tool)
-        elif isinstance(tool, BaseTool):
-            adapted.append(tool)
-        else:
-            adapted.append(LCToolAdapter(tool, AgentContext.empty(""), None))
-    return adapted
 
 
 class WorkerRegistry:
@@ -140,7 +123,7 @@ class WorkerRegistry:
         logger.info(
             "Worker '%s' registered (%d tool(s))",
             config.id,
-            len(_get_tools_for_worker(config, all_mcp_tools, custom_tools)),
+            len(get_tools_for_worker(config, all_mcp_tools, custom_tools)),
         )
 
     def unregister(self, worker_id: str) -> bool:
@@ -152,11 +135,12 @@ class WorkerRegistry:
         return True
 
 
-def _get_tools_for_worker(
+def get_tools_for_worker(
     config: WorkerConfig,
     all_mcp_tools: list[BaseAgentTool],
     custom_tools: list[BaseAgentTool],
 ) -> list[BaseAgentTool]:
+    """PLAN-0473: public worker tool selection (supervisor consumes this too)."""
     if config.tool_keys:
         mcp = [t for t in all_mcp_tools if t.spec.name in config.tool_keys]
         return mcp + list(custom_tools)
@@ -169,18 +153,13 @@ def _build_worker_graph(
     all_mcp_tools: list[BaseAgentTool],
     custom_tools: list[BaseAgentTool],
 ) -> Any | None:
-    tools = _get_tools_for_worker(config, all_mcp_tools, custom_tools)
-    logger.debug("Building graph for '%s' with %d tool(s)", config.id, len(tools))
-    try:
-        return create_react_agent(
-            model,
-            tools=_adapt_tools(tools),
-            name=config.id,
-            system_prompt=config.system_prompt,
-        )
-    except Exception as e:
-        logger.error("Failed to create graph for worker '%s': %s", config.id, e, exc_info=True)
-        return None
+    tools = get_tools_for_worker(config, all_mcp_tools, custom_tools)
+    return build_react_graph(
+        model,
+        adapt_agent_tools(tools),
+        name=config.id,
+        system_prompt=config.system_prompt,
+    )
 
 
 def _persist_enabled(config: WorkerConfig) -> None:

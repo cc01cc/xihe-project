@@ -39,7 +39,7 @@ execution/role/context 三份仍是目标态边界；独立 Agent principal、Wo
 
 | 接口 | 文件 | 职责 |
 |------|------|------|
-| `AgentRunner` | `interfaces/agent_runner.py` | Agent 编排抽象：`stream()` / `create_agent()` / `reset()` |
+| `AgentRunner` | `interfaces/agent_runner.py` | Agent 编排抽象：`stream()` / `create_agent()`（PLAN-0473 勘误：实际接口无 `reset()`；`create_agent()` 当前无生产消费者，见 PLAN-0473 规范观察项） |
 | `BaseAgentTool` / `ToolSpec` | `interfaces/tool.py` | 工具抽象：`execute()` + JSON Schema 声明 |
 | `EventAdapter` | `interfaces/event_adapter.py` | 将框架原始事件翻译为 SSE `AgentEvent` |
 | `LLMProvider` | `interfaces/llm.py` | LLM 后端抽象：`complete()` / `stream_complete()` / `with_model()` |
@@ -65,9 +65,9 @@ execution/role/context 三份仍是目标态边界；独立 Agent principal、Wo
 
 - `MCPAgentTool`（`adapters/mcp_client.py`）— 包装 LangChain MCP 工具。
 - `ApprovalAgentTool`（`adapters/approval_tool.py`）/ `GenerateImageAgentTool`（`tools/__init__.py`）— 自定义工具。
-- `LCToolAdapter`（位于 `agent_runner/langgraph_runner.py`，非 `adapters/`）— 将任意 `BaseAgentTool` 适配回 LangChain `BaseTool`，供 `LangGraphRunner` 内部使用；`registry` 经自有 `_adapt_tools` 接入，`supervisor` 经本地 `_adapt` 接入。
+- `LCToolAdapter`（位于 `agent_runner/tool_adapter.py`，PLAN-0473 迁入）— 将任意 `BaseAgentTool` 适配回 LangChain `BaseTool`，并承载共享 CP 事件 helper（D5 writer gate / bounded preview / append 失败台账）；registry 与 supervisor 均经 `agent_runner/graph_builder.py` 建图。
 
-LangChain 特定代码收敛到 `agent_runner/langgraph_runner.py` 和 `adapters/`（sse/approval/mcp_client）。
+LangChain 特定代码收敛到 `agent_runner/`（`langgraph_runner.py`、`tool_adapter.py`、`graph_builder.py`）和 `adapters/`（sse/approval/mcp_client）。
 
 ### 2.3 LLMProvider
 
@@ -117,7 +117,7 @@ flowchart TD
 | `tool.result` | 工具返回（PLAN-0381：以同一 call id 与声明配对；gate ON 恒写 `status`、OFF 仅非 completed 写 `failed`；`result` 为有界 preview 字符串或 `{preview,truncated,artifactRef?,sizeBytes?,status?,errorCode?}` 对象——工具失败先落 `status=failed` 闭合事件对再 re-raise；回放进模型的历史 tool 正文统一 ≤4096 字符） |
 | `context.source_changed` | AGENTS 等源变更（PLAN-0340：读模型改为 **L1 槽替换**，不再追加 history；失败 `status=failed` 清 L1） |
 | `epoch.started` / `epoch.replaced` | epoch 开始/替换 |
-| `runtime.state_cleared` | `AgentRunner.reset()` |
+| `runtime.state_cleared` | Runner 状态清理（PLAN-0473 勘误：`AgentRunner` 接口无 `reset()` 方法，该事件类型不在当前实现路径） |
 | `session.forked` | 会话 fork；child seed 用读模型 `messages` + 可选 SUM 初始化 child history，child EventStore sequence 为本地 cursor；忽略 source `at_sequence`（PLAN-0410 T3.6） |
 | `compaction.applied` | 上下文压缩——自动/overflow 触发，ChatRun-scoped（correlation=Run，PLAN-0410 §4）；PLAN-0341：`messages` 不再写入摘要，摘要仅 `epoch.system_messages`/`summary_hash` |
 | `compaction.manual_applied` | 上下文压缩——**手动触发（无 Run）**，branch-targeted：correlation 恒 NULL、branch 为 CP 校验的显式值（PLAN-0410 D7-B1=C）；payload 与应用语义同 `compaction.applied` |
@@ -231,14 +231,21 @@ if recover_ids:
 
 ## 6. 相关文件
 
+- `packages/agent/src/xihe_agent/main.py`（app composition root）
+- `packages/agent/src/xihe_agent/app_state.py`（共享单例/env 常量/纯 helper，PLAN-0473）
+- `packages/agent/src/xihe_agent/api/`（HTTP 路由按域分组，PLAN-0473）
 - `packages/agent/src/xihe_agent/interfaces/`
 - `packages/agent/src/xihe_agent/agent_runner/langgraph_runner.py`
+- `packages/agent/src/xihe_agent/agent_runner/tool_adapter.py`（`LCToolAdapter` + 共享事件 helper，PLAN-0473）
+- `packages/agent/src/xihe_agent/agent_runner/graph_builder.py`（`create_react_agent` 唯一归属，PLAN-0473）
 - `packages/agent/src/xihe_agent/context/`
 - `packages/agent/src/xihe_agent/adapters/`
 - `packages/agent/src/xihe_agent/llm/summarize.py`
 - `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/context/`
 
 ## 7. 相关 PLAN
+
+- PLAN-0473 Agent 模块边界与结构规范化（`api/`、`app_state.py`、`tool_adapter.py`、`graph_builder.py`；registry/supervisor 建图收敛）— 本节 §1/§2.2/§6
 
 - PLAN-0340 上下文源与注入（L1）
 - PLAN-0341 上下文管道与 prune（overflow/prune/SUM/熔断）— 本节 §3.1b
