@@ -15,7 +15,7 @@ const router = createRouter({
                 {
                     path: "",
                     name: "workspace-home",
-                    component: () => import("../components/workspace/WorkspaceView.vue"),
+                    component: () => import("../features/workspace/pages/WorkspaceView.vue"),
                 },
             ],
         },
@@ -27,17 +27,18 @@ const router = createRouter({
                 {
                     path: "",
                     name: "workspace",
-                    component: () => import("../components/workspace/WorkspaceView.vue"),
+                    component: () => import("../features/workspace/pages/WorkspaceView.vue"),
                 },
                 {
                     path: "chat/:sessionId",
                     name: "workspace-chat",
-                    component: () => import("../components/workspace/WorkspaceView.vue"),
+                    component: () => import("../features/workspace/pages/WorkspaceView.vue"),
                 },
                 {
                     path: "environment",
                     name: "workspace-environment",
-                    component: () => import("../views/workspace/WorkspaceEnvironmentView.vue"),
+                    component: () =>
+                        import("../features/workspace/pages/WorkspaceEnvironmentView.vue"),
                 },
             ],
         },

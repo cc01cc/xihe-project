@@ -1,0 +1,168 @@
+<script setup lang="ts">
+import { ref, onMounted, onBeforeUnmount } from "vue";
+import { ClipboardCopy, FilePlus, Trash2 } from "@lucide/vue";
+import { useWorkspaceStore } from "../stores/workspace";
+import { toast } from "vue-sonner";
+import ConfirmModal from "../../../components/shared/ConfirmModal.vue";
+import BaseModal from "../../../components/shared/BaseModal.vue";
+
+const props = defineProps<{
+    path: string;
+    nodeType: "file" | "directory";
+    x: number;
+    y: number;
+}>();
+
+const emit = defineEmits<{
+    close: [];
+}>();
+
+const ws = useWorkspaceStore(),
+    isDir = props.nodeType === "directory",
+    showDeleteModal = ref(false);
+const showNewFileModal = ref(false),
+    deleteLoading = ref(false),
+    newFileName = ref("");
+
+const menuRef = ref<HTMLElement | null>(null);
+
+onMounted(() => {
+    document.addEventListener("click", handleOutsideClick);
+});
+
+onBeforeUnmount(() => {
+    document.removeEventListener("click", handleOutsideClick);
+});
+
+function handleOutsideClick(e: MouseEvent) {
+    if (showDeleteModal.value || showNewFileModal.value) return;
+    if (menuRef.value && e.target instanceof Node && menuRef.value.contains(e.target)) return;
+    emit("close");
+}
+
+async function confirmDelete() {
+    deleteLoading.value = true;
+    try {
+        const deleted = await ws.deleteNode(props.path);
+        if (deleted) toast.success(`Deleted "${props.path}"`);
+        // deleteNode reports failures via treeError and returns false; no success toast.
+    } finally {
+        deleteLoading.value = false;
+        showDeleteModal.value = false;
+        emit("close");
+    }
+}
+
+function handleCopyPath() {
+    navigator.clipboard.writeText(props.path);
+    emit("close");
+}
+
+function handleDelete() {
+    showDeleteModal.value = true;
+}
+
+function handleNewFile() {
+    newFileName.value = "";
+    showNewFileModal.value = true;
+}
+
+async function confirmNewFile() {
+    const name = newFileName.value.trim();
+    if (!name) return;
+    const parentDir = isDir ? props.path : props.path.substring(0, props.path.lastIndexOf("/"));
+    const created = await ws.createFile(parentDir, name);
+    if (created) toast.success(`Created "${name}"`);
+    else toast.error(`Failed to create "${name}"`);
+    showNewFileModal.value = false;
+    emit("close");
+}
+</script>
+
+<template>
+    <div
+        ref="menuRef"
+        class="fixed z-50 min-w-40 py-1 rounded-lg border bg-popover text-popover-foreground shadow-md text-sm"
+        :style="{ left: `${x}px`, top: `${y}px` }"
+    >
+        <button
+            v-if="isDir"
+            class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-left"
+            @click="handleNewFile"
+        >
+            <FilePlus class="size-3.5" aria-hidden="true" />
+            New File
+        </button>
+        <button
+            class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-left"
+            @click="handleCopyPath"
+        >
+            <ClipboardCopy class="size-3.5" aria-hidden="true" />
+            Copy Path
+        </button>
+        <hr class="my-1 border-t" />
+        <button
+            class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-destructive text-left"
+            @click="handleDelete"
+        >
+            <Trash2 class="size-3.5" aria-hidden="true" />
+            Delete
+        </button>
+    </div>
+
+    <ConfirmModal
+        title="Confirm Delete"
+        :description="`Delete &quot;${props.path}&quot;? This action cannot be undone.`"
+        :show="showDeleteModal"
+        :loading="deleteLoading"
+        confirm-label="Delete"
+        destructive
+        @confirm="confirmDelete"
+        @close="
+            showDeleteModal = false;
+            emit('close');
+        "
+    />
+
+    <BaseModal
+        title="New File"
+        :show="showNewFileModal"
+        @close="
+            showNewFileModal = false;
+            emit('close');
+        "
+    >
+        <label class="text-sm text-muted-foreground">File name:</label>
+        <input
+            v-model="newFileName"
+            class="w-full mt-1 px-2 py-1 text-sm rounded border bg-background"
+            placeholder="e.g. index.ts"
+            autofocus
+            @keyup.enter="confirmNewFile"
+        />
+        <p
+            v-if="newFileName.trim() === '' && newFileName !== ''"
+            class="text-xs text-destructive mt-1"
+        >
+            Name cannot be empty
+        </p>
+        <div class="flex justify-end gap-2 mt-4">
+            <button
+                class="px-3 py-1.5 text-sm rounded border hover:bg-accent"
+                @click="
+                    showNewFileModal = false;
+                    emit('close');
+                "
+            >
+                Cancel
+            </button>
+            <button
+                class="px-3 py-1.5 text-sm rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                :disabled="!newFileName.trim()"
+                @click="confirmNewFile"
+            >
+                Create
+            </button>
+        </div>
+    </BaseModal>
+</template>

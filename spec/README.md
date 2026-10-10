@@ -51,7 +51,7 @@ spec/
 |---|---|---|---|---|---|---|
 | architecture / communication | proposed | partial | 跨边界 owner | UI、CP、Agent、Runtime | A03-xihe | PLAN-0385；Session 派生状态 SSE extension 顺序承接至 PLAN-0408；Runtime 运行拓扑见 `architecture/runtime-topology.md` |
 | ui interaction | proposed | partial | UI + 跨边界 owner | UI、CP、Agent、Session、Workspace | A03-xihe | PLAN-0388；PLAN-0384 仅负责 feature flow |
-| ui feature boundaries | proposed | partial | UI owner | UI features、router、tests | A03-xihe | PLAN-0472；仅冻结 UI code ownership/layout/dependency direction，不复制 wire schema |
+| architecture / UI feature boundaries | proposed | partial | UI owner | Workspace/Chat UI、Sidebar/Auth shell、router、tests | A03-xihe | PLAN-0472；Chat UI/ChatStore belongs to Workspace; Session/CP canonical unchanged |
 | agent execution / Context | proposed | partial | Agent owner | Agent、CP、Runtime、UI、Security | A03-xihe | PLAN-0387；PLAN-0381/0382 局部规范状态见其文件级消费者/来源字段 |
 | agent run guardrails（总览索引） | proposed | partial | Agent owner（索引 owner，不裁决跨域规则） | Agent、CP、Runtime、Security、UI、后续 XH PLAN | A03-xihe | PLAN-0429；只导航风险类别/执行层/实现状态，领域细则仍归各 owner SPEC |
 | session boundaries | proposed | partial | CP/Session owner | UI、CP/Session、Agent、Context、Workspace、Runtime/MCP | A03-xihe | PLAN-0387；Chat Session、ChatRun 与 MCP session 分开；fork/branch actions 见 PLAN-0409；派生协作 Inbox 见 PLAN-0408；Ledger 根行由 PLAN-0467 退役 |
@@ -88,6 +88,10 @@ PLAN-0385 已建立第一批架构/通信/事件/账本草案。它们仍为 `pr
 - [事件流](protocol/event-stream.md)
 - [MCP 通信边界](protocol/mcp.md)
 - [Operation Ledger (superseded by PLAN-0467)](data/operation-ledger.md)
+
+PLAN-0472 建立 UI 内部 feature module boundaries proposed 草案；Chat UI/ChatStore 归 Workspace Chat 子能力，Session/CP canonical owner 保持；只定义 UI code owner、目录组织和 feature dependency direction，不改 route/API/SSE/wire contract：
+
+- [UI Feature Boundaries](architecture/ui-feature-boundaries.md)
 
 PLAN-0386 已建立 Security proposed 草案；当前 User/JWT/USER-ADMIN 实现与 DEV-032 的 independent Agent principal 目标仍存在 gap，未标记 active：
 
@@ -136,10 +140,6 @@ PLAN-0388 已建立 UI interaction/design/accessibility proposed 草案；它们
 - [UI 交互模型](ui/interaction-model.md)
 - [UI 设计系统与状态表现](ui/design-system.md)
 - [UI 无障碍与键盘契约](ui/accessibility.md)
-
-PLAN-0472 已建立 UI feature boundaries proposed 草案；它冻结 UI feature source ownership、依赖方向与 Workspace 首期增量布局，不定义服务端状态或 wire schema：
-
-- [UI Feature Boundaries](ui/feature-boundaries.md)
 
 PLAN-0389 已建立 Workspace/Configuration proposed 草案；Workspace logical resource、execution binding、storage/checkpoint、import/events 和进程可见配置来源保持分层：
 

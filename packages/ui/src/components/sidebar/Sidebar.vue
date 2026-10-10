@@ -5,7 +5,7 @@ import { useI18n } from "vue-i18n";
 import { CircleUser, FolderTree, LogOut, PanelLeftClose, Plus, Settings } from "@lucide/vue";
 import { useAuthStore } from "../../stores/auth";
 import { toast } from "vue-sonner";
-import SessionList from "./SessionList.vue";
+import SessionList from "../../features/workspace/chat/components/SessionList.vue";
 import { workspacePath } from "../../lib/routes";
 
 const props = defineProps<{

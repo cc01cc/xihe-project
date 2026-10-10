@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
 import { useAuthStore } from "../auth";
 import { useAgentStore } from "../agent";
+import { useChatStore } from "../../features/workspace/chat/stores/chat";
 import type { User } from "../../types";
 import type * as apiModule from "../../composables/api";
 
@@ -88,6 +89,25 @@ describe("useAuthStore", () => {
         expect(store.error).toBeNull();
         expect(localStorage.getItem("xihe-token")).toBeNull();
         expect(localStorage.getItem("xihe-user")).toBeNull();
+    });
+
+    it("logout clears Workspace Chat cache", () => {
+        const auth = useAuthStore(),
+            chat = useChatStore();
+        auth.$patch({ token: "t", user: mockUser });
+        chat.addMessage(SESSION_ID, {
+            id: "cached-message",
+            sessionId: SESSION_ID,
+            role: "assistant",
+            content: "cached content",
+            timestamp: new Date().toISOString(),
+        });
+        chat.streamingMessageId[SESSION_ID] = "streaming-message";
+
+        auth.logout();
+
+        expect(chat.messages).toEqual({});
+        expect(chat.streamingMessageId).toEqual({});
     });
 
     it("logout clears pending approvals owned by the previous user", () => {

@@ -22,7 +22,7 @@ onMounted(async () => {
         try {
             await sessionStore.loadSessions();
         } catch {
-            // 拉取失败时由 ChatView 兜底
+            // 拉取失败不阻塞启动；错误已在 SessionStore 中记录
         }
     }
 });

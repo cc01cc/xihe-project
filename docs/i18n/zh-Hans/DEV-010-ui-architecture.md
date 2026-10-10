@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 10
 status: active
 created: 2026-09-03
-updated: 2026-10-06
+updated: 2026-10-10
 ---
 
 # DEV-010: UI 架构
@@ -29,21 +29,22 @@ updated: 2026-10-06
 
 | 路由 | 组件 | 说明 |
 |------|------|------|
-| `/` | redirect | → `/chat/default`，chat 是默认入口 |
-| `/chat/:sessionId`（父 `/chat`，`new`/空重定向到 `/chat/default`） | ChatView（AppLayout 内） | 全屏对话 |
-| `/workspace/:workspaceId?` | WorkspaceView（AppLayout 内） | 文件编辑器 + 内嵌对话；参数可选，兼容旧 `/workspace` 入口 |
+| `/` | redirect | → `/workspace` |
+| `/workspace` | WorkspaceView（AppLayout 内） | Workspace 首页 |
+| `/workspace/:workspaceId` | WorkspaceView（AppLayout 内） | 文件编辑器与 Workspace Chat；可处于无 Session 空态 |
+| `/workspace/:workspaceId/chat/:sessionId` | WorkspaceView（AppLayout 内） | 选中该 Workspace 内的 Session 并显示 Chat |
+| `/workspace/:workspaceId/environment` | WorkspaceEnvironmentView（AppLayout 内） | Workspace 执行环境 |
 
-两路由共用 `AppLayout`（侧边栏 + 全局状态一致）。Chat 用 `sessionId`，Workspace 用 `workspaceId`，禁止互充（PLAN-222）。
+所有 Workspace 路由共用 `AppLayout`。Chat 是 Workspace feature 内的 Session 视图，不再有独立 `/chat` 路由；旧的未匹配路径回退到 `/workspace`。Session id 不能替代 Workspace id（PLAN-222）。
 
 ## 2. 视图分层
 
-- **ChatView**（`components/chat/ChatView.vue`）：全屏 chat，含标题栏；内嵌 `ChatPanel :session-id`；挂载时从后端加载历史消息。
-- **WorkspaceView**（`components/workspace/WorkspaceView.vue`）：左文件树（`w-60`，`FileTree` + reka-ui `TreeRoot/TreeItem` 受控 expanded）+ 中编辑器/工具栏 + 右 `ChatPanel`（`w-96` 固定宽）；创建入口统一为 `WorkspaceCreateDialog`（PLAN-0384：空态入口 + 工具栏「添加 Workspace」共用同一弹窗）。流程 = 存储方式（托管副本/直接使用目录）→ 仅 direct-attach 走 Runtime-visible source browser 选目录 → 真实 capability 预检驱动的执行模式卡片（MXC experimental / windows-host 高风险 / docker 后置禁用）→ 确认摘要与宿主风险确认 → 创建（`Idempotency-Key`）。托管副本 v1 仅文件导入（Docker 执行后置），不提供执行模式选择；`WorkspaceSettingsDialog`（改名/PATCH、删除/DELETE + 二次确认）；移动端（<768px）为独立 IA（§7：树 Sheet + Chat 底部抽屉）。
-- **ChatPanel**（`components/chat/ChatPanel.vue`）：唯一可嵌入对话组件（消息列表 + 输入框 + SSEStream）；接收 `sessionId` prop；附件写入入口 `handleSend`。
-- **FollowUpQueuePanel**（`components/chat/FollowUpQueuePanel.vue`，PLAN-0442）：ChatPanel 内联的 durable Follow-up 队列面，纯 snapshot 驱动——FIFO 计数（含硬上限 5）、逐项撤回、整队暂停时的 Continue、容量 footer；admitted child 不提供撤回，attempted `child_ambiguous` completed 项以消息状态回显。Run 进行中 `InputArea` 以 `chat-queue-button` 提供显式「排队」（`POST /api/v1/sessions/{sessionId}/follow-ups`，带 Idempotency-Key），与普通发送语义区分——队列未清空时普通发送由 CP 409 拒绝。刷新/重连后由 snapshot 恢复，不依赖 SSE 内存态；设计预览与用户视觉批准见 `plans/PLAN-0442-XH-run-guidance-follow-up/design.md` 决策 #24。
-- **WorkspaceToolbar**：Session 下拉（保留 workspace route 切换）+ 「切换回 chat」按钮 + Environment 入口 + Workspace settings 入口 + 上传/刷新。
-- **FileNodeMenu**（`components/workspace/FileNodeMenu.vue`）：reka-ui `ContextMenu` 封装；文件：Rename/Move/Duplicate/Copy Path/Delete；目录：New File/New Directory/Rename/Move；文本走 `write_file` MCP，二进制走 `POST /api/v1/files/upload` FormData（PLAN-262 M0/B-3）。
-- **Sidebar**：「New Chat」创建 Session；Session 列表点击跳 `/chat/:sessionId`；「Workspace」按钮跳 `/workspace/:currentWorkspaceId`（缺失时 fail-closed）。
+- **WorkspaceView**（`features/workspace/pages/WorkspaceView.vue`）：左文件树（`w-60`，`FileTree` + reka-ui `TreeRoot/TreeItem` 受控 expanded）+ 中编辑器/工具栏 + 右 `ChatPanel`；有选中 Session 时挂载 Chat，否则显示创建 Session 空态。Workspace 创建入口统一为 `WorkspaceCreateDialog`（PLAN-0384：空态入口 + 工具栏「添加 Workspace」共用同一弹窗）。流程 = 存储方式（托管副本/直接使用目录）→ 仅 direct-attach 走 Runtime-visible source browser 选目录 → 真实 capability 预检驱动的执行模式卡片（MXC experimental / windows-host 高风险 / docker 后置禁用）→ 确认摘要与宿主风险确认 → 创建（`Idempotency-Key`）。托管副本 v1 仅文件导入（Docker 执行后置），不提供执行模式选择；`WorkspaceSettingsDialog`（改名/PATCH、删除/DELETE + 二次确认）；移动端（<768px）为独立 IA（§7：树 Sheet + Chat 底部抽屉）。
+- **ChatPanel**（`features/workspace/chat/components/ChatPanel.vue`）：Workspace Chat 的内嵌对话组件（消息列表 + 输入框 + SSEStream）；接收 `sessionId` prop；附件写入入口 `handleSend`。
+- **FollowUpQueuePanel**（`features/workspace/chat/components/FollowUpQueuePanel.vue`，PLAN-0442）：ChatPanel 内联的 durable Follow-up 队列面，纯 snapshot 驱动——FIFO 计数（含硬上限 5）、逐项撤回、整队暂停时的 Continue、容量 footer；admitted child 不提供撤回，attempted `child_ambiguous` completed 项以消息状态回显。Run 进行中 `InputArea` 以 `chat-queue-button` 提供显式「排队」（`POST /api/v1/sessions/{sessionId}/follow-ups`，带 Idempotency-Key），与普通发送语义区分——队列未清空时普通发送由 CP 409 拒绝。刷新/重连后由 snapshot 恢复，不依赖 SSE 内存态；设计预览与用户视觉批准见 `plans/PLAN-0442-XH-run-guidance-follow-up/design.md` 决策 #24。
+- **WorkspaceToolbar**：Session 下拉（保留 workspace route 切换）+ Environment 入口 + Workspace settings 入口 + 上传/刷新。
+- **FileNodeMenu**（`features/workspace/components/FileNodeMenu.vue`）：reka-ui `ContextMenu` 封装；文件：Rename/Move/Duplicate/Copy Path/Delete；目录：New File/New Directory/Rename/Move；文本走 `write_file` MCP，二进制走 `POST /api/v1/files/upload` FormData（PLAN-262 M0/B-3）。
+- **Sidebar**：「New Chat」在当前 Workspace 打开创建 Session 流程；Session 列表点击跳 `/workspace/:workspaceId/chat/:sessionId`；「Workspace」按钮跳 `/workspace/:currentWorkspaceId`（缺失时 fail-closed）。
 
 ## 3. 五组件族
 
@@ -80,9 +81,9 @@ flowchart LR
 ```
 
 - **chatTransport**（`services/chatTransport.ts`）：按 `sessionId` 单飞连接（`connectionGeneration` + `intentionalStops`）；`onerror` 指数退避（250ms 起，上限 5s）；`onclose` 调度重连（无次数上限，`intentionalStops` 才停）；401 清 token 跳 `/login`。
-- **useSSE**（`composables/useSSE.ts`，返回 `connect/disconnect/sendMessage`，未提供连接确保方法）：发送前由 `SSEStream` 手工确认连接（未连则 `connectSession` + 等待）；CP 侧 409（`SSE_SUBSCRIPTION_REQUIRED` / `CHAT_IN_PROGRESS`）由调用方处理，UI 无自动 409 重试分支。
+- **useSSE**（`features/workspace/chat/composables/useSSE.ts`，返回 `connect/disconnect/sendMessage`，未提供连接确保方法）：发送前由 `SSEStream` 手工确认连接（未连则 `connectSession` + 等待）；CP 侧 409（`SSE_SUBSCRIPTION_REQUIRED` / `CHAT_IN_PROGRESS`）由调用方处理，UI 无自动 409 重试分支。
 - **SSEStream**：带 hint（`reasoning`/`text`）的 token 走 `chatStore.appendToParts` 追加；无 hint 时经 `useStreamParser.handleToken` 再 `replaceStreamingParts` 整量替换；`done` 仅结束 run；`heartbeat` 15s 不进业务气泡。
-- **useStreamParser**（`composables/`）：token 实时分类为 `MessagePart[]`（`text`/`reasoning`/`citation`/`artifact`）；`Message.parts` 替代旧 `marked`；代码渲染经 `MarkstreamCodeBlockAdapter` + `parts/TextPart`。
+- **useStreamParser**（`features/workspace/chat/composables/useStreamParser.ts`）：token 实时分类为 `MessagePart[]`（`text`/`reasoning`/`citation`/`artifact`）；`Message.parts` 替代旧 `marked`；代码渲染经 `MarkstreamCodeBlockAdapter` + `parts/TextPart`。
 
 ### 4.1 Workspace 级事件 SSE（PLAN-0350）
 
@@ -101,7 +102,7 @@ flowchart LR
 
 ## 6. ChatRun 与 toolMode
 
-`ChatPanel` 默认使用 `toolMode=none`；`ChatView` 不提供工具总开关，`WorkspaceView` 才显式传入 `toolMode=workspace`。`SSEStream` 将 `provider`、`model`、`toolMode` 和新的 `Idempotency-Key` 一并提交。
+`ChatPanel` 默认使用 `toolMode=none`；WorkspaceView 显式传入 `toolMode=workspace`。`SSEStream` 将 `provider`、`model`、`toolMode` 和新的 `Idempotency-Key` 一并提交。Chat UI、ChatStore 和 Chat 生命周期 UI 适配位于 `features/workspace/chat/`；SessionStore 与 CP canonical Session/Message/ChatRun lifecycle 不随 UI feature 迁移。
 
 发送状态分为 transport run 与 assistant content 两层：CP 返回 `runId` 后才加入 user message，首个 token/reasoning/artifact 才创建 assistant。`error`、`partial`、`ambiguous` 会结束发送态并保留可恢复状态；空 assistant 直接移除，inline error 与 Toast 使用同一 payload。
 
@@ -110,8 +111,8 @@ flowchart LR
 移动端（`<768px`，Tailwind `md:` 断点）不是桌面三栏的响应式压缩，而是独立信息架构：
 
 - **单栏栈**：顶栏汉堡按钮（唤出文件树 Sheet）+ 面包屑 + Environment 入口；编辑器全屏；桌面左右栏 `hidden md:flex` 隐藏。
-- **文件树**：`Sheet side="left"` 全高抽屉（`MobileWorkspaceSheet.vue`），树组件与桌面共用 `FileTree`（同一 store/受控 expanded）。
-- **Chat**：底部抽屉（`MobileChatSheet.vue`，`Sheet side="bottom"` `h-[75vh]`）+ 右下角浮动 Chat 按钮；与桌面 `ChatPanel` 共用 Session store。
+- **文件树**：`Sheet side="left"` 全高抽屉（`features/workspace/components/MobileWorkspaceSheet.vue`），树组件与桌面共用 `FileTree`（同一 store/受控 expanded）。
+- **Chat**：底部抽屉（`features/workspace/components/MobileChatSheet.vue`，`Sheet side="bottom"` `h-[75vh]`）+ 右下角浮动 Chat 按钮；与桌面 ChatPanel 共用 Session store。
 - **右键菜单**：移动端长按触发 ContextMenu（reka-ui 原生语义），复杂操作走底部操作 Sheet。
 - **弹窗**：Create/Settings/Prepare 在移动端全屏 Sheet 化（`SheetContent side="bottom"`）。
 - **验收**：桌面 1440 为 M3/M4 Visual 基线；移动 390px 独立 Playwright viewport + 截图验收（PLAN-262 §5.1）。

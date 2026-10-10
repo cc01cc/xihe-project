@@ -6,7 +6,12 @@ import {
     ensureAgentWorkspaceBinding,
     getRootBranchId,
     sendChat,
+    waitForControlPlaneAgentReady,
 } from "./helpers/journey";
+import {
+    createWorkspaceSessionWithPrincipal,
+    provisionWorkspaceAgentPrincipal,
+} from "./helpers/agent-principal";
 import { test, expect } from "@playwright/test";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
@@ -27,7 +32,7 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
     test("A1/A2/A3: create file via write_file — approve lands FS; reject leaves FS unchanged", async ({
         page,
         request,
-    }) => {
+    }, testInfo) => {
         // PLAN-0369: the deterministic write_file tool call only exists in the
         // fake-LLM `write_file` marker mode; the built-in `mock` provider answers
         // with plain text, so this flow can never produce an approval modal there.
@@ -48,15 +53,24 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
         );
         const auth = await reg.json(),
             authToken: string = auth.accessToken,
-            wsId: string = auth.workspaceId;
-        const authHeaders = {
-            Authorization: `Bearer ${authToken}`,
-            "Content-Type": "application/json",
-        };
+            wsId: string = auth.workspaceId,
+            principalId = await provisionWorkspaceAgentPrincipal(
+                request,
+                { accessToken: authToken, workspaceId: wsId },
+                { name: `Journey A ${Date.now()}`, actions: ["read", "write"] },
+            ),
+            authHeaders = {
+                Authorization: `Bearer ${authToken}`,
+                "Content-Type": "application/json",
+            };
 
         // PLAN-0369: the Agent owns one MCP workspace per process — rebind it to
         // this spec's fresh workspace before the first workspace-tool chat.
         await ensureAgentWorkspaceBinding(wsId);
+        await waitForControlPlaneAgentReady(request, {
+            Authorization: `Bearer ${authToken}`,
+            "X-Workspace-Id": wsId,
+        });
 
         await page.addInitScript((t) => localStorage.setItem("xihe-token", t), authToken);
         await page.addInitScript(
@@ -74,8 +88,11 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
             rejectFile = `journey-a-reject-${Date.now()}.md`;
 
         await page.goto("/workspace/" + wsId, { waitUntil: "load" });
-        const chatInput = page.locator('[data-testid="chat-input"]');
+        await expect(page.getByTestId("workspace-create-session")).toBeVisible({ timeout: 20000 });
+        const sessionId = await createWorkspaceSessionWithPrincipal(page, principalId),
+            chatInput = page.locator('[data-testid="chat-input"]');
         await expect(chatInput).toBeVisible({ timeout: 20000 });
+        await expect(page).toHaveURL(new RegExp(`/workspace/${wsId}/chat/${sessionId}$`));
         const modal = page.locator('[data-testid="modal-content"]');
 
         // --- A1+A2: approve write_file → FS change ---
@@ -85,7 +102,10 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
         await expect(modal, "approval modal for write_file").toBeVisible({ timeout: 120000 });
         // Path preview should appear; avoid asserting secret material.
         await expect(modal).toContainText(approveFile, { timeout: 10000 });
-        await page.screenshot({ path: "journey-a-approve-modal.png", fullPage: false });
+        await page.screenshot({
+            path: testInfo.outputPath("journey-a-approve-modal.png"),
+            fullPage: false,
+        });
         await modal.locator('[data-testid="approval-approve"]').click();
         await expect(modal).toBeHidden({ timeout: 20000 });
 
@@ -106,7 +126,14 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
                 },
             )
             .toContain(approveContent);
-        await page.screenshot({ path: "journey-a-after-approve.png", fullPage: false });
+        await expect(
+            page.getByRole("treeitem", { name: approveFile, exact: true }),
+            "Workspace Chat write_file result appears in the file tree without a page reload",
+        ).toBeVisible({ timeout: 20000 });
+        await page.screenshot({
+            path: testInfo.outputPath("journey-a-after-approve.png"),
+            fullPage: false,
+        });
 
         // A5: the MCP invocation domain owns the durable tool-call history.
         let writeInvocationId = "";
@@ -154,7 +181,10 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
             page.locator("text=APPROVAL_REJECTED").first(),
             "terminal APPROVAL_REJECTED visible",
         ).toBeVisible({ timeout: 60000 });
-        await page.screenshot({ path: "journey-a-after-reject.png", fullPage: false });
+        await page.screenshot({
+            path: testInfo.outputPath("journey-a-after-reject.png"),
+            fullPage: false,
+        });
 
         expect(
             existsSync(path.join(hostDir, rejectFile)),
@@ -201,9 +231,19 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
         });
         expect([200, 201]).toContain(reg.status());
         const auth = await reg.json(),
-            wsId: string = auth.workspaceId;
+            wsId: string = auth.workspaceId,
+            authToken: string = auth.accessToken,
+            principalId = await provisionWorkspaceAgentPrincipal(
+                request,
+                { accessToken: authToken, workspaceId: wsId },
+                { name: `Journey A Expiry ${Date.now()}`, actions: ["read", "write"] },
+            );
 
         await ensureAgentWorkspaceBinding(wsId);
+        await waitForControlPlaneAgentReady(request, {
+            Authorization: `Bearer ${authToken}`,
+            "X-Workspace-Id": wsId,
+        });
 
         await page.addInitScript((t) => localStorage.setItem("xihe-token", t), auth.accessToken);
         await page.addInitScript(
@@ -216,6 +256,7 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
         );
 
         await page.goto("/workspace/" + wsId, { waitUntil: "load" });
+        await createWorkspaceSessionWithPrincipal(page, principalId);
         const textarea = page.locator("textarea");
         await expect(textarea).toBeVisible({ timeout: 20000 });
         const modal = page.locator('[data-testid="modal-content"]'),

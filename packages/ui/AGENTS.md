@@ -12,9 +12,8 @@
 
 ## 目录与命令
 
-- `src/components/`：可复用 UI、Chat、Workspace、设置组件。
-- `src/composables/`：API、SSE 与交互 composables。
-- `src/stores/`：Pinia stores；`src/types/`：跨层类型；`src/i18n/`：本地化。
+- `src/features/workspace/`：Workspace 页面、组件、状态与交互；`src/features/workspace/chat/`：Workspace Chat UI、ChatStore、Session 列表与 Chat SSE composables。
+- `src/components/`、`src/composables/`、`src/stores/`：跨 feature 共享 UI、composables 与状态；`src/types/`：跨层类型；`src/i18n/`：本地化。
 - `src/**/__tests__/`：Vitest 单元测试；`e2e/mock/`：Mock E2E；`e2e/real/`：真实链路 E2E。
 - UI 是 XH 唯一 pnpm 包；`pnpm-workspace.yaml`、pnpm 安全策略和唯一 lock 都归本目录。运行 `pnpm install` 或通过 `mise` UI 任务使用该包根；不要加 `--ignore-workspace`。
 
@@ -23,7 +22,7 @@ Session/ChatRun、Workspace Job、MCP invocation、Agent 可见状态及 UI 交�
 在本目录执行聚焦验证：
 
 ```bash
-pnpm run test:unit -- src/components/__tests__/ApprovalModal.spec.ts
+pnpm run test:unit -- src/features/workspace/chat/__tests__/ChatPanel.spec.ts
 pnpm run typecheck
 pnpm run lint
 pnpm run build

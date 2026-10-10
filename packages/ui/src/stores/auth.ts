@@ -3,7 +3,7 @@ import { ref, computed } from "vue";
 import { api, type ApiWorkspace } from "../composables/api";
 import { logger } from "../lib/logger";
 import { useSessionStore } from "./session";
-import { useChatStore } from "./chat";
+import { clearWorkspaceChatForUserSwitch } from "../features/workspace/chat/lifecycle";
 import { useConfigStore } from "./config";
 import { useAgentStore } from "./agent";
 import { usePolicyStore } from "./policy";
@@ -113,10 +113,12 @@ export const useAuthStore = defineStore("auth", () => {
             // Pinia not yet initialised — store will start fresh on next access.
         }
         try {
-            const chatStore = useChatStore();
-            chatStore.clearForUserSwitch();
-        } catch {
-            // Pinia not yet initialised — store will start fresh on next access.
+            clearWorkspaceChatForUserSwitch();
+        } catch (error) {
+            logger.warn("Failed to clear Workspace Chat cache during user switch", {
+                error: String(error),
+            });
+            // Preserve the existing fail-soft auth lifecycle; the cleanup failure is logged.
         }
         try {
             const configStore = useConfigStore();

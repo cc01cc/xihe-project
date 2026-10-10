@@ -6,7 +6,7 @@ import router from "./router";
 import { i18n } from "./i18n";
 import { logger } from "./lib/logger";
 import { setCustomComponents, setKaTeXWorker } from "markstream-vue";
-import MarkstreamCodeBlockAdapter from "./components/chat/MarkstreamCodeBlockAdapter.vue";
+import MarkstreamCodeBlockAdapter from "./features/workspace/chat/components/MarkstreamCodeBlockAdapter.vue";
 import "./styles/main.css";
 
 const pinia = createPinia();

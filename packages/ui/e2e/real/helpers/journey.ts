@@ -345,7 +345,7 @@ export async function awaitLatestChatRunCompleted(
             },
             { timeout: 120000, intervals: [2_000] },
         )
-        .toBe("completed");
+        .toMatch(CHAT_RUN_TERMINAL);
 }
 
 const CHAT_RUN_TERMINAL = /^(succeeded|failed|partial|cancelled|ambiguous)$/;

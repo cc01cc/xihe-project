@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 status: active
 sidebar_order: 17
 created: 2026-09-03
-updated: 2026-10-08
+updated: 2026-10-10
 ---
 
 # DEV-017: Session 架构
@@ -78,9 +78,9 @@ ChatRun 通过 `runId` 关联 Message，服务端返回的 `runStatus`、`termin
 
 ## 2. Store 职责边界（选项 B：共享 + 视图分离）
 
-- **useSessionStore**（`stores/session.ts`，跨视图）：`sessions`、`currentSessionId`、`searchQuery`、附件本地视图、`fileContext`；独占创建/删除/重命名 Session；`setFileContext`/`setSessionAgents`/`setRAGContext`/`setMCPContext`。
-- **useChatStore**（`stores/chat.ts`，视图层）：按 Session 分组 `messages`、branch list/selected branch 与 `streamingMessageId`；`getMessages/addMessage/addMarker`；branch selector 是 UI path 状态，不是授权事实；流式三件套 `createStreamingMessage` / `replaceStreamingParts`（整量替换 MessagePart[]，PLAN-230）/ `finalizeStreaming`；不存 Session 元数据与 Agent/RAG/MCP 配置。
-- **useWorkspaceStore**（`stores/workspace.ts`，视图层）：`fileTree`、`expandedPaths`、`openFiles`、`activeFilePath`、`uploadQueue`；可选地通过 `syncActiveFileToSession()` 回写当前 Session 的文件上下文；不存 Session 元数据。没有当前 Session 时，Workspace 文件操作和 Workspace 事件订阅仍可工作，不能伪造 Session。文件变更操作（`renameNode/moveNode/duplicateNode/createDirectory`）返回 `Promise<boolean>`，调用方按结果分支 toast（禁假成功，PLAN-262 M1/B-2）；`refreshAfterMutation` 保持展开态；上传按 MIME 分派（文本 `write_file` MCP / 二进制 `POST /api/v1/files/upload`，PLAN-262 M0/B-3）。v1 无导入入口。
+- **useSessionStore**（`stores/session.ts`，跨 feature）：`sessions`、`currentSessionId`、`searchQuery`、附件本地视图、`fileContext`；独占 Session 的 UI-side 创建/删除/重命名与当前选择；`setFileContext`/`setSessionAgents`/`setRAGContext`/`setMCPContext`。CP 仍拥有 canonical Session/Message/ChatRun lifecycle 与 durable records。
+- **useChatStore**（`features/workspace/chat/stores/chat.ts`，Workspace Chat UI 视图层）：按 Session 分组 `messages`、branch list/selected branch 与 `streamingMessageId`；`getMessages/addMessage/addMarker`；branch selector 是 UI path 状态，不是授权事实；流式三件套 `createStreamingMessage` / `replaceStreamingParts`（整量替换 MessagePart[]，PLAN-230）/ `finalizeStreaming`；不存 Session 元数据与 Agent/RAG/MCP 配置，也不拥有 CP durable lifecycle。
+- **useWorkspaceStore**（`features/workspace/stores/workspace.ts`，Workspace feature 视图层）：`fileTree`、`expandedPaths`、`openFiles`、`activeFilePath`、`uploadQueue`；可选地通过 `syncActiveFileToSession()` 回写当前 Session 的文件上下文；不存 Session 元数据。没有当前 Session 时，Workspace 文件操作和 Workspace 事件订阅仍可工作，不能伪造 Session。文件变更操作（`renameNode/moveNode/duplicateNode/createDirectory`）返回 `Promise<boolean>`，调用方按结果分支 toast（禁假成功，PLAN-262 M1/B-2）；`refreshAfterMutation` 保持展开态；上传按 MIME 分派（文本 `write_file` MCP / 二进制 `POST /api/v1/files/upload`，PLAN-262 M0/B-3）。v1 无导入入口。
 
 ## 3. 跨 Store 同步
 
@@ -90,8 +90,8 @@ ChatRun 通过 `runId` 关联 Message，服务端返回的 `runStatus`、`termin
 
 ## 4. 视图嵌入与切换约定
 
-- `ChatPanel` 是唯一允许的内嵌对话组件（消息列表 + 输入框 + SSEStream，无全屏布局头）；`ChatView` 与 `WorkspaceView` 共用其消息流逻辑，禁止别处直接嵌入 `ChatView`。
-- 视图切换约定：chat→workspace 经 Sidebar Workspace 按钮（`/workspace/:workspaceId`，缺失时不跳转）；Workspace 路由可以没有 Session；workspace→chat 时选择已有 Session 或创建 Session，不把 Workspace 切换误写成 Session 切换；WorkspaceToolbar 的 Session 下拉切换 Session 时保留 workspace route。
+- `ChatPanel`（`features/workspace/chat/components/ChatPanel.vue`）是 Workspace Chat 的内嵌对话组件（消息列表 + 输入框 + SSEStream，无全屏布局头）；全屏 `ChatView` 已移除，不从其他 feature 直接嵌入 Chat UI。
+- 视图切换约定：Workspace 是默认入口；Sidebar「New Chat」在当前 Workspace 通过 Agent principal picker 创建 Session；Workspace 路由可以没有 Session，选中后 route 为 `/workspace/:workspaceId/chat/:sessionId`。WorkspaceToolbar 的 Session 下拉切换 Session 时保留 Workspace route，不把 Workspace 切换误写成 Session 切换。
 - 消息历史一律经 `chatStore.getMessages(sessionId)` 读取，跨视图一致；附件经 `currentSessionAttachments` 共享。
 - 路由表与组件分层见 DEV-010 §1-2；SSE 传输层见 DEV-010 §4。
 

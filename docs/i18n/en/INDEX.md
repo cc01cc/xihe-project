@@ -15,6 +15,7 @@ General-purpose Agent tool platform.
 - [DEV-001: System Architecture](DEV-001-system-architecture.md)
 - [DEV-002: Developer Guide](DEV-002-developer-guide.md)
 - [DEV-004: Logging](DEV-004-logging.md)
+- [DEV-010: UI Architecture](DEV-010-ui-architecture.md)
 - [DEV-011: UI Visual Checklist](DEV-011-ui-checklist.md)
 - [DEV-016: MCP Architecture](DEV-016-mcp-architecture.md)
 - [DEV-017: Session Views Design (superseded)](DEV-017-session-architecture.md)
