@@ -49,8 +49,8 @@ test.describe("Chat — Interaction & UI States", () => {
         page,
     }) => {
         test.setTimeout(90000);
-        const textarea = page.locator("textarea");
-        const scroller = page.locator('[data-testid="message-scroller-viewport"]');
+        const textarea = page.locator("textarea"),
+            scroller = page.locator('[data-testid="message-scroller-viewport"]');
         const anchorBtn = page.locator('[data-testid="message-scroller-button"]');
 
         for (let i = 0; i < 12; i++) {
@@ -87,8 +87,8 @@ test.describe("Chat — Interaction & UI States", () => {
     test("user message with markdown table and code renders inside bubble bounds", async ({
         page,
     }) => {
-        const md = "```js\nconst x = 1\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |";
-        const textarea = page.locator("textarea");
+        const md = "```js\nconst x = 1\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |",
+            textarea = page.locator("textarea");
         await textarea.fill(md);
         await page.keyboard.press("Enter");
 

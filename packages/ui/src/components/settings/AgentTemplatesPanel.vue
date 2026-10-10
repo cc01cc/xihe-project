@@ -26,26 +26,26 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const actions = ["read", "write", "delete", "exec", "network", "credential"];
-const roles = ref<Role[]>([]);
-const templates = ref<Template[]>([]);
-const selectedTemplateId = ref("");
-const roleName = ref("");
-const rolePermissions = ref<Permission[]>([]);
-const editingRoleId = ref("");
-const name = ref("");
-const description = ref("");
-const systemPrompt = ref("");
-const toolMode = ref<"none" | "workspace">("none");
-const provider = ref("");
-const model = ref("");
-const roleId = ref("");
-const error = ref("");
-const malformedConfig = ref(false);
-const success = ref("");
-const pendingDeleteId = ref("");
-const pendingPayload = ref<Record<string, string> | null>(null);
-const pendingSuccess = ref("");
+const actions = ["read", "write", "delete", "exec", "network", "credential"],
+    roles = ref<Role[]>([]);
+const templates = ref<Template[]>([]),
+    selectedTemplateId = ref(""),
+    roleName = ref("");
+const rolePermissions = ref<Permission[]>([]),
+    editingRoleId = ref(""),
+    name = ref(""),
+    description = ref("");
+const systemPrompt = ref(""),
+    toolMode = ref<"none" | "workspace">("none"),
+    provider = ref(""),
+    model = ref("");
+const roleId = ref(""),
+    error = ref(""),
+    malformedConfig = ref(false),
+    success = ref(""),
+    pendingDeleteId = ref("");
+const pendingPayload = ref<Record<string, string> | null>(null),
+    pendingSuccess = ref("");
 const pendingKind = ref<"template-save" | "template-delete" | "role-save" | "role-delete" | null>(
     null,
 );

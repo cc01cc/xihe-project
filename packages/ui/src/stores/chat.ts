@@ -22,17 +22,17 @@ export const useChatStore = defineStore("chat", () => {
     // Messages are not business data we should resurrect from localStorage.
     // The server is the canonical source via /api/v1/sessions/{id}/messages,
     // and the session store + chat store are cleared on user switch / logout.
-    const messages = ref<Record<string, Message[]>>({});
-    const streamingMessageId = ref<Record<string, string | null>>({});
-    const sessionRunStates = ref<Record<string, ChatSessionRunState>>({});
+    const messages = ref<Record<string, Message[]>>({}),
+        streamingMessageId = ref<Record<string, string | null>>({}),
+        sessionRunStates = ref<Record<string, ChatSessionRunState>>({});
     // PLAN-0343: last run-terminal usage snapshot per session (CP relays the
     // mapped usage event once per run). Not persisted across reloads — the
     // llm.usage ContextEvent is durable; the header line is live-run visibility.
-    const sessionLastUsage = ref<Record<string, ChatRunUsage>>({});
-    const sessionBranches = ref<Record<string, ApiSessionBranch[]>>({});
-    const selectedBranchIds = ref<Record<string, string>>({});
-    const branchVersions = new Map<string, number>();
-    const branchLoadPromises = new Map<string, Promise<ApiSessionBranch[]>>();
+    const sessionLastUsage = ref<Record<string, ChatRunUsage>>({}),
+        sessionBranches = ref<Record<string, ApiSessionBranch[]>>({}),
+        selectedBranchIds = ref<Record<string, string>>({}),
+        branchVersions = new Map<string, number>(),
+        branchLoadPromises = new Map<string, Promise<ApiSessionBranch[]>>();
 
     function getMessages(sessionId: string): Message[] {
         return messages.value[sessionId] ?? [];
@@ -50,8 +50,8 @@ export const useChatStore = defineStore("chat", () => {
         sessionBranches.value[sessionId] = branches;
         const selected = selectedBranchIds.value[sessionId];
         if (selected && branches.some((branch) => branch.branchId === selected)) return;
-        const root = branches.find((branch) => branch.parentBranchId === null);
-        const fallback = root ?? branches[0];
+        const root = branches.find((branch) => branch.parentBranchId === null),
+            fallback = root ?? branches[0];
         if (fallback) selectedBranchIds.value[sessionId] = fallback.branchId;
         else delete selectedBranchIds.value[sessionId];
     }
@@ -197,18 +197,18 @@ export const useChatStore = defineStore("chat", () => {
             if (branchId !== undefined) existing.branchId = branchId;
             return existing.id;
         }
-        const id = crypto.randomUUID();
-        const message: Message = {
-            id,
-            sessionId,
-            role: "assistant",
-            content: "",
-            timestamp: new Date().toISOString(),
-            isStreaming: true,
-            runId,
-            branchId,
-            runStatus: "streaming",
-        };
+        const id = crypto.randomUUID(),
+            message: Message = {
+                id,
+                sessionId,
+                role: "assistant",
+                content: "",
+                timestamp: new Date().toISOString(),
+                isStreaming: true,
+                runId,
+                branchId,
+                runStatus: "streaming",
+            };
         addMessage(sessionId, message);
         streamingMessageId.value[sessionId] = id;
         setSessionRunState(sessionId, "thinking", runId);
@@ -225,8 +225,8 @@ export const useChatStore = defineStore("chat", () => {
      * message is created on demand.
      */
     function upsertToolCall(sessionId: string, call: ToolCallUpsert) {
-        const messageId = streamingMessageId.value[sessionId] ?? createStreamingMessage(sessionId);
-        const message = messages.value[sessionId]?.find((msg) => msg.id === messageId);
+        const messageId = streamingMessageId.value[sessionId] ?? createStreamingMessage(sessionId),
+            message = messages.value[sessionId]?.find((msg) => msg.id === messageId);
         if (!message) return;
 
         if (!message.toolCalls) {
@@ -260,8 +260,8 @@ export const useChatStore = defineStore("chat", () => {
         const messageId = streamingMessageId.value[sessionId];
         if (!messageId) return;
 
-        const msgs = messages.value[sessionId];
-        const message = msgs?.find((msg) => msg.id === messageId);
+        const msgs = messages.value[sessionId],
+            message = msgs?.find((msg) => msg.id === messageId);
         if (!message) return;
 
         if (!message.parts) {
@@ -420,10 +420,12 @@ export const useChatStore = defineStore("chat", () => {
             // Tool cards are renderable content: keep a tool-only bubble (with its
             // diagnostics) alive, but only assistant text counts as "partial".
             const hasTextContent = Boolean(
-                message.content ||
-                message.parts?.some((part) => part.type !== "citation" && Boolean(part.content)),
-            );
-            const hasRenderableContent = hasTextContent || Boolean(message.toolCalls?.length);
+                    message.content ||
+                    message.parts?.some(
+                        (part) => part.type !== "citation" && Boolean(part.content),
+                    ),
+                ),
+                hasRenderableContent = hasTextContent || Boolean(message.toolCalls?.length);
             if (!hasRenderableContent) {
                 messages.value[sessionId] = messages.value[sessionId].filter(
                     (msg) => msg.id !== messageId,
@@ -438,8 +440,8 @@ export const useChatStore = defineStore("chat", () => {
             message.error = error.detail;
             message.retryable = error.retryable ?? true;
             message.runId = error.runId ?? message.runId;
-            const ambiguous = error.outcome === "ambiguous";
-            const partial = !ambiguous && (hasTextContent || error.outcome === "partial");
+            const ambiguous = error.outcome === "ambiguous",
+                partial = !ambiguous && (hasTextContent || error.outcome === "partial");
             message.runStatus = ambiguous ? "ambiguous" : partial ? "partial" : "failed";
             message.terminalOutcome = ambiguous ? "ambiguous" : partial ? "partial" : "error";
             if (message.parts) {
@@ -455,9 +457,9 @@ export const useChatStore = defineStore("chat", () => {
         if (error.runId) void refreshRunRecovery(sessionId, error.runId);
     }
 
-    const runRecovery = ref<Record<string, RunRecovery | undefined>>({});
-    const recoveryGenerations = new Map<string, number>();
-    const recoveryRunIds = new Map<string, string>();
+    const runRecovery = ref<Record<string, RunRecovery | undefined>>({}),
+        recoveryGenerations = new Map<string, number>(),
+        recoveryRunIds = new Map<string, string>();
     let recoveryGeneration = 0;
 
     // PLAN-292 M3 (C2): ask the CP what actually happened to the run behind a

@@ -2,17 +2,20 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
 import ToolCallCard from "../chat/ToolCallCard.vue";
+import type * as apiModule from "../../composables/api";
 
-const getJobOutput = vi.fn();
-const cancelJob = vi.fn();
+const { getJobOutput, cancelJob } = vi.hoisted(() => ({
+    getJobOutput: vi.fn<typeof apiModule.api.getJobOutput>(),
+    cancelJob: vi.fn<typeof apiModule.api.cancelJob>(),
+}));
 vi.mock("../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {
             ...actual.api,
-            getJobOutput: (...args: unknown[]) => getJobOutput(...args),
-            cancelJob: (...args: unknown[]) => cancelJob(...args),
+            getJobOutput,
+            cancelJob,
         },
     };
 });
@@ -133,11 +136,11 @@ describe("ToolCallCard", () => {
     });
 
     it("shows duration when completed", () => {
-        const startedAt = new Date(Date.now() - 1500).toISOString();
-        const completedAt = new Date().toISOString();
-        const wrapper = mountCard({
-            toolCall: makeToolCall({ status: "completed", startedAt, completedAt }),
-        });
+        const startedAt = new Date(Date.now() - 1500).toISOString(),
+            completedAt = new Date().toISOString(),
+            wrapper = mountCard({
+                toolCall: makeToolCall({ status: "completed", startedAt, completedAt }),
+            });
         expect(wrapper.text()).toMatch(/\d+\.?\d*s/);
     });
 
@@ -179,8 +182,8 @@ describe("ToolCallCard", () => {
     });
 
     it("truncates result longer than 2000 chars", async () => {
-        const result = "x".repeat(2500);
-        const wrapper = mountCard({ toolCall: makeToolCall({ status: "completed", result }) });
+        const result = "x".repeat(2500),
+            wrapper = mountCard({ toolCall: makeToolCall({ status: "completed", result }) });
         await wrapper.find("button").trigger("click");
         expect(wrapper.text()).toContain("truncated");
     });

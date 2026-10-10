@@ -11,8 +11,8 @@ const PROVIDER_SECRET_SENTINEL = "e2e-provider-secret-sentinel-0374";
 test.describe.configure({ retries: 0 });
 
 function queryIsolatedPostgres(sql: string): string {
-    const container = process.env.XIHE_E2E_PG_CONTAINER;
-    const database = process.env.XIHE_E2E_PG_DATABASE;
+    const container = process.env.XIHE_E2E_PG_CONTAINER,
+        database = process.env.XIHE_E2E_PG_DATABASE;
     const user = process.env.XIHE_E2E_PG_USER;
     if (!container || !database || !user) {
         throw new Error(
@@ -36,8 +36,8 @@ function seedUserGrant(
     userIdValue: string,
     permissions: Array<{ actionClass: string; resource: string }>,
 ): void {
-    const userId = requireUuid(userIdValue);
-    const permissionJson = JSON.stringify(permissions).replaceAll("'", "''");
+    const userId = requireUuid(userIdValue),
+        permissionJson = JSON.stringify(permissions).replaceAll("'", "''");
     queryIsolatedPostgres(`
     INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions, source, read_state)
     VALUES (gen_random_uuid(), 'user', '${userId}'::uuid, 'user', '${userId}'::uuid,
@@ -67,8 +67,8 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     expect(secondMeResponse.ok(), await secondMeResponse.text()).toBe(true);
     const ownerUserId = requireUuid(((await ownerMeResponse.json()) as { id: string }).id);
     const secondUserId = requireUuid(((await secondMeResponse.json()) as { id: string }).id);
-    const workspaceA = requireUuid(owner.workspaceId);
-    const workspaceB = requireUuid(secondOwner.workspaceId);
+    const workspaceA = requireUuid(owner.workspaceId),
+        workspaceB = requireUuid(secondOwner.workspaceId);
 
     seedUserGrant(ownerUserId, [
         { actionClass: "CREATE_ACCOUNT", resource: "*" },
@@ -79,8 +79,8 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     ]);
     seedUserGrant(secondUserId, [{ actionClass: "MANAGE_WORKSPACE_AGENTS", resource: workspaceB }]);
 
-    const pageErrors: string[] = [];
-    const apiRequestFailures: string[] = [];
+    const pageErrors: string[] = [],
+        apiRequestFailures: string[] = [];
     page.on("pageerror", (error) => pageErrors.push(error.message));
     page.on("requestfailed", (failedRequest) => {
         if (failedRequest.url().startsWith(CP_URL)) {

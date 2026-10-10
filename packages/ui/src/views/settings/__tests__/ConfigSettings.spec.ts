@@ -18,12 +18,20 @@ vi.mock("vue-router", () => ({
             redirectedFrom: undefined,
             meta: {},
         }) as RouteLocationNormalizedLoaded,
-    useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+    useRouter: () => ({
+        push: vi.fn<(location: unknown) => Promise<void>>(),
+        replace: vi.fn<(location: unknown) => Promise<void>>(),
+    }),
     RouterLink: { template: "<a><slot /></a>" },
 }));
 
 vi.mock("vue-sonner", () => ({
-    toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
+    toast: {
+        success: vi.fn<(message?: unknown) => string | number>(),
+        error: vi.fn<(message?: unknown) => string | number>(),
+        warning: vi.fn<(message?: unknown) => string | number>(),
+        info: vi.fn<(message?: unknown) => string | number>(),
+    },
 }));
 
 const WORKSPACE_ID = "66666666-6666-4666-8666-666666666666";
@@ -34,16 +42,16 @@ const WORKSPACE_ID = "66666666-6666-4666-8666-666666666666";
  */
 function mockConfigFetch() {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
-        const url = typeof input === "string" ? input : input.url;
-        const parsed = new URL(url, "http://localhost");
-        const domain = parsed.pathname.split("/").pop() ?? "";
-        const layer = parsed.searchParams.get("layer");
+        const url = typeof input === "string" ? input : input.url,
+            parsed = new URL(url, "http://localhost"),
+            domain = parsed.pathname.split("/").pop() ?? "",
+            layer = parsed.searchParams.get("layer");
         if (!layer) {
             return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
         }
         const entries =
-            domain === "job-policy" ? { defaultTimeoutSecs: "3600", maxTimeoutSecs: "0" } : {};
-        const envOverridden = domain === "job-policy" ? { defaultTimeoutSecs: "7200" } : {};
+                domain === "job-policy" ? { defaultTimeoutSecs: "3600", maxTimeoutSecs: "0" } : {},
+            envOverridden = domain === "job-policy" ? { defaultTimeoutSecs: "7200" } : {};
         return Promise.resolve(
             new Response(JSON.stringify({ domain, entries, envOverridden }), { status: 200 }),
         );
@@ -51,13 +59,13 @@ function mockConfigFetch() {
 }
 
 async function mountView() {
-    const { default: ConfigSettings } = await import("../ConfigSettings.vue");
-    const wrapper = mount(ConfigSettings, {
-        global: {
-            plugins: [i18n],
-            stubs: { ProviderHub: true, McpStdioServerList: true },
-        },
-    });
+    const { default: ConfigSettings } = await import("../ConfigSettings.vue"),
+        wrapper = mount(ConfigSettings, {
+            global: {
+                plugins: [i18n],
+                stubs: { ProviderHub: true, McpStdioServerList: true },
+            },
+        });
     await flushPromises();
     return wrapper;
 }
@@ -91,9 +99,9 @@ describe("ConfigSettings job-policy (PLAN-0373)", () => {
         await panel.find("button").trigger("click");
 
         const defaultField = wrapper.find(
-            '[data-testid="config-field-job-policy-defaultTimeoutSecs"]',
-        );
-        const maxField = wrapper.find('[data-testid="config-field-job-policy-maxTimeoutSecs"]');
+                '[data-testid="config-field-job-policy-defaultTimeoutSecs"]',
+            ),
+            maxField = wrapper.find('[data-testid="config-field-job-policy-maxTimeoutSecs"]');
         expect(defaultField.exists()).toBe(true);
         expect(maxField.exists()).toBe(true);
         // defaultTimeoutSecs 被 env 注入锁定（mock 返回 7200），行内不渲染 input；
@@ -109,9 +117,9 @@ describe("ConfigSettings job-policy (PLAN-0373)", () => {
         await panel.find("button").trigger("click");
 
         const lockedRow = wrapper.find(
-            '[data-testid="config-field-job-policy-defaultTimeoutSecs"]',
-        );
-        const lock = wrapper.find('[data-testid="config-env-lock-job-policy-defaultTimeoutSecs"]');
+                '[data-testid="config-field-job-policy-defaultTimeoutSecs"]',
+            ),
+            lock = wrapper.find('[data-testid="config-env-lock-job-policy-defaultTimeoutSecs"]');
         expect(lock.exists()).toBe(true);
         expect(lock.text()).toBe("7200");
         expect(lockedRow.find("input").exists()).toBe(false);
@@ -175,16 +183,16 @@ describe("ConfigSettings Agent template and approval policy (PLAN-0374)", () => 
     });
 
     it("saves askActionClasses as a JSON array value through the selected config layer", async () => {
-        const wrapper = await mountView();
-        const panel = wrapper.find('[data-testid="config-domain-approval-policy"]');
+        const wrapper = await mountView(),
+            panel = wrapper.find('[data-testid="config-domain-approval-policy"]');
         await panel.find("button").trigger("click");
 
         const field = wrapper.find(
             '[data-testid="config-field-approval-policy-askActionClasses"] textarea',
         );
         await field.setValue('["CREATE_TEMPLATE"]');
-        const saveLabel = i18n.global.t("common.save");
-        const saveButton = panel.findAll("button").find((button) => button.text() === saveLabel);
+        const saveLabel = i18n.global.t("common.save"),
+            saveButton = panel.findAll("button").find((button) => button.text() === saveLabel);
         expect(saveButton).toBeTruthy();
         await saveButton!.trigger("click");
         await flushPromises();
@@ -263,11 +271,11 @@ describe("ConfigSettings Context templates (PLAN-0414)", () => {
         });
         expect(request).toBeTruthy();
 
-        const body = JSON.parse(String(request?.[1]?.body)) as Record<string, string>;
-        const saved = JSON.parse(body.templates) as Array<{
-            version: number;
-            components: Array<{ type: string }>;
-        }>;
+        const body = JSON.parse(String(request?.[1]?.body)) as Record<string, string>,
+            saved = JSON.parse(body.templates) as Array<{
+                version: number;
+                components: Array<{ type: string }>;
+            }>;
         expect(saved).toHaveLength(1);
         expect(saved[0].version).toBe(1);
         expect(saved[0].components).toHaveLength(1);

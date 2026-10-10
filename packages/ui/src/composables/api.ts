@@ -223,19 +223,19 @@ export interface ChatApprovalDecisionResponse {
 
 type JsonRecord = Record<string, unknown>;
 
-const approvalPolicyEffects = ["allow", "ask", "deny"] as const;
-const approvalPolicySourceLayers = [
-    "builtin",
-    "instance",
-    "user",
-    "workspace",
-    "session",
-    "per_call",
-] as const;
-const approvalPolicyModes = ["manual", "auto"] as const;
-const approvalPolicyShapes = ["structured", "interpreter", "opaque"] as const;
-const policyRuleLayers = ["instance", "user", "workspace"] as const;
-const policyToolFaceScopes = ["builtin", "instance", "workspace"] as const;
+const approvalPolicyEffects = ["allow", "ask", "deny"] as const,
+    approvalPolicySourceLayers = [
+        "builtin",
+        "instance",
+        "user",
+        "workspace",
+        "session",
+        "per_call",
+    ] as const,
+    approvalPolicyModes = ["manual", "auto"] as const,
+    approvalPolicyShapes = ["structured", "interpreter", "opaque"] as const,
+    policyRuleLayers = ["instance", "user", "workspace"] as const,
+    policyToolFaceScopes = ["builtin", "instance", "workspace"] as const;
 
 function isEnumValue<T extends string>(value: unknown, values: readonly T[]): value is T {
     return typeof value === "string" && values.includes(value as T);
@@ -330,13 +330,13 @@ export function normalizeSafePolicySummary(value: unknown): SafePolicySummaryVie
  * timeline/attempts; anything malformed is dropped rather than guessed at.
  */
 function normalizeAuditDetail(value: unknown): AuditEntryDetail {
-    const record = asRecord(value);
-    const entry = asRecord(record?.entry);
+    const record = asRecord(value),
+        entry = asRecord(record?.entry);
     if (!record || !entry) {
         return value as AuditEntryDetail;
     }
-    const { policy, ...rest } = entry;
-    const normalizedPolicy = normalizeSafePolicySummary(policy);
+    const { policy, ...rest } = entry,
+        normalizedPolicy = normalizeSafePolicySummary(policy);
     return {
         ...record,
         entry: normalizedPolicy ? { ...rest, policy: normalizedPolicy } : rest,
@@ -413,11 +413,11 @@ export function normalizeApprovalRequest(
         record.sessionId !== fallbackSessionId
     )
         return null;
-    const requestId = typeof record.requestId === "string" ? record.requestId : "";
-    const sessionId =
-        typeof record.sessionId === "string" && record.sessionId.length > 0
-            ? record.sessionId
-            : fallbackSessionId;
+    const requestId = typeof record.requestId === "string" ? record.requestId : "",
+        sessionId =
+            typeof record.sessionId === "string" && record.sessionId.length > 0
+                ? record.sessionId
+                : fallbackSessionId;
     if (!requestId || !sessionId) return null;
 
     const state =
@@ -474,11 +474,11 @@ export function normalizeApprovalRequest(
 // Unknown states and malformed records are discarded. Only canonical slice fields
 // are accepted, so the UI cannot silently infer a restore target.
 
-const workspaceCheckpointStates = ["captured", "abnormal-captured", "degraded", "expired"] as const;
-const workspaceCheckpointRevertStates = ["none", "rolled_back", "partial", "failed"] as const;
-const checkpointPreviewActions = ["restore", "delete"] as const;
-const checkpointPreviewEntryStates = ["execute", "noop", "type_conflict"] as const;
-const checkpointResultOutcomes = ["restored", "deleted", "failed", "suspect"] as const;
+const workspaceCheckpointStates = ["captured", "abnormal-captured", "degraded", "expired"] as const,
+    workspaceCheckpointRevertStates = ["none", "rolled_back", "partial", "failed"] as const,
+    checkpointPreviewActions = ["restore", "delete"] as const,
+    checkpointPreviewEntryStates = ["execute", "noop", "type_conflict"] as const,
+    checkpointResultOutcomes = ["restored", "deleted", "failed", "suspect"] as const;
 
 function asNonNegativeInteger(value: unknown): number | null {
     return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
@@ -494,9 +494,9 @@ function normalizeWorkspaceCheckpointRevertView(
     const record = asRecord(value);
     if (!record) return null;
     if (!isEnumValue(record.state, workspaceCheckpointRevertStates)) return null;
-    const state: WorkspaceCheckpointRevertState = record.state;
-    const countsRecord = asRecord(record.counts);
-    const counts: WorkspaceCheckpointRevertCounts = {};
+    const state: WorkspaceCheckpointRevertState = record.state,
+        countsRecord = asRecord(record.counts),
+        counts: WorkspaceCheckpointRevertCounts = {};
     if (countsRecord) {
         for (const key of ["restored", "deleted", "failed"] as const) {
             const parsed = asNonNegativeInteger(countsRecord[key]);
@@ -551,16 +551,16 @@ function normalizeWorkspaceCheckpoint(value: unknown): WorkspaceCheckpoint | nul
             ? null
             : asNullableNonEmptyString(record.sliceRef);
     if (record.sliceRef !== null && record.sliceRef !== undefined && sliceRef === null) return null;
-    const capturedAt = nullableString(record, "capturedAt");
-    const sourceRunId = nullableString(record, "sourceRunId");
-    const sourceSessionId = nullableString(record, "sourceSessionId");
-    const predecessorRef = nullableString(record, "predecessorRef");
-    const changedFiles = normalizeWorkspaceCheckpointChangedFiles(record.changedFiles);
-    const changedCount = asNonNegativeInteger(record.changedCount) ?? changedFiles.length;
-    const revert =
-        record.revert === null || record.revert === undefined
-            ? null
-            : normalizeWorkspaceCheckpointRevertView(record.revert);
+    const capturedAt = nullableString(record, "capturedAt"),
+        sourceRunId = nullableString(record, "sourceRunId"),
+        sourceSessionId = nullableString(record, "sourceSessionId"),
+        predecessorRef = nullableString(record, "predecessorRef"),
+        changedFiles = normalizeWorkspaceCheckpointChangedFiles(record.changedFiles),
+        changedCount = asNonNegativeInteger(record.changedCount) ?? changedFiles.length,
+        revert =
+            record.revert === null || record.revert === undefined
+                ? null
+                : normalizeWorkspaceCheckpointRevertView(record.revert);
     if (record.revert !== null && record.revert !== undefined && !revert) return null;
 
     return {
@@ -605,8 +605,8 @@ export function normalizeWorkspaceCheckpointEvent(
         record.sessionId !== fallbackSessionId
     )
         return null;
-    const runId = isNonEmptyString(record.runId) ? record.runId : "";
-    const sessionId = isNonEmptyString(record.sessionId) ? record.sessionId : fallbackSessionId;
+    const runId = isNonEmptyString(record.runId) ? record.runId : "",
+        sessionId = isNonEmptyString(record.sessionId) ? record.sessionId : fallbackSessionId;
     if (!runId || !sessionId) return null;
     if (!isEnumValue(record.state, workspaceCheckpointStates)) return null;
 
@@ -636,9 +636,9 @@ export function normalizeWorkspaceCheckpointEvent(
 function normalizeCheckpointPreviewCounts(value: unknown): CheckpointPreviewCounts | null {
     const record = asRecord(value);
     if (!record) return null;
-    const restore = asNonNegativeInteger(record.restore);
-    const deleted = asNonNegativeInteger(record.delete);
-    const typeConflict = asNonNegativeInteger(record.typeConflict);
+    const restore = asNonNegativeInteger(record.restore),
+        deleted = asNonNegativeInteger(record.delete),
+        typeConflict = asNonNegativeInteger(record.typeConflict);
     if (restore === null || deleted === null || typeConflict === null) return null;
     return { restore, delete: deleted, typeConflict };
 }
@@ -687,9 +687,9 @@ export function normalizeCheckpointPreview(value: unknown): CheckpointPreview | 
 function normalizeCheckpointResultCounts(value: unknown): CheckpointResultCounts | null {
     const record = asRecord(value);
     if (!record) return null;
-    const restored = asNonNegativeInteger(record.restored);
-    const deleted = asNonNegativeInteger(record.deleted);
-    const failed = asNonNegativeInteger(record.failed);
+    const restored = asNonNegativeInteger(record.restored),
+        deleted = asNonNegativeInteger(record.deleted),
+        failed = asNonNegativeInteger(record.failed);
     if (restored === null || deleted === null || failed === null) {
         return null;
     }
@@ -737,8 +737,8 @@ export function normalizeCheckpointCleanupResult(value: unknown): CheckpointClea
 
 /** `GET /workspaces/{id}/git-status` (dual-diff "待提交" side). */
 export function normalizeWorkspaceGitStatus(value: unknown): WorkspaceGitStatus {
-    const record = asRecord(value);
-    const entries: WorkspaceGitStatus["entries"] = [];
+    const record = asRecord(value),
+        entries: WorkspaceGitStatus["entries"] = [];
     if (record && Array.isArray(record.entries)) {
         for (const raw of record.entries) {
             const entry = asRecord(raw);
@@ -754,11 +754,11 @@ export function normalizeWorkspaceGitStatus(value: unknown): WorkspaceGitStatus 
 
 /** `GET .../checkpoints/retention`; malformed payloads throw for the caller to surface. */
 export function normalizeCheckpointRetention(value: unknown): CheckpointRetention {
-    const record = asRecord(value);
-    const maxRuns = record ? asNonNegativeInteger(record.maxRuns) : null;
-    const ttlDays = record ? asNonNegativeInteger(record.ttlDays) : null;
-    const currentRuns = record ? asNonNegativeInteger(record.currentRuns) : null;
-    const currentRefs = record ? asNonNegativeInteger(record.currentRefs) : null;
+    const record = asRecord(value),
+        maxRuns = record ? asNonNegativeInteger(record.maxRuns) : null,
+        ttlDays = record ? asNonNegativeInteger(record.ttlDays) : null,
+        currentRuns = record ? asNonNegativeInteger(record.currentRuns) : null,
+        currentRefs = record ? asNonNegativeInteger(record.currentRefs) : null;
     if (
         !record ||
         maxRuns === null ||
@@ -778,8 +778,8 @@ export function normalizeCheckpointRetention(value: unknown): CheckpointRetentio
 }
 
 function normalizePendingApprovalSummary(value: unknown): PendingApprovalSummary | null {
-    const record = asRecord(value);
-    const count = record?.count;
+    const record = asRecord(value),
+        count = record?.count;
     if (
         !record ||
         typeof record.sessionId !== "string" ||
@@ -831,8 +831,8 @@ function normalizePolicyModeUpdateResponse(
     value: unknown,
     fallbackSessionId: string,
 ): PolicyModeUpdateResponse {
-    const state = normalizePolicyModeState(value, fallbackSessionId);
-    const record = asRecord(value);
+    const state = normalizePolicyModeState(value, fallbackSessionId),
+        record = asRecord(value);
     if (!record || record.scope !== "session") {
         throw new Error("Invalid policy mode update response");
     }
@@ -1070,8 +1070,8 @@ export function isExecutionModeSwitchProbeFailure(code: string | null | undefine
 }
 
 function normalizeSession(value: unknown): SessionResponse {
-    const root = asRecord(value);
-    const record = asRecord(root?.session) ?? root;
+    const root = asRecord(value),
+        record = asRecord(root?.session) ?? root;
     if (!record || typeof record.id !== "string") {
         throw new Error("Invalid session response: missing id");
     }
@@ -1092,8 +1092,8 @@ function normalizeSession(value: unknown): SessionResponse {
 }
 
 function normalizeWorkspaceResponse(value: unknown): ApiWorkspace {
-    const root = asRecord(value);
-    const workspace = normalizeWorkspace(root?.workspace) ?? normalizeWorkspace(root);
+    const root = asRecord(value),
+        workspace = normalizeWorkspace(root?.workspace) ?? normalizeWorkspace(root);
     if (!workspace) throw new Error("Invalid workspace response: missing id or name");
     return workspace;
 }
@@ -1124,13 +1124,13 @@ export function normalizeWorkspaceEvent(
     if (!kind || !workspaceEventKinds.includes(kind as (typeof workspaceEventKinds)[number])) {
         return null;
     }
-    const sequence = asNonNegativeInteger(record.sequence);
-    const source =
-        typeof record.source === "string"
-            ? record.source
-            : kind === "heartbeat"
-              ? "control-plane"
-              : "";
+    const sequence = asNonNegativeInteger(record.sequence),
+        source =
+            typeof record.source === "string"
+                ? record.source
+                : kind === "heartbeat"
+                  ? "control-plane"
+                  : "";
     if (sequence === null || source.length === 0) return null;
     const path = typeof record.path === "string" ? record.path : undefined;
     if (
@@ -1204,13 +1204,13 @@ export async function apiErrorFromResponse(res: Response): Promise<never> {
 }
 
 async function checkedFetch(path: string, options?: RequestInit): Promise<Response> {
-    const hasBody = options?.body !== undefined && options.body !== null;
-    const includeContentType = hasBody && !(options?.body instanceof FormData);
-    const res = await fetch(endpoint(path), {
-        ...options,
-        headers: apiAuthHeaders(options?.headers, includeContentType),
-    });
-    const isAuthEndpoint = path === "/auth/login" || path === "/auth/register";
+    const hasBody = options?.body !== undefined && options.body !== null,
+        includeContentType = hasBody && !(options?.body instanceof FormData),
+        res = await fetch(endpoint(path), {
+            ...options,
+            headers: apiAuthHeaders(options?.headers, includeContentType),
+        }),
+        isAuthEndpoint = path === "/auth/login" || path === "/auth/register";
     if (res.status === 401 && !isAuthEndpoint) {
         localStorage.removeItem("xihe-token");
         localStorage.removeItem("xihe-user");
@@ -1294,24 +1294,24 @@ async function callRuntimeTool<T>(
     workspaceId: string,
 ): Promise<T> {
     const res = await checkedFetch("/mcp", {
-        method: "POST",
-        headers: runtimeMcpHeaders(workspaceId),
-        body: JSON.stringify({
-            jsonrpc: "2.0",
-            method: "tools/call",
-            id: Date.now(),
-            params: { name: tool, arguments: args },
+            method: "POST",
+            headers: runtimeMcpHeaders(workspaceId),
+            body: JSON.stringify({
+                jsonrpc: "2.0",
+                method: "tools/call",
+                id: Date.now(),
+                params: { name: tool, arguments: args },
+            }),
         }),
-    });
-    const text = await res.text();
-    const jsonLine = text.startsWith("data:")
-        ? text
-              .split("\n")
-              .find((line) => line.startsWith("data:"))!
-              .slice(5)
-              .trim()
-        : text;
-    const body = JSON.parse(jsonLine);
+        text = await res.text(),
+        jsonLine = text.startsWith("data:")
+            ? text
+                  .split("\n")
+                  .find((line) => line.startsWith("data:"))!
+                  .slice(5)
+                  .trim()
+            : text,
+        body = JSON.parse(jsonLine);
     if (body.error) {
         throw new ApiError({
             status: 502,
@@ -1365,13 +1365,13 @@ export const api = {
         });
     },
     async getSessions(): Promise<SessionListResponse> {
-        const payload = await request<unknown>("/sessions");
-        const root = asRecord(payload);
-        const rawSessions = Array.isArray(root?.sessions)
-            ? root.sessions
-            : Array.isArray(payload)
-              ? payload
-              : null;
+        const payload = await request<unknown>("/sessions"),
+            root = asRecord(payload),
+            rawSessions = Array.isArray(root?.sessions)
+                ? root.sessions
+                : Array.isArray(payload)
+                  ? payload
+                  : null;
         if (!rawSessions) throw new Error("Invalid sessions response: missing sessions");
         return {
             sessions: rawSessions.map(normalizeSession),
@@ -1649,9 +1649,9 @@ export const api = {
         );
     },
     async getPendingApprovals(signal?: AbortSignal): Promise<PendingApprovalSummary[]> {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 5000);
-        const abortFromCaller = () => controller.abort();
+        const controller = new AbortController(),
+            timeout = setTimeout(() => controller.abort(), 5000),
+            abortFromCaller = () => controller.abort();
         if (signal) {
             if (signal.aborted) controller.abort();
             else signal.addEventListener("abort", abortFromCaller, { once: true });
@@ -1823,22 +1823,22 @@ export const api = {
     },
     async listDirectory(path: string, workspaceId: string) {
         const raw = await callRuntimeTool<{
-            entries?: Array<{
-                name: string;
-                path: string;
-                is_dir?: boolean;
-                type?: string;
-                size?: number;
-                modified?: string;
-            }>;
-        }>("list_directory", { path }, workspaceId);
-        const entries = (raw?.entries ?? []).map((e) => ({
-            name: e.name,
-            path: e.path,
-            type: e.type ?? (e.is_dir ? "directory" : "file"),
-            size: e.size,
-            modified: e.modified,
-        }));
+                entries?: Array<{
+                    name: string;
+                    path: string;
+                    is_dir?: boolean;
+                    type?: string;
+                    size?: number;
+                    modified?: string;
+                }>;
+            }>("list_directory", { path }, workspaceId),
+            entries = (raw?.entries ?? []).map((e) => ({
+                name: e.name,
+                path: e.path,
+                type: e.type ?? (e.is_dir ? "directory" : "file"),
+                size: e.size,
+                modified: e.modified,
+            }));
         return { entries };
     },
     async readFile(path: string, workspaceId: string) {
@@ -2100,20 +2100,22 @@ export const api = {
         pendingApprovals: ApprovalRequest[];
     }> {
         const payload = await request<unknown>(`/chat/runs/${encodeURIComponent(runId)}`, {
-            method: "GET",
-        });
-        const record = asRecord(payload);
+                method: "GET",
+            }),
+            record = asRecord(payload);
         if (!record || typeof record.sessionId !== "string") {
             throw new Error("Invalid chat run response: missing sessionId");
         }
         if (record.origin !== "user_submission" && record.origin !== "spawn") {
             throw new Error("Invalid chat run response: missing origin");
         }
-        const rawApprovals = Array.isArray(record.pendingApprovals) ? record.pendingApprovals : [];
-        const pendingApprovals = rawApprovals
-            .map((approval) => normalizeApprovalRequest(approval, record.sessionId as string))
-            .map((approval) => (approval ? { ...approval, runId: approval.runId || runId } : null))
-            .filter((approval): approval is ApprovalRequest => approval !== null);
+        const rawApprovals = Array.isArray(record.pendingApprovals) ? record.pendingApprovals : [],
+            pendingApprovals = rawApprovals
+                .map((approval) => normalizeApprovalRequest(approval, record.sessionId as string))
+                .map((approval) =>
+                    approval ? { ...approval, runId: approval.runId || runId } : null,
+                )
+                .filter((approval): approval is ApprovalRequest => approval !== null);
         return {
             runId: typeof record.runId === "string" ? record.runId : runId,
             sessionId: record.sessionId,
@@ -2142,14 +2144,14 @@ export const api = {
         sliceRef: string,
     ): Promise<CheckpointPreview> {
         const payload = await request<unknown>(
-            `/workspaces/${encodeURIComponent(workspaceId)}/checkpoints/revert/preview`,
-            {
-                method: "POST",
-                headers: workspaceHeaders(workspaceId),
-                body: JSON.stringify({ sliceRef }),
-            },
-        );
-        const preview = normalizeCheckpointPreview(payload);
+                `/workspaces/${encodeURIComponent(workspaceId)}/checkpoints/revert/preview`,
+                {
+                    method: "POST",
+                    headers: workspaceHeaders(workspaceId),
+                    body: JSON.stringify({ sliceRef }),
+                },
+            ),
+            preview = normalizeCheckpointPreview(payload);
         if (!preview) throw new Error("Invalid checkpoint preview response");
         return preview;
     },
@@ -2160,14 +2162,14 @@ export const api = {
         acknowledgeTypeChanges: string[] = [],
     ): Promise<CheckpointResult> {
         const payload = await request<unknown>(
-            `/workspaces/${encodeURIComponent(workspaceId)}/checkpoints/revert`,
-            {
-                method: "POST",
-                headers: workspaceHeaders(workspaceId),
-                body: JSON.stringify({ sliceRef, acknowledgeTypeChanges }),
-            },
-        );
-        const result = normalizeCheckpointResult(payload);
+                `/workspaces/${encodeURIComponent(workspaceId)}/checkpoints/revert`,
+                {
+                    method: "POST",
+                    headers: workspaceHeaders(workspaceId),
+                    body: JSON.stringify({ sliceRef, acknowledgeTypeChanges }),
+                },
+            ),
+            result = normalizeCheckpointResult(payload);
         if (!result) throw new Error("Invalid checkpoint result response");
         return result;
     },
@@ -2177,11 +2179,11 @@ export const api = {
         sliceRef: string,
         path: string,
     ): Promise<string> {
-        const params = new URLSearchParams({ sliceRef, path });
-        const res = await apiRaw(
-            `/workspaces/${encodeURIComponent(workspaceId)}/checkpoints/blob?${params.toString()}`,
-            { headers: workspaceHeaders(workspaceId) },
-        );
+        const params = new URLSearchParams({ sliceRef, path }),
+            res = await apiRaw(
+                `/workspaces/${encodeURIComponent(workspaceId)}/checkpoints/blob?${params.toString()}`,
+                { headers: workspaceHeaders(workspaceId) },
+            );
         return res.text();
     },
     /** User-repository git status (dual-diff "待提交" side; independent of the shadow diff). */

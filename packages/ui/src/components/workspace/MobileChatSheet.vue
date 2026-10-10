@@ -15,8 +15,8 @@ const props = defineProps<{
     sessionId: string;
 }>();
 
-const agentStore = useAgentStore();
-const sessionStore = useSessionStore();
+const agentStore = useAgentStore(),
+    sessionStore = useSessionStore();
 const { t } = useI18n();
 const open = ref(false);
 const agentPrincipalId = computed(

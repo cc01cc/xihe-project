@@ -49,12 +49,12 @@ const props = withDefaults(
 );
 
 const { t } = useI18n();
-const chatStore = useChatStore();
-const agentStore = useAgentStore();
-const authStore = useAuthStore();
-const checkpointStore = useCheckpointStore();
-const configStore = useConfigStore();
-const sessionStore = useSessionStore();
+const chatStore = useChatStore(),
+    agentStore = useAgentStore(),
+    authStore = useAuthStore();
+const checkpointStore = useCheckpointStore(),
+    configStore = useConfigStore(),
+    sessionStore = useSessionStore();
 
 const suggestions = computed(() =>
     props.toolMode === "workspace"
@@ -69,20 +69,20 @@ const currentSession = computed(() =>
 );
 const sessionBranches = computed(() => chatStore.getSessionBranches(props.sessionId));
 const selectedBranchId = computed(() => chatStore.getSelectedBranchId(props.sessionId) ?? "");
-const followUpQueue = ref<ApiFollowUpQueueSnapshot | null>(null);
-const followUpQueueError = ref<string | null>(null);
-const followUpQueueSubmitting = ref(false);
-const followUpQueueContinuing = ref(false);
-const followUpQueueBusyItemId = ref<string | null>(null);
-const pendingFollowUpKeys = new Map<string, Map<string, string>>();
-let followUpQueueRequestId = 0;
-let followUpQueueSubmitGeneration = 0;
-let followUpQueueActionGeneration = 0;
+const followUpQueue = ref<ApiFollowUpQueueSnapshot | null>(null),
+    followUpQueueError = ref<string | null>(null);
+const followUpQueueSubmitting = ref(false),
+    followUpQueueContinuing = ref(false);
+const followUpQueueBusyItemId = ref<string | null>(null),
+    pendingFollowUpKeys = new Map<string, Map<string, string>>();
+let followUpQueueRequestId = 0,
+    followUpQueueSubmitGeneration = 0,
+    followUpQueueActionGeneration = 0;
 const branchOptions = computed(() => {
     const byId = new Map(sessionBranches.value.map((branch) => [branch.branchId, branch]));
     const depthOf = (branchId: string) => {
-        let depth = 0;
-        let parentId = byId.get(branchId)?.parentBranchId ?? null;
+        let depth = 0,
+            parentId = byId.get(branchId)?.parentBranchId ?? null;
         while (parentId && byId.has(parentId) && depth < 8) {
             depth += 1;
             parentId = byId.get(parentId)?.parentBranchId ?? null;
@@ -115,12 +115,12 @@ const followUpQueueFull = computed(() =>
         followUpQueue.value.outstandingCount >= followUpQueue.value.capacityLimit,
     ),
 );
-const derivedState = ref<SessionDerivedStateResponse | null>(null);
-const derivedStateLoading = ref(false);
-const derivedStateError = ref(false);
-const waitingOnByToolCallId = ref<Record<string, ToolCallWaitingOn>>({});
-let derivedStateRequestId = 0;
-let waitingOnRequestId = 0;
+const derivedState = ref<SessionDerivedStateResponse | null>(null),
+    derivedStateLoading = ref(false);
+const derivedStateError = ref(false),
+    waitingOnByToolCallId = ref<Record<string, ToolCallWaitingOn>>({});
+let derivedStateRequestId = 0,
+    waitingOnRequestId = 0;
 
 const renderedMessages = computed(() =>
     messages.value.map((message) => {
@@ -135,16 +135,16 @@ const renderedMessages = computed(() =>
     }),
 );
 
-const showPrincipalBinding = ref(false);
-const principalChoices = ref<WorkspaceAgentBinding[]>([]);
+const showPrincipalBinding = ref(false),
+    principalChoices = ref<WorkspaceAgentBinding[]>([]);
 const selectedPrincipalId = ref("");
 const pendingSend = ref<{
     content: string;
     attachments?: AttachmentFile[];
     branchId: string;
 } | null>(null);
-const loadingPrincipalChoices = ref(false);
-const creatingBranchForMessageId = ref<string | null>(null);
+const loadingPrincipalChoices = ref(false),
+    creatingBranchForMessageId = ref<string | null>(null);
 const pendingBranchKeys = new Map<string, string>();
 let messageLoadRequestId = 0;
 
@@ -158,8 +158,8 @@ const pendingApproval = computed(
                     approval.state === "dispatch_unknown"),
         ) ?? null,
 );
-const approvalSubmitting = ref(false);
-const approvalError = ref<string | null>(null);
+const approvalSubmitting = ref(false),
+    approvalError = ref<string | null>(null);
 const dismissedRequestIds = ref(new Set<string>());
 const showApproval = computed(() => {
     const approval = pendingApproval.value;
@@ -660,8 +660,8 @@ async function submitMessage(input: {
 
 async function confirmPrincipalBinding() {
     if (!pendingSend.value || !selectedPrincipalId.value) return;
-    const pending = pendingSend.value;
-    const principalId = selectedPrincipalId.value;
+    const pending = pendingSend.value,
+        principalId = selectedPrincipalId.value;
     pendingSend.value = null;
     showPrincipalBinding.value = false;
     await submitMessage({
@@ -693,8 +693,8 @@ function handleBranchSelection(event: Event) {
 }
 
 async function handleCreateBranch(anchorMessageId: string) {
-    const sessionId = props.sessionId;
-    const sourceBranchId = selectedBranchId.value;
+    const sessionId = props.sessionId,
+        sourceBranchId = selectedBranchId.value;
     if (!sessionId || !sourceBranchId || isStreaming.value || creatingBranchForMessageId.value)
         return;
 
@@ -813,9 +813,9 @@ const recoveryBannerClass = computed(() => {
 // ── PLAN-0339: workspace slice restore flow (preview → execute → result) ────
 // The entry lives beside the message; the dialogs are hosted here so
 // every chat surface (chat view, workspace chat, mobile sheet) gets the same flow.
-const revertPreviewSliceRef = ref<string | null>(null);
-const revertBusy = ref(false);
-const revertError = ref<string | null>(null);
+const revertPreviewSliceRef = ref<string | null>(null),
+    revertBusy = ref(false),
+    revertError = ref<string | null>(null);
 const revertResult = ref<CheckpointResult | null>(null);
 
 function openRevertPreview(sliceRef: string) {
@@ -831,8 +831,8 @@ function closeRevertPreview() {
 }
 
 async function confirmRevert(acknowledgeTypeChanges: string[]) {
-    const sliceRef = revertPreviewSliceRef.value;
-    const sessionId = props.sessionId;
+    const sliceRef = revertPreviewSliceRef.value,
+        sessionId = props.sessionId;
     const workspaceId = authStore.currentWorkspaceId;
     if (!sliceRef || !workspaceId || revertBusy.value) return;
     revertBusy.value = true;

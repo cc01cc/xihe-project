@@ -3,19 +3,20 @@ import { setActivePinia, createPinia } from "pinia";
 import { useAuthStore } from "../auth";
 import { useAgentStore } from "../agent";
 import type { User } from "../../types";
+import type * as apiModule from "../../composables/api";
 
 vi.mock("../../composables/api", () => ({
     api: {
-        login: vi.fn(),
-        register: vi.fn(),
+        login: vi.fn<typeof apiModule.login>(),
+        register: vi.fn<typeof apiModule.register>(),
     },
 }));
 
-const mockUser: User = { id: "u1", email: "test@test.com", name: "Test" };
-const REQUEST_ID = "11111111-1111-4111-8111-111111111111";
-const RUN_ID = "22222222-2222-4222-8222-222222222222";
-const SESSION_ID = "33333333-3333-4333-8333-333333333333";
-const WORKSPACE_ID = "44444444-4444-4444-8444-444444444444";
+const mockUser: User = { id: "u1", email: "test@test.com", name: "Test" },
+    REQUEST_ID = "11111111-1111-4111-8111-111111111111",
+    RUN_ID = "22222222-2222-4222-8222-222222222222",
+    SESSION_ID = "33333333-3333-4333-8333-333333333333",
+    WORKSPACE_ID = "44444444-4444-4444-8444-444444444444";
 
 beforeEach(() => {
     setActivePinia(createPinia());
@@ -40,12 +41,12 @@ describe("useAuthStore", () => {
     });
 
     it("login success saves token and user", async () => {
-        const { api } = await import("../../composables/api");
+        const { api } = await import("../../composables/api"),
+            store = useAuthStore();
         vi.mocked(api.login).mockResolvedValue({
             accessToken: "new-token",
             user: mockUser,
         });
-        const store = useAuthStore();
         const ok = await store.login("test@test.com", "pass");
         expect(ok).toBe(true);
         expect(store.isAuthenticated).toBe(true);
@@ -54,9 +55,9 @@ describe("useAuthStore", () => {
     });
 
     it("login failure sets error and returns false", async () => {
-        const { api } = await import("../../composables/api");
+        const { api } = await import("../../composables/api"),
+            store = useAuthStore();
         vi.mocked(api.login).mockRejectedValue(new Error("Invalid credentials"));
-        const store = useAuthStore();
         const ok = await store.login("bad@test.com", "wrong");
         expect(ok).toBe(false);
         expect(store.isAuthenticated).toBe(false);
@@ -64,12 +65,12 @@ describe("useAuthStore", () => {
     });
 
     it("register success saves token and user", async () => {
-        const { api } = await import("../../composables/api");
+        const { api } = await import("../../composables/api"),
+            store = useAuthStore();
         vi.mocked(api.register).mockResolvedValue({
             accessToken: "reg-token",
             user: mockUser,
         });
-        const store = useAuthStore();
         const ok = await store.register("new@test.com", "pass", "New");
         expect(ok).toBe(true);
         expect(store.token).toBe("reg-token");

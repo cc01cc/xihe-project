@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 import { i18n } from "../../../i18n";
 import { api } from "../../../composables/api";
+import type * as apiModule from "../../../composables/api";
 import type {
     AuditEntry,
     AuditEntryDetail,
@@ -24,18 +25,21 @@ vi.mock("vue-router", () => ({
             redirectedFrom: undefined,
             meta: {},
         }) as RouteLocationNormalizedLoaded,
-    useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+    useRouter: () => ({
+        push: vi.fn<(location: unknown) => Promise<void>>(),
+        replace: vi.fn<(location: unknown) => Promise<void>>(),
+    }),
     RouterLink: { template: "<a><slot /></a>" },
 }));
 
 vi.mock("../../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {
             ...actual.api,
-            listAuditEntries: vi.fn(),
-            getAuditEntry: vi.fn(),
+            listAuditEntries: vi.fn<typeof apiModule.api.listAuditEntries>(),
+            getAuditEntry: vi.fn<typeof apiModule.api.getAuditEntry>(),
         },
     };
 });
@@ -175,15 +179,16 @@ function detailFor(id: string): AuditEntryDetail {
 }
 
 async function mountOnly() {
-    const { default: AuditView } = await import("../AuditView.vue");
-    const wrapper = mount(AuditView, { global: { plugins: [i18n] } });
+    const { default: AuditView } = await import("../AuditView.vue"),
+        wrapper = mount(AuditView, { global: { plugins: [i18n] } });
     await flushPromises();
     return wrapper;
 }
 
 async function mountView(entryId = "inv-1") {
-    const wrapper = await mountOnly();
-    await wrapper.find(`[data-testid="settings-audit-entry-${entryId}"]`).trigger("click");
+    const wrapper = await mountOnly(),
+        entryRow = wrapper.find(`[data-testid="settings-audit-entry-${entryId}"]`);
+    await entryRow.trigger("click");
     await flushPromises();
     return wrapper;
 }
@@ -197,9 +202,8 @@ beforeEach(() => {
 
 describe("AuditView policy verdict (PLAN-0328 T1.15)", () => {
     it("renders the server projection verbatim, keyed by toolCallId", async () => {
-        const wrapper = await mountView("inv-1");
-
-        const block = wrapper.find('[data-testid="settings-audit-policy-call-auto-1"]');
+        const wrapper = await mountView("inv-1"),
+            block = wrapper.find('[data-testid="settings-audit-policy-call-auto-1"]');
         expect(block.exists()).toBe(true);
         expect(block.text()).toContain("策略判定");
         expect(
@@ -218,9 +222,8 @@ describe("AuditView policy verdict (PLAN-0328 T1.15)", () => {
     });
 
     it("keeps a plain ask verdict on the ask rendering", async () => {
-        const wrapper = await mountView("inv-ask");
-
-        const ask = wrapper.find('[data-testid="settings-audit-policy-call-ask-2"]');
+        const wrapper = await mountView("inv-ask"),
+            ask = wrapper.find('[data-testid="settings-audit-policy-call-ask-2"]');
         expect(ask.exists()).toBe(true);
         expect(wrapper.find('[data-testid="settings-audit-policy-call-ask-2-effect"]').text()).toBe(
             "询问",
@@ -240,11 +243,10 @@ describe("AuditView policy verdict (PLAN-0328 T1.15)", () => {
     });
 
     it("highlights a mode-based allowance with the exact allowedBy value", async () => {
-        const wrapper = await mountView("inv-1");
-
-        const allowedBy = wrapper.find(
-            '[data-testid="settings-audit-policy-call-auto-1-allowed-by"]',
-        );
+        const wrapper = await mountView("inv-1"),
+            allowedBy = wrapper.find(
+                '[data-testid="settings-audit-policy-call-auto-1-allowed-by"]',
+            );
         expect(allowedBy.exists()).toBe(true);
         expect(allowedBy.text()).toContain("由 auto 放行");
         expect(allowedBy.text()).toContain("auto@session");
@@ -268,9 +270,8 @@ describe("AuditView policy verdict (PLAN-0328 T1.15)", () => {
     });
 
     it("renders an explicit no-verdict state for legacy rows instead of a fake verdict", async () => {
-        const wrapper = await mountView("inv-legacy");
-
-        const absent = wrapper.find('[data-testid="settings-audit-policy-absent-inv-legacy"]');
+        const wrapper = await mountView("inv-legacy"),
+            absent = wrapper.find('[data-testid="settings-audit-policy-absent-inv-legacy"]');
         expect(absent.exists()).toBe(true);
         expect(absent.text()).toBe("无判定记录（旧记录或非 MCP 路径）");
         expect(wrapper.find('[data-testid="settings-audit-policy-call-legacy-3"]').exists()).toBe(
@@ -279,9 +280,8 @@ describe("AuditView policy verdict (PLAN-0328 T1.15)", () => {
     });
 
     it("marks a session-reuse dispatch with an icon and text, and never for null/absent/false", async () => {
-        const wrapper = await mountView("inv-reuse-4");
-
-        const reuse = wrapper.find('[data-testid="settings-audit-policy-call-reuse-4-reused"]');
+        const wrapper = await mountView("inv-reuse-4"),
+            reuse = wrapper.find('[data-testid="settings-audit-policy-call-reuse-4-reused"]');
         expect(reuse.exists()).toBe(true);
         expect(reuse.text()).toBe("由复用放行");
         // Not color-only: the marker carries an icon and the reuse text next to the verdict.
@@ -291,8 +291,8 @@ describe("AuditView policy verdict (PLAN-0328 T1.15)", () => {
         ).toBe("询问");
 
         for (const entryId of ["inv-reuse-null-5", "inv-reuse-false-6", "inv-reuse-absent-7"]) {
-            const other = await mountView(entryId);
-            const toolCallId = LIST.find((item) => item.id === entryId)?.toolCallId ?? "";
+            const other = await mountView(entryId),
+                toolCallId = LIST.find((item) => item.id === entryId)?.toolCallId ?? "";
             expect(
                 other.find(`[data-testid="settings-audit-policy-${toolCallId}-reused"]`).exists(),
             ).toBe(false);
@@ -300,9 +300,8 @@ describe("AuditView policy verdict (PLAN-0328 T1.15)", () => {
     });
 
     it("keeps reason, actionClass and shape inside the expandable detail", async () => {
-        const wrapper = await mountView("inv-1");
-
-        const block = wrapper.find('[data-testid="settings-audit-policy-call-auto-1"]');
+        const wrapper = await mountView("inv-1"),
+            block = wrapper.find('[data-testid="settings-audit-policy-call-auto-1"]');
         expect(block.find("details").exists()).toBe(true);
         expect(block.find("summary").text()).toBe("判定详情");
         expect(
@@ -319,9 +318,9 @@ describe("AuditView policy verdict (PLAN-0328 T1.15)", () => {
 
 describe("AuditView audit read surface (PLAN-0466)", () => {
     it("renders an active MCP invocation as in progress, not successful", async () => {
-        const wrapper = await mountOnly();
-        const activeRow = wrapper.find('[data-testid="settings-audit-entry-inv-active"]');
-        const status = activeRow.findAll("span").find((item) => item.text() === "active");
+        const wrapper = await mountOnly(),
+            activeRow = wrapper.find('[data-testid="settings-audit-entry-inv-active"]'),
+            status = activeRow.findAll("span").find((item) => item.text() === "active");
 
         expect(status).toBeDefined();
         expect(status?.classes()).toContain("text-amber-600");

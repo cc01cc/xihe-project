@@ -1,8 +1,8 @@
 import Dexie, { type Table } from "dexie";
 
-const MAX_BATCH = 50;
-const MAX_BATCH_BYTES = 64 * 1024;
-const FLUSH_INTERVAL = 5000;
+const MAX_BATCH = 50,
+    MAX_BATCH_BYTES = 64 * 1024,
+    FLUSH_INTERVAL = 5000;
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -23,12 +23,12 @@ interface TelemetryEntry {
 
 const SENSITIVE_KEY_PATTERN =
     /^(token|key|secret|password|passwd|authorization|auth|cookie|accesstoken|refreshtoken|apikey|api_key|servicetoken|clientsecret|client_secret|pkce|verifier)$/i;
-const REDACTED = "***redacted***";
-const SECRET_VALUE_PATTERNS: RegExp[] = [
-    /Bearer\s+[A-Za-z0-9._~+/=-]+/gi,
-    /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
-    /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
-];
+const REDACTED = "***redacted***",
+    SECRET_VALUE_PATTERNS: RegExp[] = [
+        /Bearer\s+[A-Za-z0-9._~+/=-]+/gi,
+        /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
+        /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+    ];
 
 function redactString(value: string): string {
     let result = value;
@@ -63,8 +63,8 @@ class LogDatabase extends Dexie {
     }
 }
 
-const db = new LogDatabase();
-const MAX_LOGS = 10000;
+const db = new LogDatabase(),
+    MAX_LOGS = 10000;
 
 class Logger {
     private isEnabled = true;
@@ -143,9 +143,9 @@ class Logger {
             return;
         }
 
-        const entries = this.batch.splice(0, MAX_BATCH);
-        const deviceId = (this.context.deviceId as string) || "unknown";
-        const payload = JSON.stringify({ device_id: deviceId, entries });
+        const entries = this.batch.splice(0, MAX_BATCH),
+            deviceId = (this.context.deviceId as string) || "unknown",
+            payload = JSON.stringify({ device_id: deviceId, entries });
 
         if (payload.length > MAX_BATCH_BYTES) {
             const truncated = this.truncateBatch(entries);
@@ -192,8 +192,8 @@ class Logger {
             data: data ? this.sanitizeData(data) : undefined,
         };
 
-        const ts = new Date(entry.timestamp).toLocaleTimeString("zh-CN");
-        const prefix = `[${ts}] [${level.toUpperCase()}]${deviceTag}`;
+        const ts = new Date(entry.timestamp).toLocaleTimeString("zh-CN"),
+            prefix = `[${ts}] [${level.toUpperCase()}]${deviceTag}`;
         // oxlint-disable-next-line no-console
         const cfn =
             level === "error"
@@ -244,10 +244,10 @@ class Logger {
     }
 
     async download(): Promise<void> {
-        const all = await db.logs.orderBy("timestamp").toArray();
-        const blob = new Blob([JSON.stringify(all, null, 2)], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
+        const all = await db.logs.orderBy("timestamp").toArray(),
+            blob = new Blob([JSON.stringify(all, null, 2)], { type: "application/json" }),
+            url = URL.createObjectURL(blob),
+            a = document.createElement("a");
         a.href = url;
         a.download = `xihe-logs-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.json`;
         document.body.appendChild(a);

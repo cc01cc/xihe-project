@@ -6,15 +6,18 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { chatTransport } from "@/services/chatTransport";
+import type { ChatTransportState } from "@/services/chatTransport";
 import { useSSE } from "../../composables/useSSE";
 
 const BRANCH_ID = "00000000-0000-0000-0000-000000000001";
 
 vi.mock("@/services/chatTransport", () => ({
     chatTransport: {
-        sendMessages: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn(),
-        getState: vi.fn(() => ({ isConnected: false, isConnecting: false })),
+        sendMessages: vi.fn<typeof chatTransport.sendMessages>().mockResolvedValue(undefined),
+        stop: vi.fn<typeof chatTransport.stop>(),
+        getState: vi
+            .fn<typeof chatTransport.getState>()
+            .mockReturnValue({ isConnected: false, isConnecting: false } as ChatTransportState),
     },
 }));
 
@@ -30,14 +33,16 @@ afterEach(() => {
 // Bug 1: /chat Content-Type mismatch — useSSE 发送 FormData，后端期望 JSON
 describe("BUG-1: /chat Content-Type mismatch", () => {
     it("sendMessage should send JSON body, not FormData", async () => {
-        const fetchSpy = vi.fn().mockResolvedValue({ ok: true });
+        const fetchSpy = vi.fn<(input: string, init?: RequestInit) => Promise<Response>>(() =>
+            Promise.resolve({ ok: true } as Response),
+        );
         vi.stubGlobal("fetch", fetchSpy);
 
         const { sendMessage } = useSSE("test-session");
         await sendMessage({ content: "Hello world", branchId: BRANCH_ID });
 
-        const [endpoint, options] = fetchSpy.mock.calls[0];
-        const body = options.body;
+        const [endpoint, options] = fetchSpy.mock.calls[0],
+            body = options.body;
 
         expect(endpoint).toBe("/api/v1/chat");
         expect(body).not.toBeInstanceOf(FormData);
@@ -49,14 +54,16 @@ describe("BUG-1: /chat Content-Type mismatch", () => {
     });
 
     it("sendMessage should set Content-Type: application/json", async () => {
-        const fetchSpy = vi.fn().mockResolvedValue({ ok: true });
+        const fetchSpy = vi.fn<(input: string, init?: RequestInit) => Promise<Response>>(() =>
+            Promise.resolve({ ok: true } as Response),
+        );
         vi.stubGlobal("fetch", fetchSpy);
 
         const { sendMessage } = useSSE("test-session");
         await sendMessage({ content: "Hello", branchId: BRANCH_ID });
 
-        const [, options] = fetchSpy.mock.calls[0];
-        const headers = options.headers || {};
+        const [, options] = fetchSpy.mock.calls[0],
+            headers = options.headers || {};
         expect(headers["Content-Type"]).toBe("application/json");
     });
 });
@@ -64,7 +71,9 @@ describe("BUG-1: /chat Content-Type mismatch", () => {
 // Bug 2: /telemetry/logs 404 — 后端没有这个端点
 describe("BUG-2: /telemetry/logs 404", () => {
     it("logger.flush should not send to non-existent endpoint", async () => {
-        const fetchSpy = vi.fn().mockResolvedValue({ ok: false, status: 404 });
+        const fetchSpy = vi
+            .fn<(input: string, init?: RequestInit) => Promise<Response>>()
+            .mockResolvedValue({ ok: false, status: 404 } as Response);
         vi.stubGlobal("fetch", fetchSpy);
 
         const { logger } = await import("../../lib/logger");
@@ -99,7 +108,9 @@ describe("BUG-3: /events SSE connection", () => {
 // Bug 4: attachments 必须以 fileId[] 形式随 /chat JSON 发送
 describe("BUG-4: attachments must be sent as fileId array", () => {
     it("sendMessage with attachments should send JSON with fileIds", async () => {
-        const fetchSpy = vi.fn().mockResolvedValue({ ok: true });
+        const fetchSpy = vi.fn<(input: string, init?: RequestInit) => Promise<Response>>(() =>
+            Promise.resolve({ ok: true } as Response),
+        );
         vi.stubGlobal("fetch", fetchSpy);
 
         const { sendMessage } = useSSE("test-session");
@@ -109,8 +120,8 @@ describe("BUG-4: attachments must be sent as fileId array", () => {
             attachments: ["file-id-1"],
         });
 
-        const [, options] = fetchSpy.mock.calls[0];
-        const body = options.body;
+        const [, options] = fetchSpy.mock.calls[0],
+            body = options.body;
 
         expect(body).not.toBeInstanceOf(FormData);
         expect(typeof body).toBe("string");
@@ -125,11 +136,13 @@ describe("BUG-4: attachments must be sent as fileId array", () => {
 // Bug 5: /chat 502 — error handling
 describe("BUG-5: /chat 502 error handling", () => {
     it("sendMessage should handle 502 and set error", async () => {
-        const fetchSpy = vi.fn().mockResolvedValue({
-            ok: false,
-            status: 502,
-            json: () => Promise.resolve({ error: "Bad Gateway" }),
-        });
+        const fetchSpy = vi
+            .fn<(input: string, init?: RequestInit) => Promise<Response>>()
+            .mockResolvedValue({
+                ok: false,
+                status: 502,
+                json: () => Promise.resolve({ error: "Bad Gateway" }),
+            } as Response);
         vi.stubGlobal("fetch", fetchSpy);
 
         const { sendMessage, error } = useSSE("test-session");
@@ -143,15 +156,17 @@ describe("BUG-5: /chat 502 error handling", () => {
 //        but onError callback is not invoked and isStreaming stays true.
 describe("BUG-6: /chat 409 when SSE subscription is missing", () => {
     it("sendMessage should surface 409 error via onError callback from connect", async () => {
-        const fetchSpy = vi.fn().mockResolvedValue({
-            ok: false,
-            status: 409,
-            json: () => Promise.resolve({ message: "No active SSE subscription for session" }),
-        });
+        const fetchSpy = vi
+            .fn<(input: string, init?: RequestInit) => Promise<Response>>()
+            .mockResolvedValue({
+                ok: false,
+                status: 409,
+                json: () => Promise.resolve({ message: "No active SSE subscription for session" }),
+            } as Response);
         vi.stubGlobal("fetch", fetchSpy);
 
-        const onError = vi.fn();
-        const { connect, sendMessage, error } = useSSE("test-session");
+        const onError = vi.fn<(error: unknown) => void>(),
+            { connect, sendMessage, error } = useSSE("test-session");
         connect({ onError });
         await sendMessage({ content: "Hello", branchId: BRANCH_ID });
 
@@ -162,11 +177,13 @@ describe("BUG-6: /chat 409 when SSE subscription is missing", () => {
     });
 
     it("sendMessage should reset streaming state on 409", async () => {
-        const fetchSpy = vi.fn().mockResolvedValue({
-            ok: false,
-            status: 409,
-            json: () => Promise.resolve({ message: "No active SSE subscription for session" }),
-        });
+        const fetchSpy = vi
+            .fn<(input: string, init?: RequestInit) => Promise<Response>>()
+            .mockResolvedValue({
+                ok: false,
+                status: 409,
+                json: () => Promise.resolve({ message: "No active SSE subscription for session" }),
+            } as Response);
         vi.stubGlobal("fetch", fetchSpy);
 
         const { sendMessage, isStreaming } = useSSE("test-session");
@@ -190,9 +207,11 @@ describe("BUG-7: streaming lifecycle callbacks", () => {
                 return Promise.resolve();
             },
         );
-        const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+        const fetchSpy = vi
+            .fn<(input: string, init?: RequestInit) => Promise<Response>>()
+            .mockResolvedValue({ ok: true, status: 202 } as Response);
         vi.stubGlobal("fetch", fetchSpy);
-        const onStart = vi.fn();
+        const onStart = vi.fn<() => void>();
 
         // PLAN-247: the assistant row is created on first content, so onStart
         // must not fire for transport status alone.
@@ -206,14 +225,16 @@ describe("BUG-7: streaming lifecycle callbacks", () => {
     });
 
     it("maps problem detail payloads to a visible error message", async () => {
-        const fetchSpy = vi.fn().mockResolvedValue({
-            ok: false,
-            status: 503,
-            json: () =>
-                Promise.resolve({ code: "AGENT_UNAVAILABLE", detail: "Agent is unavailable" }),
-        });
+        const fetchSpy = vi
+            .fn<(input: string, init?: RequestInit) => Promise<Response>>()
+            .mockResolvedValue({
+                ok: false,
+                status: 503,
+                json: () =>
+                    Promise.resolve({ code: "AGENT_UNAVAILABLE", detail: "Agent is unavailable" }),
+            } as Response);
         vi.stubGlobal("fetch", fetchSpy);
-        const onError = vi.fn();
+        const onError = vi.fn<(error: unknown) => void>();
 
         const { connect, sendMessage } = useSSE("test-session");
         connect({ onError });

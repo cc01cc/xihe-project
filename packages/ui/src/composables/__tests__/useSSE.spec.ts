@@ -2,36 +2,42 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
 import { flushPromises } from "@vue/test-utils";
 import { chatTransport } from "@/services/chatTransport";
+import type { ChatTransportState } from "@/services/chatTransport";
+import type * as useSSEModule from "../useSSE";
 import { useSSE } from "../useSSE";
 import { useAgentStore } from "../../stores/agent";
 import { useAuthStore } from "../../stores/auth";
 import { useChatStore } from "../../stores/chat";
 import { useCheckpointStore } from "../../stores/checkpoint";
 
-const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-const BRANCH_ID = "11111111-1111-4111-8111-111111111111";
-const RUN_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-const REQUEST_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
-const LATE_REQUEST_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
-const LOGOUT_REQUEST_ID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
-const LIVENESS_REQUEST_ID = "ffffffff-ffff-4fff-8fff-ffffffffffff";
-const WORKSPACE_ID = "99999999-9999-4999-8999-999999999999";
+const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    BRANCH_ID = "11111111-1111-4111-8111-111111111111",
+    RUN_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    REQUEST_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    LATE_REQUEST_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    LOGOUT_REQUEST_ID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+    LIVENESS_REQUEST_ID = "ffffffff-ffff-4fff-8fff-ffffffffffff",
+    WORKSPACE_ID = "99999999-9999-4999-8999-999999999999";
 
 vi.mock("@/services/chatTransport", () => ({
     chatTransport: {
-        sendMessages: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn(),
-        getState: vi.fn(() => ({ isConnected: false, isConnecting: false })),
+        sendMessages: vi
+            .fn<typeof useSSEModule.chatTransport.sendMessages>()
+            .mockResolvedValue(undefined),
+        stop: vi.fn<typeof useSSEModule.chatTransport.stop>(),
+        getState: vi
+            .fn<typeof useSSEModule.chatTransport.getState>()
+            .mockReturnValue({ isConnected: false, isConnecting: false } as ChatTransportState),
     },
 }));
 
 function createTransportController() {
-    let onopen: ((response: Response) => void | Promise<void>) | undefined;
-    let onmessage:
-        | ((event: { event: string; data: string; id?: string }) => void | Promise<void>)
-        | undefined;
-    let onerror: ((error: Error) => void | Promise<void>) | undefined;
-    let onclose: (() => void | Promise<void>) | undefined;
+    let onopen: ((response: Response) => void | Promise<void>) | undefined,
+        onmessage:
+            | ((event: { event: string; data: string; id?: string }) => void | Promise<void>)
+            | undefined,
+        onerror: ((error: Error) => void | Promise<void>) | undefined,
+        onclose: (() => void | Promise<void>) | undefined;
 
     vi.mocked(chatTransport.sendMessages).mockImplementation(
         (
@@ -95,8 +101,8 @@ describe("useSSE", () => {
     });
 
     it("sets isConnected to true when transport opens", async () => {
-        const transport = createTransportController();
-        const { connect, isConnected } = useSSE(SESSION_ID);
+        const transport = createTransportController(),
+            { connect, isConnected } = useSSE(SESSION_ID);
         connect();
         await flushPromises();
         await transport.simulateOpen();
@@ -104,9 +110,9 @@ describe("useSSE", () => {
     });
 
     it("reports initial and reconnect open as durable-state refresh signals", async () => {
-        const transport = createTransportController();
-        const onOpen = vi.fn();
-        const { connect } = useSSE(SESSION_ID);
+        const transport = createTransportController(),
+            onOpen = vi.fn<NonNullable<useSSEModule.SSECallbacks["onOpen"]>>(),
+            { connect } = useSSE(SESSION_ID);
         connect({ onOpen });
         await flushPromises();
         await transport.simulateOpen();
@@ -118,9 +124,10 @@ describe("useSSE", () => {
     });
 
     it("dispatches derived_state_changed only as a refresh hint", async () => {
-        const transport = createTransportController();
-        const onDerivedStateChanged = vi.fn();
-        const { connect } = useSSE(SESSION_ID);
+        const transport = createTransportController(),
+            onDerivedStateChanged =
+                vi.fn<NonNullable<useSSEModule.SSECallbacks["onDerivedStateChanged"]>>(),
+            { connect } = useSSE(SESSION_ID);
         connect({ onDerivedStateChanged });
         await flushPromises();
         await transport.simulateMessage(
@@ -152,9 +159,9 @@ describe("useSSE", () => {
     });
 
     it("emits tokens via onToken callback", async () => {
-        const transport = createTransportController();
-        const { connect } = useSSE(SESSION_ID);
-        const onToken = vi.fn();
+        const transport = createTransportController(),
+            { connect } = useSSE(SESSION_ID),
+            onToken = vi.fn<NonNullable<useSSEModule.SSECallbacks["onToken"]>>();
         connect({ onToken });
         await flushPromises();
         await transport.simulateMessage("token", JSON.stringify({ content: "hello" }));
@@ -162,9 +169,9 @@ describe("useSSE", () => {
     });
 
     it("does not start content lifecycle before the first token", async () => {
-        const transport = createTransportController();
-        const { connect } = useSSE(SESSION_ID);
-        const onStart = vi.fn();
+        const transport = createTransportController(),
+            { connect } = useSSE(SESSION_ID),
+            onStart = vi.fn<NonNullable<useSSEModule.SSECallbacks["onStart"]>>();
         connect({ onStart });
         await flushPromises();
 
@@ -176,9 +183,9 @@ describe("useSSE", () => {
     });
 
     it("emits status via onStatus callback", async () => {
-        const transport = createTransportController();
-        const { connect } = useSSE(SESSION_ID);
-        const onStatus = vi.fn();
+        const transport = createTransportController(),
+            { connect } = useSSE(SESSION_ID),
+            onStatus = vi.fn<NonNullable<useSSEModule.SSECallbacks["onStatus"]>>();
         connect({ onStatus });
         await flushPromises();
         await transport.simulateMessage("status", JSON.stringify({ status: "executing" }));
@@ -186,8 +193,8 @@ describe("useSSE", () => {
     });
 
     it("preserves nested policy evidence on approval requests", async () => {
-        const transport = createTransportController();
-        const { connect } = useSSE(SESSION_ID);
+        const transport = createTransportController(),
+            { connect } = useSSE(SESSION_ID);
         connect();
         await flushPromises();
 
@@ -233,8 +240,8 @@ describe("useSSE", () => {
     });
 
     it("merges run_checkpoint events into the checkpoint store", async () => {
-        const transport = createTransportController();
-        const { connect } = useSSE(SESSION_ID);
+        const transport = createTransportController(),
+            { connect } = useSSE(SESSION_ID);
         connect();
         await flushPromises();
 
@@ -257,8 +264,8 @@ describe("useSSE", () => {
     });
 
     it("drops run_checkpoint events that belong to another session", async () => {
-        const transport = createTransportController();
-        const { connect } = useSSE(SESSION_ID);
+        const transport = createTransportController(),
+            { connect } = useSSE(SESSION_ID);
         connect();
         await flushPromises();
 
@@ -276,8 +283,8 @@ describe("useSSE", () => {
     });
 
     it("drops late approval events after the agent store epoch changes", async () => {
-        const transport = createTransportController();
-        const { connect } = useSSE(SESSION_ID);
+        const transport = createTransportController(),
+            { connect } = useSSE(SESSION_ID);
         connect();
         await flushPromises();
         useAgentStore().reset();
@@ -300,8 +307,8 @@ describe("useSSE", () => {
     });
 
     it("drops late approval events after logout cleanup resets the agent store", async () => {
-        const transport = createTransportController();
-        const { connect } = useSSE(SESSION_ID);
+        const transport = createTransportController(),
+            { connect } = useSSE(SESSION_ID);
         connect();
         await flushPromises();
         useAuthStore().logout();
@@ -324,9 +331,9 @@ describe("useSSE", () => {
     });
 
     it("emits done via onDone callback and stops streaming flag", async () => {
-        const transport = createTransportController();
-        const { connect, isStreaming } = useSSE(SESSION_ID);
-        const onDone = vi.fn();
+        const transport = createTransportController(),
+            { connect, isStreaming } = useSSE(SESSION_ID),
+            onDone = vi.fn<NonNullable<useSSEModule.SSECallbacks["onDone"]>>();
         connect({ onDone });
         await flushPromises();
         await transport.simulateMessage("done", "");
@@ -336,8 +343,8 @@ describe("useSSE", () => {
 
     it("emits error via onError callback when connect fails", async () => {
         vi.mocked(chatTransport.sendMessages).mockRejectedValueOnce(new Error("connect failed"));
-        const { connect } = useSSE(SESSION_ID);
-        const onError = vi.fn();
+        const { connect } = useSSE(SESSION_ID),
+            onError = vi.fn<NonNullable<useSSEModule.SSECallbacks["onError"]>>();
         connect({ onError });
         await flushPromises();
         expect(onError).toHaveBeenCalledWith(
@@ -349,9 +356,9 @@ describe("useSSE", () => {
     });
 
     it("does not emit transport retry errors via onError callback", async () => {
-        const transport = createTransportController();
-        const { connect } = useSSE(SESSION_ID);
-        const onError = vi.fn();
+        const transport = createTransportController(),
+            { connect } = useSSE(SESSION_ID),
+            onError = vi.fn<NonNullable<useSSEModule.SSECallbacks["onError"]>>();
         connect({ onError });
         await flushPromises();
         await transport.simulateError("network failure");
@@ -368,8 +375,8 @@ describe("useSSE", () => {
 
 describe("tool events → live message toolCalls (PLAN-0342 T1.5)", () => {
     it("writes real agent payload keys and diagnostics into the streaming message", async () => {
-        const transport = createTransportController();
-        const { connect } = useSSE(SESSION_ID);
+        const transport = createTransportController(),
+            { connect } = useSSE(SESSION_ID);
         connect();
         await flushPromises();
         const chatStore = useChatStore();
@@ -445,8 +452,8 @@ describe("tool events → live message toolCalls (PLAN-0342 T1.5)", () => {
         // Real wire shape: `tool_call` carries the tool-run id in both
         // `toolCallId` and `run_id`, while `tool_result` carries the model's
         // tool_call_id in `toolCallId` — the shared `run_id` is the join key.
-        const transport = createTransportController();
-        const { connect } = useSSE(SESSION_ID);
+        const transport = createTransportController(),
+            { connect } = useSSE(SESSION_ID);
         connect();
         await flushPromises();
         const chatStore = useChatStore();
@@ -484,8 +491,8 @@ describe("tool events → live message toolCalls (PLAN-0342 T1.5)", () => {
     });
 
     it("still accepts the legacy name/id payload keys", async () => {
-        const transport = createTransportController();
-        const { connect } = useSSE(SESSION_ID);
+        const transport = createTransportController(),
+            { connect } = useSSE(SESSION_ID);
         connect();
         await flushPromises();
         const chatStore = useChatStore();
@@ -508,8 +515,8 @@ describe("tool events → live message toolCalls (PLAN-0342 T1.5)", () => {
     });
 
     it("marks enveloped tool errors as failed and drops malformed diagnostics", async () => {
-        const transport = createTransportController();
-        const { connect } = useSSE(SESSION_ID);
+        const transport = createTransportController(),
+            { connect } = useSSE(SESSION_ID);
         connect();
         await flushPromises();
         const chatStore = useChatStore();
@@ -544,18 +551,18 @@ describe("stream liveness timer (S-1)", () => {
     });
 
     async function startStreamingRun() {
-        const transport = createTransportController();
-        const sse = useSSE(SESSION_ID);
-        const onError = vi.fn();
-        const onDone = vi.fn();
+        const transport = createTransportController(),
+            sse = useSSE(SESSION_ID),
+            onError = vi.fn<NonNullable<useSSEModule.SSECallbacks["onError"]>>(),
+            onDone = vi.fn<NonNullable<useSSEModule.SSECallbacks["onDone"]>>();
         sse.connect({ onError, onDone });
         await flushPromises();
         vi.stubGlobal(
             "fetch",
-            vi.fn().mockResolvedValue({
+            vi.fn<(input: string, init?: RequestInit) => Promise<Response>>().mockResolvedValue({
                 ok: true,
                 json: async () => ({ runId: RUN_ID }),
-            }),
+            } as Response),
         );
         await sse.sendMessage({ content: "hello", branchId: BRANCH_ID });
         await transport.simulateMessage("token", JSON.stringify({ content: "hi" }));
@@ -590,16 +597,16 @@ describe("stream liveness timer (S-1)", () => {
     });
 
     it("times out as error when nothing arrives before the first token", async () => {
-        const sse = useSSE(SESSION_ID);
-        const onError = vi.fn();
+        const sse = useSSE(SESSION_ID),
+            onError = vi.fn<NonNullable<useSSEModule.SSECallbacks["onError"]>>();
         sse.connect({ onError });
         await flushPromises();
         vi.stubGlobal(
             "fetch",
-            vi.fn().mockResolvedValue({
+            vi.fn<(input: string, init?: RequestInit) => Promise<Response>>().mockResolvedValue({
                 ok: true,
                 json: async () => ({ runId: RUN_ID }),
-            }),
+            } as Response),
         );
         await sse.sendMessage({ content: "hello", branchId: BRANCH_ID });
 
@@ -614,9 +621,9 @@ describe("stream liveness timer (S-1)", () => {
     });
 
     it("does not arm the timer while idle", async () => {
-        const transport = createTransportController();
-        const { connect } = useSSE(SESSION_ID);
-        const onError = vi.fn();
+        const transport = createTransportController(),
+            { connect } = useSSE(SESSION_ID),
+            onError = vi.fn<NonNullable<useSSEModule.SSECallbacks["onError"]>>();
         connect({ onError });
         await flushPromises();
 
@@ -629,24 +636,24 @@ describe("stream liveness timer (S-1)", () => {
     });
 
     it("treats tool, approval and status events as liveness signals", async () => {
-        const { transport, onError } = await startStreamingRun();
-        const events: Array<[string, unknown]> = [
-            ["tool_call", { id: "tool-1", name: "execute_command", arguments: "{}" }],
-            ["tool_result", { id: "tool-1", result: "done" }],
-            [
-                "approval_request",
-                {
-                    requestId: LIVENESS_REQUEST_ID,
-                    runId: RUN_ID,
-                    sessionId: SESSION_ID,
-                    workspaceId: WORKSPACE_ID,
-                    tool: "request_approval",
-                    action: "write file",
-                    details: "/README.md",
-                },
-            ],
-            ["status", { status: "executing" }],
-        ];
+        const { transport, onError } = await startStreamingRun(),
+            events: Array<[string, unknown]> = [
+                ["tool_call", { id: "tool-1", name: "execute_command", arguments: "{}" }],
+                ["tool_result", { id: "tool-1", result: "done" }],
+                [
+                    "approval_request",
+                    {
+                        requestId: LIVENESS_REQUEST_ID,
+                        runId: RUN_ID,
+                        sessionId: SESSION_ID,
+                        workspaceId: WORKSPACE_ID,
+                        tool: "request_approval",
+                        action: "write file",
+                        details: "/README.md",
+                    },
+                ],
+                ["status", { status: "executing" }],
+            ];
 
         for (const [name, data] of events) {
             await vi.advanceTimersByTimeAsync(25_000);

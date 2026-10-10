@@ -56,8 +56,8 @@ const unfinishedCount = computed(() => {
     if (counts.value) return counts.value.failed;
     return (props.result?.entries ?? []).filter((entry) => entry.outcome === "failed").length;
 });
-const canRetry = computed(() => unfinishedCount.value > 0);
-const partialNote = computed(() => unfinishedCount.value > 0);
+const canRetry = computed(() => unfinishedCount.value > 0),
+    partialNote = computed(() => unfinishedCount.value > 0);
 
 const durationText = computed(() => {
     const duration = props.result?.durationMs;
@@ -69,11 +69,11 @@ function canInspect(entry: CheckpointResultEntry): boolean {
     return entry.outcome === "suspect" || entry.outcome === "failed";
 }
 
-const diffEntry = ref<CheckpointResultEntry | null>(null);
-const diffLoading = ref(false);
-const diffError = ref<string | null>(null);
-const diffRows = ref<LineDiffRow[]>([]);
-const diffTruncated = ref(false);
+const diffEntry = ref<CheckpointResultEntry | null>(null),
+    diffLoading = ref(false);
+const diffError = ref<string | null>(null),
+    diffRows = ref<LineDiffRow[]>([]),
+    diffTruncated = ref(false);
 const diffRef = ref<"slice" | null>(null);
 let diffGeneration = 0;
 

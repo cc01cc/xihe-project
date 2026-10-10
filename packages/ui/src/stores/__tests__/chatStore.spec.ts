@@ -1,16 +1,19 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
 import { api } from "../../composables/api";
+import type * as apiModule from "../../composables/api";
 import { useChatStore } from "../chat";
 
 vi.mock("../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {
             ...actual.api,
-            getChatRunStatus: vi.fn(),
-            getPendingApprovals: vi.fn().mockResolvedValue([]),
+            getChatRunStatus: vi.fn<typeof apiModule.api.getChatRunStatus>(),
+            getPendingApprovals: vi
+                .fn<typeof apiModule.api.getPendingApprovals>()
+                .mockResolvedValue([]),
         },
     };
 });
@@ -29,26 +32,26 @@ describe("useChatStore", () => {
     it("keeps branch selection scoped to each session and defaults to its root", () => {
         const store = useChatStore();
         const root = {
-            branchId: "root-a",
-            parentBranchId: null,
-            forkPointMessageId: null,
-            forkPointRunId: null,
-            createdAt: "2026-09-29T00:00:00Z",
-        };
-        const child = {
-            branchId: "child-a",
-            parentBranchId: "root-a",
-            forkPointMessageId: "message-a",
-            forkPointRunId: "run-a",
-            createdAt: "2026-09-29T00:01:00Z",
-        };
-        const otherRoot = {
-            branchId: "root-b",
-            parentBranchId: null,
-            forkPointMessageId: null,
-            forkPointRunId: null,
-            createdAt: "2026-09-29T00:00:00Z",
-        };
+                branchId: "root-a",
+                parentBranchId: null,
+                forkPointMessageId: null,
+                forkPointRunId: null,
+                createdAt: "2026-09-29T00:00:00Z",
+            },
+            child = {
+                branchId: "child-a",
+                parentBranchId: "root-a",
+                forkPointMessageId: "message-a",
+                forkPointRunId: "run-a",
+                createdAt: "2026-09-29T00:01:00Z",
+            },
+            otherRoot = {
+                branchId: "root-b",
+                parentBranchId: null,
+                forkPointMessageId: null,
+                forkPointRunId: null,
+                createdAt: "2026-09-29T00:00:00Z",
+            };
 
         store.setSessionBranches("session-a", [root, child]);
         store.setSessionBranches("session-b", [otherRoot]);
@@ -61,14 +64,14 @@ describe("useChatStore", () => {
     });
 
     it("addMessage stores a message for a session", () => {
-        const store = useChatStore();
-        const msg = {
-            id: "m1",
-            sessionId: "s1",
-            role: "user" as const,
-            content: "hello",
-            timestamp: new Date().toISOString(),
-        };
+        const store = useChatStore(),
+            msg = {
+                id: "m1",
+                sessionId: "s1",
+                role: "user" as const,
+                content: "hello",
+                timestamp: new Date().toISOString(),
+            };
         store.addMessage("s1", msg);
         expect(store.getMessages("s1")).toHaveLength(1);
         expect(store.getMessages("s1")[0].content).toBe("hello");
@@ -94,9 +97,9 @@ describe("useChatStore", () => {
     });
 
     it("createStreamingMessage adds assistant message and tracks it", () => {
-        const store = useChatStore();
-        const id = store.createStreamingMessage("s1");
-        const msgs = store.getMessages("s1");
+        const store = useChatStore(),
+            id = store.createStreamingMessage("s1"),
+            msgs = store.getMessages("s1");
         expect(msgs).toHaveLength(1);
         expect(msgs[0].role).toBe("assistant");
         expect(msgs[0].id).toBe(id);
@@ -177,10 +180,9 @@ describe("useChatStore", () => {
         expect(message.toolCalls).toHaveLength(1);
         expect(message.toolCalls?.[0].id).toBe("tc-1");
     });
-
     it("upsertToolCall reuses the active streaming message instead of creating a second", () => {
-        const store = useChatStore();
-        const messageId = store.createStreamingMessage("s1", "run-1");
+        const store = useChatStore(),
+            messageId = store.createStreamingMessage("s1", "run-1");
         store.upsertToolCall("s1", {
             id: "tc-1",
             name: "run_command",
@@ -335,8 +337,8 @@ describe("useChatStore", () => {
         store.appendToParts("s1", { type: "text", content: "partial answer before overflow" });
         store.interruptForOverflowRetry("s1");
 
-        const messages = store.getMessages("s1");
-        const assistant = messages.find((m) => m.role === "assistant");
+        const messages = store.getMessages("s1"),
+            assistant = messages.find((m) => m.role === "assistant");
         expect(assistant?.interrupted).toBe(true);
         expect(assistant?.runStatus).toBe("interrupted");
         expect(assistant?.content).toContain("partial answer before overflow");
@@ -428,13 +430,13 @@ describe("useChatStore", () => {
 });
 
 describe("refreshRunRecovery tri-state (PLAN-292 M3 C2/C3)", () => {
-    const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-    const RUN_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-    const NEW_RUN_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
-    const OLD_RUN_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
-    const REQUEST_ID_1 = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
-    const REQUEST_ID_2 = "ffffffff-ffff-4fff-8fff-ffffffffffff";
-    const TERMINAL_REQUEST_ID = "99999999-9999-4999-8999-999999999999";
+    const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        RUN_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        NEW_RUN_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        OLD_RUN_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        REQUEST_ID_1 = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        REQUEST_ID_2 = "ffffffff-ffff-4fff-8fff-ffffffffffff",
+        TERMINAL_REQUEST_ID = "99999999-9999-4999-8999-999999999999";
 
     beforeEach(() => {
         setActivePinia(createPinia());
@@ -523,9 +525,9 @@ describe("refreshRunRecovery tri-state (PLAN-292 M3 C2/C3)", () => {
     });
 
     it("expires the local approval when a ChatRun is cancelled", async () => {
-        const { useAgentStore } = await import("../agent");
-        const agent = useAgentStore();
-        const store = useChatStore();
+        const { useAgentStore } = await import("../agent"),
+            agent = useAgentStore(),
+            store = useChatStore();
         agent.addApprovalRequest({
             requestId: TERMINAL_REQUEST_ID,
             runId: RUN_ID,
@@ -617,9 +619,9 @@ describe("refreshRunRecovery tri-state (PLAN-292 M3 C2/C3)", () => {
                 leaseExpired: false,
                 pendingApprovals: [],
             });
-        const store = useChatStore();
-        const oldRequest = store.refreshRunRecovery(SESSION_ID, OLD_RUN_ID);
-        const newRequest = store.refreshRunRecovery(SESSION_ID, NEW_RUN_ID);
+        const store = useChatStore(),
+            oldRequest = store.refreshRunRecovery(SESSION_ID, OLD_RUN_ID),
+            newRequest = store.refreshRunRecovery(SESSION_ID, NEW_RUN_ID);
         await newRequest;
         resolveOld?.({
             runId: OLD_RUN_ID,
@@ -655,8 +657,8 @@ describe("refreshRunRecovery tri-state (PLAN-292 M3 C2/C3)", () => {
                     resolveStatus = resolve;
                 }),
         );
-        const store = useChatStore();
-        const pending = store.refreshRunRecovery(SESSION_ID, RUN_ID);
+        const store = useChatStore(),
+            pending = store.refreshRunRecovery(SESSION_ID, RUN_ID);
         store.invalidateRunRecovery(SESSION_ID, RUN_ID);
         resolveStatus?.({
             runId: RUN_ID,

@@ -1,26 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { ApiError, api } from "../../composables/api";
+import type * as apiModule from "../../composables/api";
 import { usePolicyAdminStore } from "../policyAdmin";
 import type { PolicyRuleView, PolicyToolFaceView } from "../../types";
 
-const RULE_ID = "77777777-7777-4777-8777-777777777777";
-const FACE_ID = "88888888-8888-4888-8888-888888888888";
-const WORKSPACE_ID = "workspace-1";
+const RULE_ID = "77777777-7777-4777-8777-777777777777",
+    FACE_ID = "88888888-8888-4888-8888-888888888888",
+    WORKSPACE_ID = "workspace-1";
 
 vi.mock("../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {
             ...actual.api,
-            listPolicyDomains: vi.fn(),
-            listPolicyRules: vi.fn(),
-            listPolicyRuleConflicts: vi.fn(),
-            createPolicyRule: vi.fn(),
-            deletePolicyRule: vi.fn(),
-            listPolicyToolFaces: vi.fn(),
-            upsertPolicyToolFace: vi.fn(),
+            listPolicyDomains: vi.fn<typeof apiModule.api.listPolicyDomains>(),
+            listPolicyRules: vi.fn<typeof apiModule.api.listPolicyRules>(),
+            listPolicyRuleConflicts: vi.fn<typeof apiModule.api.listPolicyRuleConflicts>(),
+            createPolicyRule: vi.fn<typeof apiModule.api.createPolicyRule>(),
+            deletePolicyRule: vi.fn<typeof apiModule.api.deletePolicyRule>(),
+            listPolicyToolFaces: vi.fn<typeof apiModule.api.listPolicyToolFaces>(),
+            upsertPolicyToolFace: vi.fn<typeof apiModule.api.upsertPolicyToolFace>(),
         },
     };
 });
@@ -141,7 +142,7 @@ describe("usePolicyAdminStore", () => {
                 priority: 0,
                 locked: true,
             }),
-        ).rejects.toThrow();
+        ).rejects.toThrow("locked rules require ADMIN");
 
         expect(store.rulesForbidden.instance).toBe(true);
         expect(store.rulesError.instance).toBeNull();
@@ -200,7 +201,7 @@ describe("usePolicyAdminStore", () => {
                 actionClass: "read",
                 shape: "structured",
             }),
-        ).rejects.toThrow();
+        ).rejects.toThrow("built-in face cannot be overridden");
 
         expect(store.toolFacesForbidden).toBe(true);
         expect(store.toolFacesError).toContain("FORBIDDEN");

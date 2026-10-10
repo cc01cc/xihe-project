@@ -178,12 +178,12 @@ const DETAILS: Record<string, unknown> = {
 };
 
 async function installAuditRoutes(page: Page, mode: "normal" | "empty" | "error") {
-    const listRequests: string[] = [];
-    const detailRequests: string[] = [];
+    const listRequests: string[] = [],
+        detailRequests: string[] = [];
 
     await page.route("**/api/v1/audit/entries**", async (route) => {
-        const url = new URL(route.request().url());
-        const segments = url.pathname.split("/").filter(Boolean);
+        const url = new URL(route.request().url()),
+            segments = url.pathname.split("/").filter(Boolean);
         const id = segments.at(-1);
         // List = /api/v1/audit/entries; detail = /api/v1/audit/entries/{type}/{id}.
         const isDetail = segments.length === 6 && segments[3] === "entries" && id !== undefined;
@@ -235,8 +235,8 @@ async function installAuditRoutes(page: Page, mode: "normal" | "empty" | "error"
             return;
         }
 
-        const status = url.searchParams.get("status");
-        const typeFilter = url.searchParams.get("type");
+        const status = url.searchParams.get("status"),
+            typeFilter = url.searchParams.get("type");
         const pageNumber = Number(url.searchParams.get("page") ?? "0");
         if (typeFilter === "chat_run") {
             await route.fulfill({

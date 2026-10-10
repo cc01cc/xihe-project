@@ -1,8 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 
-const mockGetDocument = vi.fn((..._args: any[]) => ({
-    promise: Promise.resolve({ numPages: 3 }),
-}));
+const mockGetDocument = vi.fn<(..._args: unknown[]) => { promise: Promise<{ numPages: number }> }>(
+    (..._args: unknown[]) => ({
+        promise: Promise.resolve({ numPages: 3 }),
+    }),
+);
 vi.mock("pdfjs-dist", () => ({
     default: {
         GlobalWorkerOptions: { workerSrc: "" },
@@ -14,8 +16,8 @@ vi.mock("pdfjs-dist", () => ({
 
 describe("usePdfDocument", () => {
     it("exports a function and handles null source", async () => {
-        const { usePdfDocument } = await import("../../composables/usePdfDocument");
-        const result = usePdfDocument(null);
+        const { usePdfDocument } = await import("../../composables/usePdfDocument"),
+            result = usePdfDocument(null);
         expect(typeof result.loading).toBe("object");
         expect(result.loading.value).toBe(false);
         expect(result.numPages.value).toBe(0);

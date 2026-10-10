@@ -53,9 +53,9 @@ export function getMessageScrollerVisibilityState({
         return EMPTY_MESSAGE_SCROLLER_VISIBILITY_STATE;
     }
 
-    const viewportRect = viewport.getBoundingClientRect();
-    const lineTop = viewportRect.top + scrollMargin + scrollPreviousItemPeek;
-    const trackByLayout = typeof IntersectionObserver === "undefined";
+    const viewportRect = viewport.getBoundingClientRect(),
+        lineTop = viewportRect.top + scrollMargin + scrollPreviousItemPeek,
+        trackByLayout = typeof IntersectionObserver === "undefined";
 
     const visible: string[] = [];
     let currentAnchorId: string | null = null;
@@ -67,8 +67,8 @@ export function getMessageScrollerVisibilityState({
             continue;
         }
 
-        const isAnchor = item.dataset.scrollAnchor === "true";
-        const rect = isAnchor || trackByLayout ? item.getBoundingClientRect() : null;
+        const isAnchor = item.dataset.scrollAnchor === "true",
+            rect = isAnchor || trackByLayout ? item.getBoundingClientRect() : null;
 
         const isVisible =
             trackByLayout && rect
@@ -196,9 +196,9 @@ export function getElementScrollTop({
     spacer: HTMLElement | null;
     viewport: HTMLElement;
 }) {
-    const elementTop = getElementTop(element, viewport);
-    const elementHeight = element.getBoundingClientRect().height;
-    const contentPadding = getContentBlockPadding(spacer);
+    const elementTop = getElementTop(element, viewport),
+        elementHeight = element.getBoundingClientRect().height,
+        contentPadding = getContentBlockPadding(spacer);
 
     if (align === "center") {
         const insetHeight = Math.max(
@@ -216,9 +216,9 @@ export function getElementScrollTop({
     }
 
     if (align === "nearest") {
-        const elementBottom = elementTop + elementHeight;
-        const viewportTop = viewport.scrollTop + contentPadding.start;
-        const viewportBottom = viewport.scrollTop + viewport.clientHeight - contentPadding.end;
+        const elementBottom = elementTop + elementHeight,
+            viewportTop = viewport.scrollTop + contentPadding.start,
+            viewportBottom = viewport.scrollTop + viewport.clientHeight - contentPadding.end;
 
         if (elementTop >= viewportTop && elementBottom <= viewportBottom) {
             return viewport.scrollTop;
@@ -235,8 +235,8 @@ export function getElementScrollTop({
 }
 
 export function getElementTop(element: HTMLElement, viewport: HTMLElement) {
-    const elementRect = element.getBoundingClientRect();
-    const viewportRect = viewport.getBoundingClientRect();
+    const elementRect = element.getBoundingClientRect(),
+        viewportRect = viewport.getBoundingClientRect();
 
     return elementRect.top - viewportRect.top + viewport.scrollTop;
 }
@@ -270,10 +270,10 @@ export function getContentBottom({
     spacer: HTMLElement | null;
     viewport: HTMLElement;
 }) {
-    const items = getMessageScrollerItems(content, spacer);
-    const padding = getBlockPadding(content);
-    const viewportRect = viewport.getBoundingClientRect();
-    const scrollTop = viewport.scrollTop;
+    const items = getMessageScrollerItems(content, spacer),
+        padding = getBlockPadding(content),
+        viewportRect = viewport.getBoundingClientRect(),
+        scrollTop = viewport.scrollTop;
     let contentBottom = padding.start + padding.end;
 
     for (const item of items) {
@@ -316,8 +316,8 @@ export function getFlexGap(element: HTMLElement | null) {
         return 0;
     }
 
-    const style = window.getComputedStyle(element);
-    const gap = style.rowGap === "normal" ? style.gap : style.rowGap;
+    const style = window.getComputedStyle(element),
+        gap = style.rowGap === "normal" ? style.gap : style.rowGap;
 
     return readCssPixel(gap);
 }

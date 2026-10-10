@@ -32,9 +32,9 @@ const { t } = useI18n();
 const checkpointStore = useCheckpointStore();
 
 type DiffTab = "timeline" | "pending";
-const activeTab = ref<DiffTab>("timeline");
-const timelineLoading = ref(false);
-const timelineError = ref<string | null>(null);
+const activeTab = ref<DiffTab>("timeline"),
+    timelineLoading = ref(false),
+    timelineError = ref<string | null>(null);
 const selectedCheckpointId = ref<string | null>(null);
 const timeline = computed(() => checkpointStore.getForWorkspace(props.workspaceId));
 let timelineGeneration = 0;
@@ -71,10 +71,10 @@ function selectCheckpoint(id: string) {
     selectedCheckpointId.value = selectedCheckpointId.value === id ? null : id;
 }
 
-const restorePreviewSliceRef = ref<string | null>(null);
-const restoreBusy = ref(false);
-const restoreError = ref<string | null>(null);
-const restoreResult = ref<CheckpointResult | null>(null);
+const restorePreviewSliceRef = ref<string | null>(null),
+    restoreBusy = ref(false);
+const restoreError = ref<string | null>(null),
+    restoreResult = ref<CheckpointResult | null>(null);
 
 function openRestore(sliceRef: string) {
     restoreResult.value = null;
@@ -89,8 +89,8 @@ function closeRestorePreview() {
 }
 
 async function confirmRestore(acknowledgeTypeChanges: string[]) {
-    const sliceRef = restorePreviewSliceRef.value;
-    const workspaceId = props.workspaceId;
+    const sliceRef = restorePreviewSliceRef.value,
+        workspaceId = props.workspaceId;
     if (!sliceRef || !workspaceId || restoreBusy.value) return;
     restoreBusy.value = true;
     restoreError.value = null;
@@ -140,8 +140,8 @@ watch(
     },
 );
 
-const pendingStatus = ref<WorkspaceGitStatus | null>(null);
-const pendingLoading = ref(false);
+const pendingStatus = ref<WorkspaceGitStatus | null>(null),
+    pendingLoading = ref(false);
 const pendingError = ref<string | null>(null);
 let pendingGeneration = 0;
 

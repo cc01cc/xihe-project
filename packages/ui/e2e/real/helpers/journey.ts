@@ -6,6 +6,7 @@ import { closeSync, mkdirSync, openSync, readFileSync, writeFileSync } from "nod
 import path from "node:path";
 import { generateE2EPassword } from "./password";
 import { expect } from "@playwright/test";
+import type { APIRequestContext, Page } from "@playwright/test";
 
 export const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 
@@ -21,7 +22,7 @@ export interface JourneyContext {
 
 /** Wait for CP's cached Agent health, which gates chat admission, after an Agent rebind. */
 export async function waitForControlPlaneAgentReady(
-    request: import("@playwright/test").APIRequestContext,
+    request: APIRequestContext,
     headers: Record<string, string>,
 ): Promise<void> {
     let lastObserved = "unobserved";
@@ -63,7 +64,7 @@ export async function waitForControlPlaneAgentReady(
 
 /** Register a fresh user (one per spec — the Agent binds one workspace per process). */
 export async function registerJourneyUser(
-    request: import("@playwright/test").APIRequestContext,
+    request: APIRequestContext,
     name: string,
 ): Promise<JourneyContext> {
     const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
@@ -86,7 +87,7 @@ export async function registerJourneyUser(
 
 /** Resolve the server-created root path for API assertions; tests do not synthesize branch IDs. */
 export async function getRootBranchId(
-    request: import("@playwright/test").APIRequestContext,
+    request: APIRequestContext,
     sessionId: string,
     headers: Record<string, string>,
 ): Promise<string> {
@@ -150,8 +151,8 @@ function killPidTree(pid: number): void {
 }
 
 async function agentHealthOk(): Promise<{ ok: boolean; llmReady: string }> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2000);
+    const controller = new AbortController(),
+        timer = setTimeout(() => controller.abort(), 2000);
     try {
         const response = await fetch(`http://127.0.0.1:${AGENT_PORT}/internal/v1/agent/health`, {
             signal: controller.signal,
@@ -263,7 +264,7 @@ export async function ensureAgentWorkspaceBinding(workspaceId: string): Promise<
 }
 
 /** Seed localStorage with auth/workspace so the SPA boots straight into the workspace. */
-export function seedPage(page: import("@playwright/test").Page, ctx: JourneyContext): void {
+export function seedPage(page: Page, ctx: JourneyContext): void {
     page.addInitScript((t) => localStorage.setItem("xihe-token", t), ctx.authToken);
     page.addInitScript(
         (raw) => localStorage.setItem("xihe-user", raw),
@@ -283,9 +284,9 @@ export function seedPage(page: import("@playwright/test").Page, ctx: JourneyCont
  *    sendMessage and never POSTs (PLAN-294 M1) — retry until the optimistic
  *    user bubble appears.
  */
-export async function sendChat(page: import("@playwright/test").Page, text: string): Promise<void> {
-    const input = page.locator('[data-testid="chat-input"]');
-    const send = page.locator('[data-testid="chat-send-button"]');
+export async function sendChat(page: Page, text: string): Promise<void> {
+    const input = page.locator('[data-testid="chat-input"]'),
+        send = page.locator('[data-testid="chat-send-button"]');
     // Each retry re-fills: a stale Vue mount (session switch / remount after
     // ensureChatReady) can drop the earlier input event, leaving the button
     // disabled with DOM value set but no v-model update.
@@ -321,7 +322,7 @@ export async function sendChat(page: import("@playwright/test").Page, text: stri
  * Wait for the newest ChatRun visible in the domain-owned audit projection.
  */
 export async function awaitLatestChatRunCompleted(
-    request: import("@playwright/test").APIRequestContext,
+    request: APIRequestContext,
     headers: Record<string, string>,
     workspaceId?: string,
 ): Promise<void> {
@@ -355,7 +356,7 @@ const CHAT_RUN_TERMINAL = /^(succeeded|failed|partial|cancelled|ambiguous)$/;
  * Wait for a specific ChatRun by its domain ID.
  */
 export async function awaitOperationCompletedForRun(
-    request: import("@playwright/test").APIRequestContext,
+    request: APIRequestContext,
     headers: Record<string, string>,
     runId: string,
 ): Promise<void> {
@@ -379,7 +380,7 @@ export async function awaitOperationCompletedForRun(
  * creation can race CP readiness on cold starts, so 新建对话 is the real
  * user path out of it.
  */
-export async function ensureChatReady(page: import("@playwright/test").Page): Promise<void> {
+export async function ensureChatReady(page: Page): Promise<void> {
     const chatInput = page.locator('[data-testid="chat-input"]');
     if (!(await chatInput.isVisible({ timeout: 10000 }).catch(() => false))) {
         const newChat = page.getByRole("button", { name: "新建对话" }).first();

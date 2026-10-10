@@ -3,13 +3,20 @@ import { mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
 import RevertPreviewDialog from "../RevertPreviewDialog.vue";
 import { ApiError, api } from "../../../composables/api";
+import type * as apiModule from "../../../composables/api";
 import type { CheckpointPreview } from "../../../types";
 
-const WORKSPACE_ID = "workspace-a";
-const SLICE_REF = "refs/xihe/workspace/slice-a";
+const WORKSPACE_ID = "workspace-a",
+    SLICE_REF = "refs/xihe/workspace/slice-a";
 vi.mock("../../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../composables/api")>();
-    return { ...actual, api: { ...actual.api, previewWorkspaceCheckpointRevert: vi.fn() } };
+    const actual = await importOriginal<typeof apiModule>();
+    return {
+        ...actual,
+        api: {
+            ...actual.api,
+            previewWorkspaceCheckpointRevert: vi.fn<typeof api.previewWorkspaceCheckpointRevert>(),
+        },
+    };
 });
 const mockedApi = vi.mocked(api);
 const i18n = createI18n({

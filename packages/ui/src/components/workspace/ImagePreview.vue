@@ -6,8 +6,8 @@ const props = defineProps<{
     fileName: string;
 }>();
 
-const showLightbox = ref(false);
-const scale = ref(1);
+const showLightbox = ref(false),
+    scale = ref(1);
 
 function zoomIn() {
     scale.value = Math.min(3, scale.value + 0.25);

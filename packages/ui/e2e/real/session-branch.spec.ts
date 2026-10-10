@@ -16,10 +16,10 @@ import {
 test.describe.configure({ mode: "serial", retries: 0, timeout: 90000 });
 
 test.describe("@host Session branch path", () => {
-    let journey: JourneyContext;
-    let workspaceHeaders: Record<string, string>;
-    let sessionId = "";
-    let principalId = "";
+    let journey: JourneyContext,
+        workspaceHeaders: Record<string, string>,
+        sessionId = "",
+        principalId = "";
     let userId = "";
 
     test.beforeAll(async ({ request }) => {
@@ -35,8 +35,8 @@ test.describe("@host Session branch path", () => {
         userId = ((await meResponse.json()) as { id: string }).id;
         seedUserGrant(userId, journey.workspaceId);
 
-        const roleId = randomUUID();
-        const templateId = randomUUID();
+        const roleId = randomUUID(),
+            templateId = randomUUID();
         const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
             headers: workspaceHeaders,
             data: {
@@ -96,9 +96,9 @@ test.describe("@host Session branch path", () => {
         await page.setViewportSize({ width: 1920, height: 1080 });
 
         const submissions: Array<{ sessionId?: string; branchId?: string; content?: string }> = [];
-        const pageErrors: string[] = [];
-        const consoleErrors: string[] = [];
-        const requestFailures: string[] = [];
+        const pageErrors: string[] = [],
+            consoleErrors: string[] = [],
+            requestFailures: string[] = [];
         const messageReads: Array<{ sessionId: string; branchId: string | null }> = [];
         page.on("pageerror", (error) => pageErrors.push(error.message));
         page.on("console", (message) => {
@@ -199,8 +199,8 @@ test.describe("@host Session branch path", () => {
         expect(createdBranch.parentBranchId).toBe(rootBranchId);
         await expect(branchSelect).toHaveValue(createdBranch.branchId);
 
-        const branchChatText = `selected-branch-${Date.now()}`;
-        const beforeBranchChat = submissions.length;
+        const branchChatText = `selected-branch-${Date.now()}`,
+            beforeBranchChat = submissions.length;
         const branchChatResponsePromise = page.waitForResponse(
             (response) =>
                 response.request().method() === "POST" &&
@@ -280,8 +280,8 @@ test.describe("@host Session branch path", () => {
         await expect(activeSessionItem).toBeVisible();
         await activeSessionItem.click({ button: "right" });
         await page.getByTestId("session-item-fork").click();
-        const forkRequest = await forkRequestPromise;
-        const forkResponse = await forkResponsePromise;
+        const forkRequest = await forkRequestPromise,
+            forkResponse = await forkResponsePromise;
         expect(forkResponse.status(), await forkResponse.text()).toBe(201);
         const idempotencyKey = forkRequest.headers()["idempotency-key"];
         expect(idempotencyKey).toMatch(/^[0-9a-f-]{36}$/i);
@@ -333,8 +333,8 @@ test.describe("@host Session branch path", () => {
             )
             .toBe(true);
 
-        const sourceDb = readSessionSnapshot(sessionId);
-        const childDb = readSessionSnapshot(childId);
+        const sourceDb = readSessionSnapshot(sessionId),
+            childDb = readSessionSnapshot(childId);
         expect(childDb).toMatchObject({
             id: childId,
             kind: "fork",
@@ -498,8 +498,8 @@ test.describe("@host Session branch path", () => {
         seedPage(page, journey);
         await page.setViewportSize({ width: 1920, height: 1080 });
 
-        const pageErrors: string[] = [];
-        const consoleErrors: string[] = [];
+        const pageErrors: string[] = [],
+            consoleErrors: string[] = [];
         page.on("pageerror", (error) => pageErrors.push(error.message));
         page.on("console", (message) => {
             if (message.type() === "error") consoleErrors.push(message.text());
@@ -573,8 +573,8 @@ test.describe("@host Session branch path", () => {
         await expect(activeSessionItem).toBeVisible();
         await activeSessionItem.click({ button: "right" });
         await page.getByTestId("session-item-fork").click();
-        const forkRequest = await forkRequestPromise;
-        const forkResponse = await forkResponsePromise;
+        const forkRequest = await forkRequestPromise,
+            forkResponse = await forkResponsePromise;
         expect(forkResponse.status(), await forkResponse.text()).toBe(201);
         expect(forkRequest.headers()["idempotency-key"]).toMatch(/^[0-9a-f-]{36}$/i);
         expect(forkRequest.postDataJSON()).toMatchObject({
@@ -628,8 +628,8 @@ test.describe("@host Session branch path", () => {
 });
 
 function seedUserGrant(userId: string, workspaceId: string) {
-    const container = process.env.XIHE_E2E_PG_CONTAINER;
-    const database = process.env.XIHE_E2E_PG_DATABASE;
+    const container = process.env.XIHE_E2E_PG_CONTAINER,
+        database = process.env.XIHE_E2E_PG_DATABASE;
     const dbUser = process.env.XIHE_E2E_PG_USER;
     if (!container || !database || !dbUser) {
         throw new Error(
@@ -680,8 +680,8 @@ function readSessionSnapshot(sessionId: string): {
     files: Array<{ id: string; messageId: string }>;
     seedPayload: { summary_seed: { messages: unknown[] } } | null;
 } {
-    const container = process.env.XIHE_E2E_PG_CONTAINER;
-    const database = process.env.XIHE_E2E_PG_DATABASE;
+    const container = process.env.XIHE_E2E_PG_CONTAINER,
+        database = process.env.XIHE_E2E_PG_DATABASE;
     const dbUser = process.env.XIHE_E2E_PG_USER;
     if (!container || !database || !dbUser) {
         throw new Error(

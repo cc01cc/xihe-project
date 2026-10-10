@@ -4,10 +4,10 @@ import { Check, LoaderCircle, Upload, X } from "@lucide/vue";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { formatFileSize } from "../../lib/fileSize";
 
-const ws = useWorkspaceStore();
-const targetDir = ref("");
-const isDragOver = ref(false);
-const splitPreference = ref(true);
+const ws = useWorkspaceStore(),
+    targetDir = ref(""),
+    isDragOver = ref(false),
+    splitPreference = ref(true);
 const fileInput = ref<HTMLInputElement | null>(null);
 
 const hasLargePdf = ref(false);

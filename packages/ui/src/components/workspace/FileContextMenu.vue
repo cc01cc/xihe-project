@@ -17,12 +17,12 @@ const emit = defineEmits<{
     close: [];
 }>();
 
-const ws = useWorkspaceStore();
-const isDir = props.nodeType === "directory";
-const showDeleteModal = ref(false);
-const showNewFileModal = ref(false);
-const deleteLoading = ref(false);
-const newFileName = ref("");
+const ws = useWorkspaceStore(),
+    isDir = props.nodeType === "directory",
+    showDeleteModal = ref(false);
+const showNewFileModal = ref(false),
+    deleteLoading = ref(false),
+    newFileName = ref("");
 
 const menuRef = ref<HTMLElement | null>(null);
 

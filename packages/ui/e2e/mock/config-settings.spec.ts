@@ -40,8 +40,8 @@ test.describe("Config Settings (three layers)", () => {
             });
         });
         await page.route("**/api/v1/config/**", async (route: any) => {
-            const url = new URL(route.request().url());
-            const domain = url.pathname.split("/").pop() ?? "";
+            const url = new URL(route.request().url()),
+                domain = url.pathname.split("/").pop() ?? "";
             if (options.delayMs)
                 await new Promise((resolve) => setTimeout(resolve, options.delayMs));
             if (route.request().method() === "PUT") {

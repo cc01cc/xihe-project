@@ -3,17 +3,24 @@ import { flushPromises } from "@vue/test-utils";
 import { setActivePinia, createPinia } from "pinia";
 import { useCheckpointStore } from "../checkpoint";
 import { ApiError, api } from "../../composables/api";
+import type * as apiModule from "../../composables/api";
 import type { WorkspaceCheckpoint } from "../../types";
 
-const WORKSPACE_ID = "workspace-a";
-const OTHER_WORKSPACE_ID = "workspace-b";
-const RUN_ID = "run-a";
-const SESSION_ID = "session-a";
-const SLICE_REF = "refs/xihe/workspace/slice-a";
+const WORKSPACE_ID = "workspace-a",
+    OTHER_WORKSPACE_ID = "workspace-b",
+    RUN_ID = "run-a",
+    SESSION_ID = "session-a",
+    SLICE_REF = "refs/xihe/workspace/slice-a";
 
 vi.mock("../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../composables/api")>();
-    return { ...actual, api: { ...actual.api, listWorkspaceCheckpoints: vi.fn() } };
+    const actual = await importOriginal<typeof apiModule>();
+    return {
+        ...actual,
+        api: {
+            ...actual.api,
+            listWorkspaceCheckpoints: vi.fn<typeof apiModule.api.listWorkspaceCheckpoints>(),
+        },
+    };
 });
 const mockedApi = vi.mocked(api);
 
@@ -100,9 +107,9 @@ describe("workspace checkpoint list fetch", () => {
                     resolveList = resolve;
                 }),
         );
-        const store = useCheckpointStore();
-        const first = store.fetchWorkspaceCheckpoints(WORKSPACE_ID);
-        const second = store.fetchWorkspaceCheckpoints(WORKSPACE_ID);
+        const store = useCheckpointStore(),
+            first = store.fetchWorkspaceCheckpoints(WORKSPACE_ID),
+            second = store.fetchWorkspaceCheckpoints(WORKSPACE_ID);
         await flushPromises();
         expect(mockedApi.listWorkspaceCheckpoints).toHaveBeenCalledTimes(1);
         resolveList?.([checkpoint()]);
@@ -117,9 +124,9 @@ describe("workspace checkpoint list fetch", () => {
                     resolveList = resolve;
                 }),
         );
-        const store = useCheckpointStore();
-        const initial = store.fetchWorkspaceCheckpoints(WORKSPACE_ID);
-        const forced = store.fetchWorkspaceCheckpoints(WORKSPACE_ID, { force: true });
+        const store = useCheckpointStore(),
+            initial = store.fetchWorkspaceCheckpoints(WORKSPACE_ID),
+            forced = store.fetchWorkspaceCheckpoints(WORKSPACE_ID, { force: true });
         await flushPromises();
         expect(mockedApi.listWorkspaceCheckpoints).toHaveBeenCalledTimes(1);
 

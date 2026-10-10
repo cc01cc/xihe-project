@@ -30,8 +30,8 @@ function requireUuid(value: string): string {
 }
 
 function queryIsolatedPostgres(sql: string): string {
-    const container = process.env.XIHE_E2E_PG_CONTAINER;
-    const database = process.env.XIHE_E2E_PG_DATABASE;
+    const container = process.env.XIHE_E2E_PG_CONTAINER,
+        database = process.env.XIHE_E2E_PG_DATABASE;
     const user = process.env.XIHE_E2E_PG_USER;
     if (!container || !database || !user) {
         throw new Error(
@@ -94,9 +94,9 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
     request,
 }) => {
     test.setTimeout(240_000);
-    const pageErrors: string[] = [];
-    const consoleErrors: string[] = [];
-    const apiFailures: string[] = [];
+    const pageErrors: string[] = [],
+        consoleErrors: string[] = [],
+        apiFailures: string[] = [];
     const consoleErrorEvents: Array<{
         text: string;
         sourceUrl: string;
@@ -115,8 +115,8 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         observedAt: string;
         metadataCaptureFailed?: boolean;
     }> = [];
-    const httpFailureCaptures: Promise<void>[] = [];
-    const browserChatRequests: string[] = [];
+    const httpFailureCaptures: Promise<void>[] = [],
+        browserChatRequests: string[] = [];
     const browserChatSubmissions: Array<{ idempotencyKey: string | null; body: string }> = [];
     const derivedStateResponses: Array<{
         status: number;
@@ -402,8 +402,8 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
 
     let childReleaseNeeded = false;
     try {
-        const token = `spawn-${Date.now().toString(36)}`;
-        const derivedResponsesBeforeSpawn = derivedStateResponses.length;
+        const token = `spawn-${Date.now().toString(36)}`,
+            derivedResponsesBeforeSpawn = derivedStateResponses.length;
         childReleaseNeeded = true;
         await sendChat(page, `XIHE-E2E-SPAWN ${token}`);
         const approvalModal = page.locator('[data-testid="modal-content"]');
@@ -440,8 +440,8 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
             parentRunsBody.runs?.find((run) => run.origin === "user_submission")?.runId ?? "",
         );
 
-        let childRunId = "";
-        let childSessionId = "";
+        let childRunId = "",
+            childSessionId = "";
         await expect
             .poll(
                 () => {
@@ -788,9 +788,11 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
             ),
         ).toBe(parentRunsBeforeClaim + 1);
         expect(claimedRunId()).toBe(claimRunId);
-        expect(scalarCount(
-            `SELECT count(*) FROM mcp_invocations WHERE session_id = '${parentSessionId}'::uuid`,
-        )).toBe(parentInvocationsBeforeClaim);
+        expect(
+            scalarCount(
+                `SELECT count(*) FROM mcp_invocations WHERE session_id = '${parentSessionId}'::uuid`,
+            ),
+        ).toBe(parentInvocationsBeforeClaim);
 
         await expect
             .poll(

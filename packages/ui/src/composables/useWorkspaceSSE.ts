@@ -17,12 +17,12 @@ export function useWorkspaceSSE(
     workspaceId: MaybeRefOrGetter<string | null | undefined>,
     options: WorkspaceSSEOptions = {},
 ) {
-    const isConnected = ref(false);
-    const isConnecting = ref(false);
-    const connectionError = ref<string | null>(null);
-    const lastSequence = ref(0);
-    let activeKey: string | null = null;
-    let activeWorkspaceId: string | null = null;
+    const isConnected = ref(false),
+        isConnecting = ref(false),
+        connectionError = ref<string | null>(null),
+        lastSequence = ref(0);
+    let activeKey: string | null = null,
+        activeWorkspaceId: string | null = null;
 
     function stop(key = activeKey) {
         if (key) chatTransport.stop(key);

@@ -7,12 +7,12 @@ import { AlertCircle, LoaderCircle } from "@lucide/vue";
 import SettingsNav from "../../components/settings/SettingsNav.vue";
 import BackToChatButton from "../../components/settings/BackToChatButton.vue";
 
-const { t } = useI18n();
-const files = ref<File[]>([]);
-const uploading = ref(false);
-const loading = ref(false);
-const loadError = ref<string | null>(null);
-const documents = ref<Array<{ id: string; filename: string; chunks: number }>>([]);
+const { t } = useI18n(),
+    files = ref<File[]>([]),
+    uploading = ref(false),
+    loading = ref(false),
+    loadError = ref<string | null>(null),
+    documents = ref<Array<{ id: string; filename: string; chunks: number }>>([]);
 
 onMounted(async () => {
     await loadDocuments();

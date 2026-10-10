@@ -6,14 +6,14 @@ import { api } from "../../composables/api";
 const props = defineProps<{ sessionId: string }>();
 const { t } = useI18n();
 
-const open = ref(false);
-const loading = ref(false);
-const failed = ref(false);
-const sourceKey = ref("");
-const status = ref("");
-const hashPrefix = ref("");
-const envBranch = ref("");
-const envHead = ref("");
+const open = ref(false),
+    loading = ref(false),
+    failed = ref(false),
+    sourceKey = ref(""),
+    status = ref("");
+const hashPrefix = ref(""),
+    envBranch = ref(""),
+    envHead = ref("");
 
 async function load() {
     if (!props.sessionId) return;

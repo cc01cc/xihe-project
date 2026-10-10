@@ -3,28 +3,32 @@ import { mount, type VueWrapper } from "@vue/test-utils";
 import { nextTick } from "vue";
 import { toast } from "vue-sonner";
 import { api, ApiError } from "../../composables/api";
+import type * as apiModule from "../../composables/api";
 import type { WorkspaceDirectAttachExecutionMode } from "../../types";
 import WorkspaceCreateDialog from "../workspace/WorkspaceCreateDialog.vue";
 import WorkspaceSettingsDialog from "../workspace/WorkspaceSettingsDialog.vue";
 import { i18n } from "../../i18n";
 
 vi.mock("../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {
             ...actual.api,
-            createWorkspace: vi.fn(),
-            updateWorkspace: vi.fn(),
-            deleteWorkspace: vi.fn(),
-            listImportSources: vi.fn(),
-            preflightDirectAttach: vi.fn(),
+            createWorkspace: vi.fn<typeof apiModule.api.createWorkspace>(),
+            updateWorkspace: vi.fn<typeof apiModule.api.updateWorkspace>(),
+            deleteWorkspace: vi.fn<typeof apiModule.api.deleteWorkspace>(),
+            listImportSources: vi.fn<typeof apiModule.api.listImportSources>(),
+            preflightDirectAttach: vi.fn<typeof apiModule.api.preflightDirectAttach>(),
         },
     };
 });
 
 vi.mock("vue-sonner", () => ({
-    toast: { success: vi.fn(), error: vi.fn() },
+    toast: {
+        success: vi.fn<typeof toast.success>(),
+        error: vi.fn<typeof toast.error>(),
+    },
 }));
 
 const { workspaceMock } = vi.hoisted(() => ({

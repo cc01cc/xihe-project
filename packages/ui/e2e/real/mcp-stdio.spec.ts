@@ -28,9 +28,9 @@ test.describe("@host MCP — stdio session (PLAN-0347)", () => {
             register.ok(),
             `register failed: ${register.status()} ${await register.text()}`,
         ).toBeTruthy();
-        const auth = await register.json();
-        const authToken: string = auth.accessToken;
-        const wsId: string = auth.workspaceId;
+        const auth = await register.json(),
+            authToken: string = auth.accessToken,
+            wsId: string = auth.workspaceId;
 
         const userHeaders = {
             Authorization: `Bearer ${authToken}`,
@@ -92,8 +92,8 @@ test.describe("@host MCP — stdio session (PLAN-0347)", () => {
             data: { jsonrpc: "2.0", method: "tools/list", id: 2, params: {} },
         });
         expect(list.status(), `tools/list failed: ${list.status()} ${await list.text()}`).toBe(200);
-        const listed = await list.json();
-        const tools = listed?.result?.tools ?? [];
+        const listed = await list.json(),
+            tools = listed?.result?.tools ?? [];
         expect(JSON.stringify(tools)).toContain("e2e_echo");
 
         // Public user callers may execute only workspace file tools. e2e_echo is

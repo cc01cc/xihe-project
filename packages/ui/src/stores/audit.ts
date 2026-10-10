@@ -12,18 +12,18 @@ import type { AuditEntry, AuditEntryDetail, AuditEntryType, AuditListFilters } f
  * slow older call can never overwrite a newer filter result.
  */
 export const useAuditStore = defineStore("audit", () => {
-    const entries = ref<AuditEntry[]>([]);
-    const selectedDetail = ref<AuditEntryDetail | null>(null);
-    const page = ref(0);
-    const size = ref(20);
-    const totalElements = ref(0);
-    const totalPages = ref(0);
-    const loading = ref(false);
-    const detailLoading = ref(false);
-    const error = ref<Error | null>(null);
+    const entries = ref<AuditEntry[]>([]),
+        selectedDetail = ref<AuditEntryDetail | null>(null),
+        page = ref(0),
+        size = ref(20),
+        totalElements = ref(0),
+        totalPages = ref(0),
+        loading = ref(false),
+        detailLoading = ref(false),
+        error = ref<Error | null>(null);
 
-    let requestToken = 0;
-    let detailToken = 0;
+    let requestToken = 0,
+        detailToken = 0;
 
     async function load(filters: AuditListFilters = {}) {
         const token = ++requestToken;

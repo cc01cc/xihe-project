@@ -32,8 +32,8 @@ const hiddenDiagnosticsCount = computed(() =>
 const expanded = ref(false);
 // Raw Arguments/Result fallback has its own toggle and stays collapsed when
 // the structured diagnostics block is present.
-const rawExpanded = ref(false);
-const diagnosticsExpanded = ref(false);
+const rawExpanded = ref(false),
+    diagnosticsExpanded = ref(false);
 
 watch(
     hasDiagnostics,
@@ -101,22 +101,22 @@ const JOB_TOOL_NAMES = [
 const isJobCard = computed(
     () => JOB_TOOL_NAMES.includes(props.toolCall.name) || !!props.toolCall.jobSummary,
 );
-const jobSummary = computed(() => props.toolCall.jobSummary);
-const jobOutput = ref("");
-const jobNextOffset = ref(0);
-const jobSizeBytes = ref(0);
-const jobTruncated = ref(false);
-const jobLoaded = ref(false);
-const jobLoading = ref(false);
+const jobSummary = computed(() => props.toolCall.jobSummary),
+    jobOutput = ref(""),
+    jobNextOffset = ref(0);
+const jobSizeBytes = ref(0),
+    jobTruncated = ref(false),
+    jobLoaded = ref(false),
+    jobLoading = ref(false);
 const jobError = ref<string | null>(null);
 const jobHasMore = computed(() => jobLoaded.value && jobNextOffset.value < jobSizeBytes.value);
 
 // PLAN-0366 T2.2：单 job 取消（**Workspace access**——按控制器实际行为，
 // 非 owner-only；二次确认；pending 防重复提交；失败不改卡片状态、可重试）。
 // PLAN-0465 T2.1：canonical 路径 /workspaces/{workspaceId}/jobs/{jobId}/cancel。
-const cancelConfirming = ref(false);
-const cancelPending = ref(false);
-const cancelError = ref<string | null>(null);
+const cancelConfirming = ref(false),
+    cancelPending = ref(false),
+    cancelError = ref<string | null>(null);
 const cancelOutcome = ref<"cancelled" | "orphaned" | null>(null);
 const displayJobStatus = computed(() => cancelOutcome.value ?? jobSummary.value?.status);
 const canCancelJob = computed(
@@ -129,8 +129,8 @@ const canCancelJob = computed(
 );
 
 async function submitJobCancel() {
-    const workspaceId = jobSummary.value?.workspaceId;
-    const jobId = jobSummary.value?.jobId;
+    const workspaceId = jobSummary.value?.workspaceId,
+        jobId = jobSummary.value?.jobId;
     if (!workspaceId || !jobId || cancelPending.value) return;
     cancelPending.value = true;
     cancelError.value = null;
@@ -167,8 +167,8 @@ function jobStatusClass(status?: string): string {
 }
 
 async function loadJobOutput(reset: boolean) {
-    const workspaceId = jobSummary.value?.workspaceId;
-    const jobId = jobSummary.value?.jobId;
+    const workspaceId = jobSummary.value?.workspaceId,
+        jobId = jobSummary.value?.jobId;
     if (!workspaceId || !jobId || jobLoading.value) return;
     jobLoading.value = true;
     jobError.value = null;

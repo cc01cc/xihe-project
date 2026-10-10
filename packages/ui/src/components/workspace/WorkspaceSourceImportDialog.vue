@@ -9,20 +9,20 @@ const emit = defineEmits<{ close: []; completed: [] }>();
 
 const { t } = useI18n();
 
-const path = ref("");
-const entries = ref<Array<{ name: string; kind: string; readable: boolean; size: number }>>([]);
-const error = ref<string | null>(null);
-const loading = ref(false);
-const importing = ref(false);
-const excludeRules = ref("node_modules\ntarget\n.venv\n.tmp");
-const importId = ref<string | null>(null);
-const status = ref<string | null>(null);
-const errorCode = ref<string | null>(null);
-const recovered = ref(false);
+const path = ref(""),
+    entries = ref<Array<{ name: string; kind: string; readable: boolean; size: number }>>([]);
+const error = ref<string | null>(null),
+    loading = ref(false),
+    importing = ref(false);
+const excludeRules = ref("node_modules\ntarget\n.venv\n.tmp"),
+    importId = ref<string | null>(null);
+const status = ref<string | null>(null),
+    errorCode = ref<string | null>(null),
+    recovered = ref(false);
 let pollTimer: ReturnType<typeof setTimeout> | undefined;
 
-const TERMINAL = ["completed", "cancelled", "failed"];
-const ACTIVE = ["queued", "running"];
+const TERMINAL = ["completed", "cancelled", "failed"],
+    ACTIVE = ["queued", "running"];
 
 /** PLAN-0384 V5: import status is durable, so it is always shown through i18n labels. */
 const statusLabel = computed(() => {

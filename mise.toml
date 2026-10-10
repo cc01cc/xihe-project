@@ -33,7 +33,7 @@ description = "Install dependencies for all active modules"
 alias = "setup"
 
 [tasks."setup:ui"]
-run = "pnpm install --ignore-workspace"
+run = "pnpm install"
 description = "Install UI dependencies"
 dir = "packages/ui"
 alias = "setup:ui"
@@ -107,7 +107,7 @@ description = "Build all production artifacts"
 alias = "build"
 
 [tasks."build:ui"]
-run = "pnpm --ignore-workspace run build"
+run = "pnpm run build"
 description = "Build the UI bundle"
 dir = "packages/ui"
 alias = "build:ui"
@@ -129,7 +129,7 @@ description = "Run the dev/ops CLI unit tests"
 alias = "test:cli"
 
 [tasks."test:ui"]
-run = "pnpm --ignore-workspace run test:unit"
+run = "pnpm run test:unit"
 description = "Run the UI unit test suite"
 dir = "packages/ui"
 alias = "test:ui"
@@ -210,7 +210,7 @@ run = "node scripts/scan-log-secrets.mjs"
 description = "Scan logs/ for credential leakage (PLAN-196 gate)"
 
 [tasks."lint:ui"]
-run = "pnpm --ignore-workspace run lint"
+run = "pnpm run lint"
 description = "Run UI lint (oxlint)"
 dir = "packages/ui"
 alias = "lint:ui"
@@ -244,7 +244,7 @@ description = "Run static type checks"
 alias = "typecheck"
 
 [tasks."typecheck:ui"]
-run = "pnpm --ignore-workspace run typecheck"
+run = "pnpm run typecheck"
 description = "Run UI type check (vue-tsc)"
 dir = "packages/ui"
 alias = "typecheck:ui"

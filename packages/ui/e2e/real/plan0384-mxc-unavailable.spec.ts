@@ -4,6 +4,7 @@ import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
 import { actionableErrors, collectPageErrors } from "./helpers/console";
 import { test, expect } from "@playwright/test";
+import type { Page } from "@playwright/test";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan0384-mxc-unavailable");
@@ -21,11 +22,11 @@ test.describe("@host PLAN-0384 MXC unavailable branch", () => {
     test.describe.configure({ mode: "serial" });
     test.setTimeout(180000);
 
-    let auth: string;
-    let seedWs = "";
-    let hostRoot = "";
-    let targetDir = "";
-    let pageErrors: string[] = [];
+    let auth: string,
+        seedWs = "",
+        hostRoot = "",
+        targetDir = "",
+        pageErrors: string[] = [];
 
     test.beforeEach(async ({ page }) => {
         pageErrors = collectPageErrors(page);
@@ -86,7 +87,7 @@ test.describe("@host PLAN-0384 MXC unavailable branch", () => {
         auth = (await refreshed.json()).accessToken as string;
     });
 
-    function seedPage(page: import("@playwright/test").Page) {
+    function seedPage(page: Page) {
         page.addInitScript((t) => localStorage.setItem("xihe-token", t), auth);
         page.addInitScript(
             (raw) => localStorage.setItem("xihe-user", raw),
@@ -165,8 +166,8 @@ test.describe("@host PLAN-0384 MXC unavailable branch", () => {
             (req) => req.url().endsWith("/api/v1/workspaces") && req.method() === "POST",
         );
         await page.locator('[data-testid="workspace-create-submit"]').click();
-        const request = await createRequest;
-        const payload = request.postDataJSON() as Record<string, unknown>;
+        const request = await createRequest,
+            payload = request.postDataJSON() as Record<string, unknown>;
         expect(payload.executionMode).toBe("windows-host");
         expect(payload.hostPath).toBe(targetDir);
         await expect(page.locator('[data-testid="workspace-create-dialog"]')).toBeHidden({

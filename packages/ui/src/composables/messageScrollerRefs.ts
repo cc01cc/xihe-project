@@ -31,41 +31,41 @@ export function useMessageScrollerRefs({
     scrollMargin = DEFAULT_SCROLL_MARGIN,
     scrollPreviousItemPeek = DEFAULT_SCROLL_PREVIOUS_ITEM_PEEK,
 }: UseMessageScrollerRefsOptions) {
-    const autoScrollRef = ref(autoScroll);
-    const autoscrollingRef = ref(false);
-    const autoscrollingTimeoutRef = ref<number | null>(null);
-    const streamingTurnRef = ref<HTMLElement | null>(null);
-    const contentRef = ref<HTMLDivElement | null>(null);
-    const defaultScrollPositionAppliedRef = ref(false);
-    const scrollEdgeThresholdRef = ref(scrollEdgeThreshold);
-    const itemCountRef = ref(0);
-    const firstItemRef = ref<HTMLElement | null>(null);
-    const modeRef = ref<MessageScrollerMode>(autoScroll ? "following-bottom" : "free-scrolling");
-    const messageElementsRef = ref(new Map<string, HTMLElement>());
-    const pendingScrollToMessageRef = ref<{
-        messageId: string;
-        options?: MessageScrollerScrollOptions;
-    } | null>(null);
-    const prependRestoreRef = ref<{
-        element: HTMLElement;
-        viewportTop: number;
-    } | null>(null);
-    const scrollPreviousItemPeekRef = ref(scrollPreviousItemPeek);
-    const preserveScrollOnPrependRef = ref(true);
-    const rootRef = ref<HTMLDivElement | null>(null);
-    const scrollMarginRef = ref(scrollMargin);
-    const pendingScrollFrameRef = ref<number | null>(null);
-    const spacerGapRef = ref(0);
-    const spacerHeightRef = ref(0);
-    const spacerRef = ref<HTMLDivElement | null>(null);
-    const stateFrameRef = ref<number | null>(null);
-    const stateStoreRef = shallowRef<MessageScrollerStore<MessageScrollerScrollable> | null>(null);
-    const viewportRef = ref<HTMLDivElement | null>(null);
-    const visibilityFrameRef = ref<number | null>(null);
-    const visibilityObserverRef = ref<IntersectionObserver | null>(null);
-    const visibilityStoreRef = shallowRef<MessageScrollerVisibilityStore | null>(null);
-    const visibleMessageIdsRef = ref(new Set<string>());
-    const handledScrollAnchorsRef = ref(new WeakSet<HTMLElement>());
+    const autoScrollRef = ref(autoScroll),
+        autoscrollingRef = ref(false),
+        autoscrollingTimeoutRef = ref<number | null>(null),
+        streamingTurnRef = ref<HTMLElement | null>(null),
+        contentRef = ref<HTMLDivElement | null>(null),
+        defaultScrollPositionAppliedRef = ref(false),
+        scrollEdgeThresholdRef = ref(scrollEdgeThreshold),
+        itemCountRef = ref(0),
+        firstItemRef = ref<HTMLElement | null>(null),
+        modeRef = ref<MessageScrollerMode>(autoScroll ? "following-bottom" : "free-scrolling"),
+        messageElementsRef = ref(new Map<string, HTMLElement>()),
+        pendingScrollToMessageRef = ref<{
+            messageId: string;
+            options?: MessageScrollerScrollOptions;
+        } | null>(null),
+        prependRestoreRef = ref<{
+            element: HTMLElement;
+            viewportTop: number;
+        } | null>(null),
+        scrollPreviousItemPeekRef = ref(scrollPreviousItemPeek),
+        preserveScrollOnPrependRef = ref(true),
+        rootRef = ref<HTMLDivElement | null>(null),
+        scrollMarginRef = ref(scrollMargin),
+        pendingScrollFrameRef = ref<number | null>(null),
+        spacerGapRef = ref(0),
+        spacerHeightRef = ref(0),
+        spacerRef = ref<HTMLDivElement | null>(null),
+        stateFrameRef = ref<number | null>(null),
+        stateStoreRef = shallowRef<MessageScrollerStore<MessageScrollerScrollable> | null>(null),
+        viewportRef = ref<HTMLDivElement | null>(null),
+        visibilityFrameRef = ref<number | null>(null),
+        visibilityObserverRef = ref<IntersectionObserver | null>(null),
+        visibilityStoreRef = shallowRef<MessageScrollerVisibilityStore | null>(null),
+        visibleMessageIdsRef = ref(new Set<string>()),
+        handledScrollAnchorsRef = ref(new WeakSet<HTMLElement>());
 
     if (stateStoreRef.value === null) {
         stateStoreRef.value = createMessageScrollerStore(

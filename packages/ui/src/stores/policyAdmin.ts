@@ -45,31 +45,25 @@ function isForbidden(cause: unknown): boolean {
 }
 
 export const usePolicyAdminStore = defineStore("policyAdmin", () => {
-    const domains = ref<PolicyDomainView[]>([]);
-    const domainsLoading = ref(false);
-    const domainsError = ref<string | null>(null);
-
-    const rulesByLayer = ref<Record<PolicyRuleLayer, PolicyRuleView[]>>(
-        createLayerRecord(() => []),
-    );
-    const rulesLoading = ref<Record<PolicyRuleLayer, boolean>>(createLayerRecord(() => false));
-    const rulesError = ref<Record<PolicyRuleLayer, string | null>>(createLayerRecord(() => null));
-    const rulesForbidden = ref<Record<PolicyRuleLayer, boolean>>(createLayerRecord(() => false));
-    const conflictsByLayer = ref<Record<PolicyRuleLayer, PolicyRuleView[]>>(
-        createLayerRecord(() => []),
-    );
-    const conflictsError = ref<Record<PolicyRuleLayer, string | null>>(
-        createLayerRecord(() => null),
-    );
-    const creatingRule = ref(false);
-    const deletingRuleId = ref<string | null>(null);
-
-    const toolFaces = ref<PolicyToolFaceView[]>([]);
-    const toolFacesScope = ref<PolicyToolFaceQueryScope>("workspace");
-    const toolFacesLoading = ref(false);
-    const toolFacesError = ref<string | null>(null);
-    const toolFacesForbidden = ref(false);
-    const classifyingTool = ref(false);
+    const domains = ref<PolicyDomainView[]>([]),
+        domainsLoading = ref(false),
+        domainsError = ref<string | null>(null),
+        rulesByLayer = ref<Record<PolicyRuleLayer, PolicyRuleView[]>>(createLayerRecord(() => [])),
+        rulesLoading = ref<Record<PolicyRuleLayer, boolean>>(createLayerRecord(() => false)),
+        rulesError = ref<Record<PolicyRuleLayer, string | null>>(createLayerRecord(() => null)),
+        rulesForbidden = ref<Record<PolicyRuleLayer, boolean>>(createLayerRecord(() => false)),
+        conflictsByLayer = ref<Record<PolicyRuleLayer, PolicyRuleView[]>>(
+            createLayerRecord(() => []),
+        ),
+        conflictsError = ref<Record<PolicyRuleLayer, string | null>>(createLayerRecord(() => null)),
+        creatingRule = ref(false),
+        deletingRuleId = ref<string | null>(null),
+        toolFaces = ref<PolicyToolFaceView[]>([]),
+        toolFacesScope = ref<PolicyToolFaceQueryScope>("workspace"),
+        toolFacesLoading = ref(false),
+        toolFacesError = ref<string | null>(null),
+        toolFacesForbidden = ref(false),
+        classifyingTool = ref(false);
 
     async function loadDomains(): Promise<void> {
         domainsLoading.value = true;

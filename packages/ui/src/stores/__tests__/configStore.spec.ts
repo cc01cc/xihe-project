@@ -37,8 +37,8 @@ describe("useConfigStore", () => {
 
         it("writes mergedConfig to localStorage via loadAllDomains", async () => {
             vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
-                const url = typeof input === "string" ? input : input.url;
-                const domain = url.split("/").pop()?.split("?")[0] ?? "";
+                const url = typeof input === "string" ? input : input.url,
+                    domain = url.split("/").pop()?.split("?")[0] ?? "";
                 const payload: Record<string, Record<string, string>> = {
                     logging: { logLevel: "DEBUG" },
                     "llm-provider": { defaultProvider: "openai", defaultModel: "gpt-4o" },
@@ -67,8 +67,8 @@ describe("useConfigStore", () => {
         it("loadAllDomains fetches and updates mergedConfig", async () => {
             const requestedDomains: string[] = [];
             vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
-                const url = typeof input === "string" ? input : input.url;
-                const domain = url.split("/").pop()?.split("?")[0] ?? "";
+                const url = typeof input === "string" ? input : input.url,
+                    domain = url.split("/").pop()?.split("?")[0] ?? "";
                 requestedDomains.push(domain);
                 const payload: Record<string, Record<string, string>> = {
                     logging: { logLevel: "DEBUG" },
@@ -262,9 +262,9 @@ describe("useConfigStore", () => {
             vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
                 const url = typeof input === "string" ? input : input.url;
                 calls.push({ url, init: init ?? undefined });
-                const parsed = new URL(url, "http://localhost");
-                const domain = parsed.pathname.split("/").pop() ?? "";
-                const layer = parsed.searchParams.get("layer") ?? "";
+                const parsed = new URL(url, "http://localhost"),
+                    domain = parsed.pathname.split("/").pop() ?? "",
+                    layer = parsed.searchParams.get("layer") ?? "";
                 return Promise.resolve(
                     new Response(
                         JSON.stringify({
@@ -301,8 +301,8 @@ describe("useConfigStore", () => {
         });
 
         it("job-policy is instance+workspace writable but absent from the user layer (PLAN-0373)", async () => {
-            const calls = mockLayerFetch();
-            const store = useConfigStore();
+            const calls = mockLayerFetch(),
+                store = useConfigStore();
 
             expect(INSTANCE_DOMAINS).toContain("job-policy");
             expect(LAYER_DOMAINS.workspace).toContain("job-policy");
@@ -319,8 +319,8 @@ describe("useConfigStore", () => {
         });
 
         it("loadLayerDomains loads all nine user domains without workspace query", async () => {
-            const calls = mockLayerFetch();
-            const store = useConfigStore();
+            const calls = mockLayerFetch(),
+                store = useConfigStore();
 
             await store.loadLayerDomains("user");
 
@@ -336,8 +336,8 @@ describe("useConfigStore", () => {
         });
 
         it("putLayerConfig targets the layer endpoint with workspace query", async () => {
-            const calls = mockLayerFetch();
-            const store = useConfigStore();
+            const calls = mockLayerFetch(),
+                store = useConfigStore();
 
             await store.putLayerConfig("workspace", "rag", { topK: "5" }, "ws-2");
             await store.putLayerConfig("user", "agent-profile", { userName: "zero" });
@@ -351,10 +351,9 @@ describe("useConfigStore", () => {
         });
 
         it("exportConfig/importConfig use the instance management endpoints", async () => {
-            const calls = mockLayerFetch();
-            const store = useConfigStore();
-
-            const exported = await store.exportConfig(false);
+            const calls = mockLayerFetch(),
+                store = useConfigStore(),
+                exported = await store.exportConfig(false);
             await store.importConfig('{"logging":{"logLevel":"INFO"}}');
 
             expect(calls[0].url).toContain("/config/export?layer=instance&includeSecrets=false");

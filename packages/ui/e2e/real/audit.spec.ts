@@ -134,9 +134,9 @@ test("@host PLAN-0466 Audit read view serves the four-domain entry stream", asyn
     await waitForControlPlaneAgentReady(request, { Authorization: `Bearer ${auth.accessToken}` });
     await installAuth(page, auth);
 
-    const pageErrors: string[] = [];
-    const consoleErrors: string[] = [];
-    const requestFailures: string[] = [];
+    const pageErrors: string[] = [],
+        consoleErrors: string[] = [],
+        requestFailures: string[] = [];
     page.on("pageerror", (error) => pageErrors.push(error.message));
     page.on("console", (message) => {
         if (message.type() === "error") consoleErrors.push(message.text());

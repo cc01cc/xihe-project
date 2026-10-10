@@ -10,35 +10,36 @@ import MessageList from "../MessageList.vue";
 import InputArea from "../InputArea.vue";
 import { i18n } from "../../../i18n";
 import { api, type ApiFollowUpQueueSnapshot } from "../../../composables/api";
+import type * as apiModule from "../../../composables/api";
 import { useAgentStore } from "../../../stores/agent";
 import { useChatStore } from "../../../stores/chat";
 import type { ApprovalRequest, SessionDerivedStateResponse } from "../../../types";
 
 vi.mock("../../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {
             ...actual.api,
-            decideChatApproval: vi.fn(),
-            getPendingApprovals: vi.fn(),
-            getMessages: vi.fn(),
-            getSessionBranches: vi.fn(),
-            createSessionBranch: vi.fn(),
-            getFollowUpQueue: vi.fn(),
-            enqueueFollowUp: vi.fn(),
-            withdrawFollowUp: vi.fn(),
-            continueFollowUpQueue: vi.fn(),
-            getSessionDerivedState: vi.fn(),
-            listSessionRuns: vi.fn(),
+            decideChatApproval: vi.fn<typeof api.decideChatApproval>(),
+            getPendingApprovals: vi.fn<typeof api.getPendingApprovals>(),
+            getMessages: vi.fn<typeof api.getMessages>(),
+            getSessionBranches: vi.fn<typeof api.getSessionBranches>(),
+            createSessionBranch: vi.fn<typeof api.createSessionBranch>(),
+            getFollowUpQueue: vi.fn<typeof api.getFollowUpQueue>(),
+            enqueueFollowUp: vi.fn<typeof api.enqueueFollowUp>(),
+            withdrawFollowUp: vi.fn<typeof api.withdrawFollowUp>(),
+            continueFollowUpQueue: vi.fn<typeof api.continueFollowUpQueue>(),
+            getSessionDerivedState: vi.fn<typeof api.getSessionDerivedState>(),
+            listSessionRuns: vi.fn<typeof api.listSessionRuns>(),
         },
     };
 });
 
-const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-const REQUEST_ID = "11111111-1111-4111-8111-111111111111";
-const STALE_REQUEST_ID = "22222222-2222-4222-8222-222222222222";
-const RUN_ID = "33333333-3333-4333-8333-333333333333";
+const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    REQUEST_ID = "11111111-1111-4111-8111-111111111111";
+const STALE_REQUEST_ID = "22222222-2222-4222-8222-222222222222",
+    RUN_ID = "33333333-3333-4333-8333-333333333333";
 const ROOT_BRANCH_ID = "44444444-4444-4444-8444-444444444444";
 
 function followUpSnapshot(
@@ -366,8 +367,8 @@ describe("ChatPanel approval dismiss and reopen pill (PLAN-0404)", () => {
     });
 
     it("drops the local dismiss record once the pending approval disappears", async () => {
-        const wrapper = mountPanel();
-        const store = useAgentStore();
+        const wrapper = mountPanel(),
+            store = useAgentStore();
         store.addApprovalRequest(approval);
         await nextTick();
         await flushPromises();
@@ -510,8 +511,8 @@ describe("ChatPanel derived child state (PLAN-0408 M3)", () => {
 
 describe("ChatPanel Follow-up queue", () => {
     it("reloads the owner Message when a child approval reveals admission", async () => {
-        const content = "run the next check";
-        const childRunId = "88888888-8888-4888-8888-888888888888";
+        const content = "run the next check",
+            childRunId = "88888888-8888-4888-8888-888888888888";
         const childMessageId = "99999999-9999-4999-8999-999999999999";
         const queued = queuedFollowUpSnapshot(content).items[0]!;
         const admitted = followUpSnapshot({

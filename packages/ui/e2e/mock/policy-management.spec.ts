@@ -1,12 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 
-const SESSION_ID = "a1a1a1a1-a1a1-41a1-81a1-a1a1a1a1a1a1";
-const WORKSPACE_ID = "workspace-1";
-const RUN_ID = "d1d1d1d1-d1d1-41d1-81d1-d1d1d1d1d1d1";
-const REQUEST_ID = "11111111-1111-4111-8111-111111111111";
-const CONFLICT_ID = "22222222-2222-4222-8222-222222222222";
-const UNCLASSIFIED_TOOL = "mcp__third_party__do";
+const SESSION_ID = "a1a1a1a1-a1a1-41a1-81a1-a1a1a1a1a1a1",
+    WORKSPACE_ID = "workspace-1";
+const RUN_ID = "d1d1d1d1-d1d1-41d1-81d1-d1d1d1d1d1d1",
+    REQUEST_ID = "11111111-1111-4111-8111-111111111111";
+const CONFLICT_ID = "22222222-2222-4222-8222-222222222222",
+    UNCLASSIFIED_TOOL = "mcp__third_party__do";
 
 interface PolicyRulePayload {
     id: string;
@@ -100,9 +100,9 @@ function installPolicyApi(page: Page) {
     // Registered after setupMockAuth on purpose: Playwright routes are LIFO, so these
     // specific handlers take precedence over the helper's catch-all.
     void page.route("**/api/v1/policy/**", async (route) => {
-        const request = route.request();
-        const url = new URL(request.url());
-        const method = request.method();
+        const request = route.request(),
+            url = new URL(request.url()),
+            method = request.method();
         const layer = url.searchParams.get("layer") ?? "";
         const json = (status: number, body: unknown) =>
             route.fulfill({

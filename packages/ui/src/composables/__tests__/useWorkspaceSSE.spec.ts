@@ -2,11 +2,12 @@ import { flushPromises } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { chatTransport } from "@/services/chatTransport";
 import { useWorkspaceSSE } from "../useWorkspaceSSE";
+import type * as useWorkspaceSSEModule from "../useWorkspaceSSE";
 
 vi.mock("@/services/chatTransport", () => ({
     chatTransport: {
-        sendMessages: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn(),
+        sendMessages: vi.fn<typeof chatTransport.sendMessages>().mockResolvedValue(undefined),
+        stop: vi.fn<typeof chatTransport.stop>(),
     },
 }));
 
@@ -16,7 +17,7 @@ describe("useWorkspaceSSE", () => {
     });
 
     it("subscribes with an isolated workspace key and forwards valid events", async () => {
-        const onEvent = vi.fn();
+        const onEvent = vi.fn<NonNullable<useWorkspaceSSEModule.WorkspaceSSEOptions["onEvent"]>>();
         useWorkspaceSSE("ws-1", { onEvent });
         await flushPromises();
 
@@ -49,23 +50,23 @@ describe("useWorkspaceSSE", () => {
     });
 
     it("requests a snapshot when a local sequence gap is observed", async () => {
-        const onEvent = vi.fn();
+        const onEvent = vi.fn<NonNullable<useWorkspaceSSEModule.WorkspaceSSEOptions["onEvent"]>>();
         useWorkspaceSSE("ws-1", { onEvent });
         await flushPromises();
-        const options = vi.mocked(chatTransport.sendMessages).mock.calls[0][1];
-        const event = (sequence: number) =>
-            options.onmessage?.({
-                id: String(sequence),
-                event: "file_changed",
-                data: JSON.stringify({
-                    workspaceId: "ws-1",
-                    sequence,
-                    kind: "file_changed",
-                    path: "src/main.ts",
-                    changeType: "modified",
-                    source: "runtime",
-                }),
-            });
+        const options = vi.mocked(chatTransport.sendMessages).mock.calls[0][1],
+            event = (sequence: number) =>
+                options.onmessage?.({
+                    id: String(sequence),
+                    event: "file_changed",
+                    data: JSON.stringify({
+                        workspaceId: "ws-1",
+                        sequence,
+                        kind: "file_changed",
+                        path: "src/main.ts",
+                        changeType: "modified",
+                        source: "runtime",
+                    }),
+                });
 
         await event(1);
         await event(3);

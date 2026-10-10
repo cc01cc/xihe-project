@@ -4,6 +4,7 @@ import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
 import { actionableErrors, collectPageErrors } from "./helpers/console";
 import { test, expect } from "@playwright/test";
+import type { APIRequestContext, Page } from "@playwright/test";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan0350-workspace-events");
@@ -15,11 +16,11 @@ test.describe("@host PLAN-0350 workspace file events", () => {
     test.describe.configure({ mode: "serial" });
     test.setTimeout(240000);
 
-    let ownerAuth: string;
-    let otherAuth: string;
-    let wsId = "";
-    let hostPath = "";
-    let pageErrors: string[] = [];
+    let ownerAuth: string,
+        otherAuth: string,
+        wsId = "",
+        hostPath = "",
+        pageErrors: string[] = [];
 
     test.beforeEach(async ({ page }) => {
         pageErrors = collectPageErrors(page);
@@ -29,10 +30,7 @@ test.describe("@host PLAN-0350 workspace file events", () => {
         expect(actionableErrors(pageErrors), pageErrors.join("\n")).toEqual([]);
     });
 
-    async function registerUser(
-        request: import("@playwright/test").APIRequestContext,
-        tag: string,
-    ) {
+    async function registerUser(request: APIRequestContext, tag: string) {
         const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
         const res = await request.post(`${CP_URL}/api/v1/auth/register`, {
             data: {
@@ -53,8 +51,8 @@ test.describe("@host PLAN-0350 workspace file events", () => {
     }
 
     test.beforeAll(async ({ request }) => {
-        const owner = await registerUser(request, "owner");
-        const other = await registerUser(request, "other");
+        const owner = await registerUser(request, "owner"),
+            other = await registerUser(request, "other");
         otherAuth = other.accessToken;
         mkdirSync(EVIDENCE_DIR, { recursive: true });
 
@@ -105,7 +103,7 @@ test.describe("@host PLAN-0350 workspace file events", () => {
         ownerAuth = refreshedBody.accessToken;
     });
 
-    function seedPage(page: import("@playwright/test").Page) {
+    function seedPage(page: Page) {
         page.addInitScript((t) => localStorage.setItem("xihe-token", t), ownerAuth);
         page.addInitScript(
             (raw) => localStorage.setItem("xihe-user", raw),
@@ -124,7 +122,7 @@ test.describe("@host PLAN-0350 workspace file events", () => {
     }
 
     /** Subscribe to the Workspace SSE from the page (relative URL → dev proxy, Bearer header). */
-    async function startSubscriber(page: import("@playwright/test").Page, workspaceId: string) {
+    async function startSubscriber(page: Page, workspaceId: string) {
         await page.evaluate((id) => {
             localStorage.setItem("xihe-workspace-id", id);
             const token = localStorage.getItem("xihe-token") ?? "";
@@ -142,8 +140,8 @@ test.describe("@host PLAN-0350 workspace file events", () => {
                         w.__ws.state = "no-body";
                         return;
                     }
-                    const reader = res.body.getReader();
-                    const decoder = new TextDecoder();
+                    const reader = res.body.getReader(),
+                        decoder = new TextDecoder();
                     for (;;) {
                         const { value, done } = await reader.read();
                         if (done) break;
@@ -157,7 +155,7 @@ test.describe("@host PLAN-0350 workspace file events", () => {
         }, workspaceId);
     }
 
-    function readSubscriber(page: import("@playwright/test").Page) {
+    function readSubscriber(page: Page) {
         return page.evaluate(
             () =>
                 (window as unknown as { __ws: { events: string; state: string; status: number } })

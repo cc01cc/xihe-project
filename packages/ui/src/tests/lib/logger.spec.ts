@@ -1,23 +1,44 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { LogLevel } from "../../lib/logger";
+
+type MockLogEntry = {
+    id?: number;
+    timestamp: number;
+    level: LogLevel;
+    message: string;
+    data?: unknown;
+};
+
+type MockLogCollection = {
+    limit: (count: number) => MockLogCollection;
+    toArray: () => Promise<MockLogEntry[]>;
+};
 
 // Mock Dexie
 const mockTable = vi.hoisted(() => ({
-    add: vi.fn().mockResolvedValue(1),
-    count: vi.fn().mockResolvedValue(0),
-    orderBy: vi.fn().mockReturnThis(),
-    toArray: vi.fn().mockResolvedValue([]),
-    bulkDelete: vi.fn().mockResolvedValue(undefined),
-    clear: vi.fn().mockResolvedValue(undefined),
-    limit: vi.fn().mockReturnThis(),
+    add: vi.fn<(entry: MockLogEntry) => Promise<number>>().mockResolvedValue(1),
+    count: vi.fn<() => Promise<number>>().mockResolvedValue(0),
+    orderBy: vi.fn<(index: string) => MockLogCollection>().mockReturnThis(),
+    toArray: vi.fn<() => Promise<MockLogEntry[]>>().mockResolvedValue([]),
+    bulkDelete: vi.fn<(ids: number[]) => Promise<void>>().mockResolvedValue(undefined),
+    clear: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    limit: vi.fn<(count: number) => MockLogCollection>().mockReturnThis(),
 }));
+type MockDexie = {
+    logs: typeof mockTable;
+    version: (version: number) => MockDexie;
+    stores: (schema: Record<string, string>) => MockDexie;
+};
 vi.mock("dexie", () => {
     class Dexie {
-        logs: unknown;
-        version = vi.fn().mockReturnThis();
-        stores = vi.fn().mockImplementation(function (this: Dexie) {
-            this.logs = mockTable;
-            return this;
-        });
+        logs!: typeof mockTable;
+        version = vi.fn<(version: number) => MockDexie>().mockReturnThis();
+        stores = vi
+            .fn<(schema: Record<string, string>) => MockDexie>()
+            .mockImplementation(function (this: MockDexie) {
+                this.logs = mockTable;
+                return this;
+            });
     }
     return { default: Dexie };
 });
@@ -37,8 +58,8 @@ describe("logger", () => {
     });
 
     it("should provide useLogger composable", async () => {
-        const { useLogger } = await import("../../lib/logger");
-        const l = useLogger();
+        const { useLogger } = await import("../../lib/logger"),
+            l = useLogger();
         expect(l).toBeDefined();
     });
 

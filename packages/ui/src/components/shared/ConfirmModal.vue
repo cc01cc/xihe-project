@@ -19,8 +19,8 @@ const emit = defineEmits<{
     close: [];
 }>();
 
-const autoCloseTimer = ref<ReturnType<typeof setTimeout> | null>(null);
-const succeeded = ref(false);
+const autoCloseTimer = ref<ReturnType<typeof setTimeout> | null>(null),
+    succeeded = ref(false);
 
 function onConfirm() {
     succeeded.value = true;

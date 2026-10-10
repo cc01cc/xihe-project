@@ -2,27 +2,29 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
 import { useWorkspaceStore } from "../workspace";
 import { ApiError, api } from "../../composables/api";
+import type * as apiModule from "../../composables/api";
+import type * as fileServiceModule from "../../composables/fileService";
 
 vi.mock("../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {
             ...actual.api,
-            deleteFile: vi.fn(),
-            writeFile: vi.fn(),
-            readFile: vi.fn(),
-            readFileRange: vi.fn(),
-            listDirectory: vi.fn(),
-            moveFile: vi.fn(),
-            copyFile: vi.fn(),
-            createDirectory: vi.fn(),
+            deleteFile: vi.fn<typeof apiModule.api.deleteFile>(),
+            writeFile: vi.fn<typeof apiModule.api.writeFile>(),
+            readFile: vi.fn<typeof apiModule.api.readFile>(),
+            readFileRange: vi.fn<typeof apiModule.api.readFileRange>(),
+            listDirectory: vi.fn<typeof apiModule.api.listDirectory>(),
+            moveFile: vi.fn<typeof apiModule.api.moveFile>(),
+            copyFile: vi.fn<typeof apiModule.api.copyFile>(),
+            createDirectory: vi.fn<typeof apiModule.api.createDirectory>(),
         },
     };
 });
 
 vi.mock("../../composables/fileService", () => ({
-    readFilePreview: vi.fn(),
+    readFilePreview: vi.fn<typeof fileServiceModule.readFilePreview>(),
 }));
 
 vi.mock("../session", () => ({
@@ -31,7 +33,7 @@ vi.mock("../session", () => ({
         currentSessionAttachments: [],
         currentSessionFileContext: undefined,
         currentAgentIds: [],
-        setFileContext: vi.fn(),
+        setFileContext: vi.fn<(file: unknown) => void>(),
     }),
 }));
 
@@ -108,16 +110,16 @@ describe("workspace store deleteNode (B-2 failure semantics)", () => {
 
     it("returns false and records treeError on 404 (no throw, no fake success)", async () => {
         mockedApi.deleteFile.mockRejectedValue(problemError(404, "FILE_NOT_FOUND"));
-        const store = useWorkspaceStore();
-        const result = await store.deleteNode("missing.txt");
+        const store = useWorkspaceStore(),
+            result = await store.deleteNode("missing.txt");
         expect(result).toBe(false);
         expect(store.treeError).toContain("删除失败");
     });
 
     it("returns false and records treeError on 500", async () => {
         mockedApi.deleteFile.mockRejectedValue(problemError(500, "RUNTIME_ERROR"));
-        const store = useWorkspaceStore();
-        const result = await store.deleteNode("x.txt");
+        const store = useWorkspaceStore(),
+            result = await store.deleteNode("x.txt");
         expect(result).toBe(false);
         expect(store.treeError).toContain("沙盒未就绪");
     });
@@ -132,16 +134,16 @@ describe("workspace store createFile (Q-3 same-mode fix)", () => {
     it("returns true on success", async () => {
         mockedApi.writeFile.mockResolvedValue({ success: true });
         mockedApi.listDirectory.mockResolvedValue({ entries: [] });
-        const store = useWorkspaceStore();
-        const result = await store.createFile("src", "new.ts");
+        const store = useWorkspaceStore(),
+            result = await store.createFile("src", "new.ts");
         expect(result).toBe(true);
         expect(mockedApi.writeFile).toHaveBeenCalledWith("src/new.ts", "", "ws-test");
     });
 
     it("returns false and records treeError on failure", async () => {
         mockedApi.writeFile.mockRejectedValue(problemError(400, "INVALID_REQUEST"));
-        const store = useWorkspaceStore();
-        const result = await store.createFile("", "bad");
+        const store = useWorkspaceStore(),
+            result = await store.createFile("", "bad");
         expect(result).toBe(false);
         expect(store.treeError).toContain("创建文件失败");
     });
@@ -258,8 +260,8 @@ describe("workspace store openFile preview routing (PLAN-292 T6)", () => {
     });
 
     it("wraps svg text content as a utf8 data URL without the binary path", async () => {
-        const store = useWorkspaceStore();
-        const { readFilePreview } = await import("../../composables/fileService");
+        const store = useWorkspaceStore(),
+            { readFilePreview } = await import("../../composables/fileService");
         vi.mocked(readFilePreview).mockResolvedValue({
             content: '<svg xmlns="http://www.w3.org/2000/svg"/>',
             truncated: false,
@@ -276,8 +278,8 @@ describe("workspace store openFile preview routing (PLAN-292 T6)", () => {
     });
 
     it("keeps text files on the size-guarded text preview path", async () => {
-        const store = useWorkspaceStore();
-        const { readFilePreview } = await import("../../composables/fileService");
+        const store = useWorkspaceStore(),
+            { readFilePreview } = await import("../../composables/fileService");
         vi.mocked(readFilePreview).mockResolvedValue({ content: "hello", truncated: false });
 
         await store.openFile("docs/note.md");

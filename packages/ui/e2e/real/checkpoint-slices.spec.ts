@@ -54,8 +54,8 @@ import {
     type JourneyContext,
 } from "./helpers/journey";
 
-const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
-const RUN_ID = process.env.XIHE_E2E_RUN_ID ?? "";
+const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock",
+    RUN_ID = process.env.XIHE_E2E_RUN_ID ?? "";
 const PROJECT_DIR = path.resolve(process.cwd(), "../..");
 // e2e-host passes XIHE_WORKSPACE_HOST_ROOT to its native services only; the
 // Playwright env carries XIHE_E2E_RUN_ID and the runner root is
@@ -66,8 +66,8 @@ const EVIDENCE_DIR = path.join(PROJECT_DIR, ".local", "evidence", "checkpoint-sl
 // PLAN-0369: workspace this file's Agent binding was ensured for.
 let agentBindingWorkspaceId = "";
 
-const NONCE = Date.now().toString(36);
-const SEED_FILE = `s0-seed-${NONCE}.md`;
+const NONCE = Date.now().toString(36),
+    SEED_FILE = `s0-seed-${NONCE}.md`;
 const SEED_CONTENT = `S0-SEED-${NONCE}-read-only-target\n`;
 
 const TERMINAL_RUN_PATTERN = /^(succeeded|failed|partial|ambiguous|cancelled)$/;
@@ -382,8 +382,8 @@ async function openWorkspace(page: Page, ctx: JourneyContext): Promise<void> {
 async function startRun(page: Page, text: string): Promise<string> {
     // PLAN-0369: keep the Agent's single MCP workspace bound to this spec.
     if (agentBindingWorkspaceId) await ensureAgentWorkspaceBinding(agentBindingWorkspaceId);
-    const input = page.locator('[data-testid="chat-input"]');
-    const send = page.locator('[data-testid="chat-send-button"]');
+    const input = page.locator('[data-testid="chat-input"]'),
+        send = page.locator('[data-testid="chat-send-button"]');
     await expect(input).toBeVisible({ timeout: 30000 });
     for (let attempt = 0; attempt < 4; attempt += 1) {
         await input.click().catch(() => {});
@@ -446,8 +446,7 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
     test.describe.configure({ mode: "serial", retries: 0 });
     test.setTimeout(300000);
 
-    let ctx: JourneyContext;
-    let hostDir: string;
+    let ctx: JourneyContext, hostDir: string;
 
     test.beforeAll(async ({ request }) => {
         test.skip(
@@ -504,8 +503,8 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
         await awaitPreviousRunSettled(request, ctx.headers);
         const before = listSliceRefs(ctx.workspaceId);
 
-        const fileName = `s1-write-${NONCE}.md`;
-        const content = `S1-SLICE-${NONCE}-written-by-l1`;
+        const fileName = `s1-write-${NONCE}.md`,
+            content = `S1-SLICE-${NONCE}-written-by-l1`;
         const runId = await startRun(page, `XIHE-E2E-WRITE ${fileName} ${content}`);
         await approveCard(page);
         await awaitHostFile(path.join(hostDir, fileName), content);
@@ -566,18 +565,18 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
         await openWorkspace(page, ctx);
         await awaitPreviousRunSettled(request, ctx.headers);
 
-        const envRel = ".env";
-        const envContent = `S2-ENV-SECRET-${NONCE}\n`;
-        const keepRel = `s2-keep-${NONCE}.txt`;
-        const delRel = `s2-del-${NONCE}.txt`;
-        const addRel = `s2-add-${NONCE}.txt`;
-        const runRel = `s2-run-${NONCE}.txt`;
-        const nodeRel = `node_modules/s2-pkg-${NONCE}/data.txt`;
-        const keepOriginal = `S2-KEEP-ORIGINAL-${NONCE}\n`;
-        const delOriginal = `S2-DEL-ORIGINAL-${NONCE}\n`;
-        const nodeOriginal = `S2-NODE-ORIGINAL-${NONCE}\n`;
-        const nodeMutated = `S2-NODE-MUTATED-${NONCE}\n`;
-        const keepMutated = `S2-KEEP-MUTATED-${NONCE}\n`;
+        const envRel = ".env",
+            envContent = `S2-ENV-SECRET-${NONCE}\n`,
+            keepRel = `s2-keep-${NONCE}.txt`;
+        const delRel = `s2-del-${NONCE}.txt`,
+            addRel = `s2-add-${NONCE}.txt`,
+            runRel = `s2-run-${NONCE}.txt`;
+        const nodeRel = `node_modules/s2-pkg-${NONCE}/data.txt`,
+            keepOriginal = `S2-KEEP-ORIGINAL-${NONCE}\n`;
+        const delOriginal = `S2-DEL-ORIGINAL-${NONCE}\n`,
+            nodeOriginal = `S2-NODE-ORIGINAL-${NONCE}\n`;
+        const nodeMutated = `S2-NODE-MUTATED-${NONCE}\n`,
+            keepMutated = `S2-KEEP-MUTATED-${NONCE}\n`;
 
         // Seeds must exist before the capture; `.env` + node_modules/ are excluded.
         mkdirSync(path.join(hostDir, path.dirname(nodeRel)), { recursive: true });
@@ -586,8 +585,8 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
         writeFileSync(path.join(hostDir, delRel), delOriginal);
         writeFileSync(path.join(hostDir, nodeRel), nodeOriginal);
 
-        const content = `S2-RUN-${NONCE}`;
-        const runId = await startRun(page, `XIHE-E2E-WRITE ${runRel} ${content}`);
+        const content = `S2-RUN-${NONCE}`,
+            runId = await startRun(page, `XIHE-E2E-WRITE ${runRel} ${content}`);
         await approveCard(page);
         await awaitHostFile(path.join(hostDir, runRel), content);
         expect(await awaitRunTerminal(request, ctx.headers, runId)).toBe("succeeded");
@@ -767,8 +766,8 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
             "nested baseline",
         ]);
 
-        const fileName = `s3-run-${NONCE}.txt`;
-        const content = `S3-RUN-${NONCE}`;
+        const fileName = `s3-run-${NONCE}.txt`,
+            content = `S3-RUN-${NONCE}`;
         const runId = await startRun(page, `XIHE-E2E-WRITE ${fileName} ${content}`);
         await approveCard(page);
         await awaitHostFile(path.join(hostDir, fileName), content);
@@ -836,8 +835,8 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
         await awaitPreviousRunSettled(request, ctx.headers);
         const before = listSliceRefs(ctx.workspaceId);
 
-        const fileName = `s4-shell-${NONCE}.txt`;
-        const content = `S4-SHELL-${NONCE}`;
+        const fileName = `s4-shell-${NONCE}.txt`,
+            content = `S4-SHELL-${NONCE}`;
         const runId = await startRun(page, `XIHE-E2E-EXEC echo ${content} > ${fileName}`);
         await approveCard(page);
         await awaitHostFile(path.join(hostDir, fileName), content);

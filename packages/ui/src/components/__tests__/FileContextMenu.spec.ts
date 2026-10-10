@@ -9,12 +9,12 @@ import type { FileNode } from "../../types";
 // instances, otherwise stubbed resolutions never reach the component.
 const { storeMock } = vi.hoisted(() => ({
     storeMock: {
-        deleteNode: vi.fn(),
-        createFile: vi.fn(),
-        renameNode: vi.fn(),
-        moveNode: vi.fn(),
-        duplicateNode: vi.fn(),
-        createDirectory: vi.fn(),
+        deleteNode: vi.fn<(path: string) => Promise<boolean>>(),
+        createFile: vi.fn<(parentDir: string, name: string) => Promise<boolean>>(),
+        renameNode: vi.fn<(oldPath: string, newName: string) => Promise<boolean>>(),
+        moveNode: vi.fn<(from: string, toDir: string) => Promise<boolean>>(),
+        duplicateNode: vi.fn<(path: string) => Promise<boolean>>(),
+        createDirectory: vi.fn<(parentDir: string, name: string) => Promise<boolean>>(),
         treeError: null as string | null,
     },
 }));
@@ -24,11 +24,14 @@ vi.mock("../../stores/workspace", () => ({
 }));
 
 vi.mock("vue-sonner", () => ({
-    toast: { success: vi.fn(), error: vi.fn() },
+    toast: {
+        success: vi.fn<typeof toast.success>(),
+        error: vi.fn<typeof toast.error>(),
+    },
 }));
 
-const dirWithDot: FileNode = { path: "src/v1.2", name: "v1.2", type: "directory" };
-const fileNoExt: FileNode = { path: "Makefile", name: "Makefile", type: "file" };
+const dirWithDot: FileNode = { path: "src/v1.2", name: "v1.2", type: "directory" },
+    fileNoExt: FileNode = { path: "Makefile", name: "Makefile", type: "file" };
 
 function mountMenu(node: FileNode) {
     return mount(FileNodeMenu, {
@@ -96,10 +99,10 @@ describe("FileNodeMenu delete toast semantics (B-2)", () => {
         await new Promise((r) => setTimeout(r, 0));
         const menu = document.body.querySelector('[data-testid="file-context-menu"]');
         expect(menu).toBeTruthy();
-        const items = Array.from(menu!.querySelectorAll('[role="menuitem"]'));
-        const target = items.find((b) => (b.textContent ?? "").trim().startsWith(label)) as
-            | HTMLElement
-            | undefined;
+        const items = Array.from(menu!.querySelectorAll('[role="menuitem"]')),
+            target = items.find((b) => (b.textContent ?? "").trim().startsWith(label)) as
+                | HTMLElement
+                | undefined;
         expect(target).toBeTruthy();
         // Programmatic selection path: dispatch the press sequence the platform
         // would produce, with hover + focus established first so the menu's

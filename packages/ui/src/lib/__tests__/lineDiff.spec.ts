@@ -34,9 +34,9 @@ describe("computeLineDiff", () => {
     });
 
     it("cuts both sides at maxLines and reports truncation", () => {
-        const oldText = Array.from({ length: 5 }, (_, i) => `line ${i}`).join("\n");
-        const newText = Array.from({ length: 5 }, (_, i) => `line ${i}`).join("\n");
-        const diff = computeLineDiff(oldText, newText, 3);
+        const oldText = Array.from({ length: 5 }, (_, i) => `line ${i}`).join("\n"),
+            newText = Array.from({ length: 5 }, (_, i) => `line ${i}`).join("\n"),
+            diff = computeLineDiff(oldText, newText, 3);
         expect(diff.truncated).toBe(true);
         expect(diff.rows.filter((row) => row.type === "context")).toHaveLength(3);
     });

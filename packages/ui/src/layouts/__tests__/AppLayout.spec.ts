@@ -4,18 +4,19 @@ import { createMemoryHistory, createRouter } from "vue-router";
 import { createI18n } from "vue-i18n";
 import { createPinia, setActivePinia } from "pinia";
 import { api } from "../../composables/api";
+import type * as apiModule from "../../composables/api";
 import { useAuthStore } from "../../stores/auth";
 import { useSessionStore } from "../../stores/session";
 import AppLayout from "../AppLayout.vue";
 
 vi.mock("../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {
             ...actual.api,
-            getPendingApprovals: vi.fn(),
-            decideChatApproval: vi.fn(),
+            getPendingApprovals: vi.fn<typeof apiModule.api.getPendingApprovals>(),
+            decideChatApproval: vi.fn<typeof apiModule.api.decideChatApproval>(),
         },
     };
 });
@@ -95,8 +96,8 @@ describe("AppLayout pending approval indicators", () => {
                 oldestRequestedAt: "2026-09-14T12:00:00Z",
             },
         ]);
-        const router = createTestRouter();
-        const wrapper = await mountLayout(router);
+        const router = createTestRouter(),
+            wrapper = await mountLayout(router);
 
         expect(wrapper.find('[data-testid="global-pending-approval-banner"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="global-pending-approval-banner"]').text()).toContain(

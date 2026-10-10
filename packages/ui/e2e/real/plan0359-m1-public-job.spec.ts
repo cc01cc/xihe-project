@@ -4,6 +4,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { generateE2EPassword } from "./helpers/password";
 import { test, expect } from "@playwright/test";
+import type { APIRequestContext, Page } from "@playwright/test";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan0359-m1-public-job");
@@ -12,7 +13,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
     test.describe.configure({ mode: "serial" });
     test.setTimeout(240000);
 
-    async function register(request: import("@playwright/test").APIRequestContext, tag: string) {
+    async function register(request: APIRequestContext, tag: string) {
         const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
         const response = await request.post(`${CP_URL}/api/v1/auth/register`, {
             data: {
@@ -34,7 +35,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
     }
 
     async function createBoundWorkspace(
-        request: import("@playwright/test").APIRequestContext,
+        request: APIRequestContext,
         tag: string,
         executionMode: "windows-host" | "windows-mxc",
         allowUnavailable = false,
@@ -79,8 +80,8 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
             });
             return null;
         }
-        const workspace = await created.json();
-        const workspaceId = String(workspace.id);
+        const workspace = await created.json(),
+            workspaceId = String(workspace.id);
 
         const refreshed = await request.post(`${CP_URL}/api/v1/auth/refresh`, {
             data: { refreshToken: auth.refreshToken },
@@ -96,7 +97,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
     }
 
     async function startJob(
-        request: import("@playwright/test").APIRequestContext,
+        request: APIRequestContext,
         token: string,
         workspaceId: string,
         body: Record<string, unknown>,
@@ -112,11 +113,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
         });
     }
 
-    async function listJobs(
-        request: import("@playwright/test").APIRequestContext,
-        token: string,
-        workspaceId: string,
-    ) {
+    async function listJobs(request: APIRequestContext, token: string, workspaceId: string) {
         const response = await request.get(`${CP_URL}/api/v1/workspaces/${workspaceId}/jobs`, {
             headers: { Authorization: `Bearer ${token}` },
         });
@@ -127,12 +124,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
         return (await response.json()) as Array<Record<string, unknown>>;
     }
 
-    function seedPage(
-        page: import("@playwright/test").Page,
-        token: string,
-        workspaceId: string,
-        name: string,
-    ) {
+    function seedPage(page: Page, token: string, workspaceId: string, name: string) {
         page.addInitScript((value) => localStorage.setItem("xihe-token", value), token);
         page.addInitScript(
             (value) => localStorage.setItem("xihe-user", value),
@@ -177,24 +169,26 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
             [200, 202],
             `job start failed: ${running.status()} ${await running.text()}`,
         ).toContain(running.status());
-        const projection = await running.json();
-        const jobId = String(projection.jobId ?? "");
+        const projection = await running.json(),
+            jobId = String(projection.jobId ?? "");
         expect(jobId).toBeTruthy();
 
         await expect
             .poll(
                 async () => {
                     const jobs = await listJobs(request, workspace.token, workspace.workspaceId);
-                    return jobs.find((job) => String(job.jobId) === jobId)
-                        ?.status;
+                    return jobs.find((job) => String(job.jobId) === jobId)?.status;
                 },
                 { timeout: 30000 },
             )
             .toMatch(/running|pending/);
 
-        const cancel = await request.post(`${CP_URL}/api/v1/workspaces/${workspace.workspaceId}/jobs/${jobId}/cancel`, {
-            headers: { Authorization: `Bearer ${workspace.token}` },
-        });
+        const cancel = await request.post(
+            `${CP_URL}/api/v1/workspaces/${workspace.workspaceId}/jobs/${jobId}/cancel`,
+            {
+                headers: { Authorization: `Bearer ${workspace.token}` },
+            },
+        );
         expect(
             cancel.ok(),
             `cancel failed: ${cancel.status()} ${await cancel.text()}`,
@@ -206,8 +200,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
             .poll(
                 async () => {
                     const jobs = await listJobs(request, workspace.token, workspace.workspaceId);
-                    return jobs.find((job) => String(job.jobId) === jobId)
-                        ?.status;
+                    return jobs.find((job) => String(job.jobId) === jobId)?.status;
                 },
                 { timeout: 30000 },
             )
@@ -246,8 +239,8 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
         );
 
         if (started.status() === 202 || started.status() === 200) {
-            const projection = await started.json();
-            const jobId = String(projection.jobId ?? "");
+            const projection = await started.json(),
+                jobId = String(projection.jobId ?? "");
             let mxcStatus = "";
             await expect
                 .poll(
@@ -258,8 +251,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
                             workspace.workspaceId,
                         );
                         mxcStatus = String(
-                            jobs.find((job) => String(job.jobId) === jobId)
-                                ?.status ?? "",
+                            jobs.find((job) => String(job.jobId) === jobId)?.status ?? "",
                         );
                         return mxcStatus;
                     },
@@ -290,9 +282,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
                                     workspace.token,
                                     workspace.workspaceId,
                                 );
-                                return jobs.find(
-                                    (job) => String(job.jobId) === jobId,
-                                )?.status;
+                                return jobs.find((job) => String(job.jobId) === jobId)?.status;
                             },
                             { timeout: 30000 },
                         )
@@ -357,8 +347,8 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
             [200, 202],
             `boundary start failed: ${started.status()} ${await started.text()}`,
         ).toContain(started.status());
-        const projection = await started.json();
-        const jobId = String(projection.jobId ?? "");
+        const projection = await started.json(),
+            jobId = String(projection.jobId ?? "");
         expect(jobId).toBeTruthy();
 
         let finalStatus = "";
@@ -367,8 +357,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
                 async () => {
                     const jobs = await listJobs(request, workspace.token, workspace.workspaceId);
                     finalStatus = String(
-                        jobs.find((job) => String(job.jobId) === jobId)
-                            ?.status ?? "",
+                        jobs.find((job) => String(job.jobId) === jobId)?.status ?? "",
                     );
                     return finalStatus;
                 },

@@ -20,11 +20,11 @@ type Snapshot = {
     sinceMs: number;
 };
 
-const configuredNames = ref<string[]>([]);
-const snapshots = ref<Record<string, Snapshot>>({});
-const loading = ref(false);
-const refreshing = ref(false);
-const stale = ref(false);
+const configuredNames = ref<string[]>([]),
+    snapshots = ref<Record<string, Snapshot>>({}),
+    loading = ref(false);
+const refreshing = ref(false),
+    stale = ref(false);
 
 let pollTimer: number | null = null;
 

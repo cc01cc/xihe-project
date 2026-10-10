@@ -30,7 +30,7 @@ function createMockFile(content: string, name: string): File {
 
 beforeEach(() => {
     // oxlint-disable-next-line no-console
-    console.warn = vi.fn();
+    console.warn = vi.fn<typeof console.warn>();
 });
 
 describe("ImportPreview", () => {

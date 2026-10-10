@@ -124,7 +124,7 @@ Equivalent module-level commands:
 
 ```bash
 # UI
-cd packages/ui && pnpm install --ignore-workspace
+cd packages/ui && pnpm install
 
 # Agent
 cd packages/agent && uv sync --all-extras
@@ -160,7 +160,7 @@ mise run validate:full
 
 If you prefer not to use root tasks, you can enter the module directory and execute manually; however, the root `.env` and corresponding profile env files will not be automatically loaded — you need to export environment variables yourself.
 
-The root directory no longer uses pnpm workspace. UI still uses pnpm, but manages dependencies and lock files only within `packages/ui/`. Since the current repository is located within the outer `one` workspace, running pnpm commands directly under `packages/ui/` requires `--ignore-workspace`, or you can use root `mise run *` tasks directly.
+The root directory no longer uses pnpm workspace. `packages/ui/` is itself the pnpm root: it owns `pnpm-workspace.yaml`, the pnpm security policies (cooldown, build-script whitelist, overrides, patches) and the single lock file. Because it is a workspace root, pnpm commands run under `packages/ui/` must NOT pass `--ignore-workspace` — that flag is install-only and does not apply to `run`, and it would skip the package's own workspace policy. You can also use the root `mise run *` tasks, which are already wired to the UI root.
 
 ### 2.4. Runtime Modes
 
@@ -399,7 +399,7 @@ cd packages/runtime && cargo test
 cd packages/control-plane && mvn test
 ```
 
-The UI lint/validate gate blocks format (`oxfmt --check`), syntax/correctness, unused-variable, `prefer-const`, and duplicate-import errors. Other style warnings remain visible but are not fatal, so a successful command does not mean zero warnings. The full UI formatter migration completed in its dedicated wave (419 historical files normalized) and the format check is now wired into `lint`. CP's `mise run lint:cp` blocks **every** Checkstyle rule at error severity (baseline 0 violations after the rule/convention alignment wave; see PLAN-0458 evidence) — it must never be weakened back to warning or globally suppressed. Agent's `mise run lint:agent` runs mypy as a real blocking gate over `src/` (the global `ignore_errors` switch was removed; currently 0 errors) — type errors must be fixed, never masked by global or module-wide ignores (PLAN-0459).
+The UI `pnpm run lint` gate runs `oxfmt --check .` followed by `oxlint .`. Oxlint enables the `typescript`, `import`, `unicorn`, and `oxc` plugins; the Vitest plugin is scoped to `src/**/__tests__/**`, `src/**/*.spec.ts`, and `src/**/*.test.ts`, where `require-mock-type-parameters` and `require-to-throw-message` are blocking and other Vitest rules remain off. The Vue plugin and template lint are outside this gate; SFC/TypeScript type checking is handled by `pnpm run typecheck` (`vue-tsc --noEmit`). Oxfmt is pinned at 0.68.0; `.oxfmtrc.jsonc` explicitly sets `tabWidth: 4` and `printWidth: 100`, ignores Markdown and `AGENTS.md`, and leaves `proseWrap` unset to preserve the pre-config zero-drift behavior. Other style warnings remain visible but are not fatal, so a successful lint does not mean zero warnings. The full UI formatter migration completed in its dedicated wave (419 historical files normalized) and the format check is now wired into `lint`. CP's `mise run lint:cp` blocks **every** Checkstyle rule at error severity (baseline 0 violations after the rule/convention alignment wave; see PLAN-0458 evidence) — it must never be weakened back to warning or globally suppressed. Agent's `mise run lint:agent` runs mypy as a real blocking gate over `src/` (the global `ignore_errors` switch was removed; currently 0 errors) — type errors must be fixed, never masked by global or module-wide ignores (PLAN-0459).
 
 ### 4.4. CP Integration Test Modes
 

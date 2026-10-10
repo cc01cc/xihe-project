@@ -108,8 +108,8 @@ export async function uploadAttachments(sessionId: string, files: File[]): Promi
     const validTasks: UploadTask[] = [];
 
     for (const file of files) {
-        const task = createTask(file);
-        const validation = validateAttachment(file);
+        const task = createTask(file),
+            validation = validateAttachment(file);
         if (!validation.valid) {
             task.state = "error";
             task.error = validation.reason;

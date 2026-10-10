@@ -2,14 +2,11 @@ import { generateE2EPassword } from "./helpers/password";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
+import type { APIRequestContext, Page } from "@playwright/test";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 
-async function registerAndLogin(
-    page: import("@playwright/test").Page,
-    request: import("@playwright/test").APIRequestContext,
-    name: string,
-) {
+async function registerAndLogin(page: Page, request: APIRequestContext, name: string) {
     const reg = await request.post(`${CP_URL}/api/v1/auth/register`, {
         data: { email: `${name}-${Date.now()}@test.com`, password: SHARED_PASSWORD, name },
     });
@@ -55,8 +52,8 @@ test.describe("@host Settings — Tier Tabs & Interactions", () => {
         const toast = page.locator("[data-sonner-toast]").first();
         await expect(toast).toBeVisible({ timeout: 8000 });
 
-        const saveBox = await saveBtn.boundingBox();
-        const toastBox = await toast.boundingBox();
+        const saveBox = await saveBtn.boundingBox(),
+            toastBox = await toast.boundingBox();
         if (saveBox && toastBox) {
             const overlap = !(
                 toastBox.x + toastBox.width < saveBox.x ||

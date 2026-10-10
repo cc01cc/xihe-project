@@ -1,12 +1,12 @@
 import { test, expect } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 
-const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-const WORKSPACE_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-const RUN_ID_1 = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
-const RUN_ID_2 = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
-const REQUEST_ID_1 = "22222222-2222-4222-8222-222222222222";
-const REQUEST_ID_2 = "33333333-3333-4333-8333-333333333333";
+const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    WORKSPACE_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const RUN_ID_1 = "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    RUN_ID_2 = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+const REQUEST_ID_1 = "22222222-2222-4222-8222-222222222222",
+    REQUEST_ID_2 = "33333333-3333-4333-8333-333333333333";
 
 test.describe("PLAN-275: Safe Coding Loop E2E", () => {
     test.beforeEach(async ({ page }) => {

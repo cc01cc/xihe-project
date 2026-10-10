@@ -32,8 +32,8 @@ const HOST_ROOT = path.resolve(
 );
 // 运行证据写 .local（已 gitignore）；需要入册时再把摘要/截图拷入对应 PLAN evidence。
 // 2026-09-19: PLAN-0369 归档后此前的 plans/PLAN-0369-.../evidence 落点会在旧路径重建目录。
-const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/journey-b");
-const HUMAN_RUNTIME_DOWN = "沙盒未就绪";
+const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/journey-b"),
+    HUMAN_RUNTIME_DOWN = "沙盒未就绪";
 
 let ctx: JourneyContext;
 
@@ -68,8 +68,8 @@ function killPidTree(pid: number): void {
 }
 
 async function fetchOk(url: string, timeoutMs = 2000): Promise<boolean> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const controller = new AbortController(),
+        timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
         const res = await fetch(url, { signal: controller.signal });
         return res.ok;

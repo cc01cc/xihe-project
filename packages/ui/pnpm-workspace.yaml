@@ -1,0 +1,19 @@
+# The UI is the only Node package in XH and is its own pnpm root.
+minimumReleaseAge: 10080
+minimumReleaseAgeExclude: []
+
+onlyBuiltDependencies:
+    - esbuild
+    - vue-demi
+    - msw
+
+overrides:
+    "decode-uri-component@0.2.2": 0.5.0
+    "dompurify@3.4.8": 3.4.14
+    "esbuild@0.27.7": 0.28.2
+    "hono@4.13.4": 4.13.8
+    "qs@6.15.3": 6.16.0
+    "source-map-js@1.2.1": 1.2.2
+
+patchedDependencies:
+    source-map-resolve@0.6.0: patches/source-map-resolve@0.6.0.patch

@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
 import { test, expect } from "@playwright/test";
+import type { APIRequestContext, Page } from "@playwright/test";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan0390-workspace-job");
@@ -19,9 +20,7 @@ test.describe("@host PLAN-0390 workspace job start", () => {
     test.describe.configure({ mode: "serial" });
     test.setTimeout(240000);
 
-    let sharedAuth: string;
-    let sharedWs: string;
-    let sharedHeaders: Record<string, string>;
+    let sharedAuth: string, sharedWs: string, sharedHeaders: Record<string, string>;
 
     test.beforeAll(async ({ request }) => {
         const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
@@ -41,7 +40,7 @@ test.describe("@host PLAN-0390 workspace job start", () => {
         mkdirSync(EVIDENCE_DIR, { recursive: true });
     });
 
-    function seedPage(page: import("@playwright/test").Page) {
+    function seedPage(page: Page) {
         page.addInitScript((t) => localStorage.setItem("xihe-token", t), sharedAuth);
         page.addInitScript(
             (raw) => localStorage.setItem("xihe-user", raw),
@@ -53,7 +52,7 @@ test.describe("@host PLAN-0390 workspace job start", () => {
         });
     }
 
-    async function listJobs(request: import("@playwright/test").APIRequestContext) {
+    async function listJobs(request: APIRequestContext) {
         const res = await request.get(`${CP_URL}/api/v1/workspaces/${sharedWs}/jobs`, {
             headers: sharedHeaders,
         });
@@ -61,11 +60,7 @@ test.describe("@host PLAN-0390 workspace job start", () => {
         return (await res.json()) as Array<Record<string, unknown>>;
     }
 
-    async function startJob(
-        request: import("@playwright/test").APIRequestContext,
-        command: string,
-        key: string,
-    ) {
+    async function startJob(request: APIRequestContext, command: string, key: string) {
         return request.post(`${CP_URL}/api/v1/workspaces/${sharedWs}/jobs`, {
             headers: { ...sharedHeaders, "Idempotency-Key": key },
             data: { command, args: [], scope: "workspace", source: "ui" },
@@ -73,11 +68,7 @@ test.describe("@host PLAN-0390 workspace job start", () => {
     }
 
     // PLAN-0465 T2.1：canonical 输出路径（decision #7 键位 = domain jobId）。
-    async function readOutput(
-        request: import("@playwright/test").APIRequestContext,
-        jobId: string,
-        offset = 0,
-    ) {
+    async function readOutput(request: APIRequestContext, jobId: string, offset = 0) {
         const res = await request.get(
             `${CP_URL}/api/v1/workspaces/${sharedWs}/jobs/${jobId}/output?stream=stdout&offset=${offset}&limit=65536`,
             { headers: sharedHeaders },
@@ -85,7 +76,7 @@ test.describe("@host PLAN-0390 workspace job start", () => {
         return { status: res.status(), body: (await res.json()) as Record<string, unknown> };
     }
 
-    async function cancelJob(request: import("@playwright/test").APIRequestContext, jobId: string) {
+    async function cancelJob(request: APIRequestContext, jobId: string) {
         return request.post(`${CP_URL}/api/v1/workspaces/${sharedWs}/jobs/${jobId}/cancel`, {
             headers: sharedHeaders,
             data: {},
@@ -99,8 +90,8 @@ test.describe("@host PLAN-0390 workspace job start", () => {
         const marker = `xihe0390-${Date.now()}`;
         // Runtime 的 background wrapper 用 `sh -c "$command" xihe-shell "$@"` 执行：
         // `command` 是 shell 命令字符串，不能传 `sh` 当命令（会立即退出、零输出）。
-        const command = `echo ${marker}; sleep 8`;
-        const key = `plan0390-${Date.now()}`;
+        const command = `echo ${marker}; sleep 8`,
+            key = `plan0390-${Date.now()}`;
 
         // 1) 首次 start → 202，durable Job 进入 running（真实 Docker 容器）
         const first = await startJob(request, command, key);
@@ -221,8 +212,8 @@ test.describe("@host PLAN-0390 workspace job start", () => {
         expect(started.status(), `start failed: ${started.status()} ${await started.text()}`).toBe(
             202,
         );
-        const job = (await started.json()) as Record<string, unknown>;
-        const jobId = String(job.jobId);
+        const job = (await started.json()) as Record<string, unknown>,
+            jobId = String(job.jobId);
         // 容器输出目录键 = Runtime backend handle（direct-attach 下等于 domain jobId，
         // Docker 容器后端由容器侧生成——本 spec 默认 Docker 后端）。
         const runtimeJobId = String(job.runtimeJobId);

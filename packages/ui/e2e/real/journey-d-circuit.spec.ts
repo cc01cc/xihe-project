@@ -13,8 +13,8 @@ import {
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
 
-const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
-const EVIDENCE_DIR = evidenceDir("journey-d-circuit");
+const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock",
+    EVIDENCE_DIR = evidenceDir("journey-d-circuit");
 const SERVICE_TOKEN = process.env.XIHE_CP_API_TOKEN ?? "";
 
 // PLAN-0341 V3/V9 (U4): recovery-band circuit surfaces as a session toast.
@@ -102,8 +102,8 @@ test.describe("@host Journey D — compaction circuit (U4)", () => {
         const circuitToast = page.getByText(/自动压缩已暂停|Auto-compaction paused/);
         await expect(circuitToast.first()).toBeVisible({ timeout: 20000 });
 
-        const toastEl = circuitToast.first();
-        const box = await toastEl.boundingBox();
+        const toastEl = circuitToast.first(),
+            box = await toastEl.boundingBox();
         expect(box, "circuit toast has layout box").toBeTruthy();
         expect(box!.width, "toast not zero-width").toBeGreaterThan(10);
         const styles = await toastEl.evaluate((el) => {

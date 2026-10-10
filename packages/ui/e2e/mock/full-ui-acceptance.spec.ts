@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
@@ -31,7 +32,7 @@ const providerCatalog = {
     ],
 };
 
-async function mockSettingsApis(page: import("@playwright/test").Page) {
+async function mockSettingsApis(page: Page) {
     await page.route("**/api/v1/events**", (route) =>
         route.fulfill({
             status: 200,
@@ -493,8 +494,8 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
     });
 
     test("PDF opens through the application FileEditor path", async ({ page }) => {
-        const pageErrors: string[] = [];
-        const consoleErrors: string[] = [];
+        const pageErrors: string[] = [],
+            consoleErrors: string[] = [];
         page.on("pageerror", (error) => pageErrors.push(error.message));
         page.on("console", (message) => {
             if (message.type() === "error") consoleErrors.push(message.text());
@@ -620,8 +621,8 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
         await setupMockAuth(page);
         await setupMockSessions(page, { sessions: [{ id: "session-1", title: "Session 1" }] });
         await page.addInitScript(() => {
-            const track = { stop() {} };
-            const stream = { getVideoTracks: () => [track], getTracks: () => [track] };
+            const track = { stop() {} },
+                stream = { getVideoTracks: () => [track], getTracks: () => [track] };
             Object.defineProperty(navigator.mediaDevices, "getDisplayMedia", {
                 configurable: true,
                 value: async () => stream,

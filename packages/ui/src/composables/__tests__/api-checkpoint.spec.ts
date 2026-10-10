@@ -10,10 +10,10 @@ import {
     normalizeWorkspaceCheckpoints,
 } from "../api";
 
-const WORKSPACE_ID = "66666666-6666-4666-8666-666666666666";
-const SLICE_REF = "refs/xihe/workspace/slice-1";
-const RUN_ID = "33333333-3333-4333-8333-333333333333";
-const SESSION_ID = "55555555-5555-4555-8555-555555555555";
+const WORKSPACE_ID = "66666666-6666-4666-8666-666666666666",
+    SLICE_REF = "refs/xihe/workspace/slice-1",
+    RUN_ID = "33333333-3333-4333-8333-333333333333",
+    SESSION_ID = "55555555-5555-4555-8555-555555555555";
 let fetchSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {

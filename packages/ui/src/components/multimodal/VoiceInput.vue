@@ -9,8 +9,8 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const isRecording = ref(false);
-const recognitionText = ref("");
+const isRecording = ref(false),
+    recognitionText = ref("");
 let recognition: SpeechRecognition | null = null;
 const isSupported =
     typeof window !== "undefined" &&

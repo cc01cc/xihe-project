@@ -2,12 +2,13 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { useAuditStore } from "../audit";
 import { api } from "../../composables/api";
+import type * as apiModule from "../../composables/api";
 import type { AuditEntry, AuditEntryDetail, AuditListResponse } from "../../types";
 
 vi.mock("../../composables/api", () => ({
     api: {
-        listAuditEntries: vi.fn(),
-        getAuditEntry: vi.fn(),
+        listAuditEntries: vi.fn<typeof apiModule.api.listAuditEntries>(),
+        getAuditEntry: vi.fn<typeof apiModule.api.getAuditEntry>(),
     },
 }));
 

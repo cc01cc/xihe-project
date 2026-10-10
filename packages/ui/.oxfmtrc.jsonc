@@ -1,0 +1,26 @@
+// PLAN-0471 T2.7 (user decision #5, 2026-10-09): explicit Oxfmt policy.
+// Values are pinned to Oxfmt 0.68.0 RUNTIME defaults, verified by stdin probe
+// and full-tree bisection (see plans/PLAN-0471-*/evidence/m2-t27-oxfmt.md):
+// formatting must stay byte-identical to the pre-config state (zero drift).
+// Notes from probing:
+// - Runtime default tabWidth is 4 when NO config file exists, but drops to 2
+//   once any .oxfmtrc exists — so tabWidth MUST be pinned explicitly.
+// - Runtime default printWidth is 100 (matches schema doc).
+// - Runtime default proseWrap is preserve; explicit "preserve" triggers
+//   markdown list-blank-line normalization that the implicit default does
+//   NOT do — so proseWrap must stay UNSET (keep implicit default).
+// - Without a config file, Markdown files are not formatted at all; with a
+//   config they get scanned. To keep zero drift, docs are excluded below.
+// - `src/styles/shadcn-vue-tailwind.css` is a byte-exact vendor copy of
+//   shadcn-vue's theme stylesheet (kept to drop the undeclared runtime
+//   dependency; PLAN-0470 commit b1604732 / 0471 cherry-pick 81a3f96b).
+//   Reformatting it (2-space -> 4-space) would rewrite ~900 whitespace-only
+//   lines and make future re-vendoring diffs unreadable, so it is excluded
+//   rather than owned by our formatter. Update it by re-copying upstream.
+// When upgrading Oxfmt: run `oxfmt --check .` and review any new drift
+// before adopting the new version's defaults here.
+{
+    "ignorePatterns": ["AGENTS.md", "*.md", "src/styles/shadcn-vue-tailwind.css"],
+    "tabWidth": 4,
+    "printWidth": 100,
+}

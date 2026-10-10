@@ -25,8 +25,8 @@ import {
     type JourneyContext,
 } from "./helpers/journey";
 
-const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
-const EVIDENCE_DIR = evidenceDir("diagnostics");
+const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock",
+    EVIDENCE_DIR = evidenceDir("diagnostics");
 const TERMINAL_RUN_PATTERN = /^(succeeded|failed|partial|ambiguous|cancelled)$/;
 const TERMINAL_CHAT_RUN_OR_NONE = /^(succeeded|failed|partial|ambiguous|cancelled|none)$/;
 
@@ -101,8 +101,8 @@ async function openWorkspace(page: Page, ctx: JourneyContext): Promise<void> {
 }
 
 async function startRun(scope: Page | Locator, text: string): Promise<string> {
-    const input = scope.locator('[data-testid="chat-input"]');
-    const send = scope.locator('[data-testid="chat-send-button"]');
+    const input = scope.locator('[data-testid="chat-input"]'),
+        send = scope.locator('[data-testid="chat-send-button"]');
     await expect(input).toBeVisible({ timeout: 30000 });
     for (let attempt = 0; attempt < 4; attempt += 1) {
         await input.click().catch(() => {});
@@ -189,8 +189,8 @@ async function sendCommand(
     opts: { reopenChat?: boolean } = {},
 ): Promise<string> {
     await awaitPreviousRunSettled(request, ctx.headers);
-    const runId = await startRun(scope, command);
-    const page = scope.locator("body").page();
+    const runId = await startRun(scope, command),
+        page = scope.locator("body").page();
     await approveCardIfShown(page, opts);
     const status = await awaitRunTerminal(request, ctx.headers, runId);
     expect(status, `run ${runId} terminal status`).toBe("succeeded");

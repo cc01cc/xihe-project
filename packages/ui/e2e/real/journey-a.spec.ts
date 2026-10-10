@@ -46,9 +46,9 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
         expect([200, 201], `register failed: ${reg.status()} ${await reg.text()}`).toContain(
             reg.status(),
         );
-        const auth = await reg.json();
-        const authToken: string = auth.accessToken;
-        const wsId: string = auth.workspaceId;
+        const auth = await reg.json(),
+            authToken: string = auth.accessToken,
+            wsId: string = auth.workspaceId;
         const authHeaders = {
             Authorization: `Bearer ${authToken}`,
             "Content-Type": "application/json",
@@ -68,10 +68,10 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
             { id: wsId, name: "Default Workspace" },
         );
 
-        const hostDir = path.join(HOST_ROOT, wsId);
-        const approveFile = `journey-a-approve-${Date.now()}.md`;
-        const approveContent = "# Journey A Approve";
-        const rejectFile = `journey-a-reject-${Date.now()}.md`;
+        const hostDir = path.join(HOST_ROOT, wsId),
+            approveFile = `journey-a-approve-${Date.now()}.md`;
+        const approveContent = "# Journey A Approve",
+            rejectFile = `journey-a-reject-${Date.now()}.md`;
 
         await page.goto("/workspace/" + wsId, { waitUntil: "load" });
         const chatInput = page.locator('[data-testid="chat-input"]');
@@ -168,8 +168,8 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
         expect(sessionsRes.ok()).toBeTruthy();
         const sessions = (await sessionsRes.json()) as { sessions: Array<{ id: string }> };
         expect(sessions.sessions.length).toBeGreaterThan(0);
-        const sid = sessions.sessions[0].id;
-        const branchId = await getRootBranchId(request, sid, authHeaders);
+        const sid = sessions.sessions[0].id,
+            branchId = await getRootBranchId(request, sid, authHeaders);
         const messagesRes = await request.get(
             `${CP_URL}/api/v1/sessions/${sid}/messages?branchId=${branchId}`,
             {
@@ -200,8 +200,8 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
             },
         });
         expect([200, 201]).toContain(reg.status());
-        const auth = await reg.json();
-        const wsId: string = auth.workspaceId;
+        const auth = await reg.json(),
+            wsId: string = auth.workspaceId;
 
         await ensureAgentWorkspaceBinding(wsId);
 
@@ -218,8 +218,8 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
         await page.goto("/workspace/" + wsId, { waitUntil: "load" });
         const textarea = page.locator("textarea");
         await expect(textarea).toBeVisible({ timeout: 20000 });
-        const modal = page.locator('[data-testid="modal-content"]');
-        const expFile = `journey-a-exp-${Date.now()}.md`;
+        const modal = page.locator('[data-testid="modal-content"]'),
+            expFile = `journey-a-exp-${Date.now()}.md`;
 
         await textarea.fill(`请创建文件 ${expFile} 内容 # exp，然后确认。`);
         await textarea.press("Enter");

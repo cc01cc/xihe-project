@@ -28,13 +28,13 @@ import { getProviderInfo } from "../../types/provider";
 import { listProviderConnections } from "../../services/providerConnectionService";
 
 const { t } = useI18n();
-const router = useRouter();
-const configStore = useConfigStore();
-const sessionStore = useSessionStore();
+const router = useRouter(),
+    configStore = useConfigStore(),
+    sessionStore = useSessionStore();
 
-const open = ref(false);
-const searchTerm = ref("");
-const collapsedProviders = ref<Set<string>>(new Set());
+const open = ref(false),
+    searchTerm = ref(""),
+    collapsedProviders = ref<Set<string>>(new Set());
 
 watch(open, (isOpen) => {
     if (isOpen) {
@@ -68,8 +68,8 @@ const currentValue = computed(() => {
 const triggerLabel = computed(() => {
     const binding = currentBinding.value;
     if (!binding) return t("chat.modelSelectorPlaceholder");
-    const info = getProviderInfo(binding.provider);
-    const providerName = info?.name ?? binding.provider;
+    const info = getProviderInfo(binding.provider),
+        providerName = info?.name ?? binding.provider;
     return `${binding.model} · ${providerName}`;
 });
 
@@ -96,8 +96,8 @@ const providerGroups = computed(() => {
     return Object.entries(models)
         .filter(([, modelIds]) => modelIds.length > 0)
         .map(([provider, modelIds]) => {
-            const info = getProviderInfo(provider);
-            const catalog = configStore.modelCache.providers?.[provider];
+            const info = getProviderInfo(provider),
+                catalog = configStore.modelCache.providers?.[provider];
             const filtered = q
                 ? modelIds.filter((model) => matchModel(provider, model, q))
                 : modelIds;
@@ -132,8 +132,8 @@ const hasAnyUnfilteredModels = computed(() => {
 });
 
 function matchModel(provider: string, model: string, q: string): boolean {
-    const info = getProviderInfo(provider);
-    const text = `${model} ${info?.name ?? provider}`.toLowerCase();
+    const info = getProviderInfo(provider),
+        text = `${model} ${info?.name ?? provider}`.toLowerCase();
     return text.includes(q);
 }
 
@@ -154,10 +154,10 @@ function setGroupCollapsed(provider: string, collapsed: boolean) {
 async function selectModel(value: string) {
     const slash = value.indexOf("/");
     if (slash < 0) return;
-    const provider = value.slice(0, slash);
-    const model = value.slice(slash + 1);
-    const catalog = configStore.modelCache.providers?.[provider];
-    const sessionId = sessionStore.currentSessionId;
+    const provider = value.slice(0, slash),
+        model = value.slice(slash + 1);
+    const catalog = configStore.modelCache.providers?.[provider],
+        sessionId = sessionStore.currentSessionId;
     if (sessionId && !configStore.isChatModelAvailable(provider, model)) {
         toast.error("Selected model is not currently available for chat");
         return;

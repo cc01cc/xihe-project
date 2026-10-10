@@ -157,17 +157,17 @@ function toolResultStatus(result: unknown): ToolCall["status"] {
 }
 
 export function useSSE(sessionId: MaybeRefOrGetter<string>) {
-    const agentStore = getAgentStoreOrNull();
-    const isConnected = ref(false);
-    const isStreaming = ref(false);
-    const error = ref<string | null>(null);
-    let currentCallbacks: SSECallbacks = {};
-    let streamTimeout: ReturnType<typeof setTimeout> | null = null;
-    let connectionErrorReported = false;
-    let activeSessionId: string | null = null;
-    let contentStarted = false;
-    let connectionGeneration = 0;
-    let activeApprovalEpoch: string | null = null;
+    const agentStore = getAgentStoreOrNull(),
+        isConnected = ref(false),
+        isStreaming = ref(false),
+        error = ref<string | null>(null);
+    let currentCallbacks: SSECallbacks = {},
+        streamTimeout: ReturnType<typeof setTimeout> | null = null,
+        connectionErrorReported = false,
+        activeSessionId: string | null = null,
+        contentStarted = false,
+        connectionGeneration = 0,
+        activeApprovalEpoch: string | null = null;
 
     function asErrorPayload(error: unknown, fallbackCode = "AGENT_STREAM_FAILED"): SSEErrorPayload {
         if (error instanceof ApiError) {
@@ -236,10 +236,12 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         switch (msg.event) {
             case "token":
                 try {
-                    const data = JSON.parse(msg.data) as { content?: unknown; hint?: string };
-                    const content = normalizeTokenContent(data.content);
-                    const hint =
-                        data.hint === "reasoning" || data.hint === "text" ? data.hint : undefined;
+                    const data = JSON.parse(msg.data) as { content?: unknown; hint?: string },
+                        content = normalizeTokenContent(data.content),
+                        hint =
+                            data.hint === "reasoning" || data.hint === "text"
+                                ? data.hint
+                                : undefined;
                     if (content) {
                         if (!contentStarted) {
                             contentStarted = true;
@@ -269,22 +271,22 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                     const data = JSON.parse(msg.data) as Record<string, unknown>;
                     // Agent payload uses `tool`/`toolCallId`; `name`/`id` remain as fallback.
                     const name =
-                        typeof data.tool === "string"
-                            ? data.tool
-                            : typeof data.name === "string"
-                              ? data.name
-                              : null;
-                    const rawId = data.toolCallId ?? data.id;
-                    const runId = typeof data.run_id === "string" ? data.run_id : undefined;
+                            typeof data.tool === "string"
+                                ? data.tool
+                                : typeof data.name === "string"
+                                  ? data.name
+                                  : null,
+                        rawId = data.toolCallId ?? data.id,
+                        runId = typeof data.run_id === "string" ? data.run_id : undefined;
                     if (name) {
                         const id =
-                            rawId !== undefined && rawId !== null && rawId !== ""
-                                ? String(rawId)
-                                : crypto.randomUUID();
-                        const args =
-                            typeof data.arguments === "string"
-                                ? data.arguments
-                                : JSON.stringify(data.arguments ?? {});
+                                rawId !== undefined && rawId !== null && rawId !== ""
+                                    ? String(rawId)
+                                    : crypto.randomUUID(),
+                            args =
+                                typeof data.arguments === "string"
+                                    ? data.arguments
+                                    : JSON.stringify(data.arguments ?? {});
                         agentStore?.addToolCall({
                             id,
                             name,
@@ -315,24 +317,24 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
             case "tool_result":
                 resetStreamTimeout();
                 try {
-                    const data = JSON.parse(msg.data) as Record<string, unknown>;
-                    const rawId = data.toolCallId ?? data.id;
+                    const data = JSON.parse(msg.data) as Record<string, unknown>,
+                        rawId = data.toolCallId ?? data.id;
                     if (rawId !== undefined && rawId !== null && rawId !== "") {
-                        const id = String(rawId);
-                        const result =
-                            typeof data.result === "string"
-                                ? data.result
-                                : JSON.stringify(data.result);
-                        const status = toolResultStatus(data.result);
-                        const diagnostics = normalizeDiagnostics(data.diagnostics);
-                        const updates: Partial<ToolCall> = {
-                            status,
-                            completedAt: new Date().toISOString(),
-                            ...(typeof result === "string" ? { result } : {}),
-                            ...(diagnostics ? { diagnostics } : {}),
-                            ...(typeof data.tool === "string" ? { name: data.tool } : {}),
-                            ...(typeof data.run_id === "string" ? { runId: data.run_id } : {}),
-                        };
+                        const id = String(rawId),
+                            result =
+                                typeof data.result === "string"
+                                    ? data.result
+                                    : JSON.stringify(data.result),
+                            status = toolResultStatus(data.result),
+                            diagnostics = normalizeDiagnostics(data.diagnostics),
+                            updates: Partial<ToolCall> = {
+                                status,
+                                completedAt: new Date().toISOString(),
+                                ...(typeof result === "string" ? { result } : {}),
+                                ...(diagnostics ? { diagnostics } : {}),
+                                ...(typeof data.tool === "string" ? { name: data.tool } : {}),
+                                ...(typeof data.run_id === "string" ? { runId: data.run_id } : {}),
+                            };
                         agentStore?.updateToolCall(id, { result, status });
                         getChatStoreOrNull()?.upsertToolCall(
                             activeSessionId ?? toValue(sessionId),
@@ -348,8 +350,8 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
             case "approval_request":
                 resetStreamTimeout();
                 try {
-                    const data = JSON.parse(msg.data) as Record<string, unknown>;
-                    const approval = normalizeApprovalRequest(data, activeSessionId ?? "");
+                    const data = JSON.parse(msg.data) as Record<string, unknown>,
+                        approval = normalizeApprovalRequest(data, activeSessionId ?? "");
                     if (approval) {
                         agentStore?.addApprovalRequest(approval);
                         if (agentStore) void agentStore.refreshPendingApprovals();
@@ -376,8 +378,8 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
             case "run_checkpoint":
                 resetStreamTimeout();
                 try {
-                    const data = JSON.parse(msg.data) as Record<string, unknown>;
-                    const event = normalizeWorkspaceCheckpointEvent(data, activeSessionId ?? "");
+                    const data = JSON.parse(msg.data) as Record<string, unknown>,
+                        event = normalizeWorkspaceCheckpointEvent(data, activeSessionId ?? "");
                     if (event) getCheckpointStoreOrNull()?.mergeEvent(event);
                 } catch {
                     logger.warn("Failed to parse SSE run_checkpoint event");
@@ -389,27 +391,27 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                 clearStreamTimeout();
                 try {
                     const data = JSON.parse(msg.data) as {
-                        error?: string;
-                        details?: string;
-                        detail?: string;
-                        code?: string;
-                        requestId?: string;
-                        runId?: string;
-                        provider?: string;
-                        model?: string;
-                        retryable?: boolean;
-                        outcome?: string;
-                    };
-                    const payload: SSEErrorPayload = {
-                        code: data.code ?? "AGENT_STREAM_FAILED",
-                        detail: data.detail ?? data.error ?? data.details ?? "Unknown error",
-                        requestId: data.requestId,
-                        runId: data.runId,
-                        provider: data.provider,
-                        model: data.model,
-                        retryable: data.retryable,
-                        outcome: data.outcome ?? (contentStarted ? "partial" : "error"),
-                    };
+                            error?: string;
+                            details?: string;
+                            detail?: string;
+                            code?: string;
+                            requestId?: string;
+                            runId?: string;
+                            provider?: string;
+                            model?: string;
+                            retryable?: boolean;
+                            outcome?: string;
+                        },
+                        payload: SSEErrorPayload = {
+                            code: data.code ?? "AGENT_STREAM_FAILED",
+                            detail: data.detail ?? data.error ?? data.details ?? "Unknown error",
+                            requestId: data.requestId,
+                            runId: data.runId,
+                            provider: data.provider,
+                            model: data.model,
+                            retryable: data.retryable,
+                            outcome: data.outcome ?? (contentStarted ? "partial" : "error"),
+                        };
                     error.value = errorText(payload);
                     currentCallbacks.onError?.(payload);
                 } catch {
@@ -454,8 +456,8 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                 // PLAN-0343: CP relays the cost-mapped usage snapshot once per
                 // run, before done; the chat store keeps the latest per session.
                 try {
-                    const data = JSON.parse(msg.data) as { usage?: Record<string, unknown> };
-                    const usage = data.usage ?? data;
+                    const data = JSON.parse(msg.data) as { usage?: Record<string, unknown> },
+                        usage = data.usage ?? data;
                     currentCallbacks.onUsage?.(usage);
                 } catch {
                     logger.warn("Failed to parse usage event payload");
@@ -570,8 +572,8 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         const generation = connectionGeneration;
         error.value = null;
         contentStarted = false;
-        const sid = overrideSid ?? toValue(sessionId);
-        const approvalEpoch = agentStore?.getApprovalEpoch(sid) ?? null;
+        const sid = overrideSid ?? toValue(sessionId),
+            approvalEpoch = agentStore?.getApprovalEpoch(sid) ?? null;
 
         try {
             const body: Record<string, unknown> = {
@@ -593,11 +595,11 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
             }
 
             const response = await apiRaw("/chat", {
-                method: "POST",
-                headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
-                body: JSON.stringify(body),
-            });
-            const result = (await response.json()) as ChatRunResponse;
+                    method: "POST",
+                    headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
+                    body: JSON.stringify(body),
+                }),
+                result = (await response.json()) as ChatRunResponse;
             if (
                 generation !== connectionGeneration ||
                 (approvalEpoch !== null && !agentStore?.isApprovalEpochCurrent(sid, approvalEpoch))

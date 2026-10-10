@@ -146,8 +146,8 @@ watch(
 
 async function handleChange(event: Event) {
     const key = (event.target as HTMLSelectElement).value;
-    const option = options.value.find((item) => optionKey(item) === key);
-    const sessionId = props.sessionId;
+    const option = options.value.find((item) => optionKey(item) === key),
+        sessionId = props.sessionId;
     if (!option || !sessionId || busy.value) return;
     busy.value = true;
     error.value = null;

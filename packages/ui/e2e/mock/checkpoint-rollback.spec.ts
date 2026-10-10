@@ -1,12 +1,12 @@
 import { test, expect, type Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 
-const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-const RUN_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-const WORKSPACE_ID = "workspace-1";
-const SLICE_REF = "refs/xihe/workspace/slice-b";
-const CHECKPOINT_FILE_TEXT = "const answer = 1\n";
-const CURRENT_FILE_TEXT = "const answer = 2\n";
+const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    RUN_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const WORKSPACE_ID = "workspace-1",
+    SLICE_REF = "refs/xihe/workspace/slice-b";
+const CHECKPOINT_FILE_TEXT = "const answer = 1\n",
+    CURRENT_FILE_TEXT = "const answer = 2\n";
 
 interface MockState {
     checkpoints: Array<Record<string, unknown>>;
@@ -112,8 +112,8 @@ function createState(): MockState {
 
 async function installCheckpointRoutes(page: Page, state: MockState) {
     await page.route("**/api/v1/workspaces/**", async (route) => {
-        const request = route.request();
-        const url = new URL(request.url());
+        const request = route.request(),
+            url = new URL(request.url());
         if (url.pathname.endsWith("/checkpoints") && request.method() === "GET") {
             state.listCalls += 1;
             await route.fulfill({

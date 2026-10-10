@@ -28,8 +28,8 @@ const emit = defineEmits<{
     revert: [sliceRef: string];
 }>();
 
-const showSearch = ref(false);
-const searchQuery = ref("");
+const showSearch = ref(false),
+    searchQuery = ref("");
 
 const filteredMessages = computed(() => {
     if (!searchQuery.value) {

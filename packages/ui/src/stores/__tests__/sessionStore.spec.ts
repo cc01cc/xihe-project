@@ -4,11 +4,11 @@ import { useSessionStore } from "../session";
 import { useAuthStore } from "../auth";
 import { useAgentStore } from "../agent";
 
-const originalFetch = globalThis.fetch;
-const REQUEST_ID = "11111111-1111-4111-8111-111111111111";
-const RUN_ID = "22222222-2222-4222-8222-222222222222";
-const SESSION_ID = "33333333-3333-4333-8333-333333333333";
-const WORKSPACE_ID = "44444444-4444-4444-8444-444444444444";
+const originalFetch = globalThis.fetch,
+    REQUEST_ID = "11111111-1111-4111-8111-111111111111",
+    RUN_ID = "22222222-2222-4222-8222-222222222222",
+    SESSION_ID = "33333333-3333-4333-8333-333333333333",
+    WORKSPACE_ID = "44444444-4444-4444-8444-444444444444";
 
 function mockAuth(workspaceId = WORKSPACE_ID) {
     const auth = useAuthStore();
@@ -43,12 +43,12 @@ beforeEach(() => {
 describe("useSessionStore (server canonical)", () => {
     it("createSession POSTs to /sessions and stores the server response", async () => {
         mockAuth();
-        const store = useSessionStore();
-        const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
-            ok: true,
-            status: 201,
-            json: () => Promise.resolve(mockSessionResponse({ id: "remote-1", title: "Plan" })),
-        } as Response);
+        const store = useSessionStore(),
+            fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+                ok: true,
+                status: 201,
+                json: () => Promise.resolve(mockSessionResponse({ id: "remote-1", title: "Plan" })),
+            } as Response);
 
         const session = await store.createSession("principal-test", "Plan");
 
@@ -67,13 +67,13 @@ describe("useSessionStore (server canonical)", () => {
 
     it("createSession prepends to the beginning of the list", async () => {
         mockAuth();
-        const store = useSessionStore();
-        const spy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
-            ok: true,
-            status: 201,
-            json: () => Promise.resolve(mockSessionResponse({ id: "s2" })),
-        } as Response);
-        const s1 = await store.createSession("principal-test", "First");
+        const store = useSessionStore(),
+            spy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+                ok: true,
+                status: 201,
+                json: () => Promise.resolve(mockSessionResponse({ id: "s2" })),
+            } as Response),
+            s1 = await store.createSession("principal-test", "First");
         spy.mockResolvedValueOnce({
             ok: true,
             status: 201,
@@ -88,12 +88,12 @@ describe("useSessionStore (server canonical)", () => {
 
     it("deleteSession calls DELETE and removes the row from list", async () => {
         mockAuth();
-        const store = useSessionStore();
-        const spy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
-            ok: true,
-            status: 201,
-            json: () => Promise.resolve(mockSessionResponse({ id: "s1" })),
-        } as Response);
+        const store = useSessionStore(),
+            spy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+                ok: true,
+                status: 201,
+                json: () => Promise.resolve(mockSessionResponse({ id: "s1" })),
+            } as Response);
         await store.createSession("principal-test", "S1");
         spy.mockResolvedValueOnce({
             ok: true,
@@ -117,11 +117,11 @@ describe("useSessionStore (server canonical)", () => {
 
     it("deleteSession clears approval state for the removed session", async () => {
         mockAuth();
-        const store = useSessionStore();
-        const agent = useAgentStore();
-        const spy = vi
-            .spyOn(globalThis, "fetch")
-            .mockResolvedValueOnce({ ok: true, status: 204 } as Response);
+        const store = useSessionStore(),
+            agent = useAgentStore(),
+            spy = vi
+                .spyOn(globalThis, "fetch")
+                .mockResolvedValueOnce({ ok: true, status: 204 } as Response);
 
         agent.addApprovalRequest({
             requestId: REQUEST_ID,
@@ -150,8 +150,8 @@ describe("useSessionStore (server canonical)", () => {
 
     it("selectSession sets currentSessionId and does not call server", () => {
         mockAuth();
-        const store = useSessionStore();
-        const spy = vi.spyOn(globalThis, "fetch");
+        const store = useSessionStore(),
+            spy = vi.spyOn(globalThis, "fetch");
 
         store.sessions.push({
             id: "s-1",
@@ -168,12 +168,12 @@ describe("useSessionStore (server canonical)", () => {
 
     it("renameSession calls PATCH and refreshes the row", async () => {
         mockAuth();
-        const store = useSessionStore();
-        const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
-            ok: true,
-            status: 200,
-            json: () => Promise.resolve(mockSessionResponse({ id: "s1", title: "Renamed" })),
-        } as Response);
+        const store = useSessionStore(),
+            fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: () => Promise.resolve(mockSessionResponse({ id: "s1", title: "Renamed" })),
+            } as Response);
 
         await store.updateSession("s1", { title: "Renamed" });
 
@@ -187,12 +187,12 @@ describe("useSessionStore (server canonical)", () => {
 
     it("groupedSessions groups sessions by time", async () => {
         mockAuth();
-        const store = useSessionStore();
-        const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
-            ok: true,
-            status: 201,
-            json: () => Promise.resolve(mockSessionResponse({ id: "s1" })),
-        } as Response);
+        const store = useSessionStore(),
+            fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+                ok: true,
+                status: 201,
+                json: () => Promise.resolve(mockSessionResponse({ id: "s1" })),
+            } as Response);
         await store.createSession("principal-test", "Group me");
         fetchSpy.mockRestore();
 
@@ -202,8 +202,8 @@ describe("useSessionStore (server canonical)", () => {
 
     it("searchQuery filters sessions by title", async () => {
         mockAuth();
-        const store = useSessionStore();
-        const fetchSpy = vi.spyOn(globalThis, "fetch");
+        const store = useSessionStore(),
+            fetchSpy = vi.spyOn(globalThis, "fetch");
         fetchSpy.mockResolvedValueOnce({
             ok: true,
             status: 201,
@@ -225,16 +225,16 @@ describe("useSessionStore (server canonical)", () => {
 
     it("loadSessions replaces list with server response", async () => {
         mockAuth();
-        const store = useSessionStore();
-        const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
-            ok: true,
-            status: 200,
-            json: () =>
-                Promise.resolve({
-                    sessions: [mockSessionResponse({ id: "srv-1", title: "Server" })],
-                    workspace: { id: "ws-test", name: "Default Workspace" },
-                }),
-        } as Response);
+        const store = useSessionStore(),
+            fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: () =>
+                    Promise.resolve({
+                        sessions: [mockSessionResponse({ id: "srv-1", title: "Server" })],
+                        workspace: { id: "ws-test", name: "Default Workspace" },
+                    }),
+            } as Response);
 
         await store.loadSessions();
 
@@ -245,12 +245,12 @@ describe("useSessionStore (server canonical)", () => {
 
     it("resetForUserSwitch clears sessions and currentSessionId", async () => {
         mockAuth();
-        const store = useSessionStore();
-        const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
-            ok: true,
-            status: 201,
-            json: () => Promise.resolve(mockSessionResponse({ id: "temp" })),
-        } as Response);
+        const store = useSessionStore(),
+            fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+                ok: true,
+                status: 201,
+                json: () => Promise.resolve(mockSessionResponse({ id: "temp" })),
+            } as Response);
         await store.createSession("principal-test", "Temp");
         fetchSpy.mockRestore();
 
@@ -262,12 +262,12 @@ describe("useSessionStore (server canonical)", () => {
 
     it("does not persist sessions to localStorage", async () => {
         mockAuth();
-        const store = useSessionStore();
-        const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
-            ok: true,
-            status: 201,
-            json: () => Promise.resolve(mockSessionResponse({ id: "no-persist" })),
-        } as Response);
+        const store = useSessionStore(),
+            fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+                ok: true,
+                status: 201,
+                json: () => Promise.resolve(mockSessionResponse({ id: "no-persist" })),
+            } as Response);
         await store.createSession("principal-test", "No persist");
         fetchSpy.mockRestore();
 

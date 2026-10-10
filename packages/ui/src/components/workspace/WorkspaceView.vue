@@ -28,12 +28,12 @@ import ChatPanel from "../chat/ChatPanel.vue";
 import { workspaceChatPath } from "../../lib/routes";
 import BaseModal from "../shared/BaseModal.vue";
 
-const route = useRoute();
-const router = useRouter();
-const ws = useWorkspaceStore();
-const sessionStore = useSessionStore();
-const auth = useAuthStore();
-const chatStore = useChatStore();
+const route = useRoute(),
+    router = useRouter(),
+    ws = useWorkspaceStore(),
+    sessionStore = useSessionStore();
+const auth = useAuthStore(),
+    chatStore = useChatStore();
 const { t } = useI18n();
 const isMobileViewport = useMediaQuery("(max-width: 767px)");
 
@@ -64,24 +64,24 @@ const routeWorkspaceId = computed(() => {
     return value && value !== "new" ? value : "";
 });
 
-const showCreateDialog = ref(false);
-const showSettingsDialog = ref(false);
-const showAgentManagementDialog = ref(false);
-const showSourceImportDialog = ref(false);
-const showMobileFiles = ref(false);
-const showMobileChanges = ref(false);
-const showAgentSelection = ref(false);
-const workspaceAgents = ref<WorkspaceAgentBinding[]>([]);
-const selectedAgentPrincipalId = ref("");
-const creatingAgentSession = ref(false);
+const showCreateDialog = ref(false),
+    showSettingsDialog = ref(false),
+    showAgentManagementDialog = ref(false);
+const showSourceImportDialog = ref(false),
+    showMobileFiles = ref(false),
+    showMobileChanges = ref(false);
+const showAgentSelection = ref(false),
+    workspaceAgents = ref<WorkspaceAgentBinding[]>([]);
+const selectedAgentPrincipalId = ref(""),
+    creatingAgentSession = ref(false);
 
 // ── PLAN-0328 M3 T3.7 (spec/ui-ux §1.3): conversation-first workspace layout ──────────────
 // The chat timeline is the main column; the file tree collapses into a narrow rail and the
 // editor / dual-diff live in one collapsible auxiliary panel (default collapsed). Panel state
 // is remembered per session in-component only (never persisted).
 type AuxPanel = "closed" | "code" | "changes";
-const treeCollapsed = ref(false);
-const auxPanel = ref<AuxPanel>("closed");
+const treeCollapsed = ref(false),
+    auxPanel = ref<AuxPanel>("closed");
 const layoutBySession = new Map<string, { treeCollapsed: boolean; auxPanel: AuxPanel }>();
 
 function layoutKey(id: string | null): string {

@@ -106,8 +106,8 @@ const router = createRouter({
 });
 
 router.beforeEach((to) => {
-    const token = localStorage.getItem("xihe-token");
-    const requiresAuth = to.matched.some((r) => r.meta?.requiresAuth);
+    const token = localStorage.getItem("xihe-token"),
+        requiresAuth = to.matched.some((r) => r.meta?.requiresAuth);
 
     if (requiresAuth && !token) {
         return { name: "login", query: { redirect: to.fullPath } };

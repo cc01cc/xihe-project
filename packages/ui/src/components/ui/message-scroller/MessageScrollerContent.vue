@@ -10,8 +10,8 @@ const props = defineProps<{
 const { handleContentChange, handleResize, setContentElement, setSpacerElement } =
     useMessageScrollerContext();
 
-const contentEl = ref<HTMLDivElement | null>(null);
-const spacerEl = ref<HTMLDivElement | null>(null);
+const contentEl = ref<HTMLDivElement | null>(null),
+    spacerEl = ref<HTMLDivElement | null>(null);
 
 watch(contentEl, (el) => {
     setContentElement(el);
@@ -21,8 +21,8 @@ watch(spacerEl, (el) => {
     setSpacerElement(el);
 });
 
-let mutationObserver: MutationObserver | null = null;
-let resizeObserver: ResizeObserver | null = null;
+let mutationObserver: MutationObserver | null = null,
+    resizeObserver: ResizeObserver | null = null;
 
 onMounted(() => {
     if (contentEl.value) {

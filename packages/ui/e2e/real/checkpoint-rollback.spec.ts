@@ -48,8 +48,8 @@ const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/checkpoint-rollback");
 // PLAN-0369: workspace this file's Agent binding was ensured for.
 let agentBindingWorkspaceId = "";
-const BASELINE_FILE = ".xihe-checkpoint-rollback-baseline.txt";
-const BASELINE_CONTENT = "checkpoint rollback baseline\n";
+const BASELINE_FILE = ".xihe-checkpoint-rollback-baseline.txt",
+    BASELINE_CONTENT = "checkpoint rollback baseline\n";
 
 const TERMINAL_RUN_STATUSES = ["succeeded", "failed", "partial", "ambiguous", "cancelled"] as const;
 const TERMINAL_RUN_PATTERN = new RegExp(`^(${TERMINAL_RUN_STATUSES.join("|")})$`);
@@ -144,8 +144,8 @@ async function sendChat(page: Page, text: string): Promise<void> {
     // PLAN-0369: workspace-tool chats need the Agent bound to THIS spec's
     // workspace (single-binding product rule); no-op when already bound.
     if (agentBindingWorkspaceId) await ensureAgentWorkspaceBinding(agentBindingWorkspaceId);
-    const input = page.locator('[data-testid="chat-input"]');
-    const send = page.locator('[data-testid="chat-send-button"]');
+    const input = page.locator('[data-testid="chat-input"]'),
+        send = page.locator('[data-testid="chat-send-button"]');
     await input.fill(text);
     await expect(send).toBeEnabled({ timeout: 15000 });
     const response = page.waitForResponse(
@@ -390,8 +390,8 @@ async function revertThroughUi(
     flow: WriteFlow,
     hostDir: string,
 ): Promise<{ previewBodies: string[]; resultBodies: string[] }> {
-    const previewBodies: string[] = [];
-    const resultBodies: string[] = [];
+    const previewBodies: string[] = [],
+        resultBodies: string[] = [];
     page.on("response", (response) => {
         const url = response.url();
         if (url.includes("/checkpoints/revert/preview")) {
@@ -412,8 +412,8 @@ async function revertThroughUi(
     await expect(marker.getByTestId("run-checkpoint-summary")).toContainText(
         String(flow.view.changedCount),
     );
-    const extraFileName = `.xihe-checkpoint-extra-${Date.now()}.txt`;
-    const extraPath = path.join(hostDir, extraFileName);
+    const extraFileName = `.xihe-checkpoint-extra-${Date.now()}.txt`,
+        extraPath = path.join(hostDir, extraFileName);
     writeFileSync(extraPath, "this file must be deleted by restoring the captured slice\n");
 
     await marker.getByTestId("run-checkpoint-revert-entry").click();
@@ -451,10 +451,10 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
     test.describe.configure({ mode: "serial" });
     test.setTimeout(240000);
 
-    let sharedAuth: string;
-    let sharedWs: string;
-    let sharedHeaders: Record<string, string>;
-    let hostDir: string;
+    let sharedAuth: string,
+        sharedWs: string,
+        sharedHeaders: Record<string, string>,
+        hostDir: string;
 
     test.beforeAll(async ({ request }) => {
         const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
@@ -509,8 +509,8 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
     }) => {
         test.skip(LLM_MODE !== "write_file", "requires XIHE_E2E_LLM_MODE=write_file");
         mkdirSync(EVIDENCE_DIR, { recursive: true });
-        const nonce = Date.now();
-        const fileName = `s1-note-${nonce}.md`;
+        const nonce = Date.now(),
+            fileName = `s1-note-${nonce}.md`;
         const content = `S1-ROW-${nonce}-preview-payloads-must-not-carry-this-content`;
 
         await openWorkspace(page, sharedAuth, sharedWs);
@@ -574,8 +574,8 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         request,
     }) => {
         test.skip(LLM_MODE !== "exec_command", "requires XIHE_E2E_LLM_MODE=exec_command");
-        const fileName = `s2-shell-${Date.now()}.txt`;
-        const content = `S2-SHELL-${Date.now()}`;
+        const fileName = `s2-shell-${Date.now()}.txt`,
+            content = `S2-SHELL-${Date.now()}`;
 
         await openWorkspace(page, sharedAuth, sharedWs);
         const modal = await beginApprovalRun(
@@ -618,9 +618,9 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
     }) => {
         test.skip(LLM_MODE !== "write_file", "requires XIHE_E2E_LLM_MODE=write_file");
         mkdirSync(EVIDENCE_DIR, { recursive: true });
-        const nonce = Date.now();
-        const fileName = `s3-conflict-${nonce}.md`;
-        const agentContent = `S3-AGENT-${nonce}`;
+        const nonce = Date.now(),
+            fileName = `s3-conflict-${nonce}.md`,
+            agentContent = `S3-AGENT-${nonce}`;
         const userContent = `S3-USER-EDIT-${nonce} replaced by the target slice`;
 
         await openWorkspace(page, sharedAuth, sharedWs);
@@ -689,9 +689,9 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
             false,
         );
 
-        const nonce = Date.now();
-        const fileName = `s4-nongit-${nonce}.md`;
-        const content = `S4-ROW-${nonce}-non-git-workspace`;
+        const nonce = Date.now(),
+            fileName = `s4-nongit-${nonce}.md`,
+            content = `S4-ROW-${nonce}-non-git-workspace`;
         await openWorkspace(page, sharedAuth, sharedWs);
         const flow = await writeFileRunThroughUi(
             page,
@@ -768,9 +768,9 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         request,
     }) => {
         test.skip(LLM_MODE !== "write_file", "requires XIHE_E2E_LLM_MODE=write_file");
-        const nonce = Date.now();
-        const fileName = `s6-idem-${nonce}.md`;
-        const content = `S6-ROW-${nonce}`;
+        const nonce = Date.now(),
+            fileName = `s6-idem-${nonce}.md`,
+            content = `S6-ROW-${nonce}`;
 
         await openWorkspace(page, sharedAuth, sharedWs);
         const modal = await beginApprovalRun(
@@ -827,9 +827,9 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         request,
     }) => {
         test.skip(LLM_MODE !== "write_file", "requires XIHE_E2E_LLM_MODE=write_file");
-        const nonce = Date.now();
-        const repoFile = `repo-tracked-${nonce}.txt`;
-        const runFile = `run-created-${nonce}.txt`;
+        const nonce = Date.now(),
+            repoFile = `repo-tracked-${nonce}.txt`,
+            runFile = `run-created-${nonce}.txt`;
         const content = `S7-ROW-${nonce}`;
 
         // User repository fixture (real host git, same workspace); S7 is ordered after S4's non-git check.

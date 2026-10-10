@@ -1,29 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { ApiError, api } from "../../composables/api";
+import type * as apiModule from "../../composables/api";
 import { useAgentStore } from "../agent";
 import type { ApprovalRequest } from "../../types";
 
-const REQUEST_ID = "11111111-1111-4111-8111-111111111111";
-const SECOND_REQUEST_ID = "22222222-2222-4222-8222-222222222222";
-const OTHER_WORKSPACE_REQUEST_ID = "33333333-3333-4333-8333-333333333333";
-const DISPATCHING_REQUEST_ID = "44444444-4444-4444-8444-444444444444";
-const UNKNOWN_REQUEST_ID = "55555555-5555-4555-8555-555555555555";
-const EXPIRED_REQUEST_ID = "66666666-6666-4666-8666-666666666666";
-const RUN_ID = "77777777-7777-4777-8777-777777777777";
-const SESSION_ID = "88888888-8888-4888-8888-888888888888";
-const OTHER_SESSION_ID = "99999999-9999-4999-8999-999999999999";
-const WORKSPACE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-const OTHER_WORKSPACE_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const REQUEST_ID = "11111111-1111-4111-8111-111111111111",
+    SECOND_REQUEST_ID = "22222222-2222-4222-8222-222222222222",
+    OTHER_WORKSPACE_REQUEST_ID = "33333333-3333-4333-8333-333333333333",
+    DISPATCHING_REQUEST_ID = "44444444-4444-4444-8444-444444444444",
+    UNKNOWN_REQUEST_ID = "55555555-5555-4555-8555-555555555555",
+    EXPIRED_REQUEST_ID = "66666666-6666-4666-8666-666666666666",
+    RUN_ID = "77777777-7777-4777-8777-777777777777",
+    SESSION_ID = "88888888-8888-4888-8888-888888888888",
+    OTHER_SESSION_ID = "99999999-9999-4999-8999-999999999999",
+    WORKSPACE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    OTHER_WORKSPACE_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 vi.mock("../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {
             ...actual.api,
-            decideChatApproval: vi.fn(),
-            getPendingApprovals: vi.fn(),
+            decideChatApproval: vi.fn<typeof apiModule.api.decideChatApproval>(),
+            getPendingApprovals: vi.fn<typeof apiModule.api.getPendingApprovals>(),
         },
     };
 });
@@ -404,9 +405,9 @@ describe("useAgentStore approval state", () => {
             }),
         );
 
-        const first = store.decideApproval(approval.requestId, { decision: "once" });
-        const second = store.decideApproval(approval.requestId, { decision: "once" });
-        const results = await Promise.allSettled([first, second]);
+        const first = store.decideApproval(approval.requestId, { decision: "once" }),
+            second = store.decideApproval(approval.requestId, { decision: "once" }),
+            results = await Promise.allSettled([first, second]);
         expect(results.every((result) => result.status === "rejected")).toBe(true);
         expect(results[0]?.reason).toMatchObject({
             problem: { code: "APPROVAL_DECISION_IN_PROGRESS" },

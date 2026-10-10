@@ -25,16 +25,16 @@ const props = defineProps<{
     node: FileNode;
 }>();
 
-const ws = useWorkspaceStore();
-const showRenameModal = ref(false);
-const showMoveModal = ref(false);
-const showNewFileModal = ref(false);
-const showNewDirModal = ref(false);
-const showDeleteModal = ref(false);
-const opLoading = ref(false);
-const nameInput = ref("");
-const moveTarget = ref("");
-const opError = ref("");
+const ws = useWorkspaceStore(),
+    showRenameModal = ref(false),
+    showMoveModal = ref(false),
+    showNewFileModal = ref(false);
+const showNewDirModal = ref(false),
+    showDeleteModal = ref(false),
+    opLoading = ref(false),
+    nameInput = ref("");
+const moveTarget = ref(""),
+    opError = ref("");
 
 const isDir = computed(() => props.node.type === "directory");
 const parentDir = computed(() => {

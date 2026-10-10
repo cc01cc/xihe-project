@@ -13,8 +13,8 @@ function seedPrincipalManagementGrant(
     workspaceId: string,
     actions: ToolAction[],
 ): void {
-    const container = process.env.XIHE_E2E_PG_CONTAINER;
-    const database = process.env.XIHE_E2E_PG_DATABASE;
+    const container = process.env.XIHE_E2E_PG_CONTAINER,
+        database = process.env.XIHE_E2E_PG_DATABASE;
     const dbUser = process.env.XIHE_E2E_PG_USER;
     if (!container || !database || !dbUser) {
         throw new Error(
@@ -64,8 +64,8 @@ export async function provisionWorkspaceAgentPrincipal(
     const { id: userId } = (await me.json()) as { id: string };
     seedPrincipalManagementGrant(userId, auth.workspaceId, actions);
 
-    const roleId = randomUUID();
-    const templateId = randomUUID();
+    const roleId = randomUUID(),
+        templateId = randomUUID();
     const toolPermissions = actions.map((actionClass) => ({ actionClass, resource: "*" }));
     const template = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
         headers,
@@ -117,8 +117,8 @@ export async function createSessionWithPrincipal(
         data: { title, agentPrincipalId: principalId },
     });
     expect(response.status(), await response.text()).toBe(201);
-    const body = (await response.json()) as { id?: string; sessionId?: string };
-    const id = body.id ?? body.sessionId;
+    const body = (await response.json()) as { id?: string; sessionId?: string },
+        id = body.id ?? body.sessionId;
     expect(id, "session id must be returned").toBeTruthy();
     return id as string;
 }
@@ -139,8 +139,8 @@ export async function createWorkspaceSessionWithPrincipal(
     await page.getByTestId("workspace-create-agent-session").click();
     const response = await responsePromise;
     expect(response.status(), await response.text()).toBe(201);
-    const body = (await response.json()) as { id?: string; sessionId?: string };
-    const sessionId = body.id ?? body.sessionId;
+    const body = (await response.json()) as { id?: string; sessionId?: string },
+        sessionId = body.id ?? body.sessionId;
     expect(sessionId, "session id must be returned").toBeTruthy();
     await expect(page.getByTestId("chat-input")).toBeVisible();
     return sessionId as string;

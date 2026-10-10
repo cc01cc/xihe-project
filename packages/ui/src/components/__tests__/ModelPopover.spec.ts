@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vite
 import { mount, flushPromises } from "@vue/test-utils";
 import { setActivePinia, createPinia } from "pinia";
 import { createI18n } from "vue-i18n";
-import { createRouter, createWebHistory } from "vue-router";
+import { createRouter, createWebHistory, type Router } from "vue-router";
 import { nextTick } from "vue";
 import { useConfigStore } from "../../stores/config";
 import { useSessionStore } from "../../stores/session";
@@ -50,7 +50,7 @@ const router = createRouter({
 });
 
 const { pushSpy } = vi.hoisted(() => ({
-    pushSpy: vi.fn(),
+    pushSpy: vi.fn<Router["push"]>(),
 }));
 
 vi.mock("vue-router", async (importOriginal) => {
@@ -124,7 +124,7 @@ describe("ModelPopover", () => {
             configurable: true,
         });
         if (!Element.prototype.scrollIntoView) {
-            Element.prototype.scrollIntoView = vi.fn();
+            Element.prototype.scrollIntoView = vi.fn<() => void>();
         }
     });
 
@@ -134,8 +134,8 @@ describe("ModelPopover", () => {
         pushSpy.mockClear();
         vi.restoreAllMocks();
         vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-            const url = typeof input === "string" ? input : (input as Request).url;
-            const method = (init?.method ?? "GET").toUpperCase();
+            const url = typeof input === "string" ? input : (input as Request).url,
+                method = (init?.method ?? "GET").toUpperCase();
             if (url.includes("/messages") && method === "GET") {
                 return new Response(JSON.stringify([]), { status: 200 });
             }
@@ -171,8 +171,8 @@ describe("ModelPopover", () => {
 
     it("shows selected model name in trigger", async () => {
         await createSessionInStore("mp-1", "Model chat");
-        const configStore = useConfigStore();
-        const sessionStore = useSessionStore();
+        const configStore = useConfigStore(),
+            sessionStore = useSessionStore();
         configStore.modelCache = readyModelCache({ deepseek: ["deepseek-chat"] });
         configStore.setSessionModel(sessionStore.currentSessionId!, "deepseek", "deepseek-chat");
         vi.spyOn(configStore, "fetchModels").mockResolvedValue(undefined);
@@ -185,8 +185,8 @@ describe("ModelPopover", () => {
 
     it("shows effective model from config defaults when no session binding", async () => {
         await createSessionInStore("mp-2", "Default model");
-        const configStore = useConfigStore();
-        const sessionStore = useSessionStore();
+        const configStore = useConfigStore(),
+            sessionStore = useSessionStore();
         sessionStore.updateSession(sessionStore.currentSessionId!, { title: "Default model" });
         configStore.$patch({
             mergedConfig: {
@@ -247,9 +247,9 @@ describe("ModelPopover", () => {
         const wrapper = mountPopover();
         await openContent(wrapper);
         const group = document.body.querySelector(
-            '[data-testid="model-group-deepseek"]',
-        ) as HTMLElement;
-        const header = group.querySelector("button") as HTMLButtonElement;
+                '[data-testid="model-group-deepseek"]',
+            ) as HTMLElement,
+            header = group.querySelector("button") as HTMLButtonElement;
 
         expect(group.getAttribute("data-state")).toBe("open");
         expect(group.querySelector('[data-state="open"]')).toBeTruthy();
@@ -280,8 +280,8 @@ describe("ModelPopover", () => {
 
     it("selects model and updates session", async () => {
         await createSessionInStore("mp-3", "Select me");
-        const configStore = useConfigStore();
-        const sessionStore = useSessionStore();
+        const configStore = useConfigStore(),
+            sessionStore = useSessionStore();
         configStore.modelCache = readyModelCache({
             deepseek: ["deepseek-chat", "deepseek-reasoner"],
         });

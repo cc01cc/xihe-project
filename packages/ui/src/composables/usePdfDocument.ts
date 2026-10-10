@@ -6,10 +6,10 @@ type PdfSource = (() => string | ArrayBuffer | null) | string | ArrayBuffer | nu
 export function usePdfDocument(src: PdfSource) {
     // pdfjs proxy objects use private fields; deep Vue reactivity changes the
     // receiver for methods such as getPage() and breaks those private fields.
-    const pdfDoc = shallowRef<any>(null);
-    const numPages = ref(0);
-    const loading = ref(false);
-    const error = ref<string | null>(null);
+    const pdfDoc = shallowRef<any>(null),
+        numPages = ref(0),
+        loading = ref(false),
+        error = ref<string | null>(null);
 
     const resolvedSrc = computed(() => (typeof src === "function" ? src() : src));
 

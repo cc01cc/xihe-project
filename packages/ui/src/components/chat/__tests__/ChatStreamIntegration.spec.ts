@@ -23,9 +23,9 @@ describe("Chat Stream Integration: useStreamParser → store.appendToParts → M
     }
 
     it("text tokens via no-hint accumulate into store via finalize", () => {
-        const store = useChatStore();
-        const parser = useStreamParser();
-        const msgId = store.createStreamingMessage("s1");
+        const store = useChatStore(),
+            parser = useStreamParser(),
+            msgId = store.createStreamingMessage("s1");
         const lastSent = { count: 0 };
 
         parser.handleToken("Hello");
@@ -47,8 +47,8 @@ describe("Chat Stream Integration: useStreamParser → store.appendToParts → M
     });
 
     it("no-hint text tokens update the live message on every token", () => {
-        const store = useChatStore();
-        const parser = useStreamParser();
+        const store = useChatStore(),
+            parser = useStreamParser();
         store.createStreamingMessage("s1");
 
         parser.handleToken("流");
@@ -65,8 +65,8 @@ describe("Chat Stream Integration: useStreamParser → store.appendToParts → M
     });
 
     it("think block via no-hint produces reasoning + text parts", () => {
-        const store = useChatStore();
-        const parser = useStreamParser();
+        const store = useChatStore(),
+            parser = useStreamParser();
         store.createStreamingMessage("s1");
         const lastSent = { count: 0 };
 

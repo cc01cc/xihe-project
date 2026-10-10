@@ -4,61 +4,64 @@ import { setActivePinia, createPinia } from "pinia";
 import { createI18n } from "vue-i18n";
 import WorkspaceChangesPanel from "../workspace/WorkspaceChangesPanel.vue";
 import { ApiError, api } from "../../composables/api";
+import type * as apiModule from "../../composables/api";
 import type { WorkspaceCheckpoint, WorkspaceGitStatus } from "../../types";
 
-const WORKSPACE_ID = "workspace-a";
-const SLICE_REF = "refs/xihe/workspace/slice-a";
+const WORKSPACE_ID = "workspace-a",
+    SLICE_REF = "refs/xihe/workspace/slice-a";
 vi.mock("../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {
             ...actual.api,
-            listWorkspaceCheckpoints: vi.fn(),
-            getWorkspaceGitStatus: vi.fn(),
-            previewWorkspaceCheckpointRevert: vi.fn(),
-            executeWorkspaceCheckpointRevert: vi.fn(),
+            listWorkspaceCheckpoints: vi.fn<typeof apiModule.api.listWorkspaceCheckpoints>(),
+            getWorkspaceGitStatus: vi.fn<typeof apiModule.api.getWorkspaceGitStatus>(),
+            previewWorkspaceCheckpointRevert:
+                vi.fn<typeof apiModule.api.previewWorkspaceCheckpointRevert>(),
+            executeWorkspaceCheckpointRevert:
+                vi.fn<typeof apiModule.api.executeWorkspaceCheckpointRevert>(),
         },
     };
 });
-const mockedApi = vi.mocked(api, true);
-const i18n = createI18n({
-    legacy: false,
-    locale: "en",
-    messages: {
-        en: {
-            common: { cancel: "Cancel", close: "Close" },
-            workspace: {
-                diffTabTimeline: "Slice timeline",
-                diffTabPending: "Pending commit",
-                diffDifferenceNote: "The lists are never merged.",
-                diffPendingLoading: "Reading git status…",
-                diffPendingLoadFailed: "Failed to load pending status",
-                diffPendingRetry: "Retry",
-                diffPendingNoRepo: "No pending-commit view",
-                diffPendingEmpty: "Nothing pending",
-                diffPendingCountUnit: "file(s)",
-                diffRefresh: "Refresh",
-                closePanel: "Close",
-                checkpointTimelineLoading: "Loading timeline",
-                checkpointTimelineEmpty: "No slices",
-                checkpointTimeUnknown: "Time unknown",
-                checkpointSourceUnknown: "Unknown source",
-                checkpointOpaqueRepos: "Nested repositories",
-                checkpointTruncated: "Truncated",
-                checkpointFilesTruncated: "File list incomplete",
-                checkpointRestore: "Restore to slice",
-                checkpointState: {
-                    captured: "Captured",
-                    "abnormal-captured": "Abnormal capture",
-                    degraded: "Degraded",
-                    expired: "Expired",
+const mockedApi = vi.mocked(api, true),
+    i18n = createI18n({
+        legacy: false,
+        locale: "en",
+        messages: {
+            en: {
+                common: { cancel: "Cancel", close: "Close" },
+                workspace: {
+                    diffTabTimeline: "Slice timeline",
+                    diffTabPending: "Pending commit",
+                    diffDifferenceNote: "The lists are never merged.",
+                    diffPendingLoading: "Reading git status…",
+                    diffPendingLoadFailed: "Failed to load pending status",
+                    diffPendingRetry: "Retry",
+                    diffPendingNoRepo: "No pending-commit view",
+                    diffPendingEmpty: "Nothing pending",
+                    diffPendingCountUnit: "file(s)",
+                    diffRefresh: "Refresh",
+                    closePanel: "Close",
+                    checkpointTimelineLoading: "Loading timeline",
+                    checkpointTimelineEmpty: "No slices",
+                    checkpointTimeUnknown: "Time unknown",
+                    checkpointSourceUnknown: "Unknown source",
+                    checkpointOpaqueRepos: "Nested repositories",
+                    checkpointTruncated: "Truncated",
+                    checkpointFilesTruncated: "File list incomplete",
+                    checkpointRestore: "Restore to slice",
+                    checkpointState: {
+                        captured: "Captured",
+                        "abnormal-captured": "Abnormal capture",
+                        degraded: "Degraded",
+                        expired: "Expired",
+                    },
+                    diffRunChangedUnit: "file(s)",
                 },
-                diffRunChangedUnit: "file(s)",
             },
         },
-    },
-});
+    });
 function checkpoint(overrides: Partial<WorkspaceCheckpoint> = {}): WorkspaceCheckpoint {
     return {
         id: "checkpoint-a",

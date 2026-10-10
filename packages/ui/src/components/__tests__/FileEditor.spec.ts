@@ -1,14 +1,21 @@
 import { describe, it, expect, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import { setActivePinia, createPinia } from "pinia";
+import type { Router } from "vue-router";
 import FileEditor from "../../components/workspace/FileEditor.vue";
 import { i18n } from "../../i18n";
+import type { editor } from "monaco-editor";
 
 vi.mock("vue-router", () => ({
     useRoute: () => ({ query: {} }),
-    useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+    useRouter: () => ({
+        push: vi.fn<Router["push"]>(),
+        replace: vi.fn<Router["replace"]>(),
+    }),
 }));
-vi.mock("monaco-editor", () => ({ editor: { create: vi.fn() } }));
+vi.mock("monaco-editor", () => ({
+    editor: { create: vi.fn<typeof editor.create>() },
+}));
 
 describe("FileEditor", () => {
     it("renders with an active .ts file", async () => {

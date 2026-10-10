@@ -8,8 +8,8 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const fileInput = ref<HTMLInputElement | null>(null);
-const isDragOver = ref(false);
+const fileInput = ref<HTMLInputElement | null>(null),
+    isDragOver = ref(false);
 
 function handleInputChange(e: Event) {
     const target = e.target as HTMLInputElement;

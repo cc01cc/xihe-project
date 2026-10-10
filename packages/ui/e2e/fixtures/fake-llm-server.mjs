@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 
-const port = Number(process.env.XIHE_FAKE_LLM_PORT ?? "13642");
-const mode = process.env.XIHE_FAKE_LLM_MODE ?? "success";
+const port = Number(process.env.XIHE_FAKE_LLM_PORT ?? "13642"),
+    mode = process.env.XIHE_FAKE_LLM_MODE ?? "success";
 const pendingSpawnResponses = new Set();
 
 const providers = {
@@ -116,8 +116,8 @@ async function sendCompletion(response, provider, requestBody) {
 // reach done(success). Earlier tool results in chat history do not suppress a
 // fresh approval request on a later user turn.
 function sendApprovalCompletion(response, requestBody) {
-    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
-    const last = messages.at(-1) ?? {};
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [],
+        last = messages.at(-1) ?? {};
     const followUp = last.role === "tool";
 
     if (!followUp) {
@@ -164,8 +164,8 @@ function sendApprovalCompletion(response, requestBody) {
 // so the approval preview exceeds the 500-char truncation bound and the
 // post-approve FS readback can assert the FULL payload survived grant matching.
 function sendWriteFileCompletion(response, requestBody) {
-    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
-    const last = messages.at(-1) ?? {};
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [],
+        last = messages.at(-1) ?? {};
     // PLAN-294 M1 made conversation history (including old tool results) part
     // of every request, so "any tool result present" no longer identifies the
     // follow-up phase. The user's marker is the phase signal instead: a fresh
@@ -176,16 +176,16 @@ function sendWriteFileCompletion(response, requestBody) {
     const followUp = last.role === "tool" || (last.role === "user" && !lastUserHasMarker);
 
     if (!followUp) {
-        const text = typeof last.content === "string" ? last.content : "";
-        const marker = text.indexOf("XIHE-E2E-WRITE ");
+        const text = typeof last.content === "string" ? last.content : "",
+            marker = text.indexOf("XIHE-E2E-WRITE ");
         if (marker < 0) {
             sendApprovalCompletion(response, requestBody);
             return;
         }
-        const rest = text.slice(marker + "XIHE-E2E-WRITE ".length);
-        const sep = rest.indexOf(" ");
-        const path = sep > 0 ? rest.slice(0, sep) : rest.trim();
-        const content = sep > 0 ? rest.slice(sep + 1) : "";
+        const rest = text.slice(marker + "XIHE-E2E-WRITE ".length),
+            sep = rest.indexOf(" ");
+        const path = sep > 0 ? rest.slice(0, sep) : rest.trim(),
+            content = sep > 0 ? rest.slice(sep + 1) : "";
         const toolCallDelta = {
             choices: [
                 {
@@ -229,9 +229,9 @@ function sendWriteFileCompletion(response, requestBody) {
 // into the LLM input), only the current turn's marker is ever visible and the
 // spec's turn-2 expectation fails, which is precisely the M0 pin.
 function sendHistoryMarkerCompletion(response, requestBody) {
-    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
-    const seen = [];
-    const current = [];
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [],
+        seen = [],
+        current = [];
     for (const m of messages) {
         const text = typeof m.content === "string" ? m.content : "";
         const matches = text.matchAll(/XIHE-E2E-HIST ([A-Za-z0-9]+)/g);
@@ -382,8 +382,8 @@ function shutdown() {
 }
 
 function sendSpawnAgentCompletion(response, requestBody) {
-    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
-    const last = messages.at(-1) ?? {};
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [],
+        last = messages.at(-1) ?? {};
     const lastUser = [...messages].reverse().find((message) => message.role === "user");
     const lastUserContent = typeof lastUser?.content === "string" ? lastUser.content : "";
     const childMatch = lastUserContent.match(/XIHE-E2E-SPAWN-CHILD\s+([A-Za-z0-9_-]+)/);
@@ -463,24 +463,24 @@ function sendSpawnAgentCompletion(response, requestBody) {
 // `--timeout` 透传给沙盒自身的单命令界（不传则用容器默认 30s —— 那是沙盒内层界，
 // 不属于 PLAN-0308 的三跳预算模型；冒烟必须显式给出更长的界才能验证外层预算）。
 function sendExecCommandCompletion(response, requestBody) {
-    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
-    const last = messages.at(-1) ?? {};
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [],
+        last = messages.at(-1) ?? {};
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     const lastUserHasMarker =
         typeof lastUser?.content === "string" && lastUser.content.includes("XIHE-E2E-EXEC ");
     const followUp = last.role === "tool" || (last.role === "user" && !lastUserHasMarker);
 
     if (!followUp) {
-        const text = typeof last.content === "string" ? last.content : "";
-        const marker = text.indexOf("XIHE-E2E-EXEC ");
+        const text = typeof last.content === "string" ? last.content : "",
+            marker = text.indexOf("XIHE-E2E-EXEC ");
         if (marker < 0) {
             sendApprovalCompletion(response, requestBody);
             return;
         }
         const rest = text.slice(marker + "XIHE-E2E-EXEC ".length).trim();
         const timeoutMatch = rest.match(/--timeout\s+(\d+)\s*$/);
-        const command = (timeoutMatch ? rest.slice(0, timeoutMatch.index) : rest).trim();
-        const args = { command };
+        const command = (timeoutMatch ? rest.slice(0, timeoutMatch.index) : rest).trim(),
+            args = { command };
         if (timeoutMatch) args.timeout = Number(timeoutMatch[1]);
         const toolCallDelta = {
             choices: [
@@ -530,8 +530,8 @@ function sendExecCommandCompletion(response, requestBody) {
 // and the follow-up streams a plain answer so the run reaches done(success).
 // The job card therefore survives the run and can be resumed/destroy-tested.
 function sendJobCompletion(response, requestBody) {
-    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
-    const last = messages.at(-1) ?? {};
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [],
+        last = messages.at(-1) ?? {};
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     const lastUserHasMarker =
         typeof lastUser?.content === "string" && lastUser.content.includes("XIHE-E2E-JOB");
@@ -582,8 +582,8 @@ function sendJobCompletion(response, requestBody) {
 // without the marker streams a plain answer, proving the session continues
 // after the cancel; the still-running B job must be unaffected.
 function sendJobCancelCompletion(response, requestBody) {
-    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
-    const last = messages.at(-1) ?? {};
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [],
+        last = messages.at(-1) ?? {};
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     const lastUserHasMarker =
         typeof lastUser?.content === "string" && lastUser.content.includes("XIHE-E2E-JOB-CANCEL");
@@ -646,16 +646,16 @@ function sendJobCancelCompletion(response, requestBody) {
 // 用于隔离「审批后挂起」与「所有 MCP 工具调用都挂起」两类故障：
 //   XIHE-E2E-READ <path>
 function sendReadFileCompletion(response, requestBody) {
-    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
-    const last = messages.at(-1) ?? {};
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [],
+        last = messages.at(-1) ?? {};
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     const lastUserHasMarker =
         typeof lastUser?.content === "string" && lastUser.content.includes("XIHE-E2E-READ ");
     const followUp = last.role === "tool" || (last.role === "user" && !lastUserHasMarker);
 
     if (!followUp) {
-        const text = typeof last.content === "string" ? last.content : "";
-        const marker = text.indexOf("XIHE-E2E-READ ");
+        const text = typeof last.content === "string" ? last.content : "",
+            marker = text.indexOf("XIHE-E2E-READ ");
         if (marker < 0) {
             sendApprovalCompletion(response, requestBody);
             return;

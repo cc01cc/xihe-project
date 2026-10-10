@@ -38,33 +38,33 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
-const saveConfirming = ref(false);
-const savedLayer = ref<"workspace" | "user">("workspace");
-const resource = ref("");
-const wildcardConfirmed = ref(false);
-const feedback = ref("");
-const submitted = ref(false);
-const saveValidationError = ref<string | null>(null);
-const onceButton = ref<HTMLButtonElement | null>(null);
-const sessionButton = ref<HTMLButtonElement | null>(null);
-const saveButton = ref<HTMLButtonElement | null>(null);
-const saveConfirmButton = ref<HTMLButtonElement | null>(null);
-const approvalContent = ref<HTMLDivElement | null>(null);
+const saveConfirming = ref(false),
+    savedLayer = ref<"workspace" | "user">("workspace"),
+    resource = ref("");
+const wildcardConfirmed = ref(false),
+    feedback = ref(""),
+    submitted = ref(false);
+const saveValidationError = ref<string | null>(null),
+    onceButton = ref<HTMLButtonElement | null>(null);
+const sessionButton = ref<HTMLButtonElement | null>(null),
+    saveButton = ref<HTMLButtonElement | null>(null);
+const saveConfirmButton = ref<HTMLButtonElement | null>(null),
+    approvalContent = ref<HTMLDivElement | null>(null);
 let previouslyFocused: HTMLElement | null = null;
 const maxDecisionTextLength = 512;
 
 // Classification workflow (PLAN-0328 T1.14 / spec/ui-ux §3.4): unclassified tools may only be
 // allowed once, and only after an explicit classification. Never auto-approve.
-const classifyConfirming = ref(false);
-const classifyActionClass = ref("");
-const classifyShape = ref<ApprovalPolicyShape>("opaque");
-const classifySubmitting = ref(false);
+const classifyConfirming = ref(false),
+    classifyActionClass = ref("");
+const classifyShape = ref<ApprovalPolicyShape>("opaque"),
+    classifySubmitting = ref(false);
 const classifyError = ref<string | null>(null);
 // Monotonic token for the classify step: reset/cancel/request-change bumps it so a write that
 // resolves later can never emit a decision for a request (or form state) that no longer applies.
 let classifyGeneration = 0;
-const classifyEntryButton = ref<HTMLButtonElement | null>(null);
-const classifyInput = ref<HTMLInputElement | null>(null);
+const classifyEntryButton = ref<HTMLButtonElement | null>(null),
+    classifyInput = ref<HTMLInputElement | null>(null);
 const classifyActionClassSuggestions = ["read", "write", "delete", "exec", "network", "credential"];
 
 const sourceLayerLabels: Record<ApprovalPolicySourceLayer, string> = {
@@ -340,8 +340,8 @@ function cancelClassifyConfirmation() {
 async function submitClassification() {
     const approval = props.approval;
     if (!approval || !canSubmitClassify.value) return;
-    const requestId = approval.requestId;
-    const generation = ++classifyGeneration;
+    const requestId = approval.requestId,
+        generation = ++classifyGeneration;
     classifySubmitting.value = true;
     classifyError.value = null;
     try {
@@ -414,14 +414,14 @@ function getFocusableElements(container: HTMLElement): HTMLElement[] {
 
 function handleDocumentKeydown(event: KeyboardEvent) {
     if (!props.show || event.key !== "Tab") return;
-    const owner = approvalContent.value;
-    const active = document.activeElement;
+    const owner = approvalContent.value,
+        active = document.activeElement;
     const content = owner?.closest<HTMLElement>('[data-testid="modal-content"]');
     if (!content || !(active instanceof HTMLElement) || !content.contains(active)) return;
     const focusable = getFocusableElements(content);
     if (focusable.length === 0) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
+    const first = focusable[0],
+        last = focusable[focusable.length - 1];
     if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();
         last?.focus();

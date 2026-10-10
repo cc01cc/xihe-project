@@ -10,9 +10,9 @@ import { Toaster } from "./components/ui/sonner";
 const theme = useTheme();
 provide(ThemeInjectionKey, theme);
 
-const authStore = useAuthStore();
-const configStore = useConfigStore();
-const sessionStore = useSessionStore();
+const authStore = useAuthStore(),
+    configStore = useConfigStore(),
+    sessionStore = useSessionStore();
 onMounted(async () => {
     if (!authStore.isAuthenticated) return;
     configStore.loadAllDomains().catch(() => {

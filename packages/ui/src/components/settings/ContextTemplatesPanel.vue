@@ -109,17 +109,17 @@ function defaultConfig(type: string): Record<string, unknown> {
     }
 }
 
-const templates = ref<TemplateDef[]>([]);
-const selectedId = ref<string | null>(null);
+const templates = ref<TemplateDef[]>([]),
+    selectedId = ref<string | null>(null);
 const draft = reactive({
     name: "",
     description: "",
     document: "",
     components: [] as ComponentDef[],
 });
-const configTexts = ref<Record<string, string>>({});
-const configErrors = ref<Record<string, string>>({});
-const dirty = ref(false);
+const configTexts = ref<Record<string, string>>({}),
+    configErrors = ref<Record<string, string>>({}),
+    dirty = ref(false);
 const insertTypeSelect = ref<HTMLSelectElement | null>(null);
 
 function parseTemplates(raw: string | undefined): TemplateDef[] {

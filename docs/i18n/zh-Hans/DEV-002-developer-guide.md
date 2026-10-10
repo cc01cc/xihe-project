@@ -54,7 +54,7 @@ cp .env.example .env.dev
 
 | 模块 | 命令 |
 |------|------|
-| UI | `cd packages/ui && pnpm install --ignore-workspace` |
+| UI | `cd packages/ui && pnpm install`（pnpm workspace 根与 lock 均位于 UI 包）|
 | Agent | `cd packages/agent && uv sync --all-extras` |
 | CP | `cd packages/control-plane && mvn dependency:resolve` |
 | Runtime | `cd packages/runtime && cargo fetch` |
@@ -233,7 +233,7 @@ Chat SSE 结构化事件与日志字段见 DEV-004 §6.3；UI 传输层见 DEV-0
 ## 5. 测试入口
 
 - 单元：`mise run test`（UI + Agent + CP + Runtime lib）；`mise run validate`（lint + typecheck + build + test，Docker 自动管理）。
-- 静态检查：UI 语法/correctness、未使用变量、`prefer-const` 与重复导入错误会阻断 lint/validate；其他 style warnings 仍须看完整输出，不代表零告警。UI 全包 formatter 已在独立波次全量格式化并接入 `lint`（`oxfmt --check` 一并阻断）。
+- 静态检查：UI `pnpm run lint` 顺序执行 `oxfmt --check .` 与 `oxlint .`。Oxlint 启用 `typescript`、`import`、`unicorn`、`oxc`；Vitest 插件作用于 `src/**/__tests__/**`、`src/**/*.spec.ts` 和 `src/**/*.test.ts`，`require-mock-type-parameters` 与 `require-to-throw-message` 为阻断规则，其余 Vitest 规则关闭。Vue 插件与 Vue template lint 不属于当前门禁；SFC/TypeScript 类型检查由 `pnpm run typecheck`（`vue-tsc --noEmit`）负责。Oxfmt 版本固定为 0.68.0，`.oxfmtrc.jsonc` 显式设置 `tabWidth: 4`、`printWidth: 100`，忽略 Markdown 与 `AGENTS.md`，`proseWrap` 保持未设置以维持原有零漂移。其他 style warnings 仍须看完整输出，不代表零告警；全包 formatter 已在独立波次全量格式化并接入 `lint`（419 个历史漂移文件清零）。
 - CP 静态检查：`mise run lint:cp` 对 `checkstyle.xml` **全部规则**按 error 阻断（基线 0 违规；规则与项目约定对齐后风格告警已清零，详见 PLAN-0458 evidence），不得回退为 warning 或全局抑制。
 - Agent 静态检查：`mise run lint:agent` 的 mypy 对 `src/` 真实阻断（`pyproject.toml` 已移除全局 `ignore_errors`，当前 0 error）；发现类型错误必须修复，不得以全局/整模块 ignore 换取绿灯。
 - 集成：`mise run test:integration`（T2；T3 需 Docker）。

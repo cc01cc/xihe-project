@@ -4,15 +4,22 @@ import { setActivePinia, createPinia } from "pinia";
 import { createI18n } from "vue-i18n";
 import RunCheckpointMarker from "../RunCheckpointMarker.vue";
 import { api } from "../../../composables/api";
+import type * as apiModule from "../../../composables/api";
 import { useCheckpointStore } from "../../../stores/checkpoint";
 
-const WORKSPACE_ID = "workspace-a";
-const RUN_ID = "run-a";
-const SESSION_ID = "session-a";
+const WORKSPACE_ID = "workspace-a",
+    RUN_ID = "run-a",
+    SESSION_ID = "session-a";
 const SLICE_REF = "refs/xihe/workspace/slice-a";
 vi.mock("../../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../composables/api")>();
-    return { ...actual, api: { ...actual.api, listWorkspaceCheckpoints: vi.fn() } };
+    const actual = await importOriginal<typeof apiModule>();
+    return {
+        ...actual,
+        api: {
+            ...actual.api,
+            listWorkspaceCheckpoints: vi.fn<typeof api.listWorkspaceCheckpoints>(),
+        },
+    };
 });
 const mockedApi = vi.mocked(api);
 const i18n = createI18n({

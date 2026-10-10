@@ -11,7 +11,10 @@ function createI18nInstance() {
 describe("ScreenshotCapture", () => {
     beforeEach(() => {
         Object.defineProperty(navigator, "mediaDevices", {
-            value: { getDisplayMedia: vi.fn() },
+            value: {
+                getDisplayMedia:
+                    vi.fn<(options?: DisplayMediaStreamOptions) => Promise<MediaStream>>(),
+            },
             configurable: true,
             writable: true,
         });

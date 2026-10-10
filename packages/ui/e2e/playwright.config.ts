@@ -1,9 +1,9 @@
 import { defineConfig } from "@playwright/test";
 
-const UI_PORT = process.env.XIHE_UI_PORT || "12630";
-const externalServer = process.env.XIHE_E2E_EXTERNAL_SERVER === "1";
-const e2eProfile = process.env.XIHE_E2E_PROFILE || "all";
-const headed = process.env.XIHE_E2E_HEADED === "1";
+const UI_PORT = process.env.XIHE_UI_PORT || "12630",
+    externalServer = process.env.XIHE_E2E_EXTERNAL_SERVER === "1";
+const e2eProfile = process.env.XIHE_E2E_PROFILE || "all",
+    headed = process.env.XIHE_E2E_HEADED === "1";
 const browserChannel = process.env.XIHE_E2E_BROWSER_CHANNEL;
 const viewport = (() => {
     const match = /^(\d+)x(\d+)$/.exec(process.env.XIHE_E2E_VIEWPORT ?? "");

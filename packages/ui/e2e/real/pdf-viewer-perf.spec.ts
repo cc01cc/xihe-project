@@ -6,8 +6,8 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __filename = fileURLToPath(import.meta.url),
+    __dirname = path.dirname(__filename);
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const REAL_PDF = path.resolve(__dirname, "../assets/sample.pdf");

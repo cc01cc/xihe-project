@@ -17,9 +17,9 @@ import { logger } from "../../lib/logger";
 import { getProviderInfo } from "../../types/provider";
 import { useAuthStore } from "../../stores/auth";
 
-const { t } = useI18n();
-const configStore = useConfigStore();
-const authStore = useAuthStore();
+const { t } = useI18n(),
+    configStore = useConfigStore(),
+    authStore = useAuthStore();
 
 type LayerTab = ConfigLayer;
 const activeTab = ref<LayerTab>(authStore.isAdmin ? "instance" : "user");
@@ -48,20 +48,20 @@ const domainLabels: Record<string, string> = {
 };
 
 const providerOptions = [
-    { label: "DeepSeek", value: "deepseek" },
-    { label: "OpenAI", value: "openai" },
-    { label: "Anthropic", value: "anthropic" },
-    { label: "Xiaomi", value: "xiaomi" },
-    { label: "DashScope", value: "dashscope" },
-];
-const levelOptions = ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"].map((level) => ({
-    label: level,
-    value: level,
-}));
-const boolOptions = [
-    { label: "true", value: "true" },
-    { label: "false", value: "false" },
-];
+        { label: "DeepSeek", value: "deepseek" },
+        { label: "OpenAI", value: "openai" },
+        { label: "Anthropic", value: "anthropic" },
+        { label: "Xiaomi", value: "xiaomi" },
+        { label: "DashScope", value: "dashscope" },
+    ],
+    levelOptions = ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"].map((level) => ({
+        label: level,
+        value: level,
+    })),
+    boolOptions = [
+        { label: "true", value: "true" },
+        { label: "false", value: "false" },
+    ];
 
 const domainSchemas: Record<string, DomainField[]> = {
     "llm-provider": [
@@ -203,8 +203,8 @@ const domainSchemas: Record<string, DomainField[]> = {
     ],
 };
 
-const fetchError = ref(false);
-const savingDomains = ref<Record<string, boolean>>({});
+const fetchError = ref(false),
+    savingDomains = ref<Record<string, boolean>>({});
 // Only the first load of a layer shows the full-page loading state. Reloads
 // after a save must keep the panels mounted (otherwise the expanded domain
 // panel and its save button unmount mid-interaction).
@@ -212,14 +212,14 @@ const hasLayerData = computed(
     () => Object.keys(configStore.layerConfig[activeTab.value] ?? {}).length > 0,
 );
 const showInitialLoading = computed(() => configStore.layerLoading && !hasLayerData.value);
-const exporting = ref(false);
-const importing = ref(false);
-const importWarnings = ref<string[]>([]);
-const includeSecrets = ref(true);
+const exporting = ref(false),
+    importing = ref(false),
+    importWarnings = ref<string[]>([]),
+    includeSecrets = ref(true);
 
-const mcpJson = ref("");
-const mcpError = ref("");
-const mcpSaving = ref(false);
+const mcpJson = ref(""),
+    mcpError = ref(""),
+    mcpSaving = ref(false);
 type RemoteMcpServer = {
     id: string;
     name: string;
@@ -233,8 +233,8 @@ type RemoteMcpServer = {
     };
 };
 type AuthorizationStatus = "required" | "authorizing" | "authorized" | "failed";
-const oauthStatus = ref<Record<string, AuthorizationStatus>>({});
-const oauthError = ref("");
+const oauthStatus = ref<Record<string, AuthorizationStatus>>({}),
+    oauthError = ref("");
 
 function currentWorkspaceId(): string {
     return authStore.currentWorkspaceId ?? "";
@@ -242,9 +242,9 @@ function currentWorkspaceId(): string {
 
 const visibleDomains = computed(() => [...LAYER_DOMAINS[activeTab.value]]);
 
-const showWorkspaceHint = computed(() => activeTab.value === "workspace" && !currentWorkspaceId());
-const showMcp = computed(() => activeTab.value === "workspace" && !!currentWorkspaceId());
-const showImportExport = computed(() => activeTab.value === "instance");
+const showWorkspaceHint = computed(() => activeTab.value === "workspace" && !currentWorkspaceId()),
+    showMcp = computed(() => activeTab.value === "workspace" && !!currentWorkspaceId()),
+    showImportExport = computed(() => activeTab.value === "instance");
 
 function schemaFor(domain: string): DomainField[] {
     const fields = domainSchemas[domain] ?? [];
@@ -349,12 +349,12 @@ function getRemoteServers(): RemoteMcpServer[] {
             const oauth = (
                 typeof server.oauth === "object" && server.oauth !== null ? server.oauth : {}
             ) as Record<string, unknown>;
-            const value = (key: string) => oauth[key] ?? server[key];
-            const clientId = value("clientId") ?? value("client_id");
-            const authorizationEndpoint =
-                value("authorizationEndpoint") ?? value("authorization_endpoint");
-            const tokenEndpoint = value("tokenEndpoint") ?? value("token_endpoint");
-            const scope = value("scope");
+            const value = (key: string) => oauth[key] ?? server[key],
+                clientId = value("clientId") ?? value("client_id"),
+                authorizationEndpoint =
+                    value("authorizationEndpoint") ?? value("authorization_endpoint"),
+                tokenEndpoint = value("tokenEndpoint") ?? value("token_endpoint"),
+                scope = value("scope");
             if (
                 [clientId, authorizationEndpoint, tokenEndpoint, scope].some(
                     (item) => typeof item !== "string" || !item,
@@ -393,13 +393,13 @@ function oauthStatusFor(serverId: string): AuthorizationStatus {
 }
 
 async function handleOAuthCallback() {
-    const params = new URLSearchParams(window.location.search);
-    const state = params.get("state");
-    const code = params.get("code");
-    const error = params.get("error");
+    const params = new URLSearchParams(window.location.search),
+        state = params.get("state"),
+        code = params.get("code"),
+        error = params.get("error");
     if (!state || (!code && !error)) return;
-    const pendingKey = `xihe-oauth-pending:${state}`;
-    const serverId = sessionStorage.getItem(pendingKey);
+    const pendingKey = `xihe-oauth-pending:${state}`,
+        serverId = sessionStorage.getItem(pendingKey);
     if (!serverId) return;
     oauthStatus.value[serverId] = "authorizing";
     try {
@@ -469,18 +469,18 @@ function generateSummary(domain: string): string {
     const entries = configStore.layerConfig[activeTab.value][domain] || {};
     if (Object.keys(entries).length === 0) return "";
     if (domain === "llm-provider") {
-        const providerId = entries["defaultProvider"];
-        const provider = providerId ? (getProviderInfo(providerId)?.name ?? providerId) : "";
+        const providerId = entries["defaultProvider"],
+            provider = providerId ? (getProviderInfo(providerId)?.name ?? providerId) : "";
         return provider ? `${provider} (已配置)` : "";
     }
     if (domain === "rag") {
-        const cs = entries["chunkSize"];
-        const tk = entries["topK"];
+        const cs = entries["chunkSize"],
+            tk = entries["topK"];
         return [cs && `chunk: ${cs}`, tk && `topK: ${tk}`].filter(Boolean).join(", ");
     }
     if (domain === "embedding") {
-        const model = entries["model"];
-        const dims = entries["dimensions"];
+        const model = entries["model"],
+            dims = entries["dimensions"];
         return [model, dims && `(${dims}d)`].filter(Boolean).join(" ");
     }
     if (domain === "logging") {
@@ -547,10 +547,10 @@ async function handleReset(domain: string, key: string) {
 async function handleExport() {
     exporting.value = true;
     try {
-        const content = await configStore.exportConfig(includeSecrets.value);
-        const blob = new Blob([content], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement("a");
+        const content = await configStore.exportConfig(includeSecrets.value),
+            blob = new Blob([content], { type: "application/json" }),
+            url = URL.createObjectURL(blob),
+            anchor = document.createElement("a");
         anchor.href = url;
         anchor.download = "config.import.local.jsonc";
         anchor.click();
@@ -565,14 +565,14 @@ async function handleExport() {
 }
 
 async function handleImportFile(event: Event) {
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0];
+    const input = event.target as HTMLInputElement,
+        file = input.files?.[0];
     if (!file) return;
     importing.value = true;
     importWarnings.value = [];
     try {
-        const content = await file.text();
-        const report = await configStore.importConfig(content);
+        const content = await file.text(),
+            report = await configStore.importConfig(content);
         importWarnings.value = report.warnings ?? [];
         toast.success(`${t("settings.importDone")}: +${report.imported} / skip ${report.skipped}`);
         if (importWarnings.value.length) toast.warning(importWarnings.value[0]);

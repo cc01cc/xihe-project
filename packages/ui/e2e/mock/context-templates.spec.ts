@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import path from "node:path";
 import fs from "node:fs";
@@ -15,8 +16,8 @@ const EVIDENCE_DIR = path.resolve(
     "../../../../../plans/PLAN-0414-XH-context-template-and-components/evidence/browser",
 );
 
-const TEMPLATE_ID = "11111111-1111-4111-8111-111111111111";
-const COMPONENT_ID = "22222222-2222-4222-8222-222222222222";
+const TEMPLATE_ID = "11111111-1111-4111-8111-111111111111",
+    COMPONENT_ID = "22222222-2222-4222-8222-222222222222";
 
 function template(version: number, name: string) {
     return {
@@ -41,7 +42,7 @@ function template(version: number, name: string) {
     };
 }
 
-async function shoot(page: import("@playwright/test").Page, name: string) {
+async function shoot(page: Page, name: string) {
     fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
     const viewport = (process.env.XIHE_E2E_VIEWPORT ?? "1920x1080").replace(/\D/g, "-");
     await page.screenshot({

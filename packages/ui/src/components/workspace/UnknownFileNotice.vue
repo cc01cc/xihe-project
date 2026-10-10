@@ -13,8 +13,8 @@ function copyPath() {
 async function download() {
     // Downloads through CP proxy
     const url = `/api/v1/files/${encodeURIComponent(props.filePath)}`;
-    const response = await apiRaw(url);
-    const blobUrl = URL.createObjectURL(await response.blob());
+    const response = await apiRaw(url),
+        blobUrl = URL.createObjectURL(await response.blob());
     const a = document.createElement("a");
     a.href = blobUrl;
     a.download = props.fileName;

@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 import { i18n } from "../../../i18n";
 import { ApiError, api } from "../../../composables/api";
+import type * as apiModule from "../../../composables/api";
 import type { PolicyRuleView } from "../../../types";
 
 vi.mock("vue-router", () => ({
@@ -19,31 +20,38 @@ vi.mock("vue-router", () => ({
             redirectedFrom: undefined,
             meta: {},
         }) as RouteLocationNormalizedLoaded,
-    useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+    useRouter: () => ({
+        push: vi.fn<(location: unknown) => Promise<void>>(),
+        replace: vi.fn<(location: unknown) => Promise<void>>(),
+    }),
     RouterLink: { template: "<a><slot /></a>" },
 }));
 
 vi.mock("vue-sonner", () => ({
-    toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+    toast: {
+        success: vi.fn<(message?: unknown) => string | number>(),
+        error: vi.fn<(message?: unknown) => string | number>(),
+        warning: vi.fn<(message?: unknown) => string | number>(),
+    },
 }));
 
 vi.mock("../../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {
             ...actual.api,
-            listPolicyDomains: vi.fn(),
-            listPolicyRules: vi.fn(),
-            listPolicyRuleConflicts: vi.fn(),
-            createPolicyRule: vi.fn(),
-            deletePolicyRule: vi.fn(),
+            listPolicyDomains: vi.fn<typeof apiModule.api.listPolicyDomains>(),
+            listPolicyRules: vi.fn<typeof apiModule.api.listPolicyRules>(),
+            listPolicyRuleConflicts: vi.fn<typeof apiModule.api.listPolicyRuleConflicts>(),
+            createPolicyRule: vi.fn<typeof apiModule.api.createPolicyRule>(),
+            deletePolicyRule: vi.fn<typeof apiModule.api.deletePolicyRule>(),
         },
     };
 });
 
-const RULE_ID = "77777777-7777-4777-8777-777777777777";
-const WORKSPACE_OWNER = "user-1";
+const RULE_ID = "77777777-7777-4777-8777-777777777777",
+    WORKSPACE_OWNER = "user-1";
 
 const conflictedRule: PolicyRuleView = {
     id: RULE_ID,
@@ -70,8 +78,8 @@ function seedUser(role?: string) {
 }
 
 async function mountView() {
-    const { default: PolicyRulesView } = await import("../PolicyRulesView.vue");
-    const wrapper = mount(PolicyRulesView, { global: { plugins: [i18n] } });
+    const { default: PolicyRulesView } = await import("../PolicyRulesView.vue"),
+        wrapper = mount(PolicyRulesView, { global: { plugins: [i18n] } });
     await flushPromises();
     return wrapper;
 }

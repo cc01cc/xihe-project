@@ -6,8 +6,8 @@ const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 
-const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
-const SERVICE_TOKEN = process.env.XIHE_CP_API_TOKEN;
+const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`,
+    SERVICE_TOKEN = process.env.XIHE_CP_API_TOKEN;
 if (!SERVICE_TOKEN) throw new Error("XIHE_CP_API_TOKEN must be set for real E2E");
 const FAKE_MCP_ACCESS_TOKEN = process.env.XIHE_FAKE_MCP_ACCESS_TOKEN;
 if (!FAKE_MCP_ACCESS_TOKEN) throw new Error("XIHE_FAKE_MCP_ACCESS_TOKEN must be set for real E2E");
@@ -48,8 +48,8 @@ test.describe("Cross-Module — Full Chain Chat", () => {
 
         await gotoWorkspaceWithChat(page);
 
-        const testMessage = `Hello ${Date.now()}`;
-        const textarea = page.locator("textarea");
+        const testMessage = `Hello ${Date.now()}`,
+            textarea = page.locator("textarea");
         await textarea.fill(testMessage);
         await page.keyboard.press("Enter");
 
@@ -147,8 +147,8 @@ test.describe("Cross-Module — Full Chain Chat", () => {
     });
 
     test("mcp config save and reload persists", async ({ page, request }) => {
-        const auth = await registerAuth("mcp-persist");
-        const token = auth.accessToken;
+        const auth = await registerAuth("mcp-persist"),
+            token = auth.accessToken;
         await page.addInitScript(
             ({ token, workspaceId }) => {
                 localStorage.setItem("xihe-token", token);
@@ -199,8 +199,8 @@ test.describe("Cross-Module — Full Chain Chat", () => {
     });
 
     test("mcp config with invalid json shows error toast", async ({ page, request }) => {
-        const auth = await registerAuth("mcp-invalid");
-        const token = auth.accessToken;
+        const auth = await registerAuth("mcp-invalid"),
+            token = auth.accessToken;
         await page.addInitScript((t) => localStorage.setItem("xihe-token", t), token);
 
         const saveResp = await request.put(
@@ -263,10 +263,10 @@ test.describe("Cross-Module — Full Chain Chat", () => {
             data: { email, password: SHARED_PASSWORD, name: "oauth-e2e" },
         });
         expect(registration.ok()).toBe(true);
-        const auth = await registration.json();
-        const serverId = randomUUID();
-        const fakeOAuthPort = process.env.XIHE_FAKE_OAUTH_PORT || "13640";
-        const uiPort = process.env.XIHE_UI_PORT || "12630";
+        const auth = await registration.json(),
+            serverId = randomUUID();
+        const fakeOAuthPort = process.env.XIHE_FAKE_OAUTH_PORT || "13640",
+            uiPort = process.env.XIHE_UI_PORT || "12630";
         const redirectUri = `http://localhost:${uiPort}/settings/config`;
         const save = await request.put(
             `${CP_URL}/api/v1/workspaces/${auth.workspaceId}/mcp-config`,
@@ -324,11 +324,11 @@ test.describe("Cross-Module — Full Chain Chat", () => {
             },
         });
         expect(registration.ok()).toBe(true);
-        const auth = await registration.json();
-        const serverId = randomUUID();
+        const auth = await registration.json(),
+            serverId = randomUUID();
         const fakeOAuthPort = process.env.XIHE_FAKE_OAUTH_PORT || "13640";
-        const fakeMcpPort = process.env.XIHE_FAKE_MCP_PORT || "13641";
-        const cpPort = process.env.XIHE_CP_PORT || "12631";
+        const fakeMcpPort = process.env.XIHE_FAKE_MCP_PORT || "13641",
+            cpPort = process.env.XIHE_CP_PORT || "12631";
         const redirectUri = `http://localhost:${cpPort}/api/v1/oauth/callback`;
         const session = await request.post(`${CP_URL}/api/v1/oauth/sessions`, {
             headers: {
@@ -441,8 +441,8 @@ test.describe("Cross-Module — Full Chain Chat", () => {
     test("Fake Remote MCP enforces session, requestState, timeout, SSE resume, and disconnect", async ({
         request,
     }) => {
-        const fakeMcpPort = process.env.XIHE_FAKE_MCP_PORT || "13641";
-        const endpoint = `http://localhost:${fakeMcpPort}/mcp`;
+        const fakeMcpPort = process.env.XIHE_FAKE_MCP_PORT || "13641",
+            endpoint = `http://localhost:${fakeMcpPort}/mcp`;
         const headers = {
             Authorization: `Bearer ${FAKE_MCP_ACCESS_TOKEN}`,
             Accept: "application/json, text/event-stream",
@@ -475,8 +475,8 @@ test.describe("Cross-Module — Full Chain Chat", () => {
                 params: { name: "remote_echo", arguments: { mode: "input_required" } },
             },
         });
-        const inputBody = await inputRequired.json();
-        const inputState = inputBody.result.requestState;
+        const inputBody = await inputRequired.json(),
+            inputState = inputBody.result.requestState;
         expect(inputRequired.ok()).toBe(true);
         expect(inputState.required).toEqual(["value"]);
 

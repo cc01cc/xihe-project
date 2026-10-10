@@ -44,8 +44,8 @@ function resolveUiLogLevel(env: Record<string, string>): ViteLogLevel {
 }
 
 export default defineConfig(({ mode }) => {
-    const envDir = new URL("../../", import.meta.url).pathname;
-    const env = loadEnv(mode, envDir, "");
+    const envDir = new URL("../../", import.meta.url).pathname,
+        env = loadEnv(mode, envDir, "");
     const uiPort = Number.parseInt(pickEnv(env, "XIHE_UI_PORT") || "12630", 10);
     const cpBaseUrl =
         pickEnv(env, "XIHE_CP_BASE_URL") ||

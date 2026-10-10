@@ -3,6 +3,7 @@ import { gotoWorkspaceWithChat } from "./helpers/chat";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { expectPlatformScreenshot } from "../helpers/visual";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
@@ -10,8 +11,8 @@ const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 test.describe("Mobile Viewport (390x844)", () => {
     test.use({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
 
-    let authToken = "";
-    let authWorkspaceId = "";
+    let authToken = "",
+        authWorkspaceId = "";
 
     test.beforeAll(async ({ request }) => {
         const r = await request.post(`${CP_URL}/api/v1/auth/register`, {
@@ -32,7 +33,7 @@ test.describe("Mobile Viewport (390x844)", () => {
         });
     });
 
-    async function assertNoHorizontalOverflow(page: import("@playwright/test").Page) {
+    async function assertNoHorizontalOverflow(page: Page) {
         const overflow = await page.evaluate(() => {
             const doc = document.scrollingElement;
             return doc ? doc.scrollWidth - doc.clientWidth : 0;
@@ -51,8 +52,8 @@ test.describe("Mobile Viewport (390x844)", () => {
         await page.addInitScript((t) => localStorage.setItem("xihe-token", t), authToken);
         await gotoWorkspaceWithChat(page);
 
-        const textarea = page.locator("textarea");
-        const box = await textarea.boundingBox();
+        const textarea = page.locator("textarea"),
+            box = await textarea.boundingBox();
         expect(box).not.toBeNull();
         expect(box!.y + box!.height).toBeLessThanOrEqual(844);
         expect(box!.x + box!.width).toBeLessThanOrEqual(392);

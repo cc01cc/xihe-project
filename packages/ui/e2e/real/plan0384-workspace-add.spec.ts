@@ -3,6 +3,7 @@ import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
 import { actionableErrors, collectPageErrors } from "./helpers/console";
 import { test, expect } from "@playwright/test";
+import type { Page } from "@playwright/test";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan0384-add-workspace");
@@ -15,11 +16,11 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
     test.describe.configure({ mode: "serial" });
     test.setTimeout(240000);
 
-    let sharedAuth: string;
-    let seedWs = "";
-    let hostRoot = "";
-    let addDir = "";
-    let pageErrors: string[] = [];
+    let sharedAuth: string,
+        seedWs = "",
+        hostRoot = "",
+        addDir = "",
+        pageErrors: string[] = [];
 
     test.beforeEach(async ({ page }) => {
         pageErrors = collectPageErrors(page);
@@ -40,8 +41,8 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
         );
         const regBody = await reg.json();
         sharedAuth = regBody.accessToken as string;
-        const refreshToken = regBody.refreshToken as string;
-        const defaultWsId = String(regBody.workspaceId ?? "");
+        const refreshToken = regBody.refreshToken as string,
+            defaultWsId = String(regBody.workspaceId ?? "");
         mkdirSync(EVIDENCE_DIR, { recursive: true });
 
         const runId = process.env.XIHE_E2E_RUN_ID;
@@ -92,7 +93,7 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
         sharedAuth = refreshedBody.accessToken as string;
     });
 
-    function seedPage(page: import("@playwright/test").Page) {
+    function seedPage(page: Page) {
         page.addInitScript((t) => localStorage.setItem("xihe-token", t), sharedAuth);
         page.addInitScript(
             (raw) => localStorage.setItem("xihe-user", raw),
@@ -234,8 +235,8 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
         });
         await page.locator('[data-testid="workspace-create-submit"]').click();
 
-        const request = await createRequest;
-        const payload = request.postDataJSON() as Record<string, unknown>;
+        const request = await createRequest,
+            payload = request.postDataJSON() as Record<string, unknown>;
         expect(payload.storageMode).toBe("direct_attach");
         expect(payload.executionMode).toBe(expectedExecutionMode);
         expect(payload.hostPath).toBe(addDir);
@@ -395,8 +396,8 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
             first.ok(),
             `first create failed: ${first.status()} ${await first.text()}`,
         ).toBeTruthy();
-        const firstId = String((await first.json()).id ?? "");
-        const second = await create(body, key);
+        const firstId = String((await first.json()).id ?? ""),
+            second = await create(body, key);
         expect([200, 201]).toContain(second.status());
         expect(String((await second.json()).id ?? "")).toBe(firstId);
     });

@@ -38,15 +38,15 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const input = ref("");
-const isComposing = ref(false);
-const attachments = ref<File[]>([]);
+const input = ref(""),
+    isComposing = ref(false),
+    attachments = ref<File[]>([]);
 let uploadedByFile = new WeakMap<File, Map<string, AttachmentFile>>();
-const attachmentErrors = ref<Record<string, string>>({});
-const showSlashMenu = ref(false);
-const slashFilter = ref("");
-const selectedSlashIndex = ref(0);
-const isUploading = ref(false);
+const attachmentErrors = ref<Record<string, string>>({}),
+    showSlashMenu = ref(false),
+    slashFilter = ref("");
+const selectedSlashIndex = ref(0),
+    isUploading = ref(false);
 
 const slashCommands: SlashCommand[] = [
     { key: "/search", label: "/search", description: "Search messages", action: () => "" },
@@ -133,8 +133,8 @@ async function handleSend() {
     if (sendDisabled.value || isUploading.value || props.queueSubmitting || props.queueActionBusy)
         return;
     const uploadSessionId = props.sessionId;
-    let uploadedForSubmit: AttachmentFile[] = [];
-    let uploadFailed = false;
+    let uploadedForSubmit: AttachmentFile[] = [],
+        uploadFailed = false;
 
     if (attachments.value.length > 0) {
         const filesToUpload = props.queueMode

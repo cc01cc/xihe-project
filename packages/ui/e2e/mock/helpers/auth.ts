@@ -73,11 +73,11 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
         await page.addInitScript(
             ({ tokens, retryTokens, errorAfterTokens, delayMs, optionsUsage, holdOpen }) => {
                 const originalFetch = window.fetch.bind(window);
-                let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
-                let streamClosed = false;
-                let streamReady = false;
-                let streamEmitted = false;
-                let shouldFail = Boolean(errorAfterTokens);
+                let streamController: ReadableStreamDefaultController<Uint8Array> | null = null,
+                    streamClosed = false;
+                let streamReady = false,
+                    streamEmitted = false,
+                    shouldFail = Boolean(errorAfterTokens);
 
                 const encode = (value: string) => new TextEncoder().encode(value);
                 const event = (name: string, data: unknown) =>
@@ -213,8 +213,8 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
         }
         const branchRoute = url.match(/\/api\/v1\/sessions\/([^/?]+)\/branches(?:\?|$)/);
         if (branchRoute) {
-            const sessionId = branchRoute[1];
-            const method = route.request().method();
+            const sessionId = branchRoute[1],
+                method = route.request().method();
             if (method === "GET") {
                 const items = branchesBySession.get(sessionId) ?? [
                     {
@@ -254,8 +254,8 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
                     return;
                 }
                 const key = `${sessionId}:${route.request().headers()["idempotency-key"]}`;
-                const requestHash = `${body.sourceBranchId}:${body.anchorMessageId}`;
-                const prior = branchResponses.get(key);
+                const requestHash = `${body.sourceBranchId}:${body.anchorMessageId}`,
+                    prior = branchResponses.get(key);
                 if (prior && prior.requestHash !== requestHash) {
                     await route.fulfill({
                         status: 409,
@@ -455,8 +455,8 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
     });
 
     await page.route("**/api/v1/sessions/**", async (route) => {
-        const url = new URL(route.request().url());
-        const parts = url.pathname.split("/").filter(Boolean);
+        const url = new URL(route.request().url()),
+            parts = url.pathname.split("/").filter(Boolean);
         const sessionId = parts.at(-1) === "messages" ? parts.at(-2) : parts.at(-1);
         if (!sessionId) {
             await route.fulfill({

@@ -10,24 +10,24 @@ import { useAuthStore } from "../../stores/auth";
 import { useCheckpointStore } from "../../stores/checkpoint";
 import type { CheckpointRetention } from "../../types";
 
-const { t } = useI18n();
-const authStore = useAuthStore();
-const checkpointStore = useCheckpointStore();
-const exporting = ref(false);
-const importing = ref(false);
-const importFile = ref<File | null>(null);
-const showImportPreview = ref(false);
-const result = ref<string | null>(null);
+const { t } = useI18n(),
+    authStore = useAuthStore(),
+    checkpointStore = useCheckpointStore(),
+    exporting = ref(false),
+    importing = ref(false),
+    importFile = ref<File | null>(null),
+    showImportPreview = ref(false),
+    result = ref<string | null>(null);
 
 // PLAN-0339: informational retention view + explicit workspace shadow cleanup.
 // Constants are server-reported (N=50 / TTL 30d); the UI never invents them.
-const workspaceId = computed(() => authStore.currentWorkspaceId);
-const retention = ref<CheckpointRetention | null>(null);
-const retentionLoading = ref(false);
-const retentionError = ref<string | null>(null);
-const cleanupConfirming = ref(false);
-const cleanupBusy = ref(false);
-const cleanupResult = ref<string | null>(null);
+const workspaceId = computed(() => authStore.currentWorkspaceId),
+    retention = ref<CheckpointRetention | null>(null),
+    retentionLoading = ref(false),
+    retentionError = ref<string | null>(null),
+    cleanupConfirming = ref(false),
+    cleanupBusy = ref(false),
+    cleanupResult = ref<string | null>(null);
 
 function errorText(cause: unknown, fallback: string): string {
     return cause instanceof ApiError
@@ -84,8 +84,8 @@ watch(workspaceId, () => {
 async function exportSettings() {
     exporting.value = true;
     try {
-        const res = await apiRaw("/config/export");
-        const blob = await res.blob();
+        const res = await apiRaw("/config/export"),
+            blob = await res.blob();
         downloadBlob(blob, "xihe-settings.json");
     } catch (e) {
         logger.error(`Settings export failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -97,8 +97,8 @@ async function exportSettings() {
 async function exportChats() {
     exporting.value = true;
     try {
-        const res = await apiRaw("/config/export");
-        const blob = await res.blob();
+        const res = await apiRaw("/config/export"),
+            blob = await res.blob();
         downloadBlob(blob, "xihe-chats.json");
     } catch (e) {
         logger.error(`Chats export failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -117,13 +117,13 @@ function handleFileSelected(e: Event) {
 async function handleConfirmImport(data: ImportData) {
     importing.value = true;
     try {
-        const text = await data.file.text();
-        const res = await apiRaw("/config/import", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: text,
-        });
-        const resultData = await res.json();
+        const text = await data.file.text(),
+            res = await apiRaw("/config/import", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: text,
+            }),
+            resultData = await res.json();
         result.value = `Imported: ${resultData.imported}, Skipped: ${resultData.skipped}`;
     } catch (e) {
         logger.error(`Chats import failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -138,8 +138,8 @@ function handleCancelImport() {
 }
 
 function downloadBlob(blob: Blob, filename: string) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
+    const url = URL.createObjectURL(blob),
+        a = document.createElement("a");
     a.href = url;
     a.download = filename;
     a.click();

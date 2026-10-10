@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 import { i18n } from "../../../i18n";
 import { ApiError, api } from "../../../composables/api";
+import type * as apiModule from "../../../composables/api";
 import type { PolicyToolFaceView } from "../../../types";
 
 vi.mock("vue-router", () => ({
@@ -19,29 +20,36 @@ vi.mock("vue-router", () => ({
             redirectedFrom: undefined,
             meta: {},
         }) as RouteLocationNormalizedLoaded,
-    useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+    useRouter: () => ({
+        push: vi.fn<(location: unknown) => Promise<void>>(),
+        replace: vi.fn<(location: unknown) => Promise<void>>(),
+    }),
     RouterLink: { template: "<a><slot /></a>" },
 }));
 
 vi.mock("vue-sonner", () => ({
-    toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+    toast: {
+        success: vi.fn<(message?: unknown) => string | number>(),
+        error: vi.fn<(message?: unknown) => string | number>(),
+        warning: vi.fn<(message?: unknown) => string | number>(),
+    },
 }));
 
 vi.mock("../../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {
             ...actual.api,
-            listPolicyToolFaces: vi.fn(),
-            upsertPolicyToolFace: vi.fn(),
+            listPolicyToolFaces: vi.fn<typeof apiModule.api.listPolicyToolFaces>(),
+            upsertPolicyToolFace: vi.fn<typeof apiModule.api.upsertPolicyToolFace>(),
         },
     };
 });
 
-const FACE_ID = "88888888-8888-4888-8888-888888888888";
-const USER_ID = "user-1";
-const WORKSPACE_ID = "workspace-1";
+const FACE_ID = "88888888-8888-4888-8888-888888888888",
+    USER_ID = "user-1",
+    WORKSPACE_ID = "workspace-1";
 
 const builtinFace: PolicyToolFaceView = {
     id: null,
@@ -81,8 +89,8 @@ function seedIdentity(options: { admin?: boolean; workspaceOwner?: boolean } = {
 }
 
 async function mountView() {
-    const { default: ToolFacesView } = await import("../ToolFacesView.vue");
-    const wrapper = mount(ToolFacesView, { global: { plugins: [i18n] } });
+    const { default: ToolFacesView } = await import("../ToolFacesView.vue"),
+        wrapper = mount(ToolFacesView, { global: { plugins: [i18n] } });
     await flushPromises();
     return wrapper;
 }
@@ -114,11 +122,10 @@ describe("ToolFacesView", () => {
 
     it("highlights unclassified rows with the default ask label", async () => {
         seedIdentity();
-        const wrapper = await mountView();
-
-        const highlight = wrapper.find(
-            '[data-testid="settings-tool-face-unclassified-mcp__third_party__do"]',
-        );
+        const wrapper = await mountView(),
+            highlight = wrapper.find(
+                '[data-testid="settings-tool-face-unclassified-mcp__third_party__do"]',
+            );
         expect(highlight.text()).toContain("默认 ask");
         expect(highlight.text()).toContain("未分类");
     });

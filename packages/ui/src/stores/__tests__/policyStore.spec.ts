@@ -1,18 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { api } from "../../composables/api";
+import type * as apiModule from "../../composables/api";
 import { usePolicyStore } from "../policy";
 
 const SESSION_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
 vi.mock("../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {
             ...actual.api,
-            getPolicyMode: vi.fn(),
-            setPolicyMode: vi.fn(),
+            getPolicyMode: vi.fn<typeof apiModule.api.getPolicyMode>(),
+            setPolicyMode: vi.fn<typeof apiModule.api.setPolicyMode>(),
         },
     };
 });
@@ -35,11 +36,11 @@ describe("usePolicyStore", () => {
 
     it("only lets the newest mode mutation clear changing state", async () => {
         let resolveFirst:
-            | ((value: { sessionId: string; mode: "auto"; scope: "session" }) => void)
-            | undefined;
-        let resolveSecond:
-            | ((value: { sessionId: string; mode: "manual"; scope: "session" }) => void)
-            | undefined;
+                | ((value: { sessionId: string; mode: "auto"; scope: "session" }) => void)
+                | undefined,
+            resolveSecond:
+                | ((value: { sessionId: string; mode: "manual"; scope: "session" }) => void)
+                | undefined;
         vi.mocked(api.setPolicyMode)
             .mockImplementationOnce(
                 () =>
@@ -53,9 +54,9 @@ describe("usePolicyStore", () => {
                         resolveSecond = resolve;
                     }),
             );
-        const store = usePolicyStore();
-        const first = store.change(SESSION_A, "auto");
-        const second = store.change(SESSION_A, "manual");
+        const store = usePolicyStore(),
+            first = store.change(SESSION_A, "auto"),
+            second = store.change(SESSION_A, "manual");
 
         resolveFirst?.({ sessionId: SESSION_A, mode: "auto", scope: "session" });
         await first;
