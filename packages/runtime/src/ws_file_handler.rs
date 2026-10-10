@@ -431,7 +431,7 @@ mod tests {
         tokio::fs::create_dir_all(&workspace_path).await.unwrap();
         let lifecycle = Arc::new(xihe_runtime::lifecycle::Lifecycle::new(
             registry.clone(),
-            Arc::new(xihe_runtime::lifecycle::ExecutionLease::new()),
+            Arc::new(xihe_runtime::lifecycle::WorkspaceOperationLock::new()),
         ));
         lifecycle
             .register_ready(
@@ -476,7 +476,7 @@ mod tests {
         ));
         let lifecycle = Arc::new(xihe_runtime::lifecycle::Lifecycle::new(
             registry.clone(),
-            Arc::new(xihe_runtime::lifecycle::ExecutionLease::new()),
+            Arc::new(xihe_runtime::lifecycle::WorkspaceOperationLock::new()),
         ));
         let app = Arc::new(AppState {
             registry: registry.clone(),

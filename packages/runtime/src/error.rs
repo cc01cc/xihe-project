@@ -97,13 +97,9 @@ pub enum RuntimeError {
     #[error("Workspace {workspace_id} is being destroyed")]
     WorkspaceDestroying { workspace_id: String },
 
-    /// PLAN-0345 T2.2 (decision #10): another in-flight operation holds the
-    /// workspace execution lease.
-    #[error("Workspace {workspace_id} is busy (held by {holder})")]
-    WorkspaceBusy {
-        workspace_id: String,
-        holder: String,
-    },
+    /// Another in-flight operation holds the per-workspace operation lock.
+    #[error("Workspace {workspace_id} is busy (another workspace operation holds the lock)")]
+    WorkspaceBusy { workspace_id: String },
 
     /// PLAN-0345 I3: illegal lifecycle transitions fail loudly.
     #[error("Illegal workspace transition for {workspace_id}: {from} -> {to}")]

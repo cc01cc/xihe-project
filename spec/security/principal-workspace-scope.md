@@ -1,6 +1,6 @@
 # XH Principal、Workspace Scope 与资源归属
 
-> 契约状态：`proposed`；实现状态：`partial`；Profile：`security`；Owner：Security + Workspace；Active PLAN：PLAN-0420；来源：PLAN-0386/DEV-032/PLAN-0407（授权模型条款回写自 PLAN-0407 spec/authorization-and-derivation.md）；更新：2026-09-27。
+> 契约状态：`proposed`；实现状态：`partial`；Profile：`security`；Owner：Security + Workspace；Active PLAN：PLAN-0474（术语同步）；来源：PLAN-0386/DEV-032/PLAN-0407（授权模型条款回写自 PLAN-0407 spec/authorization-and-derivation.md）；更新：2026-10-10。
 > 消费者：CP authorization/session/MCP、Workspace Agent API、Agent、UI Agent 管理与 Session 选择
 
 ## 1. 术语
@@ -9,7 +9,7 @@
 - `platform role`：JWT/Spring Security 平台角色，例如 `USER`、`ADMIN`、`INTERNAL_SERVICE`。
 - `workspace role`：主体在 Workspace membership 中的角色；不得用裸 `role` 替代。
 - `resource owner`：资源归属 `(owner_type, owner_id)`；不等于 workspace role owner。
-- `execution lease holder`：当前执行租约持有者；不等于资源归属或成员角色。
+- `workspace operation lock holder`：当前工作区生命周期操作锁持有者；不等于资源归属或成员角色。旧名 `execution lease holder` 不再用于 Runtime 实现语义。
 - `scope`：必须带领域限定，例如 authorization scope、OAuth provider scope、tool resource scope。
 - `grant`：主体级权限记录（`grants` 表）；permission 原子为 `{actionClass, resource?}`，`resource` 缺省 `*`，**不含 `effect` 字段——未列出即 deny**（PLAN-0407 spec/authorization-and-derivation.md §2.1/§3.1 [d27]）。
 - `ask list`：approval-policy 域的「要问 actionClass 清单」`askActionClasses[]`；ask 是审批流程规定，不是授权资格（PLAN-0407 spec §2 [d19]）。
@@ -25,7 +25,7 @@ CP 当前仍使用 User JWT 作为 API caller 身份；Agent runtime 已有 stab
 - **MCP caller 分流**：CP 按已验证 Authentication 主体选择授权路径，context headers 不改变身份。User Bearer 的 `tools/call` 仅允许 workspace UI 文件工具清单，并验证 Workspace membership + User grant；Agent internal service Bearer 的 `tools/call` 必须带真实 application Session，按 AgentPrincipal grants ∩ Workspace binding cap ∩ Session/spawn ancestor snapshots 授权。User 不能通过 Run/Operation headers 调用 Agent tool 或切换授权路径；`mcp-init` 仅是无 Session UI 请求的审计标签，不是 principal/Session。
 - **MCP error correlation**：Problem Details `requestId` 与 response `X-Request-Id` 复用 RequestIdFilter/MDC 当前请求 ID，使 CP audit 与响应可直接关联；不得在 MCP controller error helper 中覆盖为另一 ID。该规则不改变授权判定或错误 status。
 - `SPAWN_AGENT` 是创建派生 runtime Session 的独立 actionClass；Workspace toolMode 或 binding 本身不授予 spawn。必须存在显式 Agent principal grant，并与当前 binding cap 和 parent Session/spawn ancestor snapshots 求交；该 action 不进入任何默认 grant 集。grant 通过后才按现有 policy/approval mode 判定，grant 缺失必须先拒绝且不得创建 approval。
-- 所有资源归属、成员角色、执行租约和 OAuth/provider scope **MUST** 使用域限定术语。
+- 所有资源归属、成员角色、工作区操作锁持有者和 OAuth/provider scope **MUST** 使用域限定术语。
 - 任何 target principal/schema 迁移必须另立 PLAN，完成字段矩阵、round-trip、兼容和回滚证据。
 - **三道串联（fail-closed）**：道1 授权 = 一跳查表（`GrantAuthorizationService`：交集后的当前权限集含该 actionClass → 过，不含 → deny，制度拒）；道2 capability = 后端包络能否物理执行，不满足即物理拒且**不触发审批**；道3 approval = 触发源之一为 approval-policy 的 ask list（`askActionClasses[]`）。Gate order **G4** = HardGuard L0 → grant 查表 → approval，**grant deny 不得到达 approval，也不得创建 pending approval**；`userDirectMutation` 只评估已认证 human User 的 grant，Agent tool authorization 不自动并入 `sessions.user_id`（PLAN-0407 spec/authorization-and-derivation.md §2/§4.2 [d16][d18][d19]）。既有 `hasRole` 守卫 v1 保留为安全网，与查表并存且两轨不得互相矛盾 [d18]；role 权限再大不得越过 capability 包络 [d16]。
 - **grant 模型**：单主体当前权限集 = 该主体 `default|spawn|direct|template` grant permission atoms 的 **union**（G1；`source` 只作溯源，不形成优先级）；操作授权 = 请求的每个 action/resource atom 在驱动链上**每个**主体 set 中均有匹配（G2，subject union 后 path intersection）。仅工具调用边界重算（I4），评估内不重读，评估异常 = fail-closed 拒绝；空集合、词表外 actionClass、坏 JSON 一律 deny（PLAN-0407 spec §3.1/§4.2 [d27][d10]）。

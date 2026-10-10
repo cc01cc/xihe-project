@@ -27,8 +27,8 @@ updated: 2026-09-21
 
 | Bare token | Sense | **Canonical** | Do not |
 |---|---|---|---|
-| **owner** | RBAC role on workspace | `workspace role owner` | bare `owner` for lease |
-| | Lifecycle execution claimant | **`execution lease holder`** | bare `owner` / unqualified `active owner` |
+| **owner** | RBAC role on workspace | `workspace role owner` | bare `owner` for operation-lock holder |
+| | Lifecycle operation-lock holder | **`workspace operation lock holder`** | bare `owner` / unqualified `active owner`; `execution lease holder` (retired name) |
 | **L1/L2/L3** | Context injection slots | **`context L1`** | bare `L1` |
 | | Diagnostics layers | **`diagnostic L0/L1/L2`** | bare `L1` |
 | | Checkpoint restore layers | **`checkpoint L1`** | bare `L1` |
@@ -80,7 +80,7 @@ updated: 2026-09-21
 |---|---|
 | Ledger single-writer (0326) | ensure single-flight (M-3) |
 | ensure single-flight | chat `409 CHAT_IN_PROGRESS` |
-| execution lease holder | workspace role owner |
+| workspace operation lock holder | workspace role owner; retired alias: `execution lease holder` |
 | run resume | unpause |
 | **durable job continuation** | **Workspace `unpause` / `run resume`** — reading existing Job output (`job-output`, read-only cursor) is not reactivating execution |
 | **job `interrupted`** | **run `ambiguous`** — Job judged dead by a Runtime restart (never replayed) vs run terminal still undecided |
@@ -90,7 +90,7 @@ updated: 2026-09-21
 
 - “Runtime **ensures** readiness; CP exposes **materialize**.”
 - “**ensure single-flight (M-3)** → one entity creation.”
-- “At most one **execution lease holder**; lease dies on destroy.”
+- “One **workspace operation lock** is shared by ensure materialization and explicit delete; its guard is released when the operation ends.”
 - “`paused` requires an **unpause activation path**.”
 - “REST file surface is **routed to the executor**; no **executor-bypass**.”
 - “**context L1** injection; **diagnostic L1** deferred.”
@@ -102,9 +102,10 @@ updated: 2026-09-21
 | 2026-09-16 | Align unstarted XH PLAN README/spec to §1–§3 |
 | 2026-09-21 | Add `scope` / `interrupted` / `runtimeBootId`; §2.3 separates **durable job continuation** from Workspace `unpause` / `run resume` (PLAN-0390) |
 | 2026-09-30 (PLAN-0426) | Add `projection` six senses (A durable record / B read model / C response view / D UI local view / E mapping / F1 bounded preview / F2 redacted summary); scope extended to root-level `spec/`; bare `projection` banned in prose, identifiers and history excepted |
+| 2026-10-10 (PLAN-0474) | Rename the Runtime concept to workspace operation lock in this glossary and the proposed Security/Workspace glossary; no authorization semantics change |
 | Completed / archive / review | No historical rewrite; align when file is edited |
-| Code identifiers | Separate PLAN if renamed (cf. 0356) |
+| Code identifiers | PLAN-0474 renames the internal Runtime type `ExecutionLease` to `WorkspaceOperationLock`; no compatibility alias without an in-repo consumer |
 
 ## 5. Related
 
-DEV-031 / PLAN-0329 (`ensure`); PLAN-0345 (lease, unpause); PLAN-0341 (prune, compaction); PLAN-0356 (checkpoint); DEV-030 (doc layout); PLAN-0390 + `spec/workspace/execution-job.md` (`job scope` / `interrupted` / `runtimeBootId`).
+DEV-031 / PLAN-0329 (`ensure`); PLAN-0345 (workspace operation lock, unpause); PLAN-0341 (prune, compaction); PLAN-0356 (checkpoint); DEV-030 (doc layout); PLAN-0390 + `spec/workspace/execution-job.md` (`job scope` / `interrupted` / `runtimeBootId`).

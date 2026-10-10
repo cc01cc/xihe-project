@@ -77,7 +77,7 @@ sequenceDiagram
 - Runtime 启动只完成自身 liveness/readiness；经受保护的 targeted ExecutionSpec API 按 `workspaceId` 懒加载 Workspace，首次文件/命令/MCP 操作时才物化目标 Sandbox。
 - WorkspaceStorage（host 持久化）与 Sandbox（容器执行面）分离；unknown workspace fail-closed；Docker 不可用与执行超时显式失败。
 - MCP 2026-07-28 无会话协议（SEP-2567）：Runtime 侧全程 stateless；CP 转发 `tools/list`/`tools/call` 必须带 `Mcp-Method` + `Mcp-Name` 头。
-- 生命周期（PLAN-0345）：六态权威状态机（`creating/ready/paused/stopped/failed/destroying`）经 `lifecycle.rs` `Lifecycle` 单一写路径（lease 绑 in-flight 操作，无心跳/无持久化）；Registry=可重建缓存（`rebuild` 从 Docker 推导）。paused 走 unpause 激活（禁 force recreate，失败 fail-closed）；destroying 窗口内迟到 materialize → 409 `WORKSPACE_DESTROYING`（CP 原样透传，不 collapse 502）；destroy 完成即注销（无常驻 `destroyed` 态）。idle reaper 三档（15m pause / 2h stop / 24h 注销，原 7d `Released` 档删除）。REST read/list/stat 收口 executor router（binary write 仍 host 例外=债）。warm pool/microVM/多设备接管仍属后续。
+- 生命周期（PLAN-0345/0474）：六态权威状态机（`creating/ready/paused/stopped/failed/destroying`）经 `lifecycle.rs` `Lifecycle` 单一写路径；`WorkspaceOperationLock` 是 Runtime 进程内 per-Workspace async mutex，仅由 `WorkspaceEnsurer` materialization 与显式删除共用，无 TTL/心跳/持久化/跨进程语义。显式删除 try-acquire；Busy 时先返回 409 `WORKSPACE_BUSY`，不写 Lifecycle；成功持锁后才进入 `destroying`。materialize handler 在 `destroying` marker 存在时仍 409 `WORKSPACE_DESTROYING`；已排队的 materialization 在 delete 完成后重新查 CP，unknown Workspace 返回 404，不再写失败注册。backend destroy 失败保留 entity/watcher 并记录 `failed` reason，支持再次显式删除。Registry=可重建缓存（`rebuild` 从 Docker 推导）。paused 走 unpause 激活（禁 force recreate，失败 fail-closed）；destroy 完成即注销（无常驻 `destroyed` 态）。空闲回收循环三档（15m pause / 2h stop / 24h 注销，原 7d `Released` 档删除）与 Runtime 进程退出清理保持独立，不复用显式删除编排。REST read/list/stat 收口 executor router（binary write 仍 host 例外=债）。warm pool/microVM/多设备接管仍属后续。
 
 ### 4.1 Workspace 文件事件（PLAN-0350）
 

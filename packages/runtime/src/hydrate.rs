@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,8 +9,8 @@ use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
 use crate::error::{Result, RuntimeError};
-use crate::gateway::{InstanceState, WorkspaceRegistry, XiheRuntimeInstance};
-use crate::lifecycle::Lifecycle;
+use crate::gateway::{InstanceState, MaterializationState, WorkspaceRegistry, XiheRuntimeInstance};
+use crate::lifecycle::{Lifecycle, WorkspaceOperationGuard};
 use crate::sandbox::SecurityProfile;
 use crate::storage;
 use crate::workspace::{WorkspaceManager, WorkspaceState};
@@ -254,7 +253,6 @@ pub struct WorkspaceEnsurer {
     client: ExecutionSpecClient,
     host_root: Option<PathBuf>,
     default_image: String,
-    locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     materialize_timeout: Duration,
     materialize_timeout_source: &'static str,
 }
@@ -292,7 +290,6 @@ impl WorkspaceEnsurer {
             host_root,
             default_image: std::env::var("XIHE_WORKSPACE_IMAGE")
                 .unwrap_or_else(|_| DEFAULT_IMAGE.to_string()),
-            locks: Arc::new(Mutex::new(HashMap::new())),
             materialize_timeout,
             materialize_timeout_source,
         }
@@ -338,19 +335,19 @@ impl WorkspaceEnsurer {
         Self::new(lifecycle, manager, client, host_root)
     }
 
-    async fn lock_for(&self, workspace_id: &str) -> Arc<Mutex<()>> {
-        let mut locks = self.locks.lock().await;
-        locks
-            .entry(workspace_id.to_string())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone()
-    }
-
     async fn failure<T>(&self, workspace_id: &str, error: RuntimeError) -> Result<T> {
         let detail = error.to_string();
-        self.lifecycle
-            .fail_materialization(workspace_id, &detail)
-            .await;
+        let deleted_after_destroy = matches!(&error, RuntimeError::ExecutionSpecNotFound(_))
+            && self
+                .registry
+                .status(workspace_id)
+                .await
+                .is_some_and(|status| status.state == MaterializationState::Released);
+        if !deleted_after_destroy {
+            self.lifecycle
+                .fail_materialization(workspace_id, &detail)
+                .await;
+        }
         error!(workspace_id, error = %detail, "workspace materialization failed");
         Err(error)
     }
@@ -370,8 +367,7 @@ impl WorkspaceEnsurer {
                 )
                 .await;
         }
-        let workspace_lock = self.lock_for(workspace_id).await;
-        let _guard = workspace_lock.lock().await;
+        let _guard = self.lifecycle.operation_lock().lock(workspace_id).await;
         self.client
             .fetch_for_workspace(workspace_id)
             .await
@@ -382,6 +378,18 @@ impl WorkspaceEnsurer {
         &self,
         workspace_id: &str,
     ) -> Result<XiheRuntimeInstance> {
+        let guard = self.lifecycle.operation_lock().lock(workspace_id).await;
+        self.ensure_workspace_materialized_with_guard(&guard).await
+    }
+
+    /// Materialize while the caller owns the workspace operation guard. This
+    /// lets the HTTP handler hold one guard across its state write and the
+    /// materialization/watcher setup without recursively acquiring the lock.
+    pub async fn ensure_workspace_materialized_with_guard(
+        &self,
+        guard: &WorkspaceOperationGuard,
+    ) -> Result<XiheRuntimeInstance> {
+        let workspace_id = guard.workspace_id();
         if !is_safe_workspace_id(workspace_id) {
             return self
                 .failure(
@@ -393,9 +401,6 @@ impl WorkspaceEnsurer {
                 )
                 .await;
         }
-
-        let workspace_lock = self.lock_for(workspace_id).await;
-        let _guard = workspace_lock.lock().await;
 
         // PLAN-0323 M-1: bound materialization work so a stuck Docker
         // create/start cannot leave the workspace in `materializing` forever.
@@ -669,15 +674,20 @@ impl WorkspaceEnsurer {
 #[cfg(test)]
 mod tests {
     use crate::gateway::MaterializationState;
-    use crate::lifecycle::{ExecutionLease, Lifecycle};
+    use crate::lifecycle::{Lifecycle, WorkspaceOperationLock};
+    use axum::Router;
+    use axum::extract::{Path, State};
+    use axum::response::IntoResponse;
+    use axum::routing::get;
     use mockito::Server;
+    use tokio::sync::{Notify, oneshot};
 
     use super::*;
 
     fn test_lifecycle(registry: &Arc<WorkspaceRegistry>) -> Arc<Lifecycle> {
         Arc::new(Lifecycle::new(
             registry.clone(),
-            Arc::new(ExecutionLease::new()),
+            Arc::new(WorkspaceOperationLock::new()),
         ))
     }
 
@@ -705,6 +715,24 @@ mod tests {
             "storageRef": workspace_id,
         })
         .to_string()
+    }
+
+    #[derive(Clone)]
+    struct GatedNotFound {
+        started: Arc<Notify>,
+        release: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
+    }
+
+    async fn gated_not_found(
+        State(state): State<GatedNotFound>,
+        Path(_workspace_id): Path<String>,
+    ) -> axum::response::Response {
+        state.started.notify_one();
+        let release = state.release.lock().await.take();
+        if let Some(release) = release {
+            let _ = release.await;
+        }
+        (axum::http::StatusCode::NOT_FOUND, "not found").into_response()
     }
 
     #[test]
@@ -904,6 +932,88 @@ mod tests {
             "unexpected error: {error}"
         );
         mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn materialize_after_destroy_404_keeps_released_status() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("GET", "/internal/v1/runtime/workspaces/ws-1/execution-spec")
+            .with_status(404)
+            .create_async()
+            .await;
+
+        let registry = Arc::new(WorkspaceRegistry::new());
+        let lifecycle = test_lifecycle(&registry);
+        lifecycle.complete_destroy("ws-1").await;
+        let ensurer = WorkspaceEnsurer::new(
+            lifecycle,
+            Arc::new(Mutex::new(WorkspaceManager::new())),
+            ExecutionSpecClient::new(&server.url(), "test-token"),
+            None,
+        );
+
+        let error = ensurer
+            .ensure_workspace_materialized("ws-1")
+            .await
+            .unwrap_err();
+        assert!(matches!(error, RuntimeError::ExecutionSpecNotFound(_)));
+        assert!(registry.get("ws-1").await.is_none());
+        assert_eq!(
+            registry.status("ws-1").await.unwrap().state,
+            MaterializationState::Released
+        );
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn materialization_holds_shared_operation_lock_through_cp_fetch() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let started = Arc::new(Notify::new());
+        let (release_tx, release_rx) = oneshot::channel();
+        let gate = GatedNotFound {
+            started: started.clone(),
+            release: Arc::new(Mutex::new(Some(release_rx))),
+        };
+        let app = Router::new()
+            .route(
+                "/internal/v1/runtime/workspaces/{workspace_id}/execution-spec",
+                get(gated_not_found),
+            )
+            .with_state(gate);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let registry = Arc::new(WorkspaceRegistry::new());
+        let lifecycle = test_lifecycle(&registry);
+        let manager = Arc::new(Mutex::new(WorkspaceManager::new()));
+        let ensurer = Arc::new(WorkspaceEnsurer::new(
+            lifecycle.clone(),
+            manager.clone(),
+            ExecutionSpecClient::new(&format!("http://{address}"), "test-token"),
+            None,
+        ));
+        let materializing =
+            tokio::spawn(async move { ensurer.ensure_workspace_materialized("ws-1").await });
+
+        started.notified().await;
+        assert!(matches!(
+            lifecycle.operation_lock().try_lock("ws-1"),
+            Err(RuntimeError::WorkspaceBusy { .. })
+        ));
+        release_tx.send(()).unwrap();
+
+        assert!(matches!(
+            materializing.await.unwrap(),
+            Err(RuntimeError::ExecutionSpecNotFound(_))
+        ));
+        assert!(lifecycle.operation_lock().try_lock("ws-1").is_ok());
+        assert!(manager.lock().await.list_workspaces().is_empty());
+
+        server.abort();
+        assert!(server.await.unwrap_err().is_cancelled());
     }
 
     /// PLAN-242 M2: unsafe workspace ids are rejected before any CP lookup.

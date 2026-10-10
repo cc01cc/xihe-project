@@ -7,10 +7,10 @@
 //! materialize path, physically in the same crate) may call them.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex, PoisonError};
 use std::time::Duration;
 
-use tokio::sync::{Mutex, MutexGuard, RwLock};
+use tokio::sync::{Mutex, MutexGuard, OwnedMutexGuard};
 use tracing::{info, warn};
 
 use crate::error::RuntimeError;
@@ -62,110 +62,90 @@ impl LifecycleState {
                 | (Failed, Ready)
                 | (Failed, Stopped)
                 | (Failed, Destroying)
+                | (Destroying, Failed)
                 | (Destroying, Destroying) // destroy is idempotent while in flight
         )
     }
 }
 
-/// PLAN-0345 T2.2 (decision #10): single in-process execution lease per
-/// workspace, bound to an in-flight operation (ensure/destroy/pause/unpause).
-/// No heartbeat, no fixed TTL, no persistence: rebuilt implicitly from Docker
-/// state after a restart because the registry itself starts empty.
+/// Single in-process gate shared by Workspace materialization and explicit
+/// deletion. Each Workspace has one async mutex; it has no TTL or persistence.
 #[derive(Debug, Default)]
-pub struct ExecutionLease {
-    holders: RwLock<HashMap<String, String>>,
+pub struct WorkspaceOperationLock {
+    locks: StdMutex<HashMap<String, Arc<Mutex<()>>>>,
 }
 
-impl ExecutionLease {
+/// Owned guard identifies the Workspace whose operation is serialized.
+pub struct WorkspaceOperationGuard {
+    workspace_id: String,
+    _guard: OwnedMutexGuard<()>,
+}
+
+impl WorkspaceOperationGuard {
+    pub fn workspace_id(&self) -> &str {
+        &self.workspace_id
+    }
+}
+
+impl WorkspaceOperationLock {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Acquire the lease for `op` on `ws_id`; rejects when another op holds it.
-    pub async fn acquire(&self, ws_id: &str, op: &str) -> Result<LeaseGuard<'_>, RuntimeError> {
-        let mut holders = self.holders.write().await;
-        if let Some(holder) = holders.get(ws_id)
-            && holder != op
-        {
-            return Err(RuntimeError::WorkspaceBusy {
-                workspace_id: ws_id.to_string(),
-                holder: holder.to_string(),
-            });
-        }
-        holders.insert(ws_id.to_string(), op.to_string());
-        Ok(LeaseGuard {
-            leases: self,
-            ws_id: ws_id.to_string(),
-        })
+    fn lock_for(&self, ws_id: &str) -> Arc<Mutex<()>> {
+        let mut locks = self.locks.lock().unwrap_or_else(PoisonError::into_inner);
+        locks
+            .entry(ws_id.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
     }
 
-    /// Whether `op` currently holds the lease on `ws_id`.
-    pub async fn is_holder(&self, ws_id: &str, op: &str) -> bool {
-        self.holders
-            .read()
-            .await
-            .get(ws_id)
-            .is_some_and(|h| h == op)
-    }
-
-    /// Late-arrival rejection (V3): a task holding a stale lease (e.g. an old
-    /// handle whose generation was replaced) must be refused.
-    pub async fn reject_stale(&self, ws_id: &str, op: &str) -> Result<(), RuntimeError> {
-        if self.is_holder(ws_id, op).await {
-            return Ok(());
-        }
-        Err(RuntimeError::WorkspaceBusy {
+    /// Serialize a materialization operation with other workspace operations.
+    pub async fn lock(&self, ws_id: &str) -> WorkspaceOperationGuard {
+        WorkspaceOperationGuard {
             workspace_id: ws_id.to_string(),
-            holder: "stale-handle".to_string(),
-        })
-    }
-}
-
-/// RAII guard: released on drop or explicit [`LeaseGuard::release`].
-pub struct LeaseGuard<'a> {
-    leases: &'a ExecutionLease,
-    ws_id: String,
-}
-
-impl LeaseGuard<'_> {
-    pub async fn release(self) {
-        self.leases.holders.write().await.remove(&self.ws_id);
-    }
-}
-
-impl Drop for LeaseGuard<'_> {
-    fn drop(&mut self) {
-        if let Ok(mut holders) = self.leases.holders.try_write() {
-            holders.remove(&self.ws_id);
+            _guard: self.lock_for(ws_id).lock_owned().await,
         }
-        // Contended case: the write lock is held by another acquire; the entry
-        // is ours so it will be visible to the next acquire. To avoid leaking,
-        // spawn-free best effort: try again shortly is overkill for an
-        // in-process lease whose holder map is only ever touched by short
-        // critical sections, so we accept try_write semantics.
+    }
+
+    /// Explicit deletion is best-effort and must not wait past the CP callback
+    /// window when another workspace operation is still in flight.
+    pub fn try_lock(&self, ws_id: &str) -> Result<WorkspaceOperationGuard, RuntimeError> {
+        self.lock_for(ws_id)
+            .try_lock_owned()
+            .map(|guard| WorkspaceOperationGuard {
+                workspace_id: ws_id.to_string(),
+                _guard: guard,
+            })
+            .map_err(|_| RuntimeError::WorkspaceBusy {
+                workspace_id: ws_id.to_string(),
+            })
     }
 }
 
 /// Single authoritative write path. Owns all registry state mutations.
 pub struct Lifecycle {
     registry: Arc<WorkspaceRegistry>,
-    leases: Arc<ExecutionLease>,
-    /// Per-ws in-flight transition serialisation (distinct from the ensurer's
-    /// materialize lock: this one guards the state record, not Docker work).
+    operation_lock: Arc<WorkspaceOperationLock>,
+    /// Serializes registry state writes; the operation lock separately spans
+    /// per-Workspace materialization and explicit deletion.
     transitions: Mutex<()>,
 }
 
 impl Lifecycle {
-    pub fn new(registry: Arc<WorkspaceRegistry>, leases: Arc<ExecutionLease>) -> Self {
+    pub fn new(
+        registry: Arc<WorkspaceRegistry>,
+        operation_lock: Arc<WorkspaceOperationLock>,
+    ) -> Self {
         Self {
             registry,
-            leases,
+            operation_lock,
             transitions: Mutex::new(()),
         }
     }
 
-    pub fn leases(&self) -> &Arc<ExecutionLease> {
-        &self.leases
+    pub fn operation_lock(&self) -> &Arc<WorkspaceOperationLock> {
+        &self.operation_lock
     }
 
     pub fn registry(&self) -> &Arc<WorkspaceRegistry> {
@@ -435,6 +415,12 @@ pub fn derive_state(
 ) -> Option<LifecycleState> {
     match (instance, status) {
         (Some(_), Some(MaterializationState::Materializing)) => Some(LifecycleState::Creating),
+        (Some(InstanceState::Stopped), Some(MaterializationState::Destroying)) => {
+            Some(LifecycleState::Destroying)
+        }
+        (Some(InstanceState::Stopped), Some(MaterializationState::Failed)) => {
+            Some(LifecycleState::Failed)
+        }
         (Some(InstanceState::Active), _) => Some(LifecycleState::Ready),
         (Some(InstanceState::Paused), _) => Some(LifecycleState::Paused),
         (Some(InstanceState::Stopped), _) => Some(LifecycleState::Stopped),
@@ -564,7 +550,7 @@ mod tests {
     async fn seeded() -> (Arc<WorkspaceRegistry>, Lifecycle) {
         let registry = registry();
         registry.register("ws-1", "/tmp/ws-1").await;
-        let lifecycle = Lifecycle::new(registry.clone(), Arc::new(ExecutionLease::new()));
+        let lifecycle = Lifecycle::new(registry.clone(), Arc::new(WorkspaceOperationLock::new()));
         (registry, lifecycle)
     }
 
@@ -629,27 +615,46 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn lease_rejects_second_holder_and_releases_on_drop() {
-        let leases = ExecutionLease::new();
-        {
-            let _guard = leases.acquire("ws-1", "ensure").await.unwrap();
-            let second = leases.acquire("ws-1", "destroy").await;
-            assert!(second.is_err(), "double-holder must be rejected");
-            let same = leases.acquire("ws-1", "ensure").await;
-            assert!(same.is_ok(), "same op re-entrant until released");
-        }
-        // Dropped: released.
-        let next = leases.acquire("ws-1", "destroy").await;
-        assert!(next.is_ok(), "guard drop must release the lease");
+    async fn workspace_operation_lock_is_exclusive_and_releases_on_drop() {
+        let lock = WorkspaceOperationLock::new();
+        let guard = lock.lock("ws-1").await;
+
+        assert!(matches!(
+            lock.try_lock("ws-1"),
+            Err(RuntimeError::WorkspaceBusy { .. })
+        ));
+        assert!(
+            lock.try_lock("ws-2").is_ok(),
+            "other workspaces remain independent"
+        );
+
+        drop(guard);
+        assert!(
+            lock.try_lock("ws-1").is_ok(),
+            "drop must release the operation lock"
+        );
     }
 
     #[tokio::test]
-    async fn lease_rejects_stale_handles() {
-        let leases = ExecutionLease::new();
-        leases.acquire("ws-1", "destroy").await.unwrap();
-        let stale = leases.reject_stale("ws-1", "old-task");
-        // reject_stale is async; drive it.
-        assert!(stale.await.is_err());
+    async fn workspace_operation_lock_releases_when_holder_task_is_cancelled() {
+        let lock = Arc::new(WorkspaceOperationLock::new());
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let holder = tokio::spawn({
+            let lock = lock.clone();
+            async move {
+                let _guard = lock.lock("ws-1").await;
+                let _ = started_tx.send(());
+                std::future::pending::<()>().await;
+            }
+        });
+
+        started_rx.await.unwrap();
+        holder.abort();
+        assert!(holder.await.unwrap_err().is_cancelled());
+        assert!(
+            lock.try_lock("ws-1").is_ok(),
+            "cancelled task must release its guard"
+        );
     }
 
     #[test]
@@ -676,6 +681,22 @@ mod tests {
             Some(LifecycleState::Paused)
         );
         assert_eq!(
+            derive_state(
+                Some(InstanceState::Stopped),
+                Some(MaterializationState::Destroying)
+            ),
+            Some(LifecycleState::Destroying)
+        );
+        assert_eq!(
+            derive_state(
+                Some(InstanceState::Stopped),
+                Some(MaterializationState::Failed)
+            ),
+            Some(LifecycleState::Failed)
+        );
+        assert!(LifecycleState::Destroying.allows(LifecycleState::Failed));
+        assert!(LifecycleState::Failed.allows(LifecycleState::Destroying));
+        assert_eq!(
             derive_state(Some(InstanceState::Suspended), None),
             Some(LifecycleState::Stopped)
         );
@@ -693,7 +714,7 @@ mod tests {
     #[tokio::test]
     async fn rebuild_skips_known_and_maps_live_states() {
         let registry = registry();
-        let lifecycle = Lifecycle::new(registry.clone(), Arc::new(ExecutionLease::new()));
+        let lifecycle = Lifecycle::new(registry.clone(), Arc::new(WorkspaceOperationLock::new()));
         lifecycle
             .rebuild_from_instances(vec![
                 ("ws-a".to_string(), InstanceState::Active),

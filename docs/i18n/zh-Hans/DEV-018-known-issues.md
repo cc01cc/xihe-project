@@ -36,7 +36,7 @@ updated: 2026-10-08
 - **`destroying` 409 窗口**：destroy 进行中的 workspace，materialize/ensure 立即 409 `WORKSPACE_DESTROYING`；窗口结束（完成注销）后按 404 处理，再次 ensure = 新建。CP 原样透传该 409（不再 collapse 502）。
 - **paused 恢复语义**：`unpause` 失败 fail-closed（`failed` + reason），无 recreate fallback；paused 容器若被外部 `docker kill`，ensure 探测后走正常 reconcile。
 - **reaper 只剩 3 档**（15m pause / 2h stop / 24h 注销）；`Suspended/Released` 不再写入 instances，statuses 保留 `released` 字面仅供 UI「已释放」文案推导。
-- **lease 为进程内存**：Runtime 重启后 lease 全清，依赖 Docker `rebuild` 接管（无跨进程双主防护，单 Runtime v1 场景可接受）。
+- **工作区生命周期操作锁为进程内存**：`WorkspaceOperationLock` 重启后全清，依赖 Docker `rebuild` 接管；它只串行化 Runtime 内 ensure materialization 与显式删除，不提供跨进程双主防护，单 Runtime v1 场景可接受。空闲回收循环与进程退出清理仍是独立流程。
 - **REST read/list/stat 已走容器 exec**：无 Docker 或容器未启动时这些端点 fail-closed 503（与变更类一致）；binary write 仍 host 直写（JSON 帧 UTF-8 限制，债）。
 
 ## PLAN-0354 LLM 摘要 — 适用前提、租约与回退排障（2026-09-19；0355 裁定：默认关）

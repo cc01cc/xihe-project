@@ -91,7 +91,7 @@ pub struct AppState {
     /// PLAN-0347 T1.1/T1.2: execution seam (`SandboxBackend`) used by the
     /// destroy path; the ensure path still resolves the CP spec first.
     pub sandbox_backend: Arc<dyn SandboxBackend>,
-    /// PLAN-0345: single authoritative lifecycle write path + execution lease.
+    /// Single authoritative lifecycle write path + shared workspace operation lock.
     pub lifecycle: Arc<xihe_runtime::lifecycle::Lifecycle>,
     /// PLAN-0338: Run checkpoint slices (shadow git engine, capture/restore locks).
     pub checkpoints: Arc<CheckpointService>,
@@ -106,9 +106,18 @@ impl AppState {
         &self,
         workspace_id: &str,
     ) -> xihe_runtime::error::Result<xihe_runtime::gateway::XiheRuntimeInstance> {
+        let operation_guard = self.lifecycle.operation_lock().lock(workspace_id).await;
+        self.ensure_workspace_with_guard(operation_guard).await
+    }
+
+    async fn ensure_workspace_with_guard(
+        &self,
+        operation_guard: xihe_runtime::lifecycle::WorkspaceOperationGuard,
+    ) -> xihe_runtime::error::Result<xihe_runtime::gateway::XiheRuntimeInstance> {
+        let workspace_id = operation_guard.workspace_id();
         let instance = self
             .workspace_ensurer
-            .ensure_workspace_materialized(workspace_id)
+            .ensure_workspace_materialized_with_guard(&operation_guard)
             .await?;
         if let Err(error) = self
             .workspace_event_watchers
@@ -2101,10 +2110,7 @@ async fn start_direct_attach_job(
             &app.job_engine.output_dir(job_id),
         )
         .map_err(job_engine_problem)?;
-        return match app
-            .job_engine
-            .start_in_workspace(Some(ws_id), job_id, plan)
-        {
+        return match app.job_engine.start_in_workspace(Some(ws_id), job_id, plan) {
             Ok(_handle) => Ok((
                 StatusCode::ACCEPTED,
                 AxumJson(serde_json::json!({
@@ -2137,10 +2143,7 @@ async fn start_direct_attach_job(
         backend_kind = plan.backend_kind,
         "PLAN-0395: starting an unrestricted host job (no filesystem isolation)"
     );
-    match app
-        .job_engine
-        .start_in_workspace(Some(ws_id), job_id, plan)
-    {
+    match app.job_engine.start_in_workspace(Some(ws_id), job_id, plan) {
         Ok(_handle) => Ok((
             StatusCode::ACCEPTED,
             AxumJson(serde_json::json!({
@@ -2168,17 +2171,29 @@ async fn workspace_materialize_handler(
             detail: "workspaceId contains invalid route characters".to_string(),
         }));
     }
-    // PLAN-0345 (decision #7/#11): destroying window rejects late materialize
-    // synchronously with 409 WORKSPACE_DESTROYING — never a silent 202.
-    if let Some(status) = app.registry.status(&ws_id).await
-        && status.state == xihe_runtime::gateway::MaterializationState::Destroying
-    {
+    let operation_guard = match app.lifecycle.operation_lock().try_lock(&ws_id) {
+        Ok(guard) => guard,
+        Err(error) => {
+            if let Some(status) = app.registry.status(&ws_id).await
+                && status.state == xihe_runtime::gateway::MaterializationState::Destroying
+            {
+                return Err(runtime_problem(RuntimeError::WorkspaceDestroying {
+                    workspace_id: ws_id.clone(),
+                }));
+            }
+            return Err(runtime_problem(error));
+        }
+    };
+    let status = app.registry.status(&ws_id).await;
+    if status.as_ref().is_some_and(|status| {
+        status.state == xihe_runtime::gateway::MaterializationState::Destroying
+    }) {
         return Err(runtime_problem(RuntimeError::WorkspaceDestroying {
             workspace_id: ws_id.clone(),
         }));
     }
     // Fast path: already materialized and in sync with CP spec.
-    if let Some(status) = app.registry.status(&ws_id).await
+    if let Some(status) = status.as_ref()
         && status.state == xihe_runtime::gateway::MaterializationState::Ready
     {
         // PLAN-0365 (root cause D): the C0 baseline is part of a complete
@@ -2212,14 +2227,19 @@ async fn workspace_materialize_handler(
             })?),
         ));
     }
-    // PLAN-262 M4 P0 / PLAN-274: state is written before spawn so the 202
-    // response never races a missing status. Failures mark Failed instead of
-    // leaving Materializing forever.
-    app.lifecycle.begin_materialize(&ws_id).await;
+    // Preserve a completed delete marker while the async CP lookup decides
+    // whether this Workspace still exists. For all other states, write the
+    // progress marker while holding the operation guard so delete cannot race it.
+    let released = status.as_ref().is_some_and(|status| {
+        status.state == xihe_runtime::gateway::MaterializationState::Released
+    });
+    if !released {
+        app.lifecycle.begin_materialize(&ws_id).await;
+    }
     let app_clone = Arc::clone(&app);
     let ws_id_clone = ws_id.clone();
     tokio::spawn(async move {
-        match app_clone.ensure_workspace(&ws_id_clone).await {
+        match app_clone.ensure_workspace_with_guard(operation_guard).await {
             Ok(_) => {
                 tracing::info!("Explicit materialization completed: ws_id={}", ws_id_clone);
                 // PLAN-0338 T0.5 ⑧: C0 initial slice, best-effort. A capture
@@ -2251,10 +2271,6 @@ async fn workspace_materialize_handler(
                     ws_id_clone,
                     error
                 );
-                app_clone
-                    .lifecycle
-                    .fail_materialization(&ws_id_clone, &error.to_string())
-                    .await;
             }
         }
     });
@@ -2310,21 +2326,20 @@ async fn delete_workspace_handler(
     AxumJson(req): AxumJson<DeleteWorkspaceRequest>,
 ) -> Result<AxumJson<DeleteWorkspaceResponse>, (StatusCode, AxumJson<serde_json::Value>)> {
     let ws_id = &req.ws_id;
-    // PLAN-0345 (decisions #7/#10): mark destroying before any teardown so late
-    // ensure/materialize callers get 409 WORKSPACE_DESTROYING during the window,
-    // and hold the execution lease for the in-flight destroy.
+    let _operation_guard = app
+        .lifecycle
+        .operation_lock()
+        .try_lock(ws_id)
+        .map_err(runtime_problem)?;
+    // Mark destroying after acquiring the shared operation lock. The materialize
+    // handler rejects new requests with 409; already-started ensure work cannot
+    // race the destroy and rechecks CP after the lock is released.
     app.lifecycle
         .transition(
             ws_id,
             xihe_runtime::lifecycle::LifecycleState::Destroying,
             None,
         )
-        .await
-        .map_err(runtime_problem)?;
-    let _lease = app
-        .lifecycle
-        .leases()
-        .acquire(ws_id, "destroy")
         .await
         .map_err(runtime_problem)?;
     // PLAN-0344 T1.3（round-1 P1-2）：destroying 标记后、容器 stop 前枚举
@@ -2341,18 +2356,17 @@ async fn delete_workspace_handler(
         }
     };
     app.mcp_sessions.cleanup_workspace(ws_id).await;
-    let cleanup_result = {
-        let manager = app.manager.lock().await;
-        if manager.get_state(ws_id).is_some() {
-            drop(manager);
-            app.sandbox_backend
-                .destroy(&SandboxHandle {
-                    workspace_id: ws_id.to_string(),
-                })
-                .await
-        } else {
-            Ok(())
-        }
+    let cleanup_result = match app
+        .sandbox_backend
+        .destroy(&SandboxHandle {
+            workspace_id: ws_id.to_string(),
+        })
+        .await
+    {
+        // Idle eviction or a concurrent cleanup may have already removed the
+        // ephemeral entity; logical Workspace deletion remains idempotent.
+        Err(RuntimeError::SandboxNotFound(_)) => Ok(()),
+        result => result,
     };
     if let Err(error) = cleanup_result {
         // 0329 §4: distinguishable cleanup failure; leave destroying window open
@@ -3121,7 +3135,7 @@ async fn run() -> anyhow::Result<()> {
     let manager = Arc::new(Mutex::new(WorkspaceManager::new()));
     let lifecycle = Arc::new(xihe_runtime::lifecycle::Lifecycle::new(
         registry.clone(),
-        Arc::new(xihe_runtime::lifecycle::ExecutionLease::new()),
+        Arc::new(xihe_runtime::lifecycle::WorkspaceOperationLock::new()),
     ));
     let workspace_ensurer = Arc::new(WorkspaceEnsurer::from_env(
         lifecycle.clone(),
@@ -3953,7 +3967,10 @@ mod remote_handler_tests {
     use super::*;
     use axum::body::{Body, to_bytes};
     use axum::http::Request;
+    use std::collections::VecDeque;
+    use std::sync::atomic::AtomicUsize;
     use tokio::net::TcpListener;
+    use tokio::sync::oneshot;
 
     const TEST_WS: &str = "ws-test";
 
@@ -3975,6 +3992,90 @@ mod remote_handler_tests {
             "storageBackend": "host_directory",
             "storageRef": ws_id,
         })
+    }
+
+    enum FakeDestroyResult {
+        Error(String),
+        NotFound,
+    }
+
+    #[derive(Default)]
+    struct FakeSandboxBackend {
+        destroy_calls: AtomicUsize,
+        destroy_results: Mutex<VecDeque<FakeDestroyResult>>,
+        destroy_started: Mutex<Option<oneshot::Sender<()>>>,
+        destroy_gate: Mutex<Option<oneshot::Receiver<()>>>,
+    }
+
+    impl FakeSandboxBackend {
+        fn with_destroy_result(result: FakeDestroyResult) -> Self {
+            Self {
+                destroy_results: Mutex::new(VecDeque::from([result])),
+                ..Self::default()
+            }
+        }
+
+        fn blocked_once(started: oneshot::Sender<()>, gate: oneshot::Receiver<()>) -> Self {
+            Self {
+                destroy_started: Mutex::new(Some(started)),
+                destroy_gate: Mutex::new(Some(gate)),
+                ..Self::default()
+            }
+        }
+    }
+
+    impl SandboxBackend for FakeSandboxBackend {
+        fn capabilities(&self) -> xihe_runtime::backend::Capabilities {
+            xihe_runtime::backend::docker_backend_capabilities()
+        }
+
+        fn ensure<'a>(
+            &'a self,
+            spec: &'a xihe_runtime::backend::SandboxSpec,
+        ) -> xihe_runtime::backend::BoxFuture<'a, std::result::Result<SandboxHandle, RuntimeError>>
+        {
+            Box::pin(async move {
+                Ok(SandboxHandle {
+                    workspace_id: spec.workspace_id.clone(),
+                })
+            })
+        }
+
+        fn destroy<'a>(
+            &'a self,
+            handle: &'a SandboxHandle,
+        ) -> xihe_runtime::backend::BoxFuture<'a, std::result::Result<(), RuntimeError>> {
+            Box::pin(async move {
+                self.destroy_calls.fetch_add(1, Ordering::SeqCst);
+                let started = self.destroy_started.lock().await.take();
+                if let Some(started) = started {
+                    let _ = started.send(());
+                }
+                let gate = self.destroy_gate.lock().await.take();
+                if let Some(gate) = gate {
+                    let _ = gate.await;
+                }
+                match self.destroy_results.lock().await.pop_front() {
+                    Some(FakeDestroyResult::Error(detail)) => Err(RuntimeError::Docker(detail)),
+                    Some(FakeDestroyResult::NotFound) => {
+                        Err(RuntimeError::SandboxNotFound(handle.workspace_id.clone()))
+                    }
+                    None => Ok(()),
+                }
+            })
+        }
+
+        fn execute<'a>(
+            &'a self,
+            _handle: &'a SandboxHandle,
+            _operation: &'a str,
+            _payload: serde_json::Value,
+        ) -> xihe_runtime::backend::BoxFuture<
+            'a,
+            std::result::Result<serde_json::Value, RuntimeError>,
+        > {
+            Box::pin(async { Ok(serde_json::Value::Null) })
+        }
     }
 
     async fn cp_stub() -> String {
@@ -4043,11 +4144,18 @@ mod remote_handler_tests {
     }
 
     pub(super) async fn test_state(cp_url: &str) -> Arc<AppState> {
+        test_state_with_backend(cp_url, None).await
+    }
+
+    async fn test_state_with_backend(
+        cp_url: &str,
+        sandbox_backend: Option<Arc<dyn SandboxBackend>>,
+    ) -> Arc<AppState> {
         let registry = Arc::new(WorkspaceRegistry::new());
         let manager = Arc::new(Mutex::new(WorkspaceManager::new()));
         let lifecycle = Arc::new(xihe_runtime::lifecycle::Lifecycle::new(
             registry.clone(),
-            Arc::new(xihe_runtime::lifecycle::ExecutionLease::new()),
+            Arc::new(xihe_runtime::lifecycle::WorkspaceOperationLock::new()),
         ));
         let client = xihe_runtime::hydrate::ExecutionSpecClient::new(cp_url, "test-token");
         let ensurer = Arc::new(WorkspaceEnsurer::from_env_with_client(
@@ -4064,6 +4172,13 @@ mod remote_handler_tests {
                 std::env::temp_dir().join("xihe-runtime-router-job-output"),
             )),
         ));
+        let sandbox_backend = sandbox_backend.unwrap_or_else(|| {
+            Arc::new(DockerBackend::new(
+                ensurer.clone(),
+                manager.clone(),
+                router.clone(),
+            ))
+        });
         Arc::new(AppState {
             registry: registry.clone(),
             manager: manager.clone(),
@@ -4078,11 +4193,7 @@ mod remote_handler_tests {
             mcp_sessions: Arc::new(
                 McpSessionManager::new().expect("mcp session manager (docker) for tests"),
             ),
-            sandbox_backend: Arc::new(DockerBackend::new(
-                ensurer.clone(),
-                manager.clone(),
-                router.clone(),
-            )),
+            sandbox_backend,
             lifecycle: lifecycle.clone(),
             // Checkpoint tests replace this with a tempdir-scoped service; other
             // tests never touch the host root.
@@ -4091,6 +4202,263 @@ mod remote_handler_tests {
             imports: Arc::new(ImportManager::new()),
             workspace_event_watchers: WorkspaceEventWatchers::default(),
         })
+    }
+
+    fn delete_request(ws_id: &str) -> AxumJson<DeleteWorkspaceRequest> {
+        AxumJson(DeleteWorkspaceRequest {
+            ws_id: ws_id.to_string(),
+        })
+    }
+
+    async fn delete_workspace(
+        app: Arc<AppState>,
+        ws_id: &str,
+    ) -> Result<AxumJson<DeleteWorkspaceResponse>, (StatusCode, AxumJson<serde_json::Value>)> {
+        delete_workspace_handler(State(app), delete_request(ws_id)).await
+    }
+
+    #[tokio::test]
+    async fn delete_busy_returns_conflict_without_lifecycle_or_backend_mutation() {
+        let cp_url = cp_stub().await;
+        let backend = Arc::new(FakeSandboxBackend::default());
+        let backend_trait: Arc<dyn SandboxBackend> = backend.clone();
+        let app = test_state_with_backend(&cp_url, Some(backend_trait)).await;
+        app.lifecycle
+            .register_ready(TEST_WS, "/tmp/ws-test", SecurityProfile::Strict, 1, "hash")
+            .await
+            .unwrap();
+        let initial_state = app.lifecycle.current(TEST_WS).await;
+        let guard = app.lifecycle.operation_lock().lock(TEST_WS).await;
+
+        let request = Request::builder()
+            .method(axum::http::Method::POST)
+            .uri("/internal/v1/runtime/workspaces/delete")
+            .header(
+                axum::http::header::AUTHORIZATION,
+                "Bearer dev-token-not-secure",
+            )
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                serde_json::json!({"workspaceId": TEST_WS}).to_string(),
+            ))
+            .expect("delete request");
+        let response = tower::ServiceExt::oneshot(build_app_router(&app), request)
+            .await
+            .expect("infallible router");
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        let body: serde_json::Value = serde_json::from_slice(&body).expect("JSON error body");
+
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["code"], "WORKSPACE_BUSY");
+        assert_eq!(app.lifecycle.current(TEST_WS).await, initial_state);
+        assert_eq!(backend.destroy_calls.load(Ordering::SeqCst), 0);
+        drop(guard);
+    }
+
+    #[tokio::test]
+    async fn materialize_during_destroying_keeps_existing_conflict_contract() {
+        let cp_url = cp_stub().await;
+        let backend = Arc::new(FakeSandboxBackend::default());
+        let backend_trait: Arc<dyn SandboxBackend> = backend.clone();
+        let app = test_state_with_backend(&cp_url, Some(backend_trait)).await;
+        app.lifecycle
+            .transition(
+                TEST_WS,
+                xihe_runtime::lifecycle::LifecycleState::Destroying,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let (status, AxumJson(body)) =
+            workspace_materialize_handler(Path(TEST_WS.to_string()), State(app.clone()))
+                .await
+                .unwrap_err();
+
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["code"], "WORKSPACE_DESTROYING");
+        assert_eq!(
+            app.registry.status(TEST_WS).await.unwrap().state,
+            xihe_runtime::gateway::MaterializationState::Destroying
+        );
+        assert_eq!(backend.destroy_calls.load(Ordering::SeqCst), 0);
+        assert!(app.manager.lock().await.list_workspaces().is_empty());
+    }
+
+    #[tokio::test]
+    async fn materialize_busy_does_not_write_materializing_status() {
+        let cp_url = cp_stub().await;
+        let backend = Arc::new(FakeSandboxBackend::default());
+        let backend_trait: Arc<dyn SandboxBackend> = backend.clone();
+        let app = test_state_with_backend(&cp_url, Some(backend_trait)).await;
+        app.lifecycle
+            .register_ready(TEST_WS, "/tmp/ws-test", SecurityProfile::Strict, 1, "hash")
+            .await
+            .unwrap();
+        let initial_state = app.lifecycle.current(TEST_WS).await;
+        let _guard = app.lifecycle.operation_lock().lock(TEST_WS).await;
+
+        let (status, AxumJson(body)) =
+            workspace_materialize_handler(Path(TEST_WS.to_string()), State(app.clone()))
+                .await
+                .unwrap_err();
+
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["code"], "WORKSPACE_BUSY");
+        assert_eq!(app.lifecycle.current(TEST_WS).await, initial_state);
+        assert_eq!(backend.destroy_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn materialize_busy_does_not_trust_stale_materializing_marker() {
+        let cp_url = cp_stub().await;
+        let backend = Arc::new(FakeSandboxBackend::default());
+        let backend_trait: Arc<dyn SandboxBackend> = backend.clone();
+        let app = test_state_with_backend(&cp_url, Some(backend_trait)).await;
+        app.lifecycle.begin_materialize(TEST_WS).await;
+        let _guard = app.lifecycle.operation_lock().lock(TEST_WS).await;
+
+        let (status, AxumJson(body)) =
+            workspace_materialize_handler(Path(TEST_WS.to_string()), State(app.clone()))
+                .await
+                .unwrap_err();
+
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["code"], "WORKSPACE_BUSY");
+        assert_eq!(
+            app.registry.status(TEST_WS).await.unwrap().state,
+            xihe_runtime::gateway::MaterializationState::Materializing
+        );
+        assert_eq!(backend.destroy_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn materialize_handler_404_after_delete_preserves_released_status() {
+        let cp_url = cp_stub().await;
+        let backend = Arc::new(FakeSandboxBackend::default());
+        let backend_trait: Arc<dyn SandboxBackend> = backend.clone();
+        let app = test_state_with_backend(&cp_url, Some(backend_trait)).await;
+        app.lifecycle.complete_destroy("ws-missing").await;
+
+        let (status, AxumJson(body)) =
+            workspace_materialize_handler(Path("ws-missing".to_string()), State(app.clone()))
+                .await
+                .expect("async materialization trigger is accepted");
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(body["state"], "released");
+
+        let _operation_guard = app.lifecycle.operation_lock().lock("ws-missing").await;
+        assert!(app.registry.get("ws-missing").await.is_none());
+        assert_eq!(
+            app.registry.status("ws-missing").await.unwrap().state,
+            xihe_runtime::gateway::MaterializationState::Released
+        );
+        assert_eq!(backend.destroy_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn delete_treats_missing_execution_entity_as_idempotent_success() {
+        let cp_url = cp_stub().await;
+        let backend = Arc::new(FakeSandboxBackend::with_destroy_result(
+            FakeDestroyResult::NotFound,
+        ));
+        let backend_trait: Arc<dyn SandboxBackend> = backend.clone();
+        let app = test_state_with_backend(&cp_url, Some(backend_trait)).await;
+        app.lifecycle
+            .register_ready(TEST_WS, "/tmp/ws-test", SecurityProfile::Strict, 1, "hash")
+            .await
+            .unwrap();
+
+        let AxumJson(response) = delete_workspace(app.clone(), TEST_WS)
+            .await
+            .expect("already absent Sandbox is an idempotent delete");
+
+        assert_eq!(response.status, "ok");
+        assert_eq!(response.ws_id, TEST_WS);
+        assert!(response.jobs_enumeration_failed);
+        assert!(response.job_ids.is_none());
+        assert_eq!(backend.destroy_calls.load(Ordering::SeqCst), 1);
+        assert!(app.registry.get(TEST_WS).await.is_none());
+        assert_eq!(
+            app.registry.status(TEST_WS).await.unwrap().state,
+            xihe_runtime::gateway::MaterializationState::Released
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_backend_failure_is_visible_and_retryable() {
+        let cp_url = cp_stub().await;
+        let backend = Arc::new(FakeSandboxBackend::with_destroy_result(
+            FakeDestroyResult::Error("backend down".to_string()),
+        ));
+        let backend_trait: Arc<dyn SandboxBackend> = backend.clone();
+        let app = test_state_with_backend(&cp_url, Some(backend_trait)).await;
+        app.lifecycle
+            .register_ready(TEST_WS, "/tmp/ws-test", SecurityProfile::Strict, 1, "hash")
+            .await
+            .unwrap();
+
+        let (status, AxumJson(body)) = delete_workspace(app.clone(), TEST_WS).await.unwrap_err();
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["detail"], "Docker error: backend down");
+        assert_eq!(
+            app.lifecycle.current(TEST_WS).await,
+            Some(xihe_runtime::lifecycle::LifecycleState::Failed)
+        );
+        assert!(app.registry.get(TEST_WS).await.is_some());
+        assert_eq!(
+            app.registry.status(TEST_WS).await.unwrap().state,
+            xihe_runtime::gateway::MaterializationState::Failed
+        );
+
+        let AxumJson(response) = delete_workspace(app.clone(), TEST_WS)
+            .await
+            .expect("retry from Failed completes deletion");
+        assert_eq!(response.status, "ok");
+        assert_eq!(backend.destroy_calls.load(Ordering::SeqCst), 2);
+        assert!(app.registry.get(TEST_WS).await.is_none());
+        assert_eq!(
+            app.registry.status(TEST_WS).await.unwrap().state,
+            xihe_runtime::gateway::MaterializationState::Released
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_delete_releases_operation_lock_for_retry() {
+        let cp_url = cp_stub().await;
+        let (started_tx, started_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        let backend = Arc::new(FakeSandboxBackend::blocked_once(started_tx, release_rx));
+        let backend_trait: Arc<dyn SandboxBackend> = backend.clone();
+        let app = test_state_with_backend(&cp_url, Some(backend_trait)).await;
+        app.lifecycle
+            .register_ready(TEST_WS, "/tmp/ws-test", SecurityProfile::Strict, 1, "hash")
+            .await
+            .unwrap();
+
+        let request = tokio::spawn(delete_workspace(app.clone(), TEST_WS));
+        started_rx.await.expect("destroy backend started");
+        assert_eq!(
+            app.lifecycle.current(TEST_WS).await,
+            Some(xihe_runtime::lifecycle::LifecycleState::Destroying)
+        );
+
+        request.abort();
+        assert!(request.await.unwrap_err().is_cancelled());
+        let _ = release_tx.send(());
+
+        let AxumJson(response) = delete_workspace(app.clone(), TEST_WS)
+            .await
+            .expect("a cancelled delete can be retried");
+        assert_eq!(response.status, "ok");
+        assert_eq!(backend.destroy_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            app.registry.status(TEST_WS).await.unwrap().state,
+            xihe_runtime::gateway::MaterializationState::Released
+        );
     }
 
     fn auth_headers() -> HeaderMap {
@@ -5582,7 +5950,7 @@ mod job_engine_route_tests {
         let manager = Arc::new(Mutex::new(WorkspaceManager::new()));
         let lifecycle = Arc::new(Lifecycle::new(
             registry.clone(),
-            Arc::new(xihe_runtime::lifecycle::ExecutionLease::new()),
+            Arc::new(xihe_runtime::lifecycle::WorkspaceOperationLock::new()),
         ));
         let ensurer = Arc::new(WorkspaceEnsurer::new(
             lifecycle.clone(),
