@@ -41,7 +41,7 @@ uv sync          # 安装依赖（见 pyproject.toml）
 - `api/` 按域分组承载 HTTP 路由、请求 schema 与路由级错误映射；`api/` 不得直接 import LangChain/LangGraph。
 - `agent_runner/tool_adapter.py` 是 `LCToolAdapter`（含 D5 writer gate、bounded preview、append 失败台账等共享事件 helper）的唯一归属；`agent_runner/graph_builder.py` 是 `create_react_agent` 直调的唯一归属（runner 主图与 registry/supervisor 均经其建图）。
 - `registry/` 保留 worker 配置/启停/文件持久化职责；`get_tools_for_worker` 为公开选择函数，supervisor/registry 不得引用其他模块私有符号（`_` 前缀）。
-- 依赖方向与例外清单见 PLAN-0473 `spec/agent-module-boundaries.md`（完成时晋升根级 spec）。
+- 依赖方向与例外清单见根级 SPEC `../../spec/agent/agent-module-boundaries.md`（PLAN-0473 归档时晋升，`active/implemented`）。
 
 ## Key Conventions
 

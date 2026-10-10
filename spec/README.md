@@ -28,7 +28,7 @@ spec/
 |-- writing-guide.md
 |-- architecture/       # 模块边界、通信、运行拓扑
 |-- ui/                  # 交互状态、设计系统、可访问性
-|-- agent/               # 执行模型、Context/工具、Agent 绑定
+|-- agent/               # 执行模型、Context/工具、Agent 绑定、包内模块边界
 |-- session/             # Chat Session、ChatRun、MCP session
 |-- security/            # 认证、授权、审批、能力策略、审计
 |-- workspace/           # 生命周期、Sandbox、Checkpoint、导入、事件
@@ -51,6 +51,7 @@ spec/
 |---|---|---|---|---|---|---|
 | architecture / communication | proposed | partial | 跨边界 owner | UI、CP、Agent、Runtime | A03-xihe | PLAN-0385；Session 派生状态 SSE extension 顺序承接至 PLAN-0408；Runtime 运行拓扑见 `architecture/runtime-topology.md` |
 | ui interaction | proposed | partial | UI + 跨边界 owner | UI、CP、Agent、Session、Workspace | A03-xihe | PLAN-0388；PLAN-0384 仅负责 feature flow |
+| ui feature boundaries | proposed | partial | UI owner | UI features、router、tests | A03-xihe | PLAN-0472；仅冻结 UI code ownership/layout/dependency direction，不复制 wire schema |
 | agent execution / Context | proposed | partial | Agent owner | Agent、CP、Runtime、UI、Security | A03-xihe | PLAN-0387；PLAN-0381/0382 局部规范状态见其文件级消费者/来源字段 |
 | agent run guardrails（总览索引） | proposed | partial | Agent owner（索引 owner，不裁决跨域规则） | Agent、CP、Runtime、Security、UI、后续 XH PLAN | A03-xihe | PLAN-0429；只导航风险类别/执行层/实现状态，领域细则仍归各 owner SPEC |
 | session boundaries | proposed | partial | CP/Session owner | UI、CP/Session、Agent、Context、Workspace、Runtime/MCP | A03-xihe | PLAN-0387；Chat Session、ChatRun 与 MCP session 分开；fork/branch actions 见 PLAN-0409；派生协作 Inbox 见 PLAN-0408；Ledger 根行由 PLAN-0467 退役 |
@@ -118,6 +119,10 @@ PLAN-0374 冻结 Agent principal 与 Workspace 绑定契约（V42 schema、Sessi
 
 - [Agent principal 与 Workspace 绑定](agent/principal-workspace-binding.md)
 
+PLAN-0473 冻结 Agent 包内模块结构规范（`api/` 域分组、`app_state` 共享单例、`agent_runner/tool_adapter` 与 `graph_builder` 框架细节归属、依赖方向与运行行为不变量；2026-10-10 实施完成并归档，`active/implemented`）：
+
+- [Agent 模块边界与目录规范](agent/agent-module-boundaries.md)
+
 PLAN-0409 冻结跨 Session fork 与同 Session branch actions；child fork seed 消费由 PLAN-0410 独占维护：
 
 - [Session Fork 与 Branch Actions](session/fork-and-branch-actions.md)
@@ -131,6 +136,10 @@ PLAN-0388 已建立 UI interaction/design/accessibility proposed 草案；它们
 - [UI 交互模型](ui/interaction-model.md)
 - [UI 设计系统与状态表现](ui/design-system.md)
 - [UI 无障碍与键盘契约](ui/accessibility.md)
+
+PLAN-0472 已建立 UI feature boundaries proposed 草案；它冻结 UI feature source ownership、依赖方向与 Workspace 首期增量布局，不定义服务端状态或 wire schema：
+
+- [UI Feature Boundaries](ui/feature-boundaries.md)
 
 PLAN-0389 已建立 Workspace/Configuration proposed 草案；Workspace logical resource、execution binding、storage/checkpoint、import/events 和进程可见配置来源保持分层：
 

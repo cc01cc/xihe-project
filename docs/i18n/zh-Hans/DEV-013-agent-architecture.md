@@ -39,7 +39,7 @@ execution/role/context 三份仍是目标态边界；独立 Agent principal、Wo
 
 | 接口 | 文件 | 职责 |
 |------|------|------|
-| `AgentRunner` | `interfaces/agent_runner.py` | Agent 编排抽象：`stream()` / `create_agent()`（PLAN-0473 勘误：实际接口无 `reset()`；`create_agent()` 当前无生产消费者，见 PLAN-0473 规范观察项） |
+| `AgentRunner` | `interfaces/agent_runner.py` | Agent 编排抽象：`stream()` / `create_agent()`（PLAN-0473 勘误：实际接口无 `reset()`；`create_agent()` 当前无生产消费者，观察项见 [`../../spec/agent/agent-module-boundaries.md`](../../spec/agent/agent-module-boundaries.md) §5） |
 | `BaseAgentTool` / `ToolSpec` | `interfaces/tool.py` | 工具抽象：`execute()` + JSON Schema 声明 |
 | `EventAdapter` | `interfaces/event_adapter.py` | 将框架原始事件翻译为 SSE `AgentEvent` |
 | `LLMProvider` | `interfaces/llm.py` | LLM 后端抽象：`complete()` / `stream_complete()` / `with_model()` |
@@ -243,9 +243,10 @@ if recover_ids:
 - `packages/agent/src/xihe_agent/llm/summarize.py`
 - `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/context/`
 
-## 7. 相关 PLAN
+## 7. 相关 PLAN 与 SPEC
 
-- PLAN-0473 Agent 模块边界与结构规范化（`api/`、`app_state.py`、`tool_adapter.py`、`graph_builder.py`；registry/supervisor 建图收敛）— 本节 §1/§2.2/§6
+- SPEC：[Agent 模块边界与目录规范](../../spec/agent/agent-module-boundaries.md)（PLAN-0473 归档时晋升，`active/implemented`）
+- PLAN-0473（已归档：`plans/archive/PLAN-0473-xh-agent-architecture-boundaries/`）Agent 模块边界与结构规范化（`api/`、`app_state.py`、`tool_adapter.py`、`graph_builder.py`；registry/supervisor 建图收敛）— 本节 §1/§2.2/§6
 
 - PLAN-0340 上下文源与注入（L1）
 - PLAN-0341 上下文管道与 prune（overflow/prune/SUM/熔断）— 本节 §3.1b
