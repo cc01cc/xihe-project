@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
+import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 
 @RestController
 public class OAuthController {
@@ -20,18 +21,24 @@ public class OAuthController {
     private static final Logger logger = LoggerFactory.getLogger(OAuthController.class);
 
     private final OAuthCredentialService service;
+    private final WorkspaceService workspaceService;
 
-    public OAuthController(OAuthCredentialService service) {
+    public OAuthController(OAuthCredentialService service, WorkspaceService workspaceService) {
         this.service = service;
+        this.workspaceService = workspaceService;
     }
 
     @PostMapping("/api/v1/oauth/sessions")
     public ResponseEntity<?> start(Authentication authentication, @RequestBody StartRequest request) {
         try {
             String userId = requireAuthentication(authentication);
+            String workspaceId = required(request.workspaceId(), "workspaceId");
+            // PLAN-0470 #20: workspace access is an orchestration-entry gate;
+            // the credential service no longer reads Workspace data.
+            workspaceService.requireOwnerOrMemberAccess(workspaceId, userId);
             OAuthCredentialService.AuthorizationStart start = service.start(new OAuthCredentialService.StartRequest(
                     userId,
-                    required(request.workspaceId(), "workspaceId"),
+                    workspaceId,
                     required(request.serverId(), "serverId"),
                     required(request.remoteEndpoint(), "remoteEndpoint"),
                     required(request.clientId(), "clientId"),
@@ -65,7 +72,10 @@ public class OAuthController {
     public ResponseEntity<?> revoke(Authentication authentication, @RequestBody BindingRequest request) {
         try {
             String userId = requireAuthentication(authentication);
-            boolean revoked = service.revoke(userId, required(request.workspaceId(), "workspaceId"), required(request.serverId(), "serverId"));
+            String workspaceId = required(request.workspaceId(), "workspaceId");
+            // PLAN-0470 #20: same entry-level gate as start/token.
+            workspaceService.requireOwnerOrMemberAccess(workspaceId, userId);
+            boolean revoked = service.revoke(userId, workspaceId, required(request.serverId(), "serverId"));
             if (!revoked) {
                 return ProblemDetailsHandler.problemResponse(HttpStatus.NOT_FOUND, "OAUTH_CREDENTIAL_NOT_FOUND", "OAuth credential not found");
             }
@@ -90,6 +100,12 @@ public class OAuthController {
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "OAuth token request is invalid");
         }
         try {
+            // PLAN-0470 #20: the internal refresh entry verifies workspace
+            // access up front (previously only the cache-miss path checked);
+            // a member removed mid-TTL now fails here instead of serving a
+            // cached token. IllegalArgumentException maps to the same 401
+            // OAUTH_REAUTH_REQUIRED the wrapped broker failure produced.
+            workspaceService.requireOwnerOrMemberAccess(request.workspaceId(), request.userId());
             OAuthCredentialService.AccessGrant grant = service.issueAccessToken(
                     request.userId(), request.workspaceId(), request.serverId(), request.scope());
             return ResponseEntity.ok(Map.of(

@@ -144,6 +144,26 @@ public class EventStoreService {
         return eventStoreRepository.saveAll(events);
     }
 
+    /**
+     * PLAN-0470 (decision #15): session-scoped event cleanup owned by Context.
+     * Called inside the Session deletion transaction (REQUIRED propagation), so
+     * a rollback rolls the whole Session delete back with the event rows.
+     */
+    @Transactional
+    public long deleteSessionEvents(String sessionId) {
+        return eventStoreRepository.deleteBySessionId(sessionId);
+    }
+
+    /**
+     * PLAN-0470 (decision #16): bounded admission read — does this Session own
+     * any durable Context event? Used by ChatSubmission under its Session row
+     * lock to decide whether a principal-null Session is still empty.
+     */
+    @Transactional(readOnly = true)
+    public boolean hasEventsForSession(String sessionId) {
+        return eventStoreRepository.existsBySessionId(sessionId);
+    }
+
     @Transactional(readOnly = true)
     public List<ContextEvent> read(String sessionId, Long afterSequence) {
         if (afterSequence == null || afterSequence <= 0) {

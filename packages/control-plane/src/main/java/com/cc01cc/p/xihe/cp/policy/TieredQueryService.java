@@ -1,10 +1,9 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.cc01cc.p.xihe.cp.chat.ChatRunStatusReadService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
-import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
-import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
-import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.service.SessionReadService;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -41,15 +40,17 @@ public class TieredQueryService {
 
     private static final String TOOL_SESSION_CONTENT = "session_content_read";
 
-    private final SessionRepository sessionRepository;
-    private final ChatRunRepository chatRunRepository;
+    // PLAN-0470 (decision #18): chain/status judgments read through the Session and
+    // ChatRun owner read services (bounded views) — no cross-domain repositories.
+    private final SessionReadService sessionReadService;
+    private final ChatRunStatusReadService chatRunStatusReadService;
     private final GrantAuthorizationService grantAuthorizationService;
 
-    public TieredQueryService(SessionRepository sessionRepository,
-                              ChatRunRepository chatRunRepository,
+    public TieredQueryService(SessionReadService sessionReadService,
+                              ChatRunStatusReadService chatRunStatusReadService,
                               GrantAuthorizationService grantAuthorizationService) {
-        this.sessionRepository = sessionRepository;
-        this.chatRunRepository = chatRunRepository;
+        this.sessionReadService = sessionReadService;
+        this.chatRunStatusReadService = chatRunStatusReadService;
         this.grantAuthorizationService = grantAuthorizationService;
     }
 
@@ -60,29 +61,29 @@ public class TieredQueryService {
     public record Tier2Access(boolean allowed) {}
 
     public Tier1Status tier1Status(String requesterSessionId, String targetSessionId) {
-        Session requester = requireSession(requesterSessionId, "requesterSessionId");
-        Session target = requireSession(targetSessionId, "targetSessionId");
+        SessionReadService.SessionPathView requester = requireSession(requesterSessionId, "requesterSessionId");
+        SessionReadService.SessionPathView target = requireSession(targetSessionId, "targetSessionId");
         requireDownwardChain(requester, target);
-        ChatRun run = chatRunRepository
-                .findFirstBySessionIdOrderByCreatedAtDescIdDesc(target.getId().toString())
+        ChatRunStatusReadService.ChatRunStatusView run = chatRunStatusReadService
+                .findLatestBySession(target.id().toString())
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "NOT_FOUND",
                         "Target session has no run"));
-        Instant at = run.getUpdatedAt() != null ? run.getUpdatedAt() : run.getCreatedAt();
-        return new Tier1Status(target.getId().toString(), run.getId().toString(), run.getStatus(), at);
+        Instant at = run.updatedAt() != null ? run.updatedAt() : run.createdAt();
+        return new Tier1Status(target.id().toString(), run.id().toString(), run.status(), at);
     }
 
     public Tier2Access tier2Access(String requesterSessionId, String targetSessionId) {
-        Session requester = requireSession(requesterSessionId, "requesterSessionId");
-        Session target = requireSession(targetSessionId, "targetSessionId");
+        SessionReadService.SessionPathView requester = requireSession(requesterSessionId, "requesterSessionId");
+        SessionReadService.SessionPathView target = requireSession(targetSessionId, "targetSessionId");
         requireDownwardChain(requester, target);
         PolicyRequest request = new PolicyRequest(
                 TOOL_SESSION_CONTENT,
                 List.of(ToolFaceRegistry.ACTION_READ),
-                List.of(target.getId().toString()),
+                List.of(target.id().toString()),
                 ToolShape.STRUCTURED,
-                requester.getUserId(),
-                requester.getWorkspaceId(),
-                requester.getId().toString());
+                requester.userId(),
+                requester.workspaceId(),
+                requester.id().toString());
         if (!grantAuthorizationService.allows(request)) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
                     "Tier-2 content read requires an explicit grant");
@@ -90,7 +91,7 @@ public class TieredQueryService {
         return new Tier2Access(true);
     }
 
-    private Session requireSession(String rawId, String parameter) {
+    private SessionReadService.SessionPathView requireSession(String rawId, String parameter) {
         UUID id;
         try {
             id = UUID.fromString(rawId);
@@ -98,7 +99,7 @@ public class TieredQueryService {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                     parameter + " must be a UUID");
         }
-        return sessionRepository.findById(id).orElseThrow(() -> new CpApiException(
+        return sessionReadService.findById(id).orElseThrow(() -> new CpApiException(
                 HttpStatus.NOT_FOUND, "NOT_FOUND", "Session not found"));
     }
 
@@ -109,23 +110,24 @@ public class TieredQueryService {
      * other inconsistency deny fail-closed (403), mirroring the strictness of
      * {@link GrantPrincipalPathResolver}.
      */
-    private void requireDownwardChain(Session requester, Session target) {
-        if (!Objects.equals(requester.getWorkspaceId(), target.getWorkspaceId())) {
+    private void requireDownwardChain(SessionReadService.SessionPathView requester,
+                                      SessionReadService.SessionPathView target) {
+        if (!Objects.equals(requester.workspaceId(), target.workspaceId())) {
             throw chainDenied("cross-workspace query");
         }
         Set<UUID> visited = new HashSet<>();
-        Session cursor = target;
+        SessionReadService.SessionPathView cursor = target;
         while (true) {
-            if (cursor.getId().equals(requester.getId())) {
+            if (cursor.id().equals(requester.id())) {
                 return;
             }
-            if (!visited.add(cursor.getId())) {
+            if (!visited.add(cursor.id())) {
                 throw chainDenied("cyclic provenance");
             }
-            UUID parentId = cursor.getSpawnedFromSessionId();
-            UUID parentRunId = cursor.getSpawnedFromRunId();
-            Instant spawnedAt = cursor.getSpawnedAt();
-            String kind = cursor.getKind();
+            UUID parentId = cursor.spawnedFromSessionId();
+            UUID parentRunId = cursor.spawnedFromRunId();
+            Instant spawnedAt = cursor.spawnedAt();
+            String kind = cursor.kind();
             boolean hasParentInfo = parentId != null || parentRunId != null || spawnedAt != null;
             if (kind == null && !hasParentInfo) {
                 throw chainDenied("target is not on the requester's chain");
@@ -139,7 +141,7 @@ public class TieredQueryService {
             if (parentId == null || parentRunId == null || spawnedAt == null) {
                 throw chainDenied("incomplete provenance");
             }
-            cursor = sessionRepository.findById(parentId).orElseThrow(
+            cursor = sessionReadService.findById(parentId).orElseThrow(
                     () -> chainDenied("dangling provenance"));
         }
     }

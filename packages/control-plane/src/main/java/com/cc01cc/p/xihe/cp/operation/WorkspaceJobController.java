@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.operation;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
+import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeJobClient;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -85,8 +86,14 @@ public class WorkspaceJobController {
                     "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required to start a Workspace job");
         }
         try {
+            // PLAN-0470 #26: all four Job endpoints gate on Workspace access at
+            // this entry; start additionally resolves executionMode here and
+            // passes it down — the Job service no longer reads Workspace data.
+            Workspace workspace = workspaceService.requireAccessibleWorkspace(workspaceId, userId);
+            String executionMode = workspace.getExecutionMode() == null || workspace.getExecutionMode().isBlank()
+                    ? "docker" : workspace.getExecutionMode();
             WorkspaceJobStartService.StartOutcome outcome = workspaceJobStartService.start(
-                    workspaceId, userId, request, idempotencyKey);
+                    workspaceId, userId, request, idempotencyKey, executionMode);
             if (outcome.replayed()) {
                 return ResponseEntity.ok(outcome.job());
             }

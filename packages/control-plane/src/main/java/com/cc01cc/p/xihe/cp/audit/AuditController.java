@@ -92,7 +92,7 @@ public class AuditController {
             String userId = requireUser();
             AuditReadService.AuditDetail detail =
                     auditReadService.detail(type, uuid(id, "id"), userId);
-            return ResponseEntity.ok(envelope(detail));
+            return ResponseEntity.ok(AuditViews.envelope(detail));
         } catch (CpApiException e) {
             logger.warn("Audit detail rejected: type={} code={}", type, e.getCode());
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
@@ -101,14 +101,6 @@ public class AuditController {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", e.getMessage());
         }
-    }
-
-    static Map<String, Object> envelope(AuditReadService.AuditDetail detail) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("entry", detail.entry());
-        body.put("timeline", detail.timeline());
-        body.put("attempts", detail.attempts());
-        return body;
     }
 
     private String requireUser() {

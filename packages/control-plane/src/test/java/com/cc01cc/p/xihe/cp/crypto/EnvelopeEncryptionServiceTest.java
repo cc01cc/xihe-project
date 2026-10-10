@@ -1,4 +1,4 @@
-package com.cc01cc.p.xihe.cp.oauth;
+package com.cc01cc.p.xihe.cp.crypto;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;

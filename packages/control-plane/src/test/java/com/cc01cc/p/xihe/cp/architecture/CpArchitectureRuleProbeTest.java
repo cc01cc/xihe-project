@@ -14,10 +14,13 @@ import com.cc01cc.p.xihe.architectureprobe.CpArchitectureProbeFixtures.GoodServi
 import com.cc01cc.p.xihe.architectureprobe.CpArchitectureProbeFixtures.ProbeEntity;
 import com.cc01cc.p.xihe.architectureprobe.CpArchitectureProbeFixtures.ProbeRepository;
 import com.cc01cc.p.xihe.architectureprobe.CpArchitectureProbeFixtures.ArrayOwnershipProbe;
+import com.cc01cc.p.xihe.architectureprobe.CpArchitectureProbeFixtures.BadServiceDependentRepository;
 import com.cc01cc.p.xihe.architectureprobe.CpArchitectureProbeFixtures.CycleA;
 import com.cc01cc.p.xihe.architectureprobe.CpArchitectureProbeFixtures.CycleB;
 import com.cc01cc.p.xihe.architectureprobe.CpArchitectureProbeFixtures.ChainA;
 import com.cc01cc.p.xihe.architectureprobe.CpArchitectureProbeFixtures.ChainB;
+import com.cc01cc.p.xihe.cp.crypto.BadCryptoFacilityProbe;
+import com.cc01cc.p.xihe.cp.crypto.EnvelopeEncryptionService;
 import com.cc01cc.p.xihe.cp.service.UnknownOwnershipProbe;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceJob;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
@@ -153,6 +156,44 @@ class CpArchitectureRuleProbeTest {
                 Map.of("a", Set.of("b"), "b", Set.of("a", "c"), "c", Set.of())));
         assertEquals(List.of(), CpArchitectureTest.stronglyConnectedOwners(
                 Map.of("a", Set.of("b"), "b", Set.of())));
+    }
+
+    /** PLAN-0470 #27 negative probe: crypto facility depending on a business service is rejected. */
+    @Test
+    void technicalFacilityDependencyOnBusinessIsRejected() {
+        var types = new ClassFileImporter().importClasses(
+                BadCryptoFacilityProbe.class, WorkspaceService.class);
+        var rule = CpArchitectureRules.TECHNICAL_FACILITY_STAYS_LOWER;
+        // The fixture declares one field and one constructor parameter dependency.
+        assertEquals(2, rule.evaluate(types).getFailureReport().getDetails().size(),
+                () -> rule.getDescription() + "\n" + rule.evaluate(types).getFailureReport());
+        assertThrows(AssertionError.class, () -> rule.check(types));
+    }
+
+    /** PLAN-0470 #27 positive probe: the real crypto facility has no CP business deps. */
+    @Test
+    void technicalFacilityStaysLowerForRealCryptoService() {
+        var types = new ClassFileImporter().importClasses(EnvelopeEncryptionService.class);
+        CpArchitectureRules.TECHNICAL_FACILITY_STAYS_LOWER.check(types);
+    }
+
+    /** PLAN-0470 #27 negative probe: a repository depending on an application service is rejected. */
+    @Test
+    void repositoryDependencyOnServiceIsRejected() {
+        var types = new ClassFileImporter().importClasses(
+                BadServiceDependentRepository.class, GoodService.class);
+        var rule = CpArchitectureRules.REPOSITORY_STAYS_BELOW_SERVICES;
+        assertEquals(1, rule.evaluate(types).getFailureReport().getDetails().size(),
+                () -> rule.getDescription() + "\n" + rule.evaluate(types).getFailureReport());
+        assertThrows(AssertionError.class, () -> rule.check(types));
+    }
+
+    /** PLAN-0470 #27 positive probe: the legal controller→service→repository chain passes. */
+    @Test
+    void repositoryStaysBelowServicesForLegalChain() {
+        var types = new ClassFileImporter().importClasses(
+                GoodController.class, GoodService.class, ProbeRepository.class, ProbeEntity.class);
+        CpArchitectureRules.REPOSITORY_STAYS_BELOW_SERVICES.check(types);
     }
 
     private static SliceAssignment twoModules(Class<?> first, Class<?> second) {

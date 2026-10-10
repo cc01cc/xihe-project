@@ -2,7 +2,6 @@ package com.cc01cc.p.xihe.cp.chat;
 
 import jakarta.persistence.EntityManager;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
-import com.cc01cc.p.xihe.cp.entity.File;
 import com.cc01cc.p.xihe.cp.entity.McpInvocation;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.MessageRole;
@@ -10,18 +9,14 @@ import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
+import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
+import com.cc01cc.p.xihe.cp.mcp.McpInvocationService;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
-import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
-import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.InboxRepository;
-import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionFollowUpItemRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
-import com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.cc01cc.p.xihe.cp.service.ContextTemplateService;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -57,61 +52,59 @@ public class ChatSubmissionService {
     private final ChatRunRepository chatRunRepository;
     private final InboxRepository inboxRepository;
     private final MessageRepository messageRepository;
-    private final FileRepository fileRepository;
-    private final McpInvocationRepository mcpInvocationRepository;
     private final SessionRepository sessionRepository;
     private final SessionFollowUpItemRepository followUpItemRepository;
-    private final AgentPrincipalRepository agentPrincipalRepository;
-    private final WorkspaceAgentRepository workspaceAgentRepository;
     private final GrantPrincipalPathResolver principalPathResolver;
     private final DbLockTimeout dbLockTimeout;
     private final ObjectMapper objectMapper;
-    private final EventStoreRepository eventStoreRepository;
     private final AgentPrincipalService agentPrincipalService;
     private final ContextTemplateService contextTemplateService;
     private final com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService;
     private final EntityManager entityManager;
     private final ApprovalService approvalService;
     private final AuditLogger auditLogger;
+    // PLAN-0470 (decision #16): cross-domain admission reads go through the
+    // MCP/Context owner services inside this transaction — no direct repos.
+    private final McpInvocationService mcpInvocationService;
+    private final EventStoreService eventStoreService;
+    // PLAN-0470 (decision #23): the attachment->Message link write is owned
+    // by Files (ChatAttachmentService); this service no longer holds FileRepository.
+    private final com.cc01cc.p.xihe.cp.files.ChatAttachmentService chatAttachmentService;
 
     public ChatSubmissionService(ChatRunRepository chatRunRepository,
                                  InboxRepository inboxRepository,
                                  MessageRepository messageRepository,
-                                 FileRepository fileRepository,
-                                 McpInvocationRepository mcpInvocationRepository,
                                  SessionRepository sessionRepository,
                                  SessionFollowUpItemRepository followUpItemRepository,
-                                 AgentPrincipalRepository agentPrincipalRepository,
-                                 WorkspaceAgentRepository workspaceAgentRepository,
                                  GrantPrincipalPathResolver principalPathResolver,
                                  DbLockTimeout dbLockTimeout,
                                  ObjectMapper objectMapper,
-                                   EventStoreRepository eventStoreRepository,
-                                   AgentPrincipalService agentPrincipalService,
-                                   ContextTemplateService contextTemplateService,
-                                   com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService,
-                                  EntityManager entityManager,
-                                  ApprovalService approvalService,
-                                  AuditLogger auditLogger) {
+                                 AgentPrincipalService agentPrincipalService,
+                                 ContextTemplateService contextTemplateService,
+                                 com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService,
+                                 EntityManager entityManager,
+                                 ApprovalService approvalService,
+                                 AuditLogger auditLogger,
+                                 McpInvocationService mcpInvocationService,
+                                 EventStoreService eventStoreService,
+                                 com.cc01cc.p.xihe.cp.files.ChatAttachmentService chatAttachmentService) {
         this.chatRunRepository = chatRunRepository;
         this.inboxRepository = inboxRepository;
         this.messageRepository = messageRepository;
-        this.fileRepository = fileRepository;
-        this.mcpInvocationRepository = mcpInvocationRepository;
         this.sessionRepository = sessionRepository;
         this.followUpItemRepository = followUpItemRepository;
-        this.agentPrincipalRepository = agentPrincipalRepository;
-        this.workspaceAgentRepository = workspaceAgentRepository;
         this.principalPathResolver = principalPathResolver;
         this.dbLockTimeout = dbLockTimeout;
         this.objectMapper = objectMapper;
-        this.eventStoreRepository = eventStoreRepository;
         this.agentPrincipalService = agentPrincipalService;
         this.contextTemplateService = contextTemplateService;
         this.branchPathService = branchPathService;
         this.entityManager = entityManager;
         this.approvalService = approvalService;
         this.auditLogger = auditLogger;
+        this.mcpInvocationService = mcpInvocationService;
+        this.eventStoreService = eventStoreService;
+        this.chatAttachmentService = chatAttachmentService;
     }
 
     @Transactional
@@ -214,11 +207,11 @@ public class ChatSubmissionService {
 
         // PLAN-0464 T2.1: spawn provenance is the Chat domain (Run/Session) plus
         // the 0463 execution-domain invocation row, never a Ledger item.
-        McpInvocation invocation = requireSpawnInvocation(parentRunId, toolCallId);
+        McpInvocationService.SpawnInvocationView invocation = requireSpawnInvocation(parentRunId, toolCallId);
         validateSpawnInvocation(parentRunId, invocation);
-        String content = deriveSpawnContent(invocation.getArgumentsPreview());
+        String content = deriveSpawnContent(invocation.argumentsPreview());
         return new SpawnInvocation(parentRunId, toolCallId, parentSession.getId().toString(),
-                invocation.getId(), parentRun.getUserId(), parentRun.getWorkspaceId(),
+                invocation.id(), parentRun.getUserId(), parentRun.getWorkspaceId(),
                 parentSession.getAgentPrincipalId(), createSpawnAuthorizationBody(content));
     }
 
@@ -269,10 +262,10 @@ public class ChatSubmissionService {
 
         // PLAN-0464 T2.1: provenance comes from the 0463 invocation row plus the
         // locked Chat domain, never from a Ledger root/item.
-        McpInvocation invocation = requireSpawnInvocation(parentRunId, toolCallId);
+        McpInvocationService.SpawnInvocationView invocation = requireSpawnInvocation(parentRunId, toolCallId);
         validateSpawnInvocation(parentRunId, invocation);
 
-        String content = deriveSpawnContent(invocation.getArgumentsPreview());
+        String content = deriveSpawnContent(invocation.argumentsPreview());
         String authorizationBody = createSpawnAuthorizationBody(content);
         if (!authorizationBody.equals(authorization.authorizationBody())) {
             throw new CpApiException(HttpStatus.CONFLICT, "SPAWN_ARGUMENTS_CHANGED",
@@ -354,15 +347,15 @@ public class ChatSubmissionService {
         // PLAN-0464 T2.1: the waiting link lives on the child run row itself.
         ChatRun childRun = created.run();
         childRun.setWaitingOnRunId(parentRun.getId().toString());
-        childRun.setWaitingToolCallId(invocation.getToolCallId());
+        childRun.setWaitingToolCallId(invocation.toolCallId());
         chatRunRepository.save(childRun);
 
         com.fasterxml.jackson.databind.node.ObjectNode detail = objectMapper.createObjectNode();
         detail.put("authorizationAction", "SPAWN_AGENT");
         detail.put("parentSessionId", parentSession.getId().toString());
         detail.put("parentRunId", parentRun.getId().toString());
-        detail.put("parentToolCallId", invocation.getToolCallId());
-        detail.put("parentInvocationId", invocation.getId().toString());
+        detail.put("parentToolCallId", invocation.toolCallId());
+        detail.put("parentInvocationId", invocation.id().toString());
         detail.put("childSessionId", childSession.getId().toString());
         detail.put("childRunId", created.run().getId().toString());
         detail.put("agentPrincipalId", childSession.getAgentPrincipalId());
@@ -445,25 +438,27 @@ public class ChatSubmissionService {
      * PLAN-0464 T2.1: resolves the durable spawn tool call from the execution
      * domain. A tool call that exists under another parent run is a cross-parent
      * reference (403); a tool call that does not exist at all is missing (404).
+     * PLAN-0470 (decision #16): the read goes through the MCP owner service —
+     * a bounded provenance view, never the invocation repository/entity.
      */
-    private McpInvocation requireSpawnInvocation(String parentRunId, String toolCallId) {
-        return mcpInvocationRepository
-                .findByRunIdAndToolCallIdAndSource(parentRunId, toolCallId, McpInvocation.SOURCE_AGENT)
+    private McpInvocationService.SpawnInvocationView requireSpawnInvocation(String parentRunId, String toolCallId) {
+        return mcpInvocationService
+                .findSpawnInvocation(parentRunId, toolCallId)
                 .orElseGet(() -> rejectUnmatchedSpawnInvocation(toolCallId));
     }
 
-    private McpInvocation rejectUnmatchedSpawnInvocation(String toolCallId) {
-        if (mcpInvocationRepository.findBySourceAndToolCallId(McpInvocation.SOURCE_AGENT, toolCallId).isPresent()) {
+    private McpInvocationService.SpawnInvocationView rejectUnmatchedSpawnInvocation(String toolCallId) {
+        if (mcpInvocationService.existsAgentInvocation(toolCallId)) {
             throw agentSpawnForbidden("Durable invocation belongs to a different parent run");
         }
         throw new CpApiException(HttpStatus.NOT_FOUND, "SPAWN_EVENT_NOT_FOUND", "Spawn item not found");
     }
 
     /** PLAN-0464 T2.1: invocation-side equivalent of the retired item check. */
-    private void validateSpawnInvocation(String parentRunId, McpInvocation invocation) {
-        if (!parentRunId.equals(invocation.getRunId())
-                || !McpInvocation.SOURCE_AGENT.equals(invocation.getSource())
-                || !SPAWN_TOOL_NAME.equals(invocation.getToolName())) {
+    private void validateSpawnInvocation(String parentRunId, McpInvocationService.SpawnInvocationView invocation) {
+        if (!parentRunId.equals(invocation.runId())
+                || !McpInvocation.SOURCE_AGENT.equals(invocation.source())
+                || !SPAWN_TOOL_NAME.equals(invocation.toolName())) {
             throw agentSpawnForbidden(
                     "Durable invocation is not an agent spawn_agent tool call of this parent run");
         }
@@ -556,12 +551,9 @@ public class ChatSubmissionService {
         chatRun.setUserMessageId(userMessage.getId().toString());
         chatRunRepository.save(chatRun);
 
-        for (String fileId : attachmentIds) {
-            File file = fileRepository.findById(java.util.UUID.fromString(fileId))
-                    .orElseThrow(() -> new IllegalStateException("Attachment disappeared during Chat submission"));
-            file.setMessageId(userMessage.getId().toString());
-            fileRepository.save(file);
-        }
+        // PLAN-0470 (decision #23): Files owns the attachment->Message link;
+        // same transaction, no physical deletion, no wire change.
+        chatAttachmentService.linkToMessage(attachmentIds, userMessage.getId().toString());
 
         int claimedNotices = inboxRepository.claimPendingForRun(UUID.fromString(sessionId), UUID.fromString(runId));
         if (claimedNotices > 0) {
@@ -636,8 +628,8 @@ public class ChatSubmissionService {
             if (session.getAgentPermissionsSnapshot() != null
                     || chatRunRepository.existsBySessionId(sessionId)
                     || messageRepository.existsBySessionId(sessionId)
-                    || mcpInvocationRepository.existsBySessionId(sessionId)
-                    || eventStoreRepository.existsBySessionId(sessionId)) {
+                    || mcpInvocationService.hasInvocationForSession(sessionId)
+                    || eventStoreService.hasEventsForSession(sessionId)) {
                 throw new CpApiException(HttpStatus.CONFLICT, "SESSION_PRINCIPAL_BINDING_CONFLICT",
                         "Only an empty, unbound Session can be assigned an Agent principal");
             }
@@ -671,12 +663,9 @@ public class ChatSubmissionService {
             throw agentSessionForbidden();
         }
 
-        boolean activePrincipal = agentPrincipalRepository.findById(path.principalId())
-                .filter(principal -> principal.getDisabledAt() == null)
-                .isPresent();
-        boolean workspaceBound = workspaceAgentRepository.findById(
-                new WorkspaceAgentId(path.principalId(), UUID.fromString(workspaceId))).isPresent();
-        if (!activePrincipal || !workspaceBound) {
+        try {
+            agentPrincipalService.requireActiveWorkspaceBinding(path.principalId().toString(), workspaceId);
+        } catch (CpApiException e) {
             throw agentSessionForbidden();
         }
         return session;

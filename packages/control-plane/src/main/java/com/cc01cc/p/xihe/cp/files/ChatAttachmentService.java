@@ -173,6 +173,31 @@ public class ChatAttachmentService {
         return file;
     }
 
+    public Optional<WorkspaceAttachmentDownload> findWorkspaceAttachmentForDownload(
+            String fileId, String userId, String workspaceId) {
+        File file = fileRepository.findById(UUID.fromString(fileId)).orElse(null);
+        if (file == null) {
+            return Optional.empty();
+        }
+        Session session = file.getSessionId() == null
+                ? null : sessionRepository.findById(UUID.fromString(file.getSessionId())).orElse(null);
+        if (session == null
+                || session.isArchived()
+                || !workspaceId.equals(session.getWorkspaceId())
+                || !userId.equals(session.getUserId())
+                || !workspaceId.equals(file.getWorkspaceId())
+                || !userId.equals(file.getUserId())
+                || workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId)).isEmpty()
+                || workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(
+                        UUID.fromString(workspaceId), UUID.fromString(userId)).isEmpty()) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "File access denied");
+        }
+        return Optional.of(new WorkspaceAttachmentDownload(
+                Paths.get(file.getStoragePath()), file.getMimeType()));
+    }
+
+    public record WorkspaceAttachmentDownload(Path storagePath, String mimeType) {}
+
     public List<AttachmentInfo> resolveForChatSubmission(List<String> fileIds, String sessionId,
                                                          String workspaceId, String userId,
                                                          String sessionUserId) {
@@ -226,6 +251,7 @@ public class ChatAttachmentService {
             fileRepository.delete(file);
             logger.info("Session attachment deleted session={} fileId={}", sessionId, file.getId());
         }
+        fileRepository.deleteBySessionId(sessionId);
         deleteDirectoryIfEmpty(Paths.get(attachmentsBasePath, sessionId));
     }
 
@@ -237,6 +263,24 @@ public class ChatAttachmentService {
                 file.setMessageId(null);
                 fileRepository.save(file);
             }
+        }
+    }
+
+    /**
+     * PLAN-0470 (decision #23): ChatSubmission links admitted attachments to
+     * the freshly created user Message through the Files owner. Joins the
+     * caller's ChatSubmission transaction — a Message save failure rolls the
+     * link updates back with it. No physical file is deleted and no HTTP
+     * response field changes; the "attachment disappeared" failure text is
+     * preserved from the previous direct write.
+     */
+    @Transactional
+    public void linkToMessage(List<String> attachmentIds, String messageId) {
+        for (String fileId : attachmentIds) {
+            File file = fileRepository.findById(UUID.fromString(fileId))
+                    .orElseThrow(() -> new IllegalStateException("Attachment disappeared during Chat submission"));
+            file.setMessageId(messageId);
+            fileRepository.save(file);
         }
     }
 

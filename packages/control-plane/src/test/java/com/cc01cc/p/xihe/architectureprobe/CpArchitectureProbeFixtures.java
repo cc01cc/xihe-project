@@ -25,6 +25,11 @@ public final class CpArchitectureProbeFixtures {
 
     public interface ProbeRepository extends Repository<ProbeEntity, String> { }
 
+    /** PLAN-0470 #27 negative probe: a repository must not depend on an application service. */
+    public interface BadServiceDependentRepository extends Repository<ProbeEntity, String> {
+        GoodService findService();
+    }
+
     @Service
     public static class GoodService {
         private final ProbeRepository repository;

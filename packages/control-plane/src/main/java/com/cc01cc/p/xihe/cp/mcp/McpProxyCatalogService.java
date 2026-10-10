@@ -1,13 +1,18 @@
 package com.cc01cc.p.xihe.cp.mcp;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.cc01cc.p.xihe.cp.entity.McpServer;
+import com.cc01cc.p.xihe.cp.entity.McpStdioServer;
 import com.cc01cc.p.xihe.cp.entity.McpToolAlias;
 import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpStdioServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpToolAliasRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -27,10 +32,83 @@ public class McpProxyCatalogService {
         this.aliases = aliases;
     }
 
+    /**
+     * PLAN-0470: OAuth binding reads a workspace-scoped enabled remote server
+     * through the MCP owner instead of touching {@code McpServerRepository}.
+     */
+    @Transactional(readOnly = true)
+    public boolean isWorkspaceEnabledServer(String workspaceId, String serverId) {
+        return remoteServers.findById(UUID.fromString(serverId))
+                .filter(server -> workspaceId.equals(server.getWorkspaceId()) && server.isEnabled())
+                .isPresent();
+    }
+
+    /**
+     * PLAN-0470: OAuth start registers the remote server under its fixed id/name.
+     * Error messages match the legacy OAuth wire contract verbatim.
+     */
+    @Transactional
+    public void registerOrValidateRemoteServer(String workspaceId, String serverId, String endpoint) {
+        UUID id = UUID.fromString(serverId);
+        remoteServers.findById(id).ifPresentOrElse(server -> {
+            if (!workspaceId.equals(server.getWorkspaceId())) {
+                throw new IllegalArgumentException("mcp_server_forbidden");
+            }
+            if (!server.isEnabled()) {
+                throw new IllegalArgumentException("mcp_server_disabled");
+            }
+            server.setEndpoint(endpoint);
+            remoteServers.save(server);
+        }, () -> {
+            McpServer server = new McpServer(workspaceId, serverId, endpoint);
+            server.setId(id);
+            server.setEnabled(true);
+            remoteServers.save(server);
+        });
+    }
+
     public List<StdioServerView> listStdioServers(String workspaceId) {
         return stdioServers.findByWorkspaceIdOrderByNameAsc(workspaceId).stream()
                 .map(server -> new StdioServerView(server.getName(), server.isEnabled()))
                 .toList();
+    }
+
+    public List<StdioConfigView> listStdioConfigs(String workspaceId) {
+        return stdioServers.findByWorkspaceIdOrderByNameAsc(workspaceId).stream()
+                .map(server -> new StdioConfigView(
+                        server.getName(), server.getConfig(), server.getUpdatedAt()))
+                .toList();
+    }
+
+    public void replaceStdioConfigs(String workspaceId, Map<String, JsonNode> next) {
+        List<McpStdioServer> existing = stdioServers.findByWorkspaceIdOrderByNameAsc(workspaceId);
+        for (McpStdioServer row : existing) {
+            if (!next.containsKey(row.getName())) {
+                stdioServers.delete(row);
+            }
+        }
+        for (Map.Entry<String, JsonNode> entry : next.entrySet()) {
+            McpStdioServer row = stdioServers.findByWorkspaceIdAndName(workspaceId, entry.getKey())
+                    .orElseGet(() -> new McpStdioServer(workspaceId, entry.getKey(), entry.getValue()));
+            row.setConfig(entry.getValue());
+            stdioServers.save(row);
+        }
+    }
+
+    public List<RemoteServerConfigView> listEnabledRemoteConfigs(String workspaceId) {
+        return remoteServers.findByWorkspaceIdAndEnabledTrue(workspaceId).stream()
+                .map(server -> new RemoteServerConfigView(server.getName(), server.getEndpoint()))
+                .toList();
+    }
+
+    public void saveRemoteEndpoints(String workspaceId, Map<String, String> endpoints) {
+        for (Map.Entry<String, String> entry : endpoints.entrySet()) {
+            McpServer row = remoteServers.findByWorkspaceIdAndName(workspaceId, entry.getKey())
+                    .orElseGet(() -> new McpServer(workspaceId, entry.getKey(), entry.getValue()));
+            row.setEndpoint(entry.getValue());
+            row.setEnabled(true);
+            remoteServers.save(row);
+        }
     }
 
     public List<RemoteServerView> listEnabledRemoteServers(String workspaceId) {
@@ -71,6 +149,12 @@ public class McpProxyCatalogService {
     }
 
     public record StdioServerView(String name, boolean enabled) {
+    }
+
+    public record StdioConfigView(String name, JsonNode config, Instant updatedAt) {
+    }
+
+    public record RemoteServerConfigView(String name, String endpoint) {
     }
 
     public record RemoteServerView(String id, String endpoint, String authMode) {

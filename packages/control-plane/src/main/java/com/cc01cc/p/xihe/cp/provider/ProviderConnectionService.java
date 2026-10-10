@@ -4,7 +4,7 @@ import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnectionAudit;
 import com.cc01cc.p.xihe.cp.entity.ProviderCredentialLease;
-import com.cc01cc.p.xihe.cp.oauth.EnvelopeEncryptionService;
+import com.cc01cc.p.xihe.cp.crypto.EnvelopeEncryptionService;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionAuditRepository;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -75,6 +75,43 @@ public class ProviderConnectionService {
                     ProviderConnection.OWNER_WORKSPACE, workspaceId));
         }
         return connections;
+    }
+
+    /** Bounded config export projection; plaintext is populated only on the audited admin path. */
+    public record ConfigExportView(UUID id, String providerId, String label, String ownerType,
+                                   String ownerId, String baseUrl, String status, boolean enabled,
+                                   String modelDiscovery, String manualModels, String apiKey) {}
+
+    /**
+     * PLAN-0470: ConfigService consumes a provider-owned export projection, not
+     * ProviderConnection entities. Credential plaintext is materialized only
+     * when the caller's already-authorized export explicitly requests secrets.
+     */
+    @Transactional(readOnly = true)
+    public List<ConfigExportView> listForConfigExport(boolean includeSecrets) {
+        return repository.findAll().stream()
+                .map(connection -> new ConfigExportView(
+                        connection.getId(), connection.getProviderId(), connection.getLabel(),
+                        connection.getOwnerType(), connection.getOwnerId(), connection.getBaseUrl(),
+                        connection.getStatus(), connection.isEnabled(), connection.getModelDiscovery(),
+                        connection.getManualModels(),
+                        includeSecrets ? decryptCredential(connection) : null))
+                .toList();
+    }
+
+    /** PLAN-0470: connection count for the config export audit record. */
+    @Transactional(readOnly = true)
+    public long countForConfigExport() {
+        return repository.count();
+    }
+
+    /** PLAN-0470: readiness check consumed by the config layering decision. */
+    @Transactional(readOnly = true)
+    public boolean isReadyForOwner(String ownerType, String ownerId, String provider) {
+        return repository.findByOwnerTypeAndOwnerIdAndProviderId(ownerType, ownerId, provider)
+                .filter(connection -> connection.isEnabled()
+                        && ProviderConnection.STATUS_READY.equals(connection.getStatus()))
+                .isPresent();
     }
 
     @Transactional
@@ -353,15 +390,6 @@ public class ProviderConnectionService {
             return null;
         }
         return encryption.decrypt(connection.getCredentialCiphertext(), aad(connection));
-    }
-
-    /**
-     * PLAN-0307 T2.21: management-plane export needs the plaintext credential so
-     * the snapshot can rebuild connections on another instance. Callers must be
-     * ADMIN-authorized and must audit the export (T2.25); never log the result.
-     */
-    public String exportPlaintextCredential(ProviderConnection connection) {
-        return decryptCredential(connection);
     }
 
     private String aad(ProviderConnection connection) {

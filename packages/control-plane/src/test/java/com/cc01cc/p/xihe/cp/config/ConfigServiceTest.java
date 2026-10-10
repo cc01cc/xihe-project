@@ -44,7 +44,7 @@ class ConfigServiceTest {
 
     @Autowired
     @org.springframework.beans.factory.annotation.Qualifier("providerCredentialEncryption")
-    private com.cc01cc.p.xihe.cp.oauth.EnvelopeEncryptionService credentialEncryption;
+    private com.cc01cc.p.xihe.cp.crypto.EnvelopeEncryptionService credentialEncryption;
 
     private final UUID userA = UUID.randomUUID();
     private final UUID userB = UUID.randomUUID();

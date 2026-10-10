@@ -41,9 +41,14 @@ class CpArchitectureTest {
 
         List<Map<String, Object>> rules = new ArrayList<>();
         List<DescribedPredicate<JavaClass>> origins = List.of(CpArchitectureRules.CONTROLLERS,
-                CpArchitectureRules.APPLICATIONS, CpArchitectureRules.CONTROLLERS, CpArchitectureRules.PERSISTENCE);
+                CpArchitectureRules.APPLICATIONS, CpArchitectureRules.CONTROLLERS, CpArchitectureRules.PERSISTENCE,
+                // PLAN-0470 #27: technical-facility isolation + persistence-below-services.
+                DescribedPredicate.describe("crypto facility classes",
+                        type -> type.getPackageName().startsWith("com.cc01cc.p.xihe.cp.crypto.")),
+                CpArchitectureRules.REPOSITORIES);
         List<DescribedPredicate<JavaClass>> targets = List.of(CpArchitectureRules.CONTROLLERS,
-                CpArchitectureRules.CONTROLLERS, CpArchitectureRules.REPOSITORIES, CpArchitectureRules.CONTROLLERS);
+                CpArchitectureRules.CONTROLLERS, CpArchitectureRules.REPOSITORIES, CpArchitectureRules.CONTROLLERS,
+                CpArchitectureRules.CP_BUSINESS_PACKAGES, CpArchitectureRules.APPLICATIONS);
         for (int index = 0; index < CpArchitectureRules.ALL.size(); index++) {
             ArchRule rule = CpArchitectureRules.ALL.get(index);
             var origin = origins.get(index);

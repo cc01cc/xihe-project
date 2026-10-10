@@ -1,10 +1,8 @@
 package com.cc01cc.p.xihe.cp.operation;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
-import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceJob;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeJobClient;
-import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationContext;
@@ -28,11 +26,15 @@ import java.util.UUID;
 /**
  * PLAN-0390 M2 T2.2 / PLAN-0465 T1.2：Workspace Job start 编排。
  *
- * <p>顺序：Workspace access → 幂等重读（`workspace_jobs`，V36 语义）→ 创建
+ * <p>顺序：幂等重读（`workspace_jobs`，V36 语义）→ 创建
  * `workspace_jobs` 行与 history `start` → Runtime
  * 派发 → 落 running / 失败收口。CP 是 durable 唯一写者，Runtime 只返回执行事实；
  * dispatch 复用既有 per-request exec（Docker 立即执行，direct-attach 显式
  * `PROCESS_BACKEND_LAUNCH_PENDING`，不 fallback）。</p>
+ *
+ * <p>PLAN-0470 #26：Workspace 授权检查与 executionMode 读取由编排入口
+ * （WorkspaceJobController）先行完成并作为参数传入；本服务不再依赖
+ * WorkspaceService。`start()` 只能由该入口调用（前置检查在入口）。</p>
  *
  * <p>`jobId` = `workspace_jobs.id` is the domain identity sent to Runtime.</p>
  */
@@ -46,16 +48,13 @@ public class WorkspaceJobStartService {
     private static final Set<String> SOURCES = Set.of("ui", "agent", "runtime", "system", "mcp");
 
     private final JobStateService jobStateService;
-    private final WorkspaceService workspaceService;
     private final RuntimeJobClient runtimeJobClient;
     private final ApplicationContext applicationContext;
 
     public WorkspaceJobStartService(JobStateService jobStateService,
-                                    WorkspaceService workspaceService,
                                     RuntimeJobClient runtimeJobClient,
                                     ApplicationContext applicationContext) {
         this.jobStateService = jobStateService;
-        this.workspaceService = workspaceService;
         this.runtimeJobClient = runtimeJobClient;
         this.applicationContext = applicationContext;
     }
@@ -73,7 +72,7 @@ public class WorkspaceJobStartService {
     }
 
     public StartOutcome start(String workspaceId, String userId, StartRequest request,
-                              String idempotencyKey) {
+                              String idempotencyKey, String executionMode) {
         if (request == null || request.command() == null || request.command().isBlank()) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "command is required");
         }
@@ -81,9 +80,6 @@ public class WorkspaceJobStartService {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "IDEMPOTENCY_KEY_REQUIRED",
                     "Idempotency-Key is required to start a Workspace job");
         }
-        Workspace workspace = workspaceService.requireAccessibleWorkspace(workspaceId, userId);
-        String executionMode = workspace.getExecutionMode() == null || workspace.getExecutionMode().isBlank()
-                ? "docker" : workspace.getExecutionMode();
         String scope = normalizeScope(request.scope());
         String source = normalizeSource(request.source());
         List<String> args = request.args() == null ? List.of() : request.args();

@@ -1,10 +1,10 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.cc01cc.p.xihe.cp.chat.ChatRunStatusReadService;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
-import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
-import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
-import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.mcp.McpInvocationService;
+import com.cc01cc.p.xihe.cp.service.SessionReadService;
 import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
@@ -30,14 +30,14 @@ class GrantPrincipalPathResolverTest {
         UUID runId = UUID.randomUUID();
         UUID toolCallId = UUID.randomUUID();
 
-        SessionRepository sessions = mock(SessionRepository.class);
-        ChatRunRepository runs = mock(ChatRunRepository.class);
-        McpInvocationRepository invocations = mock(McpInvocationRepository.class);
-        when(invocations.findByRunIdAndToolCallIdAndSource(runId.toString(), toolCallId.toString(),
-                "agent")).thenReturn(Optional.empty());
+        SessionReadService sessionReadService = mock(SessionReadService.class);
+        ChatRunStatusReadService chatRunStatusReadService = mock(ChatRunStatusReadService.class);
+        McpInvocationService mcpInvocationService = mock(McpInvocationService.class);
+        when(mcpInvocationService.findAgentInvocationContext(runId.toString(), toolCallId.toString()))
+                .thenReturn(Optional.empty());
 
         GrantPrincipalPathResolver resolver = new GrantPrincipalPathResolver(
-                sessions, runs, invocations);
+                sessionReadService, chatRunStatusReadService, mcpInvocationService);
 
         assertEquals(Optional.empty(), resolver.validateAgentInvocationContext(
                 userId.toString(), workspaceId.toString(), sessionId.toString(), runId.toString(),
@@ -59,17 +59,26 @@ class GrantPrincipalPathResolverTest {
         UUID toolCallId = UUID.randomUUID();
         UUID principalId = UUID.randomUUID();
 
-        SessionRepository sessions = mock(SessionRepository.class);
-        ChatRunRepository runs = mock(ChatRunRepository.class);
-        McpInvocationRepository invocations = mock(McpInvocationRepository.class);
+        SessionReadService sessionReadService = mock(SessionReadService.class);
+        ChatRunStatusReadService chatRunStatusReadService = mock(ChatRunStatusReadService.class);
+        McpInvocationService mcpInvocationService = mock(McpInvocationService.class);
 
         Session session = new Session(workspaceId.toString(), userId.toString(), "test");
         session.setId(sessionId);
         session.setAgentPrincipalId(principalId.toString());
+        SessionReadService.SessionPathView sessionView = new SessionReadService.SessionPathView(
+                session.getId(), session.getUserId(), session.getWorkspaceId(),
+                session.getAgentPrincipalId(), session.getSpawnedFromSessionId(),
+                session.getSpawnedFromRunId(), session.getSpawnedAt(), session.getKind(),
+                session.getAgentPermissionsSnapshot());
+        when(sessionReadService.findById(sessionId)).thenReturn(Optional.of(sessionView));
+
         ChatRun run = new ChatRun(runId.toString(), sessionId.toString(), userId.toString(),
                 workspaceId.toString(), "request", "hash", "provider", "model", "workspace", "running");
-        when(sessions.findById(sessionId)).thenReturn(Optional.of(session));
-        when(runs.findById(runId)).thenReturn(Optional.of(run));
+        ChatRunStatusReadService.ChatRunStatusView runView = new ChatRunStatusReadService.ChatRunStatusView(
+                run.getId(), run.getStatus(), run.getSessionId(), run.getUserId(),
+                run.getWorkspaceId(), run.getCreatedAt(), run.getUpdatedAt());
+        when(chatRunStatusReadService.findById(runId)).thenReturn(Optional.of(runView));
 
         com.cc01cc.p.xihe.cp.entity.McpInvocation invocation =
                 new com.cc01cc.p.xihe.cp.entity.McpInvocation();
@@ -82,11 +91,13 @@ class GrantPrincipalPathResolverTest {
         invocation.setToolName("read_file");
         invocation.setSource("agent");
         invocation.setStatus("active");
-        when(invocations.findByRunIdAndToolCallIdAndSource(runId.toString(), toolCallId.toString(),
-                "agent")).thenReturn(Optional.of(invocation));
+        when(mcpInvocationService.findAgentInvocationContext(runId.toString(), toolCallId.toString()))
+                .thenReturn(Optional.of(new McpInvocationService.InvocationContextView(
+                        invocation.getStatus(), invocation.getSessionId(), invocation.getUserId(),
+                        invocation.getWorkspaceId(), invocation.getRunId(), invocation.getToolName())));
 
         GrantPrincipalPathResolver resolver = new GrantPrincipalPathResolver(
-                sessions, runs, invocations);
+                sessionReadService, chatRunStatusReadService, mcpInvocationService);
 
         assertEquals(Optional.of(Boolean.TRUE), resolver.validateAgentInvocationContext(
                 userId.toString(), workspaceId.toString(), sessionId.toString(), runId.toString(),

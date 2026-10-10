@@ -42,7 +42,7 @@ public class InternalAuditController {
         try {
             AuditReadService.AuditDetail detail =
                     auditReadService.detail(type, entryId(id), null);
-            return ResponseEntity.ok(AuditController.envelope(detail));
+            return ResponseEntity.ok(AuditViews.envelope(detail));
         } catch (CpApiException e) {
             logger.warn("Internal audit detail rejected: type={} code={}", type, e.getCode());
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());

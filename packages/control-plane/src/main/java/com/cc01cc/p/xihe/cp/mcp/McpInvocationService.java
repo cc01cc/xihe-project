@@ -72,6 +72,66 @@ public class McpInvocationService {
         this.dbLockTimeout = dbLockTimeout;
     }
 
+    /**
+     * Bounded spawn provenance view (PLAN-0470 decision #16): the fields the
+     * Chat spawn gate validates — no {@link McpInvocation} Entity leaves MCP.
+     */
+    public record SpawnInvocationView(UUID id, String runId, String source, String toolName,
+                                      String toolCallId, String argumentsPreview) {}
+
+    /** Read-only admission query: does this Session own any invocation row? */
+    @Transactional(readOnly = true)
+    public boolean hasInvocationForSession(String sessionId) {
+        return invocations.existsBySessionId(sessionId);
+    }
+
+    /** Durable {@code source=agent} spawn tool call of this parent run. */
+    @Transactional(readOnly = true)
+    public Optional<SpawnInvocationView> findSpawnInvocation(String parentRunId, String toolCallId) {
+        return invocations
+                .findByRunIdAndToolCallIdAndSource(parentRunId, toolCallId, McpInvocation.SOURCE_AGENT)
+                .map(invocation -> new SpawnInvocationView(
+                        invocation.getId(), invocation.getRunId(), invocation.getSource(),
+                        invocation.getToolName(), invocation.getToolCallId(),
+                        invocation.getArgumentsPreview()));
+    }
+
+    /** The same tool call under any parent run (cross-parent spawn detection). */
+    @Transactional(readOnly = true)
+    public boolean existsAgentInvocation(String toolCallId) {
+        return invocations.findBySourceAndToolCallId(McpInvocation.SOURCE_AGENT, toolCallId).isPresent();
+    }
+
+    /**
+     * Bounded authorization view (PLAN-0470 decision #18): the correlation and
+     * status fields the policy path validates — no Entity leaves MCP.
+     */
+    public record InvocationContextView(String status, String sessionId, String userId,
+                                        String workspaceId, String runId, String toolName) {}
+
+    /** Read-only lookup of an {@code source=agent} invocation governing a tool call. */
+    @Transactional(readOnly = true)
+    public Optional<InvocationContextView> findAgentInvocationContext(String runId, String toolCallId) {
+        return invocations
+                .findByRunIdAndToolCallIdAndSource(runId, toolCallId, McpInvocation.SOURCE_AGENT)
+                .map(invocation -> new InvocationContextView(
+                        invocation.getStatus(), invocation.getSessionId(), invocation.getUserId(),
+                        invocation.getWorkspaceId(), invocation.getRunId(), invocation.getToolName()));
+    }
+
+    /**
+     * PLAN-0470 (decision #15): session-scoped history cleanup for the Session
+     * deletion path. Required propagation joins the caller's transaction; leaf
+     * dispatch history → attempts → invocations preserves the V50 restrictive
+     * FK order. Never REQUIRES_NEW: a rollback must roll the delete back too.
+     */
+    @Transactional
+    public void deleteSessionHistories(String sessionId) {
+        history.deleteBySessionId(sessionId);
+        attempts.deleteBySessionId(sessionId);
+        invocations.deleteBySessionId(sessionId);
+    }
+
     private record InvocationScope(String runId, String sessionId, String workspaceId, String userId) {}
 
     /** Returns only the provenance projection needed to label a Run's Workspace Jobs. */

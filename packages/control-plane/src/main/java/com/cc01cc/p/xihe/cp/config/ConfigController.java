@@ -30,10 +30,7 @@ import java.util.UUID;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
-import com.cc01cc.p.xihe.cp.entity.McpServer;
-import com.cc01cc.p.xihe.cp.entity.McpStdioServer;
-import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
-import com.cc01cc.p.xihe.cp.repository.McpStdioServerRepository;
+import com.cc01cc.p.xihe.cp.mcp.McpProxyCatalogService;
 import com.cc01cc.p.xihe.cp.service.AgentTemplateService;
 import com.cc01cc.p.xihe.cp.service.ContextTemplateService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
@@ -51,8 +48,7 @@ public class ConfigController {
     private final ConfigService configService;
     private final WorkspaceService workspaceService;
     private final ObjectMapper objectMapper;
-    private final McpStdioServerRepository stdioRepo;
-    private final McpServerRepository remoteRepo;
+    private final McpProxyCatalogService mcpProxyCatalogService;
     private final com.cc01cc.p.xihe.cp.audit.AuditLogger auditLogger;
     private final AgentTemplateService agentTemplateService;
     private final ContextTemplateService contextTemplateService;
@@ -60,16 +56,14 @@ public class ConfigController {
     public ConfigController(ConfigService configService,
                             WorkspaceService workspaceService,
                             ObjectMapper objectMapper,
-                            McpStdioServerRepository stdioRepo,
-                            McpServerRepository remoteRepo,
+                            McpProxyCatalogService mcpProxyCatalogService,
                             com.cc01cc.p.xihe.cp.audit.AuditLogger auditLogger,
                             AgentTemplateService agentTemplateService,
                             ContextTemplateService contextTemplateService) {
         this.configService = configService;
         this.workspaceService = workspaceService;
         this.objectMapper = objectMapper;
-        this.stdioRepo = stdioRepo;
-        this.remoteRepo = remoteRepo;
+        this.mcpProxyCatalogService = mcpProxyCatalogService;
         this.auditLogger = auditLogger;
         this.agentTemplateService = agentTemplateService;
         this.contextTemplateService = contextTemplateService;
@@ -484,7 +478,7 @@ public class ConfigController {
                 }
                 next.put(name, node);
             }
-            replaceStdioServers(wsId, next);
+            mcpProxyCatalogService.replaceStdioConfigs(wsId, next);
             StdioSnapshot updated = stdioSnapshot(wsId);
             return ResponseEntity.ok(Map.of(
                     "status", "ok",
@@ -525,13 +519,13 @@ public class ConfigController {
     private record StdioSnapshot(long generation, String hash, Map<String, JsonNode> servers) {}
 
     private StdioSnapshot stdioSnapshot(String wsId) throws Exception {
-        List<McpStdioServer> rows = stdioRepo.findByWorkspaceIdOrderByNameAsc(wsId);
         Map<String, JsonNode> servers = new LinkedHashMap<>();
         long generation = 0L;
-        for (McpStdioServer row : rows) {
-            servers.put(row.getName(), row.getConfig());
-            if (row.getUpdatedAt() != null) {
-                generation = Math.max(generation, row.getUpdatedAt().toEpochMilli());
+        for (McpProxyCatalogService.StdioConfigView row :
+                mcpProxyCatalogService.listStdioConfigs(wsId)) {
+            servers.put(row.name(), row.config());
+            if (row.updatedAt() != null) {
+                generation = Math.max(generation, row.updatedAt().toEpochMilli());
             }
         }
         String hash = "sha256:" + sha256(objectMapper.writeValueAsString(servers));
@@ -544,21 +538,6 @@ public class ConfigController {
             plain.put(entry.getKey(), objectMapper.convertValue(entry.getValue(), Object.class));
         }
         return plain;
-    }
-
-    private void replaceStdioServers(String wsId, Map<String, JsonNode> next) {
-        List<McpStdioServer> existing = stdioRepo.findByWorkspaceIdOrderByNameAsc(wsId);
-        for (McpStdioServer row : existing) {
-            if (!next.containsKey(row.getName())) {
-                stdioRepo.delete(row);
-            }
-        }
-        for (Map.Entry<String, JsonNode> entry : next.entrySet()) {
-            McpStdioServer row = stdioRepo.findByWorkspaceIdAndName(wsId, entry.getKey())
-                    .orElseGet(() -> new McpStdioServer(wsId, entry.getKey(), entry.getValue()));
-            row.setConfig(entry.getValue());
-            stdioRepo.save(row);
-        }
     }
 
     private static String sha256(String value) throws NoSuchAlgorithmException {
@@ -629,14 +608,8 @@ public class ConfigController {
                         "MCP server entry has neither stdio nor remote fields: " + name);
             }
         }
-        replaceStdioServers(wsId, stdio);
-        for (Map.Entry<String, String> entry : remoteEndpoints.entrySet()) {
-            McpServer row = remoteRepo.findByWorkspaceIdAndName(wsId, entry.getKey())
-                    .orElseGet(() -> new McpServer(wsId, entry.getKey(), entry.getValue()));
-            row.setEndpoint(entry.getValue());
-            row.setEnabled(true);
-            remoteRepo.save(row);
-        }
+            mcpProxyCatalogService.replaceStdioConfigs(wsId, stdio);
+            mcpProxyCatalogService.saveRemoteEndpoints(wsId, remoteEndpoints);
         log.info("MCP config saved for workspace {}: stdio={}, remote={}",
                 wsId, stdio.size(), remoteEndpoints.size());
         return ResponseEntity.ok(Map.of("status", "ok"));
@@ -645,14 +618,16 @@ public class ConfigController {
     private ResponseEntity<Map<String, Object>> getMixedMcpConfig(String wsId) {
         try {
             Map<String, Object> servers = new LinkedHashMap<>();
-            for (McpStdioServer row : stdioRepo.findByWorkspaceIdOrderByNameAsc(wsId)) {
-                servers.put(row.getName(), objectMapper.convertValue(row.getConfig(), Object.class));
+            for (McpProxyCatalogService.StdioConfigView row :
+                    mcpProxyCatalogService.listStdioConfigs(wsId)) {
+                servers.put(row.name(), objectMapper.convertValue(row.config(), Object.class));
             }
-            for (McpServer row : remoteRepo.findByWorkspaceIdAndEnabledTrue(wsId)) {
+            for (McpProxyCatalogService.RemoteServerConfigView row :
+                    mcpProxyCatalogService.listEnabledRemoteConfigs(wsId)) {
                 Map<String, Object> value = new LinkedHashMap<>();
-                value.put("url", row.getEndpoint());
+                value.put("url", row.endpoint());
                 value.put("type", "http");
-                servers.putIfAbsent(row.getName(), value);
+                servers.putIfAbsent(row.name(), value);
             }
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("mcpServers", servers);

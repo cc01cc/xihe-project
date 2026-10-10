@@ -75,6 +75,38 @@ public class GrantDefaultService {
                 lockedSession.getWorkspaceId());
     }
 
+    /**
+     * PLAN-0470 (decision #15): session-scoped agent grants cleanup owned by
+     * Policy; participates in the caller's Session deletion transaction.
+     */
+    @Transactional
+    public void deleteSessionAgentGrants(UUID sessionId) {
+        grantRepository.deleteBySubjectTypeAndSubjectId("agent", sessionId);
+    }
+
+    /**
+     * PLAN-0470 (decision #22): the agent-principal default/template grant
+     * write is owned by Policy; the Principal service computes the covered
+     * permission set and hands it over. Joins the caller's transaction.
+     */
+    @Transactional
+    public void createAgentPrincipalGrant(UUID principalId, UUID granterId, String source,
+                                          String roleName, String templateName,
+                                          com.fasterxml.jackson.databind.JsonNode permissions) {
+        AuthorizationGrant grant = new AuthorizationGrant();
+        grant.setId(UUID.randomUUID());
+        grant.setSubjectType(GrantPrincipalPathResolver.AGENT_PRINCIPAL);
+        grant.setSubjectId(principalId);
+        grant.setGranterType(GrantPrincipalPathResolver.USER);
+        grant.setGranterId(granterId);
+        grant.setSource(source);
+        grant.setRoleName(roleName);
+        grant.setTemplateName(templateName);
+        grant.setReadState("read");
+        grant.setPermissions(permissions);
+        grantRepository.saveAndFlush(grant);
+    }
+
     private void ensureDefault(String subjectType, UUID subjectId, UserRole role,
                                String actorUserId, String workspaceId) {
         if (grantRepository.existsBySubjectTypeAndSubjectIdAndSource(subjectType, subjectId, "default")) {

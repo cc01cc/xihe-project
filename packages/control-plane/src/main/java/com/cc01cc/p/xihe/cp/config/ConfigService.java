@@ -16,7 +16,6 @@ import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.repository.ConfigAuditRepository;
 import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
-import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.cc01cc.p.xihe.cp.provider.ProviderConnectionService;
 
 import java.io.IOException;
@@ -111,9 +110,6 @@ public class ConfigService {
 
     @Autowired
     private ConfigAuditRepository auditRepo;
-
-    @Autowired
-    private ProviderConnectionRepository providerConnections;
 
     @Autowired
     private ProviderConnectionService providerConnectionService;
@@ -584,11 +580,7 @@ public class ConfigService {
     }
 
     private boolean isReadyProviderConnection(String ownerType, String ownerId, String provider) {
-        return providerConnections
-                .findByOwnerTypeAndOwnerIdAndProviderId(ownerType, ownerId, provider)
-                .filter(connection -> connection.isEnabled()
-                        && ProviderConnection.STATUS_READY.equals(connection.getStatus()))
-                .isPresent();
+        return providerConnectionService.isReadyForOwner(ownerType, ownerId, provider);
     }
 
     public static class ConfigOwnershipException extends IllegalArgumentException {
@@ -799,29 +791,27 @@ public class ConfigService {
                 ObjectNode domainNode = root.putObject(domainEntry.getKey());
                 domainEntry.getValue().forEach(domainNode::put);
             }
-            List<ProviderConnection> connections = providerConnections.findAll();
+            List<ProviderConnectionService.ConfigExportView> connections =
+                    providerConnectionService.listForConfigExport(includeSecrets);
             if (!connections.isEmpty()) {
                 ArrayNode connectionNodes = objectMapper.createArrayNode();
-                for (ProviderConnection connection : connections) {
+                for (ProviderConnectionService.ConfigExportView connection : connections) {
                     ObjectNode node = objectMapper.createObjectNode();
-                    node.put("providerId", connection.getProviderId());
-                    node.put("label", connection.getLabel());
-                    node.put("ownerType", connection.getOwnerType());
-                    node.put("ownerId", connection.getOwnerId());
-                    if (connection.getBaseUrl() != null) {
-                        node.put("baseUrl", connection.getBaseUrl());
+                    node.put("providerId", connection.providerId());
+                    node.put("label", connection.label());
+                    node.put("ownerType", connection.ownerType());
+                    node.put("ownerId", connection.ownerId());
+                    if (connection.baseUrl() != null) {
+                        node.put("baseUrl", connection.baseUrl());
                     }
-                    node.put("status", connection.getStatus());
-                    node.put("enabled", connection.isEnabled());
-                    node.put("modelDiscovery", connection.getModelDiscovery());
-                    if (connection.getManualModels() != null) {
-                        node.set("manualModels", objectMapper.readTree(connection.getManualModels()));
+                    node.put("status", connection.status());
+                    node.put("enabled", connection.enabled());
+                    node.put("modelDiscovery", connection.modelDiscovery());
+                    if (connection.manualModels() != null) {
+                        node.set("manualModels", objectMapper.readTree(connection.manualModels()));
                     }
-                    if (includeSecrets) {
-                        String apiKey = providerConnectionService.exportPlaintextCredential(connection);
-                        if (apiKey != null) {
-                            node.put("apiKey", apiKey);
-                        }
+                    if (includeSecrets && connection.apiKey() != null) {
+                        node.put("apiKey", connection.apiKey());
                     }
                     connectionNodes.add(node);
                 }
@@ -835,7 +825,7 @@ public class ConfigService {
 
     /** PLAN-0307 T2.25: connection count for the export audit record. */
     public long countProviderConnections() {
-        return providerConnections.count();
+        return providerConnectionService.countForConfigExport();
     }
 
     private void createAudit(ConfigEntity entity, String oldValue,

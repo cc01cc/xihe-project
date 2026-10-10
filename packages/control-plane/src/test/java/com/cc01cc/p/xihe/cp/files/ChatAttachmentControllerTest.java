@@ -42,6 +42,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -242,6 +243,33 @@ class ChatAttachmentControllerTest extends AbstractH2Test {
         assertNotNull(meta);
         assertEquals(fileId, meta.get("id"));
         assertEquals("meta.pdf", meta.get("name"));
+    }
+
+    @Test
+    void getWorkspaceFile_returnsOwnedAttachmentContent() throws IOException {
+        Path tempDir = Files.createTempDirectory("attach-download");
+        Path tempFile = tempDir.resolve("download.png");
+        byte[] expected = "image-data".getBytes();
+        Files.write(tempFile, expected);
+
+        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+        body.add("files", new FileSystemResource(tempFile));
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+        ResponseEntity<Map> uploadResponse = restTemplate.exchange(
+                baseUrl + "/api/v1/sessions/" + sessionId + "/attachments",
+                HttpMethod.POST, new HttpEntity<>(body, headers), Map.class);
+        Map<String, Object> uploaded = (Map<String, Object>)
+                ((List<?>) uploadResponse.getBody().get("success")).get(0);
+
+        ResponseEntity<byte[]> response = restTemplate.exchange(
+                baseUrl + uploaded.get("url"), HttpMethod.GET,
+                new HttpEntity<>(authHeaders()), byte[].class);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals(MediaType.IMAGE_PNG, response.getHeaders().getContentType());
+        assertArrayEquals(expected, response.getBody());
     }
 
     @Test

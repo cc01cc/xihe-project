@@ -205,6 +205,17 @@ public class ContextService {
         return eventStoreService.getLatestSequence(sessionId);
     }
 
+    /**
+     * PLAN-0470 (decision #15): one Context-owned cleanup entry for the Session
+     * deletion path — projections first, then events (the pre-existing order).
+     * Joins the caller's transaction; adds no rollback/compensation semantics.
+     */
+    @Transactional
+    public void deleteSessionData(String sessionId) {
+        projectionService.deleteSessionProjection(sessionId);
+        eventStoreService.deleteSessionEvents(sessionId);
+    }
+
     @Transactional
     public Long fork(String sourceSessionId, Long atSequence, String newSessionId,
                      String workspaceId, String userId) {

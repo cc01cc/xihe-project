@@ -55,8 +55,34 @@ final class CpArchitectureRules {
             .should().dependOnClassesThat(CONTROLLERS)
             .as("Persistence must not depend on HTTP Controllers");
 
+    /**
+     * PLAN-0470 #27 (分层单向): every CP package under {@code com.cc01cc.p.xihe.cp}
+     * except {@code crypto} counts as a business package. Technical-facility
+     * packages must stay lower and may not depend on any of them.
+     */
+    static final DescribedPredicate<JavaClass> CP_BUSINESS_PACKAGES =
+            DescribedPredicate.describe("CP business packages (cp.* except cp.crypto.*)",
+                    type -> type.getPackageName().startsWith("com.cc01cc.p.xihe.cp.")
+                            && !type.getPackageName().startsWith("com.cc01cc.p.xihe.cp.crypto."));
+
+    /** PLAN-0470 #27: technical facilities (crypto) stay lower — no CP business deps. */
+    static final ArchRule TECHNICAL_FACILITY_STAYS_LOWER = noClasses()
+            .that().resideInAPackage("com.cc01cc.p.xihe.cp.crypto..")
+            .should().dependOnClassesThat(CP_BUSINESS_PACKAGES)
+            // allowEmptyShould: probe subsets may not contain any crypto class;
+            // the production import always contains EnvelopeEncryptionService.
+            .allowEmptyShould(true)
+            .as("Technical facility packages (crypto) must not depend on CP business packages");
+
+    /** PLAN-0470 #27: persistence stays below services. */
+    static final ArchRule REPOSITORY_STAYS_BELOW_SERVICES = noClasses().that(REPOSITORIES)
+            .should().dependOnClassesThat(APPLICATIONS)
+            .allowEmptyShould(true)
+            .as("JPA repositories must not depend on application services");
+
     static final List<ArchRule> ALL = List.of(CONTROLLER_TO_CONTROLLER, APPLICATION_TO_CONTROLLER,
-            CONTROLLER_TO_REPOSITORY, PERSISTENCE_TO_CONTROLLER);
+            CONTROLLER_TO_REPOSITORY, PERSISTENCE_TO_CONTROLLER,
+            TECHNICAL_FACILITY_STAYS_LOWER, REPOSITORY_STAYS_BELOW_SERVICES);
 
     private CpArchitectureRules() { }
 }

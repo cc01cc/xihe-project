@@ -104,6 +104,24 @@ public class ApprovalService {
     }
 
     /**
+     * PLAN-0470 (decision #18): bounded read of decided approvals for Context
+     * constraint extraction — the Context summary path never touches
+     * {@link ChatApprovalRepository} directly.
+     */
+    public record DecidedApprovalView(String tool, String action, String state, Boolean approved) {}
+
+    @Transactional(readOnly = true)
+    public List<DecidedApprovalView> listDecidedForConstraints(String sessionId) {
+        return approvalRepository
+                .findBySessionIdAndStateInOrderByCreatedAtDesc(
+                        sessionId, List.of("approved", "rejected", "expired"))
+                .stream()
+                .map(row -> new DecidedApprovalView(
+                        row.getTool(), row.getAction(), row.getState(), row.getApproved()))
+                .toList();
+    }
+
+    /**
      * Convenience overload for the **Agent-relay** path: an approval request that reached CP from
      * the Agent's event stream (model-initiated {@code request_approval}). Gate-created rows must
      * use the explicit-origin overload so the durable row records {@link ChatApproval#ORIGIN_CP_GATE}

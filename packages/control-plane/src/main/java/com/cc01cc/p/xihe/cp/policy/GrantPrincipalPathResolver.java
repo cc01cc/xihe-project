@@ -1,11 +1,10 @@
 package com.cc01cc.p.xihe.cp.policy;
 
-import com.cc01cc.p.xihe.cp.entity.ChatRun;
+import com.cc01cc.p.xihe.cp.chat.ChatRunStatusReadService;
 import com.cc01cc.p.xihe.cp.entity.McpInvocation;
 import com.cc01cc.p.xihe.cp.entity.Session;
-import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
-import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
-import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.mcp.McpInvocationService;
+import com.cc01cc.p.xihe.cp.service.SessionReadService;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Propagation;
@@ -26,41 +25,43 @@ public class GrantPrincipalPathResolver {
     public static final String USER = "user";
     public static final String AGENT_PRINCIPAL = "agent_principal";
 
-    private final SessionRepository sessionRepository;
-    private final ChatRunRepository chatRunRepository;
-    private final McpInvocationRepository mcpInvocationRepository;
+    // PLAN-0470 (decision #18): authorization reads go through the Session/Chat/MCP
+    // owner read services (bounded views) — no cross-domain repositories here.
+    private final SessionReadService sessionReadService;
+    private final ChatRunStatusReadService chatRunStatusReadService;
+    private final McpInvocationService mcpInvocationService;
 
-    public GrantPrincipalPathResolver(SessionRepository sessionRepository,
-                                      ChatRunRepository chatRunRepository,
-                                      McpInvocationRepository mcpInvocationRepository) {
-        this.sessionRepository = sessionRepository;
-        this.chatRunRepository = chatRunRepository;
-        this.mcpInvocationRepository = mcpInvocationRepository;
+    public GrantPrincipalPathResolver(SessionReadService sessionReadService,
+                                      ChatRunStatusReadService chatRunStatusReadService,
+                                      McpInvocationService mcpInvocationService) {
+        this.sessionReadService = sessionReadService;
+        this.chatRunStatusReadService = chatRunStatusReadService;
+        this.mcpInvocationService = mcpInvocationService;
     }
 
     public AgentPath resolveAgent(String userId, String workspaceId, String sessionId) {
         UUID userUuid = parseUuid(userId);
         UUID workspaceUuid = parseUuid(workspaceId);
-        Session current = sessionRepository.findById(parseUuid(sessionId))
+        SessionReadService.SessionPathView current = sessionReadService.findById(parseUuid(sessionId))
                 .orElseThrow(GrantPrincipalPathResolver::invalidPath);
-        UUID agentPrincipalId = parseUuid(current.getAgentPrincipalId());
-        List<Session> reverseSessionPath = new ArrayList<>();
+        UUID agentPrincipalId = parseUuid(current.agentPrincipalId());
+        List<SessionReadService.SessionPathView> reverseSessionPath = new ArrayList<>();
         Set<UUID> visited = new HashSet<>();
 
         while (true) {
-            UUID currentId = current.getId();
-            if (!userUuid.equals(parseUuid(current.getUserId()))
-                    || !workspaceUuid.equals(parseUuid(current.getWorkspaceId()))
-                    || !agentPrincipalId.equals(parseUuid(current.getAgentPrincipalId()))
+            UUID currentId = current.id();
+            if (!userUuid.equals(parseUuid(current.userId()))
+                    || !workspaceUuid.equals(parseUuid(current.workspaceId()))
+                    || !agentPrincipalId.equals(parseUuid(current.agentPrincipalId()))
                     || !visited.add(currentId)) {
                 throw invalidPath();
             }
             reverseSessionPath.add(current);
 
-            UUID parentSessionId = current.getSpawnedFromSessionId();
-            UUID parentRunId = current.getSpawnedFromRunId();
-            boolean hasParent = parentSessionId != null || parentRunId != null || current.getSpawnedAt() != null;
-            String kind = current.getKind();
+            UUID parentSessionId = current.spawnedFromSessionId();
+            UUID parentRunId = current.spawnedFromRunId();
+            boolean hasParent = parentSessionId != null || parentRunId != null || current.spawnedAt() != null;
+            String kind = current.kind();
 
             if (kind == null) {
                 if (hasParent) {
@@ -68,7 +69,7 @@ public class GrantPrincipalPathResolver {
                 }
                 break;
             }
-            if (!hasParent || parentSessionId == null || parentRunId == null || current.getSpawnedAt() == null) {
+            if (!hasParent || parentSessionId == null || parentRunId == null || current.spawnedAt() == null) {
                 throw invalidPath();
             }
             if (!Session.KIND_FORK.equals(kind) && !Session.KIND_SPAWN.equals(kind)) {
@@ -78,32 +79,32 @@ public class GrantPrincipalPathResolver {
             if (Session.KIND_FORK.equals(kind)) {
                 // Fork is a new permission root. Validate live lineage when both
                 // source rows remain, but source deletion must not invalidate the child.
-                Session parent = sessionRepository.findById(parentSessionId).orElse(null);
-                ChatRun parentRun = chatRunRepository.findById(parentRunId).orElse(null);
+                SessionReadService.SessionPathView parent = sessionReadService.findById(parentSessionId).orElse(null);
+                ChatRunStatusReadService.ChatRunStatusView parentRun = chatRunStatusReadService.findById(parentRunId).orElse(null);
                 if ((parent == null) != (parentRun == null)) {
                     throw invalidPath();
                 }
-                if (parent != null && (!parentSessionId.toString().equals(parentRun.getSessionId())
-                        || !userId.equals(parentRun.getUserId())
-                        || !workspaceId.equals(parentRun.getWorkspaceId())
-                        || !userUuid.equals(parseUuid(parent.getUserId()))
-                        || !workspaceUuid.equals(parseUuid(parent.getWorkspaceId()))
-                        || !agentPrincipalId.equals(parseUuid(parent.getAgentPrincipalId())))) {
+                if (parent != null && (!parentSessionId.toString().equals(parentRun.sessionId())
+                        || !userId.equals(parentRun.userId())
+                        || !workspaceId.equals(parentRun.workspaceId())
+                        || !userUuid.equals(parseUuid(parent.userId()))
+                        || !workspaceUuid.equals(parseUuid(parent.workspaceId()))
+                        || !agentPrincipalId.equals(parseUuid(parent.agentPrincipalId())))) {
                     throw invalidPath();
                 }
                 break;
             }
 
-            Session parent = sessionRepository.findById(parentSessionId)
+            SessionReadService.SessionPathView parent = sessionReadService.findById(parentSessionId)
                     .orElseThrow(GrantPrincipalPathResolver::invalidPath);
-            ChatRun parentRun = chatRunRepository.findById(parentRunId)
+            ChatRunStatusReadService.ChatRunStatusView parentRun = chatRunStatusReadService.findById(parentRunId)
                     .orElseThrow(GrantPrincipalPathResolver::invalidPath);
-            if (!parentSessionId.toString().equals(parentRun.getSessionId())
-                    || !userId.equals(parentRun.getUserId())
-                    || !workspaceId.equals(parentRun.getWorkspaceId())
-                    || !userUuid.equals(parseUuid(parent.getUserId()))
-                    || !workspaceUuid.equals(parseUuid(parent.getWorkspaceId()))
-                    || !agentPrincipalId.equals(parseUuid(parent.getAgentPrincipalId()))) {
+            if (!parentSessionId.toString().equals(parentRun.sessionId())
+                    || !userId.equals(parentRun.userId())
+                    || !workspaceId.equals(parentRun.workspaceId())
+                    || !userUuid.equals(parseUuid(parent.userId()))
+                    || !workspaceUuid.equals(parseUuid(parent.workspaceId()))
+                    || !agentPrincipalId.equals(parseUuid(parent.agentPrincipalId()))) {
                 throw invalidPath();
             }
             current = parent;
@@ -129,9 +130,8 @@ public class GrantPrincipalPathResolver {
         if (runUuid == null || toolCallUuid == null) {
             return Optional.empty();
         }
-        McpInvocation invocation = mcpInvocationRepository
-                .findByRunIdAndToolCallIdAndSource(runUuid.toString(), toolCallUuid.toString(),
-                        McpInvocation.SOURCE_AGENT)
+        McpInvocationService.InvocationContextView invocation = mcpInvocationService
+                .findAgentInvocationContext(runUuid.toString(), toolCallUuid.toString())
                 .orElse(null);
         if (invocation == null) {
             return Optional.empty();
@@ -141,20 +141,20 @@ public class GrantPrincipalPathResolver {
         UUID workspaceUuid = parseUuid(workspaceId);
         UUID sessionUuid = parseUuid(sessionId);
 
-        ChatRun run = chatRunRepository.findById(runUuid)
+        ChatRunStatusReadService.ChatRunStatusView run = chatRunStatusReadService.findById(runUuid)
                 .orElseThrow(GrantPrincipalPathResolver::invalidPath);
-        if (!ChatRunRepository.ACTIVE_LEASE_STATUSES.contains(run.getStatus())
-                || !sessionUuid.equals(parseUuid(run.getSessionId()))
-                || !userUuid.equals(parseUuid(run.getUserId()))
-                || !workspaceUuid.equals(parseUuid(run.getWorkspaceId()))) {
+        if (!ChatRunStatusReadService.isActiveLeaseStatus(run.status())
+                || !sessionUuid.equals(parseUuid(run.sessionId()))
+                || !userUuid.equals(parseUuid(run.userId()))
+                || !workspaceUuid.equals(parseUuid(run.workspaceId()))) {
             throw invalidPath();
         }
-        if (!McpInvocation.STATUS_ACTIVE.equals(invocation.getStatus())
-                || !sessionUuid.equals(parseUuid(invocation.getSessionId()))
-                || !userUuid.equals(parseUuid(invocation.getUserId()))
-                || !workspaceUuid.equals(parseUuid(invocation.getWorkspaceId()))
-                || !runUuid.equals(parseUuid(invocation.getRunId()))
-                || (toolName != null && !toolName.equals(invocation.getToolName()))) {
+        if (!McpInvocation.STATUS_ACTIVE.equals(invocation.status())
+                || !sessionUuid.equals(parseUuid(invocation.sessionId()))
+                || !userUuid.equals(parseUuid(invocation.userId()))
+                || !workspaceUuid.equals(parseUuid(invocation.workspaceId()))
+                || !runUuid.equals(parseUuid(invocation.runId()))
+                || (toolName != null && !toolName.equals(invocation.toolName()))) {
             throw invalidPath();
         }
 
@@ -186,5 +186,5 @@ public class GrantPrincipalPathResolver {
         return new IllegalArgumentException("Session principal path is invalid");
     }
 
-    public record AgentPath(UUID principalId, List<Session> sessionPath) {}
+    public record AgentPath(UUID principalId, List<SessionReadService.SessionPathView> sessionPath) {}
 }
