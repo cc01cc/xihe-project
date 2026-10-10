@@ -234,9 +234,9 @@ You are A.
             workers = reg.list_enabled()
             assert len(workers) == 1
 
-            from xihe_agent.registry.registry import _get_tools_for_worker
+            from xihe_agent.registry.registry import get_tools_for_worker
 
-            tools = _get_tools_for_worker(workers[0], self.mcp_tools, self.custom_tools)
+            tools = get_tools_for_worker(workers[0], self.mcp_tools, self.custom_tools)
             tool_names = [t.spec.name for t in tools]
             assert "mock_web_fetch" in tool_names
             assert "mock_edit_file" not in tool_names

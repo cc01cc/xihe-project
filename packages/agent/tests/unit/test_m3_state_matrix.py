@@ -13,7 +13,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 import xihe_agent.agent_runner.langgraph_runner as langgraph_runner_module
 from xihe_agent.adapters.approval_tool import ApprovalExpiredError
-from xihe_agent.agent_runner.langgraph_runner import (
+from xihe_agent.agent_runner.tool_adapter import (
     EVENT_WRITER_V2_ENV,
     LCToolAdapter,
 )

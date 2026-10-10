@@ -9,7 +9,7 @@ from xihe_agent.registry import WorkerConfig
 from xihe_agent.registry.registry import (
     WorkerRegistry,
     _build_worker_graph,
-    _get_tools_for_worker,
+    get_tools_for_worker,
 )
 
 
@@ -26,33 +26,33 @@ class FakeAgentTool(BaseAgentTool):
         return {"content": self._name}
 
 
-def test_get_tools_for_worker_no_filter():
+def testget_tools_for_worker_no_filter():
     config = WorkerConfig(id="t", name="t", description="t", tool_keys=[])
     mcp = [FakeAgentTool("mock_tool_a"), FakeAgentTool("mock_tool_b")]
     custom = [FakeAgentTool("custom_tool")]
-    result = _get_tools_for_worker(config, mcp, custom)
+    result = get_tools_for_worker(config, mcp, custom)
     assert len(result) == 3
     assert any(t.spec.name == "mock_tool_a" for t in result)
     assert any(t.spec.name == "mock_tool_b" for t in result)
     assert any(t.spec.name == "custom_tool" for t in result)
 
 
-def test_get_tools_for_worker_with_filter():
+def testget_tools_for_worker_with_filter():
     config = WorkerConfig(id="t", name="t", description="t", tool_keys=["mock_tool_a"])
     mcp = [FakeAgentTool("mock_tool_a"), FakeAgentTool("mock_tool_b")]
     custom = [FakeAgentTool("custom_tool")]
-    result = _get_tools_for_worker(config, mcp, custom)
+    result = get_tools_for_worker(config, mcp, custom)
     names = [t.spec.name for t in result]
     assert "mock_tool_a" in names
     assert "mock_tool_b" not in names
     assert "custom_tool" in names
 
 
-def test_get_tools_for_worker_no_mcp_match():
+def testget_tools_for_worker_no_mcp_match():
     config = WorkerConfig(id="t", name="t", description="t", tool_keys=["nonexistent"])
     mcp = [FakeAgentTool("mock_tool_a")]
     custom = [FakeAgentTool("custom_tool")]
-    result = _get_tools_for_worker(config, mcp, custom)
+    result = get_tools_for_worker(config, mcp, custom)
     names = [t.spec.name for t in result]
     assert "mock_tool_a" not in names
     assert "custom_tool" in names
@@ -76,7 +76,7 @@ def test_build_worker_graph_failure():
         async def execute(self, input: dict, context: AgentContext) -> dict:
             return {}
 
-    with patch("xihe_agent.registry.registry.create_react_agent", side_effect=ValueError("boom")):
+    with patch("xihe_agent.agent_runner.graph_builder.create_react_agent", side_effect=ValueError("boom")):
         config = WorkerConfig(id="b", name="b", description="b")
         graph = _build_worker_graph(config, model, [BrokenTool()], [])
         assert graph is None

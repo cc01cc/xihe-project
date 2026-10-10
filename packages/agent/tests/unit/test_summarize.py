@@ -6,7 +6,8 @@ import pytest
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
 
-from xihe_agent import main as main_module
+import xihe_agent.app_state as main_module
+from xihe_agent.main import app as agent_app
 from xihe_agent.llm.summarize import (
     SUMMARIZE_SECTIONS,
     SUMMARIZE_SYSTEM_PROMPT,
@@ -108,7 +109,7 @@ def test_summarize_endpoint_returns_summary_and_usage(monkeypatch):
             )
         ),
     )
-    client = TestClient(main_module.app)
+    client = TestClient(agent_app)
 
     resp = client.post(
         "/internal/v1/agent/summarize",
@@ -134,7 +135,7 @@ def test_summarize_endpoint_returns_summary_and_usage(monkeypatch):
 
 
 def test_summarize_endpoint_requires_credential_lease():
-    client = TestClient(main_module.app)
+    client = TestClient(agent_app)
 
     resp = client.post(
         "/internal/v1/agent/summarize",
@@ -148,7 +149,7 @@ def test_summarize_endpoint_requires_credential_lease():
 
 def test_summarize_endpoint_maps_lease_failure_to_503(monkeypatch):
     _install_lease(monkeypatch, error=RuntimeError("lease unavailable"))
-    client = TestClient(main_module.app)
+    client = TestClient(agent_app)
 
     resp = client.post(
         "/internal/v1/agent/summarize",

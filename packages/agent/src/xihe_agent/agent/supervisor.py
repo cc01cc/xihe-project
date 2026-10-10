@@ -1,8 +1,6 @@
 from typing import TYPE_CHECKING, Optional
 
-from langchain.agents import create_agent as create_react_agent
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.pregel import Pregel
 from langgraph_supervisor import create_supervisor
@@ -12,9 +10,7 @@ if TYPE_CHECKING:
 
 from loguru import logger
 
-from xihe_agent.adapters.mcp_client import MCPAgentTool
-from xihe_agent.agent_runner.langgraph_runner import LCToolAdapter
-from xihe_agent.interfaces.context import AgentContext
+from xihe_agent.agent_runner.graph_builder import adapt_agent_tools, build_react_graph
 from xihe_agent.interfaces.tool import BaseAgentTool
 
 GENERAL_PROMPT = "You are the main xihe Agent assistant. Use available tools to help users."
@@ -43,18 +39,7 @@ def build_supervisor(
     custom_tools: list[BaseAgentTool],
     registry: Optional["WorkerRegistry"] = None,
 ) -> CompiledStateGraph:
-    from xihe_agent.registry.registry import _get_tools_for_worker
-
-    def _adapt(tools: list[BaseAgentTool]) -> list[BaseTool]:
-        adapted: list[BaseTool] = []
-        for tool in tools:
-            if isinstance(tool, MCPAgentTool):
-                adapted.append(tool.base_tool)
-            elif isinstance(tool, BaseTool):
-                adapted.append(tool)
-            else:
-                adapted.append(LCToolAdapter(tool, AgentContext.empty(""), None))
-        return adapted
+    from xihe_agent.registry.registry import get_tools_for_worker
 
     if registry is not None:
         workers = registry.list_enabled()
@@ -64,11 +49,11 @@ def build_supervisor(
     if workers:
         sub_agents: list[Pregel] = []
         for config in workers:
-            tools = _get_tools_for_worker(config, all_mcp_tools, custom_tools)
+            tools = get_tools_for_worker(config, all_mcp_tools, custom_tools)
             sub_agents.append(
-                create_react_agent(
+                build_react_graph(
                     model,
-                    tools=_adapt(tools),
+                    adapt_agent_tools(tools),
                     name=config.id,
                     system_prompt=config.system_prompt,
                 )
@@ -80,9 +65,9 @@ def build_supervisor(
         sub_agents = []
         for w in _BUILTIN_WORKERS:
             sub_agents.append(
-                create_react_agent(
+                build_react_graph(
                     model,
-                    tools=_adapt(list(all_mcp_tools) + list(custom_tools)),
+                    adapt_agent_tools(list(all_mcp_tools) + list(custom_tools)),
                     name=w["id"],
                     system_prompt=w["prompt"],
                 )

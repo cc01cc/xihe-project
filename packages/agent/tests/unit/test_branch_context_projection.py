@@ -16,6 +16,7 @@ import pytest
 from langchain_core.messages import ToolMessage
 
 import xihe_agent.agent_runner.langgraph_runner as langgraph_runner_module
+import xihe_agent.agent_runner.tool_adapter as tool_adapter_module
 from xihe_agent.agent_runner import LangGraphRunner
 from xihe_agent.context.event_sourced_provider import EventSourcedContextProvider
 from xihe_agent.context.store_client import CPContextServiceClient
@@ -25,7 +26,7 @@ from xihe_agent.interfaces.message import TextMessage
 from xihe_agent.interfaces.tool import ToolSpec
 from xihe_agent.llm.base import create_llm
 
-LCToolAdapter = langgraph_runner_module.LCToolAdapter
+LCToolAdapter = tool_adapter_module.LCToolAdapter
 
 
 class FakeTool:

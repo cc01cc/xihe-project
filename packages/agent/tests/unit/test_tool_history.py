@@ -11,6 +11,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 import xihe_agent.agent_runner.langgraph_runner as langgraph_runner_module
+import xihe_agent.agent_runner.tool_adapter as tool_adapter_module
 from xihe_agent.agent_runner import LangGraphRunner
 from xihe_agent.interfaces.agent_runner import RunnerConfig
 from xihe_agent.interfaces.context import (
@@ -24,8 +25,8 @@ from xihe_agent.interfaces.message import TextMessage, ToolCallRef
 from xihe_agent.interfaces.tool import ToolSpec
 from xihe_agent.llm.base import create_llm
 
-LCToolAdapter = langgraph_runner_module.LCToolAdapter
-EVENT_WRITER_V2_ENV = langgraph_runner_module.EVENT_WRITER_V2_ENV
+LCToolAdapter = tool_adapter_module.LCToolAdapter
+EVENT_WRITER_V2_ENV = tool_adapter_module.EVENT_WRITER_V2_ENV
 MISSING_TOOL_RESULT_CONTENT = langgraph_runner_module.MISSING_TOOL_RESULT_CONTENT
 
 
@@ -242,8 +243,8 @@ def test_snapshot_read_marks_tool_without_id_degraded():
 def test_tool_result_event_written_by_gate_default_is_legacy(monkeypatch):
     """Gate OFF (default): payload field set and order match pre-gate writer."""
     monkeypatch.delenv(EVENT_WRITER_V2_ENV, raising=False)
-    assert langgraph_runner_module.event_writer_v2_enabled() is False
-    payload = langgraph_runner_module._tool_event_payload(
+    assert tool_adapter_module.event_writer_v2_enabled() is False
+    payload = tool_adapter_module._tool_event_payload(
         call_id="c1",
         tool_name="read_file",
         run_id="run-1",

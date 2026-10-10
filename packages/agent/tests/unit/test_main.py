@@ -2,9 +2,10 @@
 
 import pytest
 
-import xihe_agent.main as main_module
+import xihe_agent.app_state as main_module
+import xihe_agent.main as agent_composition
 from xihe_agent.llm.base import LLMConfig
-from xihe_agent.main import (
+from xihe_agent.app_state import (
     _classify_llm_exception,
     _derive_llm_ready,
     _has_instance_fallback_credentials,
@@ -90,29 +91,33 @@ def test_instance_fallback_credentials_requires_key_or_mock():
 
 
 def test_configure_log_level_is_idempotent(monkeypatch):
-    calls: list[str] = []
-    monkeypatch.setattr(main_module.logger, "remove", lambda *args, **kwargs: calls.append("remove"))
-    monkeypatch.setattr(main_module.logger, "add", lambda *args, **kwargs: calls.append("add"))
-    monkeypatch.setattr(main_module, "_APPLIED_LOG_LEVEL", "info")
+    from xihe_agent import main as agent_composition
 
-    main_module._configure_log_level("info")
+    calls: list[str] = []
+    monkeypatch.setattr(agent_composition.logger, "remove", lambda *args, **kwargs: calls.append("remove"))
+    monkeypatch.setattr(agent_composition.logger, "add", lambda *args, **kwargs: calls.append("add"))
+    monkeypatch.setattr(agent_composition, "_APPLIED_LOG_LEVEL", "info")
+
+    agent_composition._configure_log_level("info")
     assert calls == []
 
-    main_module._configure_log_level("debug")
+    agent_composition._configure_log_level("debug")
     assert calls == ["remove", "add", "add"]
 
 
 @pytest.mark.asyncio
 async def test_apply_cp_log_level_reads_logging_domain(monkeypatch):
+    from xihe_agent import main as agent_composition
+
     applied: list[str] = []
-    monkeypatch.setattr(main_module, "_configure_log_level", lambda level: applied.append(level))
+    monkeypatch.setattr(agent_composition, "_configure_log_level", lambda level: applied.append(level))
     monkeypatch.setattr(
         main_module.config_client,
         "get",
         lambda domain, key: "debug" if (domain, key) == ("logging", "levelAgent") else None,
     )
 
-    await main_module._apply_cp_log_level()
+    await agent_composition._apply_cp_log_level()
 
     assert applied == ["debug"]
 
@@ -149,7 +154,7 @@ def test_classify_llm_exception_maps_provider_400_to_request_rejected():
 
 @pytest.mark.asyncio
 async def test_pure_chat_does_not_initialize_mcp(monkeypatch):
-    from xihe_agent import main as agent_main
+    import xihe_agent.app_state as agent_main
 
     async def unexpected_initialize(**_kwargs):
         raise AssertionError("MCP must not initialize for pure chat")
@@ -161,7 +166,7 @@ async def test_pure_chat_does_not_initialize_mcp(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_mcp_workspace_context_conflict_fails_fast(monkeypatch):
-    from xihe_agent import main as agent_main
+    import xihe_agent.app_state as agent_main
 
     monkeypatch.setattr(agent_main.mcp_manager, "_initialized", True)
     monkeypatch.setattr(agent_main.mcp_manager, "workspace_id", "workspace-a")
@@ -172,7 +177,7 @@ async def test_mcp_workspace_context_conflict_fails_fast(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_workspace_tool_mode_requires_workspace_id():
-    from xihe_agent import main as agent_main
+    import xihe_agent.app_state as agent_main
 
     with pytest.raises(RuntimeError, match="workspaceId is required"):
         await agent_main._get_tools_for_mode("workspace", None)
@@ -180,7 +185,7 @@ async def test_workspace_tool_mode_requires_workspace_id():
 
 @pytest.mark.asyncio
 async def test_workspace_mcp_initialization_failure_is_not_silenced(monkeypatch):
-    from xihe_agent import main as agent_main
+    import xihe_agent.app_state as agent_main
 
     async def failed_initialize(**_kwargs):
         raise OSError("runtime unavailable")
@@ -194,7 +199,7 @@ async def test_workspace_mcp_initialization_failure_is_not_silenced(monkeypatch)
 def test_health_reports_stable_process_instance_id():
     import uuid
 
-    from xihe_agent import main as agent_main
+    import xihe_agent.app_state as agent_main
 
     first = uuid.UUID(agent_main._instance_id)
     second = uuid.UUID(agent_main._instance_id)

@@ -2,7 +2,7 @@
 
 import pytest
 
-from xihe_agent import main
+import xihe_agent.app_state as main
 from xihe_agent.llm.base import ENV_PROVIDER_KEY_MAP, LLMConfig
 
 

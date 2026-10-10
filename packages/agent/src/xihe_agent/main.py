@@ -1,8 +1,11 @@
 """
-xihe-agent: LLM Agent with LangChain integration.
-Uses LangGraph create_react_agent for tool-calling loop,
-langchain-mcp-adapters for MCP tool discovery,
-and SSE streaming for real-time responses.
+xihe-agent: FastAPI app composition root.
+
+PLAN-0473 M1 (spec/agent-module-boundaries.md): HTTP routes and request
+schemas live in `xihe_agent.api.*` (grouped by domain); process-wide runtime
+singletons, env constants, and shared helpers live in `xihe_agent.app_state`.
+This module keeps only: logging setup, config refresh orchestration, app
+lifespan, middleware/exception handlers, and router registration.
 """
 
 import asyncio
@@ -10,76 +13,41 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager, suppress
-from typing import Any, TypedDict, cast
+from typing import Any
 from uuid import uuid4
 
 import litellm
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, StreamingResponse
-from langchain_core.messages import AnyMessage
-from litellm import get_llm_provider
+from fastapi.responses import JSONResponse
 from loguru import logger
 
-from xihe_agent.adapters.approval_tool import (
-    ApprovalAgentTool,
-    ApprovalExecutorUnsupportedError,
-    ApprovalTerminalError,
-    ApprovalTool,
+from xihe_agent.app_state import (
+    AGENT_HOST,
+    AGENT_PORT,
+    CP_URL,
+    SyncReport,
+    _derive_llm_ready,
+    _parse_recover_session_ids,
+    _resolve_policy_for_model,
+    _runtime_refresh_lock,
+    config_client,
+    crash_recovery,
 )
-from xihe_agent.adapters.mcp_client import MCPClientManager
-from xihe_agent.adapters.sse_adapter import render_sse
-from xihe_agent.agent_runner import LangGraphRunner
-from xihe_agent.cancel_registry import RunCancelRegistry
-from xihe_agent.config_client import ConfigClient, SyncReport
-from xihe_agent.context import (
-    CPContextServiceClient,
-    CPEventStoreClient,
-    CrashRecovery,
-    EventSourcedContextProvider,
-)
-from xihe_agent.context.builder import build_context
 from xihe_agent.dotenv_loader import load_project_env, parse_cli_overrides
-from xihe_agent.interfaces.agent_runner import RunnerConfig
-from xihe_agent.interfaces.chat_run_context import ChatRunContext, ContextBuildError
-from xihe_agent.interfaces.message import Message, TextMessage
-from xihe_agent.llm.base import (
-    LLMConfig,
-    LLMRouteConfigError,
-    ProviderName,
-    create_llm,
-    env_api_key,
-    fallback_provider_configs,
-    resolve_provider_base_url,
-)
-from xihe_agent.llm.models import _models_router, fetch_model_catalog
-from xihe_agent.llm.models import router as models_router
-from xihe_agent.llm.summarize import summarize_with_llm
+from xihe_agent.llm.base import LLMConfig, create_llm
+from xihe_agent.llm.models import fetch_model_catalog
 from xihe_agent.llm.token_counter import TokenCounter
-from xihe_agent.rag import EmbeddingService, LiteLLMEmbeddings, VectorStore
-from xihe_agent.rag import chunk_document as rag_chunk
 from xihe_agent.registry.registry import WorkerRegistry
 from xihe_agent.security_defaults import enforce_security_defaults
-from xihe_agent.tools import GenerateImageAgentTool, GenerateImageTool, ProviderManager
+from xihe_agent.tools import GenerateImageAgentTool, ProviderManager
 
-_SAFE_CONTEXT_DIAGNOSTIC_CODES = {
-    "root_agents_md_missing",
-    "runtime_environment_missing",
-    "tool_definitions_max_tools_reached",
-    "tool_definitions_budget_truncated",
-    "artifact_status_available",
-    "artifact_status_expired",
-    "artifact_status_unavailable",
-    "artifact_status_unknown",
-    "invalid_session_workspace_binding",
-    "unsupported_tree_root",
-    "policy_request_invalid",
-    "authorization_denied",
-    "policy_approval_required",
-    "policy_denied",
-    "runtime_returned_invalid_path",
-    "entry_limit_reached",
-}
+
+def get_env(name: str) -> str | None:  # re-exported for compatibility
+    from xihe_agent.app_state import get_env as _get_env
+
+    return _get_env(name)
+
 
 # Suppress litellm verbose debugging that prints Authorization headers and
 # full request payloads. The redaction boundary already masks Bearer/JWT, but
@@ -89,11 +57,6 @@ with suppress(Exception):
     litellm.set_verbose = False  # type: ignore[attr-defined]
 
 
-def get_env(name: str) -> str | None:
-    value = os.getenv(name)
-    if value is None or value == "":
-        return None
-    return value
 
 
 def get_log_level_env(*names: str, default: str) -> str:
@@ -181,6 +144,11 @@ async def _apply_cp_log_level() -> None:
         logger.warning("CP log level unavailable, keeping current level", exc_info=True)
 
 
+# app_state helpers imported under a distinct alias to keep the logging
+# functions' call graph explicit (main owns log-level wiring; app_state owns
+# the shared helpers).
+
+
 async def _poll_runtime_config() -> None:
     while True:
         try:
@@ -193,343 +161,16 @@ async def _poll_runtime_config() -> None:
         await asyncio.sleep(30)
 
 
-def get_int_env(name: str, default: int) -> int:
-    value = os.getenv(name)
-    if value is None or value == "":
-        return default
-    try:
-        return int(value)
-    except ValueError as exc:
-        raise RuntimeError(f"{name} must be an integer, got: {value}") from exc
 
 
-CP_URL = get_env("XIHE_CP_URL") or f"http://localhost:{get_int_env('XIHE_CP_PORT', 12631)}"
-MCP_URL = f"{CP_URL}/api/v1/mcp"
-AGENT_HOST = get_env("XIHE_AGENT_HOST") or "0.0.0.0"
-AGENT_PORT = get_int_env("XIHE_AGENT_PORT", 12632)
-MCP_RETRY_INTERVAL = 2.0
-CP_API_TOKEN = get_env("XIHE_CP_API_TOKEN") or "dev-token-not-secure"
 
 
-def _parse_recover_session_ids() -> list[str]:
-    raw = get_env("XIHE_RECOVER_SESSION_IDS") or ""
-    return [s.strip() for s in raw.split(",") if s.strip()]
 
-
-def verify_api_token(request: Request) -> None:
-    auth_header = request.headers.get("Authorization", "")
-    token = auth_header.removeprefix("Bearer ") if auth_header.startswith("Bearer ") else None
-    if token != CP_API_TOKEN:
-        logger.warning("Agent API token mismatch")
-        raise HTTPException(status_code=403, detail="Forbidden: invalid API token")
-
-
-approval_tool = ApprovalAgentTool()
-mcp_manager = MCPClientManager(
-    cp_url=MCP_URL,
-    server_name="cp",
-    workspace_id=get_env("XIHE_WORKSPACE_ID"),
-    api_token=CP_API_TOKEN,
-    approval_tool=approval_tool,
-    retry_interval=MCP_RETRY_INTERVAL,
-)
-legacy_approval_tool = ApprovalTool()
-config_client = ConfigClient(
-    cp_url=CP_URL,
-    api_token=CP_API_TOKEN,
-    workspace_id=get_env("XIHE_WORKSPACE_ID"),
-)
-_models_router.bind(config_client)
-
-llm_config = LLMConfig.from_config_client(config_client)
-image_provider_manager = ProviderManager.from_env(config_client.get("llm-provider", "imageProvider"))
-generate_image_tool = GenerateImageAgentTool(provider_manager=image_provider_manager)
-legacy_generate_image_tool = GenerateImageTool(provider_manager=image_provider_manager)
-
-cp_context_service_client = CPContextServiceClient(base_url=CP_URL, api_token=CP_API_TOKEN)
-cp_event_store_client = CPEventStoreClient(base_url=CP_URL, api_token=CP_API_TOKEN)
-context_provider = EventSourcedContextProvider(cp_context_service_client)
-crash_recovery = CrashRecovery(cp_event_store_client)
-agent_runner = LangGraphRunner(
-    model_factory=lambda model: create_llm(llm_config.with_model(model)), event_store=cp_event_store_client
-)
-# PLAN-290 M0.3: active-run cancel registry shared by /chat stream and
-# POST /internal/v1/agent/runs/{runId}/cancel (CP forwards from chat cancel).
-run_cancel_registry = RunCancelRegistry()
-
-# RAG
-PG_DSN = get_env("XIHE_PG_DSN") or "postgresql+psycopg://xihe:@localhost:12634/xihe"
-embedding_model: str | None = None
-_embedding_api_key: str | None = None
-_embedding_api_base: str | None = None
-embedding_enabled = False
-# Created and swapped inside _refresh_embedding_config (module `global`
-# assignments). The bare annotations declare their types for readers without
-# changing the current "NameError until first refresh" runtime behaviour.
-embedding_service: EmbeddingService
-embedding_adapter: LiteLLMEmbeddings
-vector_store: VectorStore
-
-
-def _refresh_embedding_config() -> None:
-    global embedding_model, _embedding_api_key, _embedding_api_base
-    global embedding_enabled, embedding_service, embedding_adapter, vector_store
-
-    embedding_model = config_client.get("embedding", "model")
-    _embedding_api_key = None
-    _embedding_api_base = None
-
-    if embedding_model:
-        try:
-            _, provider, _, resolved_api_base = get_llm_provider(embedding_model)
-            # PLAN-0307 decision #21: config holds no credentials; the env
-            # fallback is the only instance-level source for embedding keys.
-            _embedding_api_key = env_api_key(provider) or None
-            _embedding_api_base = resolve_provider_base_url(
-                config_client.get_domain("llm-provider"),
-                provider,
-                resolved_api_base,
-            )
-        except Exception as e:
-            logger.warning("Failed to resolve embedding provider: {}", e)
-
-    # The default OpenAI embedding model must not create a request without credentials.
-    embedding_enabled = bool(embedding_model and _embedding_api_key)
-    if embedding_model and not embedding_enabled:
-        logger.warning(
-            "[LIFECYCLE] service=agent event=rag_embedding_disabled model={} reason=missing_api_key",
-            embedding_model,
-        )
-
-    embedding_service = EmbeddingService(
-        model=embedding_model or "mock",
-        api_key=_embedding_api_key,
-        api_base=_embedding_api_base,
-    )
-    embedding_adapter = LiteLLMEmbeddings(service=embedding_service)
-    dimensions = config_client.get("embedding", "dimensions")
-    vector_store = VectorStore(
-        dsn=PG_DSN,
-        embedding_service=embedding_adapter,
-        vector_size=int(dimensions) if dimensions else None,
-    )
-
-
-_refresh_embedding_config()
-
-AGENT_INSTRUCTIONS = (
-    config_client.get("agent-runtime", "instructions")
-    or "You are xihe Agent. Answer in Chinese by default. "
-    "Use the provided tools whenever the user asks about workspace files, directories, "
-    "or commands, then answer with the tool results."
-)
-AGENT_USER_NAME = config_client.get("agent-profile", "userName") or "User"
-USE_SUPERVISOR = config_client.get_bool("agent-runtime", "useSupervisor")
-USE_REGISTRY = config_client.get_bool("agent-runtime", "useRegistry")
-
-worker_registry: WorkerRegistry | None = None
-_watcher_observer: Any = None
-_watcher_event_handler: Any = None
-_agent_status: str = "starting"  # starting | ok | degraded
-_llm_ready: str = "unknown"
-_llm_verified_at: str | None = None
-_runtime_config_revision: str = ""
-_model_catalog: dict[str, Any] = {"models": {}, "providers": {}, "configRevision": ""}
-_runtime_refresh_lock = asyncio.Lock()
-_instance_id: str = str(uuid4())
-
-
-def _log_token_usage(result: Any) -> None:
-    """Log token usage from LLM response for monitoring."""
-    try:
-        if hasattr(result, "usage_metadata") and result.usage_metadata:
-            meta = result.usage_metadata
-            logger.info(
-                "Token usage: input={} output={} total={}",
-                meta.get("input_tokens", "?"),
-                meta.get("output_tokens", "?"),
-                meta.get("total_tokens", "?"),
-            )
-    except Exception:
-        logger.debug("Token usage metadata not available")
-
-
-def _derive_llm_ready(
-    report: SyncReport,
-    catalog: dict[str, Any],
-    config: LLMConfig,
-) -> tuple[str, str | None]:
-    llm_domain = report["domains"].get("llm-provider")
-    required_status: str = llm_domain["status"] if llm_domain else "unknown"
-    if required_status in {"unreachable", "unauthorized", "invalid_response"}:
-        return "unknown", None
-    if config.provider == "mock":
-        return "ready", None
-
-    provider_info = catalog.get("providers", {}).get(config.provider)
-    if not isinstance(provider_info, dict):
-        # PLAN-0307 T2.13: no instance-level fallback credential for this
-        # provider (BYOK, decision #37). Credential readiness is per-run via the
-        # provider connection lease and is enforced at /internal/v1/agent/chat;
-        # service readiness itself must not depend on instance keys.
-        return "ready", None
-
-    provider_status = provider_info.get("status")
-    if provider_status == "missing_credentials":
-        # Defensive contract mapping (review 2026-09-12): current catalog
-        # sources only emit keyed providers, so this status is not produced by
-        # the present call chain. It stays because `missing_credentials` is part
-        # of the documented llmReady contract (AGENTS.md) and keeps cross-version
-        # / remote catalog sources compatible.
-        return "missing_credentials", None
-    if provider_status == "invalid_credentials":
-        return "invalid_credentials", None
-    if provider_status == "unreachable":
-        return "unreachable", None
-    if provider_status == "invalid_response":
-        return "model_unavailable", None
-    if provider_status != "ready":
-        return "unknown", None
-
-    model_entries = provider_info.get("models", [])
-    model_names = {
-        item.get("name") for item in model_entries if isinstance(item, dict) and isinstance(item.get("name"), str)
-    }
-    chat_models = {
-        item.get("name")
-        for item in model_entries
-        if isinstance(item, dict) and item.get("capabilities", {}).get("chat") is True
-    }
-    if config.model and config.model not in model_names:
-        return "model_unavailable", provider_info.get("verifiedAt")
-    if config.model and config.model not in chat_models:
-        return "model_unavailable", provider_info.get("verifiedAt")
-    return "ready", provider_info.get("verifiedAt")
-
-
-def _llm_readiness_error_code(readiness: str) -> str:
-    # `missing_credentials` is retained as a defensive/contract mapping (see
-    # `_derive_llm_ready`); the live per-run gap is reported by the
-    # LLM_NOT_CONFIGURED response inside `/chat`.
-    return {
-        "missing_credentials": "LLM_NOT_CONFIGURED",
-        "invalid_credentials": "LLM_CREDENTIALS_INVALID",
-        "unreachable": "LLM_PROVIDER_UNREACHABLE",
-        "model_unavailable": "LLM_MODEL_UNAVAILABLE",
-    }.get(readiness, "AGENT_UNAVAILABLE")
-
-
-def _has_instance_fallback_credentials(config: LLMConfig) -> bool:
-    """True when a keyless run can still call the provider (mock or env key)."""
-    return config.provider == "mock" or bool(config.api_key)
-
-
-def _validate_run_overrides(raw: Any, field: str) -> str | None:
-    """PLAN-0307 T2.7: payload override shape is {domain: {key: string}}."""
-    if raw is None:
-        return None
-    if not isinstance(raw, dict):
-        return f"{field} must be an object"
-    for domain, entries in raw.items():
-        if not isinstance(entries, dict):
-            return f"{field}.{domain} must be an object"
-        for key, value in entries.items():
-            if not isinstance(value, str):
-                return f"{field}.{domain}.{key} must be a string"
-    return None
-
-
-def _normalize_run_overrides(raw: Any) -> dict[str, dict[str, str]]:
-    if not isinstance(raw, dict):
-        return {}
-    return {
-        str(domain): {str(key): str(value) for key, value in entries.items()}
-        for domain, entries in raw.items()
-        if isinstance(entries, dict)
-    }
-
-
-def _normalize_tool_timeouts(raw: Any) -> dict[str, int]:
-    """PLAN-0308 T1.9（决策 #27/#28）：per-call 原始值（CP 已校验并回传）。
-
-    本模块不改写、不计算；非正整数（CP 不会产生）的条目忽略并告警。
-    """
-    values: dict[str, int] = {}
-    if isinstance(raw, dict):
-        for tool_name, seconds in raw.items():
-            if (
-                isinstance(seconds, (int, float))
-                and not isinstance(seconds, bool)
-                and float(seconds) > 0
-                and float(seconds).is_integer()
-            ):
-                values[str(tool_name)] = int(seconds)
-            else:
-                logger.warning("Ignoring invalid toolTimeouts entry {}={!r}", tool_name, seconds)
-    return values
-
-
-def _merge_run_domain(
-    domain: str,
-    user_overrides: dict[str, dict[str, str]],
-    workspace_overrides: dict[str, dict[str, str]],
-) -> dict[str, str]:
-    """Run-local merge: pulled effective -> user -> workspace (PLAN-0307 T2.7).
-
-    Pure function (decision #24/G6): never writes back to the process snapshot.
-    """
-    merged = dict(config_client.get_domain(domain))
-    merged.update(user_overrides.get(domain, {}))
-    merged.update(workspace_overrides.get(domain, {}))
-    return merged
-
-
-def _classify_llm_exception(error: Exception) -> tuple[str, str, bool]:
-    """Map provider failures to safe, stable client-facing error semantics."""
-    if isinstance(error, LLMRouteConfigError):
-        return "LLM_BASE_URL_MISSING", str(error), False
-    text = str(error).lower()
-    if (
-        isinstance(error, litellm.exceptions.UnsupportedParamsError)
-        or "unsupportedparams" in text
-        or "does not support parameters" in text
-    ):
-        # PLAN-0364 M3: the resolved route rejects tool parameters (e.g. the native
-        # Xiaomi slug has no tool metadata). Never drop tools silently — the user
-        # must switch to an OpenAI-compatible connection or another model.
-        return (
-            "LLM_TOOL_ROUTE_UNSUPPORTED",
-            "当前模型路由不支持工具调用：请改用 OpenAI 兼容连接，或更换支持工具的模型",
-            False,
-        )
-    provider_status = getattr(error, "status_code", None)
-    if provider_status is None:
-        provider_status = getattr(getattr(error, "response", None), "status_code", None)
-    if isinstance(error, litellm.exceptions.BadRequestError) or provider_status == 400:
-        # The provider rejected the payload (message shape / params / tool schema).
-        # Non-retryable: the same request cannot succeed; log the raw text for triage.
-        logger.error("[LLM] provider rejected the request: {}", str(error)[:500])
-        return (
-            "LLM_REQUEST_REJECTED",
-            "模型提供方拒绝了该请求（消息格式或参数不被接受）",
-            False,
-        )
-    if any(marker in text for marker in ("missing credentials", "api key", "apikey")):
-        return "LLM_NOT_CONFIGURED", "Provider credentials are not configured", True
-    if any(marker in text for marker in ("authentication", "unauthorized", "401", "403")):
-        return "LLM_CREDENTIALS_INVALID", "Provider credentials were rejected", False
-    if any(marker in text for marker in ("timeout", "timed out")):
-        return "LLM_PROVIDER_UNREACHABLE", "Provider request timed out", True
-    if any(marker in text for marker in ("connection", "connect", "dns", "unreachable")):
-        return "LLM_PROVIDER_UNREACHABLE", "Provider is unreachable", True
-    return "AGENT_STREAM_FAILED", "Agent stream failed", True
 
 
 async def reload_runtime_config(reason: str) -> SyncReport:
     """Refresh config-derived dependencies and swap their runtime snapshot atomically."""
-    global llm_config, image_provider_manager, generate_image_tool
-    global AGENT_INSTRUCTIONS, AGENT_USER_NAME, USE_SUPERVISOR, USE_REGISTRY
-    global _llm_ready, _llm_verified_at, _runtime_config_revision, _model_catalog, _agent_status
+    import xihe_agent.app_state as state
 
     async with _runtime_refresh_lock:
         report = await config_client.sync_with_retry()
@@ -541,9 +182,9 @@ async def reload_runtime_config(reason: str) -> SyncReport:
             # on every refreshed snapshot; env stays the startup bootstrap only.
             await _apply_cp_log_level()
         else:
-            staged_llm_config = llm_config
-            staged_image_manager = image_provider_manager
-            staged_catalog = _model_catalog
+            staged_llm_config = state.llm_config
+            staged_image_manager = state.image_provider_manager
+            staged_catalog = state._model_catalog
 
         staged_ready, staged_verified_at = _derive_llm_ready(
             report,
@@ -551,29 +192,28 @@ async def reload_runtime_config(reason: str) -> SyncReport:
             staged_llm_config,
         )
 
-        llm_config = staged_llm_config
-        image_provider_manager = staged_image_manager
-        generate_image_tool = GenerateImageAgentTool(provider_manager=image_provider_manager)
-        _model_catalog = staged_catalog
-        _llm_ready = staged_ready
-        _llm_verified_at = staged_verified_at
-        _runtime_config_revision = config_client.config_revision
-        _refresh_embedding_config()
+        state.llm_config = staged_llm_config
+        state.image_provider_manager = staged_image_manager
+        state.generate_image_tool = GenerateImageAgentTool(provider_manager=staged_image_manager)
+        state._model_catalog = staged_catalog
+        state._llm_ready = staged_ready
+        state._llm_verified_at = staged_verified_at
+        state._runtime_config_revision = config_client.config_revision
+        state._refresh_embedding_config()
 
         if cc_instructions := config_client.get("agent-runtime", "instructions"):
-            AGENT_INSTRUCTIONS = cc_instructions
+            state.AGENT_INSTRUCTIONS = cc_instructions
         if cc_user_name := config_client.get("agent-profile", "userName"):
-            AGENT_USER_NAME = cc_user_name
-        USE_SUPERVISOR = config_client.get_bool("agent-runtime", "useSupervisor")
-        USE_REGISTRY = config_client.get_bool("agent-runtime", "useRegistry")
-        _agent_status = "ok" if staged_ready == "ready" else "degraded"
+            state.AGENT_USER_NAME = cc_user_name
+        state.USE_SUPERVISOR = config_client.get_bool("agent-runtime", "useSupervisor")
+        state.USE_REGISTRY = config_client.get_bool("agent-runtime", "useRegistry")
+        state._agent_status = "ok" if staged_ready == "ready" else "degraded"
         # PLAN-0341 T1.6: rebuild TokenCounter when tokenizerRef is configured.
-        global _token_counter
         try:
             default_model = staged_llm_config.model if staged_llm_config else None
             policy = _resolve_policy_for_model(default_model)
             if policy.tokenizer_ref:
-                _token_counter = TokenCounter(tokenizer_ref=policy.tokenizer_ref, model=default_model)
+                state._token_counter = TokenCounter(tokenizer_ref=policy.tokenizer_ref, model=default_model)
                 logger.info(
                     "[LIFECYCLE] service=agent event=tokenizer_ref_applied ref={} model={}",
                     policy.tokenizer_ref,
@@ -585,87 +225,25 @@ async def reload_runtime_config(reason: str) -> SyncReport:
         logger.info(
             "[LIFECYCLE] service=agent event=runtime_config_swapped reason={} revision={} llmReady={} provider={} model={} verifiedAt={}",
             reason,
-            _runtime_config_revision,
-            _llm_ready,
-            llm_config.provider,
-            llm_config.model,
-            _llm_verified_at or "none",
+            state._runtime_config_revision,
+            state._llm_ready,
+            state.llm_config.provider,
+            state.llm_config.model,
+            state._llm_verified_at or "none",
         )
         return report
 
 
-async def _enrich_with_rag_context(content: str, instructions: str) -> str:
-    """Search RAG knowledge base and append relevant context to instructions."""
-    if not embedding_enabled:
-        return instructions
-
-    try:
-        query_emb = await embedding_service.embed(content)
-        results = await vector_store.search(query_emb, top_k=3, min_score=0.3)
-        if results:
-            context_parts = []
-            for r in results:
-                context_parts.append(f"[Knowledge: {r['text']}]")
-            rag_context = "\n".join(context_parts)
-            return f"{instructions}\n\n## RAG Context\n{rag_context}"
-    except Exception:
-        logger.warning("RAG enrichment failed", exc_info=True)
-    return instructions
-
-
-async def _get_mcp_tools(workspace_id: str | None) -> list[Any]:
-    """Load MCP tools only for a workspace-bound request."""
-    if not workspace_id:
-        return []
-    if mcp_manager.initialized and mcp_manager.workspace_id != workspace_id:
-        # This process owns one MCP workspace in the minimal boundary. Never
-        # reuse tools discovered for a different workspace.
-        raise RuntimeError("MCP workspace context cannot be reused across workspaces")
-
-    try:
-        await mcp_manager.initialize(workspace_id=workspace_id)
-    except Exception as e:
-        logger.warning(
-            "[LIFECYCLE] service=agent event=mcp_request_init_failed workspaceId={} error={}",
-            workspace_id,
-            e,
-        )
-        raise RuntimeError("MCP workspace initialization failed") from e
-    return mcp_manager.tools
-
-
-async def _get_tools_for_mode(tool_mode: str, workspace_id: str | None) -> list[Any]:
-    """Keep the pure chat path free of MCP discovery and tool construction."""
-    if tool_mode == "none":
-        return []
-    if tool_mode == "workspace" and not workspace_id:
-        raise RuntimeError("workspaceId is required for workspace tool mode")
-    return await _get_mcp_tools(workspace_id)
-
-
-def get_llm_initialization_status() -> dict[str, Any]:
-    return {
-        "provider": llm_config.provider,
-        "model": llm_config.model,
-        # Readiness-derived (PLAN-0307 T2.13): credentials are per-run leases
-        # under BYOK, so status must not inspect the instance API key.
-        "configured": _llm_ready == "ready",
-        "readiness": _llm_ready,
-        "configRevision": _runtime_config_revision,
-        "verifiedAt": _llm_verified_at,
-    }
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global worker_registry, _watcher_observer, _watcher_event_handler
-    global AGENT_INSTRUCTIONS, AGENT_USER_NAME, USE_SUPERVISOR, USE_REGISTRY
-    global _agent_status
+    import xihe_agent.app_state as state
 
     logger.info(
         "[LIFECYCLE] service=agent event=startup_begin provider={} model={} cp_url={}",
-        llm_config.provider,
-        llm_config.model,
+        state.llm_config.provider,
+        state.llm_config.model,
         CP_URL,
     )
 
@@ -673,7 +251,7 @@ async def lifespan(app: FastAPI):
     try:
         await reload_runtime_config(reason="startup")
     except Exception as e:
-        _agent_status = "degraded"
+        state._agent_status = "degraded"
         logger.error(
             "[LIFECYCLE] service=agent event=config_sync_failed error={}",
             e,
@@ -688,8 +266,8 @@ async def lifespan(app: FastAPI):
 
     logger.info(
         "[LIFECYCLE] service=agent event=status_change from=starting to={} reason=runtime_config_loaded llmReady={}",
-        _agent_status,
-        _llm_ready,
+        state._agent_status,
+        state._llm_ready,
     )
 
     # Recover any sessions configured for crash recovery before accepting traffic.
@@ -708,31 +286,32 @@ async def lifespan(app: FastAPI):
         except Exception:
             logger.warning("Crash recovery failed", exc_info=True)
 
-    if USE_REGISTRY:
+    if state.USE_REGISTRY:
         from xihe_agent.registry.watcher import start_watcher
 
-        model = create_llm(llm_config)
-        custom_tools = [approval_tool, generate_image_tool]
+        model = create_llm(state.llm_config)
+        custom_tools = [state.approval_tool, state.generate_image_tool]
         # Registry startup must not initialize MCP. Workspace/tool requests
         # discover tools lazily in the request-scoped workspace path.
         mcp_tools: list[Any] = []
         _workers_dir = config_client.get("agent-runtime", "workersDir")
-        worker_registry = WorkerRegistry(workers_dir=_workers_dir)
-        worker_registry.load_all(model, mcp_tools, custom_tools)
-        _watcher_observer, _watcher_event_handler = start_watcher(
-            worker_registry,
+        registry = WorkerRegistry(workers_dir=_workers_dir)
+        registry.load_all(model, mcp_tools, custom_tools)
+        state.worker_registry = registry
+        state._watcher_observer, state._watcher_event_handler = start_watcher(
+            registry,
             model,
             mcp_tools,
             custom_tools,
         )
-        logger.info("Worker registry initialized with {} worker(s)", len(worker_registry.list_workers()))
+        logger.info("Worker registry initialized with {} worker(s)", len(registry.list_workers()))
 
     yield
 
     logger.info("[LIFECYCLE] service=agent event=shutdown reason=lifespan_exit")
-    if _watcher_observer is not None:
-        _watcher_observer.stop()
-        _watcher_observer.join()
+    if state._watcher_observer is not None:
+        state._watcher_observer.stop()
+        state._watcher_observer.join()
     if poll_task is not None:
         poll_task.cancel()
         with suppress(asyncio.CancelledError):
@@ -740,7 +319,20 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="xihe-agent", version="0.1.0", lifespan=lifespan)
+
+from xihe_agent.api.approval import router as approval_router  # noqa: E402
+from xihe_agent.api.chat import router as chat_router  # noqa: E402
+from xihe_agent.api.misc import router as misc_router  # noqa: E402
+from xihe_agent.api.rag import router as rag_router  # noqa: E402
+from xihe_agent.api.registry import router as registry_router  # noqa: E402
+from xihe_agent.llm.models import router as models_router  # noqa: E402
+
 app.include_router(models_router)
+app.include_router(chat_router)
+app.include_router(misc_router)
+app.include_router(rag_router)
+app.include_router(approval_router)
+app.include_router(registry_router)
 
 
 @app.middleware("http")
@@ -809,1036 +401,6 @@ async def internal_problem_handler(request: Request, exc: Exception) -> JSONResp
     )
 
 
-_token_counter = TokenCounter()
-
-
-def _resolve_policy_for_model(
-    model: str | None,
-    user_overrides: dict[str, dict[str, str]] | None = None,
-    workspace_overrides: dict[str, dict[str, str]] | None = None,
-):
-    """PLAN-0341 T1.6: effective context-policy for this run."""
-    from xihe_agent.context_policy import resolve_context_policy
-
-    entries = dict(config_client.get_domain("context-policy"))
-    if user_overrides:
-        entries.update(user_overrides.get("context-policy", {}))
-    if workspace_overrides:
-        entries.update(workspace_overrides.get("context-policy", {}))
-    policy = resolve_context_policy(model, entries)
-    logger.info(
-        "[LIFECYCLE] service=agent event=context_policy_resolved model={} source={} maxInputTokens={} pruneWindowChars={} recoveryBand={}",
-        model,
-        policy.source,
-        policy.max_input_tokens,
-        policy.prune_window_chars,
-        policy.recovery_band,
-    )
-    return policy
-
-
-def _model_window_tokens(
-    model: str | None,
-    user_overrides: dict[str, dict[str, str]] | None = None,
-    workspace_overrides: dict[str, dict[str, str]] | None = None,
-) -> int:
-    """PLAN-0341 T1.6: config maxInputTokens overrides litellm static table."""
-    policy = _resolve_policy_for_model(model, user_overrides, workspace_overrides)
-    if policy.max_input_tokens:
-        return policy.max_input_tokens
-    if not model:
-        return 0
-    try:
-        info = litellm.model_cost.get(model) or {}
-        return int(info.get("max_input_tokens") or 0)
-    except Exception:
-        return 0
-
-
-def _estimate_input_tokens(messages: list[Any]) -> int:
-    """PLAN-294 decision #12: local estimation of the assembled input.
-
-    Role: pre-call compaction signal. Provider usage remains the truth source
-    that calibrates these estimates via llm_usage events.
-    """
-    payload = []
-    for m in messages:
-        role = getattr(m, "role", "human")
-        content = getattr(m, "content", "")
-        payload.append({"role": role, "content": content})
-    return _token_counter.estimate_messages(payload)
-
-
-@app.post("/internal/v1/agent/chat")
-async def chat(request: Request, _token: None = Depends(verify_api_token)):
-    data = await request.json()
-    content: str = data.get("content", "")
-    session_id: str = data.get("sessionId", "default")
-    workspace_id: str | None = data.get("workspaceId") or None
-    request_id: str = request.headers.get("X-Request-Id") or str(uuid4())
-    run_id: str = request.headers.get("X-Chat-Run-Id") or data.get("runId") or str(uuid4())
-    model_override: str | None = data.get("model")
-    provider_override: str | None = data.get("provider")
-    tool_mode: str = data.get("toolMode", "none")
-    safe_agent_instructions: str = data.get("instructions", "")
-    instructions: str = safe_agent_instructions or AGENT_INSTRUCTIONS
-    chat_history_raw: list[dict[str, Any]] = data.get("history", [])
-    credential_lease: str | None = data.get("credentialLease") or None
-    provider_connection_id: str | None = data.get("providerConnectionId") or None
-    connection_revision = data.get("connectionRevision")
-
-    # PLAN-0308 M1（spec S1/S2）：CP 计算好的 per-tool 等待值（Agent 侧最终值）
-    # 与性质标记（per-call | config）。本模块只消费，不计算。
-    tool_waits_raw = data.get("toolWaits")
-    tool_waits: dict[str, float] = {}
-    if isinstance(tool_waits_raw, dict):
-        for tool_name, seconds in tool_waits_raw.items():
-            if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) and seconds > 0:
-                tool_waits[str(tool_name)] = float(seconds)
-            else:
-                logger.warning("Ignoring invalid toolWaits entry {}={!r}", tool_name, seconds)
-    system_tool_wait_raw = data.get("systemToolWait")
-    system_tool_wait: float | None = None
-    if (
-        isinstance(system_tool_wait_raw, (int, float))
-        and not isinstance(system_tool_wait_raw, bool)
-        and system_tool_wait_raw > 0
-    ):
-        system_tool_wait = float(system_tool_wait_raw)
-
-    tool_wait_origins: dict[str, str] = {}
-    tool_wait_origins_raw = data.get("toolWaitOrigins")
-    if isinstance(tool_wait_origins_raw, dict):
-        for tool_name, origin in tool_wait_origins_raw.items():
-            if origin in ("per-call", "config"):
-                tool_wait_origins[str(tool_name)] = str(origin)
-
-    # PLAN-0308 M1 T1.9（决策 #27/#28）：per-call 原始值（CP 已校验、随 run 回传）；
-    # 本模块不改值、不计算，仅在工具调用时附带入站头 X-Xihe-Tool-Timeout-Per-Call。
-    tool_timeouts = _normalize_tool_timeouts(data.get("toolTimeouts"))
-
-    # PLAN-0307 T2.7 (decision #3=#3a): CP-resolved per-run layer overrides.
-    raw_user_overrides = data.get("userOverrides")
-    raw_workspace_overrides = data.get("workspaceOverrides")
-    for field, raw in (
-        ("userOverrides", raw_user_overrides),
-        ("workspaceOverrides", raw_workspace_overrides),
-    ):
-        validation_error = _validate_run_overrides(raw, field)
-        if validation_error:
-            return JSONResponse(
-                status_code=400,
-                media_type="application/problem+json",
-                headers={"X-Request-Id": request_id},
-                content={
-                    "type": "https://xihe.dev/problems/invalid-request",
-                    "title": "Invalid run overrides",
-                    "status": 400,
-                    "code": "INVALID_REQUEST",
-                    "detail": validation_error,
-                    "requestId": request_id,
-                    "runId": run_id,
-                },
-            )
-    user_overrides = _normalize_run_overrides(raw_user_overrides)
-    workspace_overrides = _normalize_run_overrides(raw_workspace_overrides)
-
-    profile_entries = _merge_run_domain("agent-profile", user_overrides, workspace_overrides)
-    user_name: str = data.get("userName") or profile_entries.get("userName") or AGENT_USER_NAME
-
-    if _llm_ready != "ready" and not credential_lease:
-        error_code = _llm_readiness_error_code(_llm_ready)
-        return JSONResponse(
-            status_code=503,
-            media_type="application/problem+json",
-            headers={"X-Request-Id": request_id},
-            content={
-                "type": "https://xihe.dev/problems/llm-not-ready",
-                "title": "LLM is not ready",
-                "status": 503,
-                "code": error_code,
-                "detail": f"Agent LLM readiness is {_llm_ready}",
-                "retryable": True,
-                "provider": llm_config.provider,
-                "model": model_override or llm_config.model,
-                "requestId": request_id,
-                "runId": run_id,
-            },
-        )
-
-    if tool_mode not in {"none", "workspace"}:
-        return JSONResponse(
-            status_code=400,
-            media_type="application/problem+json",
-            headers={"X-Request-Id": request_id},
-            content={
-                "type": "https://xihe.dev/problems/invalid-tool-mode",
-                "title": "Invalid tool mode",
-                "status": 400,
-                "code": "INVALID_REQUEST",
-                "detail": "toolMode must be none or workspace",
-                "requestId": request_id,
-                "runId": run_id,
-            },
-        )
-
-    run_llm_entries = _merge_run_domain("llm-provider", user_overrides, workspace_overrides)
-    run_llm_config = LLMConfig.from_entries(run_llm_entries)
-
-    request_config: LLMConfig
-    if credential_lease:
-        try:
-            grant = await config_client.redeem_provider_lease(
-                {
-                    "lease": credential_lease,
-                    "runId": run_id,
-                    "providerConnectionId": provider_connection_id or "",
-                    "providerId": provider_override or "",
-                    "model": model_override or "",
-                    "connectionRevision": int(connection_revision or 0),
-                }
-            )
-        except Exception as exc:
-            logger.warning(
-                "Provider credential lease unavailable runId={} connectionId={} errorType={}",
-                run_id,
-                provider_connection_id,
-                type(exc).__name__,
-            )
-            return JSONResponse(
-                status_code=503,
-                media_type="application/problem+json",
-                headers={"X-Request-Id": request_id},
-                content={
-                    "type": "https://xihe.dev/problems/provider-connection-unavailable",
-                    "title": "Provider connection unavailable",
-                    "status": 503,
-                    "code": "PROVIDER_CONNECTION_UNAVAILABLE",
-                    "detail": "The selected provider connection is unavailable",
-                    "retryable": True,
-                    "provider": provider_override or "",
-                    "model": model_override or "",
-                    "requestId": request_id,
-                    "runId": run_id,
-                },
-            )
-        request_config = LLMConfig(
-            provider=str(grant.get("provider", provider_override or "")),
-            route_provider=str(grant.get("routeProvider", grant.get("provider", ""))),
-            api_key=str(grant.get("apiKey") or ""),
-            api_base=str(grant.get("baseUrl") or ""),
-            model=str(grant.get("model") or model_override or ""),
-            # T2.7: user/workspace model params apply even when the lease owns
-            # the credential (grant carries key/base/model only).
-            timeout=run_llm_config.timeout,
-            max_tokens=run_llm_config.max_tokens,
-            temperature=run_llm_config.temperature,
-        )
-    else:
-        request_config = run_llm_config
-    if not credential_lease and provider_override and provider_override != run_llm_config.provider:
-        provider_info = _model_catalog.get("providers", {}).get(provider_override)
-        provider_runtime = fallback_provider_configs(run_llm_entries).get(provider_override)
-        if not isinstance(provider_info, dict) or provider_info.get("status") != "ready" or not provider_runtime:
-            return JSONResponse(
-                status_code=503,
-                media_type="application/problem+json",
-                headers={"X-Request-Id": request_id},
-                content={
-                    "type": "https://xihe.dev/problems/model-unavailable",
-                    "title": "Provider is not ready",
-                    "status": 503,
-                    "code": "LLM_MODEL_UNAVAILABLE",
-                    "detail": "Selected provider is not ready",
-                    "retryable": True,
-                    "provider": provider_override,
-                    "model": model_override or "",
-                    "requestId": request_id,
-                    "runId": run_id,
-                },
-            )
-        request_config = LLMConfig(
-            provider=cast(ProviderName, provider_override),
-            api_key=str(provider_runtime.get("apiKey", "")),
-            api_base=str(provider_runtime.get("baseUrl", "")),
-            model=str(provider_runtime.get("model", "")),
-            timeout=run_llm_config.timeout,
-            max_tokens=run_llm_config.max_tokens,
-            temperature=run_llm_config.temperature,
-        )
-    if model_override:
-        request_config = request_config.with_model(model_override)
-
-    # PLAN-0307 T2.13 fail-closed: a run without a lease relies on the instance
-    # env fallback; stop before calling the provider with empty credentials.
-    if not credential_lease and not _has_instance_fallback_credentials(request_config):
-        return JSONResponse(
-            status_code=503,
-            media_type="application/problem+json",
-            headers={"X-Request-Id": request_id},
-            content={
-                "type": "https://xihe.dev/problems/llm-not-configured",
-                "title": "LLM credentials are not configured",
-                "status": 503,
-                "code": "LLM_NOT_CONFIGURED",
-                "detail": "No provider connection lease and no instance fallback credentials",
-                "retryable": True,
-                "provider": request_config.provider,
-                "model": request_config.model,
-                "requestId": request_id,
-                "runId": run_id,
-            },
-        )
-
-    logger.info(
-        "[LIFECYCLE] service=agent event=chat_stream_started requestId={} sessionId={} workspaceId={} runId={} provider={} model={} contentLength={}",
-        request_id,
-        session_id,
-        workspace_id,
-        run_id,
-        request_config.provider,
-        request_config.model,
-        len(content),
-    )
-
-    # Enrich with RAG context if knowledge base has content
-    instructions = await _enrich_with_rag_context(content, instructions)
-
-    chat_history = _deserialize_messages(chat_history_raw)
-    model = create_llm(request_config)
-    # Register before streaming so CP cancel can reach an in-flight run.
-    cancel_event = run_cancel_registry.register(run_id)
-    request_runner = LangGraphRunner(
-        model_factory=lambda _model: create_llm(request_config),
-        event_store=cp_event_store_client,
-    )
-
-    async def event_stream():
-        terminal_sent = False
-        error_sent = False
-        error_seen = False
-        llm_request_started = False
-        terminal_outcome = "success"
-        terminal_error_code: str | None = None
-        token_count = 0
-        assistant_chars = 0
-        event_index = 0
-
-        def correlated_data(event_data: dict[str, Any]) -> dict[str, Any]:
-            payload = dict(event_data)
-            payload.setdefault("requestId", request_id)
-            payload.setdefault("runId", run_id)
-            return payload
-
-        try:
-            mcp_tools = await _get_tools_for_mode(tool_mode, workspace_id)
-            if USE_SUPERVISOR and tool_mode == "workspace":
-                raise ApprovalExecutorUnsupportedError("Approval is not supported by the buffered supervisor executor")
-                # Supervisor path remains on legacy tools until full migration.
-                from langchain_core.messages import HumanMessage
-
-                from xihe_agent.agent.supervisor import build_supervisor
-
-                custom_tools = [approval_tool, generate_image_tool]
-                supervisor = build_supervisor(
-                    model,
-                    mcp_tools,
-                    custom_tools,
-                    registry=worker_registry if USE_REGISTRY else None,
-                )
-                result = await supervisor.ainvoke(
-                    {"messages": _to_langchain_messages(chat_history) + [HumanMessage(content=content)]}
-                )
-                for msg in result["messages"]:
-                    if hasattr(msg, "content") and msg.content:
-                        token_count += 1
-                        msg_content = _content_length(msg.content)
-                        assistant_chars += msg_content
-                        event_index += 1
-                        logger.debug(
-                            "[LIFECYCLE] service=agent event=chat_stream_chunk requestId={} sessionId={} runId={} eventIndex={} tokenChars={}",
-                            request_id,
-                            session_id,
-                            run_id,
-                            event_index,
-                            msg_content,
-                        )
-                        yield render_sse("token", correlated_data({"content": msg.content, "type": "token"}))
-                terminal_sent = True
-                yield render_sse("done", correlated_data({"type": "done"}))
-            else:
-                # PLAN-0410 T2.3: the snapshot is scoped to this Run's branch;
-                # CP resolves/validates the branch from the durable runId.
-                context = await context_provider.load(session_id, after_sequence=0, run_id=run_id)
-                context.runtime_state["user_name"] = user_name
-                context.runtime_state["instructions"] = instructions
-                context.runtime_state["toolWaits"] = tool_waits
-                context.runtime_state["toolWaitOrigins"] = tool_wait_origins
-                context.runtime_state["systemToolWait"] = system_tool_wait
-                context.runtime_state["toolTimeouts"] = tool_timeouts
-                context.metadata.update(
-                    {
-                        "requestId": request_id,
-                        "runId": run_id,
-                        "sessionId": session_id,
-                        "workspaceId": workspace_id,
-                        "branchId": context.branch_id,
-                    }
-                )
-
-                all_tools = [] if tool_mode == "none" else [approval_tool, generate_image_tool]
-                if mcp_tools:
-                    all_tools = list(mcp_tools) + all_tools
-
-                has_template = "contextTemplateSnapshot" in data
-                if has_template:
-                    run_context = ChatRunContext.from_request(
-                        {
-                            **data,
-                            "runId": run_id,
-                            "sessionId": session_id,
-                            "workspaceId": workspace_id,
-                            "requestId": request_id,
-                            "provider": request_config.provider,
-                            "model": model_override or request_config.model,
-                            "toolMode": tool_mode,
-                            "instructions": safe_agent_instructions,
-                            "platformInstructions": AGENT_INSTRUCTIONS,
-                        },
-                        context,
-                    )
-                    built = build_context(run_context, all_tools, content, token_counter=_token_counter)
-                    messages = list(built.messages)
-                    for component_result in built.components:
-                        raw_source = component_result.source
-                        source_kind = raw_source.get("kind") if isinstance(raw_source, dict) else "unknown"
-                        if source_kind not in {"context_projection", "runtime_workspace", "runtime"}:
-                            source_kind = "unknown"
-                        diagnostic_codes = [
-                            code
-                            for code in component_result.diagnostics
-                            if code in _SAFE_CONTEXT_DIAGNOSTIC_CODES
-                        ]
-                        logger.info(
-                            "Context component resolved type={} status={} sourceKind={} estimatedTokens={} truncated={} diagnosticCodes={}",
-                            component_result.type,
-                            component_result.status,
-                            source_kind,
-                            component_result.estimated_tokens,
-                            component_result.truncated,
-                            diagnostic_codes,
-                        )
-                    logger.info(
-                        "Context template built templateId={} version={} components={} estimatedTokens={}",
-                        run_context.template_snapshot.get("templateId"),
-                        run_context.template_snapshot.get("version"),
-                        len(built.components),
-                        built.estimated_tokens,
-                    )
-                else:
-                    messages = list(chat_history)
-                    messages.append(TextMessage(role="human", content=content))
-
-                config = RunnerConfig(
-                    model=model_override or request_config.model,
-                    system_prompt="" if has_template else instructions,
-                    tools=all_tools,
-                    context=context,
-                    cancel_event=cancel_event,
-                    prune_window_chars=_resolve_policy_for_model(
-                        model_override or request_config.model,
-                        user_overrides,
-                        workspace_overrides,
-                    ).prune_window_chars,
-                    branch_id=context.branch_id,
-                    template_context=has_template,
-                    admitted_prompt=content,
-                )
-
-                llm_request_started = True
-                async for event in request_runner.stream(messages, config):
-                    if event.type == "token":
-                        token_chars = _content_length(event.data.get("content"))
-                        token_count += 1
-                        event_index += 1
-                        if event.data.get("hint") != "reasoning":
-                            assistant_chars += token_chars
-                        logger.debug(
-                            "[LIFECYCLE] service=agent event=chat_stream_chunk requestId={} sessionId={} runId={} eventIndex={} tokenChars={}",
-                            request_id,
-                            session_id,
-                            run_id,
-                            event_index,
-                            token_chars,
-                        )
-                        yield render_sse("token", correlated_data(event.data))
-                    elif event.type == "error":
-                        error_seen = True
-                        structured_code = event.data.get("code")
-                        if structured_code:
-                            terminal_error_code = str(structured_code)
-                            error_detail = str(event.data.get("error", "Agent stream failed"))
-                            retryable = False
-                        else:
-                            terminal_error_code, error_detail, retryable = _classify_llm_exception(
-                                RuntimeError(str(event.data.get("error", "Agent stream failed")))
-                            )
-                        terminal_outcome = (
-                            "ambiguous"
-                            if llm_request_started
-                            and terminal_error_code in {"LLM_PROVIDER_UNREACHABLE", "AGENT_STREAM_FAILED"}
-                            else "partial"
-                            if assistant_chars > 0
-                            else "error"
-                        )
-                        if not error_sent:
-                            error_sent = True
-                            yield render_sse(
-                                "error",
-                                correlated_data(
-                                    {
-                                        "code": terminal_error_code,
-                                        "detail": error_detail,
-                                        "retryable": retryable,
-                                        "outcome": terminal_outcome,
-                                        "type": "error",
-                                    }
-                                ),
-                            )
-                    elif event.type == "done":
-                        if terminal_sent:
-                            continue
-                        terminal_sent = True
-                        done_data = {**event.data, "type": "done", "outcome": terminal_outcome}
-                        if terminal_error_code:
-                            done_data["errorCode"] = terminal_error_code
-                        yield render_sse("done", correlated_data(done_data))
-                    elif event.type == "usage":
-                        # PLAN-294 decision #14: when no provider usage chunk
-                        # arrived (source=fallback), estimate the input size
-                        # from the assembled request so the compression signal
-                        # and audit trail still carry a usable value.
-                        usage_data = dict(event.data.get("usage") or {})
-                        if usage_data.get("source") in (None, "fallback"):
-                            estimated = _estimate_input_tokens(messages)
-                            usage_data.setdefault("estimatedInputTokens", estimated)
-                            usage_data["source"] = "estimated" if estimated else "fallback"
-                        else:
-                            usage_data.setdefault("estimatedInputTokens", 0)
-                        # PLAN-294 M3 (decision #5): the model window rides
-                        # along so the CP compaction gate can evaluate the
-                        # percentage threshold without a config dependency.
-                        usage_data["windowTokens"] = _model_window_tokens(
-                            request_config.model, user_overrides, workspace_overrides
-                        )
-                        # PLAN-0343 decision #10: the model string is the
-                        # aggregation key and the CP pricing lookup key.
-                        # Spec key shape is provider/model; request_config.model
-                        # is the bare model name, so prefix the CP provider id
-                        # (matches pricing.models keys, e.g. deepseek/deepseek-v4-flash).
-                        usage_model = model_override or request_config.model
-                        if usage_model and request_config.provider and "/" not in usage_model:
-                            usage_model = f"{request_config.provider}/{usage_model}"
-                        usage_data["model"] = usage_model
-                        yield render_sse("usage", correlated_data({"usage": usage_data}))
-                    else:
-                        yield render_sse(event.type, correlated_data(event.data))
-        except ApprovalTerminalError as exc:
-            error_seen = True
-            terminal_error_code = exc.code
-            error_detail = str(exc)
-            retryable = False
-            terminal_outcome = "error"
-            logger.info(
-                "[LIFECYCLE] service=agent event=chat_approval_terminal requestId={} sessionId={} workspaceId={} runId={} errorCode={}",
-                request_id,
-                session_id,
-                workspace_id,
-                run_id,
-                terminal_error_code,
-            )
-            if not error_sent:
-                error_sent = True
-                yield render_sse(
-                    "error",
-                    correlated_data(
-                        {
-                            "code": terminal_error_code,
-                            "detail": error_detail,
-                            "retryable": retryable,
-                            "outcome": terminal_outcome,
-                            "type": "error",
-                        }
-                    ),
-                )
-        except ContextBuildError as exc:
-            error_seen = True
-            terminal_error_code = "CONTEXT_BUILD_FAILED"
-            terminal_outcome = "error"
-            logger.warning(
-                "Context template build failed requestId={} runId={} errorType={}",
-                request_id,
-                run_id,
-                type(exc).__name__,
-                exc_info=True,
-            )
-            if not error_sent:
-                error_sent = True
-                yield render_sse(
-                    "error",
-                    correlated_data({
-                        "code": terminal_error_code,
-                        "detail": "Context template snapshot is invalid",
-                        "retryable": False,
-                        "outcome": terminal_outcome,
-                        "type": "error",
-                    }),
-                )
-        except Exception as exc:
-            error_seen = True
-            terminal_error_code, error_detail, retryable = _classify_llm_exception(exc)
-            terminal_outcome = (
-                "ambiguous"
-                if llm_request_started and terminal_error_code in {"LLM_PROVIDER_UNREACHABLE", "AGENT_STREAM_FAILED"}
-                else "partial"
-                if assistant_chars > 0
-                else "error"
-            )
-            logger.exception(
-                "[LIFECYCLE] service=agent event=chat_stream_failed requestId={} sessionId={} workspaceId={} runId={} errorCode={}",
-                request_id,
-                session_id,
-                workspace_id,
-                run_id,
-                terminal_error_code,
-            )
-            if not error_sent:
-                error_sent = True
-                yield render_sse(
-                    "error",
-                    correlated_data(
-                        {
-                            "code": terminal_error_code,
-                            "detail": error_detail,
-                            "retryable": retryable,
-                            "outcome": terminal_outcome,
-                            "type": "error",
-                        }
-                    ),
-                )
-        finally:
-            # Always drop the cancel handle when the run body ends (terminal,
-            # abort, or client disconnect) so later cancels report unknown.
-            run_cancel_registry.unregister(run_id)
-
-        if not terminal_sent:
-            terminal_sent = True
-            if not error_seen:
-                terminal_outcome = "ambiguous"
-            done_data: dict[str, Any] = {
-                "type": "done",
-                "synthetic": True,
-                "outcome": terminal_outcome,
-            }
-            if error_seen and terminal_error_code:
-                done_data["errorCode"] = terminal_error_code
-            yield render_sse("done", correlated_data(done_data))
-
-        logger.info(
-            "[LIFECYCLE] service=agent event=chat_stream_finished requestId={} sessionId={} workspaceId={} runId={} tokenCount={} assistantChars={} outcome={}",
-            request_id,
-            session_id,
-            workspace_id,
-            run_id,
-            token_count,
-            assistant_chars,
-            terminal_outcome,
-        )
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
-
-
-@app.post("/internal/v1/agent/runs/{run_id}/cancel")
-async def cancel_run(run_id: str, request: Request, _token: None = Depends(verify_api_token)):
-    """PLAN-290 M0.3 Agent-side cancel contract (CP forwards chat cancel here).
-
-    Returns one of:
-    - accepted: cancel attached to an active run (HTTP 202)
-    - unknown: runId not registered / already finished (HTTP 404)
-    - failed: cancel action itself failed (HTTP 500)
-    """
-    try:
-        data = await request.json()
-        if not isinstance(data, dict):
-            data = {}
-    except Exception:
-        data = {}
-    reason = str(data.get("reason") or "user_requested")
-    workspace_id = data.get("workspaceId")
-
-    try:
-        status = run_cancel_registry.cancel(run_id)
-    except Exception:
-        logger.error(
-            "[LIFECYCLE] service=agent event=run_cancel_endpoint runId={} status=failed reason={} workspaceId={}",
-            run_id,
-            reason,
-            workspace_id,
-            exc_info=True,
-        )
-        return JSONResponse(
-            status_code=500,
-            content={"status": "failed", "runId": run_id, "code": "CANCEL_FAILED"},
-        )
-    if status == "accepted":
-        logger.info(
-            "[LIFECYCLE] service=agent event=run_cancel_endpoint runId={} status=accepted reason={} workspaceId={}",
-            run_id,
-            reason,
-            workspace_id,
-        )
-        return JSONResponse(
-            status_code=202,
-            content={"status": "accepted", "runId": run_id},
-        )
-    if status == "unknown":
-        return JSONResponse(
-            status_code=404,
-            content={"status": "unknown", "runId": run_id},
-        )
-    logger.error(
-        "[LIFECYCLE] service=agent event=run_cancel_endpoint runId={} status=failed reason={}",
-        run_id,
-        reason,
-    )
-    return JSONResponse(
-        status_code=500,
-        content={"status": "failed", "runId": run_id, "code": "CANCEL_FAILED"},
-    )
-
-
-def _problem_response(request_id: str, status_code: int, code: str, detail: str,
-                      retryable: bool = False) -> JSONResponse:
-    """RFC 9457 problem+json used by the summarize endpoint (spec §8)."""
-    return JSONResponse(
-        status_code=status_code,
-        media_type="application/problem+json",
-        headers={"X-Request-Id": request_id},
-        content={
-            "type": f"https://xihe.dev/problems/{code.lower()}",
-            "title": code,
-            "status": status_code,
-            "code": code,
-            "detail": detail,
-            "retryable": retryable,
-            "requestId": request_id,
-        },
-    )
-
-
-@app.post("/internal/v1/agent/summarize")
-async def summarize(request: Request, _token: None = Depends(verify_api_token)):
-    """PLAN-0354 spec §8: one bounded semantic-summary call for CP compaction.
-
-    The CP issues a short credential lease for this hop; the Agent redeems it
-    and calls the provider once. No events, no persistence, no [Constraints]
-    data: CP owns fallback, cost accounting and the SC section (I3/I4).
-    """
-    data = await request.json()
-    request_id: str = request.headers.get("X-Request-Id") or str(uuid4())
-    session_id: str = str(data.get("sessionId") or "")
-    run_id: str = str(data.get("runId") or "")
-    provider_override: str | None = data.get("provider") or None
-    model_override: str | None = data.get("model") or None
-    credential_lease: str | None = data.get("credentialLease") or None
-    provider_connection_id: str | None = data.get("providerConnectionId") or None
-    connection_revision = data.get("connectionRevision")
-    text: str = data.get("text") or ""
-    prior_summary: str | None = data.get("priorSummary") or None
-
-    if not credential_lease:
-        return _problem_response(request_id, 400, "INVALID_REQUEST", "credentialLease is required")
-    if not text.strip():
-        return _problem_response(request_id, 400, "INVALID_REQUEST", "text is required")
-
-    try:
-        grant = await config_client.redeem_provider_lease(
-            {
-                "lease": credential_lease,
-                "runId": run_id,
-                "providerConnectionId": provider_connection_id or "",
-                "providerId": provider_override or "",
-                "model": model_override or "",
-                "connectionRevision": int(connection_revision or 0),
-            }
-        )
-    except Exception as exc:
-        logger.warning(
-            "Provider credential lease unavailable for summarize sessionId={} errorType={}",
-            session_id,
-            type(exc).__name__,
-        )
-        return _problem_response(
-            request_id, 503, "PROVIDER_CONNECTION_UNAVAILABLE",
-            "The selected provider connection is unavailable", retryable=True)
-
-    run_llm_entries = config_client.get_domain("llm-provider")
-    run_llm_config = LLMConfig.from_entries(run_llm_entries)
-    request_config = LLMConfig(
-        provider=str(grant.get("provider", provider_override or "")),
-        route_provider=str(grant.get("routeProvider", grant.get("provider", ""))),
-        api_key=str(grant.get("apiKey") or ""),
-        api_base=str(grant.get("baseUrl") or ""),
-        model=str(grant.get("model") or model_override or ""),
-        timeout=run_llm_config.timeout,
-        max_tokens=min(run_llm_config.max_tokens, 2048),
-        temperature=run_llm_config.temperature,
-    )
-    summarizer = create_llm(request_config)
-    try:
-        summary, usage = await summarize_with_llm(summarizer, text, prior_summary)
-    except Exception as exc:
-        error_code, error_detail, retryable = _classify_llm_exception(exc)
-        logger.warning(
-            "[LIFECYCLE] service=agent event=summarize_failed requestId={} sessionId={} errorCode={}",
-            request_id,
-            session_id,
-            error_code,
-        )
-        return _problem_response(request_id, 502, error_code, error_detail, retryable=retryable)
-
-    # PLAN-0343 decision #10: pricing lookup key is provider/model.
-    usage_model = request_config.model
-    if usage_model and request_config.provider and "/" not in usage_model:
-        usage_model = f"{request_config.provider}/{usage_model}"
-    usage["model"] = usage_model
-    logger.info(
-        "[LIFECYCLE] service=agent event=summarize_completed requestId={} sessionId={} summaryChars={} source={}",
-        request_id,
-        session_id,
-        len(summary),
-        usage.get("source"),
-    )
-    return JSONResponse(content={"summary": summary, "usage": usage})
-
-
-class _RagDefaults(TypedDict):
-    chunkSize: int
-    chunkOverlap: int
-    topK: int
-    minScore: float
-
-
-def _rag_config_defaults() -> _RagDefaults:
-    """PLAN-0307 T2.4: RAG defaults come from the DB `rag` domain; request params win."""
-    return {
-        "chunkSize": int(config_client.get("rag", "chunkSize") or 1000),
-        "chunkOverlap": int(config_client.get("rag", "chunkOverlap") or 200),
-        "topK": int(config_client.get("rag", "topK") or 5),
-        "minScore": float(config_client.get("rag", "minScore") or 0.0),
-    }
-
-
-@app.post("/internal/v1/agent/rag/ingest")
-async def rag_ingest(
-    file: UploadFile = File(...),
-    chunk_size: int | None = Form(None, alias="chunkSize"),
-    chunk_overlap: int | None = Form(None, alias="chunkOverlap"),
-    _token: None = Depends(verify_api_token),
-):
-    if not embedding_enabled:
-        raise HTTPException(status_code=503, detail="RAG embedding provider is not configured")
-    defaults = _rag_config_defaults()
-    if chunk_size is None:
-        chunk_size = defaults["chunkSize"]
-    if chunk_overlap is None:
-        chunk_overlap = defaults["chunkOverlap"]
-    content = (await file.read()).decode("utf-8", errors="replace")
-    chunks = rag_chunk(
-        content, chunk_size=chunk_size, chunk_overlap=chunk_overlap, metadata={"filename": file.filename}
-    )
-    doc_ids = []
-    for chunk in chunks:
-        doc_id = await vector_store.add(chunk["text"], chunk["metadata"])
-        doc_ids.append(doc_id)
-    return {"status": "ok", "chunks": len(chunks), "docIds": doc_ids}
-
-
-@app.post("/internal/v1/agent/rag/search")
-async def rag_search(
-    query: str = Form(...),
-    top_k: int | None = Form(None, alias="topK"),
-    min_score: float | None = Form(None, alias="minScore"),
-    _token: None = Depends(verify_api_token),
-):
-    if not embedding_enabled:
-        raise HTTPException(status_code=503, detail="RAG embedding provider is not configured")
-    defaults = _rag_config_defaults()
-    if top_k is None:
-        top_k = defaults["topK"]
-    if min_score is None:
-        min_score = defaults["minScore"]
-    query_emb = await embedding_service.embed(query)
-    results = await vector_store.search(query_emb, top_k=top_k, min_score=min_score)
-    return {"results": results}
-
-
-@app.get("/internal/v1/agent/rag/stats")
-async def rag_stats(_token: None = Depends(verify_api_token)):
-    return {"totalDocuments": await vector_store.count()}
-
-
-@app.delete("/internal/v1/agent/rag/documents/{doc_id}")
-async def rag_delete(doc_id: str, _token: None = Depends(verify_api_token)):
-    ok = await vector_store.delete(doc_id)
-    return {"deleted": ok}
-
-
-def _content_length(content: Any) -> int:
-    if isinstance(content, str):
-        return len(content)
-    if isinstance(content, list):
-        return sum(_content_length(item) for item in content)
-    if isinstance(content, dict):
-        return _content_length(content.get("text") or content.get("content") or "")
-    return 0
-
-
-def _deserialize_messages(raw: list[dict[str, Any]]) -> list[Message]:
-    # PLAN-0381 T1.1: tool-history fields (pairing ids/flags) survive the
-    # request-history round-trip; same reader rules as the snapshot loader.
-    from xihe_agent.interfaces.context import message_from_dict
-
-    return [message_from_dict(item) for item in raw]
-
-
-def _to_langchain_messages(messages: list[Message]) -> list[AnyMessage]:
-    # PLAN-0381 T1.4: one shared provider mapping (contract §7) — the runner
-    # and this supervisor path must not diverge on pairing/degradation rules.
-    from xihe_agent.agent_runner.langgraph_runner import to_langchain_messages
-
-    return to_langchain_messages(messages)
-
-
-@app.post("/internal/v1/agent/approval/respond")
-async def approval_respond(request: Request, _token: None = Depends(verify_api_token)):
-    data = await request.json()
-    request_id = data.get("requestId", "")
-    approved = data.get("approved", False)
-    # PLAN-0328 M1 (decision #23): optional rejection feedback forwarded to the blocked tool.
-    raw_feedback = data.get("feedback")
-    feedback = raw_feedback if isinstance(raw_feedback, str) and raw_feedback else None
-    status, decision = approval_tool.resolve_approval_status(request_id, bool(approved), feedback)
-    if status in {"accepted", "already_decided"}:
-        return {
-            "status": status,
-            "requestId": request_id,
-            "approved": decision,
-        }
-    if status == "conflict":
-        raise HTTPException(status_code=409, detail=f"Approval decision conflict: {request_id}")
-    if status == "expired":
-        raise HTTPException(status_code=410, detail=f"Approval request expired: {request_id}")
-    raise HTTPException(status_code=404, detail=f"No pending approval: {request_id}")
-
-
-@app.get("/internal/v1/agent/approval/pending")
-async def approval_pending(_token: None = Depends(verify_api_token)):
-    return {"pending": approval_tool.get_pending()}
-
-
-@app.get("/internal/v1/agent/approval/{request_id}")
-async def approval_status(request_id: str, _token: None = Depends(verify_api_token)):
-    status = approval_tool.get_approval_status(request_id)
-    if status is None:
-        raise HTTPException(status_code=404, detail=f"Approval request not found: {request_id}")
-    return status
-
-
-@app.post("/internal/v1/agent/mcp/reinit")
-async def reinit_mcp(_token: None = Depends(verify_api_token)):
-    try:
-        await mcp_manager.reinitialize()
-        return {
-            "status": "ok",
-            "toolsCount": len(mcp_manager.tools),
-            "tools": [t.spec.name for t in mcp_manager.tools],
-        }
-    except Exception as e:
-        logger.error("MCP reinit failed", exc_info=e)
-        return {"status": "error", "code": "MCP_REINITIALIZE_FAILED", "requestId": str(uuid4())}
-
-
-@app.get("/internal/v1/agent/registry/workers")
-async def registry_list_workers(_token: None = Depends(verify_api_token)):
-    if not USE_REGISTRY or worker_registry is None:
-        raise HTTPException(status_code=404, detail="Registry mode is not enabled")
-    workers = worker_registry.list_workers()
-    return {
-        "workers": [
-            {
-                "id": w.id,
-                "name": w.name,
-                "description": w.description,
-                "enabled": w.enabled,
-                "filePath": w.file_path,
-                "errorCode": "WORKER_INITIALIZATION_FAILED" if w.error else None,
-            }
-            for w in workers
-        ],
-    }
-
-
-@app.post("/internal/v1/agent/registry/workers/{worker_id}/enable")
-async def registry_enable_worker(worker_id: str, _token: None = Depends(verify_api_token)):
-    if not USE_REGISTRY or worker_registry is None:
-        raise HTTPException(status_code=404, detail="Registry mode is not enabled")
-    model = create_llm(llm_config)
-    custom_tools = [approval_tool, generate_image_tool]
-    ok = worker_registry.enable(worker_id, model, mcp_manager.tools, custom_tools)
-    if not ok:
-        raise HTTPException(status_code=404, detail=f"Worker '{worker_id}' not found")
-    return {"status": "ok", "workerId": worker_id, "enabled": True}
-
-
-@app.post("/internal/v1/agent/registry/workers/{worker_id}/disable")
-async def registry_disable_worker(worker_id: str, _token: None = Depends(verify_api_token)):
-    if not USE_REGISTRY or worker_registry is None:
-        raise HTTPException(status_code=404, detail="Registry mode is not enabled")
-    ok = worker_registry.disable(worker_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail=f"Worker '{worker_id}' not found")
-    return {"status": "ok", "workerId": worker_id, "enabled": False}
-
-
-@app.get("/internal/v1/agent/health")
-async def health():
-    llm_status = get_llm_initialization_status()
-    return {
-        "status": _agent_status,
-        "liveness": "up" if _agent_status != "starting" else "starting",
-        "instanceId": _instance_id,
-        "llmReady": _llm_ready,
-        "configRevision": _runtime_config_revision,
-        "configSync": config_client.last_sync_report,
-        "llm": llm_status,
-        "cpUrl": CP_URL,
-        "mcpInitialized": mcp_manager.initialized,
-        "toolsCount": len(mcp_manager.tools),
-        "tools": [t.spec.name for t in mcp_manager.tools],
-        "version": "0.1.0",
-        "framework": "langgraph",
-    }
-
-
-@app.get("/internal/v1/agent/tools")
-async def list_tools(_token: None = Depends(verify_api_token)):
-    return {
-        "tools": [{"name": t.spec.name, "description": t.spec.description} for t in mcp_manager.tools],
-        "customTools": [{"name": approval_tool.name, "description": approval_tool.description}],
-    }
-
-
 if __name__ == "__main__":
     # PLAN-0307 T3.5: CLI --set is the highest-priority config layer.
     load_project_env(parse_cli_overrides(sys.argv[1:]))
@@ -1847,11 +409,13 @@ if __name__ == "__main__":
 
     import uvicorn
 
+    import xihe_agent.app_state as state
+
     logger.info(
         "Starting xihe Agent on %s:%s provider=%s cp=%s",
         AGENT_HOST,
         AGENT_PORT,
-        llm_config.provider,
+        state.llm_config.provider,
         CP_URL,
     )
     uvicorn.run(
