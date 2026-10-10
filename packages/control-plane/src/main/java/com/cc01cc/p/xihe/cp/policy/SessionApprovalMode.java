@@ -1,7 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
-import com.cc01cc.p.xihe.cp.entity.Session;
-import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.service.SessionApprovalModeStore;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
@@ -19,6 +18,11 @@ import org.springframework.transaction.annotation.Transactional;
  * "inherit the workspace {@code approval-policy.mode}", which keeps existing rows and newly created
  * sessions on the workspace default without a data backfill.</p>
  *
+ * <p>PLAN-0470 (T3.2): this policy view no longer injects {@code SessionRepository}. Reads go
+ * through the session domain's {@link SessionReadService} leaf; the write goes through
+ * {@link SessionService#setApprovalMode} (the session canonical writer), so policy never writes a
+ * Session row directly.</p>
+ *
  * <p>Fail-closed: unreadable state yields {@link Optional#empty()} so the caller falls back to the
  * workspace default and finally to {@code manual} — a broken read must never relax the decision.</p>
  */
@@ -27,10 +31,10 @@ public class SessionApprovalMode {
 
     private static final Logger log = LoggerFactory.getLogger(SessionApprovalMode.class);
 
-    private final SessionRepository sessionRepository;
+    private final SessionApprovalModeStore store;
 
-    public SessionApprovalMode(SessionRepository sessionRepository) {
-        this.sessionRepository = sessionRepository;
+    public SessionApprovalMode(SessionApprovalModeStore store) {
+        this.store = store;
     }
 
     /** Stored override for one session; empty when unset (inherit) or unreadable. */
@@ -41,8 +45,7 @@ public class SessionApprovalMode {
             return Optional.empty();
         }
         try {
-            return sessionRepository.findById(id)
-                    .map(Session::getApprovalMode)
+            return store.findApprovalMode(id)
                     .filter(mode -> mode != null && !mode.isBlank())
                     .map(mode -> mode.trim().toLowerCase(Locale.ROOT))
                     .filter(mode -> {
@@ -75,10 +78,7 @@ public class SessionApprovalMode {
         if (id == null) {
             throw new IllegalStateException("session not found: " + sessionId);
         }
-        Session session = sessionRepository.findById(id)
-                .orElseThrow(() -> new IllegalStateException("session not found: " + sessionId));
-        session.setApprovalMode(mode);
-        sessionRepository.save(session);
+        store.setApprovalMode(id, mode);
     }
 
     private static UUID parseUuid(String value) {

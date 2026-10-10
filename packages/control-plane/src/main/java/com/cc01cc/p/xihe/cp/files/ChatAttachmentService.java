@@ -15,7 +15,6 @@ import com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo;
 import com.cc01cc.p.xihe.cp.files.dto.BatchUploadResult;
 import com.cc01cc.p.xihe.cp.files.dto.UploadFailure;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
-import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 
@@ -80,7 +79,7 @@ public class ChatAttachmentService {
     private final String attachmentsBasePath;
     private final Set<String> allowedExtensions;
     private final FileRepository fileRepository;
-    private final SessionRepository sessionRepository;
+    private final com.cc01cc.p.xihe.cp.service.SessionAttachmentAnchorService sessionAnchor;
     private final WorkspaceRepository workspaceRepository;
     private final WorkspaceUserRepository workspaceUserRepository;
     private final ObjectMapper objectMapper;
@@ -89,14 +88,14 @@ public class ChatAttachmentService {
             @Value("${cp.attachments-base-path:/data/xihe/attachments}") String attachmentsBasePath,
             @Value("${cp.attachments.allowed-extensions:png,jpg,jpeg,gif,webp,svg,bmp,pdf,doc,docx,txt,md,json,csv,xls,xlsx,ppt,pptx,mp3,wav,m4a,ogg,flac,aac,mp4,webm,mov,avi,mkv}") String allowedExtensionsConfig,
             FileRepository fileRepository,
-            SessionRepository sessionRepository,
+            com.cc01cc.p.xihe.cp.service.SessionAttachmentAnchorService sessionAnchor,
             WorkspaceRepository workspaceRepository,
             WorkspaceUserRepository workspaceUserRepository,
             ObjectMapper objectMapper) {
         this.attachmentsBasePath = attachmentsBasePath;
         this.allowedExtensions = parseAllowedExtensions(allowedExtensionsConfig);
         this.fileRepository = fileRepository;
-        this.sessionRepository = sessionRepository;
+        this.sessionAnchor = sessionAnchor;
         this.workspaceRepository = workspaceRepository;
         this.workspaceUserRepository = workspaceUserRepository;
         this.objectMapper = objectMapper;
@@ -179,12 +178,10 @@ public class ChatAttachmentService {
         if (file == null) {
             return Optional.empty();
         }
-        Session session = file.getSessionId() == null
-                ? null : sessionRepository.findById(UUID.fromString(file.getSessionId())).orElse(null);
+        // Session ownership (archived / workspace / user mismatch) is enforced by the
+        // session-domain anchor; null means missing or unowned — collapse to forbidden.
+        Session session = sessionAnchor.findOwnedSession(file.getSessionId(), workspaceId, userId);
         if (session == null
-                || session.isArchived()
-                || !workspaceId.equals(session.getWorkspaceId())
-                || !userId.equals(session.getUserId())
                 || !workspaceId.equals(file.getWorkspaceId())
                 || !userId.equals(file.getUserId())
                 || workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId)).isEmpty()
@@ -284,7 +281,17 @@ public class ChatAttachmentService {
         }
     }
 
+    /**
+     * PLAN-0470 (T3.2): lock the source attachment rows for a fork copy so the
+     * fork coordinator does not inject {@code FileRepository} directly. Returns
+     * the locked rows ordered by id; ownership is asserted by the caller's
+     * already-authenticated session scope.
+     */
     @Transactional
+    public List<File> lockForForkCopy(List<String> messageIds) {
+        return fileRepository.findByMessageIdsForUpdateOrderByIdAsc(messageIds);
+    }
+
     public File copyForFork(UUID sourceFileId, String sourceSessionId, String sourceMessageId,
                             String childSessionId, String childMessageId, String userId, String workspaceId) {
         File source = fileRepository.findByIdAndSessionIdForUpdate(sourceFileId, sourceSessionId)
@@ -390,25 +397,17 @@ public class ChatAttachmentService {
         return MAX_FILE_SIZE;
     }
 
+    // Session existence + ownership write/check lives in the session-domain anchor
+    // (PLAN-0470 T3.2); this files service no longer touches SessionRepository.
     private void ensureSessionExists(String sessionId, String workspaceId, String userId) {
-        Optional<Session> existing = sessionRepository.findById(UUID.fromString(sessionId));
-        if (existing.isPresent()) {
-            requireOwnedSession(existing.get(), workspaceId, userId);
-            return;
-        }
-        Session session = new Session(workspaceId, userId, "Attachment Upload");
-        session.setId(UUID.fromString(sessionId));
-        sessionRepository.save(session);
-        logger.info("Session created for attachments session={} workspace={}", sessionId, workspaceId);
+        sessionAnchor.ensureExistsForAttachment(sessionId, workspaceId, userId);
     }
 
     private Session requireOwnedSession(String sessionId, String workspaceId, String userId) {
-        Session session = sessionRepository.findById(UUID.fromString(sessionId))
+        // Two distinct failures preserved from the pre-refactor contract: a missing
+        // row is "not found", an archived/mismatched row is "access denied".
+        Session session = sessionAnchor.findExistingSession(sessionId)
                 .orElseThrow(() -> new IllegalArgumentException("Session not found"));
-        return requireOwnedSession(session, workspaceId, userId);
-    }
-
-    private Session requireOwnedSession(Session session, String workspaceId, String userId) {
         if (session.isArchived()
                 || !workspaceId.equals(session.getWorkspaceId())
                 || !userId.equals(session.getUserId())) {
