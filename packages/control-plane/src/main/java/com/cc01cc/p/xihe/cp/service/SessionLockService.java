@@ -1,8 +1,11 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -28,5 +31,15 @@ public class SessionLockService {
      */
     public void lockRow(UUID sessionId) {
         sessionRepository.findByIdForUpdate(sessionId);
+    }
+
+    /**
+     * PLAN-0470 (T3.2): acquire the Session row lock and return the locked row so
+     * the caller (Policy default-grant idempotency) can read its kind/userId within
+     * the same transaction. Empty when the row is absent.
+     */
+    @Transactional
+    public Optional<Session> lockAndFind(UUID sessionId) {
+        return sessionRepository.findByIdForUpdate(sessionId);
     }
 }

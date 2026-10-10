@@ -1,14 +1,14 @@
 package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
+import com.cc01cc.p.xihe.cp.auth.AuthUserLockService;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
-import com.cc01cc.p.xihe.cp.repository.SessionRepository;
-import com.cc01cc.p.xihe.cp.repository.UserRepository;
+import com.cc01cc.p.xihe.cp.service.SessionLockService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -27,21 +27,21 @@ public class GrantDefaultService {
             "read", "write", "delete", "exec", "network", "credential");
 
     private final AuthorizationGrantRepository grantRepository;
-    private final SessionRepository sessionRepository;
-    private final UserRepository userRepository;
+    private final AuthUserLockService userLock;
+    private final SessionLockService sessionLock;
     private final AuditLogger auditLogger;
     private final ObjectMapper objectMapper;
     private final DbLockTimeout dbLockTimeout;
 
     public GrantDefaultService(AuthorizationGrantRepository grantRepository,
-                               SessionRepository sessionRepository,
-                               UserRepository userRepository,
+                               AuthUserLockService userLock,
+                               SessionLockService sessionLock,
                                AuditLogger auditLogger,
                                ObjectMapper objectMapper,
                                DbLockTimeout dbLockTimeout) {
         this.grantRepository = grantRepository;
-        this.sessionRepository = sessionRepository;
-        this.userRepository = userRepository;
+        this.userLock = userLock;
+        this.sessionLock = sessionLock;
         this.auditLogger = auditLogger;
         this.objectMapper = objectMapper;
         this.dbLockTimeout = dbLockTimeout;
@@ -53,7 +53,7 @@ public class GrantDefaultService {
             throw new IllegalArgumentException("A persisted user and role are required for default grants");
         }
         dbLockTimeout.apply();
-        User lockedUser = userRepository.findByIdForUpdate(user.getId())
+        User lockedUser = userLock.lockAndFind(user.getId())
                 .orElseThrow(() -> new IllegalArgumentException("User not found"));
         ensureDefault("user", lockedUser.getId(), lockedUser.getRole(), lockedUser.getId().toString(), null);
     }
@@ -64,12 +64,12 @@ public class GrantDefaultService {
             throw new IllegalArgumentException("A persisted root Session is required for default grants");
         }
         dbLockTimeout.apply();
-        Session lockedSession = sessionRepository.findByIdForUpdate(session.getId())
+        Session lockedSession = sessionLock.lockAndFind(session.getId())
                 .orElseThrow(() -> new IllegalArgumentException("Session not found"));
         if (lockedSession.getKind() != null) {
             throw new IllegalArgumentException("Derived Sessions require an explicit narrowed grant snapshot");
         }
-        User user = userRepository.findById(UUID.fromString(lockedSession.getUserId()))
+        User user = userLock.lockAndFind(UUID.fromString(lockedSession.getUserId()))
                 .orElseThrow(() -> new IllegalArgumentException("Session owner not found"));
         ensureDefault("agent", lockedSession.getId(), user.getRole(), user.getId().toString(),
                 lockedSession.getWorkspaceId());
