@@ -5,8 +5,8 @@ import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.context.EventTypeTaxonomy;
 import com.cc01cc.p.xihe.cp.context.entity.ContextEvent;
 import com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository;
-import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.BranchPathService;
+import com.cc01cc.p.xihe.cp.service.SessionLockService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -27,18 +27,18 @@ public class EventStoreService {
     private static final Logger logger = LoggerFactory.getLogger(EventStoreService.class);
 
     private final EventStoreRepository eventStoreRepository;
-    private final SessionRepository sessionRepository;
+    private final SessionLockService sessionLockService;
     private final ObjectMapper objectMapper;
     private final DbLockTimeout dbLockTimeout;
     private final BranchPathService branchPathService;
 
     public EventStoreService(EventStoreRepository eventStoreRepository,
-                             SessionRepository sessionRepository,
+                             SessionLockService sessionLockService,
                              ObjectMapper objectMapper,
                              DbLockTimeout dbLockTimeout,
                              BranchPathService branchPathService) {
         this.eventStoreRepository = eventStoreRepository;
-        this.sessionRepository = sessionRepository;
+        this.sessionLockService = sessionLockService;
         this.objectMapper = objectMapper;
         this.dbLockTimeout = dbLockTimeout;
         this.branchPathService = branchPathService;
@@ -54,9 +54,10 @@ public class EventStoreService {
     // The lock is taken only when the anchor row exists: a missing session has
     // no sequence timeline to serialize, and on PostgreSQL the insert is
     // rejected by fk_context_events_session anyway (H2 legacy tests operate
-    // without session rows).
+    // without session rows). PLAN-0470 #24/D1d: the lock itself is the
+    // Session-owned seam (SessionLockService), no entity leaves Session.
     private void lockSessionForSequence(UUID sessionId) {
-        sessionRepository.findByIdForUpdate(sessionId);
+        sessionLockService.lockRow(sessionId);
     }
 
     @Transactional

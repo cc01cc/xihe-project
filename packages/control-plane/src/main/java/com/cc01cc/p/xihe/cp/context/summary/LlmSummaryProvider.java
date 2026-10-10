@@ -1,9 +1,8 @@
 package com.cc01cc.p.xihe.cp.context.summary;
 
 import com.cc01cc.p.xihe.cp.config.ConfigService;
-import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.provider.ProviderCredentialLeaseService;
-import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.service.SessionReadService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -18,7 +17,6 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -52,7 +50,7 @@ public class LlmSummaryProvider implements SummaryProvider {
     static final Duration SUMMARY_LEASE_TTL = Duration.ofMinutes(2);
 
     private final ConfigService configService;
-    private final SessionRepository sessionRepository;
+    private final SessionReadService sessionReadService;
     private final ProviderCredentialLeaseService credentialLeases;
     private final RuleBasedSummaryProvider ruleProvider;
     private final ConstraintExtractor constraintExtractor;
@@ -60,14 +58,14 @@ public class LlmSummaryProvider implements SummaryProvider {
     private final ObjectMapper objectMapper;
 
     public LlmSummaryProvider(ConfigService configService,
-                              SessionRepository sessionRepository,
+                              SessionReadService sessionReadService,
                               ProviderCredentialLeaseService credentialLeases,
                               RuleBasedSummaryProvider ruleProvider,
                               ConstraintExtractor constraintExtractor,
                               AgentSummarizeClient agentClient,
                               ObjectMapper objectMapper) {
         this.configService = configService;
-        this.sessionRepository = sessionRepository;
+        this.sessionReadService = sessionReadService;
         this.credentialLeases = credentialLeases;
         this.ruleProvider = ruleProvider;
         this.constraintExtractor = constraintExtractor;
@@ -78,12 +76,12 @@ public class LlmSummaryProvider implements SummaryProvider {
     @Override
     public SummaryResult summarize(SummaryRequest request) {
         long started = System.currentTimeMillis();
-        Session session = lookupSession(request.sessionId());
-        SummarySettings settings = resolveSettings(request, session);
+        SessionReadService.SummaryRoutingView routing = lookupRouting(request.sessionId());
+        SummarySettings settings = resolveSettings(request, routing);
         if (!"llm".equals(settings.provider())) {
             return ruleDirect(request, started);
         }
-        String connectionId = session == null ? null : session.getProviderConnectionId();
+        String connectionId = routing == null ? null : routing.providerConnectionId();
         if (isBlank(settings.providerId()) || isBlank(settings.model())
                 || "mock".equals(settings.providerId()) || isBlank(connectionId)) {
             logger.warn("[LIFECYCLE] service=cp event=compaction_summary_fallback sessionId={} trigger={} reason=no_credential",
@@ -95,7 +93,7 @@ public class LlmSummaryProvider implements SummaryProvider {
             lease = credentialLeases.issue(
                     request.userId(), request.workspaceId(), request.sessionId(), request.runId(),
                     connectionId, settings.providerId(), settings.model(),
-                    session.getConnectionRevision(), SUMMARY_LEASE_TTL);
+                    routing.connectionRevision(), SUMMARY_LEASE_TTL);
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=compaction_summary_fallback sessionId={} trigger={} reason=lease_failed error={}",
                     request.sessionId(), request.trigger(), e.getMessage());
@@ -109,7 +107,7 @@ public class LlmSummaryProvider implements SummaryProvider {
         payload.put("model", settings.model());
         payload.put("credentialLease", lease.token());
         payload.put("providerConnectionId", connectionId);
-        payload.put("connectionRevision", session.getConnectionRevision() == null ? 0L : session.getConnectionRevision());
+        payload.put("connectionRevision", routing.connectionRevision() == null ? 0L : routing.connectionRevision());
         payload.put("text", buildInput(request, settings.inputBudgetChars()));
         String prior = SummarySections.withoutSection(request.previousSummary(), SummarySections.CONSTRAINTS);
         if (prior != null && !prior.isBlank()) {
@@ -239,17 +237,22 @@ public class LlmSummaryProvider implements SummaryProvider {
         return java.util.regex.Pattern.compile("(?m)^\\[").matcher(summary).find();
     }
 
-    private Session lookupSession(String sessionId) {
+    /**
+     * PLAN-0470 #24/D1a: read only the routing fields through the Session
+     * domain's narrow view; the Session entity never enters the Context domain.
+     * A lookup failure still degrades to {@code null} (rule fallback), matching
+     * the previous behaviour.
+     */
+    private SessionReadService.SummaryRoutingView lookupRouting(String sessionId) {
         try {
-            Optional<Session> session = sessionRepository.findById(UUID.fromString(sessionId));
-            return session.orElse(null);
+            return sessionReadService.findSummaryRouting(UUID.fromString(sessionId)).orElse(null);
         } catch (Exception e) {
             logger.debug("[LIFECYCLE] service=cp event=compaction_summary_session_lookup_failed sessionId={}", sessionId);
             return null;
         }
     }
 
-    private SummarySettings resolveSettings(SummaryRequest request, Session session) {
+    private SummarySettings resolveSettings(SummaryRequest request, SessionReadService.SummaryRoutingView routing) {
         Map<String, String> domain = resolveDomainSafely(
                 "context-policy", uuidOrNull(request.userId()), uuidOrNull(request.workspaceId()));
         Map<String, String> llmDomain = resolveDomainSafely(
@@ -257,10 +260,10 @@ public class LlmSummaryProvider implements SummaryProvider {
         JsonNode defaults = parseObject(domain.get("defaults"));
         JsonNode models = parseObject(domain.get("models"));
 
-        String providerId = session != null && !isBlank(session.getModelProvider())
-                ? session.getModelProvider() : text(llmDomain.get("defaultProvider"));
-        String baseModel = session != null && !isBlank(session.getModelName())
-                ? session.getModelName() : text(llmDomain.get("defaultModel"));
+        String providerId = routing != null && !isBlank(routing.modelProvider())
+                ? routing.modelProvider() : text(llmDomain.get("defaultProvider"));
+        String baseModel = routing != null && !isBlank(routing.modelName())
+                ? routing.modelName() : text(llmDomain.get("defaultModel"));
         if (isBlank(baseModel) && !isBlank(providerId)) {
             baseModel = text(llmDomain.get(providerId + "Model"));
         }

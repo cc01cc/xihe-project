@@ -50,4 +50,24 @@ public class SessionReadService {
                 session.getKind(),
                 session.getAgentPermissionsSnapshot()));
     }
+
+    /**
+     * PLAN-0470 #24/D1a: the minimal routing fields the LLM summary hop needs
+     * (provider connection, revision and model routing); never the Session
+     * entity.
+     */
+    public record SummaryRoutingView(
+            String providerConnectionId,
+            Long connectionRevision,
+            String modelProvider,
+            String modelName) {}
+
+    @Transactional(readOnly = true)
+    public Optional<SummaryRoutingView> findSummaryRouting(UUID id) {
+        return sessionRepository.findById(id).map(session -> new SummaryRoutingView(
+                session.getProviderConnectionId(),
+                session.getConnectionRevision(),
+                session.getModelProvider(),
+                session.getModelName()));
+    }
 }
