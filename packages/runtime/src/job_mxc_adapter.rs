@@ -68,6 +68,15 @@ pub fn build_mxc_job(
     std::fs::write(&policy_path, bytes).map_err(|error| {
         JobEngineError::Unavailable(format!("MXC policy write failed: {error}"))
     })?;
+    let policy_path = if policy_path.is_absolute() {
+        policy_path
+    } else {
+        std::env::current_dir()
+            .map_err(|error| {
+                JobEngineError::Unavailable(format!("Runtime current dir lookup failed: {error}"))
+            })?
+            .join(policy_path)
+    };
     Ok(LaunchPlan {
         backend_kind: "windows-mxc".to_string(),
         backend_revision: "builtin".to_string(),
@@ -111,8 +120,8 @@ mod tests {
 
     #[test]
     fn build_mxc_job_writes_the_policy_into_the_job_output_dir() {
-        let root =
-            std::env::temp_dir().join(format!("xihe-mxc-adapter-test-{}", uuid::Uuid::new_v4()));
+        let root = PathBuf::from("target/.tmp")
+            .join(format!("xihe-mxc-adapter-test-{}", uuid::Uuid::new_v4()));
         let plan = build_mxc_job(
             MxcJobRequest {
                 workspace_path: std::env::temp_dir().to_string_lossy().into_owned(),
@@ -126,7 +135,8 @@ mod tests {
         )
         .expect("mxc job plan");
         let policy_path = plan.policy_artifact.clone().expect("policy artifact");
-        assert!(policy_path.starts_with(&root));
+        assert!(policy_path.is_absolute());
+        assert!(policy_path.starts_with(std::env::current_dir().unwrap().join(&root)));
         assert_eq!(plan.args, vec![policy_path.to_string_lossy().into_owned()]);
         assert_eq!(plan.backend_kind, "windows-mxc");
         assert_eq!(plan.timeout_ms, 5_000);
@@ -140,5 +150,6 @@ mod tests {
                 .as_array()
                 .is_some_and(|paths| !paths.is_empty())
         );
+        std::fs::remove_dir_all(root).expect("remove adapter test output");
     }
 }
