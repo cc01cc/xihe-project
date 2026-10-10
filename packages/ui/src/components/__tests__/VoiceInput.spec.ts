@@ -8,17 +8,20 @@ function createI18nInstance() {
 }
 
 describe("VoiceInput", () => {
+    class MockSpeechRecognition extends EventTarget implements SpeechRecognition {
+        lang = "";
+        continuous = false;
+        interimResults = false;
+        start = vi.fn<SpeechRecognition["start"]>();
+        stop = vi.fn<SpeechRecognition["stop"]>();
+        abort = vi.fn<SpeechRecognition["abort"]>();
+        onresult: SpeechRecognition["onresult"] = null;
+        onerror: SpeechRecognition["onerror"] = null;
+        onend: SpeechRecognition["onend"] = null;
+    }
+
     beforeEach(() => {
-        (globalThis as any).SpeechRecognition = vi.fn(() => ({
-            start: vi.fn(),
-            stop: vi.fn(),
-            lang: "",
-            continuous: false,
-            interimResults: false,
-            onresult: null,
-            onend: null,
-            onerror: null,
-        }));
+        window.SpeechRecognition = MockSpeechRecognition;
     });
 
     it("renders voice input button", async () => {

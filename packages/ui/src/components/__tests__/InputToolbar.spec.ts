@@ -58,7 +58,7 @@ describe("InputToolbar", () => {
     });
 
     it("passes props to dynamic action components", async () => {
-        const onClick = vi.fn(),
+        const onClick = vi.fn<(event: MouseEvent) => void>(),
             wrapper = mount(InputToolbar, {
                 props: {
                     actions: [

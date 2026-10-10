@@ -4,16 +4,18 @@ import { createI18n } from "vue-i18n";
 import McpStdioServerList from "../settings/McpStdioServerList.vue";
 import type * as apiModule from "../../composables/api";
 
-const getStdioServers = vi.fn(),
-    getMcpServerStatus = vi.fn();
+const { getStdioServers, getMcpServerStatus } = vi.hoisted(() => ({
+    getStdioServers: vi.fn<typeof apiModule.api.getStdioServers>(),
+    getMcpServerStatus: vi.fn<typeof apiModule.api.getMcpServerStatus>(),
+}));
 vi.mock("../../composables/api", async (importOriginal) => {
     const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {
             ...actual.api,
-            getStdioServers: (...args: unknown[]) => getStdioServers(...args),
-            getMcpServerStatus: (...args: unknown[]) => getMcpServerStatus(...args),
+            getStdioServers,
+            getMcpServerStatus,
         },
     };
 });

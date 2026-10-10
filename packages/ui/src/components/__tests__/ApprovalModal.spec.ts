@@ -13,7 +13,7 @@ vi.mock("../../composables/api", async (importOriginal) => {
         ...actual,
         api: {
             ...actual.api,
-            upsertPolicyToolFace: vi.fn(),
+            upsertPolicyToolFace: vi.fn<typeof apiModule.api.upsertPolicyToolFace>(),
         },
     };
 });

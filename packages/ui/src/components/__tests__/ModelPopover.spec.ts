@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vite
 import { mount, flushPromises } from "@vue/test-utils";
 import { setActivePinia, createPinia } from "pinia";
 import { createI18n } from "vue-i18n";
-import { createRouter, createWebHistory } from "vue-router";
+import { createRouter, createWebHistory, type Router } from "vue-router";
 import { nextTick } from "vue";
 import { useConfigStore } from "../../stores/config";
 import { useSessionStore } from "../../stores/session";
@@ -50,7 +50,7 @@ const router = createRouter({
 });
 
 const { pushSpy } = vi.hoisted(() => ({
-    pushSpy: vi.fn(),
+    pushSpy: vi.fn<Router["push"]>(),
 }));
 
 vi.mock("vue-router", async (importOriginal) => {
@@ -124,7 +124,7 @@ describe("ModelPopover", () => {
             configurable: true,
         });
         if (!Element.prototype.scrollIntoView) {
-            Element.prototype.scrollIntoView = vi.fn();
+            Element.prototype.scrollIntoView = vi.fn<() => void>();
         }
     });
 

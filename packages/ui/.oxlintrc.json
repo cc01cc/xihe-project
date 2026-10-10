@@ -75,7 +75,7 @@
             }
         },
         {
-            "files": ["src/**/__tests__/**"],
+            "files": ["src/**/__tests__/**", "src/**/*.spec.ts", "src/**/*.test.ts"],
             "plugins": ["typescript", "import", "unicorn", "vitest"],
             "env": {
                 "vitest": true

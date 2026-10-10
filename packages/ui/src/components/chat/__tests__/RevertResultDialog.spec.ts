@@ -12,7 +12,11 @@ vi.mock("../../../composables/api", async (importOriginal) => {
     const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
-        api: { ...actual.api, getWorkspaceCheckpointBlob: vi.fn(), readFile: vi.fn() },
+        api: {
+            ...actual.api,
+            getWorkspaceCheckpointBlob: vi.fn<typeof api.getWorkspaceCheckpointBlob>(),
+            readFile: vi.fn<typeof api.readFile>(),
+        },
     };
 });
 const mockedApi = vi.mocked(api);

@@ -15,10 +15,12 @@ vi.mock("../../composables/api", async (importOriginal) => {
         ...actual,
         api: {
             ...actual.api,
-            listWorkspaceCheckpoints: vi.fn(),
-            getWorkspaceGitStatus: vi.fn(),
-            previewWorkspaceCheckpointRevert: vi.fn(),
-            executeWorkspaceCheckpointRevert: vi.fn(),
+            listWorkspaceCheckpoints: vi.fn<typeof apiModule.api.listWorkspaceCheckpoints>(),
+            getWorkspaceGitStatus: vi.fn<typeof apiModule.api.getWorkspaceGitStatus>(),
+            previewWorkspaceCheckpointRevert:
+                vi.fn<typeof apiModule.api.previewWorkspaceCheckpointRevert>(),
+            executeWorkspaceCheckpointRevert:
+                vi.fn<typeof apiModule.api.executeWorkspaceCheckpointRevert>(),
         },
     };
 });

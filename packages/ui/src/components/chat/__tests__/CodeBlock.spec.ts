@@ -8,7 +8,11 @@ vi.mock("vue-i18n", () => ({
 describe("CodeBlock", () => {
     beforeEach(() => {
         Object.assign(navigator, {
-            clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
+            clipboard: {
+                writeText: vi
+                    .fn<typeof navigator.clipboard.writeText>()
+                    .mockResolvedValue(undefined),
+            },
         });
     });
 

@@ -65,7 +65,7 @@ describe("MobileChatSheet approval dismissal guard", () => {
 
     function emitPointerDownOutside(wrapper: ReturnType<typeof mountOpen>) {
         const content = wrapper.findComponent({ name: "SheetContent" }),
-            event = { preventDefault: vi.fn() };
+            event = { preventDefault: vi.fn<() => void>() };
         content.vm.$emit("pointerDownOutside", event);
         return event;
     }

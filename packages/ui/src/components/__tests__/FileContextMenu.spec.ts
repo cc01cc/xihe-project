@@ -9,12 +9,12 @@ import type { FileNode } from "../../types";
 // instances, otherwise stubbed resolutions never reach the component.
 const { storeMock } = vi.hoisted(() => ({
     storeMock: {
-        deleteNode: vi.fn(),
-        createFile: vi.fn(),
-        renameNode: vi.fn(),
-        moveNode: vi.fn(),
-        duplicateNode: vi.fn(),
-        createDirectory: vi.fn(),
+        deleteNode: vi.fn<(path: string) => Promise<boolean>>(),
+        createFile: vi.fn<(parentDir: string, name: string) => Promise<boolean>>(),
+        renameNode: vi.fn<(oldPath: string, newName: string) => Promise<boolean>>(),
+        moveNode: vi.fn<(from: string, toDir: string) => Promise<boolean>>(),
+        duplicateNode: vi.fn<(path: string) => Promise<boolean>>(),
+        createDirectory: vi.fn<(parentDir: string, name: string) => Promise<boolean>>(),
         treeError: null as string | null,
     },
 }));
@@ -24,7 +24,10 @@ vi.mock("../../stores/workspace", () => ({
 }));
 
 vi.mock("vue-sonner", () => ({
-    toast: { success: vi.fn(), error: vi.fn() },
+    toast: {
+        success: vi.fn<typeof toast.success>(),
+        error: vi.fn<typeof toast.error>(),
+    },
 }));
 
 const dirWithDot: FileNode = { path: "src/v1.2", name: "v1.2", type: "directory" },

@@ -15,17 +15,20 @@ vi.mock("../../composables/api", async (importOriginal) => {
         ...actual,
         api: {
             ...actual.api,
-            createWorkspace: vi.fn(),
-            updateWorkspace: vi.fn(),
-            deleteWorkspace: vi.fn(),
-            listImportSources: vi.fn(),
-            preflightDirectAttach: vi.fn(),
+            createWorkspace: vi.fn<typeof apiModule.api.createWorkspace>(),
+            updateWorkspace: vi.fn<typeof apiModule.api.updateWorkspace>(),
+            deleteWorkspace: vi.fn<typeof apiModule.api.deleteWorkspace>(),
+            listImportSources: vi.fn<typeof apiModule.api.listImportSources>(),
+            preflightDirectAttach: vi.fn<typeof apiModule.api.preflightDirectAttach>(),
         },
     };
 });
 
 vi.mock("vue-sonner", () => ({
-    toast: { success: vi.fn(), error: vi.fn() },
+    toast: {
+        success: vi.fn<typeof toast.success>(),
+        error: vi.fn<typeof toast.error>(),
+    },
 }));
 
 const { workspaceMock } = vi.hoisted(() => ({

@@ -2,6 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import WorkspaceSourceImportDialog from "../workspace/WorkspaceSourceImportDialog.vue";
 import { i18n } from "../../i18n";
+import type * as apiModule from "../../composables/api";
 
 const {
     listImportSources,
@@ -10,11 +11,11 @@ const {
     cancelWorkspaceImport,
     listWorkspaceImports,
 } = vi.hoisted(() => ({
-    listImportSources: vi.fn(),
-    startWorkspaceImport: vi.fn(),
-    getWorkspaceImport: vi.fn(),
-    cancelWorkspaceImport: vi.fn(),
-    listWorkspaceImports: vi.fn(),
+    listImportSources: vi.fn<typeof apiModule.api.listImportSources>(),
+    startWorkspaceImport: vi.fn<typeof apiModule.api.startWorkspaceImport>(),
+    getWorkspaceImport: vi.fn<typeof apiModule.api.getWorkspaceImport>(),
+    cancelWorkspaceImport: vi.fn<typeof apiModule.api.cancelWorkspaceImport>(),
+    listWorkspaceImports: vi.fn<typeof apiModule.api.listWorkspaceImports>(),
 }));
 
 vi.mock("../../composables/api", () => ({

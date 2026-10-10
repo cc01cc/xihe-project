@@ -3,6 +3,7 @@ import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { nextTick } from "vue";
 import { setActivePinia, createPinia } from "pinia";
 import { createI18n } from "vue-i18n";
+import type { Router } from "vue-router";
 import WorkspaceView from "../workspace/WorkspaceView.vue";
 import WorkspaceAgentManagementDialog from "../workspace/WorkspaceAgentManagementDialog.vue";
 import { useSessionStore } from "../../stores/session";
@@ -15,7 +16,10 @@ vi.mock("vue-router", () => ({
         path: "/workspace/workspace-1",
         query: {},
     }),
-    useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+    useRouter: () => ({
+        push: vi.fn<Router["push"]>(),
+        replace: vi.fn<Router["replace"]>(),
+    }),
 }));
 
 vi.mock("../../composables/api", async (importOriginal) => {
@@ -24,11 +28,11 @@ vi.mock("../../composables/api", async (importOriginal) => {
         ...actual,
         api: {
             ...actual.api,
-            getSessions: vi.fn(),
-            createSession: vi.fn(),
-            getWorkspaceAgents: vi.fn(),
-            getAgentTemplates: vi.fn(),
-            createAgentPrincipal: vi.fn(),
+            getSessions: vi.fn<typeof apiModule.api.getSessions>(),
+            createSession: vi.fn<typeof apiModule.api.createSession>(),
+            getWorkspaceAgents: vi.fn<typeof apiModule.api.getWorkspaceAgents>(),
+            getAgentTemplates: vi.fn<typeof apiModule.api.getAgentTemplates>(),
+            createAgentPrincipal: vi.fn<typeof apiModule.api.createAgentPrincipal>(),
         },
     };
 });

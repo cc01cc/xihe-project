@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
-import type { RouteLocationNormalizedLoaded } from "vue-router";
+import type { RouteLocationNormalizedLoaded, Router } from "vue-router";
 import SettingsNav from "../SettingsNav.vue";
 
 vi.mock("vue-router", () => ({
@@ -17,7 +17,7 @@ vi.mock("vue-router", () => ({
             redirectedFrom: undefined,
             meta: {},
         }) as RouteLocationNormalizedLoaded,
-    useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+    useRouter: () => ({ push: vi.fn<Router["push"]>(), replace: vi.fn<Router["replace"]>() }),
     RouterLink: { template: "<a><slot /></a>" },
 }));
 

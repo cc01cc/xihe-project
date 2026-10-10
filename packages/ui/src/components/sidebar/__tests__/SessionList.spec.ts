@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { createMemoryHistory, createRouter } from "vue-router";
+import type { toast as sonnerToast } from "vue-sonner";
 import { i18n } from "../../../i18n";
 import { ApiError, api } from "../../../composables/api";
 import { useChatStore } from "../../../stores/chat";
@@ -10,8 +11,8 @@ import SessionItem from "../SessionItem.vue";
 import SessionList from "../SessionList.vue";
 
 const { toastError, toastSuccess } = vi.hoisted(() => ({
-    toastError: vi.fn(),
-    toastSuccess: vi.fn(),
+    toastError: vi.fn<typeof sonnerToast.error>(),
+    toastSuccess: vi.fn<typeof sonnerToast.success>(),
 }));
 vi.mock("vue-sonner", () => ({ toast: { error: toastError, success: toastSuccess } }));
 

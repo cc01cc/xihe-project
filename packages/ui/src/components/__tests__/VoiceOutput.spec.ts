@@ -10,7 +10,11 @@ function createI18nInstance() {
 
 beforeEach(() => {
     Object.defineProperty(window, "speechSynthesis", {
-        value: { cancel: vi.fn(), speak: vi.fn(), getVoices: vi.fn(() => []) },
+        value: {
+            cancel: vi.fn<() => void>(),
+            speak: vi.fn<typeof window.speechSynthesis.speak>(),
+            getVoices: vi.fn<() => SpeechSynthesisVoice[]>(() => []),
+        },
         configurable: true,
         writable: true,
     });

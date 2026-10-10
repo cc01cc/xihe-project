@@ -13,7 +13,13 @@ const WORKSPACE_ID = "workspace-a",
 const SLICE_REF = "refs/xihe/workspace/slice-a";
 vi.mock("../../../composables/api", async (importOriginal) => {
     const actual = await importOriginal<typeof apiModule>();
-    return { ...actual, api: { ...actual.api, listWorkspaceCheckpoints: vi.fn() } };
+    return {
+        ...actual,
+        api: {
+            ...actual.api,
+            listWorkspaceCheckpoints: vi.fn<typeof api.listWorkspaceCheckpoints>(),
+        },
+    };
 });
 const mockedApi = vi.mocked(api);
 const i18n = createI18n({

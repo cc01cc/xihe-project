@@ -4,11 +4,12 @@ import { createPinia, setActivePinia } from "pinia";
 import { api } from "../../../composables/api";
 import { i18n } from "../../../i18n";
 import { useChatStore } from "../../../stores/chat";
+import type { chatTransport } from "@/services/chatTransport";
 import SSEStream from "../SSEStream.vue";
 
 vi.mock("@/services/chatTransport", () => ({
     chatTransport: {
-        sendMessages: vi.fn(
+        sendMessages: vi.fn<typeof chatTransport.sendMessages>(
             async (
                 _sessionId: string,
                 options: { onopen?: (response: Response) => void | Promise<void> },
@@ -16,7 +17,7 @@ vi.mock("@/services/chatTransport", () => ({
                 await options.onopen?.(new Response(null, { status: 200 }));
             },
         ),
-        stop: vi.fn(),
+        stop: vi.fn<typeof chatTransport.stop>(),
     },
 }));
 
@@ -33,11 +34,11 @@ describe("SSEStream session ownership", () => {
     it("does not reuse session A run id after switching to session B", async () => {
         vi.stubGlobal(
             "fetch",
-            vi.fn().mockResolvedValue({
+            vi.fn<typeof fetch>().mockResolvedValue({
                 ok: true,
                 status: 202,
                 json: async () => ({ status: "accepted", sessionId: "session-a", runId: "run-a" }),
-            }),
+            } as Response),
         );
         const cancel = vi
             .spyOn(api, "cancelChatRun")
@@ -62,11 +63,11 @@ describe("SSEStream session ownership", () => {
     it("refreshes authoritative run state after cancelling from the stream", async () => {
         vi.stubGlobal(
             "fetch",
-            vi.fn().mockResolvedValue({
+            vi.fn<typeof fetch>().mockResolvedValue({
                 ok: true,
                 status: 202,
                 json: async () => ({ status: "accepted", sessionId: "session-a", runId: "run-a" }),
-            }),
+            } as Response),
         );
         const chatStore = useChatStore();
         const refreshRunRecovery = vi

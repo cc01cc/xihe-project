@@ -4,16 +4,18 @@ import { createI18n } from "vue-i18n";
 import ToolCallCard from "../chat/ToolCallCard.vue";
 import type * as apiModule from "../../composables/api";
 
-const getJobOutput = vi.fn(),
-    cancelJob = vi.fn();
+const { getJobOutput, cancelJob } = vi.hoisted(() => ({
+    getJobOutput: vi.fn<typeof apiModule.api.getJobOutput>(),
+    cancelJob: vi.fn<typeof apiModule.api.cancelJob>(),
+}));
 vi.mock("../../composables/api", async (importOriginal) => {
     const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {
             ...actual.api,
-            getJobOutput: (...args: unknown[]) => getJobOutput(...args),
-            cancelJob: (...args: unknown[]) => cancelJob(...args),
+            getJobOutput,
+            cancelJob,
         },
     };
 });

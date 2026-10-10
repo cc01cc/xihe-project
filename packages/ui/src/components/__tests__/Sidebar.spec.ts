@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { setActivePinia, createPinia } from "pinia";
 import { createI18n } from "vue-i18n";
+import type { Router } from "vue-router";
 import Sidebar from "../sidebar/Sidebar.vue";
 import { useSessionStore } from "../../stores/session";
 import { useAuthStore } from "../../stores/auth";
@@ -28,7 +29,7 @@ const messages = {
 };
 
 const { pushSpy } = vi.hoisted(() => ({
-    pushSpy: vi.fn(),
+    pushSpy: vi.fn<Router["push"]>(),
 }));
 
 vi.mock("vue-router", () => ({

@@ -1,10 +1,20 @@
 import { describe, it, expect, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import DiffViewer from "../../components/workspace/DiffViewer.vue";
+import type * as monacoModule from "monaco-editor";
 
-vi.mock("monaco-editor", () => ({ editor: { createDiffEditor: vi.fn(), createModel: vi.fn() } }), {
-    spy: true,
-});
+vi.mock(
+    "monaco-editor",
+    () => ({
+        editor: {
+            createDiffEditor: vi.fn<typeof monacoModule.editor.createDiffEditor>(),
+            createModel: vi.fn<typeof monacoModule.editor.createModel>(),
+        },
+    }),
+    {
+        spy: true,
+    },
+);
 
 describe("DiffViewer", () => {
     it("renders diff container div", () => {
