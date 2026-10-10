@@ -27,8 +27,8 @@ updated: 2026-10-08
 
 | 冲突裸词 | 义项 | **正名（必须用这个）** | 禁止写法 | 备注 |
 |---|---|---|---|---|
-| **owner** | A. workspace **权限角色**（成员 owner/admin） | `workspace 角色 owner` 或 `角色=owner` | 裸 `owner` 指 lease | 与 RBAC 一致 |
-| | B. 生命周期 **执行租约持有者** | **`execution lease holder`**（中文：**执行租约持有者**；可缩写 **lease holder**） | 裸 `owner`、`active owner` 无 lease 上下文 | PLAN-0345 起；「单 active owner」→「**单 execution lease holder**」 |
+| **owner** | A. workspace **权限角色**（成员 owner/admin） | `workspace 角色 owner` 或 `角色=owner` | 裸 `owner` 指操作锁持有者 | 与 RBAC 一致 |
+| | B. 生命周期 **工作区操作锁持有者** | **`workspace operation lock holder`**（中文：**工作区生命周期操作锁持有者**） | 裸 `owner`、`active owner` 无操作锁上下文；`execution lease holder`（旧名） | PLAN-0474；Runtime materialization 与显式删除的进程内互斥 |
 | | C. **资源归属**（连接、工作区、会话挂在谁名下） | **`资源归属 owner`**（英文：*resource owner*；字段写 `owner_type` / `owner_id`） | 用裸 `owner` 指归属；把归属与「workspace 角色 owner」混用 | 连接归属 ≠ 成员角色；目标态 `owner_type` 可含 `AGENT`（见 §1.1） |
 | **role** | A. 平台身份 | **`平台角色`**（*platform role*，值 `ADMIN` / `USER`，来自 JWT `role` claim） | 裸 `role` 指 workspace 角色 | 判定入口 `@PreAuthorize`；见 §1.1 |
 | | B. workspace 内身份 | **`workspace 角色`**（值 `OWNER` / `MEMBER`；`ADMIN` / `VIEWER` 为悬空枚举值，未落库） | 裸 `role` 指平台角色 | 见 §1.1 与 backlog「身份与权限模型」 |
@@ -66,7 +66,7 @@ XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账�
 | 主体 | **principal** | `human`（开发者/用户）、`agent`（独立账户与角色）、`service`（CP/Agent/Runtime 内部管道，非协作者）；`system` = 平台自身触发，非可登录主体 | 把 Agent 说成「代表 user 的 actor」；用 `user` 泛指 principal |
 | 成员 | **membership** | `principal × workspace + 角色`；Agent 与开发者同为 workspace 成员 | 把成员表/字段永久写死为 `user_id` |
 | 角色 | **平台角色 / workspace 角色** | 见 §1 `role` 两义 | 裸 `role` 不带域 |
-| 归属 | **资源归属 owner** | `(owner_type, owner_id)`；目标态可含 `AGENT` | 与「workspace 角色 owner」「execution lease holder」混用 |
+| 归属 | **资源归属 owner** | `(owner_type, owner_id)`；目标态可含 `AGENT` | 与「workspace 角色 owner」「工作区生命周期操作锁持有者」混用 |
 
 历史形态（不阻碍目标，但新代码不得加深）：`sessions.user_id`、`workspace_users.user_id`、`provider_connections.owner_id` 均为 user-only 形态；`ledger_operations.actor_type`（表名历史形态 `session_operations`，V33 改名）已含 `agent`（`V2`），方向一致。
 
@@ -100,7 +100,7 @@ XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账�
 |---|---|---|
 | 单写者 ledger（0326） | ensure single-flight（M-3） | 账本单写 vs 实体只建一次 |
 | ensure single-flight | chat `409 CHAT_IN_PROGRESS` | 沙盒就绪 vs 会话单并发 run |
-| execution lease holder | workspace 角色 owner | 执行租约 vs RBAC 角色 |
+| 工作区生命周期操作锁持有者 | **workspace operation lock holder** | `execution lease holder`（旧名）vs workspace 角色 owner；Runtime 互斥操作 vs RBAC 角色 |
 | run resume | unpause | 会话恢复 vs 容器解除暂停 |
 | **durable job 续看** | **Workspace `unpause` / `run resume`** | 读既有 Job 输出（`job-output`，只读游标）vs 重新激活执行；禁止把续看说成恢复/unpause |
 | **job `interrupted`** | **run `ambiguous`** | Job 因 Runtime 重启判死且不重放 vs run 终态未定、待人工确认 |
@@ -112,7 +112,7 @@ XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账�
 |---|---|
 | 生命周期 | 「Runtime 经 **ensure** 保证执行环境就绪；CP 对外路径名 **materialize**。」 |
 | 并发 | 「同 workspace **ensure single-flight（M-3）**，仅一次实体创建。」 |
-| 租约 | 「至多一个 **execution lease holder**；destroy 后 lease 失效。」 |
+| 操作锁 | 「ensure materialization 与显式删除共用 **workspace operation lock**；destroy 完成后操作锁守卫释放。」 |
 | 暂停 | 「`paused` 须存在 **unpause 激活路径**，禁止无文档重建。」 |
 | REST | 「REST 文件面 **收口到 executor**，消除 **executor-bypass**。」 |
 | 上下文 | 「**context L1 槽** 注入；**diagnostic L1** 后置。」 |
@@ -125,13 +125,14 @@ XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账�
 | 2026-09-17 增补 | 新增 §1.1（principal / membership / 协作≠委托）、`owner` 第三义（资源归属）、`role` 分域；未实施 PLAN 与 docs 按新正名；实现归 backlog BL-18（原标注不实施；2026-09-23 G2 冻结入 PLAN-0407 承接，执行中） |
 | 2026-09-21 增补 | 新增 `scope` / `interrupted` / `runtimeBootId` 分义；§2.3 明确 **durable job 续看 ≠ Workspace `unpause` / `run resume`**（0390） |
 | 2026-09-30 增补（PLAN-0426） | 新增 `projection` 六义分义（A durable 记录 / B 可重建读模型 / C 响应视图 / D UI 本地视图 / E 映射 / F1 有界预览 / F2 安全摘要）；适用范围扩展至根级 `spec/`；裸 `projection`/「投影」叙述禁用，标识符与历史记录除外 |
+| 2026-10-10（PLAN-0474） | 将 Runtime 概念正名为“工作区生命周期操作锁 / workspace operation lock”，更新 zh-Hans/en 与 proposed Security/Workspace glossary；不改变授权语义 |
 | 已完成 PLAN / archive / review | **不改**历史证据用词；再次编辑该文件时顺带对齐 |
-| 代码标识符 | 不在本文档批量改名；需改名另开 PLAN（参考 0356） |
+| 代码标识符 | PLAN-0474 将 Runtime 内部 `ExecutionLease` 改为 `WorkspaceOperationLock`；不保留无已知消费者的兼容别名 |
 
 ## 5. 关联
 
 - 契约层正名 `ensure`：DEV-031、PLAN-0329
-- 生命周期 lease / unpause：PLAN-0345 `spec/workspace-lifecycle.md`
+- 工作区生命周期操作锁 / unpause：PLAN-0345 `spec/workspace-lifecycle.md`、PLAN-0474
 - Job scope / interrupted / runtimeBootId：`spec/workspace/execution-job.md`、PLAN-0390
 - 主体/成员/归属与 Agent 主体化：workspace internal `xh-backlog-and-debt.md` BL-18（不入库分发；承接 PLAN-0407，执行中）
 - prune / compaction：PLAN-0341
