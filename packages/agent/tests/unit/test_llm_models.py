@@ -126,6 +126,10 @@ async def test_scoped_catalog_redeems_lease_and_fetches_models():
             "connectionRevision": 4,
             "modelDiscovery": "remote-models",
             "manualModels": [],
+            "connectionKey": "default",
+            "apiTypeId": "openai-chat-completions",
+            "apiTypeVersion": 1,
+            "operation": "chat",
         }
     )
     response = MagicMock(status_code=200)
@@ -143,7 +147,11 @@ async def test_scoped_catalog_redeems_lease_and_fetches_models():
                     "lease": "pl-test",
                     "runId": "catalog-run",
                     "connectionId": "conn-1",
+                    "connectionKey": "default",
                     "providerId": "deepseek",
+                    "apiTypeId": "openai-chat-completions",
+                    "apiTypeVersion": 1,
+                    "operation": "chat",
                     "scope": "USER",
                     "displayName": "DeepSeek",
                     "connectionRevision": 4,
@@ -152,6 +160,90 @@ async def test_scoped_catalog_redeems_lease_and_fetches_models():
         )
 
     config_client.redeem_provider_lease.assert_awaited_once()
-    assert result["models"]["deepseek"] == ["deepseek-chat"]
-    assert result["providers"]["deepseek"]["connectionId"] == "conn-1"
-    assert result["providers"]["deepseek"]["status"] == "ready"
+    assert result["models"]["conn-1"] == ["deepseek-chat"]
+    assert result["providers"]["conn-1"]["connectionId"] == "conn-1"
+    assert result["providers"]["conn-1"]["connectionKey"] == "default"
+    assert result["providers"]["conn-1"]["providerId"] == "deepseek"
+    assert result["providers"]["conn-1"]["apiTypeId"] == "openai-chat-completions"
+    assert result["providers"]["conn-1"]["apiTypeVersion"] == 1
+    assert result["providers"]["conn-1"]["operation"] == "chat"
+    assert result["providers"]["conn-1"]["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_scoped_catalog_preserves_same_provider_different_connections():
+    from xihe_agent.llm.models import fetch_connection_catalog
+
+    config_client = MagicMock()
+    config_client.config_revision = "connection-rev"
+    config_client.redeem_provider_lease = AsyncMock(
+        side_effect=[
+            {
+                "provider": "deepseek",
+                "routeProvider": "deepseek",
+                "model": "*",
+                "baseUrl": None,
+                "apiKey": "sk-scoped",
+                "connectionRevision": 4,
+                "modelDiscovery": "manual",
+                "manualModels": ["deepseek-chat"],
+                "connectionKey": "default",
+                "apiTypeId": "openai-chat-completions",
+                "apiTypeVersion": 1,
+                "operation": "chat",
+            },
+            {
+                "provider": "deepseek",
+                "routeProvider": "deepseek",
+                "model": "*",
+                "baseUrl": None,
+                "apiKey": "sk-scoped-2",
+                "connectionRevision": 9,
+                "modelDiscovery": "manual",
+                "manualModels": ["deepseek-reasoner"],
+                "connectionKey": "secondary",
+                "apiTypeId": "openai-chat-completions",
+                "apiTypeVersion": 1,
+                "operation": "chat",
+            },
+        ]
+    )
+
+    result = await fetch_connection_catalog(
+        config_client,
+        [
+            {
+                "lease": "pl-1",
+                "runId": "catalog-run",
+                "connectionId": "conn-1",
+                "connectionKey": "default",
+                "providerId": "deepseek",
+                "apiTypeId": "openai-chat-completions",
+                "apiTypeVersion": 1,
+                "operation": "chat",
+                "scope": "USER",
+                "displayName": "DeepSeek",
+                "connectionRevision": 4,
+            },
+            {
+                "lease": "pl-2",
+                "runId": "catalog-run",
+                "connectionId": "conn-2",
+                "connectionKey": "secondary",
+                "providerId": "deepseek",
+                "apiTypeId": "openai-chat-completions",
+                "apiTypeVersion": 1,
+                "operation": "chat",
+                "scope": "WORKSPACE",
+                "displayName": "DeepSeek Secondary",
+                "connectionRevision": 9,
+            },
+        ],
+    )
+
+    assert config_client.redeem_provider_lease.await_count == 2
+    assert result["models"]["conn-1"] == ["deepseek-chat"]
+    assert result["models"]["conn-2"] == ["deepseek-reasoner"]
+    assert result["providers"]["conn-1"]["connectionKey"] == "default"
+    assert result["providers"]["conn-2"]["connectionKey"] == "secondary"
+    assert result["providers"]["conn-2"]["scope"] == "WORKSPACE"

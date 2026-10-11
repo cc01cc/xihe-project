@@ -148,14 +148,23 @@ async def fetch_connection_catalog(
     config_client: Any,
     connections: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Fetch a user-scoped catalog using CP-issued credential leases."""
+    """Fetch a user-scoped catalog using CP-issued credential leases.
+
+    Model identity is concrete connectionId + modelId. The envelope shape stays
+    {models, providers, configRevision}; maps are keyed by connectionId so two
+    connections of the same provider remain separate.
+    """
     results: dict[str, list[str]] = {}
     provider_catalog: dict[str, dict[str, Any]] = {}
     async with httpx.AsyncClient() as client:
         for descriptor in connections:
             provider_id = str(descriptor.get("providerId", ""))
             connection_id = str(descriptor.get("connectionId", ""))
-            catalog_key = provider_id
+            connection_key = str(descriptor.get("connectionKey", ""))
+            api_type_id = str(descriptor.get("apiTypeId", ""))
+            api_type_version = int(descriptor.get("apiTypeVersion", 0) or 0)
+            operation = str(descriptor.get("operation", ""))
+            catalog_key = connection_id
             if not provider_id or not connection_id or catalog_key in provider_catalog:
                 continue
             try:
@@ -222,6 +231,11 @@ async def fetch_connection_catalog(
                 results[catalog_key] = [model["name"] for model in models]
                 provider_catalog[catalog_key] = {
                     "connectionId": connection_id,
+                    "connectionKey": connection_key,
+                    "providerId": provider_id,
+                    "apiTypeId": api_type_id,
+                    "apiTypeVersion": api_type_version,
+                    "operation": operation,
                     "scope": descriptor.get("scope", "USER"),
                     "displayName": descriptor.get("displayName", provider_id),
                     "connectionStatus": status,
@@ -242,6 +256,11 @@ async def fetch_connection_catalog(
                 results[catalog_key] = []
                 provider_catalog[catalog_key] = {
                     "connectionId": connection_id,
+                    "connectionKey": connection_key,
+                    "providerId": provider_id,
+                    "apiTypeId": api_type_id,
+                    "apiTypeVersion": api_type_version,
+                    "operation": operation,
                     "scope": descriptor.get("scope", "USER"),
                     "displayName": descriptor.get("displayName", provider_id),
                     "connectionStatus": "unreachable",

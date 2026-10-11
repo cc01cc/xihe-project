@@ -30,7 +30,6 @@ from xihe_agent.app_state import (
     _has_instance_fallback_credentials,
     _llm_readiness_error_code,
     _merge_run_domain,
-    _model_catalog,
     _model_window_tokens,
     _normalize_run_overrides,
     _normalize_tool_timeouts,
@@ -43,6 +42,7 @@ from xihe_agent.app_state import (
     context_provider,
     cp_event_store_client,
     generate_image_tool,
+    get_model_catalog,
     llm_config,
     run_cancel_registry,
     worker_registry,
@@ -254,7 +254,7 @@ async def chat(request: Request):
     else:
         request_config = run_llm_config
     if not credential_lease and provider_override and provider_override != run_llm_config.provider:
-        provider_info = _model_catalog.get("providers", {}).get(provider_override)
+        provider_info = get_model_catalog().get("providers", {}).get(provider_override)
         provider_runtime = fallback_provider_configs(run_llm_entries).get(provider_override)
         if not isinstance(provider_info, dict) or provider_info.get("status") != "ready" or not provider_runtime:
             return JSONResponse(

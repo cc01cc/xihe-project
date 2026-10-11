@@ -78,6 +78,7 @@ __all__ = [
     "_llm_verified_at",
     "_runtime_config_revision",
     "_model_catalog",
+    "get_model_catalog",
     "_runtime_refresh_lock",
     "_instance_id",
     "embedding_model",
@@ -405,6 +406,18 @@ def _merge_run_domain(
     merged.update(user_overrides.get(domain, {}))
     merged.update(workspace_overrides.get(domain, {}))
     return merged
+
+
+def get_model_catalog() -> dict[str, Any]:
+    """Current runtime model catalog.
+
+    `main.reload_runtime_config` hot-swaps the catalog by rebinding the module
+    attribute (`state._model_catalog = staged_catalog`). Callers must read it
+    through this accessor; a top-level `from app_state import _model_catalog`
+    would keep the initial empty snapshot forever and reject every
+    cross-provider Chat with LLM_MODEL_UNAVAILABLE.
+    """
+    return _model_catalog
 
 
 def _classify_llm_exception(error: Exception) -> tuple[str, str, bool]:
