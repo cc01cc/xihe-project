@@ -29,6 +29,7 @@ public class ProviderCredentialLeaseService {
     private final ProviderConnectionRepository connectionRepository;
     private final ProviderConnectionService connectionService;
     private final ProviderCatalogService catalog;
+    private final ApiInputTypeService apiTypes;
     private final ObjectMapper objectMapper;
     private final EnvelopeEncryptionService encryption;
     private final SecureRandom random = new SecureRandom();
@@ -38,12 +39,14 @@ public class ProviderCredentialLeaseService {
             ProviderConnectionRepository connectionRepository,
             ProviderConnectionService connectionService,
             ProviderCatalogService catalog,
+            ApiInputTypeService apiTypes,
             ObjectMapper objectMapper,
             @Qualifier("providerCredentialEncryption") EnvelopeEncryptionService encryption) {
         this.repository = repository;
         this.connectionRepository = connectionRepository;
         this.connectionService = connectionService;
         this.catalog = catalog;
+        this.apiTypes = apiTypes;
         this.objectMapper = objectMapper;
         this.encryption = encryption;
     }
@@ -149,9 +152,12 @@ public class ProviderCredentialLeaseService {
         String routeProvider = catalog.require(connection.getProviderId())
                 .path("litellmProvider").asText(connection.getProviderId());
         List<String> manualModels = parseManualModels(connection.getManualModels());
+        String operation = apiTypes.operation(connection.getApiTypeId(), connection.getApiTypeVersion());
         return new CredentialGrant(
                 connection.getProviderId(), routeProvider, request.model(), connection.getBaseUrl(),
-                apiKey, connection.getRevision(), connection.getModelDiscovery(), manualModels);
+                apiKey, connection.getRevision(), connection.getModelDiscovery(), manualModels,
+                connection.getConnectionKey(), connection.getApiTypeId(),
+                connection.getApiTypeVersion(), operation);
     }
 
     private String randomToken() {
@@ -188,7 +194,11 @@ public class ProviderCredentialLeaseService {
             String apiKey,
             long connectionRevision,
             String modelDiscovery,
-            List<String> manualModels) {}
+            List<String> manualModels,
+            String connectionKey,
+            String apiTypeId,
+            int apiTypeVersion,
+            String operation) {}
 
     private List<String> parseManualModels(String raw) {
         if (raw == null || raw.isBlank()) {

@@ -381,6 +381,10 @@ class ConfigServiceTest {
         connection.setOwnerType(ownerType);
         connection.setOwnerId(ownerId);
         connection.setProviderId(providerId);
+        connection.setConnectionKey("default");
+        connection.setApiTypeId("xiaomi".equals(providerId)
+                ? "mimo-responses" : "openai-chat-completions");
+        connection.setApiTypeVersion(1);
         connection.setLabel("test-connection");
         connection.setEnabled(enabled);
         connection.setStatus(status);
@@ -484,6 +488,9 @@ class ConfigServiceTest {
         connection.setOwnerType("USER");
         connection.setOwnerId(ownerId);
         connection.setProviderId("deepseek");
+        connection.setConnectionKey("default");
+        connection.setApiTypeId("openai-chat-completions");
+        connection.setApiTypeVersion(1);
         connection.setLabel("Personal");
         connection.setEnabled(true);
         connection.setStatus("READY");

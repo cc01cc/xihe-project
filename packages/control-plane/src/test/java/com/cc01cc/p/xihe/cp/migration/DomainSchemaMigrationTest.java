@@ -70,6 +70,21 @@ class DomainSchemaMigrationTest {
         }
     }
 
+    private static String sha256Hex(String value) throws Exception {
+        byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        return java.util.HexFormat.of().formatHex(digest);
+    }
+
+    private static boolean hasCauseMessage(Throwable failure, String expected) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause.getMessage() != null && cause.getMessage().contains(expected)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static void executeUpdate(String sql) throws SQLException {
         executeUpdate(connection, sql);
     }
@@ -94,7 +109,7 @@ class DomainSchemaMigrationTest {
                 versions.add(rs.getString(1));
             }
         }
-        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7", "8", "9", "27", "28", "33", "36", "37", "38", "39", "40", "41", "42", "49", "50", "51", "52", "53", "54", "55", "56")),
+        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7", "8", "9", "27", "28", "33", "36", "37", "38", "39", "40", "41", "42", "49", "50", "51", "52", "53", "54", "55", "56", "57")),
                 "fresh database must apply the current migration chain: " + versions);
         assertEquals(versions.size(),
                 scalarInt("SELECT count(*) FROM flyway_schema_history WHERE success = true"));
@@ -443,6 +458,364 @@ class DomainSchemaMigrationTest {
                 "V51 must keep ON DELETE SET NULL");
     }
 
+
+    @Test
+    void v57AddsApiKeyAndResetsConflictingDevelopmentConnectionData() throws SQLException {
+        String upgradeDb = "xihe_cp_upgrade_v57";
+        String adminUrl = postgres.getJdbcUrl();
+        try (Connection admin = DriverManager.getConnection(
+                adminUrl, postgres.getUsername(), postgres.getPassword());
+             Statement statement = admin.createStatement()) {
+            statement.executeUpdate("DROP DATABASE IF EXISTS " + upgradeDb);
+            statement.executeUpdate("CREATE DATABASE " + upgradeDb);
+        }
+        String upgradeUrl = adminUrl.replace("/" + postgres.getDatabaseName(), "/" + upgradeDb);
+
+        Flyway.configure()
+                .dataSource(upgradeUrl, postgres.getUsername(), postgres.getPassword())
+                .locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("56"))
+                .load()
+                .migrate();
+
+        UUID userId = UUID.randomUUID();
+        UUID workspaceId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        UUID chatRunId = UUID.randomUUID();
+        UUID branchId = UUID.randomUUID();
+        UUID connectionId = UUID.randomUUID();
+        try (Connection c = DriverManager.getConnection(
+                upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
+            executeUpdate(c, "INSERT INTO users (id, email, password_hash) VALUES ('" + userId
+                    + "'::uuid, 'v57-" + userId + "@test.local', 'hash')");
+            executeUpdate(c, "INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
+                    + "'::uuid, 'v57-workspace', '" + userId + "'::uuid)");
+            executeUpdate(c, "INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('" + sessionId
+                    + "'::uuid, '" + workspaceId + "'::uuid, '" + userId + "'::uuid, 'v57-session')");
+            executeUpdate(c, "INSERT INTO session_branches (id, session_id, created_at) VALUES ('" + branchId
+                    + "'::uuid, '" + sessionId + "'::uuid, NOW())");
+            executeUpdate(c, "INSERT INTO chat_runs (id, session_id, user_id, workspace_id, idempotency_key, "
+                    + "request_hash, status, provider_connection_id, connection_revision, origin, branch_id) VALUES ('" + chatRunId
+                    + "'::uuid, '" + sessionId + "'::uuid, '" + userId + "'::uuid, '" + workspaceId
+                    + "'::uuid, 'v57-submit', 'v57-hash', 'accepted', '" + connectionId + "'::uuid, 1, "
+                    + "'user_submission', '" + branchId + "'::uuid)");
+            executeUpdate(c, "INSERT INTO provider_connections (id, owner_type, owner_id, provider_id, label, "
+                    + "encryption_key_version) VALUES ('" + connectionId + "'::uuid, 'USER', '" + userId
+                    + "'::uuid::text, 'deepseek', 'old connection', 'v1')");
+            executeUpdate(c, "INSERT INTO provider_connection_audit (id, provider_connection_id, owner_type, "
+                    + "owner_id, provider_id, action, changed_by, credential_present, credential_last4, "
+                    + "connection_revision) VALUES ('" + UUID.randomUUID() + "'::uuid, '" + connectionId
+                    + "'::uuid, 'USER', '" + userId + "'::uuid::text, 'deepseek', 'CREATED', 'seed', true, "
+                    + "'1234', 1)");
+            executeUpdate(c, "UPDATE sessions SET provider_connection_id = '" + connectionId
+                    + "'::uuid, connection_revision = 1");
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM provider_connections"));
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM provider_connection_audit"));
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM sessions WHERE provider_connection_id IS NOT NULL"));
+        }
+
+        Flyway.configure()
+                .dataSource(upgradeUrl, postgres.getUsername(), postgres.getPassword())
+                .locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("57"))
+                .load()
+                .migrate();
+
+        try (Connection c = DriverManager.getConnection(
+                upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM flyway_schema_history "
+                    + "WHERE version = '57' AND success = true"), "V57 must be applied");
+            assertEquals(0, scalarInt(c, "SELECT count(*) FROM provider_connections"),
+                    "conflicting development connections are reset, not mapped");
+            assertEquals(0, scalarInt(c, "SELECT count(*) FROM provider_connection_audit"),
+                    "credential suffix audit history is reset");
+            assertEquals(0, scalarInt(c, "SELECT count(*) FROM sessions WHERE provider_connection_id IS NOT NULL"),
+                    "session pins to removed connections are cleared");
+            assertEquals(0, scalarInt(c, "SELECT count(*) FROM chat_runs WHERE provider_connection_id IS NOT NULL"),
+                    "run pins to removed connections are cleared");
+            assertEquals(0, scalarInt(c, "SELECT count(*) FROM provider_credential_leases"),
+                    "credential leases cascade with their removed connection");
+            assertEquals("NO", scalarString(c, "SELECT is_nullable FROM information_schema.columns "
+                    + "WHERE table_name = 'provider_connections' AND column_name = 'connection_key'"));
+            assertEquals("NO", scalarString(c, "SELECT is_nullable FROM information_schema.columns "
+                    + "WHERE table_name = 'provider_connections' AND column_name = 'api_type_id'"));
+            assertEquals("NO", scalarString(c, "SELECT is_nullable FROM information_schema.columns "
+                    + "WHERE table_name = 'provider_connections' AND column_name = 'api_type_version'"));
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM pg_constraint WHERE conname = "
+                    + "'uq_provider_connections_owner_provider_key' AND contype = 'u'"),
+                    "new composite unique constraint must exist");
+            assertEquals(0, scalarInt(c, "SELECT count(*) FROM pg_constraint WHERE conname = "
+                    + "'uq_provider_connection_scope'"),
+                    "provider-only unique constraint must be removed");
+            // Unrelated domain rows remain.
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM users WHERE id = '" + userId + "'::uuid"));
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM workspaces WHERE id = '" + workspaceId + "'::uuid"));
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM sessions WHERE id = '" + sessionId + "'::uuid"));
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM chat_runs WHERE id = '" + chatRunId + "'::uuid"));
+        }
+    }
+
+    @Test
+    void v57FailureRollsBackAndForwardRetrySucceedsAfterRepair() throws Exception {
+        String retryDb = "xihe_cp_upgrade_v57_retry";
+        String adminUrl = postgres.getJdbcUrl();
+        try (Connection admin = DriverManager.getConnection(
+                adminUrl, postgres.getUsername(), postgres.getPassword());
+             Statement statement = admin.createStatement()) {
+            statement.executeUpdate("DROP DATABASE IF EXISTS " + retryDb);
+            statement.executeUpdate("CREATE DATABASE " + retryDb);
+        }
+        String retryUrl = adminUrl.replace("/" + postgres.getDatabaseName(), "/" + retryDb);
+        Flyway.configure()
+                .dataSource(retryUrl, postgres.getUsername(), postgres.getPassword())
+                .locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("56"))
+                .load()
+                .migrate();
+
+        UUID userId = UUID.randomUUID();
+        UUID connectionId = UUID.randomUUID();
+        try (Connection c = DriverManager.getConnection(
+                retryUrl, postgres.getUsername(), postgres.getPassword())) {
+            executeUpdate(c, "INSERT INTO users (id, email, password_hash) VALUES ('" + userId
+                    + "'::uuid, 'v57retry-" + userId + "@test.local', 'hash')");
+            executeUpdate(c, "INSERT INTO provider_connections (id, owner_type, owner_id, provider_id, "
+                    + "label, encryption_key_version, credential_ciphertext) VALUES ('" + connectionId
+                    + "'::uuid, 'USER', '" + userId + "'::uuid::text, 'deepseek', 'retry seed', 'v1', "
+                    + "'v1:retry-ciphertext-not-a-real-secret')");
+            // Conflict for V57's ADD COLUMN connection_key: whole migration must roll back.
+            executeUpdate(c, "ALTER TABLE provider_connections ADD COLUMN connection_key VARCHAR(64)");
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM provider_connections"));
+        }
+
+        Flyway failing = Flyway.configure()
+                .dataSource(retryUrl, postgres.getUsername(), postgres.getPassword())
+                .locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("57"))
+                .load();
+        assertThrows(Exception.class, failing::migrate);
+
+        try (Connection c = DriverManager.getConnection(
+                retryUrl, postgres.getUsername(), postgres.getPassword())) {
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM provider_connections"),
+                    "failed V57 must roll back its DELETE");
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM pg_constraint WHERE conname = "
+                    + "'uq_provider_connection_scope' AND contype = 'u'"),
+                    "failed V57 must roll back its constraint drop");
+            assertEquals(0, scalarInt(c, "SELECT count(*) FROM information_schema.columns "
+                    + "WHERE table_name = 'provider_connections' AND column_name = 'api_type_id'"),
+                    "no partial V57 column may remain");
+            assertEquals(0, scalarInt(c, "SELECT count(*) FROM flyway_schema_history "
+                    + "WHERE version = '57' AND success = true"));
+            // PostgreSQL runs the migration inside one transaction; the failed attempt leaves no
+            // partial history entry and no partial schema/data change.
+            assertEquals(0, scalarInt(c, "SELECT count(*) FROM flyway_schema_history "
+                    + "WHERE version = '57'"),
+                    "failed transactional migration must not persist a history row");
+        }
+
+        // The schema conflict still exists, so a forward retry cannot silently succeed yet.
+        Flyway blocked = Flyway.configure()
+                .dataSource(retryUrl, postgres.getUsername(), postgres.getPassword())
+                .locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("57"))
+                .load();
+        Exception blockedError = assertThrows(Exception.class, blocked::migrate);
+        assertTrue(String.valueOf(blockedError.getMessage()).contains("connection_key")
+                        || hasCauseMessage(blockedError, "connection_key"),
+                "retry must still fail on the unresolved column conflict: " + blockedError.getMessage());
+
+        try (Connection c = DriverManager.getConnection(
+                retryUrl, postgres.getUsername(), postgres.getPassword())) {
+            executeUpdate(c, "ALTER TABLE provider_connections DROP COLUMN connection_key");
+        }
+        Flyway retry = Flyway.configure()
+                .dataSource(retryUrl, postgres.getUsername(), postgres.getPassword())
+                .locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("57"))
+                .load();
+        retry.repair();
+        retry.migrate();
+
+        try (Connection c = DriverManager.getConnection(
+                retryUrl, postgres.getUsername(), postgres.getPassword())) {
+            assertEquals(0, scalarInt(c, "SELECT count(*) FROM provider_connections"),
+                    "forward retry applies the scoped reset");
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM flyway_schema_history "
+                    + "WHERE version = '57' AND success = true"));
+            assertEquals(0, scalarInt(c, "SELECT count(*) FROM flyway_schema_history "
+                    + "WHERE version = '57' AND success = false"));
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM users WHERE id = '" + userId + "'::uuid"),
+                    "unrelated rows survive the failed and retried migration");
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM pg_constraint WHERE conname = "
+                    + "'uq_provider_connections_owner_provider_key' AND contype = 'u'"));
+        }
+    }
+
+    @Test
+    void v57ScopedResetHasBackupAndRestoreRoundTrip() throws Exception {
+        String backupDb = "xihe_cp_v57_backup_src";
+        String restoreDb = "xihe_cp_v57_backup_restore";
+        String adminUrl = postgres.getJdbcUrl();
+        for (String name : new String[]{backupDb, restoreDb}) {
+            try (Connection admin = DriverManager.getConnection(
+                    adminUrl, postgres.getUsername(), postgres.getPassword());
+                 Statement statement = admin.createStatement()) {
+                statement.executeUpdate("DROP DATABASE IF EXISTS " + name);
+                statement.executeUpdate("CREATE DATABASE " + name);
+            }
+        }
+        String backupUrl = adminUrl.replace("/" + postgres.getDatabaseName(), "/" + backupDb);
+        String restoreUrl = adminUrl.replace("/" + postgres.getDatabaseName(), "/" + restoreDb);
+        Flyway.configure()
+                .dataSource(backupUrl, postgres.getUsername(), postgres.getPassword())
+                .locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("56"))
+                .load()
+                .migrate();
+
+        UUID userId = UUID.randomUUID();
+        UUID workspaceId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        UUID branchId = UUID.randomUUID();
+        UUID chatRunId = UUID.randomUUID();
+        UUID connectionId = UUID.randomUUID();
+        String backupCiphertext = "v1:backup-ciphertext-not-a-real-secret";
+        String backupLeaseHash = "lease-hash-backup-not-a-real-token";
+        try (Connection c = DriverManager.getConnection(
+                backupUrl, postgres.getUsername(), postgres.getPassword())) {
+            executeUpdate(c, "INSERT INTO users (id, email, password_hash) VALUES ('" + userId
+                    + "'::uuid, 'v57backup-" + userId + "@test.local', 'hash')");
+            executeUpdate(c, "INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
+                    + "'::uuid, 'v57backup-workspace', '" + userId + "'::uuid)");
+            executeUpdate(c, "INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('" + sessionId
+                    + "'::uuid, '" + workspaceId + "'::uuid, '" + userId + "'::uuid, 'v57backup-session')");
+            executeUpdate(c, "INSERT INTO session_branches (id, session_id, created_at) VALUES ('" + branchId
+                    + "'::uuid, '" + sessionId + "'::uuid, NOW())");
+            executeUpdate(c, "INSERT INTO chat_runs (id, session_id, user_id, workspace_id, idempotency_key, "
+                    + "request_hash, status, provider_connection_id, connection_revision, origin, branch_id) VALUES ('" + chatRunId
+                    + "'::uuid, '" + sessionId + "'::uuid, '" + userId + "'::uuid, '" + workspaceId
+                    + "'::uuid, 'v57backup-submit', 'v57backup-hash', 'accepted', '" + connectionId
+                    + "'::uuid, 1, 'user_submission', '" + branchId + "'::uuid)");
+            executeUpdate(c, "INSERT INTO provider_connections (id, owner_type, owner_id, provider_id, label, "
+                    + "encryption_key_version, credential_ciphertext, model_discovery, manual_models, revision) "
+                    + "VALUES ('" + connectionId + "'::uuid, 'USER', '" + userId + "'::uuid::text, 'deepseek', "
+                    + "'backup connection', 'v1', '" + backupCiphertext + "', 'manual', '[\"restored-model\"]', 3)");
+            executeUpdate(c, "INSERT INTO provider_connection_audit (id, provider_connection_id, owner_type, "
+                    + "owner_id, provider_id, action, changed_by, credential_present, credential_last4, "
+                    + "connection_revision) VALUES ('" + UUID.randomUUID() + "'::uuid, '" + connectionId
+                    + "'::uuid, 'USER', '" + userId + "'::uuid::text, 'deepseek', 'CREATED', 'seed', true, "
+                    + "'1234', 1)");
+            executeUpdate(c, "INSERT INTO provider_credential_leases (id, lease_hash, provider_connection_id, "
+                    + "user_id, workspace_id, session_id, run_id, provider_id, model, expires_at) VALUES ('"
+                    + UUID.randomUUID() + "'::uuid, '" + backupLeaseHash + "', '" + connectionId + "'::uuid, '"
+                    + userId + "'::uuid, '" + workspaceId + "'::uuid, '" + sessionId + "'::uuid, '"
+                    + chatRunId + "'::uuid, 'deepseek', 'model-x', NOW() + INTERVAL '5 minutes')");
+            executeUpdate(c, "UPDATE sessions SET provider_connection_id = '" + connectionId
+                    + "'::uuid, connection_revision = 1");
+            executeUpdate(c, "UPDATE chat_runs SET provider_connection_id = '" + connectionId
+                    + "'::uuid");
+        }
+
+        // Recoverable in-memory backup of scoped rows: counts, pins and ciphertext hash only.
+        int backupConnections;
+        int backupAudits;
+        int backupLeases;
+        String backupSessionPin;
+        String backupRunPin;
+        String backupCipherHash;
+        String backupLeaseHashRow;
+        try (Connection c = DriverManager.getConnection(
+                backupUrl, postgres.getUsername(), postgres.getPassword())) {
+            backupConnections = scalarInt(c, "SELECT count(*) FROM provider_connections");
+            backupAudits = scalarInt(c, "SELECT count(*) FROM provider_connection_audit");
+            backupLeases = scalarInt(c, "SELECT count(*) FROM provider_credential_leases");
+            backupSessionPin = scalarString(c, "SELECT provider_connection_id::text FROM sessions");
+            backupRunPin = scalarString(c, "SELECT provider_connection_id::text FROM chat_runs");
+            backupCipherHash = sha256Hex(scalarString(c,
+                    "SELECT credential_ciphertext FROM provider_connections"));
+            backupLeaseHashRow = scalarString(c, "SELECT lease_hash FROM provider_credential_leases");
+        }
+        assertEquals(1, backupConnections);
+        assertEquals(1, backupAudits);
+        assertEquals(1, backupLeases);
+        assertEquals(connectionId.toString(), backupSessionPin);
+        assertEquals(connectionId.toString(), backupRunPin);
+        assertEquals(backupLeaseHash, backupLeaseHashRow);
+
+        Flyway.configure()
+                .dataSource(backupUrl, postgres.getUsername(), postgres.getPassword())
+                .locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("57"))
+                .load()
+                .migrate();
+
+        try (Connection c = DriverManager.getConnection(
+                backupUrl, postgres.getUsername(), postgres.getPassword())) {
+            assertEquals(0, scalarInt(c, "SELECT count(*) FROM provider_connections"));
+            assertEquals(0, scalarInt(c, "SELECT count(*) FROM provider_connection_audit"));
+            assertEquals(0, scalarInt(c, "SELECT count(*) FROM provider_credential_leases"));
+            assertNull(scalarString(c, "SELECT provider_connection_id::text FROM sessions"));
+            assertNull(scalarString(c, "SELECT provider_connection_id::text FROM chat_runs"));
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM users WHERE id = '" + userId + "'::uuid"));
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM workspaces WHERE id = '" + workspaceId + "'::uuid"));
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM sessions WHERE id = '" + sessionId + "'::uuid"));
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM chat_runs WHERE id = '" + chatRunId + "'::uuid"));
+        }
+
+        // Restore the scoped backup into an independent V56 database; ciphertext stays encrypted.
+        Flyway.configure()
+                .dataSource(restoreUrl, postgres.getUsername(), postgres.getPassword())
+                .locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("56"))
+                .load()
+                .migrate();
+        try (Connection c = DriverManager.getConnection(
+                restoreUrl, postgres.getUsername(), postgres.getPassword())) {
+            executeUpdate(c, "INSERT INTO users (id, email, password_hash) VALUES ('" + userId
+                    + "'::uuid, 'v57backup-" + userId + "@test.local', 'hash')");
+            executeUpdate(c, "INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
+                    + "'::uuid, 'v57backup-workspace', '" + userId + "'::uuid)");
+            executeUpdate(c, "INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('" + sessionId
+                    + "'::uuid, '" + workspaceId + "'::uuid, '" + userId + "'::uuid, 'v57backup-session')");
+            executeUpdate(c, "INSERT INTO session_branches (id, session_id, created_at) VALUES ('" + branchId
+                    + "'::uuid, '" + sessionId + "'::uuid, NOW())");
+            executeUpdate(c, "INSERT INTO chat_runs (id, session_id, user_id, workspace_id, idempotency_key, "
+                    + "request_hash, status, provider_connection_id, connection_revision, origin, branch_id) VALUES ('" + chatRunId
+                    + "'::uuid, '" + sessionId + "'::uuid, '" + userId + "'::uuid, '" + workspaceId
+                    + "'::uuid, 'v57backup-submit', 'v57backup-hash', 'accepted', '" + connectionId
+                    + "'::uuid, 1, 'user_submission', '" + branchId + "'::uuid)");
+            executeUpdate(c, "INSERT INTO provider_connections (id, owner_type, owner_id, provider_id, label, "
+                    + "encryption_key_version, credential_ciphertext, model_discovery, manual_models, revision) "
+                    + "VALUES ('" + connectionId + "'::uuid, 'USER', '" + userId + "'::uuid::text, 'deepseek', "
+                    + "'backup connection', 'v1', '" + backupCiphertext + "', 'manual', '[\"restored-model\"]', 3)");
+            executeUpdate(c, "INSERT INTO provider_connection_audit (id, provider_connection_id, owner_type, "
+                    + "owner_id, provider_id, action, changed_by, credential_present, credential_last4, "
+                    + "connection_revision) VALUES ('" + UUID.randomUUID() + "'::uuid, '" + connectionId
+                    + "'::uuid, 'USER', '" + userId + "'::uuid::text, 'deepseek', 'CREATED', 'seed', true, "
+                    + "'1234', 1)");
+            executeUpdate(c, "INSERT INTO provider_credential_leases (id, lease_hash, provider_connection_id, "
+                    + "user_id, workspace_id, session_id, run_id, provider_id, model, expires_at) VALUES ('"
+                    + UUID.randomUUID() + "'::uuid, '" + backupLeaseHash + "', '" + connectionId + "'::uuid, '"
+                    + userId + "'::uuid, '" + workspaceId + "'::uuid, '" + sessionId + "'::uuid, '"
+                    + chatRunId + "'::uuid, 'deepseek', 'model-x', NOW() + INTERVAL '5 minutes')");
+            executeUpdate(c, "UPDATE sessions SET provider_connection_id = '" + connectionId
+                    + "'::uuid, connection_revision = 1");
+            executeUpdate(c, "UPDATE chat_runs SET provider_connection_id = '" + connectionId
+                    + "'::uuid");
+
+            assertEquals(backupConnections, scalarInt(c, "SELECT count(*) FROM provider_connections"));
+            assertEquals(backupAudits, scalarInt(c, "SELECT count(*) FROM provider_connection_audit"));
+            assertEquals(backupLeases, scalarInt(c, "SELECT count(*) FROM provider_credential_leases"));
+            assertEquals(backupSessionPin, scalarString(c, "SELECT provider_connection_id::text FROM sessions"));
+            assertEquals(backupRunPin, scalarString(c, "SELECT provider_connection_id::text FROM chat_runs"));
+            assertEquals(backupCipherHash, sha256Hex(scalarString(c,
+                    "SELECT credential_ciphertext FROM provider_connections")),
+                    "restored ciphertext must be byte-identical to the backup");
+            assertEquals(backupLeaseHashRow, scalarString(c,
+                    "SELECT lease_hash FROM provider_credential_leases"));
+        }
+    }
 
     private static UUID insertUserWithSession(UUID userId) throws SQLException {
         UUID workspaceId = UUID.randomUUID();

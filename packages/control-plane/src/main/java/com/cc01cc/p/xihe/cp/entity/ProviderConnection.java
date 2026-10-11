@@ -15,8 +15,8 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "provider_connections", uniqueConstraints = @UniqueConstraint(
-        name = "uq_provider_connection_scope",
-        columnNames = {"owner_type", "owner_id", "provider_id"}))
+        name = "uq_provider_connections_owner_provider_key",
+        columnNames = {"owner_type", "owner_id", "provider_id", "connection_key"}))
 public class ProviderConnection {
 
     public static final String OWNER_WORKSPACE = "WORKSPACE";
@@ -41,6 +41,15 @@ public class ProviderConnection {
 
     @Column(name = "provider_id", nullable = false, length = 128)
     private String providerId;
+
+    @Column(name = "connection_key", nullable = false, length = 64)
+    private String connectionKey;
+
+    @Column(name = "api_type_id", nullable = false, length = 64)
+    private String apiTypeId;
+
+    @Column(name = "api_type_version", nullable = false)
+    private int apiTypeVersion;
 
     @Column(nullable = false, length = 128)
     private String label;
@@ -113,6 +122,12 @@ public class ProviderConnection {
     public void setOwnerId(String ownerId) { this.ownerId = ownerId; }
     public String getProviderId() { return providerId; }
     public void setProviderId(String providerId) { this.providerId = providerId; }
+    public String getConnectionKey() { return connectionKey; }
+    public void setConnectionKey(String connectionKey) { this.connectionKey = connectionKey; }
+    public String getApiTypeId() { return apiTypeId; }
+    public void setApiTypeId(String apiTypeId) { this.apiTypeId = apiTypeId; }
+    public int getApiTypeVersion() { return apiTypeVersion; }
+    public void setApiTypeVersion(int apiTypeVersion) { this.apiTypeVersion = apiTypeVersion; }
     public String getLabel() { return label; }
     public void setLabel(String label) { this.label = label; }
     public String getBaseUrl() { return baseUrl; }

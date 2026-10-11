@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.config;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -97,6 +98,21 @@ public class ProblemDetailsHandler {
     public ResponseEntity<Map<String, Object>> forbidden(AccessDeniedException exception, HttpServletRequest request) {
         logger.warn("Forbidden request at {}: {}", request.getRequestURI(), exception);
         return problem(HttpStatus.FORBIDDEN, "FORBIDDEN", "Access denied", request);
+    }
+
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<Map<String, Object>> integrityViolation(
+            DataIntegrityViolationException exception, HttpServletRequest request) {
+        for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
+            if (cause instanceof org.hibernate.exception.ConstraintViolationException constraint
+                    && "uq_provider_connections_owner_provider_key".equals(constraint.getConstraintName())) {
+                logger.warn("Provider connection key conflict at {}", request.getRequestURI());
+                return problem(HttpStatus.CONFLICT, "PROVIDER_CONNECTION_KEY_CONFLICT",
+                        "A connection already exists for this provider, key and scope", request);
+            }
+        }
+        logger.error("Unhandled database integrity failure at {}", request.getRequestURI(), exception);
+        return problem(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "Request failed", request);
     }
 
     @ExceptionHandler(NoResourceFoundException.class)

@@ -1,0 +1,35 @@
+[
+  {
+    "apiTypeId": "openai-chat-completions",
+    "version": 1,
+    "operation": "chat",
+    "method": "POST",
+    "path": "/chat/completions",
+    "requiredBaseSuffix": "/v1",
+    "requestShape": "messages, model, stream, tools, temperature, max_tokens",
+    "responseShape": "choices, usage",
+    "streamShape": "chat.completion.chunk"
+  },
+  {
+    "apiTypeId": "anthropic-messages",
+    "version": 1,
+    "operation": "chat",
+    "method": "POST",
+    "path": "/messages",
+    "requiredBaseSuffix": "/v1",
+    "requestShape": "messages, model, stream, tools, max_tokens",
+    "responseShape": "content, usage",
+    "streamShape": "message.delta"
+  },
+  {
+    "apiTypeId": "mimo-responses",
+    "version": 1,
+    "operation": "chat",
+    "method": "POST",
+    "path": "/responses",
+    "requiredBaseSuffix": "/v1",
+    "requestShape": "input, model, stream, tools",
+    "responseShape": "output, usage",
+    "streamShape": "response.output_text.delta"
+  }
+]
