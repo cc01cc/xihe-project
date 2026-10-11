@@ -9,6 +9,7 @@ import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionAuditRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.type.TypeReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -25,17 +26,23 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 @Service
 public class ProviderConnectionService {
 
     private static final Logger logger = LoggerFactory.getLogger(ProviderConnectionService.class);
     private static final Duration VERIFY_TIMEOUT = Duration.ofSeconds(8);
+    private static final Pattern CONNECTION_KEY_PATTERN =
+            Pattern.compile("[a-z0-9]+(?:-[a-z0-9]+)*");
+    private static final java.util.Set<String> MODEL_DISCOVERY_VALUES =
+            java.util.Set.of("remote-models", "litellm-catalog", "curated", "manual");
 
     private final ProviderConnectionRepository repository;
     private final ProviderConnectionAuditRepository auditRepository;
     private final com.cc01cc.p.xihe.cp.repository.ProviderCredentialLeaseRepository leaseRepository;
     private final ProviderCatalogService catalog;
+    private final ApiInputTypeService apiTypes;
     private final EnvelopeEncryptionService encryption;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
@@ -45,12 +52,14 @@ public class ProviderConnectionService {
             ProviderConnectionAuditRepository auditRepository,
             com.cc01cc.p.xihe.cp.repository.ProviderCredentialLeaseRepository leaseRepository,
             ProviderCatalogService catalog,
+            ApiInputTypeService apiTypes,
             @Qualifier("providerCredentialEncryption") EnvelopeEncryptionService encryption,
             ObjectMapper objectMapper) {
         this.repository = repository;
         this.auditRepository = auditRepository;
         this.leaseRepository = leaseRepository;
         this.catalog = catalog;
+        this.apiTypes = apiTypes;
         this.encryption = encryption;
         this.objectMapper = objectMapper;
         this.httpClient = HttpClient.newBuilder()
@@ -80,6 +89,7 @@ public class ProviderConnectionService {
     /** Bounded config export projection; plaintext is populated only on the audited admin path. */
     public record ConfigExportView(UUID id, String providerId, String label, String ownerType,
                                    String ownerId, String baseUrl, String status, boolean enabled,
+                                   String connectionKey, String apiTypeId, int apiTypeVersion,
                                    String modelDiscovery, String manualModels, String apiKey) {}
 
     /**
@@ -93,8 +103,9 @@ public class ProviderConnectionService {
                 .map(connection -> new ConfigExportView(
                         connection.getId(), connection.getProviderId(), connection.getLabel(),
                         connection.getOwnerType(), connection.getOwnerId(), connection.getBaseUrl(),
-                        connection.getStatus(), connection.isEnabled(), connection.getModelDiscovery(),
-                        connection.getManualModels(),
+                        connection.getStatus(), connection.isEnabled(), connection.getConnectionKey(),
+                        connection.getApiTypeId(), connection.getApiTypeVersion(),
+                        connection.getModelDiscovery(), connection.getManualModels(),
                         includeSecrets ? decryptCredential(connection) : null))
                 .toList();
     }
@@ -109,9 +120,9 @@ public class ProviderConnectionService {
     @Transactional(readOnly = true)
     public boolean isReadyForOwner(String ownerType, String ownerId, String provider) {
         return repository.findByOwnerTypeAndOwnerIdAndProviderId(ownerType, ownerId, provider)
-                .filter(connection -> connection.isEnabled()
-                        && ProviderConnection.STATUS_READY.equals(connection.getStatus()))
-                .isPresent();
+                .stream()
+                .anyMatch(connection -> connection.isEnabled()
+                        && ProviderConnection.STATUS_READY.equals(connection.getStatus()));
     }
 
     @Transactional
@@ -119,15 +130,18 @@ public class ProviderConnectionService {
         String userId = requireUserId();
         String scope = normalizeScope(input.scope());
         String ownerId = resolveOwnerId(scope, userId);
-        JsonNode definition = catalog.require(input.providerId());
-        String baseUrl = normalizeBaseUrl(input.baseUrl(), definition);
-        validateBaseUrl(baseUrl);
+        String connectionKey = requireConnectionKey(input.connectionKey());
+        ProviderCatalogService.ApiTypeRef defaultType = catalog.defaultApiType(input.providerId());
+        JsonNode pair = catalog.supportedPair(input.providerId(), defaultType.apiTypeId(), defaultType.version());
+        String baseUrl = normalizeBaseUrl(input.baseUrl(), pair);
+        validateBaseUrl(baseUrl, defaultType.apiTypeId(), defaultType.version());
         String apiKey = blankToNull(input.apiKey());
         if (catalog.requiresCredential(input.providerId()) && apiKey == null) {
             throw new IllegalArgumentException("Provider requires an API key");
         }
-        if (repository.findByOwnerTypeAndOwnerIdAndProviderId(scope, ownerId, input.providerId()).isPresent()) {
-            throw new IllegalArgumentException("A connection already exists for this provider and scope");
+        if (repository.findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
+                scope, ownerId, input.providerId(), connectionKey).isPresent()) {
+            throw new KeyConflictException("A connection already exists for this provider, key and scope");
         }
 
         ProviderConnection connection = new ProviderConnection();
@@ -135,15 +149,19 @@ public class ProviderConnectionService {
         connection.setOwnerType(scope);
         connection.setOwnerId(ownerId);
         connection.setProviderId(input.providerId());
+        connection.setConnectionKey(connectionKey);
+        connection.setApiTypeId(defaultType.apiTypeId());
+        connection.setApiTypeVersion(defaultType.version());
         connection.setLabel(requireLabel(input.label()));
         connection.setBaseUrl(baseUrl);
         connection.setCredentialCiphertext(encryptCredential(connection, apiKey));
         connection.setEncryptionKeyVersion(encryption.currentVersion());
         connection.setEnabled(true);
         connection.setStatus(ProviderConnection.STATUS_VERIFYING);
-        connection.setModelDiscovery(input.modelDiscovery() == null || input.modelDiscovery().isBlank()
-                ? definition.path("modelDiscovery").asText("remote-models")
-                : input.modelDiscovery());
+        connection.setModelDiscovery(requireModelDiscovery(
+                input.modelDiscovery() == null || input.modelDiscovery().isBlank()
+                ? pair.path("modelDiscovery").asText("remote-models")
+                : input.modelDiscovery()));
         connection.setManualModels(serializeModels(input.manualModels()));
         ProviderConnection saved = repository.save(connection);
         audit(saved, "CREATED", null, saved.getStatus());
@@ -154,16 +172,21 @@ public class ProviderConnectionService {
     public ProviderConnection update(String id, ConnectionInput input) {
         ProviderConnection connection = requireVisible(id);
         ensureCanManage(connection);
+        if (input.connectionKey() != null
+                && !input.connectionKey().equals(connection.getConnectionKey())) {
+            throw new KeyImmutableException("Connection key cannot be changed");
+        }
         if (input.label() != null) {
             connection.setLabel(requireLabel(input.label()));
         }
         if (input.baseUrl() != null) {
-            String baseUrl = normalizeBaseUrl(input.baseUrl(), catalog.require(connection.getProviderId()));
-            validateBaseUrl(baseUrl);
+            String baseUrl = normalizeBaseUrl(input.baseUrl(), catalog.supportedPair(
+                    connection.getProviderId(), connection.getApiTypeId(), connection.getApiTypeVersion()));
+            validateBaseUrl(baseUrl, connection.getApiTypeId(), connection.getApiTypeVersion());
             connection.setBaseUrl(baseUrl);
         }
         if (input.modelDiscovery() != null && !input.modelDiscovery().isBlank()) {
-            connection.setModelDiscovery(input.modelDiscovery());
+            connection.setModelDiscovery(requireModelDiscovery(input.modelDiscovery()));
         }
         if (input.manualModels() != null) {
             connection.setManualModels(serializeModels(input.manualModels()));
@@ -171,8 +194,6 @@ public class ProviderConnectionService {
         String apiKey = blankToNull(input.apiKey());
         if (apiKey != null) {
             connection.setCredentialCiphertext(encryptCredential(connection, apiKey));
-            // PLAN-0307 T2.24 (review P1-7): keep the stored key version in sync
-            // with the ciphertext produced by the active key.
             connection.setEncryptionKeyVersion(encryption.currentVersion());
         }
         if (input.hasChanges()) {
@@ -350,6 +371,21 @@ public class ProviderConnectionService {
         return normalized;
     }
 
+    private String requireConnectionKey(String value) {
+        if (value == null || value.isBlank() || value.length() > 64
+                || !CONNECTION_KEY_PATTERN.matcher(value).matches()) {
+            throw new KeyInvalidException("Connection key must be a 1-64 character lowercase slug");
+        }
+        return value;
+    }
+
+    private String requireModelDiscovery(String value) {
+        if (!MODEL_DISCOVERY_VALUES.contains(value)) {
+            throw new IllegalArgumentException("Unsupported model discovery mode");
+        }
+        return value;
+    }
+
     private String normalizeBaseUrl(String input, JsonNode definition) {
         if (input != null && !input.isBlank()) {
             return input.trim().replaceAll("/$", "");
@@ -358,7 +394,7 @@ public class ProviderConnectionService {
         return value == null || value.isNull() ? null : value.asText().replaceAll("/$", "");
     }
 
-    private void validateBaseUrl(String value) {
+    private void validateBaseUrl(String value, String apiTypeId, int apiTypeVersion) {
         if (value == null || value.isBlank()) {
             return;
         }
@@ -372,6 +408,11 @@ public class ProviderConnectionService {
             }
             if (value.length() > 2048) {
                 throw new IllegalArgumentException("Base URL is too long");
+            }
+            String requiredSuffix = apiTypes.requiredBaseSuffix(apiTypeId, apiTypeVersion);
+            if (!requiredSuffix.isEmpty() && !value.endsWith(requiredSuffix)) {
+                throw new IllegalArgumentException(
+                        "Base URL must end with the API Type path prefix " + requiredSuffix);
             }
         } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException("Invalid provider Base URL", e);
@@ -429,10 +470,9 @@ public class ProviderConnectionService {
         entry.setChangedBy(changedBy == null || changedBy.isBlank() ? "internal-service" : changedBy);
         entry.setFromStatus(fromStatus);
         entry.setToStatus(toStatus);
-        String credential = decryptCredential(connection);
-        entry.setCredentialPresent(credential != null && !credential.isBlank());
-        entry.setCredentialLast4(credential == null || credential.length() < 4
-                ? null : credential.substring(credential.length() - 4));
+        entry.setCredentialPresent(connection.getCredentialCiphertext() != null
+                && !connection.getCredentialCiphertext().isBlank());
+        entry.setCredentialLast4(null);
         entry.setConnectionRevision(connection.getRevision());
         auditRepository.save(entry);
     }
@@ -468,16 +508,34 @@ public class ProviderConnectionService {
     }
 
     private ProviderConnectionView toView(ProviderConnection connection) {
-        String masked = null;
-        String credential = decryptCredential(connection);
-        if (credential != null && !credential.isBlank()) {
-            masked = credential.length() <= 4 ? "****" : "****" + credential.substring(credential.length() - 4);
-        }
+        String operation = apiTypes.operation(connection.getApiTypeId(), connection.getApiTypeVersion());
+        boolean hasKey = connection.getCredentialCiphertext() != null
+                && !connection.getCredentialCiphertext().isBlank();
         return new ProviderConnectionView(
                 connection.getId().toString(), connection.getProviderId(), connection.getLabel(),
                 connection.getOwnerType(), connection.getOwnerId(), connection.getBaseUrl(),
-                credential != null, masked, connection.isEnabled(), connection.getStatus(),
-                connection.getLastVerifiedAt(), connection.getLastErrorCode(), connection.getRevision());
+                connection.getConnectionKey(), connection.getApiTypeId(), connection.getApiTypeVersion(),
+                operation, hasKey, null, connection.isEnabled(), connection.getStatus(),
+                connection.getLastVerifiedAt(), connection.getLastErrorCode(), connection.getRevision(),
+                connection.getModelDiscovery(), readManualModels(connection));
+    }
+
+    private List<String> readManualModels(ProviderConnection connection) {
+        String value = connection.getManualModels();
+        if (value == null || value.isBlank()) {
+            return List.of();
+        }
+        try {
+            List<String> models = objectMapper.readValue(value, new TypeReference<List<String>>() {});
+            if (models == null) {
+                throw new IllegalStateException("Stored manual model list is invalid");
+            }
+            return models;
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            logger.warn("Manual model list read failed connectionId={} errorType={}",
+                    connection.getId(), e.getClass().getSimpleName());
+            throw new IllegalStateException("Stored manual model list is invalid", e);
+        }
     }
 
     public record ConnectionInput(
@@ -488,7 +546,8 @@ public class ProviderConnectionService {
             String baseUrl,
             String modelDiscovery,
             List<String> manualModels,
-            Boolean enabled) {
+            Boolean enabled,
+            String connectionKey) {
         public boolean hasChanges() {
             return label != null || apiKey != null || baseUrl != null
                     || modelDiscovery != null || manualModels != null || enabled != null;
@@ -502,11 +561,29 @@ public class ProviderConnectionService {
             String scope,
             String ownerId,
             String baseUrl,
+            String connectionKey,
+            String apiTypeId,
+            int apiTypeVersion,
+            String operation,
             boolean hasKey,
             String maskedKey,
             boolean enabled,
             String status,
             Instant lastVerifiedAt,
             String lastErrorCode,
-            long revision) {}
+            long revision,
+            String modelDiscovery,
+            List<String> manualModels) {}
+
+    public static final class KeyInvalidException extends IllegalArgumentException {
+        public KeyInvalidException(String message) { super(message); }
+    }
+
+    public static final class KeyConflictException extends IllegalStateException {
+        public KeyConflictException(String message) { super(message); }
+    }
+
+    public static final class KeyImmutableException extends IllegalStateException {
+        public KeyImmutableException(String message) { super(message); }
+    }
 }

@@ -102,8 +102,13 @@ export const useConfigStore = defineStore("config", () => {
         modelError = ref<string | null>(null);
 
     function findProviderForModel(modelId: string): string | undefined {
-        for (const provider of Object.keys(modelCache.value.providers ?? {})) {
-            if (getChatModels(provider).includes(modelId)) return provider;
+        for (const [catalogKey, catalog] of Object.entries(modelCache.value.providers ?? {})) {
+            if (
+                catalog.status === "ready" &&
+                catalog.models.some((entry) => entry.name === modelId && entry.capabilities.chat)
+            ) {
+                return catalog.providerId ?? catalogKey;
+            }
         }
         return undefined;
     }
@@ -232,21 +237,41 @@ export const useConfigStore = defineStore("config", () => {
         return sessionModels.value[sessionId];
     }
 
-    function isChatModelAvailable(provider: string, model: string): boolean {
-        const catalog = modelCache.value.providers?.[provider];
-        if (!catalog || catalog.status !== "ready") return false;
-        return catalog.models.some((entry) => entry.name === model && entry.capabilities.chat);
+    function isChatModelAvailable(provider: string, model: string, connectionId?: string): boolean {
+        return getChatModels(provider, connectionId).includes(model);
     }
 
-    function getChatModels(provider: string): string[] {
-        const catalog = modelCache.value.providers?.[provider];
-        if (!catalog || catalog.status !== "ready") return [];
-        return catalog.models.filter((entry) => entry.capabilities.chat).map((entry) => entry.name);
+    function getChatModels(provider: string, connectionId?: string): string[] {
+        const entries = connectionId
+            ? ([[connectionId, modelCache.value.providers?.[connectionId]]] as const)
+            : Object.entries(modelCache.value.providers ?? {});
+        return [
+            ...new Set(
+                entries.flatMap(([catalogKey, catalog]) => {
+                    // Legacy provider-keyed catalogs omit providerId; the map key IS the
+                    // provider id for that shape. Scoped catalogs carry providerId explicitly.
+                    const catalogProvider = catalog?.providerId ?? catalogKey;
+                    if (!catalog || catalogProvider !== provider || catalog.status !== "ready") {
+                        return [];
+                    }
+                    return catalog.models
+                        .filter((entry) => entry.capabilities.chat)
+                        .map((entry) => entry.name);
+                }),
+            ),
+        ];
     }
 
     function getEffectiveModel(sessionId: string): SessionModelBinding | undefined {
         const sessionBinding = sessionModels.value[sessionId];
-        if (sessionBinding && isChatModelAvailable(sessionBinding.provider, sessionBinding.model)) {
+        if (
+            sessionBinding &&
+            isChatModelAvailable(
+                sessionBinding.provider,
+                sessionBinding.model,
+                sessionBinding.connectionId,
+            )
+        ) {
             return sessionBinding;
         }
 
@@ -316,7 +341,7 @@ export const useConfigStore = defineStore("config", () => {
             modelError.value = null;
             const data = await request<{
                 models?: Record<string, string[]>;
-                providers?: ModelCache["providers"];
+                providers?: typeof modelCache.value.providers;
                 configRevision?: string;
             }>("/models");
             modelCache.value = {

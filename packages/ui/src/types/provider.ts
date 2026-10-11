@@ -68,6 +68,12 @@ export interface CatalogModel {
 }
 
 export interface ProviderCatalog {
+    /**
+     * Present on scoped (connectionId-keyed) catalogs. Legacy provider-keyed
+     * catalogs omit it; consumers must fall back to the catalog map key, which
+     * is the provider id for that shape.
+     */
+    providerId?: string;
     status:
         | "ready"
         | "missing_credentials"

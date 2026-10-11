@@ -507,7 +507,7 @@ erDiagram
 > - `idx_oauth_credentials_server (server_id)`
 > - 唯一约束 `(user_id, workspace_id, server_id)` — 单用户单空间单服单凭证
 
-**provider_connections**（`V18`，Entity `entity/ProviderConnection.java`）：LLM Provider 连接（PLAN-261）。归属现为**两级** `USER / WORKSPACE`；`SYSTEM` 归属已退役（PLAN-0364 M2：不再创建/可见/可选），但 **CHECK 保留 `SYSTEM` 值不收紧**——为将来 `AGENT` 等主体类型留扩展位（BL-18，DEV-032 §1.1；BL-18 已于 2026-09-23 G2 冻结入 PLAN-0407 承接，执行中）。
+**provider_connections**（`V1` 建表，`V57` 增加 API Type/connectionKey，Entity `entity/ProviderConnection.java`）：LLM Provider 连接（PLAN-261；PLAN-0438 以 `connectionKey` + 单一 API Type 为稳定身份）。归属现为**两级** `USER / WORKSPACE`；`SYSTEM` 归属已退役（PLAN-0364 M2：不再创建/可见/可选），但 **CHECK 保留 `SYSTEM` 值不收紧**——为将来 `AGENT` 等主体类型留扩展位（BL-18，DEV-032 §1.1；BL-18 已于 2026-09-23 G2 冻结入 PLAN-0407 承接，执行中）。
 
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
@@ -515,6 +515,9 @@ erDiagram
 | owner_type | VARCHAR(16) | NOT NULL CHECK `SYSTEM/WORKSPACE/USER`（现用 `USER/WORKSPACE`；CHECK 不收紧以保留扩展位） | 作用域 |
 | owner_id | VARCHAR(64) | NOT NULL | 作用域 ID |
 | provider_id | VARCHAR(128) | NOT NULL | 如 `openai/deepseek` |
+| connection_key | VARCHAR(64) | NOT NULL（`V57` 加） | 同 scope/provider 下的稳定 key；1..64 小写 slug，创建后不可改 |
+| api_type_id | VARCHAR(64) | NOT NULL（`V57` 加） | 内置 API Type id，如 `openai-chat-completions` |
+| api_type_version | INTEGER | NOT NULL（`V57` 加） | API Type 版本 |
 | label | VARCHAR(128) | NOT NULL | 展示名 |
 | base_url | VARCHAR(2048) | nullable | 自建网关覆盖 |
 | credential_ciphertext | TEXT | nullable | 信封加密，独立 key |
@@ -532,7 +535,7 @@ erDiagram
 > 索引：
 > - `idx_provider_connections_owner (owner_type, owner_id, enabled)`
 > - `idx_provider_connections_provider_status (provider_id, status, enabled)`
-> - 唯一约束 `(owner_type, owner_id, provider_id)` — 同 scope 同 provider 一条
+> - 唯一约束 `uq_provider_connections_owner_provider_key (owner_type, owner_id, provider_id, connection_key)` — 同 scope 同 provider 同 key 一条（`V57` 取代旧的 provider-only 唯一约束；`V57` 同时重置冲突的开发期连接/租约/Session+Run pin 并清空 audit suffix，清单外数据保留）
 
 **provider_credential_leases**（`V18`，Entity `entity/ProviderCredentialLease.java`）：发给 Agent 的一次性短期凭证租约。
 
@@ -911,7 +914,7 @@ erDiagram
 | grants | `entity/AuthorizationGrant.java` | V38 |
 | run_checkpoints | `entity/RunCheckpoint.java` | V27（V22/V23/V26 仅为历史增量） |
 | approval_requests | `entity/ChatApproval.java` | V1 |
-| provider_connections | `entity/ProviderConnection.java` | V1 |
+| provider_connections | `entity/ProviderConnection.java` | V1（V57 增 connection_key/api_type_id/version） |
 | provider_credential_leases | `entity/ProviderCredentialLease.java` | V1 |
 | provider_connection_audit | `entity/ProviderConnectionAudit.java` | V1 |
 | mcp_remote_servers | `entity/McpServer.java`（类名保留，决策 #38②） | V1（V12 由 `mcp_servers` 改名） |

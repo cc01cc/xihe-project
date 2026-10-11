@@ -62,7 +62,9 @@ const currentBinding = computed(() => {
 
 const currentValue = computed(() => {
     const binding = currentBinding.value;
-    return binding ? `${binding.provider}/${binding.model}` : undefined;
+    // Scoped bindings key options by connectionId; legacy provider-keyed
+    // bindings fall back to the provider id, which is also their catalog key.
+    return binding ? `${binding.connectionId ?? binding.provider}/${binding.model}` : undefined;
 });
 
 const triggerLabel = computed(() => {
@@ -86,26 +88,21 @@ const hasConfiguredProvider = computed(() => configuredConnectionCount.value > 0
 const searchQuery = computed(() => searchTerm.value.toLowerCase().trim());
 
 const providerGroups = computed(() => {
-    const models = Object.fromEntries(
-        Object.keys(configStore.modelCache.providers ?? {}).map((provider) => [
-            provider,
-            configStore.getChatModels(provider),
-        ]),
-    );
     const q = searchQuery.value;
-    return Object.entries(models)
-        .filter(([, modelIds]) => modelIds.length > 0)
-        .map(([provider, modelIds]) => {
-            const info = getProviderInfo(provider),
-                catalog = configStore.modelCache.providers?.[provider];
+    return Object.entries(configStore.modelCache.providers ?? {})
+        .map(([catalogKey, catalog]) => {
+            const provider = catalog.providerId ?? catalogKey,
+                info = getProviderInfo(provider),
+                modelIds = configStore.getChatModels(provider, catalogKey);
             const filtered = q
                 ? modelIds.filter((model) => matchModel(provider, model, q))
                 : modelIds;
             return {
                 provider,
-                name: catalog?.displayName ?? info?.name ?? provider,
-                connectionId: catalog?.connectionId,
-                connectionRevision: catalog?.connectionRevision,
+                catalogKey,
+                name: catalog.displayName ?? info?.name ?? provider,
+                connectionId: catalogKey,
+                connectionRevision: catalog.connectionRevision,
                 models: filtered,
             };
         })
@@ -115,10 +112,14 @@ const providerGroups = computed(() => {
 const filteredFavorites = computed(() => {
     const favs = configStore.modelFavorites;
     if (favs.length === 0) return [];
-    const q = searchQuery.value;
-    return favs
-        .filter((favorite) => configStore.isChatModelAvailable(favorite.provider, favorite.model))
-        .filter((favorite) => !q || matchModel(favorite.provider, favorite.model, q));
+    return favs.flatMap((favorite) =>
+        providerGroups.value
+            .filter(
+                (group) =>
+                    group.provider === favorite.provider && group.models.includes(favorite.model),
+            )
+            .map((group) => ({ ...favorite, connectionId: group.connectionId })),
+    );
 });
 
 const hasAnyModels = computed(
@@ -126,8 +127,9 @@ const hasAnyModels = computed(
 );
 
 const hasAnyUnfilteredModels = computed(() => {
-    return Object.keys(configStore.modelCache.providers ?? {}).some(
-        (provider) => configStore.getChatModels(provider).length > 0,
+    return Object.entries(configStore.modelCache.providers ?? {}).some(
+        ([catalogKey, catalog]) =>
+            configStore.getChatModels(catalog.providerId ?? catalogKey, catalogKey).length > 0,
     );
 });
 
@@ -137,28 +139,38 @@ function matchModel(provider: string, model: string, q: string): boolean {
     return text.includes(q);
 }
 
-function isGroupCollapsed(provider: string): boolean {
+function isGroupCollapsed(catalogKey: string): boolean {
     if (searchQuery.value) return false;
-    return collapsedProviders.value.has(provider);
+    return collapsedProviders.value.has(catalogKey);
 }
 
-function setGroupCollapsed(provider: string, collapsed: boolean) {
+function setGroupCollapsed(catalogKey: string, collapsed: boolean) {
     if (searchQuery.value) return;
     if (collapsed) {
-        collapsedProviders.value.add(provider);
+        collapsedProviders.value.add(catalogKey);
     } else {
-        collapsedProviders.value.delete(provider);
+        collapsedProviders.value.delete(catalogKey);
     }
 }
 
 async function selectModel(value: string) {
     const slash = value.indexOf("/");
     if (slash < 0) return;
-    const provider = value.slice(0, slash),
+    // Option values are the catalog map key: a concrete connectionId for scoped
+    // catalogs, or the provider id for legacy provider-keyed catalogs.
+    const catalogKey = value.slice(0, slash),
         model = value.slice(slash + 1);
-    const catalog = configStore.modelCache.providers?.[provider],
+    const catalog = configStore.modelCache.providers?.[catalogKey],
         sessionId = sessionStore.currentSessionId;
-    if (sessionId && !configStore.isChatModelAvailable(provider, model)) {
+    if (!catalog) {
+        toast.error("Selected model is not currently available for chat");
+        return;
+    }
+    const provider = catalog.providerId ?? catalogKey,
+        // Legacy catalogs have no concrete ProviderConnection to bind; omit the
+        // field entirely so PATCH keeps provider/model only (pre-0438 behavior).
+        connectionId = catalog.connectionId;
+    if (!configStore.isChatModelAvailable(provider, model, connectionId)) {
         toast.error("Selected model is not currently available for chat");
         return;
     }
@@ -167,14 +179,14 @@ async function selectModel(value: string) {
             const updated = await sessionStore.updateSession(sessionId, {
                 modelProvider: provider,
                 modelName: model,
-                providerConnectionId: catalog?.connectionId,
+                providerConnectionId: connectionId,
             });
             configStore.setSessionModel(
                 sessionId,
                 updated.modelProvider ?? provider,
                 updated.modelName ?? model,
-                updated.providerConnectionId ?? catalog?.connectionId,
-                updated.connectionRevision ?? catalog?.connectionRevision,
+                updated.providerConnectionId ?? connectionId,
+                updated.connectionRevision ?? catalog.connectionRevision,
             );
         } catch (cause: unknown) {
             const message =
@@ -206,7 +218,7 @@ onMounted(() => {
     configStore.fetchModels();
     listProviderConnections()
         .then((response) => {
-            configuredConnectionCount.value = response.connections.length;
+            configuredConnectionCount.value = response.connections?.length ?? 0;
         })
         .catch((e) => {
             logger.warn("Failed to load provider connections for readiness hint", e);
@@ -304,10 +316,11 @@ onMounted(() => {
                             </ComboboxLabel>
                             <ComboboxItem
                                 v-for="fav in filteredFavorites"
-                                :key="`fav-${fav.provider}-${fav.model}`"
-                                :value="`${fav.provider}/${fav.model}`"
+                                :key="`fav-${fav.connectionId}-${fav.model}`"
+                                :value="`${fav.connectionId}/${fav.model}`"
                                 :text-value="`${fav.model} ${getProviderInfo(fav.provider)?.name ?? fav.provider}`"
                                 :data-testid="`model-item-${fav.provider}/${fav.model}`"
+                                :data-model-key="`${fav.connectionId}/${fav.model}`"
                                 class="w-full flex items-center justify-between px-2 py-1 text-xs rounded hover:bg-accent data-[highlighted]:bg-accent data-[state=checked]:bg-accent outline-none cursor-pointer"
                                 @select="handleSelect"
                             >
@@ -336,12 +349,13 @@ onMounted(() => {
                             </ComboboxItem>
                         </ComboboxGroup>
 
-                        <template v-for="group in providerGroups" :key="group.provider">
+                        <template v-for="group in providerGroups" :key="group.catalogKey">
                             <CollapsibleRoot
-                                :open="!isGroupCollapsed(group.provider)"
+                                :open="!isGroupCollapsed(group.catalogKey)"
                                 :unmount-on-hide="false"
                                 :data-testid="`model-group-${group.provider}`"
-                                @update:open="setGroupCollapsed(group.provider, !$event)"
+                                :data-connection-id="group.connectionId"
+                                @update:open="setGroupCollapsed(group.catalogKey, !$event)"
                             >
                                 <ComboboxGroup class="py-1">
                                     <ComboboxLabel
@@ -352,7 +366,7 @@ onMounted(() => {
                                                 class="w-full flex items-center gap-1 hover:text-foreground transition-colors"
                                             >
                                                 <ChevronRight
-                                                    v-if="isGroupCollapsed(group.provider)"
+                                                    v-if="isGroupCollapsed(group.catalogKey)"
                                                     class="size-3"
                                                     aria-hidden="true"
                                                 />
@@ -372,10 +386,11 @@ onMounted(() => {
                                     <CollapsibleContent>
                                         <ComboboxItem
                                             v-for="model in group.models"
-                                            :key="`${group.provider}-${model}`"
-                                            :value="`${group.provider}/${model}`"
+                                            :key="`${group.connectionId}-${model}`"
+                                            :value="`${group.connectionId}/${model}`"
                                             :text-value="`${model} ${group.name}`"
                                             :data-testid="`model-item-${group.provider}/${model}`"
+                                            :data-model-key="`${group.connectionId}/${model}`"
                                             class="w-full flex items-center justify-between px-2 py-1 pl-6 text-xs rounded hover:bg-accent data-[highlighted]:bg-accent data-[state=checked]:bg-accent outline-none cursor-pointer"
                                             @select="handleSelect"
                                         >

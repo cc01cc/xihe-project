@@ -12,6 +12,7 @@ function seedReadyModel(store: ReturnType<typeof useConfigStore>, provider: stri
         models: { [provider]: [model] },
         providers: {
             [provider]: {
+                providerId: provider,
                 status: "ready",
                 models: [{ name: model, capabilities: { chat: true } }],
             },
@@ -111,6 +112,54 @@ describe("useConfigStore", () => {
     });
 
     describe("getEffectiveModel", () => {
+        it("resolves a bound connection without treating its UUID as the provider", () => {
+            const store = useConfigStore();
+            seedReadyModel(store, "openai", "gpt-4o");
+            const catalog = store.modelCache.providers!.openai;
+            store.modelCache.providers = {
+                "connection-a": { ...catalog, connectionId: "connection-a" },
+                "connection-b": { ...catalog, connectionId: "connection-b", status: "unreachable" },
+            };
+            store.setSessionModel("s1", "openai", "gpt-4o", "connection-a", 3);
+            expect(store.getEffectiveModel("s1")).toEqual({
+                provider: "openai",
+                model: "gpt-4o",
+                connectionId: "connection-a",
+                connectionRevision: 3,
+            });
+            store.setSessionModel("s1", "openai", "gpt-4o", "connection-b");
+            expect(store.getEffectiveModel("s1")).toBeUndefined();
+            store.setSessionModel("s1", "openai", "gpt-4o", "missing-connection");
+            expect(store.getEffectiveModel("s1")).toBeUndefined();
+            store.setSessionModel("s1", "deepseek", "gpt-4o", "connection-a");
+            expect(store.getEffectiveModel("s1")).toBeUndefined();
+        });
+
+        it("keeps provider-based callers and unbound defaults on real provider IDs", () => {
+            const store = useConfigStore();
+            seedReadyModel(store, "openai", "gpt-4o");
+            const catalog = store.modelCache.providers!.openai;
+            store.modelCache.providers = {
+                "connection-a": { ...catalog, connectionId: "connection-a" },
+                "connection-b": {
+                    ...catalog,
+                    connectionId: "connection-b",
+                    models: [{ name: "gpt-4.1", capabilities: { chat: true } }],
+                },
+            };
+            expect(store.findProviderForModel("gpt-4o")).toBe("openai");
+            expect(store.getChatModels("openai")).toEqual(["gpt-4o", "gpt-4.1"]);
+            expect(store.getChatModels("connection-a")).toEqual([]);
+            expect(store.isChatModelAvailable("openai", "gpt-4.1", "connection-a")).toBe(false);
+            expect(store.isChatModelAvailable("openai", "gpt-4.1", "connection-b")).toBe(true);
+            store.mergedConfig = {
+                "llm-provider": { defaultProvider: "openai", defaultModel: "gpt-4o" },
+            };
+            expect(store.getEffectiveModel("s1")).toEqual({ provider: "openai", model: "gpt-4o" });
+            store.setSessionModel("s1", "openai", "gpt-4.1");
+            expect(store.getEffectiveModel("s1")).toEqual({ provider: "openai", model: "gpt-4.1" });
+        });
+
         it("returns session binding when set", () => {
             const store = useConfigStore();
             seedReadyModel(store, "deepseek", "deepseek-chat");
@@ -239,6 +288,7 @@ describe("useConfigStore", () => {
                 models: { openai: ["gpt-4o"] },
                 providers: {
                     openai: {
+                        providerId: "openai",
                         status: "ready",
                         models: [{ name: "gpt-4o", capabilities: { chat: true } }],
                     },

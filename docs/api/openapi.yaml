@@ -796,7 +796,17 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProviderModelCatalog' }
         '401': { $ref: '#/components/responses/Problem' }
-        '503': { $ref: '#/components/responses/Problem' }
+        '502': { $ref: '#/components/responses/Problem' }
+  /api/v1/api-input-types:
+    get:
+      operationId: listApiInputTypes
+      summary: List built-in immutable API Type definitions
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Built-in API Type registry
+          content: { application/json: { schema: { $ref: '#/components/schemas/ApiInputTypeListResponse' } } }
+        '401': { $ref: '#/components/responses/Problem' }
   /api/v1/provider-catalog:
     get:
       operationId: listProviderCatalog
@@ -832,6 +842,7 @@ paths:
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /api/v1/provider-connections/{connectionId}:
     parameters: [{ in: path, name: connectionId, required: true, schema: { type: string, format: uuid } }]
     patch:
@@ -848,6 +859,7 @@ paths:
         '400': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
     delete:
       operationId: deleteProviderConnection
       summary: Disable and remove a provider connection
@@ -2260,6 +2272,24 @@ components:
             - $ref: '#/components/schemas/PolicyMode'
             - type: 'null'
           description: Effective session mode captured by the atomic decision claim; legacy rows may omit it or return null.
+    ApiInputTypeListResponse:
+       type: object
+       required: [types]
+       properties:
+         types: { type: array, items: { $ref: '#/components/schemas/ApiInputType' } }
+    ApiInputType:
+        type: object
+        required: [apiTypeId, version, operation, method, path, requiredBaseSuffix, requestShape, responseShape, streamShape]
+        properties:
+          apiTypeId: { type: string }
+          version: { type: integer, minimum: 1 }
+          operation: { type: string, enum: [chat, embedding] }
+          method: { type: string, enum: [POST] }
+          path: { type: string }
+          requiredBaseSuffix: { type: string, pattern: '^/', description: 'Static base-URL path prefix enforced at connection create/update; real wire compatibility is judged by the operation sender tests (PLAN-0439/0485).' }
+          requestShape: { type: string }
+          responseShape: { type: string }
+          streamShape: { type: string }
     ProviderCatalogResponse:
        type: object
        required: [catalogRevision, providers]
@@ -2268,7 +2298,7 @@ components:
          providers: { type: array, items: { $ref: '#/components/schemas/ProviderDefinition' } }
     ProviderDefinition:
        type: object
-       required: [id, displayName, adapter, modelDiscovery, credential, supports]
+       required: [id, displayName, adapter, modelDiscovery, credential, supports, supportedApiTypes, defaultApiType]
        properties:
          id: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{1,127}$' }
          displayName: { type: string }
@@ -2279,6 +2309,16 @@ components:
          modelDiscovery: { type: string, enum: [remote-models, litellm-catalog, curated, manual] }
          credential: { $ref: '#/components/schemas/ProviderCredentialDefinition' }
          supports: { $ref: '#/components/schemas/ProviderSupports' }
+         supportedApiTypes: { type: array, minItems: 1, items: { $ref: '#/components/schemas/ApiTypePair' } }
+         defaultApiType: { $ref: '#/components/schemas/ApiTypePair' }
+    ApiTypePair:
+       type: object
+       required: [apiTypeId, version]
+       properties:
+          apiTypeId: { type: string }
+          version: { type: integer, minimum: 1 }
+          defaultBaseUrl: { type: [string, 'null'], format: uri, description: 'Supported pair override; omitted uses provider default.' }
+          modelDiscovery: { type: string, enum: [remote-models, litellm-catalog, curated, manual], description: 'Supported pair override; omitted uses provider default.' }
     ProviderCredentialDefinition:
        type: object
        required: [type, required]
@@ -2300,29 +2340,35 @@ components:
        properties:
          connections: { type: array, items: { $ref: '#/components/schemas/ProviderConnection' } }
     ProviderConnection:
-       type: object
-       required: [id, providerId, label, scope, hasKey, enabled, status, revision]
-       properties:
-         id: { type: string, format: uuid, readOnly: true }
-         providerId: { type: string }
-         label: { type: string, maxLength: 128 }
-         scope: { type: string, enum: [USER, WORKSPACE, SYSTEM], readOnly: true }
-         workspaceId: { type: [string, 'null'], readOnly: true }
-         baseUrl: { type: [string, 'null'], format: uri }
-         hasKey: { type: boolean, readOnly: true }
-         maskedKey: { type: [string, 'null'], readOnly: true }
-         enabled: { type: boolean }
-         status: { type: string, enum: [unverified, verifying, ready, invalid_credentials, unreachable, disabled] }
-         lastVerifiedAt: { type: [string, 'null'], format: date-time, readOnly: true }
-         lastErrorCode: { type: [string, 'null'], readOnly: true }
-         modelCount: { type: integer, minimum: 0, readOnly: true }
-         revision: { type: integer, minimum: 1, readOnly: true }
+        type: object
+        required: [id, providerId, connectionKey, apiTypeId, apiTypeVersion, operation, label, scope, hasKey, enabled, status, revision, modelDiscovery, manualModels]
+        properties:
+          id: { type: string, format: uuid, readOnly: true }
+          providerId: { type: string }
+          connectionKey: { type: string, minLength: 1, maxLength: 64, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$' }
+          apiTypeId: { type: string, readOnly: true }
+          apiTypeVersion: { type: integer, minimum: 1, readOnly: true }
+          operation: { type: string, enum: [chat, embedding], readOnly: true }
+          label: { type: string, maxLength: 128 }
+          scope: { type: string, enum: [USER, WORKSPACE, SYSTEM], readOnly: true }
+          ownerId: { type: string, readOnly: true }
+          baseUrl: { type: [string, 'null'], format: uri }
+          hasKey: { type: boolean, readOnly: true }
+          maskedKey: { type: [string, 'null'], readOnly: true, description: 'Always null; ordinary reads never derive a credential suffix.' }
+          modelDiscovery: { type: string, enum: [remote-models, litellm-catalog, curated, manual] }
+          manualModels: { type: array, items: { type: string } }
+          enabled: { type: boolean }
+          status: { type: string, enum: [UNVERIFIED, VERIFYING, READY, INVALID_CREDENTIALS, UNREACHABLE, DISABLED] }
+          lastVerifiedAt: { type: [string, 'null'], format: date-time, readOnly: true }
+          lastErrorCode: { type: [string, 'null'], readOnly: true }
+          revision: { type: integer, minimum: 1, readOnly: true }
     ProviderConnectionCreateRequest:
        type: object
-       required: [providerId, label]
+       required: [providerId, label, connectionKey]
        properties:
          providerId: { type: string }
          label: { type: string, minLength: 1, maxLength: 128 }
+         connectionKey: { type: string, minLength: 1, maxLength: 64, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$' }
          scope: { type: string, enum: [USER, WORKSPACE], default: USER, description: 'Scope is still authorization-checked by CP; clients cannot create SYSTEM connections.' }
          apiKey: { type: [string, 'null'], minLength: 1, writeOnly: true }
          baseUrl: { type: [string, 'null'], format: uri }
@@ -2333,6 +2379,7 @@ components:
        minProperties: 1
        properties:
          label: { type: string, minLength: 1, maxLength: 128 }
+         connectionKey: { type: [string, 'null'], minLength: 1, maxLength: 64, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$', description: 'Omitted preserves the key; null is rejected with PROVIDER_CONNECTION_KEY_INVALID; a different key is rejected with PROVIDER_CONNECTION_KEY_IMMUTABLE.' }
          apiKey: { type: [string, 'null'], minLength: 1, writeOnly: true }
          baseUrl: { type: [string, 'null'], format: uri }
          enabled: { type: boolean }
@@ -2356,6 +2403,11 @@ components:
        required: [connectionId, scope, displayName, connectionStatus, models]
        properties:
          connectionId: { type: string, format: uuid }
+         connectionKey: { type: string }
+         providerId: { type: string }
+         apiTypeId: { type: string }
+         apiTypeVersion: { type: integer, minimum: 1 }
+         operation: { type: string, enum: [chat, embedding] }
          scope: { type: string, enum: [USER, WORKSPACE, SYSTEM] }
          displayName: { type: string }
          connectionStatus: { type: string, enum: [unverified, verifying, ready, invalid_credentials, unreachable, disabled] }
@@ -2382,13 +2434,14 @@ components:
          pdf: { type: [boolean, 'null'] }
     ProviderCredentialLeaseRedeemRequest:
        type: object
-       required: [lease, runId, providerConnectionId, provider, model]
+       required: [lease, runId, providerConnectionId, providerId, model, connectionRevision]
        properties:
          lease: { type: string, writeOnly: true }
          runId: { type: string }
          providerConnectionId: { type: string, format: uuid }
-         provider: { type: string }
+         providerId: { type: string }
          model: { type: string }
+         connectionRevision: { type: integer, minimum: 1 }
     ProviderCredentialLeaseGrant:
        type: object
        required: [provider, routeProvider, model, baseUrl]
@@ -2401,6 +2454,10 @@ components:
          connectionRevision: { type: integer, minimum: 1 }
          modelDiscovery: { type: string, enum: [remote-models, litellm-catalog, curated, manual] }
          manualModels: { type: array, items: { type: string } }
+         connectionKey: { type: string }
+         apiTypeId: { type: string }
+         apiTypeVersion: { type: integer, minimum: 1 }
+         operation: { type: string, enum: [chat, embedding] }
     ScopedModelCatalogRequest:
        type: object
        required: [connections]
@@ -2413,7 +2470,11 @@ components:
          lease: { type: string, writeOnly: true }
          runId: { type: string }
          connectionId: { type: string, format: uuid }
+         connectionKey: { type: string }
          providerId: { type: string }
+         apiTypeId: { type: string }
+         apiTypeVersion: { type: integer, minimum: 1 }
+         operation: { type: string, enum: [chat, embedding] }
          scope: { type: string, enum: [USER, WORKSPACE, SYSTEM] }
          displayName: { type: string }
          connectionRevision: { type: integer, minimum: 1 }

@@ -12,6 +12,9 @@ public interface ProviderConnectionRepository extends JpaRepository<ProviderConn
 
     List<ProviderConnection> findByOwnerTypeAndOwnerId(String ownerType, String ownerId);
 
-    Optional<ProviderConnection> findByOwnerTypeAndOwnerIdAndProviderId(
+    List<ProviderConnection> findByOwnerTypeAndOwnerIdAndProviderId(
             String ownerType, String ownerId, String providerId);
+
+    Optional<ProviderConnection> findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
+            String ownerType, String ownerId, String providerId, String connectionKey);
 }

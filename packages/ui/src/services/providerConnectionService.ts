@@ -1,5 +1,6 @@
 import { request } from "../composables/api";
 import type {
+    ApiInputType,
     ProviderConnection,
     ProviderConnectionInput,
     ProviderDefinition,
@@ -8,6 +9,10 @@ import type {
 export interface ProviderCatalogResponse {
     catalogRevision: string;
     providers: ProviderDefinition[];
+}
+
+export interface ApiInputTypeListResponse {
+    types: ApiInputType[];
 }
 
 export interface ProviderConnectionListResponse {
@@ -21,6 +26,10 @@ export interface ProviderVerifyResponse {
 
 export function listProviderCatalog(): Promise<ProviderCatalogResponse> {
     return request<ProviderCatalogResponse>("/provider-catalog");
+}
+
+export function listApiInputTypes(): Promise<ApiInputTypeListResponse> {
+    return request<ApiInputTypeListResponse>("/api-input-types");
 }
 
 export function listProviderConnections(): Promise<ProviderConnectionListResponse> {

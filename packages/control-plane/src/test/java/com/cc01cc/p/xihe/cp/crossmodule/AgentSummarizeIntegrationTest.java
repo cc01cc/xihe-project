@@ -141,12 +141,17 @@ class AgentSummarizeIntegrationTest extends AbstractWireMockTest {
         ProviderConnection connection = providerConnectionRepository
                 .findByOwnerTypeAndOwnerIdAndProviderId(
                         ProviderConnection.OWNER_USER, USER_ID, "deepseek")
+                .stream()
+                .findFirst()
                 .orElseGet(() -> {
                     ProviderConnection created = new ProviderConnection();
                     created.setId(UUID.randomUUID());
                     created.setOwnerType(ProviderConnection.OWNER_USER);
                     created.setOwnerId(USER_ID);
                     created.setProviderId("deepseek");
+                    created.setConnectionKey("default");
+                    created.setApiTypeId("openai-chat-completions");
+                    created.setApiTypeVersion(1);
                     created.setLabel("test connection");
                     created.setBaseUrl("http://localhost:1");
                     created.setEncryptionKeyVersion("v1");
