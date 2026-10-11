@@ -81,6 +81,7 @@ function readyModelCache(models: Record<string, string[]>) {
             Object.entries(models).map(([provider, modelIds]) => [
                 provider,
                 {
+                    providerId: provider,
                     status: "ready" as const,
                     models: modelIds.map((name) => ({
                         name,
@@ -309,7 +310,83 @@ describe("ModelPopover", () => {
 
         expect(updateSpy).toHaveBeenCalled();
         const binding = configStore.getActiveModel(sessionStore.currentSessionId!);
-        expect(binding).toEqual({ provider: "deepseek", model: "deepseek-chat" });
+        // Legacy provider-keyed catalogs have no concrete ProviderConnection, so the
+        // binding stays provider/model only (pre-0438 PATCH shape).
+        expect(binding?.provider).toBe("deepseek");
+        expect(binding?.model).toBe("deepseek-chat");
+        expect(binding?.connectionId).toBeUndefined();
+        expect(binding?.connectionRevision).toBeUndefined();
+        wrapper.unmount();
+    });
+
+    it("keeps same-provider model options distinct and patches the selected connection identity", async () => {
+        await createSessionInStore("mp-3", "Connection identity");
+        const configStore = useConfigStore(),
+            sessionStore = useSessionStore(),
+            catalog = readyModelCache({ openai: ["vendor/model"] }).providers.openai;
+        configStore.modelCache = {
+            models: { "connection-a": ["vendor/model"], "connection-b": ["vendor/model"] },
+            providers: {
+                "connection-a": {
+                    ...catalog,
+                    connectionId: "connection-a",
+                    displayName: "Personal",
+                    connectionRevision: 1,
+                },
+                "connection-b": {
+                    ...catalog,
+                    connectionId: "connection-b",
+                    displayName: "Workspace",
+                    connectionRevision: 2,
+                },
+            },
+        };
+        configStore.setSessionModel("mp-3", "openai", "vendor/model", "connection-a", 1);
+        configStore.toggleFavorite("openai", "vendor/model");
+        vi.spyOn(configStore, "fetchModels").mockResolvedValue(undefined);
+        const updateSpy = vi.spyOn(sessionStore, "updateSession").mockResolvedValue({
+            ...stubSessionResponse({ id: "mp-3" }),
+            modelProvider: "openai",
+            modelName: "vendor/model",
+            providerConnectionId: "connection-b",
+            connectionRevision: 2,
+        });
+        const wrapper = mountPopover();
+        expect(wrapper.text()).toContain("vendor/model · OpenAI");
+        await openContent(wrapper);
+        expect(
+            document.body.querySelectorAll('[data-model-key="connection-a/vendor/model"]'),
+        ).toHaveLength(2);
+        expect(
+            document.body.querySelectorAll('[data-model-key="connection-b/vendor/model"]'),
+        ).toHaveLength(2);
+        // Readable legacy selector stays provider/model scoped for existing E2E specs;
+        // connection identity lives in data-model-key.
+        expect(
+            document.body.querySelectorAll('[data-testid="model-item-openai/vendor/model"]').length,
+        ).toBeGreaterThan(0);
+        const selected = document.body.querySelector(
+            '[data-model-key="connection-a/vendor/model"][data-state="checked"]',
+        );
+        expect(selected).toBeTruthy();
+        const option = document.body.querySelector(
+            '[data-connection-id="connection-b"] [role="option"]',
+        );
+        expect(option).toBeTruthy();
+        (option as HTMLElement).click();
+        await flushPromises();
+        expect(updateSpy).toHaveBeenCalledWith("mp-3", {
+            modelProvider: "openai",
+            modelName: "vendor/model",
+            providerConnectionId: "connection-b",
+        });
+        expect(configStore.getEffectiveModel("mp-3")).toEqual({
+            provider: "openai",
+            model: "vendor/model",
+            connectionId: "connection-b",
+            connectionRevision: 2,
+        });
+        expect(configStore.modelFavorites).toEqual([{ provider: "openai", model: "vendor/model" }]);
         wrapper.unmount();
     });
 

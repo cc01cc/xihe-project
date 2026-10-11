@@ -2,6 +2,8 @@
 import { computed, onMounted, reactive, ref } from "vue";
 import { toast } from "vue-sonner";
 import { logger } from "../../lib/logger";
+import { request } from "../../composables/api";
+import type { ProviderCatalog } from "../../types/provider";
 import { Search } from "@lucide/vue";
 import {
     createProviderConnection,
@@ -40,11 +42,55 @@ const formScope = ref<"USER" | "WORKSPACE">("USER"),
     saving = ref(false),
     verifyingId = ref<string | null>(null);
 const pickerSearch = ref("");
+const selectedConnectionId = ref<string | null>(null);
+const modelCatalogs = ref<Record<string, ProviderCatalog>>({});
+const modelsError = ref(false);
+const connectionGroups = computed(() => {
+    const query = search.value.trim().toLowerCase();
+    const groups = new Map<string, ProviderConnection[]>();
+    for (const connection of connections.value) {
+        if (
+            query &&
+            !`${providerName(connection.providerId)} ${connection.connectionKey} ${connection.label} ${connection.scope}`
+                .toLowerCase()
+                .includes(query)
+        )
+            continue;
+        const items = groups.get(connection.providerId) ?? [];
+        items.push(connection);
+        groups.set(connection.providerId, items);
+    }
+    return Array.from(groups, ([providerId, items]) => ({ providerId, items }));
+});
+const activeConnection = computed(() => {
+    const visible = connectionGroups.value.flatMap((group) => group.items);
+    return visible.find((connection) => connection.id === selectedConnectionId.value) ?? visible[0];
+});
+const activeModels = computed(() => {
+    const connection = activeConnection.value;
+    if (!connection) return [];
+    const catalog = modelCatalogs.value[connection.id];
+    if (catalog?.connectionId === connection.id) return catalog.models.map((model) => model.name);
+    return connection.modelDiscovery === "manual" ? connection.manualModels : [];
+});
+
+async function loadModels() {
+    try {
+        const data = await request<{ providers?: Record<string, ProviderCatalog> }>("/models");
+        modelCatalogs.value = data.providers ?? {};
+        modelsError.value = false;
+    } catch (cause: unknown) {
+        modelCatalogs.value = {};
+        modelsError.value = true;
+        logger.warn("Provider Hub models load failed", cause);
+    }
+}
 
 const form = reactive({
     label: "",
     apiKey: "",
     baseUrl: "",
+    connectionKey: "default",
     modelDiscovery: "remote-models" as ProviderDefinition["modelDiscovery"],
     manualModels: "",
 });
@@ -134,9 +180,19 @@ function resetForm(provider: ProviderDefinition, connection?: ProviderConnection
     formScope.value = connection?.scope === "WORKSPACE" ? "WORKSPACE" : props.scope;
     form.label = connection?.label ?? `${provider.displayName} 连接`;
     form.apiKey = "";
-    form.baseUrl = connection?.baseUrl ?? provider.defaultBaseUrl ?? "";
-    form.modelDiscovery = provider.modelDiscovery;
-    form.manualModels = "";
+    const pair = provider.supportedApiTypes.find(
+        (item) =>
+            item.apiTypeId === (connection?.apiTypeId ?? provider.defaultApiType.apiTypeId) &&
+            item.version === (connection?.apiTypeVersion ?? provider.defaultApiType.version),
+    );
+    form.baseUrl =
+        connection?.baseUrl ??
+        (pair?.defaultBaseUrl !== undefined ? pair.defaultBaseUrl : provider.defaultBaseUrl) ??
+        "";
+    form.connectionKey = connection?.connectionKey ?? "default";
+    form.modelDiscovery =
+        connection?.modelDiscovery ?? pair?.modelDiscovery ?? provider.modelDiscovery;
+    form.manualModels = connection?.manualModels.join("\n") ?? "";
 }
 
 function openPicker() {
@@ -165,6 +221,7 @@ function closeForm() {
     formOpen.value = false;
     selectedProvider.value = null;
     editingConnection.value = null;
+    form.apiKey = "";
 }
 
 async function load() {
@@ -178,6 +235,10 @@ async function load() {
         // (template and computed read `.length`/`.map`).
         providers.value = catalog.providers ?? [];
         connections.value = connected.connections ?? [];
+        if (!connections.value.some((connection) => connection.id === selectedConnectionId.value)) {
+            selectedConnectionId.value = connections.value[0]?.id ?? null;
+        }
+        await loadModels();
     } catch (cause: unknown) {
         logger.warn("Provider Hub load failed", cause);
         toast.error(cause instanceof Error ? cause.message : "Provider 配置加载失败");
@@ -193,14 +254,21 @@ async function save() {
         toast.error("请输入 API key");
         return;
     }
+    const connectionKey = form.connectionKey.trim();
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(connectionKey) || connectionKey.length > 64) {
+        toast.error("连接标识只能包含小写字母、数字和连字符");
+        return;
+    }
+
     saving.value = true;
     try {
         const input: ProviderConnectionInput = {
             providerId: provider.id,
             label: form.label.trim(),
             scope: formScope.value,
+            connectionKey,
             ...(form.apiKey.trim() ? { apiKey: form.apiKey.trim() } : {}),
-            ...(form.baseUrl.trim() ? { baseUrl: form.baseUrl.trim() } : {}),
+            baseUrl: form.baseUrl.trim(),
             modelDiscovery: form.modelDiscovery,
             manualModels: form.manualModels
                 .split(/[,\n]/)
@@ -210,6 +278,8 @@ async function save() {
         const connection = editingConnection.value
             ? await updateProviderConnection(editingConnection.value.id, input)
             : await createProviderConnection(input);
+        selectedConnectionId.value = connection.id;
+        form.apiKey = "";
         const verification = await verifyProviderConnection(connection.id);
         await load();
         if (verification.connection.status === "READY") toast.success("Provider 已连接并验证");
@@ -294,78 +364,208 @@ onMounted(() => {
                 </button>
             </div>
 
-            <section>
-                <div class="mb-2.5 flex items-center justify-between">
-                    <h4 class="text-sm font-semibold">已连接</h4>
-                    <span class="text-xs text-muted-foreground"
-                        >{{ connections.length }} 个连接</span
+            <section
+                data-testid="provider-master-detail"
+                class="grid min-w-0 gap-4 lg:grid-cols-[minmax(240px,0.31fr)_minmax(0,0.69fr)]"
+            >
+                <nav aria-label="Provider 连接导航" class="min-w-0">
+                    <div class="mb-2.5 flex items-center justify-between">
+                        <h4 class="text-sm font-semibold">已连接</h4>
+                        <span class="text-xs text-muted-foreground"
+                            >{{ connections.length }} 个连接</span
+                        >
+                    </div>
+                    <div
+                        v-if="connections.length === 0"
+                        class="rounded-lg border border-dashed px-4 py-7 text-center text-sm text-muted-foreground"
                     >
-                </div>
-                <div
-                    v-if="connections.length === 0"
-                    class="rounded-lg border border-dashed px-4 py-7 text-center text-sm text-muted-foreground"
+                        尚未连接 Provider，点击右上角「连接 Provider」开始。
+                    </div>
+                    <div v-else class="space-y-4">
+                        <p
+                            v-if="connectionGroups.length === 0"
+                            class="text-sm text-muted-foreground"
+                        >
+                            没有匹配的连接
+                        </p>
+                        <section
+                            v-for="group in connectionGroups"
+                            :key="group.providerId"
+                            class="space-y-2"
+                        >
+                            <h5 class="text-xs font-semibold text-muted-foreground">
+                                {{ providerName(group.providerId) }}
+                            </h5>
+                            <article
+                                v-for="connection in group.items"
+                                :key="connection.id"
+                                class="min-w-0 rounded-lg border bg-background p-3"
+                                :class="{
+                                    'border-primary': activeConnection?.id === connection.id,
+                                }"
+                                :data-testid="`provider-connection-${connection.providerId}`"
+                                :data-connection-key="connection.connectionKey"
+                            >
+                                <button
+                                    type="button"
+                                    class="block w-full min-w-0 rounded text-left outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                                    :aria-pressed="activeConnection?.id === connection.id"
+                                    @click="selectedConnectionId = connection.id"
+                                >
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <span class="break-all font-mono text-sm font-semibold">{{
+                                            connection.connectionKey
+                                        }}</span>
+                                        <span class="text-xs text-muted-foreground">{{
+                                            connection.scope === "WORKSPACE" ? "Workspace" : "User"
+                                        }}</span>
+                                        <span
+                                            class="inline-flex items-center gap-1.5 text-xs font-semibold"
+                                            :class="statusClass(connection.status)"
+                                        >
+                                            <span class="size-1.5 rounded-full bg-current" />{{
+                                                statusLabel(connection.status)
+                                            }}
+                                        </span>
+                                    </div>
+                                    <div
+                                        class="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground"
+                                    >
+                                        <span class="break-all">{{ connection.label }}</span>
+                                    </div>
+                                </button>
+                                <div class="mt-3 flex flex-wrap gap-1.5">
+                                    <button
+                                        class="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
+                                        :disabled="verifyingId === connection.id || props.readonly"
+                                        @click="verify(connection)"
+                                    >
+                                        {{ verifyingId === connection.id ? "验证中" : "验证" }}
+                                    </button>
+                                    <button
+                                        class="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
+                                        :disabled="props.readonly"
+                                        @click="openManage(connection)"
+                                    >
+                                        管理
+                                    </button>
+                                    <button
+                                        class="rounded-md border px-2.5 py-1.5 text-xs text-destructive transition-colors hover:border-destructive disabled:opacity-50"
+                                        :disabled="props.readonly"
+                                        @click="remove(connection)"
+                                    >
+                                        删除
+                                    </button>
+                                </div>
+                            </article>
+                        </section>
+                    </div>
+                </nav>
+                <section
+                    v-if="activeConnection"
+                    data-testid="provider-connection-detail"
+                    :data-connection-key="activeConnection.connectionKey"
+                    :data-connection-id="activeConnection.id"
+                    class="min-w-0 space-y-5 rounded-lg border bg-background p-4"
                 >
-                    尚未连接 Provider，点击右上角「连接 Provider」开始。
-                </div>
-                <div v-else class="space-y-2">
-                    <article
-                        v-for="connection in connections"
-                        :key="connection.id"
-                        class="flex flex-wrap items-center gap-3.5 rounded-lg border bg-background p-4"
-                        :data-testid="`provider-connection-${connection.providerId}`"
-                    >
-                        <div class="min-w-0 flex-1">
-                            <div class="flex flex-wrap items-center gap-2">
-                                <span class="text-sm font-semibold">{{ connection.label }}</span>
-                                <span
-                                    class="inline-flex items-center gap-1.5 text-xs font-semibold"
-                                    :class="statusClass(connection.status)"
-                                >
-                                    <span class="size-1.5 rounded-full bg-current" />{{
-                                        statusLabel(connection.status)
+                    <header>
+                        <h4 class="break-all text-base font-semibold">
+                            {{ providerName(activeConnection.providerId) }} ·
+                            {{ activeConnection.connectionKey }}
+                        </h4>
+                        <p class="mt-1 text-xs text-muted-foreground">
+                            {{ activeConnection.scope === "WORKSPACE" ? "Workspace" : "User" }} ·
+                            {{ activeConnection.label }}
+                        </p>
+                    </header>
+                    <dl class="space-y-3 text-sm">
+                        <div>
+                            <dt class="text-xs text-muted-foreground">API Type · 只读</dt>
+                            <dd data-testid="provider-connection-readonly-type" class="break-all">
+                                {{ activeConnection.apiTypeId }}@{{
+                                    activeConnection.apiTypeVersion
+                                }}
+                                · {{ activeConnection.operation }}
+                            </dd>
+                        </div>
+                        <div>
+                            <dt class="text-xs text-muted-foreground">Endpoint</dt>
+                            <dd class="break-all">
+                                {{ activeConnection.baseUrl || "Provider 默认地址" }}
+                            </dd>
+                        </div>
+                        <div>
+                            <dt class="text-xs text-muted-foreground">Credential</dt>
+                            <dd>
+                                {{
+                                    providers.find(
+                                        (provider) => provider.id === activeConnection?.providerId,
+                                    )?.credential.required === false
+                                        ? "Not required"
+                                        : activeConnection.hasKey
+                                          ? "Configured · hidden"
+                                          : "未配置"
+                                }}
+                            </dd>
+                            <button
+                                v-if="
+                                    !props.readonly &&
+                                    providers.find(
+                                        (provider) => provider.id === activeConnection?.providerId,
+                                    )?.credential.type !== 'none'
+                                "
+                                type="button"
+                                class="mt-1 rounded-md border px-2.5 py-1.5 text-xs hover:border-primary"
+                                @click="openManage(activeConnection)"
+                            >
+                                {{ activeConnection.hasKey ? "替换 API key" : "添加 API key" }}
+                            </button>
+                        </div>
+                        <div>
+                            <dt class="text-xs text-muted-foreground">连接状态</dt>
+                            <dd :class="statusClass(activeConnection.status)">
+                                {{ statusLabel(activeConnection.status) }} ·
+                                {{ formatVerifiedAt(activeConnection.lastVerifiedAt) }}
+                            </dd>
+                            <dd
+                                v-if="activeConnection.lastErrorCode"
+                                class="mt-1 break-all text-xs text-destructive"
+                            >
+                                验证错误：{{ activeConnection.lastErrorCode }}
+                            </dd>
+                        </div>
+                    </dl>
+                    <section data-testid="provider-connection-models" class="border-t pt-4">
+                        <h5 class="text-sm font-semibold">Models</h5>
+                        <p class="mt-1 text-xs text-muted-foreground">
+                            模型发现：{{ activeConnection.modelDiscovery }}
+                        </p>
+                        <p v-if="modelsError" class="mt-2 text-xs text-destructive">
+                            模型目录加载失败；下列手动配置不代表验证通过。
+                        </p>
+                        <ul v-if="activeModels.length" class="mt-2 divide-y">
+                            <li
+                                v-for="model in activeModels"
+                                :key="model"
+                                class="flex flex-wrap justify-between gap-2 py-2 text-xs"
+                            >
+                                <span class="break-all">{{ model }}</span>
+                                <span class="break-all text-muted-foreground"
+                                    >{{ activeConnection.apiTypeId }}@{{
+                                        activeConnection.apiTypeVersion
                                     }}
-                                </span>
-                            </div>
-                            <div
-                                class="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground"
-                            >
-                                <span>{{ providerName(connection.providerId) }}</span>
-                                <span>{{
-                                    connection.hasKey
-                                        ? connection.maskedKey || "已配置 key"
-                                        : "无 key"
-                                }}</span>
-                                <span v-if="connection.modelCount != null"
-                                    >{{ connection.modelCount }} 个模型</span
+                                    · 继承连接</span
                                 >
-                                <span>{{ formatVerifiedAt(connection.lastVerifiedAt) }}</span>
-                            </div>
-                        </div>
-                        <div class="flex shrink-0 gap-1.5">
-                            <button
-                                class="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
-                                :disabled="verifyingId === connection.id || props.readonly"
-                                @click="verify(connection)"
-                            >
-                                {{ verifyingId === connection.id ? "验证中" : "验证" }}
-                            </button>
-                            <button
-                                class="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
-                                :disabled="props.readonly"
-                                @click="openManage(connection)"
-                            >
-                                管理
-                            </button>
-                            <button
-                                class="rounded-md border px-2.5 py-1.5 text-xs text-destructive transition-colors hover:border-destructive disabled:opacity-50"
-                                :disabled="props.readonly"
-                                @click="remove(connection)"
-                            >
-                                删除
-                            </button>
-                        </div>
-                    </article>
-                </div>
+                            </li>
+                        </ul>
+                        <p v-else class="mt-2 text-sm text-muted-foreground">
+                            此连接暂无可显示的模型。请验证连接或管理手动模型。
+                        </p>
+                    </section>
+                </section>
+                <p v-else class="py-7 text-sm text-muted-foreground">
+                    选择或创建连接以查看详情与 Models。
+                </p>
             </section>
 
             <div
@@ -377,7 +577,8 @@ onMounted(() => {
                 >
                 <div>
                     <strong class="font-semibold text-foreground">连接作用域</strong><br />
-                    个人连接对同一 Provider 优先于工作区共享连接。API key 由 Control Plane
+                    按连接 key 选择具体的 User 或 Workspace 作用域记录；Workspace/User overlay
+                    由后续连接解析功能处理。API key 由 Control Plane
                     加密存储，不会出现在浏览器存储或日志中。
                 </div>
             </div>
@@ -511,8 +712,15 @@ onMounted(() => {
                     <div class="mb-5">
                         <strong class="block text-sm">{{ selectedProvider.displayName }}</strong>
                         <span class="text-xs text-muted-foreground"
-                            >{{ adapterLabel(selectedProvider) }} ·
-                            {{ selectedProvider.modelDiscovery }}</span
+                            >{{ adapterLabel(selectedProvider) }} · {{ form.modelDiscovery }} ·
+                            {{
+                                editingConnection
+                                    ? `${editingConnection.apiTypeId}@${editingConnection.apiTypeVersion}`
+                                    : `${selectedProvider.defaultApiType.apiTypeId}@${selectedProvider.defaultApiType.version}`
+                            }}</span
+                        >
+                        <span class="mt-1 block text-xs text-muted-foreground"
+                            >API Type 只读，暂不支持切换。</span
                         >
                     </div>
 
@@ -524,6 +732,23 @@ onMounted(() => {
                             required
                             maxlength="128"
                         />
+                    </label>
+                    <label class="mt-4 block">
+                        <span class="mb-1.5 block text-xs font-semibold">连接标识</span>
+                        <input
+                            v-model="form.connectionKey"
+                            data-testid="provider-connection-form-key"
+                            class="w-full rounded-md border bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+                            :readonly="Boolean(editingConnection)"
+                            required
+                            maxlength="64"
+                            pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
+                            placeholder="default"
+                        />
+                        <span class="mt-1.5 block text-[11px] text-muted-foreground"
+                            >小写字母、数字和连字符；同一
+                            Provider/作用域内不可重复。保存后不可修改。</span
+                        >
                     </label>
                     <label class="mt-4 block">
                         <span class="mb-1.5 block text-xs font-semibold">API key</span>
@@ -595,6 +820,8 @@ onMounted(() => {
                             class="w-full rounded-md border bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30"
                         >
                             <option value="remote-models">Provider /models</option>
+                            <option value="litellm-catalog">LiteLLM Catalog</option>
+                            <option value="curated">Provider 预置模型</option>
                             <option value="manual">手动输入模型</option>
                         </select>
                         <span class="mt-1.5 block text-[11px] text-muted-foreground"
