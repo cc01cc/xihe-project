@@ -45,7 +45,9 @@ public class WorkspaceJobStartService {
 
     private static final Set<String> SCOPES =
             Set.of(JobStateService.SCOPE_RUN, JobStateService.SCOPE_SESSION, JobStateService.SCOPE_WORKSPACE);
-    private static final Set<String> SOURCES = Set.of("ui", "agent", "runtime", "system", "mcp");
+    // PLAN-0489 T1.3（0486 §4）：定时任务分派来源 'scheduled' 同批入枚举；
+    // openapi.yaml 两处 source enum 与 DEV-019 枚举由后续波次同步。
+    private static final Set<String> SOURCES = Set.of("ui", "agent", "runtime", "system", "mcp", "scheduled");
 
     private final JobStateService jobStateService;
     private final RuntimeJobClient runtimeJobClient;
