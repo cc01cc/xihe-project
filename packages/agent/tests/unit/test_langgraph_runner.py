@@ -117,12 +117,12 @@ async def test_template_context_does_not_inject_hidden_runner_system_messages(mo
     captured = {}
 
     class FakeAgent:
-        async def astream_events(self, inputs, version):
+        async def astream_events(self, inputs, version, **kwargs):
             captured["messages"] = inputs["messages"]
             if False:
                 yield {}
 
-    monkeypatch.setattr(langgraph_runner_module, "create_react_agent", lambda _model, tools: FakeAgent())
+    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, tools: FakeAgent())
     context = AgentContext("session", epoch=ContextEpoch(
         "epoch", "hash", ["unselected summary"], l1_status="ok", l1_rendered="unselected L1",
         env_status="ok", env_platform="unselected env",
@@ -192,12 +192,12 @@ async def test_stream_template_admits_only_current_prompt_not_history(monkeypatc
     event_store.append = AsyncMock()
 
     class EmptyAgent:
-        async def astream_events(self, _inputs, version):
+        async def astream_events(self, _inputs, version, **kwargs):
             assert version == "v2"
             if False:
                 yield {}
 
-    monkeypatch.setattr(langgraph_runner_module, "create_react_agent", lambda _model, tools: EmptyAgent())
+    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, tools: EmptyAgent())
     runner = LangGraphRunner(
         model_factory=lambda _model: object(),
         event_store=event_store,
@@ -221,11 +221,11 @@ async def test_stream_legacy_without_admitted_prompt_preserves_message_behavior(
     event_store.append = AsyncMock()
 
     class EmptyAgent:
-        async def astream_events(self, _inputs, version):
+        async def astream_events(self, _inputs, version, **kwargs):
             if False:
                 yield {}
 
-    monkeypatch.setattr(langgraph_runner_module, "create_react_agent", lambda _model, tools: EmptyAgent())
+    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, tools: EmptyAgent())
     runner = LangGraphRunner(model_factory=lambda _model: object(), event_store=event_store)
     async for _ in runner.stream(
         [TextMessage("human", "legacy historical turn"), TextMessage("human", "legacy current turn")],
@@ -246,7 +246,7 @@ async def test_runner_fans_in_approval_event_before_blocked_tool_completes(monke
         def __init__(self, tools):
             self.tools = tools
 
-        def astream_events(self, _inputs, version):
+        def astream_events(self, _inputs, version, **kwargs):
             assert version == "v2"
             adapted_tool = self.tools[0]
 
@@ -273,7 +273,7 @@ async def test_runner_fans_in_approval_event_before_blocked_tool_completes(monke
 
     monkeypatch.setattr(
         langgraph_runner_module,
-        "create_react_agent",
+        "build_react_graph",
         lambda _model, tools: FakeAgent(tools),
     )
     runner = LangGraphRunner(model_factory=lambda _model: object())

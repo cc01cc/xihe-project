@@ -31,15 +31,36 @@ class AgentEvent:
 
 
 @dataclass(frozen=True)
+class RunBudget:
+    """PLAN-0492: CP-resolved cumulative budget for one ChatRun.
+
+    CP owns the effective value and its ceiling clamp; the runner only
+    enforces. A zero value disables that dimension (observation-only):
+    the runner still counts and reports it, but never stops the run.
+
+    - ``max_turns``: 1 turn = 1 LLM call (the ``llm_usage`` event, emitted
+      once per ``on_chat_model_end``).
+    - ``max_elapsed_seconds``: wall-clock of the run, excluding approval /
+      human waits (waiting for a person is not "running away").
+    - ``max_tokens``: cumulative ``RunUsage.total_tokens``.
+    """
+
+    max_turns: int = 0
+    max_elapsed_seconds: int = 0
+    max_tokens: int = 0
+
+
+@dataclass(frozen=True)
 class RunnerConfig:
     """Configuration for a single agent run."""
 
     model: str
     system_prompt: str
     tools: list["BaseAgentTool"]
-    max_turns: int = 25
     context: "AgentContext | None" = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    # PLAN-0492: CP-resolved run budget; None = no budget (legacy behavior).
+    budget: RunBudget | None = None
     # PLAN-290 M0.3: when set, stream() must observe it and terminate the
     # LangGraph run, emitting error(code=cancelled) before usage.
     cancel_event: asyncio.Event | None = None

@@ -118,7 +118,7 @@ def test_cancel_endpoint_rejects_missing_token():
 class _HungStreamAgent:
     """Fake agent whose astream_events never completes until cancelled."""
 
-    def astream_events(self, _inputs, version):
+    def astream_events(self, _inputs, version, **kwargs):
         assert version == "v2"
 
         async def events() -> AsyncIterator[dict[str, Any]]:
@@ -131,7 +131,7 @@ class _HungStreamAgent:
 @pytest.mark.asyncio
 async def test_langgraph_runner_stream_yields_cancelled_on_cancel_event(monkeypatch):
     monkeypatch.setattr(
-        "xihe_agent.agent_runner.langgraph_runner.create_react_agent",
+        "xihe_agent.agent_runner.langgraph_runner.build_react_graph",
         lambda _model, tools: _HungStreamAgent(),
     )
     cancel_event = asyncio.Event()
@@ -167,7 +167,7 @@ async def test_langgraph_runner_stream_yields_cancelled_on_cancel_event(monkeypa
 @pytest.mark.asyncio
 async def test_langgraph_runner_pre_cancelled_event_stops_immediately(monkeypatch):
     monkeypatch.setattr(
-        "xihe_agent.agent_runner.langgraph_runner.create_react_agent",
+        "xihe_agent.agent_runner.langgraph_runner.build_react_graph",
         lambda _model, tools: _HungStreamAgent(),
     )
     cancel_event = asyncio.Event()
