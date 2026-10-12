@@ -40,6 +40,11 @@ test.describe("@host PLAN-0439 owner-scope connection resolver matrix", () => {
         page,
         request,
     }) => {
+        test.skip(
+            (process.env.XIHE_E2E_LLM_MODE ?? "mock") !== "success",
+            "requires XIHE_E2E_LLM_MODE=success (provider wire); current: " +
+                (process.env.XIHE_E2E_LLM_MODE ?? "mock"),
+        );
         test.setTimeout(120000);
         const registration = await request.post(`${CP_URL}/api/v1/auth/register`, {
             data: {

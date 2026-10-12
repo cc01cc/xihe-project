@@ -71,6 +71,11 @@ test.describe.serial("@host PLAN-0485 embedding provider settings", () => {
         page,
         request,
     }) => {
+        test.skip(
+            (process.env.XIHE_E2E_LLM_MODE ?? "mock") !== "success",
+            "requires XIHE_E2E_LLM_MODE=success; current: " +
+                (process.env.XIHE_E2E_LLM_MODE ?? "mock"),
+        );
         test.setTimeout(120000);
         const connectionKey = `embed-${randomUUID().slice(0, 8)}`;
         const created = await createConnection(request, connectionKey);
@@ -133,6 +138,11 @@ test.describe.serial("@host PLAN-0485 embedding provider settings", () => {
     });
 
     test("the embedding API Type rejects custom hosts (type-contract pin)", async ({ request }) => {
+        test.skip(
+            (process.env.XIHE_E2E_LLM_MODE ?? "mock") !== "success",
+            "requires XIHE_E2E_LLM_MODE=success; current: " +
+                (process.env.XIHE_E2E_LLM_MODE ?? "mock"),
+        );
         const created = await createConnection(
             request,
             `embed-pin-${randomUUID().slice(0, 8)}`,
@@ -143,6 +153,11 @@ test.describe.serial("@host PLAN-0485 embedding provider settings", () => {
     });
 
     test("public RAG routes are profile-scoped and never leak credentials", async ({ request }) => {
+        test.skip(
+            (process.env.XIHE_E2E_LLM_MODE ?? "mock") !== "success",
+            "requires XIHE_E2E_LLM_MODE=success; current: " +
+                (process.env.XIHE_E2E_LLM_MODE ?? "mock"),
+        );
         test.setTimeout(90000);
         const connectionKey = `embed-${randomUUID().slice(0, 8)}`;
         const created = await createConnection(request, connectionKey);

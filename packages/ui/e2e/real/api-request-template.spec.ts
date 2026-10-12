@@ -35,6 +35,11 @@ for (const wire of cases) {
             page,
             request,
         }) => {
+            test.skip(
+                (process.env.XIHE_E2E_LLM_MODE ?? "mock") !== "success",
+                "requires XIHE_E2E_LLM_MODE=success (provider wire); current: " +
+                    (process.env.XIHE_E2E_LLM_MODE ?? "mock"),
+            );
             test.setTimeout(60000);
             const observed: Record<string, unknown>[] = [];
             const paths: string[] = [];

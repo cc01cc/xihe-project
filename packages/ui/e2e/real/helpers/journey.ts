@@ -277,6 +277,104 @@ export function seedPage(page: Page, ctx: JourneyContext): void {
 }
 
 /**
+ * PLAN-0439: chat admission requires an explicit Session binding — a visible
+ * READY chat connection at the pinned revision plus the template pin triple.
+ * Specs written before the API-native runtime created raw Sessions, so the
+ * send path binds the active session first. Idempotent: a bound session is
+ * left untouched, and the fixture connection is created once per workspace.
+ */
+export async function ensureChatBinding(page: Page, sessionId: string): Promise<void> {
+    // PLAN-0439: bound sessions dispatch through the connection, so the
+    // fixture connection must point at a reachable OpenAI-compatible endpoint.
+    // The host runner serves one for every mode (fake-llm fixture).
+    const fakeLlmPort = process.env.XIHE_FAKE_LLM_PORT;
+    const baseUrl = fakeLlmPort
+        ? `http://127.0.0.1:${fakeLlmPort}/openai/v1`
+        : "https://provider.invalid/v1";
+    const outcome = await page.evaluate(
+        async ({ sid, baseUrl: chatBaseUrl }) => {
+            const token = localStorage.getItem("xihe-token") ?? "";
+            const headers: Record<string, string> = {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+            };
+            const session = await (await fetch(`/api/v1/sessions/${sid}`, { headers })).json();
+            if (session?.providerConnectionId) return "bound";
+            const list = await (await fetch("/api/v1/provider-connections", { headers })).json();
+            type ConnectionView = {
+                id: string;
+                providerId: string;
+                revision: number;
+                enabled: boolean;
+                status: string;
+                operation?: string;
+                manualModels?: string[];
+            };
+            const modelName = session?.modelName || "wire-model";
+            let connection: ConnectionView | undefined = (
+                (list?.connections ?? []) as ConnectionView[]
+            ).find((item) => item.enabled && item.status === "READY" && item.operation === "chat");
+            if (!connection) {
+                const created = await fetch("/api/v1/provider-connections", {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify({
+                        providerId: "custom-openai-compatible",
+                        apiTypeId: "openai-chat-completions",
+                        apiTypeVersion: 1,
+                        apiKey: "e2e-chat-binding-fixture",
+                        connectionKey: "e2e-chat",
+                        label: "E2E chat binding",
+                        scope: "USER",
+                        baseUrl: "https://provider.invalid/v1",
+                        modelDiscovery: "manual",
+                        manualModels: [modelName],
+                        baseUrl: chatBaseUrl,
+                    }),
+                });
+                if (!created.ok) return `create ${created.status} ${await created.text()}`;
+                const createdConnection = (await created.json()) as ConnectionView;
+                const verified = await fetch(
+                    `/api/v1/provider-connections/${createdConnection.id}/verify`,
+                    { method: "POST", headers },
+                );
+                if (!verified.ok) return `verify ${verified.status} ${await verified.text()}`;
+                connection = ((await verified.json()) as { connection: ConnectionView }).connection;
+            }
+            // Manual discovery gates dispatch on the registered model set.
+            if (!(connection.manualModels ?? []).includes(modelName)) {
+                const patched = await fetch(`/api/v1/provider-connections/${connection.id}`, {
+                    method: "PATCH",
+                    headers,
+                    body: JSON.stringify({
+                        manualModels: [...(connection.manualModels ?? []), modelName],
+                        expectedRevision: connection.revision,
+                    }),
+                });
+                if (!patched.ok) return `models ${patched.status} ${await patched.text()}`;
+                connection = (await patched.json()) as ConnectionView;
+            }
+            const bound = await fetch(`/api/v1/sessions/${sid}`, {
+                method: "PATCH",
+                headers,
+                body: JSON.stringify({
+                    providerConnectionId: connection.id,
+                    modelProvider: connection.providerId,
+                    modelName,
+                    connectionRevision: connection.revision,
+                }),
+            });
+            if (!bound.ok) return `bind ${bound.status} ${await bound.text()}`;
+            return "bound-now";
+        },
+        { sid: sessionId, baseUrl },
+    );
+    if (outcome !== "bound" && outcome !== "bound-now") {
+        throw new Error(`ensureChatBinding failed: ${outcome}`);
+    }
+}
+
+/**
  * Send a chat message with the two known robustness hazards handled:
  *  - 新建对话 switches sessions asynchronously and clears the input — retry
  *    the fill until the send button reflects the non-empty input;
@@ -285,6 +383,10 @@ export function seedPage(page: Page, ctx: JourneyContext): void {
  *    user bubble appears.
  */
 export async function sendChat(page: Page, text: string): Promise<void> {
+    const bound = page.url().match(/\/chat\/([0-9a-f-]{36})/i);
+    if (bound) {
+        await ensureChatBinding(page, bound[1]);
+    }
     const input = page.locator('[data-testid="chat-input"]'),
         send = page.locator('[data-testid="chat-send-button"]');
     // Each retry re-fills: a stale Vue mount (session switch / remount after
@@ -303,6 +405,12 @@ export async function sendChat(page: Page, text: string): Promise<void> {
         .waitFor({ state: "detached", timeout: 8000 })
         .catch(() => {});
     for (let i = 0; i < 10; i++) {
+        // The session may appear only after the first click (UI auto-create),
+        // so re-resolve and bind the active session on every attempt.
+        const active = page.url().match(/\/chat\/([0-9a-f-]{36})/i);
+        if (active) {
+            await ensureChatBinding(page, active[1]).catch(() => {});
+        }
         await send.click();
         try {
             await expect(

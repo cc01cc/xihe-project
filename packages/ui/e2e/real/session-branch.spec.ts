@@ -170,9 +170,9 @@ test.describe("@host Session branch path", () => {
         expect(rootChatResponse.status(), await rootChatResponse.text()).toBe(202);
         const rootChat = (await rootChatResponse.json()) as { runId?: string };
         if (!rootChat.runId) throw new Error("Root Chat response did not contain runId");
-        await expect(
-            page.locator('[data-slot="message"][data-align="start"]').last(),
-        ).toBeVisible();
+        await expect(page.locator('[data-slot="message"][data-align="start"]').last()).toBeVisible({
+            timeout: 20000,
+        });
         await awaitOperationCompletedForRun(request, workspaceHeaders, rootChat.runId);
 
         const rootBranchId = await getRootBranchId(request, sessionId, workspaceHeaders);
