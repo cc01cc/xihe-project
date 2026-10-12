@@ -109,7 +109,7 @@ class DomainSchemaMigrationTest {
                 versions.add(rs.getString(1));
             }
         }
-        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7", "8", "9", "27", "28", "33", "36", "37", "38", "39", "40", "41", "42", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58")),
+        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7", "8", "9", "27", "28", "33", "36", "37", "38", "39", "40", "41", "42", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60")),
                 "fresh database must apply the current migration chain: " + versions);
         assertEquals(versions.size(),
                 scalarInt("SELECT count(*) FROM flyway_schema_history WHERE success = true"));
@@ -211,6 +211,42 @@ class DomainSchemaMigrationTest {
         assertEquals(1, scalarInt(
                 "SELECT count(*) FROM flyway_schema_history WHERE version = '39' AND success = true"),
                 "V39 must be recorded as applied");
+    }
+
+    /**
+     * PLAN-0489 决策 #7（V59）: the relaxed ck_chat_runs_origin accepts the
+     * scheduled wakeup carrier and still rejects unknown provenance values.
+     */
+    @Test
+    void v59AllowsScheduledChatRunOriginAndRejectsUnknownOrigin() throws SQLException {
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '59' AND success = true"),
+                "V59 must be recorded as applied");
+        UUID userId = UUID.randomUUID();
+        executeUpdate("INSERT INTO users (id, email, password_hash) VALUES ('" + userId
+                + "'::uuid, 'v59-" + userId + "@test.local', 'hash')");
+        UUID workspaceId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        UUID branchId = UUID.randomUUID();
+        executeUpdate("INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
+                + "'::uuid, 'v59-ws', '" + userId + "'::uuid)");
+        executeUpdate("INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('" + sessionId
+                + "'::uuid, '" + workspaceId + "'::uuid, '" + userId + "'::uuid, 'v59-session')");
+        executeUpdate("INSERT INTO session_branches (id, session_id, created_at) VALUES ('" + branchId
+                + "'::uuid, '" + sessionId + "'::uuid, NOW())");
+
+        executeUpdate("INSERT INTO chat_runs (id, session_id, user_id, workspace_id, idempotency_key, "
+                + "request_hash, status, origin, branch_id) VALUES ('" + UUID.randomUUID() + "'::uuid, '"
+                + sessionId + "'::uuid, '" + userId + "'::uuid, '" + workspaceId
+                + "'::uuid, 'v59-scheduled-run', 'v59-hash', 'accepted', 'scheduled', '"
+                + branchId + "'::uuid)");
+        assertThrows(SQLException.class, () -> executeUpdate(
+                "INSERT INTO chat_runs (id, session_id, user_id, workspace_id, idempotency_key, "
+                        + "request_hash, status, origin, branch_id) VALUES ('" + UUID.randomUUID() + "'::uuid, '"
+                        + sessionId + "'::uuid, '" + userId + "'::uuid, '" + workspaceId
+                        + "'::uuid, 'v59-bogus-run', 'v59-hash', 'accepted', 'bogus_origin', '"
+                        + branchId + "'::uuid)"),
+                "the relaxed origin CHECK must still reject values outside the allowed set");
     }
 
     private static void insertGrant(String source, UUID subjectId) throws SQLException {

@@ -157,10 +157,10 @@ class ScheduledTaskDispatcherTest {
     }
 
     @Test
-    void wakeup_start_unavailable_marks_missed_dispatch_failed() {
+    void wakeup_start_failure_marks_missed_dispatch_failed() {
         ScheduledTask task = task(ScheduledTask.TRIGGER_DELAY_ONCE, ScheduledTask.TARGET_SESSION_WAKEUP);
         when(sessionWakeupService.wakeup(anyString(), anyString(), anyString(), anyString(), anyString()))
-                .thenThrow(new SessionWakeupService.WakeupStartUnavailableException("pending decision"));
+                .thenThrow(new IllegalStateException("scheduled start handoff failed"));
 
         ScheduledTaskDispatcher.DispatchOutcome outcome = dispatcher.dispatch(task);
 

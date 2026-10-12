@@ -751,7 +751,7 @@ erDiagram
 | `operation_attempts` / `operation_events` | MCP 调用阶段与执行事实归 `mcp_attempts` / `mcp_dispatch_history`；审批归 `approval_requests` / `approval_history`；Job 状态变化归 `workspace_job_history`。 |
 | `operation_extensions` / `diagnostic_artifacts` | 不做跨域回填；按 owner 生命周期随对应 Session/Workspace 事实处理。受保护工件仍由其 domain-owned storage reference 管理。 |
 
-当前 schema 以本文件 §3.2–§3.6、§3.8–§3.9、`docs/api/openapi.yaml`、`docs/api/inventory.md` 与 V56 migration 为准。
+当前 schema 以本文件 §3.2–§3.6、§3.8–§3.10、`docs/api/openapi.yaml`、`docs/api/inventory.md` 与 V56/V58/V59/V60 migration 为准。
 ### 3.8 任务连续性（task_plans / task_items）
 
 **task_plans**（`V6`，Entity `entity/TaskPlan.java`）：一次 run 的目标导向计划（PLAN-276 M1）。
@@ -796,7 +796,7 @@ erDiagram
 | session_id | UUID | nullable FK `sessions(id) ON DELETE CASCADE` | session-less Job 为 NULL |
 | run_id | UUID | nullable FK `chat_runs(id) ON DELETE SET NULL` | run-scope 归属/收口键 |
 | tool_call_id | UUID | nullable | MCP 工具调用关联（decision #5 provenance） |
-| source | VARCHAR(32) | NOT NULL，`ui/agent/runtime/system/mcp` | — |
+| source | VARCHAR(32) | NOT NULL，`ui/agent/runtime/system/mcp/scheduled`（`scheduled` 为 PLAN-0489 定时任务 job_dispatch 来源） | — |
 | scope | VARCHAR(16) | NOT NULL，`ck_workspace_jobs_scope` | `run/session/workspace`（存活边界） |
 | idempotency_key | VARCHAR(128) | nullable | V36 语义迁入 |
 | input_hash | VARCHAR(64) | nullable | 同 key 异 hash → 409 |
@@ -824,7 +824,13 @@ erDiagram
 
 > 索引：`uq_workspace_job_history_job_sequence (job_id, sequence)`；`idx_workspace_job_history_job_created (job_id, created_at)`。
 
-## 4. 迁移对照（当前 active 升级链 V1~V56）
+### 3.10 定时任务（scheduled_tasks）
+
+**scheduled_tasks**（`V58`，Entity `scheduled/ScheduledTask.java`）：user/agent 可见的定时触发器（PLAN-0489，契约 PLAN-0486 spec §1/§4）。`trigger_kind` 拆分 cron（`cron_expr` 5 段、`timezone` 创建快照不可编辑）与 delay_once（`expires_at = created_at + 7d TTL`，无 cron_expr）；`target_kind` 拆分 session_wakeup（`target_session_id` 可空——硬删后置 NULL，扫描转 missed(target_gone)，B2）与 job_dispatch（`payload` JSONB，无 session/prompt）。`status` = `scheduled/firing/missed/expired/cancelled/completed`，`firing` 为 CAS 认领占位（B3）；`missed_count` = 连续 missed 轮次（E1，用户处置清零），`missed_reason` ∈ `target_gone/dispatch_failed/overdue_grace`。`user_id` 为创建 principal（human 或 agent 背后的 user 账户，FK NO ACTION）；`agent_principal_id`（`V60`，可空 FK→agent_principals，ON DELETE SET NULL）标注创建者是否 agent——AgentPrincipal 无独立 users 行，wire 读 DTO `createdBy`（名 + `type: human|agent`）按此列派生：非空→取 agent_principals.name + type=agent，空→users 投影 + type=human；agent principal 删除后列置 NULL、徽标降级 human。`V59` 放开 `chat_runs.origin` CHECK 加入 `scheduled`（空闲会话唤醒载体）。完整 DDL 与 CHECK 见迁移文件。
+
+> 索引：`idx_scheduled_tasks_due (next_fire_at) WHERE status='scheduled'`（due 扫描）；`idx_scheduled_tasks_workspace_created_at (workspace_id, created_at DESC)`（列表页）；`idx_scheduled_tasks_user_status (user_id, status) WHERE status IN ('scheduled','firing','missed')`（principal 配额计数）；`idx_scheduled_tasks_creator_principal (agent_principal_id, created_at DESC) WHERE agent_principal_id IS NOT NULL`（按创建 agent 回查，`V60`）。
+
+## 4. 迁移对照（当前 active 升级链 V1~V60）
 
 > PLAN-280 destructive rebaseline 取代了当时的历史链（旧 V2~V22/U6 移出 active classpath，仅 Git 历史可追溯）；V15 起的 V15~V41 均为当前 active 链的 post-rebaseline migrations。本节保留历史编号解释，不把两套编号混用；表内 V2/V3/V4/V30 的旧名属于历史迁移文件名与原表名（V33 改名后保留）。
 
@@ -880,6 +886,9 @@ erDiagram
 | V54 | `V54__workspace_job_history.sql` | 单 Job append-only transition history（PLAN-0465 T1.3 / decision #8）：六事件 `start/running/settle/cancel/orphaned/interrupted`，per-job `sequence` 唯一，FK 级联 | `workspace_job_history` |
 | V55 | `V55__audit_entries_view.sql` | 四域 Audit read-only view，不回填或改写 owner tables | `v_audit_entries` |
 | V56 | `V56__retire_operation_ledger.sql` | 先从 `workspace_jobs` 删除 `operation_item_id` FK/index/column，再按 FK 依赖次序删除六张 Ledger 历史表；V55 pre-DROP snapshot hash 与恢复演练见 `plans/PLAN-0467-xh-ledger-retirement/evidence/` | `workspace_jobs` / retired Ledger tables |
+| V58 | `V58__scheduled_tasks.sql` | 定时任务领域表（PLAN-0489 T1.1，契约 PLAN-0486 spec §1）：delay_once/cron 触发拆分、firing CAS 认领状态机、missed/expired 处置模型、三条 CHECK 组与 due/列表/principal 配额索引；无历史回填 | `scheduled_tasks` |
+| V59 | `V59__scheduled_chat_run_origin.sql` | 放开 `ck_chat_runs_origin` 加入 `scheduled`（PLAN-0489 决策 #7：空闲会话定时唤醒的 ChatRun 载体溯源）；不回填旧行 | `chat_runs` |
+| V60 | `V60__scheduled_task_creator_principal.sql` | `scheduled_tasks` 加 `agent_principal_id UUID REFERENCES agent_principals(id) ON DELETE SET NULL` + 部分索引（PLAN-0489 决策 #9 读端落地，用户裁定 2026-10-11；AgentPrincipal 无独立 users 行，需此列回溯创建者是否 agent，镜像 sessions V42）；新表无回填 | `scheduled_tasks` |
 
 ## 5. 本地查看与运维
 

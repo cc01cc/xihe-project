@@ -5,3 +5,7 @@ export function workspacePath(workspaceId: string): string {
 export function workspaceChatPath(workspaceId: string, sessionId: string): string {
     return `${workspacePath(workspaceId)}/chat/${encodeURIComponent(sessionId)}`;
 }
+
+export function workspaceScheduledTasksPath(workspaceId: string): string {
+    return `${workspacePath(workspaceId)}/scheduled-tasks`;
+}

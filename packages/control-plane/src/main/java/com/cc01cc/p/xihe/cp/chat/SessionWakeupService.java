@@ -2,16 +2,20 @@ package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
+import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionFollowUpItemRepository;
 import com.cc01cc.p.xihe.cp.service.BranchPathService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -21,35 +25,47 @@ import java.util.UUID;
  * <p>四语义落点：① target_gone（session 404/归档/外属归并）→ {@link TargetGoneException}；
  * ② busy（在途 Run 或未清空 follow-up 队列，镜像 {@code ChatSubmissionService}
  * 两个 admission 门的只读预检）→ 复用 {@link FollowUpQueueService#enqueue} 既有
- * 公共入队路径顺延，不计 missed；③ 空闲会话的「以 prompt 启动 ChatRun」执行
- * handoff（{@code ChatController.execAsync}）目前是 controller 私有路径且
- * {@code POST /api/v1/chat} 有 SSE 订阅门——本波次无法在不破坏边界的情况下内部
- * 复用，抛 {@link WakeupStartUnavailableException} 由分派器按
- * missed(dispatch_failed) 可见收口（PLAN-0489 实施报告：待决策，建议抽
- * ChatRunDispatchService）；④ 其余内部错误原样抛出（CpApiException/RuntimeException）
- * 由分派器转 missed(dispatch_failed)。</p>
+ * 公共入队路径顺延，不计 missed；③ 空闲会话（PLAN-0489 决策 #7）→ 经
+ * {@link ChatSubmissionService#createScheduled} 落 origin=scheduled 的 ChatRun +
+ * user Message 载体，再以 {@link ScheduledRunDispatchRequestedEvent} 同步事件交给
+ * {@code ChatController.dispatchScheduledRun} 走 headless lease/registry/execAsync
+ * 执行链（与 spawn 分派同构，不经过 POST /api/v1/chat 的 SSE 订阅门）；
+ * ④ 其余内部错误原样抛出（CpApiException/RuntimeException）由分派器转
+ * missed(dispatch_failed)。</p>
  */
 @Service
 public class SessionWakeupService {
 
     private static final Logger logger = LoggerFactory.getLogger(SessionWakeupService.class);
 
+    /** Scheduled wakeups mirror the follow-up idle path: no tool surface unless the run expands it. */
+    private static final String SCHEDULED_TOOL_MODE = "none";
+
     private final SessionService sessionService;
     private final ChatRunRepository chatRunRepository;
     private final SessionFollowUpItemRepository followUpItemRepository;
     private final FollowUpQueueService followUpQueueService;
     private final BranchPathService branchPathService;
+    private final ChatSubmissionService chatSubmissionService;
+    private final ApplicationEventPublisher eventPublisher;
+    private final ObjectMapper objectMapper;
 
     public SessionWakeupService(SessionService sessionService,
                                 ChatRunRepository chatRunRepository,
                                 SessionFollowUpItemRepository followUpItemRepository,
                                 FollowUpQueueService followUpQueueService,
-                                BranchPathService branchPathService) {
+                                BranchPathService branchPathService,
+                                ChatSubmissionService chatSubmissionService,
+                                ApplicationEventPublisher eventPublisher,
+                                ObjectMapper objectMapper) {
         this.sessionService = sessionService;
         this.chatRunRepository = chatRunRepository;
         this.followUpItemRepository = followUpItemRepository;
         this.followUpQueueService = followUpQueueService;
         this.branchPathService = branchPathService;
+        this.chatSubmissionService = chatSubmissionService;
+        this.eventPublisher = eventPublisher;
+        this.objectMapper = objectMapper;
     }
 
     /** started = 已创建 ChatRun 载体；deferred = busy 顺延入 follow-up 队列（不计 missed）。 */
@@ -70,17 +86,11 @@ public class SessionWakeupService {
         }
     }
 
-    /** 空闲会话的启动 handoff 待决策（见类注释③）——fail-closed，不制造僵尸 Run。 */
-    public static class WakeupStartUnavailableException extends RuntimeException {
-        public WakeupStartUnavailableException(String detail) {
-            super(detail);
-        }
-    }
-
     public WakeupResult wakeup(String sessionId, String userId, String workspaceId,
                                String prompt, String idempotencyKey) {
+        Session session;
         try {
-            sessionService.requireCurrent(sessionId, userId, workspaceId);
+            session = sessionService.requireCurrent(sessionId, userId, workspaceId);
         } catch (CpApiException e) {
             if (HttpStatus.NOT_FOUND.equals(e.getStatus())) {
                 throw new TargetGoneException("Scheduled session_wakeup target session is gone: " + sessionId, e);
@@ -95,11 +105,7 @@ public class SessionWakeupService {
         boolean queueOutstanding = followUpItemRepository.countBySessionIdAndStatusIn(
                 sessionId, SessionFollowUpItemRepository.OUTSTANDING_STATUSES) > 0;
         if (!activeRun && !queueOutstanding) {
-            throw new WakeupStartUnavailableException(
-                    "Scheduled session_wakeup start path is pending decision (PLAN-0489 report): "
-                            + "the ChatRun execution handoff is ChatController-private and the HTTP "
-                            + "chat entry requires a live SSE subscription; no internal start path "
-                            + "can be reused without extracting an internal dispatch service");
+            return startScheduledRun(session, sessionId, userId, workspaceId, prompt, idempotencyKey);
         }
 
         String branchId = branchPathService.ensureRootBranchId(sessionId);
@@ -122,5 +128,48 @@ public class SessionWakeupService {
         logger.info("[LIFECYCLE] service=cp event=session_wakeup_deferred sessionId={} reason=busy",
                 sessionId);
         return WakeupResult.deferred();
+    }
+
+    /**
+     * PLAN-0489 决策 #7: idle path — persist the scheduled ChatRun carrier through
+     * the existing submission state machine, then hand off to the headless
+     * dispatch chain via the same synchronous event pattern as spawn Runs
+     * (no ChatController injection → no dependency cycle).
+     */
+    private WakeupResult startScheduledRun(Session session, String sessionId, String userId,
+                                           String workspaceId, String prompt, String idempotencyKey) {
+        String branchId = branchPathService.ensureRootBranchId(sessionId);
+        // 镜像 follow-up dispatch 的连接权威规则：Session 绑定了 Provider Connection
+        // 则 provider/model 由 Session 行决定；未绑定则不带提示（Agent 侧走默认）。
+        String provider = session.getProviderConnectionId() == null ? null : session.getModelProvider();
+        String model = session.getProviderConnectionId() == null ? null : session.getModelName();
+        String principalId = session.getAgentPrincipalId();
+        String runId = UUID.randomUUID().toString();
+        String requestHash = ChatRequestHash.calculate(objectMapper, prompt, provider, model,
+                SCHEDULED_TOOL_MODE, List.of(), Map.of(), principalId, branchId);
+        ChatSubmissionService.Submission created;
+        try {
+            created = chatSubmissionService.createScheduled(runId, sessionId, userId, workspaceId, branchId,
+                    idempotencyKey, requestHash, provider, model, SCHEDULED_TOOL_MODE,
+                    session.getProviderConnectionId(), session.getConnectionRevision(), null,
+                    UUID.randomUUID().toString(), prompt, "[]", List.of(), principalId);
+        } catch (CpApiException e) {
+            logger.warn("[LIFECYCLE] service=cp event=session_wakeup_start_rejected sessionId={} code={}",
+                    sessionId, e.getCode());
+            throw e;
+        }
+        try {
+            eventPublisher.publishEvent(new ScheduledRunDispatchRequestedEvent(sessionId,
+                    created.run().getId().toString()));
+        } catch (RuntimeException e) {
+            // 与 spawn 分派（AgentSpawnExecutionService.execute）同语义：发布失败只留痕，
+            // 已提交的 accepted Run 由后续 reconciliation/终态路径收口。
+            logger.error("[LIFECYCLE] service=cp event=session_wakeup_dispatch_failed sessionId={} "
+                    + "runId={} failureType={}", sessionId, created.run().getId(),
+                    e.getClass().getSimpleName(), e);
+        }
+        logger.info("[LIFECYCLE] service=cp event=session_wakeup_started sessionId={} runId={}",
+                sessionId, created.run().getId());
+        return WakeupResult.started(created.run().getId());
     }
 }

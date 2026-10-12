@@ -2,15 +2,21 @@ package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
+import com.cc01cc.p.xihe.cp.entity.ChatRun;
+import com.cc01cc.p.xihe.cp.entity.Message;
+import com.cc01cc.p.xihe.cp.entity.MessageRole;
+import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionFollowUpItemRepository;
 import com.cc01cc.p.xihe.cp.service.BranchPathService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 
 import java.util.List;
@@ -20,10 +26,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -31,7 +39,8 @@ import static org.mockito.Mockito.when;
 
 /**
  * PLAN-0489 T1.3：session_wakeup 适配——target_gone（404 归并）、busy→follow-up
- * 既有入队路径、空闲会话 fail-closed（待决策 handoff）、enqueue 冲突原样传播。
+ * 既有入队路径、空闲会话（决策 #7）创建 origin=scheduled 载体并触发 headless
+ * 分派事件、enqueue 冲突原样传播。
  */
 class SessionWakeupServiceTest {
 
@@ -39,12 +48,15 @@ class SessionWakeupServiceTest {
     private static final String USER_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
     private static final String WORKSPACE_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc";
     private static final String BRANCH_ID = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    private static final String RUN_ID = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
 
     private SessionService sessionService;
     private ChatRunRepository chatRunRepository;
     private SessionFollowUpItemRepository followUpItemRepository;
     private FollowUpQueueService followUpQueueService;
     private BranchPathService branchPathService;
+    private ChatSubmissionService chatSubmissionService;
+    private ApplicationEventPublisher eventPublisher;
     private SessionWakeupService service;
 
     @BeforeEach
@@ -54,8 +66,11 @@ class SessionWakeupServiceTest {
         followUpItemRepository = Mockito.mock(SessionFollowUpItemRepository.class);
         followUpQueueService = Mockito.mock(FollowUpQueueService.class);
         branchPathService = Mockito.mock(BranchPathService.class);
+        chatSubmissionService = Mockito.mock(ChatSubmissionService.class);
+        eventPublisher = Mockito.mock(ApplicationEventPublisher.class);
         service = new SessionWakeupService(sessionService, chatRunRepository,
-                followUpItemRepository, followUpQueueService, branchPathService);
+                followUpItemRepository, followUpQueueService, branchPathService,
+                chatSubmissionService, eventPublisher, new ObjectMapper());
         when(chatRunRepository.existsBySessionIdAndStatusIn(anyString(), anyCollection()))
                 .thenReturn(false);
         when(followUpItemRepository.countBySessionIdAndStatusIn(anyString(), anyCollection()))
@@ -87,11 +102,53 @@ class SessionWakeupServiceTest {
     }
 
     @Test
-    void free_session_fails_closed_start_unavailable_pending_decision() {
-        assertThrows(SessionWakeupService.WakeupStartUnavailableException.class,
-                () -> service.wakeup(SESSION_ID, USER_ID, WORKSPACE_ID, "hi", "sched-wakeup-1"));
+    void free_session_creates_scheduled_run_and_requests_dispatch() {
+        Session session = new Session(WORKSPACE_ID, USER_ID, "wakeup target");
+        when(sessionService.requireCurrent(SESSION_ID, USER_ID, WORKSPACE_ID)).thenReturn(session);
+        when(branchPathService.ensureRootBranchId(SESSION_ID)).thenReturn(BRANCH_ID);
+        when(chatSubmissionService.createScheduled(anyString(), anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyString(), any(), any(), eq("none"), any(), any(),
+                any(), anyString(), eq("hi"), eq("[]"), eq(List.of()), any()))
+                .thenAnswer(invocation -> {
+                    String runId = invocation.getArgument(0);
+                    ChatRun scheduledRun = new ChatRun(runId, SESSION_ID, USER_ID, WORKSPACE_ID,
+                            "sched-wakeup-1", "hash", null, null, "none", "accepted");
+                    scheduledRun.setOrigin(ChatRun.ORIGIN_SCHEDULED);
+                    Message userMessage = new Message(SESSION_ID, MessageRole.USER, "hi");
+                    return new ChatSubmissionService.Submission(scheduledRun, userMessage);
+                });
+
+        SessionWakeupService.WakeupResult result =
+                service.wakeup(SESSION_ID, USER_ID, WORKSPACE_ID, "hi", "sched-wakeup-1");
+
+        assertTrue(result.started());
+        ArgumentCaptor<String> runIdCaptor = ArgumentCaptor.forClass(String.class);
+        verify(chatSubmissionService).createScheduled(runIdCaptor.capture(), eq(SESSION_ID), eq(USER_ID),
+                eq(WORKSPACE_ID), eq(BRANCH_ID), eq("sched-wakeup-1"), anyString(), any(), any(),
+                eq("none"), any(), any(), isNull(), anyString(), eq("hi"), eq("[]"), eq(List.of()), any());
+        assertEquals(runIdCaptor.getValue(), result.runId().toString(),
+                "started runId must be the persisted scheduled carrier");
+        verify(eventPublisher).publishEvent(new ScheduledRunDispatchRequestedEvent(SESSION_ID,
+                runIdCaptor.getValue()));
         verify(followUpQueueService, never()).enqueue(anyString(), anyString(), anyString(),
                 anyString(), any());
+        assertNull(TenantContext.getUserId(), "idle start path must not leak tenant context");
+    }
+
+    @Test
+    void free_session_start_rejection_propagates_for_dispatcher_classification() {
+        Session session = new Session(WORKSPACE_ID, USER_ID, "wakeup target");
+        when(sessionService.requireCurrent(SESSION_ID, USER_ID, WORKSPACE_ID)).thenReturn(session);
+        when(branchPathService.ensureRootBranchId(SESSION_ID)).thenReturn(BRANCH_ID);
+        when(chatSubmissionService.createScheduled(anyString(), anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyString(), any(), any(), any(), any(), any(), any(),
+                anyString(), anyString(), anyString(), any(), any()))
+                .thenThrow(new CpApiException(HttpStatus.CONFLICT, "CHAT_IN_PROGRESS", "active run"));
+
+        CpApiException error = assertThrows(CpApiException.class,
+                () -> service.wakeup(SESSION_ID, USER_ID, WORKSPACE_ID, "hi", "sched-wakeup-1"));
+        assertEquals("CHAT_IN_PROGRESS", error.getCode());
+        verify(eventPublisher, never()).publishEvent(any(ScheduledRunDispatchRequestedEvent.class));
     }
 
     @Test
@@ -113,6 +170,9 @@ class SessionWakeupServiceTest {
         assertEquals("none", request.getValue().toolMode());
         assertEquals(List.of(), request.getValue().attachments());
         assertNull(TenantContext.getUserId(), "tenant context must be cleared after enqueue");
+        verify(chatSubmissionService, never()).createScheduled(anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any(), any(),
+                any(), anyString(), anyString(), anyString(), any(), any());
     }
 
     @Test

@@ -40,6 +40,11 @@ const router = createRouter({
                     component: () =>
                         import("../features/workspace/pages/WorkspaceEnvironmentView.vue"),
                 },
+                {
+                    path: "scheduled-tasks",
+                    name: "workspace-scheduled-tasks",
+                    component: () => import("../features/workspace/pages/ScheduledTasksView.vue"),
+                },
             ],
         },
         {

@@ -51,6 +51,10 @@ import type {
     WorkspaceStorageMode,
     WorkspaceCapabilityPreflight,
     WorkspaceDirectAttachExecutionMode,
+    ScheduledTask,
+    ScheduledTaskCreateRequest,
+    ScheduledTaskDisposeResult,
+    ScheduledTaskListPage,
 } from "../types";
 
 const API_BASE = "/api/v1";
@@ -1103,6 +1107,7 @@ const workspaceEventKinds = [
     "file_changed",
     "snapshot_required",
     "workspace_event_error",
+    "scheduled_tasks_changed",
     "heartbeat",
 ] as const;
 
@@ -2012,6 +2017,64 @@ export const api = {
         return request<WorkspaceJob[]>(`/workspaces/${encodeURIComponent(wsId)}/jobs`, {
             headers: workspaceHeaders(wsId),
         });
+    },
+    // PLAN-0489 T2.1: workspace scheduled tasks (openapi scheduled-tasks 5 routes).
+    listScheduledTasks(
+        wsId: string,
+        options: { page?: number; size?: number } = {},
+    ): Promise<ScheduledTaskListPage> {
+        const params = new URLSearchParams();
+        if (options.page !== undefined) params.set("page", String(options.page));
+        if (options.size !== undefined) params.set("size", String(options.size));
+        const query = params.toString();
+        return request<ScheduledTaskListPage>(
+            `/workspaces/${encodeURIComponent(wsId)}/scheduled-tasks${query ? `?${query}` : ""}`,
+            { headers: workspaceHeaders(wsId) },
+        );
+    },
+    createScheduledTask(wsId: string, body: ScheduledTaskCreateRequest): Promise<ScheduledTask> {
+        return request<ScheduledTask>(`/workspaces/${encodeURIComponent(wsId)}/scheduled-tasks`, {
+            method: "POST",
+            headers: workspaceHeaders(wsId),
+            body: JSON.stringify(body),
+        });
+    },
+    getScheduledTask(wsId: string, taskId: string): Promise<ScheduledTask> {
+        return request<ScheduledTask>(
+            `/workspaces/${encodeURIComponent(wsId)}/scheduled-tasks/${encodeURIComponent(taskId)}`,
+            { headers: workspaceHeaders(wsId) },
+        );
+    },
+    /** scheduled→cancelled; missed/expired use removeScheduledTask (409 points there). */
+    deleteScheduledTask(wsId: string, taskId: string): Promise<ScheduledTaskDisposeResult> {
+        return request<ScheduledTaskDisposeResult>(
+            `/workspaces/${encodeURIComponent(wsId)}/scheduled-tasks/${encodeURIComponent(taskId)}`,
+            { method: "DELETE", headers: workspaceHeaders(wsId) },
+        );
+    },
+    /** One-shot manual rerun of a missed/expired task; returns the refreshed task view. */
+    rerunScheduledTask(wsId: string, taskId: string): Promise<ScheduledTask> {
+        return request<ScheduledTask>(
+            `/workspaces/${encodeURIComponent(wsId)}/scheduled-tasks/${encodeURIComponent(taskId)}/rerun`,
+            { method: "POST", headers: workspaceHeaders(wsId) },
+        );
+    },
+    /** missed/expired→cancelled, idempotent (`200 {changed:false}` when already cancelled). */
+    removeScheduledTask(wsId: string, taskId: string): Promise<ScheduledTaskDisposeResult> {
+        return request<ScheduledTaskDisposeResult>(
+            `/workspaces/${encodeURIComponent(wsId)}/scheduled-tasks/${encodeURIComponent(taskId)}/remove`,
+            { method: "POST", headers: workspaceHeaders(wsId) },
+        );
+    },
+    postponeScheduledTask(wsId: string, taskId: string, at: string): Promise<ScheduledTask> {
+        return request<ScheduledTask>(
+            `/workspaces/${encodeURIComponent(wsId)}/scheduled-tasks/${encodeURIComponent(taskId)}/postpone`,
+            {
+                method: "POST",
+                headers: workspaceHeaders(wsId),
+                body: JSON.stringify({ at }),
+            },
+        );
     },
     /**
      * Start a Workspace Job (202 new / 200 idempotent replay). The `Idempotency-Key` header is

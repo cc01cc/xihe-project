@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.scheduled;
 
+import com.cc01cc.p.xihe.cp.event.WorkspaceEventManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -26,13 +27,15 @@ import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
  * PLAN-0489 T1.2：扫描主循环——expired 优先、grace 下界、CAS 认领放弃、
- * firing 占位重叠仅日志、executor 拒绝/异常/超时 → missed(dispatch_failed)。
+ * firing 占位重叠仅日志、executor 拒绝/异常/超时 → missed(dispatch_failed)；
+ * T1.5：状态改动 → scheduled_tasks_changed workspace 失效事件（无改动不发）。
  */
 class ScheduledTaskScanServiceTest {
 
@@ -40,15 +43,17 @@ class ScheduledTaskScanServiceTest {
 
     private ScheduledTaskRepository repository;
     private ScheduledTaskDispatcher dispatcher;
+    private WorkspaceEventManager eventManager;
     private ScheduledTaskScanService scanService;
 
     @BeforeEach
     void setUp() {
         repository = Mockito.mock(ScheduledTaskRepository.class);
         dispatcher = Mockito.mock(ScheduledTaskDispatcher.class);
+        eventManager = Mockito.mock(WorkspaceEventManager.class);
         // 内联 executor：提交即同步执行，whenComplete 在同线程完成，测试确定性。
         scanService = new ScheduledTaskScanService(
-                repository, dispatcher, Runnable::run, GRACE_MS, 60_000L);
+                repository, dispatcher, eventManager, Runnable::run, GRACE_MS, 60_000L);
         when(repository.expireDueOnceTasks(any())).thenReturn(0);
         when(repository.markOverdueMissed(anyString(), any(), anyString(), any())).thenReturn(0);
         when(repository.markStaleFiringMissed(any(), anyString(), any())).thenReturn(0);
@@ -151,6 +156,7 @@ class ScheduledTaskScanServiceTest {
         when(repository.findByStatusAndNextFireAtBeforeOrderByNextFireAtAsc(anyString(), any()))
                 .thenReturn(List.of(task));
         ScheduledTaskScanService rejecting = new ScheduledTaskScanService(repository, dispatcher,
+                eventManager,
                 command -> {
                     throw new RejectedExecutionException("scheduled dispatch queue is full");
                 }, GRACE_MS, 60_000L);
@@ -174,6 +180,7 @@ class ScheduledTaskScanServiceTest {
 
         verify(repository).markMissed(eq(task.getId()), eq(List.of(ScheduledTask.STATUS_FIRING)),
                 eq(ScheduledTask.REASON_DISPATCH_FAILED), any(Instant.class));
+        verify(eventManager).publishScheduledTasksChanged(task.getWorkspaceId().toString());
     }
 
     @Test
@@ -191,7 +198,7 @@ class ScheduledTaskScanServiceTest {
         }).when(dispatcher).dispatch(any());
         ExecutorService pool = Executors.newSingleThreadExecutor();
         ScheduledTaskScanService shortTimeout = new ScheduledTaskScanService(repository, dispatcher,
-                pool::execute, GRACE_MS, 50L);
+                eventManager, pool::execute, GRACE_MS, 50L);
         try {
             shortTimeout.scanScheduledTasks();
             verify(repository, timeout(2_000)).markMissed(eq(task.getId()),
@@ -212,9 +219,68 @@ class ScheduledTaskScanServiceTest {
         assertTrue(scanService.submitDispatch(task),
                 "inline executor must accept the dispatch");
         ScheduledTaskScanService rejecting = new ScheduledTaskScanService(repository, dispatcher,
+                eventManager,
                 command -> {
                     throw new RejectedExecutionException("full");
                 }, GRACE_MS, 60_000L);
         assertFalse(rejecting.submitDispatch(task));
+    }
+
+    // ── T1.5 事件发射（scheduled_tasks_changed） ───────────────────────────
+
+    @Test
+    void scan_publishes_changed_event_to_distinct_affected_workspaces() {
+        UUID shared = UUID.randomUUID();
+        UUID expiredOnly = UUID.randomUUID();
+        UUID overdueOnly = UUID.randomUUID();
+        UUID staleOnly = UUID.randomUUID();
+        when(repository.findExpiringWorkspaceIds(any())).thenReturn(List.of(shared, expiredOnly));
+        when(repository.expireDueOnceTasks(any())).thenReturn(2);
+        when(repository.findOverdueWorkspaceIds(anyString(), any())).thenReturn(List.of(shared, overdueOnly));
+        when(repository.markOverdueMissed(anyString(), any(), anyString(), any())).thenReturn(1);
+        when(repository.findStaleFiringWorkspaceIds(any())).thenReturn(List.of(staleOnly));
+        when(repository.markStaleFiringMissed(any(), anyString(), any())).thenReturn(1);
+
+        scanService.scanScheduledTasks();
+
+        verify(eventManager).publishScheduledTasksChanged(expiredOnly.toString());
+        verify(eventManager).publishScheduledTasksChanged(overdueOnly.toString());
+        verify(eventManager).publishScheduledTasksChanged(staleOnly.toString());
+        verify(eventManager, times(1)).publishScheduledTasksChanged(shared.toString());
+    }
+
+    @Test
+    void scan_publishes_nothing_when_no_rows_changed() {
+        scanService.scanScheduledTasks();
+
+        verify(eventManager, never()).publishScheduledTasksChanged(anyString());
+    }
+
+    @Test
+    void dispatcher_missed_outcome_publishes_changed_event() {
+        ScheduledTask task = dueTask(Instant.now().minusSeconds(5));
+        when(repository.claimToFiring(eq(task.getId()), any())).thenReturn(1);
+        when(repository.findByStatusAndNextFireAtBeforeOrderByNextFireAtAsc(anyString(), any()))
+                .thenReturn(List.of(task));
+        when(dispatcher.dispatch(any()))
+                .thenReturn(ScheduledTaskDispatcher.DispatchOutcome.MISSED_TARGET_GONE);
+
+        scanService.scanScheduledTasks();
+
+        verify(eventManager).publishScheduledTasksChanged(task.getWorkspaceId().toString());
+    }
+
+    @Test
+    void dispatch_success_publishes_changed_event() {
+        ScheduledTask task = dueTask(Instant.now().minusSeconds(5));
+        when(repository.claimToFiring(eq(task.getId()), any())).thenReturn(1);
+        when(repository.findByStatusAndNextFireAtBeforeOrderByNextFireAtAsc(anyString(), any()))
+                .thenReturn(List.of(task));
+        when(dispatcher.dispatch(any()))
+                .thenReturn(ScheduledTaskDispatcher.DispatchOutcome.DISPATCHED);
+
+        scanService.scanScheduledTasks();
+
+        verify(eventManager).publishScheduledTasksChanged(task.getWorkspaceId().toString());
     }
 }

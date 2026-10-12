@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.scheduled;
 
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -26,6 +27,36 @@ public interface ScheduledTaskRepository extends JpaRepository<ScheduledTask, UU
             String status, Instant before);
 
     long countByStatusAndNextFireAtBefore(String status, Instant before);
+
+    /** T1.4 列表页：workspace 倒序分页（idx_scheduled_tasks_workspace_created_at）。 */
+    List<ScheduledTask> findByWorkspaceIdOrderByCreatedAtDesc(UUID workspaceId, Pageable pageable);
+
+    /** T1.4 配额：workspace 总上限计数（活跃态 = scheduled/firing/missed，同 user 部分索引词汇）。 */
+    long countByWorkspaceIdAndStatusIn(UUID workspaceId, Collection<String> statuses);
+
+    /** T1.4 配额：principal 二级配额（0486 #9，按 user_id 计，活跃态）。 */
+    long countByWorkspaceIdAndUserIdAndStatusIn(UUID workspaceId, UUID userId,
+            Collection<String> statuses);
+
+    /**
+     * PLAN-0489 T1.5 事件面：与 {@link #expireDueOnceTasks} 同谓词的受影响
+     * distinct workspace_id 收集——update 前查询（同参数同一谓词，行只可能离开
+     * 集合不可能进入，查询集恒为实际更新行的超集，粗粒度失效事件多发无害）。
+     */
+    @Query("select distinct t.workspaceId from ScheduledTask t where t.status = 'scheduled' "
+            + "and t.triggerKind = 'delay_once' and t.expiresAt is not null and t.expiresAt <= :now")
+    List<UUID> findExpiringWorkspaceIds(@Param("now") Instant now);
+
+    /** T1.5 事件面：与 {@link #markOverdueMissed} 同谓词的受影响 distinct workspace_id。 */
+    @Query("select distinct t.workspaceId from ScheduledTask t where t.status = :expected "
+            + "and t.nextFireAt < :cutoff")
+    List<UUID> findOverdueWorkspaceIds(@Param("expected") String expected,
+                                       @Param("cutoff") Instant cutoff);
+
+    /** T1.5 事件面：与 {@link #markStaleFiringMissed} 同谓词的受影响 distinct workspace_id。 */
+    @Query("select distinct t.workspaceId from ScheduledTask t where t.status = 'firing' "
+            + "and t.updatedAt < :staleBefore")
+    List<UUID> findStaleFiringWorkspaceIds(@Param("staleBefore") Instant staleBefore);
 
     /**
      * PLAN-0489 §过期扫描：delay_once 超过 expires_at（同轮扫描先于 missed 判定，
@@ -66,10 +97,14 @@ public interface ScheduledTaskRepository extends JpaRepository<ScheduledTask, UU
             + "where t.id = :id and t.status = 'scheduled' and t.nextFireAt = :expectedNextFire")
     int claimToFiring(@Param("id") UUID id, @Param("expectedNextFire") Instant expectedNextFire);
 
-    /** 用户处置补跑（rerun）：missed/expired→firing 认领（T1.4 API 使用）。 */
+    /**
+     * 用户处置补跑（rerun）：missed/expired→firing 认领（T1.4 API 使用）。
+     * missed 计数随处置清零（0486 E1：missed_count=连续 missed 轮次，处置清零）。
+     */
     @Modifying
     @Transactional
-    @Query("update ScheduledTask t set t.status = 'firing', t.updatedAt = CURRENT_INSTANT "
+    @Query("update ScheduledTask t set t.status = 'firing', t.missedCount = 0, "
+            + "t.updatedAt = CURRENT_INSTANT "
             + "where t.id = :id and t.status in :expectedStatuses")
     int claimForRerun(@Param("id") UUID id,
                       @Param("expectedStatuses") Collection<String> expectedStatuses);
@@ -126,11 +161,15 @@ public interface ScheduledTaskRepository extends JpaRepository<ScheduledTask, UU
                             @Param("expectedStatuses") Collection<String> expectedStatuses,
                             @Param("at") Instant at);
 
-    /** 用户处置移除/删除：→ cancelled。 */
+    /**
+     * 用户处置移除/删除：→ cancelled；missed_count 随行清零
+     * （0486 §2 remove 语义；missed_reason/last_missed_at 保留为历史痕迹）。
+     */
     @Modifying
     @Transactional
     @Query("update ScheduledTask t set t.status = 'cancelled', t.cancelReason = :reason, "
-            + "t.updatedAt = CURRENT_INSTANT where t.id = :id and t.status in :expectedStatuses")
+            + "t.missedCount = 0, t.updatedAt = CURRENT_INSTANT "
+            + "where t.id = :id and t.status in :expectedStatuses")
     int markCancelled(@Param("id") UUID id,
                       @Param("expectedStatuses") Collection<String> expectedStatuses,
                       @Param("reason") String reason);

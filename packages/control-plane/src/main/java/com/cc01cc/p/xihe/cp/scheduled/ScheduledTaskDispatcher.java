@@ -69,10 +69,29 @@ public class ScheduledTaskDispatcher {
      * {@code nextFireAt} 即认领时读到的 occurrence（幂等键的 fire_at 来源）。
      */
     public DispatchOutcome dispatch(ScheduledTask task) {
+        return dispatch(task, idempotencyKey(task.getId(), task.getNextFireAt()));
+    }
+
+    /**
+     * PLAN-0489 T1.4（0486 §4 幂等键）：用户补跑分派——与扫描分派同一状态机回写，
+     * 但携带独立 retry 键 {@code sched:{task_id}:{fire_at_ms}:retry:{uuid}}，
+     * 防止与原 occurrence 的 job 幂等键碰撞（双击防护由 API 层 claimForRerun
+     * CAS 保证：第二次请求无 missed/expired 行可认领）。
+     */
+    public DispatchOutcome dispatchRerun(ScheduledTask task, String idempotencyKey) {
+        return dispatch(task, idempotencyKey);
+    }
+
+    /** retry 键：fire_at 取该任务当前（被补跑的）occurrence 毫秒 + 每次补跑新 UUID。 */
+    public static String rerunIdempotencyKey(UUID taskId, Instant fireAt) {
+        return "sched:" + taskId + ":" + fireAt.toEpochMilli() + ":retry:" + UUID.randomUUID();
+    }
+
+    private DispatchOutcome dispatch(ScheduledTask task, String idempotencyKey) {
         try {
             return switch (task.getTargetKind()) {
-                case ScheduledTask.TARGET_SESSION_WAKEUP -> dispatchSessionWakeup(task);
-                case ScheduledTask.TARGET_JOB_DISPATCH -> dispatchJob(task);
+                case ScheduledTask.TARGET_SESSION_WAKEUP -> dispatchSessionWakeup(task, idempotencyKey);
+                case ScheduledTask.TARGET_JOB_DISPATCH -> dispatchJob(task, idempotencyKey);
                 default -> settleMissed(task, ScheduledTask.REASON_DISPATCH_FAILED,
                         "unknown target kind: " + task.getTargetKind());
             };
@@ -90,7 +109,7 @@ public class ScheduledTaskDispatcher {
         return "sched:" + taskId + ":" + fireAt.toEpochMilli();
     }
 
-    private DispatchOutcome dispatchSessionWakeup(ScheduledTask task) {
+    private DispatchOutcome dispatchSessionWakeup(ScheduledTask task, String idempotencyKey) {
         if (task.getTargetSessionId() == null) {
             return settleMissed(task, ScheduledTask.REASON_TARGET_GONE,
                     "target session was hard-deleted (session_id NULL)");
@@ -102,7 +121,7 @@ public class ScheduledTaskDispatcher {
                     task.getUserId().toString(),
                     task.getWorkspaceId().toString(),
                     task.getPrompt(),
-                    idempotencyKey(task.getId(), task.getNextFireAt()));
+                    idempotencyKey);
         } catch (SessionWakeupService.TargetGoneException e) {
             logger.warn("[LIFECYCLE] service=cp event=scheduled_task_wakeup_target_gone "
                     + "taskId={} sessionId={}", task.getId(), task.getTargetSessionId());
@@ -122,7 +141,7 @@ public class ScheduledTaskDispatcher {
         return settleExecuted(task, null, DispatchOutcome.DEFERRED);
     }
 
-    private DispatchOutcome dispatchJob(ScheduledTask task) {
+    private DispatchOutcome dispatchJob(ScheduledTask task, String idempotencyKey) {
         JsonNode payload = task.getPayload();
         if (payload == null || !payload.isObject()) {
             return settleMissed(task, ScheduledTask.REASON_DISPATCH_FAILED,
@@ -148,7 +167,7 @@ public class ScheduledTaskDispatcher {
                     task.getWorkspaceId().toString(),
                     task.getUserId().toString(),
                     request,
-                    idempotencyKey(task.getId(), task.getNextFireAt()),
+                    idempotencyKey,
                     executionMode);
         } catch (CpApiException e) {
             logger.error("[LIFECYCLE] service=cp event=scheduled_task_job_dispatch_failed taskId={} "

@@ -144,6 +144,26 @@ public class ChatSubmissionService {
                 agentPrincipalId, true);
     }
 
+    /**
+     * PLAN-0489 决策 #7: durable ChatRun carrier for an idle-session scheduled
+     * wakeup — same atomic ChatRun + user Message persist as a user submission
+     * (status=accepted), provenance origin=scheduled, hung on the existing
+     * target Session (never a spawn child). Lease/registry handoff is owned by
+     * the dispatch caller, mirroring the spawn Run (leaseOwner stays null here).
+     */
+    @Transactional
+    public Submission createScheduled(String runId, String sessionId, String userId, String workspaceId,
+                                      String branchId, String idempotencyKey, String requestHash, String provider,
+                                      String model, String toolMode, String providerConnectionId,
+                                      Long connectionRevision, String leaseOwner, String requestId,
+                                      String content, String attachmentsJson, List<String> attachmentIds,
+                                      String agentPrincipalId) {
+        return persist(ChatRun.ORIGIN_SCHEDULED, runId, sessionId, userId, workspaceId,
+                branchId, idempotencyKey, requestHash, provider, model, toolMode, providerConnectionId,
+                connectionRevision, leaseOwner, requestId, content, attachmentsJson, attachmentIds,
+                agentPrincipalId, false);
+    }
+
     /** Persists an assistant response and links it to its Run in the existing order. */
     public String persistAssistantResponse(String sessionId, String runId, String assistantContent) {
         // Preserve the existing repository commit boundaries by keeping this method non-transactional.

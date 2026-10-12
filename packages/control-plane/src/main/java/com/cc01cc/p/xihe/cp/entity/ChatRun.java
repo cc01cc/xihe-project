@@ -24,6 +24,8 @@ public class ChatRun {
 
     public static final String ORIGIN_USER_SUBMISSION = "user_submission";
     public static final String ORIGIN_SPAWN = "spawn";
+    /** PLAN-0489 决策 #7: idle-session scheduled wakeup carrier (V59). */
+    public static final String ORIGIN_SCHEDULED = "scheduled";
 
     @Id
     @Column(name = "id", columnDefinition = "uuid")

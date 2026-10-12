@@ -29,6 +29,9 @@ import java.util.concurrent.atomic.AtomicLong;
 @Component
 public class WorkspaceEventManager {
 
+    /** PLAN-0489 T1.5：scheduled task 状态变化的粗粒度失效事件 kind（无 per-row payload）。 */
+    public static final String KIND_SCHEDULED_TASKS_CHANGED = "scheduled_tasks_changed";
+
     private static final long HEARTBEAT_INTERVAL_MS = 15_000L;
     private static final int MAX_SUBSCRIBERS_PER_WORKSPACE = 8;
     private static final Logger logger = LoggerFactory.getLogger(WorkspaceEventManager.class);
@@ -112,6 +115,11 @@ public class WorkspaceEventManager {
             send(channel, subscriber, event);
         }
         return event;
+    }
+
+    public WorkspaceEvent publishScheduledTasksChanged(String workspaceId) {
+        return publish(workspaceId, KIND_SCHEDULED_TASKS_CHANGED,
+                null, null, "control-plane", null, null);
     }
 
     public long currentSequence(String workspaceId) {
@@ -223,7 +231,8 @@ public class WorkspaceEventManager {
         if (!"workspace_status".equals(kind)
                 && !"file_changed".equals(kind)
                 && !"snapshot_required".equals(kind)
-                && !"workspace_event_error".equals(kind)) {
+                && !"workspace_event_error".equals(kind)
+                && !KIND_SCHEDULED_TASKS_CHANGED.equals(kind)) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Unsupported Workspace event kind");
         }
     }

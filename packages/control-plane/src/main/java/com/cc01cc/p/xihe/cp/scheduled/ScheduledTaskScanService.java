@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.scheduled;
 
+import com.cc01cc.p.xihe.cp.event.WorkspaceEventManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -9,7 +10,10 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executor;
@@ -43,6 +47,7 @@ public class ScheduledTaskScanService {
 
     private final ScheduledTaskRepository scheduledTaskRepository;
     private final ScheduledTaskDispatcher dispatcher;
+    private final WorkspaceEventManager workspaceEventManager;
     private final Executor dispatchExecutor;
     private final Duration grace;
     private final long dispatchTimeoutMs;
@@ -50,11 +55,13 @@ public class ScheduledTaskScanService {
     public ScheduledTaskScanService(
             ScheduledTaskRepository scheduledTaskRepository,
             ScheduledTaskDispatcher dispatcher,
+            WorkspaceEventManager workspaceEventManager,
             @Qualifier("scheduledDispatchExecutor") Executor dispatchExecutor,
             @Value("${cp.scheduled.grace-ms:600000}") long graceMs,
             @Value("${cp.scheduled.dispatch-timeout-ms:60000}") long dispatchTimeoutMs) {
         this.scheduledTaskRepository = scheduledTaskRepository;
         this.dispatcher = dispatcher;
+        this.workspaceEventManager = workspaceEventManager;
         this.dispatchExecutor = dispatchExecutor;
         this.grace = Duration.ofMillis(graceMs);
         this.dispatchTimeoutMs = dispatchTimeoutMs;
@@ -65,12 +72,29 @@ public class ScheduledTaskScanService {
     public void scanScheduledTasks() {
         Instant now = Instant.now();
         Instant graceCutoff = now.minus(grace);
+        Set<UUID> changedWorkspaces = new LinkedHashSet<>();
+        List<UUID> expiringWorkspaces = scheduledTaskRepository.findExpiringWorkspaceIds(now);
         int expired = scheduledTaskRepository.expireDueOnceTasks(now);
+        if (expired > 0) {
+            changedWorkspaces.addAll(expiringWorkspaces);
+        }
+        List<UUID> overdueWorkspaces = scheduledTaskRepository.findOverdueWorkspaceIds(
+                ScheduledTask.STATUS_SCHEDULED, graceCutoff);
         int overdue = scheduledTaskRepository.markOverdueMissed(
                 ScheduledTask.STATUS_SCHEDULED, graceCutoff,
                 ScheduledTask.REASON_OVERDUE_GRACE, now);
+        if (overdue > 0) {
+            changedWorkspaces.addAll(overdueWorkspaces);
+        }
+        List<UUID> staleFiringWorkspaces = scheduledTaskRepository.findStaleFiringWorkspaceIds(graceCutoff);
         int firingTimeouts = scheduledTaskRepository.markStaleFiringMissed(
                 graceCutoff, ScheduledTask.REASON_DISPATCH_FAILED, now);
+        if (firingTimeouts > 0) {
+            changedWorkspaces.addAll(staleFiringWorkspaces);
+        }
+        for (UUID workspaceId : changedWorkspaces) {
+            workspaceEventManager.publishScheduledTasksChanged(workspaceId.toString());
+        }
         List<ScheduledTask> due = scheduledTaskRepository
                 .findByStatusAndNextFireAtBeforeOrderByNextFireAtAsc(ScheduledTask.STATUS_SCHEDULED, now);
         int claimed = 0;
@@ -122,6 +146,9 @@ public class ScheduledTaskScanService {
         if (error == null) {
             logger.debug("[LIFECYCLE] service=cp event=scheduled_task_dispatch_settled taskId={} outcome={}",
                     task.getId(), outcome == null ? null : outcome.outcome());
+            // 任一 settle（DISPATCHED 成功→scheduled/completed，或 MISSED→missed）都是状态变化，
+            // 粗粒度失效事件统一通知 UI refetch（成功回写同样需推送，否则 completed 不实时）。
+            workspaceEventManager.publishScheduledTasksChanged(task.getWorkspaceId().toString());
             return;
         }
         Throwable cause = error instanceof CompletionException && error.getCause() != null
@@ -143,6 +170,8 @@ public class ScheduledTaskScanService {
         if (updated == 0) {
             logger.debug("[LIFECYCLE] service=cp event=scheduled_task_missed_settle_lost taskId={} "
                     + "failureType={}", task.getId(), cause.getClass().getSimpleName());
+            return;
         }
+        workspaceEventManager.publishScheduledTasksChanged(task.getWorkspaceId().toString());
     }
 }

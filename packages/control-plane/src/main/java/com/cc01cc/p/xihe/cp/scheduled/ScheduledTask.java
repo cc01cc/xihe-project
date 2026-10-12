@@ -14,12 +14,13 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * PLAN-0489 T1.2（contract: PLAN-0486 spec/scheduled-task.md v3.3 §1）：
+ * PLAN-0489 T1.2（contract: PLAN-0486 spec/scheduled-task.md v3.4 §1）：
  * user/agent 可见的定时触发器（delay_once + cron）。
  *
  * <p>{@code firing} 是 CAS 认领占位（0486 B3）：同一任务同一时刻至多一行在途；
  * {@code missed_count} 承载 E1 停摆语义（连续 missed 轮次，用户处置清零）；
- * {@code timezone} 为创建时快照，不可编辑（D3-A）。</p>
+ * {@code timezone} 为创建时快照，不可编辑（D3-A）；{@code agentPrincipalId}
+ * 为创建者归属（V60，非空 = agent 创建，FK ON DELETE SET NULL）。</p>
  */
 @Entity
 @Table(name = "scheduled_tasks")
@@ -48,6 +49,9 @@ public class ScheduledTask {
 
     @Column(name = "user_id", nullable = false, columnDefinition = "uuid")
     private UUID userId;
+
+    @Column(name = "agent_principal_id", columnDefinition = "uuid")
+    private UUID agentPrincipalId;
 
     @Column(name = "trigger_kind", nullable = false, length = 16)
     private String triggerKind;
@@ -126,6 +130,8 @@ public class ScheduledTask {
     public void setWorkspaceId(UUID workspaceId) { this.workspaceId = workspaceId; }
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
+    public UUID getAgentPrincipalId() { return agentPrincipalId; }
+    public void setAgentPrincipalId(UUID agentPrincipalId) { this.agentPrincipalId = agentPrincipalId; }
     public String getTriggerKind() { return triggerKind; }
     public void setTriggerKind(String triggerKind) { this.triggerKind = triggerKind; }
     public String getCronExpr() { return cronExpr; }

@@ -7,6 +7,7 @@ import { useSessionStore } from "../../../stores/session";
 import { useAuthStore } from "../../../stores/auth";
 import {
     Bot,
+    Clock,
     Code,
     FileDiff,
     FolderOpen,
@@ -17,7 +18,7 @@ import {
     Settings2,
     Upload,
 } from "@lucide/vue";
-import { workspaceChatPath } from "../../../lib/routes";
+import { workspaceChatPath, workspaceScheduledTasksPath } from "../../../lib/routes";
 
 const props = defineProps<{
     workspaceId: string;
@@ -73,6 +74,11 @@ function switchToChat() {
 function openEnvironment() {
     const id = props.workspaceId || auth.currentWorkspaceId;
     if (id) router.push(`/workspace/${id}/environment`);
+}
+
+function openScheduledTasks() {
+    const id = props.workspaceId || auth.currentWorkspaceId;
+    if (id) router.push(workspaceScheduledTasksPath(id));
 }
 
 function switchSession(id: string) {
@@ -210,6 +216,15 @@ function switchSession(id: string) {
                 @click="openEnvironment"
             >
                 环境
+            </button>
+            <button
+                data-testid="workspace-toolbar-scheduled-tasks"
+                class="inline-flex items-center gap-1 px-2 py-1 text-xs rounded border hover:bg-accent text-muted-foreground transition-colors"
+                :title="t('workspace.scheduledTasks.nav')"
+                @click="openScheduledTasks"
+            >
+                <Clock class="size-3" aria-hidden="true" />
+                {{ t("workspace.scheduledTasks.nav") }}
             </button>
             <button
                 data-testid="workspace-toolbar-settings"

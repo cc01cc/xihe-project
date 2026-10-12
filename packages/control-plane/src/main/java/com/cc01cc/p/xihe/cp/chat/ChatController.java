@@ -727,6 +727,58 @@ public class ChatController {
         }
     }
 
+    @EventListener
+    void onScheduledRunDispatchRequested(ScheduledRunDispatchRequestedEvent event) {
+        boolean dispatched = dispatchScheduledRun(event.runId());
+        logger.info("[LIFECYCLE] service=cp event=scheduled_dispatch_result sessionId={} runId={} dispatched={}",
+                event.sessionId(), event.runId(), dispatched);
+    }
+
+    /**
+     * PLAN-0489 决策 #7: dispatches a committed scheduled wakeup Run through the
+     * same local worker and lease path as spawn Runs. Unlike the spawn handoff
+     * the target is a normal Session (kind is not checked — only the origin,
+     * accepted status and Run/Session/user-Message consistency gate dispatch).
+     */
+    public boolean dispatchScheduledRun(String runId) {
+        ChatRunReadService.DispatchRun run = chatRunReadService.findDispatchRun(runId).orElse(null);
+        if (run == null || !ChatRun.ORIGIN_SCHEDULED.equals(run.origin()) || !"accepted".equals(run.status())) {
+            return false;
+        }
+        Session session;
+        try {
+            session = sessionService.requireCurrent(run.sessionId(), run.userId(), run.workspaceId());
+        } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
+            throw new IllegalStateException("Committed scheduled Session is no longer dispatchable", e);
+        }
+        MessageReadService.DispatchMessage userMessage = run.userMessageId() == null
+                ? null : messageReadService.findDispatchMessage(run.userMessageId()).orElse(null);
+        if (session == null || userMessage == null
+                || !run.id().equals(userMessage.runId())
+                || !run.sessionId().equals(userMessage.sessionId())
+                || !run.userId().equals(session.getUserId())
+                || !run.workspaceId().equals(session.getWorkspaceId())) {
+            throw new IllegalStateException("Committed scheduled Run is missing its Session or user Message");
+        }
+
+        String sessionId = run.sessionId();
+        if (activeRunRegistry.putIfAbsent(sessionId, runId) != null) {
+            return false;
+        }
+        if (!acquireLeaseForExistingRun(runId)) {
+            activeRunRegistry.remove(sessionId, runId);
+            return false;
+        }
+        try {
+            execAsync(sessionId, userMessage.content(), run.provider(), run.model(), run.toolMode(),
+                    Map.of(), List.of(), run.userId(), run.workspaceId(), runId, runId);
+            return true;
+        } catch (RuntimeException e) {
+            releaseRun(sessionId, runId, "scheduled_dispatch_handoff_failed");
+            throw e;
+        }
+    }
+
     private void execAsync(String sessionId, String content, String provider, String model, String toolMode,
                            Map<String, Integer> toolTimeouts,
                            List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachments,

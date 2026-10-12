@@ -19,9 +19,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * PLAN-0489 T1.1（contract: PLAN-0486 spec v3.3 §1）：V58 {@code scheduled_tasks}
+ * PLAN-0489 T1.1（contract: PLAN-0486 spec v3.4 §1）：V58 {@code scheduled_tasks}
  * 在隔离 PG 全量迁移成功；关键 CHECK 正反例（expires_at / session_target /
- * prompt / status）与两条（+quota 共三条）索引断言。
+ * prompt / status）与两条（+quota 共三条）索引断言；V60 创建者归属列
+ * {@code agent_principal_id}（FK SET NULL + 部分索引 + 删除降级）同批断言。
  */
 @Testcontainers
 class ScheduledTaskMigrationIntegrationTest {
@@ -179,6 +180,59 @@ class ScheduledTaskMigrationIntegrationTest {
                         + "'job_dispatch', '{\"command\":\"echo\"}'::jsonb, 'queued', NOW(), "
                         + "NOW() + interval '1 hour')"),
                 "ck_scheduled_tasks_status must reject unknown status values");
+    }
+
+    @Test
+    void v60_creator_principal_column_fk_and_partial_index_applied() throws SQLException {
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '60' AND success = true"),
+                "V60 must be recorded as applied");
+        assertEquals("uuid", scalarString(
+                "SELECT data_type FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'scheduled_tasks' AND column_name = 'agent_principal_id'"));
+        assertEquals("YES", scalarString(
+                "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'scheduled_tasks' AND column_name = 'agent_principal_id'"),
+                "creator principal is optional (human creation keeps the column NULL)");
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM pg_constraint conf "
+                        + "JOIN pg_attribute src ON src.attrelid = conf.conrelid "
+                        + "AND src.attnum = ANY (conf.conkey) "
+                        + "WHERE conf.contype = 'f' "
+                        + "AND conf.conrelid = 'scheduled_tasks'::regclass "
+                        + "AND conf.confrelid = 'agent_principals'::regclass "
+                        + "AND src.attname = 'agent_principal_id' "
+                        + "AND conf.confdeltype = 'n'"),
+                "creator principal FK must be ON DELETE SET NULL (confdeltype 'n')");
+        String indexDef = scalarString(
+                "SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' "
+                        + "AND indexname = 'idx_scheduled_tasks_creator_principal'");
+        assertTrue(indexDef.contains("(agent_principal_id, created_at DESC)"),
+                "creator principal index must lead with (agent_principal_id, created_at DESC): " + indexDef);
+        assertTrue(indexDef.contains("WHERE (agent_principal_id IS NOT NULL)"),
+                "creator principal index must be partial on agent_principal_id IS NOT NULL: " + indexDef);
+    }
+
+    @Test
+    void v60_deleting_agent_principal_sets_creator_column_null_and_keeps_task() throws SQLException {
+        UUID principalId = UUID.randomUUID();
+        execute("INSERT INTO agent_principals (id, name, created_by_user_id) VALUES ('" + principalId
+                + "'::uuid, 'v60-agent', '" + userId + "'::uuid)");
+        UUID taskId = UUID.randomUUID();
+        execute("INSERT INTO scheduled_tasks (id, workspace_id, user_id, agent_principal_id, "
+                + "trigger_kind, cron_expr, timezone, target_kind, target_session_id, prompt, status, "
+                + "next_fire_at) VALUES ('" + taskId + "'::uuid, '" + workspaceId + "'::uuid, '"
+                + userId + "'::uuid, '" + principalId + "'::uuid, 'cron', '*/5 * * * *', 'UTC', "
+                + "'session_wakeup', '" + sessionId + "'::uuid, 'agent task', 'scheduled', "
+                + "NOW() + interval '5 minutes')");
+        assertEquals(1, scalarInt("SELECT count(*) FROM scheduled_tasks WHERE id = '" + taskId
+                + "'::uuid AND agent_principal_id = '" + principalId + "'::uuid"));
+
+        execute("DELETE FROM agent_principals WHERE id = '" + principalId + "'::uuid");
+
+        assertEquals(1, scalarInt("SELECT count(*) FROM scheduled_tasks WHERE id = '" + taskId
+                + "'::uuid AND agent_principal_id IS NULL"),
+                "principal deletion must SET NULL on the creator column and keep the task row");
     }
 
     private static void execute(String sql) throws SQLException {
