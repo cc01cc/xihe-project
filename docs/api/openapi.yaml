@@ -942,6 +942,34 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /internal/v1/credentials/rotation/status:
+    get:
+      operationId: getCredentialRotationStatus
+      summary: Credential key-ring rotation status
+      description: 'PLAN-0495 M3: service-to-service only. Reports ring versions, the current version and per-version row counts (retirement evidence); never a value or ciphertext.'
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Rotation status
+          content: { application/json: { schema: { $ref: '#/components/schemas/CredentialRotationStatus' } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+  /internal/v1/credentials/rotation/runs:
+    post:
+      operationId: runCredentialRotationBatch
+      summary: Re-encrypt one batch of credentials under the current key version
+      description: 'PLAN-0495 M3: service-to-service only. Decrypt/encrypt with compare-and-set write-back; batches are resumable; a concurrent replace is never overwritten. Response carries counts only.'
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: false
+        content: { application/json: { schema: { $ref: '#/components/schemas/CredentialRotationBatchRequest' } } }
+      responses:
+        '200':
+          description: Batch result
+          content: { application/json: { schema: { $ref: '#/components/schemas/CredentialRotationBatchResult' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
   /api/v1/health:
     get: { operationId: health, responses: { '200': { description: Healthy } } }
   /api/v1/status:
@@ -2719,6 +2747,29 @@ components:
          apiTypeId: { type: string }
          apiTypeVersion: { type: integer, minimum: 1 }
          operation: { type: string, enum: [chat, embedding] }
+    CredentialRotationStatus:
+       type: object
+       required: [currentVersion, ringVersions, countsByVersion, pendingByVersion, pendingTotal]
+       properties:
+         currentVersion: { type: string }
+         ringVersions: { type: array, items: { type: string } }
+         countsByVersion: { type: object, additionalProperties: { type: integer, format: int64 } }
+         pendingByVersion: { type: object, additionalProperties: { type: integer, format: int64 } }
+         pendingTotal: { type: integer, format: int64 }
+    CredentialRotationBatchRequest:
+       type: object
+       properties:
+         batchSize: { type: integer, minimum: 1, maximum: 500 }
+    CredentialRotationBatchResult:
+       type: object
+       required: [scanned, migrated, conflicts, failures, remaining, targetVersion]
+       properties:
+         scanned: { type: integer }
+         migrated: { type: integer }
+         conflicts: { type: integer }
+         failures: { type: integer }
+         remaining: { type: integer, format: int64 }
+         targetVersion: { type: string }
     ScopedModelCatalogRequest:
        type: object
        required: [connections]

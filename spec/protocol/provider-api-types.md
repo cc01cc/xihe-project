@@ -22,6 +22,7 @@
 
 - Credentials are encrypted at rest and write-only on ordinary Connection APIs. Presence/status may be returned, but no suffix or derived credential fragment is returned or written to new audits.
 - One-use internal leases may return a credential only to authorized Agent request memory. Opaque leases and decrypted grants are not logged or forwarded to the browser.
+- Scope note (PLAN-0495): this section governs provider connection and MCP OAuth credentials only. The standalone credential manager (`spec/security/credential-management.md`) defines its own object/lifecycle/rotation contract without superseding this section; cross-reference only.
 
 ## Phase Ownership
 

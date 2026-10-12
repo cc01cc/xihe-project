@@ -183,6 +183,8 @@ Catalog 标为 manual discovery 的 Provider（如 Ark）创建连接时，还�
 
 Provider verify 的 ready 只表示 CP 当前 remote `/models` 响应结构有效（`data` 数组可为空），不代表模型 completion 成功。`test:e2e:host:real` 沿用 Agent 进程的 `XIHE_E2E_REAL_XIAOMI_KEY` 通路，不消费此处的 Provider Connection lease；两条路径不可相互替代。
 
+**凭据管理域与轮换（PLAN-0495）**：`credentials` 表承载 owner 级独立凭据对象（USER/WORKSPACE 两级；`token`/`key_pair` 两形态；`lease`/`reveal` 单通道档位）。独立主密钥 `XIHE_CP_CREDENTIALS_KEY`（或 `XIHE_CP_CREDENTIALS_KEY_RING` JSON 环 + `XIHE_CP_CREDENTIALS_CURRENT_VERSION`，环须含 current）；prod 未配置 key/ring 或 `XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY=true` 时 fail-fast 拒绝启动。密钥轮换经 `mise run xihe -- credential rotate`（internal 服务面，需 `XIHE_CP_API_TOKEN`）：扩环（旧+新，current=新）→ 批量重加密（CAS 回写、可续跑）→ 退役校验（按版本计数为 0 后方可移除旧 key）。契约见 `spec/security/credential-management.md`。
+
 **导入导出契约（决策 #36/#37，T2.21/T2.25）**：导出 `GET /api/v1/config/export?layer=instance&includeSecrets=<bool>`（ADMIN）—— config KV + `provider-connections` 元数据（label/status/modelDiscovery/manualModels/enabled/ownerType/ownerId/baseUrl）；`includeSecrets=false` 仅排除明文 `apiKey`，**任何模式都不输出库内密文**；导出写 AUDIT sink（actor/时间/是否含密钥，不记响应体）且响应 `Cache-Control: no-store`。导入**不恢复任何凭证**——`provider-connections` 条目整体跳过并在响应 `{imported, skipped, warnings}` 中列出（owner id 跨实例不可映射），需人工经凭证 API/UI 重建。导出产物落盘使用 `config.export*.jsonc`（gitignored）。UI 实例页内提供导出（含可选明文密钥开关）与导入（文件 + WARN 清单）入口。
 
 **配置 key 多点同步（硬约束）**：新增/修改 domain key 必须同步四处——（a）CP `config-schemas/*.json`（JSON Schema，同时约束 import 与 UI 保存）、（b）`config.import.example.jsonc` 模板、（c）UI `/settings/config` 表单、（d）UI `stores/config.ts` 域列表（`INSTANCE_DOMAINS` / `LAYER_DOMAINS`，决定各 tab 呈现与 `loadLayerDomains` 拉取范围；PLAN-0373 对账 V4 新增同步点）；任一漏改会导致 import 与保存同时 400，或该域在 UI 域列表漏拉取/漏渲染。

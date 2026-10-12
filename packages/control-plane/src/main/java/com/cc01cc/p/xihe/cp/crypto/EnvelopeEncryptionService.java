@@ -63,6 +63,11 @@ public final class EnvelopeEncryptionService {
         return currentVersion;
     }
 
+    /** PLAN-0495 M3: the registered key-ring versions (rotation status reporting). */
+    public java.util.Set<String> keyVersions() {
+        return keys.keySet();
+    }
+
     public String decrypt(String envelope, String associatedData) {
         if (envelope == null) {
             throw new IllegalArgumentException("envelope must not be null");

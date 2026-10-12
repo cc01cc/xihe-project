@@ -64,6 +64,9 @@ final class CpModuleAssignment implements SliceAssignment {
         if (name.startsWith("OAuth")) {
             return "oauth";
         }
+        if (name.startsWith("Credential")) {
+            return "credentials";
+        }
         if (name.startsWith("Policy") || name.startsWith("ToolFace") || name.startsWith("AuthorizationGrant")) {
             return "policy";
         }

@@ -60,6 +60,7 @@ spec/
 | agent role/scope binding | proposed | partial | Agent owner | CP、Agent、Runtime、UI 审计 | A03-xihe | PLAN-0387；只写绑定、传播和消费，不复制授权模型 |
 | agent principal / Workspace binding | active | partial | Agent binding owner（PLAN-0374；Security canonical 归 PLAN-0407） | CP authorization/session/MCP、Workspace Agent API、Agent、UI Agent 管理与 Session 选择 | A03-xihe | PLAN-0374 principal/Workspace binding、template CRUD/form 与 V5/V6/V7 已完成；fork 创建归 PLAN-0409/0410；Agent 铸造与多层审批后置 BL-70/71 |
 | capability / approval / audit | proposed | partial | Runtime/Security/CP owners | Capability：Runtime、CP、UI；Approval：CP、Agent、UI、Audit；Audit：CP、授权/审批调用方 | A03-xihe | PLAN-0386/0389；能力策略、审批、审计分别建模 |
+| credential management | proposed | partial | Security（授权/审计）+ CP ConfigService（存储/密钥） | 0496 授权接入与 API、0497 交付通道、0498 UI、运维轮换 | A03-xihe | PLAN-0495；存储/生命周期/轮换已实现（M1–M3）；交付与用户 API 归 0496/0497，UI 归 0498；`security/credential-management.md` |
 | workspace / sandbox / checkpoint | proposed | partial | Workspace/Runtime owners | CP、Runtime、UI、Agent | A03-xihe | PLAN-0389 |
 | execution job / scope / durable continuation | proposed | partial | CP durable-record + Runtime Job owners | CP Job API/durable record、Runtime Job backend、UI、Agent | A03-xihe | PLAN-0390; backend adapters PLAN-0392–0395; Workspace release PLAN-0391 |
 | configuration / env | proposed | partial | CP ConfigService owner | CP、Agent、Runtime、UI、Audit | A03-xihe | PLAN-0389；以现行配置模型整合历史来源 |
@@ -154,6 +155,10 @@ PLAN-0389 已建立 Workspace/Configuration proposed 草案；Workspace logical 
 - [Workspace Import、Copy、Direct Attach 与 Reuse](workspace/import.md)
 - [Workspace 文件事件](workspace/events.md)
 - [配置 Effective Source 与进程可见性](configuration/env-effective.md)
+
+PLAN-0495 建立凭据管理 proposed 草案（存储、生命周期与轮换；用户管理 API、交付通道与 UI 分别归 PLAN-0496/0497/0498）：
+
+- [凭据管理](security/credential-management.md)
 
 ## 5. Spec Impact 与写回
 
