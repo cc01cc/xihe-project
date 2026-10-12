@@ -17,7 +17,9 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration and
 | CP | `POST /oauth/token` | `POST /internal/v1/oauth/token` | service Bearer | Runtime |
 | CP | `/mcp` | `/api/v1/mcp` | user Bearer | Agent, UI; Agent `spawn_agent` is a CP-owned MCP tool behind the normal grant/approval gate and local CP dispatch (PLAN-0407 T2.10) |
 | CP | `/config/**` | `/api/v1/config/**`（`instance` / `workspace` / `user` 三层；`/api/v1/providers` 已删除 → `provider-connections` + `provider-catalog`） | user/admin Bearer | UI |
-| CP | `/api-input-types` | `/api/v1/api-input-types` | user/admin Bearer | UI ProviderHub 只读 Type registry |
+| CP | API Type registry/validator | `GET /api/v1/api-input-types`; `POST /api/v1/api-input-types/{apiTypeId}/versions/{version}/validate` | user/admin Bearer | Immutable Type registry and non-persistent bodySource validation |
+| CP | API request templates | `GET /api/v1/config/api-request-templates`; `PUT /api/v1/config/{layer}/api-request-templates` | user/admin + owner/workspace ACL | JSON-string config envelope; immutable published versions, raw drafts, defaults and user Model overrides |
+| CP | Type impact and binding | `GET /api/v1/provider-connections/{connectionId}/api-type-change-impact`; `PATCH /api/v1/sessions/{sessionId}/api-request-template` | user/admin + resource ACL | Impact aggregate counts and revision CAS; Session explicit published template pin |
 | CP | `/models` | `/api/v1/models` | user/admin Bearer | UI model selector; proxies provider status/capability without secrets |
 | CP | `/internal/config/**` | `/internal/v1/config/effective/{domain}`（层端点已废弃，决策 #19） | service Bearer | Agent（effective）+ Runtime 按需 |
 | CP | `/workspaces/{id}/mcp-config` | `/api/v1/workspaces/{workspaceId}/mcp-config`（混合 JSON，字段拆分）与 `/api/v1/workspaces/{workspaceId}/stdio-servers`（结构化） | user Bearer | UI |
