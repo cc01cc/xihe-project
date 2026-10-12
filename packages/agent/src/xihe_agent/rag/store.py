@@ -167,19 +167,20 @@ class VectorStore:
         async with engine.connect() as conn:
             result = await conn.execute(
                 text(
-                    "SELECT column_name, data_type FROM information_schema.columns "
+                    "SELECT column_name, data_type, udt_name FROM information_schema.columns "
                     "WHERE table_schema = 'public' AND table_name = :table"
                 ),
                 {"table": TABLE_NAME},
             )
-            columns = {row[0]: row[1] for row in result}
+            # pgvector columns report data_type=USER-DEFINED with udt_name=vector.
+            columns = {row[0]: (row[1], row[2]) for row in result}
         missing = [name for name, _ in [(c.name, c.data_type) for c in PARTITION_COLUMNS] if name not in columns]
         if missing:
             raise VectorSchemaError(
                 "document_chunks is missing partition columns: " + ", ".join(sorted(missing))
             )
-        dimension_type = columns.get("embedding")
-        if dimension_type is None or "vector" not in str(dimension_type):
+        embedding_type = columns.get("embedding")
+        if embedding_type is None or "vector" not in str(embedding_type):
             raise VectorSchemaError("document_chunks.embedding is not a pgvector column")
 
     async def add_document(

@@ -8,6 +8,7 @@ import ConfigDomainPanel, {
 } from "../../components/settings/ConfigDomainPanel.vue";
 import AgentTemplatesPanel from "../../components/settings/AgentTemplatesPanel.vue";
 import ContextTemplatesPanel from "../../components/settings/ContextTemplatesPanel.vue";
+import EmbeddingSettingsPanel from "../../components/settings/EmbeddingSettingsPanel.vue";
 import McpStdioServerList from "../../components/settings/McpStdioServerList.vue";
 import ProviderHub from "../../components/settings/ProviderHub.vue";
 import SettingsNav from "../../components/settings/SettingsNav.vue";
@@ -706,6 +707,12 @@ async function handleImportFile(event: Event) {
                             :layer="activeTab"
                             :workspace-id="currentWorkspaceId() || undefined"
                             @save="handleSave(domain, $event)"
+                        />
+                        <EmbeddingSettingsPanel
+                            v-else-if="domain === 'embedding' && activeTab !== 'instance'"
+                            :layer="activeTab === 'user' ? 'user' : 'workspace'"
+                            :workspace-id="currentWorkspaceId() || undefined"
+                            :saving="savingDomains[domain] || false"
                         />
                         <ConfigDomainPanel
                             v-else
