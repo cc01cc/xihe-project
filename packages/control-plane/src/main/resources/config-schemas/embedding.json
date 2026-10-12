@@ -2,8 +2,15 @@
   "type": "object",
   "properties": {
     "profile": {
-      "type": "string",
-      "description": "Complete embedding profile unit: {providerId, connectionKey, model} serialized as JSON; empty clears the layer to inherit."
+      "type": "object",
+      "description": "Complete embedding profile unit; omitted or empty clears the layer to inherit.",
+      "properties": {
+        "providerId": { "type": "string" },
+        "connectionKey": { "type": "string" },
+        "model": { "type": "string" }
+      },
+      "required": ["providerId", "connectionKey", "model"],
+      "additionalProperties": false
     }
   },
   "required": [],

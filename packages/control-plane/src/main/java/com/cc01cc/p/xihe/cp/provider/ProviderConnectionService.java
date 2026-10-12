@@ -467,6 +467,17 @@ public class ProviderConnectionService {
                 throw new IllegalArgumentException(
                         "Base URL must end with the API Type path prefix " + requiredSuffix);
             }
+            // PLAN-0485 spec §API Type: the embedding type contract pins this
+            // host (probe evidence: the workspace endpoint rejected the key).
+            // This is a type-contract pin, not a generic policy — other types
+            // keep legitimate custom endpoints.
+            if ("dashscope-multimodal-embedding".equals(apiTypeId)) {
+                String host = uri.getHost();
+                if (host == null || !host.equalsIgnoreCase("dashscope.aliyuncs.com")) {
+                    throw new IllegalArgumentException(
+                            "This embedding API Type only supports the pinned dashscope.aliyuncs.com host");
+                }
+            }
         } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException("Invalid provider Base URL", e);
         }

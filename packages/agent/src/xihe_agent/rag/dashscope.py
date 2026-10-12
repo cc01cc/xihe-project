@@ -91,7 +91,9 @@ class DashScopeEmbeddings(Embeddings):
             "input": {"contents": [{"text": text} for text in texts]},
             "parameters": {"dimension": SUPPORTED_DIMENSION},
         }
-        url = f"{self._base_url}/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding"
+        # The connection baseUrl is host-pinned with the required /api/v1
+        # suffix (catalog V4), so the endpoint appends only the service path.
+        url = f"{self._base_url}/services/embeddings/multimodal-embedding/multimodal-embedding"
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(

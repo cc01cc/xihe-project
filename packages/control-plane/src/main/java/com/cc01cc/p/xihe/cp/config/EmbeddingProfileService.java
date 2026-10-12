@@ -248,14 +248,20 @@ public class EmbeddingProfileService {
         return value == null || value.isBlank();
     }
 
-    /** Sanitized view for the settings UI and test endpoint (spec §Settings). */
+    /** Sanitized view for the Agent (partition identity) and settings UI. */
     public Map<String, Object> describe(ResolvedProfile profile) {
         Map<String, Object> view = new LinkedHashMap<>();
+        view.put("workspaceId", profile.workspaceId() == null ? null : profile.workspaceId().toString());
+        view.put("userId", profile.userId() == null ? null : profile.userId().toString());
+        view.put("connectionOwnerType", profile.connectionOwnerType());
+        view.put("connectionOwnerId", profile.connectionOwnerId());
         view.put("providerId", profile.providerId());
         view.put("connectionKey", profile.connectionKey());
         view.put("providerConnectionId", profile.providerConnectionId());
         view.put("connectionOwnerScope", profile.connectionOwnerScope());
         view.put("connectionRevision", profile.connectionRevision());
+        view.put("apiTypeId", profile.apiTypeId());
+        view.put("apiTypeVersion", profile.apiTypeVersion());
         view.put("modelId", profile.modelId());
         view.put("dimension", profile.dimension());
         view.put("profileScope", profile.profileScope());

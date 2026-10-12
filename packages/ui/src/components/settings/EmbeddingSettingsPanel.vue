@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { request } from "../../composables/api";
+import { ApiError } from "../../composables/api";
 import {
     embeddingConnections,
     fetchEmbeddingEffective,
@@ -57,7 +57,7 @@ async function load() {
     loading.value = true;
     try {
         const [connectionList, profile] = await Promise.all([
-            listProviderConnections(props.workspaceId),
+            listProviderConnections(),
             fetchEmbeddingEffective(props.workspaceId),
         ]);
         connections.value = connectionList.connections;
@@ -119,8 +119,11 @@ async function handleTest() {
         }
     } catch (cause) {
         logger.warn("Embedding test failed", cause);
-        testResult.value = { status: "error", errorCode: "EMBEDDING_PROVIDER_UNREACHABLE" };
-        toast.error(t("settings.embeddingTestFailed"));
+        const code = cause instanceof ApiError
+            ? cause.problem.code || "EMBEDDING_PROVIDER_UNREACHABLE"
+            : "EMBEDDING_PROVIDER_UNREACHABLE";
+        testResult.value = { status: "error", errorCode: code };
+        toast.error(code);
     } finally {
         testing.value = false;
     }
@@ -174,7 +177,7 @@ onMounted(load);
                         <dt class="text-muted-foreground">{{ t("settings.embeddingEffectiveScope") }}</dt>
                         <dd>{{ effective.profileScope }}</dd>
                         <dt class="text-muted-foreground">{{ t("settings.embeddingModelSource") }}</dt>
-                        <dd>{{ effective.profile.model }}</dd>
+                        <dd>{{ effective.resolved?.modelSource ?? effective.profile.model }}</dd>
                     </template>
                 </dl>
 

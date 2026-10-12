@@ -111,7 +111,7 @@
       {
         "apiTypeId": "dashscope-multimodal-embedding",
         "version": 1,
-        "defaultBaseUrl": "https://dashscope.aliyuncs.com",
+        "defaultBaseUrl": "https://dashscope.aliyuncs.com/api/v1",
         "modelDiscovery": "manual"
       }
     ],

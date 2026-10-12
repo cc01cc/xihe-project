@@ -21,6 +21,7 @@ from xihe_agent.rag.dashscope import (
     validate_profile,
 )
 from xihe_agent.rag.store import (
+    PARTITION_COLUMNS,
     PARTITION_KEYS,
     VectorStore,
     _sql_predicate,
@@ -89,7 +90,7 @@ async def test_dashscope_wire_body_and_path():
 
     httpx.AsyncClient.send = send
     try:
-        adapter = DashScopeEmbeddings(api_key="fixture-only", base_url="https://dashscope.aliyuncs.com")
+        adapter = DashScopeEmbeddings(api_key="fixture-only", base_url="https://dashscope.aliyuncs.com/api/v1")
         vectors = await adapter.embed_batch(["a", "b"])
     finally:
         httpx.AsyncClient.send = original
@@ -105,7 +106,9 @@ async def test_dashscope_wire_body_and_path():
 
 @pytest.mark.asyncio
 async def test_dashscope_error_mapping():
-    adapter = DashScopeEmbeddings(api_key="fixture-only", base_url="https://dashscope.aliyuncs.com")
+    adapter = DashScopeEmbeddings(
+        api_key="fixture-only", base_url="https://dashscope.aliyuncs.com/api/v1"
+    )
     original = httpx.AsyncClient.send
 
     async def unauthorized(self, request, **kwargs):
@@ -187,9 +190,16 @@ class FakeConnection:
 
     async def execute(self, stmt, params=None):
         self.statements.append((str(stmt), params))
-        if "COUNT(DISTINCT" in str(stmt):
+        text_stmt = str(stmt)
+        if "information_schema.columns" in text_stmt:
+            rows = [(column.name, "text", "text") for column in PARTITION_COLUMNS]
+            rows.append(("embedding", "USER-DEFINED", "vector"))
+            return FakeResult(rows=rows)
+        if "information_schema.tables" in text_stmt:
+            return FakeResult(scalar=1)
+        if "COUNT(DISTINCT" in text_stmt:
             return FakeResult(scalar=2)
-        if "GROUP BY" in str(stmt):
+        if "GROUP BY" in text_stmt:
             return FakeResult(rows=[("doc-1", "a.pdf", 3)])
         return FakeResult(rowcount=1)
 
@@ -222,7 +232,9 @@ async def test_count_and_documents_are_partition_scoped():
     documents = await store.documents(PROFILE)
     assert total == 2
     assert documents == [{"id": "doc-1", "filename": "a.pdf", "chunks": 3}]
-    count_stmt, count_params = engine.statements[0]
+    count_stmt, count_params = next(
+        entry for entry in engine.statements if "COUNT(DISTINCT" in entry[0]
+    )
     assert 'COUNT(DISTINCT "doc_id")' in count_stmt
     identity = [key for key in PARTITION_KEYS if key not in ("doc_id", "filename")]
     for key in identity:
@@ -236,20 +248,25 @@ async def test_delete_requires_full_partition_and_doc():
     store = VectorStore(dsn="", embedding_service=None, shared_engine=engine)
     deleted = await store.delete("doc-9", PROFILE)
     assert deleted is True
-    stmt, params = engine.statements[0]
+    stmt, params = next(entry for entry in engine.statements if entry[0].startswith("DELETE"))
     assert stmt.startswith('DELETE FROM "public"."document_chunks" WHERE')
     identity = [key for key in PARTITION_KEYS if key not in ("doc_id", "filename")]
     assert len(params) == len(identity) + 1
 
 
 @pytest.mark.asyncio
-async def test_add_document_inserts_all_chunks_in_one_transaction():
+async def test_add_document_inserts_all_chunks_in_one_transaction(monkeypatch):
     class Embed:
         async def aembed_documents(self, texts):
             return [vector() for _ in texts]
 
     engine = FakeEngine()
     store = VectorStore(dsn="", embedding_service=Embed(), shared_engine=engine)
+
+    async def skip_schema(_engine):
+        return None
+
+    monkeypatch.setattr(store, "_ensure_schema", skip_schema)
     doc_id = await store.add_document(["one", "two", "three"], PROFILE, "notes.pdf")
     assert doc_id
     inserts = [entry for entry in engine.statements if "INSERT INTO" in entry[0]]
@@ -264,12 +281,17 @@ async def test_add_document_inserts_all_chunks_in_one_transaction():
     assert doc_ids == {doc_id}
 
 @pytest.mark.asyncio
-async def test_add_document_rejects_wrong_vector_length():
+async def test_add_document_rejects_wrong_vector_length(monkeypatch):
     class Embed:
         async def aembed_documents(self, texts):
             return [vector(1024) for _ in texts]
 
     store = VectorStore(dsn="", embedding_service=Embed(), shared_engine=FakeEngine())
+
+    async def skip_schema(_engine):
+        return None
+
+    monkeypatch.setattr(store, "_ensure_schema", skip_schema)
     from xihe_agent.rag.store import VectorSchemaError
 
     with pytest.raises(VectorSchemaError):

@@ -16,6 +16,8 @@ export interface EmbeddingResolvedProfile {
 export interface EmbeddingEffectiveProfile {
     profile: { providerId: string; connectionKey: string; model: string } | null;
     profileScope: string | null;
+    resolved: EmbeddingResolvedProfile | null;
+    code?: string;
 }
 
 export interface EmbeddingTestResult {
@@ -43,7 +45,7 @@ export function embeddingConnections(connections: ProviderConnection[]): Provide
 
 export function fetchEmbeddingEffective(workspaceId?: string): Promise<EmbeddingEffectiveProfile> {
     const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
-    return request<EmbeddingEffectiveProfile>(`/config/effective/embedding${query}`);
+    return request<EmbeddingEffectiveProfile>(`/config/embedding/effective${query}`);
 }
 
 export function saveEmbeddingProfile(

@@ -185,13 +185,28 @@ embedding_enabled = False
 _shared_engine: Any = None
 
 
+def _async_pg_dsn(dsn: str) -> str:
+    """Force an asyncpg driver for the async RAG engine.
+
+    The process DSN may use psycopg (sync runtime paths); psycopg async cannot
+    run on the Windows ProactorEventLoop, so the async RAG engine always uses
+    asyncpg regardless of the incoming driver.
+    """
+    for prefix in ("postgresql+psycopg://", "postgresql+psycopg2://"):
+        if dsn.startswith(prefix):
+            return "postgresql+asyncpg://" + dsn[len(prefix):]
+    if dsn.startswith("postgresql://"):
+        return "postgresql+asyncpg://" + dsn[len("postgresql://"):]
+    return dsn
+
+
 def shared_pg_engine() -> Any:
     """Process-shared SQLAlchemy async engine/pool for RAG stores."""
     global _shared_engine
     if _shared_engine is None:
         from sqlalchemy.ext.asyncio import create_async_engine
 
-        _shared_engine = create_async_engine(PG_DSN)
+        _shared_engine = create_async_engine(_async_pg_dsn(PG_DSN))
     return _shared_engine
 
 

@@ -62,11 +62,6 @@ def _parse_profile(raw: str | None) -> dict[str, Any]:
     return profile
 
 
-def _reject_legacy_profile(payload: dict[str, Any]) -> None:
-    if "providerId" not in payload and "modelId" not in payload:
-        raise EmbeddingProviderError("EMBEDDING_PROFILE_REQUIRED", 409)
-
-
 def _request_id(request: Request) -> str:
     return request.headers.get("X-Request-Id") or ""
 
@@ -117,7 +112,6 @@ async def rag_embedding_test(request: Request) -> JSONResponse:
         payload = {}
     if not isinstance(payload, dict):
         payload = {}
-    _reject_legacy_profile(payload)
     profile = _parse_profile(_json.dumps(payload.get("embeddingProfile") or {}))
     try:
         grant = await _redeem(profile, payload.get("embeddingCredentialLease"))
@@ -199,7 +193,6 @@ async def rag_search(
         payload = {}
     if not isinstance(payload, dict):
         payload = {}
-    _reject_legacy_profile(payload)
     try:
         profile = _parse_profile(_json.dumps(payload.get("embeddingProfile") or {}))
         defaults = _rag_config_defaults()
@@ -241,7 +234,6 @@ async def rag_stats(request: Request):
         payload = {}
     if not isinstance(payload, dict):
         payload = {}
-    _reject_legacy_profile(payload)
     try:
         profile = _parse_profile(_json.dumps(payload.get("embeddingProfile") or {}))
         from xihe_agent.app_state import shared_pg_engine
@@ -269,7 +261,6 @@ async def rag_delete(doc_id: str, request: Request):
         payload = {}
     if not isinstance(payload, dict):
         payload = {}
-    _reject_legacy_profile(payload)
     try:
         profile = _parse_profile(_json.dumps(payload.get("embeddingProfile") or {}))
         from xihe_agent.app_state import shared_pg_engine

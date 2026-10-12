@@ -65,7 +65,7 @@ const mockedTest = vi.mocked(testEmbedding);
 beforeEach(() => {
     vi.clearAllMocks();
     mockedConnections.mockResolvedValue({ connections: [] } as never);
-    mockedEffective.mockResolvedValue({ profile: null, profileScope: null });
+    mockedEffective.mockResolvedValue({ profile: null, profileScope: null, resolved: null });
     mockedSave.mockResolvedValue(undefined);
     mockedTest.mockResolvedValue({ status: "ok", model: "m", dimension: 768, requestId: "r1" });
 });
@@ -90,7 +90,7 @@ describe("EmbeddingSettingsPanel", () => {
         mockedConnections.mockResolvedValue({
             connections: [connection({ id: "embed-1" })],
         } as never);
-        mockedEffective.mockResolvedValue({ profile: null, profileScope: null });
+        mockedEffective.mockResolvedValue({ profile: null, profileScope: null, resolved: null });
         const wrapper = mount(EmbeddingSettingsPanel, { props: { layer: "workspace", workspaceId: "ws-1" } });
         await flushPromises();
         await wrapper.find("select[data-testid='embedding-connection-select']").setValue("embed-1");
@@ -119,6 +119,7 @@ describe("EmbeddingSettingsPanel", () => {
                 model: "tongyi-embedding-vision-flash-2026-03-06",
             },
             profileScope: "user",
+            resolved: null,
         });
         const wrapper = mount(EmbeddingSettingsPanel, { props: { layer: "user" } });
         await flushPromises();
@@ -140,6 +141,7 @@ describe("EmbeddingSettingsPanel", () => {
                 model: "tongyi-embedding-vision-flash-2026-03-06",
             },
             profileScope: "user",
+            resolved: null,
         });
         mockedTest.mockResolvedValue({
             status: "error",

@@ -8,10 +8,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.net.URI;
@@ -50,6 +52,53 @@ public class EmbeddingTestController {
         this.objectMapper = objectMapper;
         this.agentBaseUrl = agentBaseUrl.replaceAll("/+$", "");
         this.agentApiToken = agentApiToken;
+    }
+
+    /**
+     * PLAN-0485 T2.2: read-only effective profile for the settings surface.
+     * Returns the whole-unit layer profile and its scope, plus the resolved
+     * non-secret owner view when a READY embedding connection matches. A pure
+     * read never fails on missing profile/connection; it reports the explicit
+     * conflict code instead so the UI can explain the state.
+     */
+    @GetMapping("/effective")
+    public ResponseEntity<Map<String, Object>> effective(
+            @RequestHeader(value = "X-Workspace-Id", required = false) String headerWorkspaceId,
+            @RequestParam(value = "workspaceId", required = false) String queryWorkspaceId) {
+        String userIdValue = TenantContext.getUserId();
+        if (userIdValue == null || userIdValue.isBlank()) {
+            throw new CpApiException(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED",
+                    "Authentication is required");
+        }
+        UUID userId = UUID.fromString(userIdValue);
+        String wsValue = headerWorkspaceId != null && !headerWorkspaceId.isBlank()
+                ? headerWorkspaceId
+                : queryWorkspaceId != null && !queryWorkspaceId.isBlank()
+                        ? queryWorkspaceId
+                        : TenantContext.getWorkspaceId();
+        UUID workspaceId = wsValue == null || wsValue.isBlank() ? null : UUID.fromString(wsValue);
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        EmbeddingProfileService.EffectiveProfile effective = profiles.effectiveProfile(userId, workspaceId);
+        if (effective.profile() == null) {
+            response.put("profile", null);
+            response.put("profileScope", null);
+            response.put("resolved", null);
+            return ResponseEntity.ok(response);
+        }
+        Map<String, Object> unit = new LinkedHashMap<>();
+        unit.put("providerId", effective.profile().providerId());
+        unit.put("connectionKey", effective.profile().connectionKey());
+        unit.put("model", effective.profile().model());
+        response.put("profile", unit);
+        response.put("profileScope", effective.profileScope());
+        try {
+            response.put("resolved", profiles.describe(profiles.resolve(userId, workspaceId)));
+        } catch (CpApiException conflict) {
+            response.put("resolved", null);
+            response.put("code", conflict.getCode());
+        }
+        return ResponseEntity.ok(response);
     }
 
     @PostMapping("/test")
@@ -94,13 +143,16 @@ public class EmbeddingTestController {
                     response.body(), new TypeReference<Map<String, Object>>() { });
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 String code = String.valueOf(payload.getOrDefault("code", "EMBEDDING_PROVIDER_UNREACHABLE"));
-                Map<String, Object> safe = new LinkedHashMap<>();
-                safe.put("status", "error");
-                safe.put("errorCode", code);
-                safe.put("requestId", requestId);
+                Map<String, Object> problem = new LinkedHashMap<>();
+                problem.put("type", "https://xihe.dev/problems/" + code.toLowerCase(java.util.Locale.ROOT));
+                problem.put("title", "Embedding test failed");
+                problem.put("status", response.statusCode());
+                problem.put("code", code);
+                problem.put("detail", "The embedding provider request did not succeed");
+                problem.put("requestId", requestId);
                 return ResponseEntity.status(response.statusCode())
                         .contentType(org.springframework.http.MediaType.APPLICATION_PROBLEM_JSON)
-                        .body(safe);
+                        .body(problem);
             }
             Map<String, Object> safe = new LinkedHashMap<>();
             safe.put("status", "ok");

@@ -125,6 +125,8 @@ class VectorStore:
 
     async def _ensure_schema(self, engine: AsyncEngine) -> None:
         """Create the 768 partitioned table when absent; validate when present."""
+        if self._engine is None:
+            self._engine = PGEngine.from_engine(engine)
         async with engine.connect() as conn:
             exists = (
                 await conn.execute(
@@ -208,6 +210,7 @@ class VectorStore:
                     f"Provider returned a {len(vector)}-dimension vector; expected {SUPPORTED_DIMENSION}"
                 )
         engine = await self._ensure_engine()
+        await self._ensure_schema(engine)
         columns = ['"langchain_id"', '"content"', '"embedding"'] + [
             f'"{name}"' for name in PARTITION_KEYS
         ]
@@ -262,9 +265,25 @@ class VectorStore:
             )
         return output
 
+    async def _table_exists(self, engine: AsyncEngine) -> bool:
+        async with engine.connect() as conn:
+            return bool(
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT 1 FROM information_schema.tables "
+                            "WHERE table_schema = 'public' AND table_name = :table"
+                        ),
+                        {"table": TABLE_NAME},
+                    )
+                ).scalar()
+            )
+
     async def count(self, profile: dict[str, Any]) -> int:
-        """Count documents (not chunks) inside one partition."""
+        """Count documents (not chunks) inside one partition; empty if absent."""
         engine = await self._ensure_engine()
+        if not await self._table_exists(engine):
+            return 0
         predicate = partition_filter(profile)
         clause, params = _sql_predicate(predicate)
         async with engine.connect() as conn:
@@ -279,6 +298,8 @@ class VectorStore:
 
     async def documents(self, profile: dict[str, Any]) -> list[dict[str, Any]]:
         engine = await self._ensure_engine()
+        if not await self._table_exists(engine):
+            return []
         predicate = partition_filter(profile)
         clause, params = _sql_predicate(predicate)
         async with engine.connect() as conn:
@@ -297,6 +318,8 @@ class VectorStore:
 
     async def delete(self, doc_id: str, profile: dict[str, Any]) -> bool:
         engine = await self._ensure_engine()
+        if not await self._table_exists(engine):
+            return False
         predicate = partition_filter(profile, doc_id=doc_id)
         clause, params = _sql_predicate(predicate)
         async with engine.begin() as conn:

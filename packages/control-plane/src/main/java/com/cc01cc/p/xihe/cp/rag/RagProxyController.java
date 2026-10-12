@@ -10,8 +10,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -83,7 +81,7 @@ public class RagProxyController {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("embeddingProfile", profiles.describe(profile));
         Map<String, Object> agentPayload = postAgent(
-                "/internal/v1/agent/rag/stats", body, requestId(), false);
+                "/internal/v1/agent/rag/stats", body, requestId(), true);
         return ResponseEntity.ok(agentPayload);
     }
 
@@ -114,13 +112,13 @@ public class RagProxyController {
             }
             body.add("embeddingProfile", objectMapper.writeValueAsString(profiles.describe(profile)));
             body.add("embeddingCredentialLease", lease.token());
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.MULTIPART_FORM_DATA);
-            headers.setBearerAuth(agentApiToken);
+            BoundaryResource multipart = new BoundaryResource(body);
             HttpRequest agentRequest = HttpRequest.newBuilder(URI.create(agentBaseUrl + "/internal/v1/agent/rag/ingest"))
                     .header("Authorization", "Bearer " + agentApiToken)
+                    .header("Content-Type", multipart.contentType())
+                    .header("Accept", "application/json")
                     .timeout(Duration.ofSeconds(120))
-                    .POST(ofMultipart(body, headers))
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(multipart.bytes()))
                     .build();
             HttpResponse<String> response = httpClient.send(agentRequest, HttpResponse.BodyHandlers.ofString());
             Map<String, Object> payload = objectMapper.readValue(
@@ -227,11 +225,6 @@ public class RagProxyController {
         throw new CpApiException(http, code, "RAG ingest failed", requestId);
     }
 
-    private HttpRequest.BodyPublisher ofMultipart(MultiValueMap<String, Object> body, HttpHeaders headers) {
-        BoundaryResource resource = new BoundaryResource(body, headers);
-        return HttpRequest.BodyPublishers.ofByteArray(resource.bytes());
-    }
-
     private UUID currentUserId() {
         String value = TenantContext.getUserId();
         if (value == null || value.isBlank()) {
@@ -253,10 +246,11 @@ public class RagProxyController {
     /** Minimal multipart encoder for the agent ingest hop. */
     private static final class BoundaryResource {
         private final byte[] bytes;
+        private final String contentType;
 
-        BoundaryResource(MultiValueMap<String, Object> body, HttpHeaders headers) {
+        BoundaryResource(MultiValueMap<String, Object> body) {
             String boundary = "xihe-rag-" + UUID.randomUUID().toString().replace("-", "");
-            headers.setContentType(MediaType.parseMediaType("multipart/form-data; boundary=" + boundary));
+            this.contentType = "multipart/form-data; boundary=" + boundary;
             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
             try {
                 for (Map.Entry<String, java.util.List<Object>> entry : body.entrySet()) {
@@ -287,6 +281,10 @@ public class RagProxyController {
 
         byte[] bytes() {
             return bytes;
+        }
+
+        String contentType() {
+            return contentType;
         }
     }
 }
