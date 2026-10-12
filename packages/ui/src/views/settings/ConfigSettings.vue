@@ -8,6 +8,7 @@ import ConfigDomainPanel, {
 } from "../../components/settings/ConfigDomainPanel.vue";
 import AgentTemplatesPanel from "../../components/settings/AgentTemplatesPanel.vue";
 import ContextTemplatesPanel from "../../components/settings/ContextTemplatesPanel.vue";
+import EmbeddingSettingsPanel from "../../components/settings/EmbeddingSettingsPanel.vue";
 import McpStdioServerList from "../../components/settings/McpStdioServerList.vue";
 import ProviderHub from "../../components/settings/ProviderHub.vue";
 import SettingsNav from "../../components/settings/SettingsNav.vue";
@@ -43,7 +44,7 @@ const domainLabels: Record<string, string> = {
     logging: t("settings.domainLogging"),
     "approval-policy": t("settings.domainApprovalPolicy"),
     "agent-templates": t("settings.domainAgentTemplates"),
-    "context-templates": t("settings.domainContextTemplates"),
+    "api-request-templates": t("settings.domainContextTemplates"),
     "job-policy": t("settings.domainJobPolicy"),
 };
 
@@ -688,6 +689,7 @@ async function handleImportFile(event: Event) {
 
                     <template v-for="domain in visibleDomains" :key="domain">
                         <ProviderHub
+                            :workspace-id="currentWorkspaceId() || undefined"
                             v-if="domain === 'llm-provider' && activeTab !== 'instance'"
                             :scope="activeTab === 'user' ? 'USER' : 'WORKSPACE'"
                         />
@@ -698,11 +700,19 @@ async function handleImportFile(event: Event) {
                             @save="handleSave(domain, $event)"
                         />
                         <ContextTemplatesPanel
-                            v-else-if="domain === 'context-templates'"
+                            :key="`${activeTab}:${currentWorkspaceId()}`"
+                            v-else-if="domain === 'api-request-templates'"
                             :entries="configStore.layerConfig[activeTab][domain] || {}"
                             :saving="savingDomains[domain] || false"
                             :layer="activeTab"
+                            :workspace-id="currentWorkspaceId() || undefined"
                             @save="handleSave(domain, $event)"
+                        />
+                        <EmbeddingSettingsPanel
+                            v-else-if="domain === 'embedding' && activeTab !== 'instance'"
+                            :layer="activeTab === 'user' ? 'user' : 'workspace'"
+                            :workspace-id="currentWorkspaceId() || undefined"
+                            :saving="savingDomains[domain] || false"
                         />
                         <ConfigDomainPanel
                             v-else

@@ -58,6 +58,9 @@ final class CpModuleAssignment implements SliceAssignment {
         if (name.startsWith("Provider")) {
             return "provider";
         }
+        if (name.startsWith("ApiRequestTemplate") || name.startsWith("ApiInputType")) {
+            return "provider";
+        }
         if (name.startsWith("OAuth")) {
             return "oauth";
         }

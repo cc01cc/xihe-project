@@ -219,15 +219,19 @@ public class SessionController {
             String modelProvider = request == null ? null : request.modelProvider();
             String modelName = request == null ? null : request.modelName();
             String providerConnectionId = request == null ? null : request.providerConnectionId();
-            Session session = sessionService.update(sessionId, userId, workspaceId,
-                    title, modelProvider, modelName, providerConnectionId);
+            ContextTemplateService.TemplateSelection selection = request == null ? null : selection(
+                    request.contextTemplateLayer(), request.contextTemplateId(), request.contextTemplateVersion());
+            Session session = sessionService.updateBinding(sessionId, userId, workspaceId,
+                    title, modelProvider, modelName, providerConnectionId,
+                    request == null ? null : request.connectionRevision(), selection,
+                    request != null && Boolean.TRUE.equals(request.confirmedTypeChange()));
             return ResponseEntity.ok(toView(session));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
     }
 
-    @PatchMapping("/{sessionId}/context-template")
+    @PatchMapping("/{sessionId}/api-request-template")
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
     public ResponseEntity<?> updateContextTemplate(@PathVariable String sessionId,
                                                    @RequestBody ContextTemplateBindingRequest request) {
@@ -237,8 +241,8 @@ public class SessionController {
                 throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                         "layer, templateId and version are required");
             }
-            Session session = sessionService.updateContextTemplate(sessionId, TenantContext.getUserId(),
-                    TenantContext.getWorkspaceId(), request.layer(), request.templateId(), request.version());
+            Session session = sessionService.updateApiTemplate(sessionId, TenantContext.getUserId(),
+                    TenantContext.getWorkspaceId(), request.layer(), request.templateId(), request.version(), request.connectionRevision());
             return ResponseEntity.ok(toView(session));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
@@ -334,10 +338,30 @@ public class SessionController {
                                        String providerConnectionId, String agentPrincipalId,
                                        String contextTemplateLayer, String contextTemplateId,
                                        Integer contextTemplateVersion) {}
-    public record ContextTemplateBindingRequest(String layer, String templateId, Integer version) {}
+    public record ContextTemplateBindingRequest(String layer, String templateId, Integer version, Long connectionRevision) {
+        public ContextTemplateBindingRequest(String layer, String templateId, Integer version) {
+            this(layer, templateId, version, null);
+        }
+    }
     public record ForkRequest(String sourceBranchId, String anchorMessageId) {}
     public record UpdateSessionRequest(String title, String modelProvider, String modelName,
-                                       String providerConnectionId) {}
+                                       String providerConnectionId, Long connectionRevision,
+                                       String contextTemplateLayer, String contextTemplateId, Integer contextTemplateVersion,
+                                       Boolean confirmedTypeChange) {
+        public UpdateSessionRequest(String title, String modelProvider, String modelName, String providerConnectionId) {
+            this(title, modelProvider, modelName, providerConnectionId, null, null, null, null, null);
+        }
+    }
+
+    private static ContextTemplateService.TemplateSelection selection(String layer, String id, Integer version) {
+        if (layer == null && id == null && version == null) {
+            return null;
+        }
+        if (layer == null || id == null || version == null) {
+            throw com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService.invalid("A complete template triple is required");
+        }
+        return new ContextTemplateService.TemplateSelection(layer, id, version);
+    }
 
     private static ContextTemplateService.TemplateSelection templateSelection(CreateSessionRequest request) {
         if (request == null) {

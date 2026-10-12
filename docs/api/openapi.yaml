@@ -254,8 +254,8 @@ paths:
     get: { operationId: getSession, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
     patch: { operationId: updateSession, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/SessionUpdateRequest' } } } }, responses: { '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
     delete: { operationId: deleteSession, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted }, '409': { description: FORK_REQUEST_IN_PROGRESS while the source Session is being copied, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
-  /api/v1/sessions/{sessionId}/context-template:
-    patch: { operationId: updateSessionContextTemplate, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ContextTemplateBindingRequest' } } } }, responses: { '200': { description: Session with the updated pinned Context Template binding, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '400': { $ref: '#/components/responses/Problem' }, '404': { description: CONTEXT_TEMPLATE_NOT_FOUND for an unknown layer/revision, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
+  /api/v1/sessions/{sessionId}/api-request-template:
+    patch: { operationId: updateSessionApiRequestTemplate, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ApiRequestTemplateBindingRequest' } } } }, responses: { '200': { description: Session with the updated pinned API request template binding, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '400': { $ref: '#/components/responses/Problem' }, '409': { description: 'API_TYPE_TEMPLATE_MISMATCH / API_TYPE_REBIND_REQUIRED / CONNECTION_REVISION_CHANGED', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '404': { description: API_REQUEST_TEMPLATE_NOT_FOUND for an unknown layer/revision, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
   /api/v1/sessions/{sessionId}/derived-state:
     get:
       operationId: getSessionDerivedState
@@ -814,6 +814,43 @@ paths:
           description: Built-in API Type registry
           content: { application/json: { schema: { $ref: '#/components/schemas/ApiInputTypeListResponse' } } }
         '401': { $ref: '#/components/responses/Problem' }
+  /api/v1/api-input-types/{apiTypeId}/versions/{version}/validate:
+    post:
+      operationId: validateApiRequestTemplate
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: apiTypeId, required: true, schema: { type: string } }, { in: path, name: version, required: true, schema: { type: integer, minimum: 1 } }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [bodySource], properties: { bodySource: { type: string } } } } } }
+      responses:
+        '200': { description: Non-persistent validation; invalid source returns valid=false, content: { application/json: { schema: { $ref: '#/components/schemas/ApiRequestTemplateValidation' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+  /api/v1/config/api-request-templates:
+    get:
+      operationId: listApiRequestTemplates
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: query, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace] } }, { in: query, name: workspaceId, schema: { type: string, format: uuid } }, { in: query, name: includeMeta, schema: { type: boolean, default: false } }]
+      responses:
+        '200': { description: 'Authorized config string map by default; includeMeta=true returns domain, entries and envOverridden. templates/defaults/model bindings are JSON strings.', content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '403': { $ref: '#/components/responses/Problem' }
+  /api/v1/config/{layer}/api-request-templates:
+    put:
+      operationId: saveApiRequestTemplates
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace] } }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: { type: string }, description: 'templates, connectionDefaultTemplates and providerModelBindings are JSON strings. Published versions are immutable; drafts preserve invalid raw source.' } } } }
+      responses:
+        '200': { description: Saved authorized config envelope }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /api/v1/provider-connections/{connectionId}/api-type-change-impact:
+    get:
+      operationId: getProviderApiTypeChangeImpact
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: connectionId, required: true, schema: { type: string, format: uuid } }, { in: query, name: apiTypeId, required: true, schema: { type: string } }, { in: query, name: version, required: true, schema: { type: integer, minimum: 1 } }]
+      responses:
+        '200': { description: Owner-visible compatible refs and aggregate incompatible override/session counts; no cross-user identities or bodies, content: { application/json: { schema: { $ref: '#/components/schemas/ApiTypeChangeImpact' } } } }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /api/v1/provider-catalog:
     get:
       operationId: listProviderCatalog
@@ -921,6 +958,30 @@ paths:
     put: { operationId: putWorkspaceConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }, { in: query, name: workspaceId, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Updated }, '403': { $ref: '#/components/responses/Problem' } } }
   /api/v1/config/user/{domain}:
     put: { operationId: putUserConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }], responses: { '200': { description: Updated } } }
+  /api/v1/config/embedding/effective:
+    get:
+      operationId: getEmbeddingEffectiveProfile
+      summary: Read-only effective embedding profile for the settings surface
+      description: 'PLAN-0485: CP serves the pinned V1 contract (modelId/dimension) instead of letting the client re-declare it. profile/profileScope show the whole-unit layer profile; resolved is the non-secret owner view of the same-key READY embedding connection, or null with a stable conflict code. A pure read never fails on a missing profile/connection. A client-supplied workspaceId is authorized for the caller.'
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: query, name: workspaceId, required: false, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Effective embedding profile, content: { application/json: { schema: { $ref: '#/components/schemas/EmbeddingEffectiveProfile' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+  /api/v1/config/embedding/test:
+    post:
+      operationId: testEmbeddingProfile
+      summary: Probe the resolved embedding profile through the Agent
+      description: 'PLAN-0485: resolves the authenticated caller profile, issues a one-use credential lease and asks the Agent to embed a probe text. Takes no request body (a non-empty body is rejected). The response is sanitized: no credential, provider payload or vector is returned.'
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Sanitized probe result, content: { application/json: { schema: { $ref: '#/components/schemas/EmbeddingTestResult' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '502': { $ref: '#/components/responses/Problem' }
   /api/v1/config/import:
     post: { operationId: importConfig, security: [{ bearerAuth: [] }], parameters: [{ in: query, name: layer, required: false, schema: { type: string, enum: [instance] } }], responses: { '200': { description: Imported (merge semantics) } } }
   /api/v1/config/export:
@@ -1280,9 +1341,21 @@ paths:
   /internal/v1/agent/rag/search:
     post: { operationId: agentRagSearch, security: [{ bearerAuth: [] }], responses: { '200': { description: RAG result } } }
   /internal/v1/agent/rag/stats:
-    get: { operationId: agentRagStats, security: [{ bearerAuth: [] }], responses: { '200': { description: RAG statistics, content: { application/json: { schema: { $ref: '#/components/schemas/RagStatsResponse' } } } }, '401': { $ref: '#/components/responses/Problem' } } }
-  /internal/v1/agent/rag/documents/{docId}:
-    delete: { operationId: agentRagDelete, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: docId, required: true, schema: { type: string } }], responses: { '200': { description: Deleted, content: { application/json: { schema: { $ref: '#/components/schemas/DeletedResponse' } } } }, '401': { $ref: '#/components/responses/Problem' } } }
+    post: { operationId: agentRagStats, security: [{ bearerAuth: [] }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [embeddingProfile], properties: { embeddingProfile: { type: string } } } } } }, responses: { '200': { description: RAG statistics, content: { application/json: { schema: { type: object } } } }, '401': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' }, '502': { $ref: '#/components/responses/Problem' } } }
+  /internal/v1/agent/rag/documents/{docId}/delete:
+    post: { operationId: agentRagDelete, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: docId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [embeddingProfile], properties: { embeddingProfile: { type: string } } } } } }, responses: { '200': { description: Deleted, content: { application/json: { schema: { $ref: '#/components/schemas/DeletedResponse' } } } }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
+  /internal/v1/agent/rag/embedding/test:
+    post:
+      operationId: agentRagEmbeddingTest
+      summary: Embedding provider probe behind the CP settings test action
+      description: 'PLAN-0485: request-scoped embedding call. CP sends the non-secret embeddingProfile plus a separate one-use embeddingCredentialLease; the Agent redeems the lease and calls the pinned Multimodal-Embedding endpoint. Errors are sanitized RFC 9457 problems with stable codes.'
+      security: [{ bearerAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [embeddingProfile, embeddingCredentialLease], properties: { embeddingProfile: { type: string, description: 'JSON string of the non-secret profile (providerId/connectionKey/modelId/providerConnectionId/connectionRevision/dimension).' }, embeddingCredentialLease: { type: string, writeOnly: true }, requestId: { type: string } } } } } }
+      responses:
+        '200': { description: 'Sanitized probe result (status/model/dimension/requestId)', content: { application/json: { schema: { $ref: '#/components/schemas/EmbeddingTestResult' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '502': { $ref: '#/components/responses/Problem' }
   /internal/v1/agent/models:
     get: { operationId: agentModelsLegacy, security: [{ bearerAuth: [] }], responses: { '200': { description: Legacy global models } } }
     post:
@@ -1969,10 +2042,20 @@ components:
         aggregate_id: { type: string, description: Session identifier; not the persisted event primary key }
         sequence: { type: integer, format: int64 }
         type: { type: string }
-        payload: { type: object, additionalProperties: true }
+        payload: { type: object, additionalProperties: true, description: 'assistant.responded payload.message may use NativeAssistantHistoryMessage. Its Type/nativeRecords triple is atomic and replaces that Run ai/tool projection using correlation_id; it excludes admitted user input.' }
         created_at: { type: string, format: date-time }
         correlation_id: { type: [string, 'null'] }
         causation_id: { type: [string, 'null'] }
+    NativeAssistantHistoryMessage:
+      type: object
+      required: [role, content, apiTypeId, apiTypeVersion, nativeRecords]
+      description: 'Optional native carrier variant of assistant.responded.message. Preserve exact signatures/reasoning; bound tool arguments/results using existing policy. Serialized Type/nativeRecords carrier must fit resolved pruneWindowChars or fail before publication. Replay/fork preserve it; prune/compaction remove it atomically with replaced Run history. No credentials or rendered request body.'
+      properties:
+        role: { type: string, enum: [ai] }
+        content: { type: string }
+        apiTypeId: { type: string, enum: [openai-chat-completions, anthropic-messages, mimo-responses] }
+        apiTypeVersion: { type: integer, minimum: 1 }
+        nativeRecords: { type: array, items: { type: object, additionalProperties: true } }
     RuntimeReadFileRequest: { type: object, required: [path], additionalProperties: false, properties: { path: { type: string, description: 'Workspace-relative path.' }, max_bytes: { type: integer, description: 'Truncate content to N bytes; truncated=true marks an applied cut.' } } }
     WorkspaceFactsResult: { type: object, required: [isRepository, cwd, platform, shell, observedAt], properties: { isRepository: { type: boolean }, branch: { type: string, description: 'Omitted when non-repo or detached.' }, head: { type: string }, cwd: { type: string, nullable: true, description: 'Logical sandbox cwd (/workspace in docker); null = unknown (host/mxc never report host paths).' }, platform: { type: string, nullable: true, description: 'Execution-face OS (container OS in docker, Runtime host OS otherwise).' }, shell: { type: string, nullable: true, description: 'Tool-exec shell entry (xihe-shell in docker); null = no shell layer or unknown.' }, observedAt: { type: string, format: date-time, description: 'Report time (RFC3339 UTC); diagnostics only, never an idempotency key.' } } }
     RuntimeReadFileResult: { type: object, required: [found, content, truncated], properties: { found: { type: boolean, description: 'false = path resolved to no content (missing file or unmaterialized root); true = content authoritative even when empty string.' }, content: { type: string, description: 'File content; empty string when found=false or the file is empty (distinguish via found).' }, truncated: { type: boolean } } }
@@ -2112,7 +2195,7 @@ components:
        required: [counts]
        properties:
          counts: { type: object, required: [deleted, kept], properties: { deleted: { type: integer }, kept: { type: integer } } }
-    Session: { type: object, required: [id, workspaceId, title, archived, agentPrincipalId], properties: { id: { type: string }, workspaceId: { type: string }, agentPrincipalId: { type: [string, 'null'], format: uuid }, title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, contextTemplateLayer: { type: string, enum: [instance, user, workspace], readOnly: true, description: PLAN-0414 explicit source layer of the immutable Context Template revision pinned to this Session. }, contextTemplateId: { type: string, format: uuid, readOnly: true, description: PLAN-0414 pinned Context Template UUID; revisions are append-only in its config layer. }, contextTemplateVersion: { type: integer, readOnly: true, description: PLAN-0414 pinned Context Template revision. }, archived: { type: boolean }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
+    Session: { type: object, required: [id, workspaceId, title, archived, agentPrincipalId], properties: { id: { type: string }, workspaceId: { type: string }, agentPrincipalId: { type: [string, 'null'], format: uuid }, title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, contextTemplateLayer: { type: [string, 'null'], enum: [instance, user, workspace, null], readOnly: true, description: All three pin fields are present together or null; null requires explicit rebind. }, contextTemplateId: { type: [string, 'null'], format: uuid, readOnly: true }, contextTemplateVersion: { type: [integer, 'null'], readOnly: true }, archived: { type: boolean }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
     SessionForkResponse:
       allOf:
         - { $ref: '#/components/schemas/Session' }
@@ -2135,8 +2218,8 @@ components:
     SessionCompactRequest: { type: object, additionalProperties: false, required: [branchId], properties: { branchId: { type: string, format: uuid }, upToSequence: { type: integer, format: int64, minimum: 0 } } }
     SessionCompactResponse: { type: object, additionalProperties: false, required: [sequence, eventType, createdAt], properties: { sequence: { type: integer, format: int64 }, eventType: { type: string, const: compaction.manual_applied }, createdAt: { type: string, format: date-time } } }
     SessionMessage: { type: object, required: [id, sessionId, role, content, createdAt, attachments], properties: { id: { type: string, format: uuid }, sessionId: { type: string, format: uuid }, role: { type: string, enum: [USER, ASSISTANT] }, content: { type: string }, createdAt: { type: string, format: date-time }, runId: { type: string, format: uuid }, runStatus: { type: string }, terminalOutcome: { type: string }, errorCode: { type: string }, errorDetail: { type: string }, partial: { type: boolean }, jobSummary: { type: array, items: { type: object } }, attachments: { type: array, items: { type: object } } } }
-    SessionUpdateRequest: { type: object, properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'] } } }
-    ContextTemplateBindingRequest: { type: object, additionalProperties: false, required: [layer, templateId, version], properties: { layer: { type: string, enum: [instance, user, workspace] }, templateId: { type: string, format: uuid }, version: { type: integer, minimum: 1, description: Must address an existing immutable revision in the given layer, otherwise 404 CONTEXT_TEMPLATE_NOT_FOUND. } } }
+    SessionUpdateRequest: { type: object, description: "Metadata-only edits retain the pin. Binding edits require modelProvider/modelName/providerConnectionId/connectionRevision together; omitted template triple resolves the target default once; partial or null bindings fail. Cross-Type changes require confirmedTypeChange.", properties: { title: { type: [string, 'null'] }, modelProvider: { type: string }, modelName: { type: string }, providerConnectionId: { type: string, format: uuid }, connectionRevision: { type: integer, minimum: 1 }, confirmedTypeChange: { type: boolean }, contextTemplateLayer: { type: string, enum: [instance, user, workspace] }, contextTemplateId: { type: string, format: uuid }, contextTemplateVersion: { type: integer, minimum: 1 } } }
+    ApiRequestTemplateBindingRequest: { type: object, additionalProperties: false, required: [layer, templateId, version, connectionRevision], properties: { connectionRevision: { type: integer, minimum: 1 }, layer: { type: string, enum: [instance, user, workspace] }, templateId: { type: string, format: uuid }, version: { type: integer, minimum: 1, description: Must address an existing immutable revision in the given layer, otherwise 404 API_REQUEST_TEMPLATE_NOT_FOUND. } } }
     SessionDerivedStateResponse:
        type: object
        additionalProperties: false
@@ -2532,6 +2615,8 @@ components:
        type: object
        required: [providerId, label, connectionKey]
        properties:
+         apiTypeId: { type: string, description: Optional supported Type pair; omission selects the catalog default. }
+         apiTypeVersion: { type: integer, minimum: 1 }
          providerId: { type: string }
          label: { type: string, minLength: 1, maxLength: 128 }
          connectionKey: { type: string, minLength: 1, maxLength: 64, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$' }
@@ -2540,10 +2625,20 @@ components:
          baseUrl: { type: [string, 'null'], format: uri }
          modelDiscovery: { type: [string, 'null'], enum: [remote-models, litellm-catalog, curated, manual] }
          manualModels: { type: array, items: { type: string }, maxItems: 256 }
+    ApiRequestTemplateRef: { type: object, additionalProperties: false, required: [layer, templateId, version], properties: { layer: { type: string, enum: [instance, user, workspace] }, templateId: { type: string, format: uuid }, version: { type: integer, minimum: 1 } } }
+    ApiRequestTemplate: { type: object, required: [id, version, name, apiTypeId, apiTypeVersion, bodySource, status], properties: { id: { type: string, format: uuid }, version: { type: integer, minimum: 1 }, name: { type: string }, description: { type: string }, apiTypeId: { type: string }, apiTypeVersion: { type: integer, minimum: 1 }, bodySource: { type: string }, status: { type: string, enum: [draft, published] } } }
+    ApiRequestTemplateValidation: { type: object, required: [valid, diagnostics], properties: { valid: { type: boolean }, diagnostics: { type: array, items: { type: object, required: [code, path, message], properties: { code: { type: string }, path: { type: string }, message: { type: string } } } } } }
+    ApiTypeChangeImpact: { type: object, required: [connectionRevision, currentType, targetType, compatibleTemplates, incompatibleOverrides, sessionRebindCount], properties: { connectionRevision: { type: integer }, currentType: { $ref: '#/components/schemas/ApiTypePair' }, targetType: { $ref: '#/components/schemas/ApiTypePair' }, compatibleTemplates: { type: array, items: { $ref: '#/components/schemas/ApiRequestTemplateRef' } }, incompatibleOverrides: { type: array, items: { type: object, required: [scope, count], properties: { scope: { type: string }, count: { type: integer } } } }, sessionRebindCount: { type: integer } } }
     ProviderConnectionUpdateRequest:
        type: object
+       required: [expectedRevision]
        minProperties: 1
        properties:
+         expectedRevision: { type: integer, minimum: 1, description: Required revision CAS; stale writes return CONNECTION_REVISION_CHANGED. }
+         apiTypeId: { type: string, description: Must be paired with apiTypeVersion. }
+         apiTypeVersion: { type: integer, minimum: 1 }
+         confirmedTypeChange: { type: boolean, description: Required true when changing the Type pair. }
+         connectionDefaultTemplateRef: { $ref: '#/components/schemas/ApiRequestTemplateRef' }
          label: { type: string, minLength: 1, maxLength: 128 }
          connectionKey: { type: [string, 'null'], minLength: 1, maxLength: 64, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$', description: 'Omitted preserves the key; null is rejected with PROVIDER_CONNECTION_KEY_INVALID; a different key is rejected with PROVIDER_CONNECTION_KEY_IMMUTABLE.' }
          apiKey: { type: [string, 'null'], minLength: 1, writeOnly: true }
@@ -2646,8 +2741,9 @@ components:
          connectionRevision: { type: integer, minimum: 1 }
     AgentChatRequest:
       type: object
-      required: [sessionId, content, stream]
+      required: [runId, sessionId, content, stream, provider, model, providerConnectionId, connectionRevision, credentialLease, contextTemplateSnapshot]
       properties:
+        runId: { type: string, format: uuid }
         sessionId: { type: string }
         content: { type: string }
         instructions: { type: string, description: CP-selected safe Agent profile instructions text only; AgentPrincipal IDs and permission snapshots are forbidden on this wire. }
@@ -2692,23 +2788,20 @@ components:
         attachments: { type: array, items: { type: object, additionalProperties: true } }
     ContextTemplateSnapshot:
       type: object
-      required: [layer, templateId, version, source, template]
+      description: Exact admission snapshot; the historical carrier field name is retained, but legacy Markdown snapshots are audit-only.
+      required: [layer, templateId, version, source, template, providerConnectionId, connectionRevision, apiTypeId, apiTypeVersion, connectionKey, connectionScope]
       properties:
         layer: { type: string, enum: [instance, user, workspace] }
         templateId: { type: string, format: uuid }
         version: { type: integer, minimum: 1 }
-        source: { type: string, const: session-binding }
-        template:
-          type: object
-          required: [id, version, name, document, components]
-          properties:
-            id: { type: string, format: uuid }
-            version: { type: integer, minimum: 1 }
-            name: { type: string }
-            description: { type: string }
-            document: { type: string }
-            components: { type: array, items: { type: object, additionalProperties: true } }
-          additionalProperties: false
+        source: { type: string }
+        template: { $ref: '#/components/schemas/ApiRequestTemplate' }
+        providerConnectionId: { type: string, format: uuid }
+        connectionRevision: { type: integer, minimum: 1 }
+        apiTypeId: { type: string }
+        apiTypeVersion: { type: integer, minimum: 1 }
+        connectionKey: { type: string }
+        connectionScope: { type: string, enum: [USER, WORKSPACE, SYSTEM] }
       additionalProperties: false
     ContextComponentSource:
       type: object
@@ -2744,7 +2837,25 @@ components:
     OAuthTokenRequest: { type: object, required: [userId, workspaceId, serverId, scope], properties: { userId: { type: string }, workspaceId: { type: string }, serverId: { type: string }, scope: { type: string } } }
     StatusResponse: { type: object, required: [status], properties: { status: { type: string } }, additionalProperties: true }
     DeletedResponse: { type: object, required: [deleted], properties: { deleted: { type: boolean } } }
-    RagIngestRequest: { type: object, required: [file], properties: { file: { type: string, format: binary }, chunkSize: { type: integer, default: 1000 }, chunkOverlap: { type: integer, default: 200 } } }
+    RagIngestRequest: { type: object, required: [file, embeddingProfile, embeddingCredentialLease], properties: { file: { type: string, format: binary }, chunkSize: { type: integer, default: 1000 }, chunkOverlap: { type: integer, default: 200 }, embeddingProfile: { type: string, description: 'JSON string of the CP-resolved non-secret profile; the Agent partitions every stored row by its full identity tuple.' }, embeddingCredentialLease: { type: string, writeOnly: true } } }
+    RagSearchRequest: { type: object, required: [query, embeddingProfile, embeddingCredentialLease], properties: { query: { type: string }, topK: { type: integer, default: 5 }, embeddingProfile: { type: string }, embeddingCredentialLease: { type: string, writeOnly: true } } }
+    EmbeddingEffectiveProfile:
+      type: object
+      required: [contract, profile, profileScope, resolved]
+      properties:
+        contract: { type: object, required: [modelId, dimension], properties: { modelId: { type: string }, dimension: { type: integer } }, description: 'Pinned V1 embedding contract served by CP.' }
+        profile: { type: ['object', 'null'], properties: { providerId: { type: string }, connectionKey: { type: string }, model: { type: string } } }
+        profileScope: { type: ['string', 'null'], enum: [instance, user, workspace, null] }
+        resolved: { type: ['object', 'null'], description: 'Non-secret owner view of the same-key READY embedding connection; null when absent or conflicting (code carries the stable conflict code).' }
+        code: { type: string }
+    EmbeddingTestResult:
+      type: object
+      required: [status, model, dimension, requestId]
+      properties:
+        status: { type: string, enum: [ok] }
+        model: { type: string }
+        dimension: { type: integer }
+        requestId: { type: string }
     RagIngestResponse: { type: object, required: [status, chunks, docIds], properties: { status: { type: string }, chunks: { type: integer }, docIds: { type: array, items: { type: string } } } }
     RagStatsResponse: { type: object, required: [totalDocuments], properties: { totalDocuments: { type: integer } } }
     WorkspaceExecutionSpec: { type: object, required: [workspaceId, generation, sandboxSpecHash, sandboxSpec, storageBackend, storageRef, storageMode, executionMode], properties: { workspaceId: { type: string }, generation: { type: integer }, sandboxSpecHash: { type: string }, sandboxSpec: { type: object, additionalProperties: true }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'] }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] } } }

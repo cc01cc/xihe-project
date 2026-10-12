@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import json
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -39,6 +40,7 @@ from xihe_agent.interfaces.event_store import EventStore
 from xihe_agent.interfaces.message import Message, TextMessage
 from xihe_agent.interfaces.tool import BaseAgentTool
 from xihe_agent.interfaces.usage import RunUsage
+from xihe_agent.llm.api_request import ApiRequestError
 
 # PLAN-0341 T1.2: assembly-layer fuse only — prune is the real governance.
 # Truncation must never orphan a tool result (window start lands on a tool
@@ -125,16 +127,20 @@ def prune_history_tool_results(
     prune_reasons: dict[int, str] = {}
     kept_tool_chars = 0
     for i, msg in enumerate(history):
-        if msg.role != "tool" or i >= window_start:
+        native_records = getattr(msg, "native_records", None)
+        if (msg.role != "tool" and native_records is None) or i >= window_start:
             continue
         duplicated = msg.content in seen_contents
-        oversized = len(msg.content) > TOOL_RESULT_MASK_CHARS
+        content_size = (
+            len(json.dumps(native_records, ensure_ascii=False)) if native_records is not None else len(msg.content)
+        )
+        oversized = content_size > TOOL_RESULT_MASK_CHARS
         if duplicated:
             prune_reasons[i] = "duplicate"
         elif oversized:
             prune_reasons[i] = "oversized"
         else:
-            kept_tool_chars += len(msg.content)
+            kept_tool_chars += content_size
             if kept_tool_chars > prune_window_chars:
                 prune_reasons[i] = "window"
         seen_contents.add(msg.content)
@@ -159,6 +165,8 @@ def prune_history_tool_results(
             )
             # PLAN-0381 contract §8: mask swaps content only — pairing fields
             # (id/name/status/degraded) survive so V9 keeps pairs intact.
+            if getattr(msg, "native_records", None) is not None:
+                continue
             if isinstance(msg, TextMessage):
                 result.append(replace(msg, content=MASK_PLACEHOLDER))
             else:
@@ -171,7 +179,6 @@ def prune_history_tool_results(
 # Back-compat alias used by existing unit tests (PLAN-294 surface).
 def _mask_history_tool_results(history: Sequence[Message]) -> list[Message]:
     return prune_history_tool_results(history).messages
-
 
 
 class LangGraphRunner(AgentRunner):
@@ -256,6 +263,7 @@ class LangGraphRunner(AgentRunner):
         seen_tool_ids: set[str] = set()
         cancel_event = config.cancel_event
         cancelled = False
+        failed = False
         assistant_parts: list[str] = []
 
         try:
@@ -308,12 +316,19 @@ class LangGraphRunner(AgentRunner):
                 if aclose is not None:
                     await aclose()
         except ApprovalTerminalError as e:
+            failed = True
             # Approval gate terminations (rejected/expired) are structured
             # terminal outcomes, not stream failures: propagate the code so the
             # SSE relay can emit error(APPROVAL_REJECTED|APPROVAL_EXPIRED).
             logger.info("LangGraph stream terminated by approval gate: code={}", e.code)
             yield AgentEvent(type="error", data={"error": str(e), "code": e.code})
+        except ApiRequestError as e:
+            failed = True
+            logger.warning("API request failed code={}", e.code)
+            context.metadata.pop(EVENT_STORE_FAILURES_KEY, None)
+            yield AgentEvent(type="error", data={"error": e.code, "code": e.terminal_code, "retryable": False})
         except litellm.exceptions.ContextWindowExceededError as e:
+            failed = True
             # PLAN-294 decision #10 (M3): provider-side overflow is a
             # structured terminal outcome, not a crash — the CP compaction
             # gate consumes CONTEXT_OVERFLOW as the reactive trigger and the
@@ -324,6 +339,7 @@ class LangGraphRunner(AgentRunner):
                 data={"error": "Context window exceeded", "code": "CONTEXT_OVERFLOW", "retryable": True},
             )
         except Exception as e:
+            failed = True
             logger.error("LangGraph stream failed", exc_info=e)
             # PLAN-0410 T2.3: this error already surfaces as the terminal
             # outcome — drop the failure ledger so the post-run check below
@@ -337,20 +353,35 @@ class LangGraphRunner(AgentRunner):
             # the context event store — the UI-facing messages table (CP side)
             # and the event-sourced projection must share the same history.
             # Only successful, non-cancelled runs carry a durable reply.
-            if not cancelled and assistant_parts and self._event_store is not None:
+            if (
+                not cancelled
+                and not failed
+                and (assistant_parts or getattr(model, "native_records", None))
+                and self._event_store is not None
+            ):
                 try:
+                    message: dict[str, Any] = {"role": "ai", "content": "".join(assistant_parts)}
+                    from xihe_agent.adapters.api_chat_model import ApiChatModel, durable_native_carrier
+
+                    if isinstance(model, ApiChatModel):
+                        message.update(durable_native_carrier(model, config.prune_window_chars))
                     await self._event_store.append(
                         Event(
                             aggregate_id=context.aggregate_id,
                             sequence=0,
                             type="assistant.responded",
                             payload={
-                                "message": {"role": "ai", "content": "".join(assistant_parts)},
+                                "message": message,
                                 "runId": context.metadata.get("runId"),
                             },
                             created_at=datetime.now(UTC),
                             correlation_id=_run_correlation(context),
                         )
+                    )
+                except ApiRequestError as e:
+                    logger.warning("Native history persistence rejected code={}", e.terminal_code)
+                    yield AgentEvent(
+                        type="error", data={"error": e.terminal_code, "code": e.terminal_code, "retryable": False}
                     )
                 except Exception as e:
                     # PLAN-0410 T2.3: required assistant event — recorded here,
@@ -640,9 +671,7 @@ def to_langchain_messages(messages: list[Message]) -> list[AnyMessage]:
             # degrade to a text fact, never a fabricated pair. 先组装降级事实
             # 再整体加界（标签前缀计入 4096 预算）。
             logger.warning("Degrading unpaired tool result to a text fact: toolCallId={!r}", call_id)
-            degraded, _ = bound_tool_preview(
-                f"[unpaired tool result: {tool_name}] {message.content}", None
-            )
+            degraded, _ = bound_tool_preview(f"[unpaired tool result: {tool_name}] {message.content}", None)
             result.append(SystemMessage(content=degraded))
             continue
         # human / system / plain ai: flush pending declarations first (§7.5)

@@ -32,10 +32,11 @@ class TestChunking:
 
 @pytest.mark.asyncio
 async def test_rag_enrichment_skips_unconfigured_embedding(monkeypatch):
+    # PLAN-0485: chat-time RAG query handoff is owned by PLAN-0416; without a
+    # per-Run profile the enrichment is skipped and no provider call happens.
     embedding_service = MagicMock()
     embedding_service.embed = AsyncMock()
-    monkeypatch.setattr(main, "embedding_enabled", False)
-    monkeypatch.setattr(main, "embedding_service", embedding_service)
+    monkeypatch.setattr(main, "embedding_enabled", True)
 
     result = await main._enrich_with_rag_context("question", "instructions")
 

@@ -55,6 +55,15 @@ import java.util.UUID;
 
 class AgentChatIntegrationTest extends AbstractWireMockTest {
 
+    /**
+     * PLAN-0439: the published api-request-templates revision must pass the chat
+     * Type validator; this is the built-in openai-chat-completions body shape.
+     */
+    private static final String CHAT_BODY_SOURCE = "{\"model\":\"${xh.model}\","
+            + "\"messages\":[{\"role\":\"system\",\"content\":\"${xh.agent_instructions}\"},"
+            + "\"${xh.conversation_history}\",{\"role\":\"user\",\"content\":\"${xh.user_input}\"}],"
+            + "\"tools\":[\"${xh.tools}\"],\"stream\":true}";
+
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
         registry.add("cp.agent-url", () -> "http://localhost:" + wireMock.port() + "/internal/v1/agent/chat");
@@ -76,6 +85,12 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
 
     @Autowired
     private SessionRepository sessionRepository;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository providerConnectionRepository;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService apiRequestTemplates;
 
     @Autowired
     private AgentPrincipalRepository agentPrincipalRepository;
@@ -231,13 +246,23 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
         String templateId = UUID.randomUUID().toString();
         String componentId = UUID.randomUUID().toString();
         String sessionId = UUID.randomUUID().toString();
-        String treeTemplate = "[{\"id\":\"" + templateId + "\",\"version\":1,\"name\":\"tree\","
-                + "\"description\":\"d\",\"document\":\"{{component:" + componentId + "}}\","
-                + "\"components\":[{\"instanceId\":\"" + componentId + "\",\"type\":\"workspace_tree\","
-                + "\"enabled\":true,\"config\":{\"root\":\"session_workspace\",\"maxDepth\":2,"
-                + "\"includeFiles\":true,\"maxEntries\":20}}]}]";
-        configService.putLayer("user", "context-templates", Map.of("templates", treeTemplate),
-                "test", UUID.fromString(userId), UUID.fromString(workspaceId));
+        // PLAN-0439/0485: pinned templates live in api-request-templates; the
+        // published record must pass the chat Type validator, and the tree
+        // `components` array travels inside the pinned template (the admission
+        // snapshot copies it into contextTemplateSnapshot.template.components).
+        var template = objectMapper.createObjectNode();
+        template.put("id", templateId).put("version", 1).put("name", "tree").put("description", "d")
+                .put("apiTypeId", "openai-chat-completions").put("apiTypeVersion", 1)
+                .put("bodySource", CHAT_BODY_SOURCE).put("status", "published")
+                .put("document", "{{component:" + componentId + "}}");
+        var component = template.putArray("components").addObject();
+        component.put("instanceId", componentId).put("type", "workspace_tree").put("enabled", true);
+        component.putObject("config").put("root", "session_workspace").put("maxDepth", 2)
+                .put("includeFiles", true).put("maxEntries", 20);
+        ResponseEntity<Map> written = restTemplate.exchange(
+                url("/api/v1/config/user/api-request-templates"), HttpMethod.PUT,
+                entityWithAuth(Map.of("templates", "[" + template + "]"), token), Map.class);
+        assertEquals(HttpStatus.OK, written.getStatusCode(), String.valueOf(written.getBody()));
         createAgentSession(sessionId, "Tree component");
         Session session = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow();
         session.setContextTemplateLayer("user");
@@ -319,8 +344,8 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
                 Map.of("userName", "Alice"), "test", uid, null);
         configService.putLayer("user", "rag",
                 Map.of("chunkSize", "512"), "test", uid, null);
-        configService.putLayer("user", "embedding",
-                Map.of("model", "text-embedding-3-small", "dimensions", "1536"), "test", uid, null);
+        // PLAN-0485: the embedding domain is a whole-unit profile and no longer
+        // participates in Chat userOverrides/workspaceOverrides.
         configService.putLayer("workspace", "llm-provider",
                 Map.of("temperature", "0.2"), "test", uid, wid);
         configService.putLayer("workspace", "agent-runtime",
@@ -361,8 +386,6 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
                 .withRequestBody(matchingJsonPath(
                         "$.userOverrides['rag'].chunkSize", equalTo("512")))
                 .withRequestBody(matchingJsonPath(
-                        "$.userOverrides['embedding'].model", equalTo("text-embedding-3-small")))
-                .withRequestBody(matchingJsonPath(
                         "$.workspaceOverrides['llm-provider'].temperature", equalTo("0.2")))
                 .withRequestBody(matchingJsonPath(
                         "$.workspaceOverrides['agent-runtime'].useRegistry", equalTo("true"))));
@@ -370,7 +393,6 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
         configService.deleteKey("user", "llm-provider", "defaultModel", "test", uid, null);
         configService.deleteKey("user", "agent-profile", "userName", "test", uid, null);
         configService.deleteKey("user", "rag", "chunkSize", "test", uid, null);
-        configService.deleteKey("user", "embedding", "model", "test", uid, null);
         configService.deleteKey("workspace", "llm-provider", "temperature", "test", uid, wid);
         configService.deleteKey("workspace", "agent-runtime", "useRegistry", "test", uid, wid);
     }
@@ -421,6 +443,8 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
         session.setId(UUID.fromString(sessionId));
         session.setAgentPrincipalId(principalId);
         session.setAgentPermissionsSnapshot(principalPermissions.deepCopy());
+        com.cc01cc.p.xihe.cp.chat.ChatBindingTestSupport.bindNewChatConnection(
+                session, providerConnectionRepository, apiRequestTemplates, userId);
         sessionRepository.saveAndFlush(session);
     }
 

@@ -97,7 +97,9 @@ def _result_whitelist(result: dict[str, Any]) -> dict[str, Any]:
     return {
         "truncated": bool(result.get("truncated", False)),
         "artifact_ref": str(result.get("artifactRef") or result.get("artifact_ref") or ""),
-        "artifact_status": result.get("status") if result.get("status") in {"available", "expired", "unavailable"} else "",
+        "artifact_status": result.get("status")
+        if result.get("status") in {"available", "expired", "unavailable"}
+        else "",
         "size_bytes": size_bytes if isinstance(size_bytes, int) and not isinstance(size_bytes, bool) else None,
         "error_code": str(result.get("errorCode") or result.get("error_code") or ""),
     }
@@ -149,6 +151,14 @@ def _snapshot_message(message: Message) -> dict[str, Any]:
     fields are emitted only when set (backward-compatible with old readers)."""
     data: dict[str, Any] = {"role": message.role, "content": message.content}
     if isinstance(message, TextMessage):
+        if message.native_records is not None:
+            import copy
+
+            data.update(
+                apiTypeId=message.api_type_id,
+                apiTypeVersion=message.api_type_version,
+                nativeRecords=copy.deepcopy(list(message.native_records)),
+            )
         if message.tool_calls:
             data["tool_calls"] = [
                 {"call_id": ref.call_id, "tool_name": ref.tool_name, "arguments": ref.arguments}
@@ -178,6 +188,19 @@ def _snapshot_message(message: Message) -> dict[str, Any]:
 
 
 def message_from_dict(raw: dict[str, Any]) -> TextMessage:
+    import copy
+
+    carrier = any(key in raw for key in ("apiTypeId", "apiTypeVersion", "nativeRecords"))
+    if carrier and (
+        raw.get("role") != "ai"
+        or not isinstance(raw.get("apiTypeId"), str)
+        or not raw.get("apiTypeId")
+        or type(raw.get("apiTypeVersion")) is not int
+        or raw["apiTypeVersion"] < 1
+        or not isinstance(raw.get("nativeRecords"), list)
+        or not all(isinstance(record, dict) for record in raw["nativeRecords"])
+    ):
+        raise ValueError("Invalid native history carrier")
     role = raw.get("role", "human")
     if role not in ("system", "human", "ai", "tool"):
         role = "human"
@@ -208,6 +231,9 @@ def message_from_dict(raw: dict[str, Any]) -> TextMessage:
         degraded=bool(raw.get("degraded", False)),
         legacy_normalized=bool(raw.get("legacy_normalized", False)),
         tool_calls=tool_calls,
+        api_type_id=raw.get("apiTypeId", ""),
+        api_type_version=raw.get("apiTypeVersion"),
+        native_records=tuple(copy.deepcopy(raw["nativeRecords"])) if carrier else None,
     )
     # Contract §5/V3: legacy snapshots and fork seeds carry tool messages
     # without a pairing id — record the degraded state at read time.
@@ -286,6 +312,8 @@ class AgentContext:
     epoch: ContextEpoch | None = None
     runtime_state: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    _message_run_ids: dict[int, str] = field(default_factory=dict, repr=False)
+    _native_replaced_hashes: dict[int, set[str]] = field(default_factory=dict, repr=False)
     # PLAN-0410 T2.3: the branch CP resolved for this snapshot ("" when the
     # snapshot predates branch awareness). The Agent never fills this itself.
     branch_id: str = ""
@@ -307,6 +335,8 @@ class AgentContext:
         self.set_latest_sequence(event.sequence)
         payload = event.payload
         event_type = event.type
+        before_messages = {id(message) for message in self.messages}
+        run_id = str(payload.get("runId") or event.correlation_id or "")
 
         if event_type == "session.created":
             self.metadata.setdefault("workspace_id", payload.get("workspace_id"))
@@ -325,7 +355,28 @@ class AgentContext:
             # PLAN-294 M1: durable assistant reply (decision #2/#6). Applied
             # identically to llm.token so snapshots reconstruct the same
             # conversation either way.
-            self._add_message_from_payload(payload, "ai")
+            raw_message = payload.get("message")
+            if isinstance(raw_message, dict) and any(
+                key in raw_message for key in ("apiTypeId", "apiTypeVersion", "nativeRecords")
+            ):
+                native_message = message_from_dict(raw_message)
+                if not run_id:
+                    raise ValueError("Native history requires existing Run identity")
+                import hashlib
+
+                self._native_replaced_hashes[id(native_message)] = {
+                    hashlib.sha256(message.content.encode("utf-8", errors="replace")).hexdigest()
+                    for message in self.messages
+                    if message.role in {"ai", "tool"} and self._message_run_ids.get(id(message)) == run_id
+                }
+                self.messages = [
+                    message
+                    for message in self.messages
+                    if message.role not in {"ai", "tool"} or self._message_run_ids.get(id(message)) != run_id
+                ]
+                self.messages.append(native_message)
+            else:
+                self._add_message_from_payload(payload, "ai")
         elif event_type == "tool.result":
             # PLAN-0381 T1.1/T1.5: pairing fields + shape-based result read.
             self._add_tool_result_message(payload)
@@ -509,6 +560,14 @@ class AgentContext:
                     q["status"] = "answered"
                     q["answer"] = payload.get("answer", "")
                     break
+        for message in self.messages:
+            if id(message) not in before_messages and run_id:
+                self._message_run_ids[id(message)] = run_id
+        live_ids = {id(message) for message in self.messages}
+        self._message_run_ids = {key: value for key, value in self._message_run_ids.items() if key in live_ids}
+        self._native_replaced_hashes = {
+            key: value for key, value in self._native_replaced_hashes.items() if key in live_ids
+        }
         return self
 
     def _apply_fork_seed(self, payload: dict[str, Any]) -> None:
@@ -642,6 +701,14 @@ class AgentContext:
         if not pruned_hashes:
             return
         placeholder = "[old tool result cleared]"
+        retained: list[TextMessage] = []
+        for message in self.messages:
+            if isinstance(message, TextMessage) and message.native_records is not None:
+                digest = hashlib.sha256(message.content.encode("utf-8", errors="replace")).hexdigest()
+                if digest in pruned_hashes or self._native_replaced_hashes.get(id(message), set()) & pruned_hashes:
+                    continue
+            retained.append(message)
+        self.messages = retained
         for i, msg in enumerate(self.messages):
             if msg.role != "tool" or msg.content == placeholder:
                 continue

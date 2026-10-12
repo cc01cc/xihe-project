@@ -7,6 +7,7 @@ import { nextTick } from "vue";
 import { useConfigStore } from "../../../../stores/config";
 import { useSessionStore } from "../../../../stores/session";
 import { useAuthStore } from "../../../../stores/auth";
+import * as connectionApi from "../../../../services/providerConnectionService";
 import ModelPopover from "../components/ModelPopover.vue";
 
 const i18n = createI18n({
@@ -82,6 +83,8 @@ function readyModelCache(models: Record<string, string[]>) {
                 provider,
                 {
                     providerId: provider,
+                    connectionId: provider,
+                    connectionRevision: 1,
                     status: "ready" as const,
                     models: modelIds.map((name) => ({
                         name,
@@ -138,6 +141,26 @@ describe("ModelPopover", () => {
         localStorage.clear();
         pushSpy.mockClear();
         vi.restoreAllMocks();
+        vi.spyOn(connectionApi, "listProviderConnections").mockImplementation(async () => ({
+            connections: Object.entries(useConfigStore().modelCache.providers ?? {}).map(
+                ([id, catalog]) => ({
+                    id,
+                    providerId: catalog.providerId ?? id,
+                    connectionKey: id,
+                    apiTypeId: "openai-chat-completions",
+                    apiTypeVersion: 1,
+                    operation: "chat" as const,
+                    label: id,
+                    scope: "USER" as const,
+                    enabled: true,
+                    status: "READY" as const,
+                    revision: catalog.connectionRevision ?? 1,
+                    hasKey: true,
+                    modelDiscovery: "manual" as const,
+                    manualModels: catalog.models.map((item) => item.name),
+                }),
+            ),
+        }));
         vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
             const url = typeof input === "string" ? input : (input as Request).url,
                 method = (init?.method ?? "GET").toUpperCase();
@@ -314,8 +337,8 @@ describe("ModelPopover", () => {
         // binding stays provider/model only (pre-0438 PATCH shape).
         expect(binding?.provider).toBe("deepseek");
         expect(binding?.model).toBe("deepseek-chat");
-        expect(binding?.connectionId).toBeUndefined();
-        expect(binding?.connectionRevision).toBeUndefined();
+        expect(binding?.connectionId).toBe("deepseek");
+        expect(binding?.connectionRevision).toBe(1);
         wrapper.unmount();
     });
 
@@ -379,6 +402,7 @@ describe("ModelPopover", () => {
             modelProvider: "openai",
             modelName: "vendor/model",
             providerConnectionId: "connection-b",
+            connectionRevision: 2,
         });
         expect(configStore.getEffectiveModel("mp-3")).toEqual({
             provider: "openai",

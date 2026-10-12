@@ -28,6 +28,9 @@ import java.util.UUID;
 @Service
 public class SessionService {
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private ApiRequestTemplateService apiRequestTemplates;
+
     private final SessionRepository sessionRepository;
     private final SessionForkRequestRepository forkRequestRepository;
     private final SessionBranchRepository sessionBranchRepository;
@@ -38,7 +41,6 @@ public class SessionService {
     private final SessionPolicyState sessionPolicyState;
     private final DbLockTimeout dbLockTimeout;
     private final AgentPrincipalService agentPrincipalService;
-    private final ContextTemplateService contextTemplateService;
     private final EntityManager entityManager;
     // PLAN-0470 (decision #15): cross-domain Session cleanup goes through the
     // Context/MCP/Policy owner services inside this delete transaction — the
@@ -57,7 +59,6 @@ public class SessionService {
                           SessionPolicyState sessionPolicyState,
                           DbLockTimeout dbLockTimeout,
                           AgentPrincipalService agentPrincipalService,
-                          ContextTemplateService contextTemplateService,
                           EntityManager entityManager,
                           ContextService contextService,
                           McpInvocationService mcpInvocationService,
@@ -72,7 +73,6 @@ public class SessionService {
         this.sessionPolicyState = sessionPolicyState;
         this.dbLockTimeout = dbLockTimeout;
         this.agentPrincipalService = agentPrincipalService;
-        this.contextTemplateService = contextTemplateService;
         this.entityManager = entityManager;
         this.contextService = contextService;
         this.mcpInvocationService = mcpInvocationService;
@@ -127,9 +127,7 @@ public class SessionService {
         session.setModelProvider(modelProvider);
         session.setModelName(modelName);
         bindProviderConnection(session, userId, workspaceId, providerConnectionId, modelProvider);
-        ContextTemplateService.TemplateBinding binding = contextTemplateService.resolveForSession(
-                userId, workspaceId, session.getModelProvider(), session.getModelName(), templateSelection);
-        applyContextTemplateBinding(session, binding);
+        bindApiTemplate(session, templateSelection);
         return sessionRepository.save(session);
     }
 
@@ -186,6 +184,7 @@ public class SessionService {
         session.setModelProvider(modelProvider);
         session.setModelName(modelName);
         bindProviderConnection(session, userId, workspaceId, providerConnectionId, modelProvider);
+        bindApiTemplate(session, null);
         return sessionRepository.save(session);
     }
 
@@ -265,7 +264,7 @@ public class SessionService {
     public Session update(String sessionId, String userId, String workspaceId,
                           String title, String modelProvider, String modelName,
                           String providerConnectionId) {
-        Session session = requireCurrent(sessionId, userId, workspaceId);
+        Session session = lockCurrentForMutation(sessionId, userId, workspaceId);
         if (title != null) {
             if (title.isBlank()) {
                 throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "title must not be blank");
@@ -281,24 +280,81 @@ public class SessionService {
         if (providerConnectionId != null) {
             bindProviderConnection(session, userId, workspaceId, providerConnectionId, modelProvider);
         }
+        if (modelProvider != null || modelName != null || providerConnectionId != null) {
+            bindApiTemplate(session, null);
+        }
         return sessionRepository.save(session);
     }
 
     @Transactional
-    public Session updateContextTemplate(String sessionId, String userId, String workspaceId,
-                                         String layer, String templateId, int version) {
+    public Session updateBinding(String sessionId, String userId, String workspaceId, String title,
+                                 String provider, String model, String connectionId, Long revision,
+                                 ContextTemplateService.TemplateSelection selection, boolean confirmed) {
         Session session = lockCurrentForMutation(sessionId, userId, workspaceId);
-        ContextTemplateService.TemplateBinding binding = contextTemplateService.binding(
-                layer, templateId, version, "explicit", UUID.fromString(userId), UUID.fromString(workspaceId));
-        applyContextTemplateBinding(session, binding);
+        if (title != null) {
+            if (title.isBlank()) {
+                throw ApiRequestTemplateService.invalid("title must not be blank");
+            }
+            session.setTitle(title.trim());
+        }
+        boolean binding = provider != null || model != null || connectionId != null || revision != null || selection != null;
+        if (binding) {
+            if (provider == null || model == null || model.isBlank() || connectionId == null || revision == null) {
+                throw ApiRequestTemplateService.invalid("Complete model/Connection/revision bundle is required");
+            }
+            ProviderConnection target = apiRequestTemplates.lockConnection(connectionId);
+            apiRequestTemplates.requireVisible(target, userId, workspaceId);
+            apiRequestTemplates.requireChat(target);
+            if (target.getRevision() != revision) {
+                throw ApiRequestTemplateService.conflict("STALE_PROVIDER_CONNECTION", "Connection revision changed");
+            }
+            if (session.getProviderConnectionId() != null && session.getContextTemplateId() != null) {
+                var previous = apiRequestTemplates.pinnedTemplate(session);
+                boolean different = previous != null && (!previous.path("apiTypeId").asText().equals(target.getApiTypeId())
+                        || previous.path("apiTypeVersion").asInt() != target.getApiTypeVersion());
+                if (different && (!confirmed || selection == null)) {
+                    throw ApiRequestTemplateService.invalid("Different API Type requires confirmation and target template");
+                }
+            }
+            session.setModelProvider(provider);
+            session.setModelName(model);
+            bindProviderConnection(session, userId, workspaceId, connectionId, provider);
+            bindApiTemplate(session, selection);
+        }
         return sessionRepository.save(session);
     }
 
-    private static void applyContextTemplateBinding(Session session,
-                                                     ContextTemplateService.TemplateBinding binding) {
-        session.setContextTemplateLayer(binding.layer());
-        session.setContextTemplateId(UUID.fromString(binding.templateId()));
-        session.setContextTemplateVersion(binding.version());
+    @Transactional
+    public Session updateApiTemplate(String sessionId, String userId, String workspaceId,
+                                     String layer, String templateId, int version, Long revision) {
+        Session session = lockCurrentForMutation(sessionId, userId, workspaceId);
+        if (revision == null) {
+            throw ApiRequestTemplateService.invalid("connectionRevision is required");
+        }
+        return updateBinding(sessionId, userId, workspaceId, null, session.getModelProvider(), session.getModelName(),
+                session.getProviderConnectionId(), revision,
+                new ContextTemplateService.TemplateSelection(layer, templateId, version), true);
+    }
+
+    private void bindApiTemplate(Session session, ContextTemplateService.TemplateSelection selection) {
+        if (session.getProviderConnectionId() == null) {
+            if (selection != null) {
+                throw ApiRequestTemplateService.invalid("Select a Connection before a template");
+            }
+            return;
+        }
+        ProviderConnection connection = providerConnectionService.requireUsableForOwner(session.getProviderConnectionId(),
+                session.getUserId(), session.getWorkspaceId());
+        apiRequestTemplates.requireChat(connection);
+        apiRequestTemplates.requireModel(connection, session.getModelName());
+        com.fasterxml.jackson.databind.JsonNode ref = selection == null ? null :
+                new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode().put("layer", selection.layer())
+                        .put("templateId", selection.templateId()).put("version", selection.version());
+        var snapshot = apiRequestTemplates.resolve(connection, session.getModelName(), UUID.fromString(session.getUserId()),
+                UUID.fromString(session.getWorkspaceId()), ref);
+        session.setContextTemplateLayer(snapshot.path("layer").asText());
+        session.setContextTemplateId(UUID.fromString(snapshot.path("templateId").asText()));
+        session.setContextTemplateVersion(snapshot.path("version").asInt());
     }
 
     private void bindProviderConnection(
@@ -308,10 +364,18 @@ public class SessionService {
             String providerConnectionId,
             String requestedProvider) {
         if (providerConnectionId == null || providerConnectionId.isBlank()) {
-            return;
+            if (requestedProvider == null && session.getModelName() == null) {
+                return;
+            }
+            var candidates = apiRequestTemplates.effectiveConnections(userId, workspaceId, requestedProvider);
+            if (candidates.size() != 1) {
+                throw ApiRequestTemplateService.invalid("Select an explicit usable Connection and Model");
+            }
+            providerConnectionId = candidates.getFirst().getId().toString();
         }
         try {
-            ProviderConnection connection = providerConnectionService.requireUsable(providerConnectionId);
+            ProviderConnection connection = providerConnectionService.requireUsableForOwner(
+                    providerConnectionId, userId, workspaceId);
             if (requestedProvider != null && !requestedProvider.isBlank()
                     && !connection.getProviderId().equals(requestedProvider.trim())) {
                 throw new IllegalArgumentException("Provider connection does not match model provider");

@@ -79,7 +79,13 @@ class ProviderConnectionHttpIntegrationTest extends AbstractIntegrationTest {
         for (String fields : List.of(
                 "\"apiTypeId\":\"unknown-type\",\"apiTypeVersion\":1",
                 "\"apiTypeId\":\"openai-chat-completions\",\"apiTypeVersion\":999",
-                "\"apiTypeId\":\"anthropic-messages\",\"apiTypeVersion\":1",
+                "\"apiTypeId\":\"anthropic-messages\",\"apiTypeVersion\":1")) {
+            assertProblem(send("POST", "", createBody("rejected", "," + fields)),
+                    400, "PROVIDER_API_TYPE_UNSUPPORTED");
+            assertProblem(send("PATCH", path, "{\"label\":\"Rejected\"," + fields + "}"),
+                    400, "PROVIDER_API_TYPE_UNSUPPORTED");
+        }
+        for (String fields : List.of(
                 "\"apiTypeId\":null,\"apiTypeVersion\":1",
                 "\"apiTypeId\":[],\"apiTypeVersion\":1",
                 "\"apiTypeId\":\"openai-chat-completions\"",
@@ -88,10 +94,12 @@ class ProviderConnectionHttpIntegrationTest extends AbstractIntegrationTest {
                 "\"apiTypeId\":\"openai-chat-completions\",\"apiTypeVersion\":\"1\"",
                 "\"apiTypeId\":\"openai-chat-completions\",\"apiTypeVersion\":1.5",
                 "\"apiTypeId\":\"openai-chat-completions\",\"apiTypeVersion\":2147483648")) {
+            // PLAN-0439 freezes the pair as a complete non-null Type id/version;
+            // malformed shapes are a plain invalid request, not a catalog miss.
             assertProblem(send("POST", "", createBody("rejected", "," + fields)),
-                    400, "PROVIDER_API_TYPE_UNSUPPORTED");
+                    400, "INVALID_REQUEST");
             assertProblem(send("PATCH", path, "{\"label\":\"Rejected\"," + fields + "}"),
-                    400, "PROVIDER_API_TYPE_UNSUPPORTED");
+                    400, "INVALID_REQUEST");
         }
         for (String value : List.of("\"chat\"", "\"embedding\"", "null", "{}")) {
             assertProblem(send("POST", "", createBody("rejected", ",\"operation\":" + value)),
@@ -132,8 +140,10 @@ class ProviderConnectionHttpIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void supportedButInactivePairIs409OnCreateAndPatch() throws Exception {
-        // Current catalog has only defaults. Model a future supported pair without enabling it.
+    void catalogSupportedPairUnknownToTheTypeRegistryIsRejectedWithoutMutation() throws Exception {
+        // PLAN-0439 derives the operation from the immutable Type registry: a
+        // pair the catalog lists but the registry does not know is a plain
+        // invalid request and must never mutate the connection.
         var pair = new com.fasterxml.jackson.databind.ObjectMapper().readTree(
                 "{\"apiTypeId\":\"openai-responses\",\"version\":1}");
         doReturn(pair).when(catalog).supportedPair("custom-openai-compatible", "openai-responses", 1);
@@ -143,9 +153,9 @@ class ProviderConnectionHttpIntegrationTest extends AbstractIntegrationTest {
         long count = repository.count();
         String fields = "\"apiTypeId\":\"openai-responses\",\"apiTypeVersion\":1";
         assertProblem(send("POST", "", createBody("inactive", "," + fields)),
-                409, "PROVIDER_API_TYPE_NOT_ACTIVE");
+                400, "PROVIDER_CONNECTION_INVALID");
         assertProblem(send("PATCH", "/" + id, "{" + fields + "}"),
-                409, "PROVIDER_API_TYPE_NOT_ACTIVE");
+                400, "INVALID_REQUEST");
         var persisted = repository.findById(UUID.fromString(id)).orElseThrow();
         assertEquals("openai-chat-completions", persisted.getApiTypeId());
         assertEquals(1, persisted.getRevision());

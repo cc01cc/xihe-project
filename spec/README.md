@@ -64,7 +64,8 @@ spec/
 | execution job / scope / durable continuation | proposed | partial | CP durable-record + Runtime Job owners | CP Job API/durable record、Runtime Job backend、UI、Agent | A03-xihe | PLAN-0390; backend adapters PLAN-0392–0395; Workspace release PLAN-0391 |
 | configuration / env | proposed | partial | CP ConfigService owner | CP、Agent、Runtime、UI、Audit | A03-xihe | PLAN-0389；以现行配置模型整合历史来源 |
 | protocol | proposed | partial | 对应协议 owners | UI、CP、Agent、Runtime | A03-xihe | PLAN-0385；OpenAPI/inventory/schema 保持各自事实源 |
-| protocol / Provider API Type + Connection identity | proposed | partial | CP Provider owner | CP Provider/Models/Lease、Agent catalog、UI ProviderHub | A03-xihe | PLAN-0438 sole active writer; downstream PLAN-0439/0485/0416 consume by sequential handoff; `protocol/provider-api-types.md` |
+| protocol / Provider API Type + Connection identity | proposed | partial | CP Provider owner | CP Provider/Models/Lease、Agent catalog、UI ProviderHub | A03-xihe | PLAN-0438 completed at 692b89fb; PLAN-0439 active writer; downstream PLAN-0485/0416 consume by sequential handoff; `protocol/provider-api-types.md` |
+| protocol / Embedding provider + RAG proxy | proposed | partial | CP Provider owner | CP Embedding/RAG proxy、Agent RAG routes、UI KnowledgeBase/EmbeddingSettings | A03-xihe | PLAN-0485；profile/lease wire 与分区 tuple 冻结，见 `embedding-provider-contract.md` |
 | Operation Ledger data model | superseded | retired | replaced by ChatRun/MCP/Workspace Job/Approval owners | historical consumers only | A03-xihe | PLAN-0467 / V56；参见 retired SPEC 与 migration/recovery evidence |
 
 ## 4. Agent 读取规则
@@ -88,7 +89,8 @@ PLAN-0385 已建立第一批架构/通信/事件/账本草案。它们仍为 `pr
 - [Runtime 运行拓扑](architecture/runtime-topology.md)
 - [事件流](protocol/event-stream.md)
 - [MCP 通信边界](protocol/mcp.md)
-- [Provider API Types / Connection identity](protocol/provider-api-types.md) (PLAN-0438; proposed/partial)
+- [Provider API Types / Connection identity](protocol/provider-api-types.md) (PLAN-0439 handoff from PLAN-0438; proposed/partial)
+- [Embedding provider / RAG proxy](embedding-provider-contract.md) (PLAN-0485; proposed/partial)
 - [Operation Ledger (superseded by PLAN-0467)](data/operation-ledger.md)
 
 PLAN-0472 建立 UI 内部 feature module boundaries proposed 草案；Chat UI/ChatStore 归 Workspace Chat 子能力，Session/CP canonical owner 保持；只定义 UI code owner、目录组织和 feature dependency direction，不改 route/API/SSE/wire contract：

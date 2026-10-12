@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 14
 status: active
 created: 2026-09-03
-updated: 2026-10-09
+updated: 2026-10-12
 ---
 
 # DEV-014: CP 架构
@@ -174,6 +174,22 @@ flowchart LR
 - **根级 AGENTS.md 刷新范围（PLAN-0415，用户 2026-10-04 裁定）**：active 值为 `per_chat_run`（每个 ChatRun 前刷新）/`per_session`（首次成功读取或明确 found:false 后，在该 Session 的 ContextEvent projection 固定正文/状态）；`unavailable/failed/unknown` 不算成功，后续 Run 重试；env facts 仍每 Run 刷新。旧值仅留归档 0414 历史，未上线不保留 wire 兼容。
 - **根级 AGENTS.md 刷新范围（PLAN-0415，用户 2026-10-04 裁定）**：active 值为 `per_chat_run`（每个 Run 前刷新）/`per_session`（首次成功读取或明确 found:false 后，在该 Session 的 ContextEvent projection 固定）；`unavailable/failed/unknown` 不算成功，后续 Run 重试；env facts 仍每 Run 刷新。旧值仅留归档 0414 历史，未上线不保留 wire 兼容。
 - **存量处置（用户 2026-10-03 裁定）**：**先清库、迁移纯 schema**——未上线开发库在升级前执行既有 `mise run dev:reset`（V14 dev-state 可弃先例）；V48 只 `ADD COLUMN ... DEFAULT/CHECK`，不携带 DELETE/数据拦截（升级路径测试的历史回填语义必须在完整链上可验证）；漏清库时旧行经 DEFAULT 自动钉内置默认模板，零回填代码。
+
+## 8g. API Request Templates 与 Provider Connection Type（PLAN-0438/0439）
+
+- **连接模型**：每个 ProviderConnection 持一个 API Type（`apiTypeId/apiTypeVersion`，`operation` 只读派生）；模型身份 = `connectionId + modelId`，逻辑槽 = `providerId + connectionKey`；`connectionKey` 在 `(owner_type, owner_id, provider_id)` 内唯一、可跨 User/Workspace 重名；同 key 的 effective 集合里 Workspace 整条覆盖 User（禁用/未 READY/非 chat 时回退 User），不同 key 取并集（`ApiRequestTemplateService.effectiveConnections`）。
+- **模板与绑定**：配置域 `api-request-templates`（细则见 DEV-003 §3b）；解析顺序 Model override → Connection default → Type 内置 default；类型变更（`PATCH /provider-connections/{id}`，需 `expectedRevision` + `confirmedTypeChange` + chat 类型必带 `connectionDefaultTemplateRef`）在 CAS 串行化下原子清除不兼容模型 override，并按 `GET .../api-type-change-impact` 的 `incompatibleOverrides`/`sessionRebindCount` 预览计数（预览值 = 实际移除数）；`connectionKey` 不可改（`409 PROVIDER_CONNECTION_KEY_IMMUTABLE`）。
+- **Session 钉住（V61）**：`sessions.context_template_layer/id/version` 改为全 NULL 或全非 NULL（unbound Session 显式）；NULL 准入返回 `409 API_TYPE_REBIND_REQUIRED` 直到 `PATCH /api/v1/sessions/{sessionId}/api-request-template` 显式换绑；admission 生成 API Request 快照，在途 Run 不受 Connection 后续变更影响。
+- **Chat-only 门**：Session 选择器、CP 准入与 Agent 发送只接受 `operation=chat` 类型（embedding 等非 chat 类型伪造绑定 → `400 API_TYPE_OPERATION_MISMATCH`）。
+- **凭据租约按 operation 校验**：`ProviderCredentialLeaseService.issue` 以连接的实际 operation 判据——chat 连接的 dispatch 租约校验 `requireModel`；catalog 枚举租约以通配 `model="*"` 发行（manual 连接的模型清单由 Agent 从兑换 grant 的 `manualModels` 返回，不触发模型注册校验）。
+- **模板校验（独立、不落库）**：`ApiRequestValidator` 拒绝重复 JSON 键、对象键内变量、非法 `${xh.*}` 槽位与 runtime-owned 字段（`apiKey`/`authorization`/`credentials`/`headers`/`endpoint`/`baseUrl` 等）；`${xh.*}` 单遍替换、`$${...}` 输出字面量、结构化历史 splice 只允许出现在约定位置。
+
+## 8h. Embedding Provider Connection 与 RAG 代理（PLAN-0485）
+
+- **类型与连接**：内置类型 `dashscope-multimodal-embedding/v1`（`operation=embedding`）由 type contract 钉住 host/路径（`https://dashscope.aliyuncs.com/api/v1`），CP 拒绝自定义 host；固定模型 `tongyi-embedding-vision-flash-2026-03-06`、维度 768；`modelDiscovery=manual`。
+- **profile 解析**：`EmbeddingProfileService` 按认证 TenantContext 解析 `(providerId, connectionKey, model)` 整组 profile（workspace 覆盖 user，再 instance）；`GET /api/v1/config/embedding/effective` 只读返回 `contract{modelId,dimension}` 与解析结果（缺失/冲突给稳定 `code`）；`POST /api/v1/config/embedding/test` 经 Agent 一次性租约探测，响应脱敏。客户端传入的 workspace 必须先通过成员校验。
+- **RAG 公开路由**：`/api/v1/rag/{ingest,search,stats,documents/{docId}}` 由 CP 从认证上下文解析 owner/profile 并代理到 Agent 内部路由（携带非密 `embeddingProfile` + 一次性 `embeddingCredentialLease`）；每条向量行按 `(workspaceId, connectionOwnerType/id, providerConnectionId, apiTypeId/version, modelId, dimension)` 分区，检索在 PostgreSQL 下推 tuple 过滤（WHERE 先于 ORDER BY/LIMIT），跨 scope 负向检索无返回。
+- **迁移（V61 前）**：fresh store 固定 768；开发期旧 embedding 配置/向量经显式审计后可 reset/re-ingest，不保留 legacy 兼容（处置见 PLAN-0485 evidence）。
 
 ## 9. Durable job 档案与续看（PLAN-0344）
 

@@ -1,14 +1,15 @@
 package com.cc01cc.p.xihe.cp.crossmodule;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
-import static com.github.tomakehurst.wiremock.client.WireMock.created;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
+import com.cc01cc.p.xihe.cp.chat.ChatBindingTestSupport;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
@@ -19,12 +20,14 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.cc01cc.p.xihe.cp.service.AgentTemplateService;
+import com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService;
 import com.cc01cc.p.xihe.cp.service.BranchPathService;
 import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,19 +48,31 @@ import org.springframework.test.context.DynamicPropertySource;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
 /**
- * PLAN-0414 T1.2/T1.3/T1.4: context-templates config layer contract, explicit
- * Session binding, and atomic ChatRun snapshot isolation.
+ * PLAN-0439/0485: the api-request-templates layer contract, explicit Session
+ * binding (Model override → Connection default → built-in Type pin) and the
+ * atomic ChatRun snapshot isolation guarantee.
  */
 class ContextTemplateIntegrationTest extends AbstractWireMockTest {
 
     private static final String TEMPLATE_ID = "11111111-1111-4111-8111-111111111111";
     private static final String COMPONENT_ID = "22222222-2222-4222-8222-222222222222";
-    private static final String BUILTIN_TEMPLATE_ID = "00000000-0000-4000-8000-000000000001";
+    private static final String CHAT_TYPE_ID = "openai-chat-completions";
+    private static final int CHAT_TYPE_VERSION = 1;
     private static final Duration RUN_WAIT = Duration.ofSeconds(5);
+
+    /**
+     * A published revision must pass the chat Type validator; this is the
+     * built-in openai-chat-completions body shape.
+     */
+    private static final String VALID_BODY_SOURCE = "{\"model\":\"${xh.model}\","
+            + "\"messages\":[{\"role\":\"system\",\"content\":\"${xh.agent_instructions}\"},"
+            + "\"${xh.conversation_history}\",{\"role\":\"user\",\"content\":\"${xh.user_input}\"}],"
+            + "\"tools\":[\"${xh.tools}\"],\"stream\":true}";
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
@@ -71,6 +86,8 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
     @Autowired private WorkspaceAgentRepository workspaceAgentRepository;
     @Autowired private SessionRepository sessionRepository;
     @Autowired private ChatRunRepository chatRunRepository;
+    @Autowired private ProviderConnectionRepository providerConnectionRepository;
+    @Autowired private ApiRequestTemplateService apiRequestTemplates;
     @Autowired private JwtTokenProvider jwtTokenProvider;
     @Autowired private HealthMonitor healthMonitor;
     @Autowired private AgentPrincipalService agentPrincipalService;
@@ -124,28 +141,40 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
         when(sseEmitterManager.hasEmitter(anyString())).thenReturn(true);
     }
 
-    // ---- T1.2 / V1: explicit-layer config contract ----
+    // ---- T1.2 / V1: explicit-layer config contract (api-request-templates) ----
 
     @Test
     void contextTemplatesRejectReadWithoutExplicitLayer() {
         ResponseEntity<Map> response = restTemplate.exchange(
-                url("/api/v1/config/context-templates"), HttpMethod.GET,
+                url("/api/v1/config/api-request-templates"), HttpMethod.GET,
                 new HttpEntity<>(bearerJson(token)), Map.class);
-        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        // The superseding domain must be read from one explicit layer; the
+        // projected (layer-less) read is rejected by the domain guard.
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        assertEquals("FORBIDDEN", response.getBody().get("code"));
     }
 
     @Test
-    void instanceLayerIsNotReadableByRegularUser() {
-        ResponseEntity<Map> response = restTemplate.exchange(
-                url("/api/v1/config/context-templates?layer=instance"), HttpMethod.GET,
+    void instanceLayerIsReadOnlyForRegularUser() {
+        // Published instance templates and built-ins stay visible to the user...
+        ResponseEntity<Map> read = restTemplate.exchange(
+                url("/api/v1/config/api-request-templates?layer=instance"), HttpMethod.GET,
                 new HttpEntity<>(bearerJson(token)), Map.class);
-        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        assertEquals(HttpStatus.OK, read.getStatusCode());
+        assertTrue(String.valueOf(read.getBody().get("templates")).contains(CHAT_TYPE_ID),
+                String.valueOf(read.getBody().get("templates")));
+
+        // ...but instance mutations remain admin-only.
+        ResponseEntity<Map> write = restTemplate.exchange(
+                url("/api/v1/config/instance/api-request-templates"), HttpMethod.PUT,
+                new HttpEntity<>(Map.of("templates", "[]"), bearerJson(token)), Map.class);
+        assertEquals(HttpStatus.FORBIDDEN, write.getStatusCode());
     }
 
     @Test
     void userLayerStartsWithEmptyTemplateSet() {
         ResponseEntity<Map> response = restTemplate.exchange(
-                url("/api/v1/config/context-templates?layer=user"), HttpMethod.GET,
+                url("/api/v1/config/api-request-templates?layer=user"), HttpMethod.GET,
                 new HttpEntity<>(bearerJson(token)), Map.class);
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("[]", response.getBody().get("templates"));
@@ -153,119 +182,159 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
 
     @Test
     void contextTemplateRevisionsAreAppendOnly() {
-        String v1 = "[" + fragment(1, "用户模板 v1") + "]";
-        String modifiedV1 = "[" + fragment(1, "被篡改的 v1") + "]";
-        String v1AndV2 = "[" + fragment(1, "用户模板 v1") + "," + fragment(2, "用户模板 v2") + "]";
-        String v2Only = "[" + fragment(2, "用户模板 v2") + "]";
+        String v1 = "[" + publishedFragment(1, "用户模板 v1") + "]";
+        String modifiedV1 = "[" + publishedFragment(1, "被篡改的 v1") + "]";
+        String v1AndV2 = "[" + publishedFragment(1, "用户模板 v1") + "," + publishedFragment(2, "用户模板 v2") + "]";
+        String v2Only = "[" + publishedFragment(2, "用户模板 v2") + "]";
 
         assertEquals(HttpStatus.OK, putUserTemplates(v1).getStatusCode());
 
         ResponseEntity<Map> mutated = putUserTemplates(modifiedV1);
         assertEquals(HttpStatus.CONFLICT, mutated.getStatusCode());
-        assertEquals("CONTEXT_TEMPLATE_REVISION_IMMUTABLE", mutated.getBody().get("code"));
+        assertEquals("API_REQUEST_TEMPLATE_REVISION_IMMUTABLE", mutated.getBody().get("code"));
 
         assertEquals(HttpStatus.OK, putUserTemplates(v1AndV2).getStatusCode());
 
         ResponseEntity<Map> dropped = putUserTemplates(v2Only);
         assertEquals(HttpStatus.CONFLICT, dropped.getStatusCode());
-        assertEquals("CONTEXT_TEMPLATE_REVISION_IMMUTABLE", dropped.getBody().get("code"));
+        assertEquals("API_REQUEST_TEMPLATE_REVISION_IMMUTABLE", dropped.getBody().get("code"));
     }
 
     @Test
-    void componentMarkerMustReferenceKnownInstance() {
-        String broken = "[{\"id\":\"" + TEMPLATE_ID + "\",\"version\":1,\"name\":\"broken\","
-                + "\"description\":\"d\",\"document\":\"{{component:33333333-3333-4333-8333-333333333333}}\","
-                + "\"components\":[{\"instanceId\":\"" + COMPONENT_ID + "\",\"type\":\"text\","
-                + "\"enabled\":true,\"config\":{\"text\":\"hi\"}}]}]";
-        ResponseEntity<Map> response = putUserTemplates(broken);
-        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    void componentMarkersAreOpaqueAndBodySourceGatesPublication() {
+        // The retired context-templates domain rejected docs whose
+        // {{component:<id>}} marker had no matching instance. The frozen
+        // api-request-templates contract validates the chat bodySource instead
+        // and carries component metadata opaquely, so an unknown marker is
+        // accepted while an invalid published bodySource is rejected.
+        var markerTemplate = objectMapper.createObjectNode();
+        markerTemplate.put("id", TEMPLATE_ID).put("version", 1).put("name", "broken marker")
+                .put("description", "d").put("apiTypeId", CHAT_TYPE_ID).put("apiTypeVersion", CHAT_TYPE_VERSION)
+                .put("bodySource", VALID_BODY_SOURCE).put("status", "published")
+                .put("document", "{{component:33333333-3333-4333-8333-333333333333}}");
+        markerTemplate.putArray("components").addObject().put("instanceId", COMPONENT_ID)
+                .put("type", "text").put("enabled", true);
+        assertEquals(HttpStatus.OK, putUserTemplates("[" + markerTemplate + "]").getStatusCode());
+
+        String invalidBody = objectMapper.createObjectNode()
+                .put("id", "33333333-3333-4333-8333-333333333333").put("version", 1).put("name", "invalid body")
+                .put("description", "d").put("apiTypeId", CHAT_TYPE_ID).put("apiTypeVersion", CHAT_TYPE_VERSION)
+                .put("bodySource", "{}").put("status", "published").toString();
+        assertEquals(HttpStatus.BAD_REQUEST, putUserTemplates("[" + invalidBody + "]").getStatusCode());
     }
 
     @Test
-    void workspaceLayerCannotDefineDefaults() {
-        String payload = "{\"templates\":[" + fragment(1, "workspace invalid") + "],"
-                + "\"defaultTemplate\":{\"layer\":\"workspace\",\"templateId\":\""
-                + TEMPLATE_ID + "\",\"version\":1}}";
+    void workspaceLayerCannotDefineUserScopeModelOverrides() {
+        var connection = ChatBindingTestSupport.ensureChatConnection(
+                providerConnectionRepository, "USER", userId, "ctx-workspace");
+        String overrides = "{\"" + connection.getId() + "\":{\"wire-model\":{\"layer\":\"user\","
+                + "\"templateId\":\"" + TEMPLATE_ID + "\",\"version\":1}}}";
         ResponseEntity<Map> response = restTemplate.exchange(
-                url("/api/v1/config/workspace/context-templates?workspaceId=" + workspaceId),
-                HttpMethod.PUT, new HttpEntity<>(payload, bearerJson(token)), Map.class);
+                url("/api/v1/config/workspace/api-request-templates?workspaceId=" + workspaceId),
+                HttpMethod.PUT, new HttpEntity<>(Map.of("providerModelBindings", overrides), bearerJson(token)),
+                Map.class);
+        // Model overrides (the "Model override" resolution step) are user-scope
+        // only; the workspace layer cannot define them.
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
     }
 
     @Test
-    void rootAgentsRefreshPolicyUsesSessionAndChatRunScopeNames() {
-        String template = "[{\"id\":\"" + TEMPLATE_ID + "\",\"version\":1,\"name\":\"root rules\","
-                + "\"description\":\"d\",\"document\":\"{{component:" + COMPONENT_ID + "}}\","
-                + "\"components\":[{\"instanceId\":\"" + COMPONENT_ID + "\",\"type\":\"root_agents_md\","
-                + "\"enabled\":true,\"config\":{\"enabled\":true,\"refreshPolicy\":\"per_session\","
-                + "\"maxBytes\":32768,\"missingPolicy\":\"empty_with_status\"}}]}]";
-        assertEquals(HttpStatus.OK, putUserTemplates(template).getStatusCode());
+    void refreshPolicyIsOpaqueAndBodySourceSlotsGatePublication() {
+        // The retired domain whitelisted root_agents_md refreshPolicy scope
+        // names at write time. The frozen contract instead validates the chat
+        // bodySource variable slots at publication (spec §API Request Template
+        // and Chat Admission).
+        assertEquals(HttpStatus.OK, putUserTemplates("[" + publishedFragment(1, "valid slots") + "]")
+                .getStatusCode());
 
-        String oldName = template.replace("per_session", "session_snapshot");
-        ResponseEntity<Map> rejected = putUserTemplates(oldName);
-        assertEquals(HttpStatus.BAD_REQUEST, rejected.getStatusCode());
+        String forgedTools = objectMapper.createObjectNode()
+                .put("id", "44444444-4444-4444-8444-444444444444").put("version", 1).put("name", "forged tools")
+                .put("description", "d").put("apiTypeId", CHAT_TYPE_ID).put("apiTypeVersion", CHAT_TYPE_VERSION)
+                .put("bodySource", "{\"model\":\"${xh.model}\",\"messages\":"
+                        + "[{\"role\":\"user\",\"content\":\"${xh.user_input}\"}],"
+                        + "\"tools\":[{\"name\":\"forged\"}]}")
+                .put("status", "published").toString();
+        assertEquals(HttpStatus.BAD_REQUEST, putUserTemplates("[" + forgedTools + "]").getStatusCode());
     }
 
     // ---- T1.3 / V3: explicit Session binding ----
 
     @Test
-    void defaultResolutionPrefersProviderModelThenUserDefaultThenBuiltinAndNeverDriftsExistingSessions() {
-        // userDefault + provider/model default both point at user template v1.
-        assertEquals(HttpStatus.OK, putUserTemplatesWithDefaults(
-                "[" + fragment(1, "用户模板 v1") + "]",
-                "{\"layer\":\"user\",\"templateId\":\"" + TEMPLATE_ID + "\",\"version\":1}",
-                "[{\"provider\":\"deepseek\",\"model\":\"deepseek-chat\",\"templateId\":\""
-                        + TEMPLATE_ID + "\",\"version\":1}]").getStatusCode());
+    void defaultResolutionPrefersModelOverrideThenConnectionDefaultThenBuiltinAndNeverDriftsExistingSessions() {
+        var connection = ChatBindingTestSupport.ensureChatConnection(
+                providerConnectionRepository, "USER", userId, "ctx-defaults");
+        String connectionId = connection.getId().toString();
 
-        // 1) provider/model match wins over the user default.
-        Map<String, Object> matched = createSession("Provider match",
-                "deepseek", "deepseek-chat");
+        // Model override + user default both point at user template v1.
+        assertEquals(HttpStatus.OK, putUserTemplateConfig(Map.of(
+                "templates", "[" + publishedFragment(1, "用户模板 v1") + "]",
+                "providerModelBindings", "{\"" + connectionId + "\":{\"override-model\":{\"layer\":\"user\","
+                        + "\"templateId\":\"" + TEMPLATE_ID + "\",\"version\":1}}}")).getStatusCode());
+
+        // 1) Model override wins over the Connection default.
+        Map<String, Object> matched = createSession("Model override", "custom-openai-compatible", "override-model");
         assertEquals("user", matched.get("contextTemplateLayer"));
         assertEquals(TEMPLATE_ID, String.valueOf(matched.get("contextTemplateId")));
 
-        // 2) no provider match -> user default.
-        Map<String, Object> userDefault = createSession("User default", "openai", "gpt-4o");
-        assertEquals("user", userDefault.get("contextTemplateLayer"));
-        assertEquals(TEMPLATE_ID, String.valueOf(userDefault.get("contextTemplateId")));
+        // 2) no model override -> Connection default.
+        assertEquals(HttpStatus.OK, putUserTemplateConfig(Map.of(
+                "providerModelBindings", "{}",
+                "connectionDefaultTemplates", "{\"" + connectionId + "\":{\"layer\":\"user\","
+                        + "\"templateId\":\"" + TEMPLATE_ID + "\",\"version\":1}}}")).getStatusCode());
+        Map<String, Object> connectionDefault = createSession(
+                "Connection default", "custom-openai-compatible", "default-model");
+        assertEquals("user", connectionDefault.get("contextTemplateLayer"));
+        assertEquals(TEMPLATE_ID, String.valueOf(connectionDefault.get("contextTemplateId")));
 
-        // 3) remove defaults -> built-in instance template.
-        assertEquals(HttpStatus.OK, putUserTemplatesWithDefaults(
-                "[" + fragment(1, "用户模板 v1") + "]", null, null).getStatusCode());
-        Map<String, Object> builtin = createSession("Builtin default", null, null);
+        // 3) remove defaults -> built-in Type template pin.
+        assertEquals(HttpStatus.OK, putUserTemplateConfig(Map.of("connectionDefaultTemplates", "{}"))
+                .getStatusCode());
+        String builtinTemplateId = apiRequestTemplates
+                .builtinRef(CHAT_TYPE_ID, CHAT_TYPE_VERSION).path("templateId").asText();
+        Map<String, Object> builtin = createSession("Builtin default", "custom-openai-compatible", "builtin-model");
         assertEquals("instance", builtin.get("contextTemplateLayer"));
-        assertEquals(BUILTIN_TEMPLATE_ID, String.valueOf(builtin.get("contextTemplateId")));
+        assertEquals(builtinTemplateId, String.valueOf(builtin.get("contextTemplateId")));
+        assertEquals(1, builtin.get("contextTemplateVersion"));
 
         // 4) an already-created Session never drifts when defaults change afterwards.
         String pinnedSessionId = (String) builtin.get("id");
-        assertEquals(HttpStatus.OK, putUserTemplatesWithDefaults(
-                "[" + fragment(1, "用户模板 v1") + "]",
-                "{\"layer\":\"user\",\"templateId\":\"" + TEMPLATE_ID + "\",\"version\":1}",
-                null).getStatusCode());
+        assertEquals(HttpStatus.OK, putUserTemplateConfig(Map.of(
+                "connectionDefaultTemplates", "{\"" + connectionId + "\":{\"layer\":\"user\","
+                        + "\"templateId\":\"" + TEMPLATE_ID + "\",\"version\":1}}}")).getStatusCode());
         ResponseEntity<Map> reread = restTemplate.exchange(
                 url("/api/v1/sessions/" + pinnedSessionId), HttpMethod.GET,
                 new HttpEntity<>(bearerJson(token)), Map.class);
         assertEquals(HttpStatus.OK, reread.getStatusCode());
         assertEquals("instance", reread.getBody().get("contextTemplateLayer"));
-        assertEquals(BUILTIN_TEMPLATE_ID, String.valueOf(reread.getBody().get("contextTemplateId")));
+        assertEquals(builtinTemplateId, String.valueOf(reread.getBody().get("contextTemplateId")));
     }
 
     @Test
     void sessionCreationPinsBuiltinDefaultAndExplicitRebindIsVisible() {
-        Map<String, Object> created = createSession("Binding test");
+        ChatBindingTestSupport.ensureChatConnection(
+                providerConnectionRepository, "USER", userId, "ctx-rebind");
+        Map<String, Object> created = createSession(
+                "Binding test", "custom-openai-compatible", "bind-model");
+        String builtinTemplateId = apiRequestTemplates
+                .builtinRef(CHAT_TYPE_ID, CHAT_TYPE_VERSION).path("templateId").asText();
         assertEquals("instance", created.get("contextTemplateLayer"));
-        assertEquals(BUILTIN_TEMPLATE_ID, String.valueOf(created.get("contextTemplateId")));
+        assertEquals(builtinTemplateId, String.valueOf(created.get("contextTemplateId")));
         assertEquals(1, created.get("contextTemplateVersion"));
 
-        assertEquals(HttpStatus.OK, putUserTemplates("[" + fragment(1, "用户模板 v1") + "]").getStatusCode());
+        assertEquals(HttpStatus.OK, putUserTemplates("[" + publishedFragment(1, "用户模板 v1") + "]").getStatusCode());
 
         String sessionId = (String) created.get("id");
+        Map<String, Object> rebind = new HashMap<>();
+        rebind.put("layer", "user");
+        rebind.put("templateId", TEMPLATE_ID);
+        rebind.put("version", 1);
+        rebind.put("connectionRevision", created.get("connectionRevision"));
         ResponseEntity<Map> rebound = patchClient.exchange(
-                url("/api/v1/sessions/" + sessionId + "/context-template"),
+                url("/api/v1/sessions/" + sessionId + "/api-request-template"),
                 HttpMethod.PATCH,
-                new HttpEntity<>(Map.of("layer", "user", "templateId", TEMPLATE_ID, "version", 1),
-                        bearerJson(token)),
+                new HttpEntity<>(rebind, bearerJson(token)),
                 Map.class);
-        assertEquals(HttpStatus.OK, rebound.getStatusCode());
+        assertEquals(HttpStatus.OK, rebound.getStatusCode(), String.valueOf(rebound.getBody()));
         assertEquals("user", rebound.getBody().get("contextTemplateLayer"));
         assertEquals(TEMPLATE_ID, String.valueOf(rebound.getBody().get("contextTemplateId")));
         assertEquals(1, rebound.getBody().get("contextTemplateVersion"));
@@ -282,14 +351,17 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
         assertEquals("user", renamed.getBody().get("contextTemplateLayer"));
         assertEquals(TEMPLATE_ID, String.valueOf(renamed.getBody().get("contextTemplateId")));
 
-        ResponseEntity<Map> missingRevision = patchClient.exchange(
-                url("/api/v1/sessions/" + sessionId + "/context-template"),
+        // An unpublished revision cannot be bound; the new domain reports the
+        // stable mismatch conflict instead of a bare not-found.
+        Map<String, Object> missingRevision = new HashMap<>(rebind);
+        missingRevision.put("version", 99);
+        ResponseEntity<Map> missing = patchClient.exchange(
+                url("/api/v1/sessions/" + sessionId + "/api-request-template"),
                 HttpMethod.PATCH,
-                new HttpEntity<>(Map.of("layer", "user", "templateId", TEMPLATE_ID, "version", 99),
-                        bearerJson(token)),
+                new HttpEntity<>(missingRevision, bearerJson(token)),
                 Map.class);
-        assertEquals(HttpStatus.NOT_FOUND, missingRevision.getStatusCode());
-        assertEquals("CONTEXT_TEMPLATE_NOT_FOUND", missingRevision.getBody().get("code"));
+        assertEquals(HttpStatus.CONFLICT, missing.getStatusCode(), String.valueOf(missing.getBody()));
+        assertEquals("API_TYPE_TEMPLATE_MISMATCH", missing.getBody().get("code"));
     }
 
     // ---- T1.4 / V8: atomic admission snapshot ----
@@ -299,15 +371,20 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
         String sessionId = UUID.randomUUID().toString();
         createAgentSession(sessionId, "Snapshot test");
         assertEquals(HttpStatus.OK,
-                putUserTemplates("[" + fragment(1, "用户模板 v1") + "]").getStatusCode());
+                putUserTemplates("[" + publishedFragment(1, "用户模板 v1") + "]").getStatusCode());
 
+        Session bound = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow();
+        Map<String, Object> rebind = new HashMap<>();
+        rebind.put("layer", "user");
+        rebind.put("templateId", TEMPLATE_ID);
+        rebind.put("version", 1);
+        rebind.put("connectionRevision", bound.getConnectionRevision());
         ResponseEntity<Map> rebound = patchClient.exchange(
-                url("/api/v1/sessions/" + sessionId + "/context-template"),
+                url("/api/v1/sessions/" + sessionId + "/api-request-template"),
                 HttpMethod.PATCH,
-                new HttpEntity<>(Map.of("layer", "user", "templateId", TEMPLATE_ID, "version", 1),
-                        bearerJson(token)),
+                new HttpEntity<>(rebind, bearerJson(token)),
                 Map.class);
-        assertEquals(HttpStatus.OK, rebound.getStatusCode());
+        assertEquals(HttpStatus.OK, rebound.getStatusCode(), String.valueOf(rebound.getBody()));
 
         wireMock.stubFor(post(urlEqualTo("/internal/v1/agent/chat"))
                 .willReturn(aResponse()
@@ -331,13 +408,14 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
         assertEquals("user", snapshot.path("layer").asText());
         assertEquals(TEMPLATE_ID, snapshot.path("templateId").asText());
         assertEquals(1, snapshot.path("version").asInt());
-        assertEquals("session-binding", snapshot.path("source").asText());
+        assertEquals("explicit", snapshot.path("source").asText());
+        assertEquals(CHAT_TYPE_ID, snapshot.path("apiTypeId").asText());
         assertEquals("用户模板 v1", snapshot.path("template").path("name").asText());
         String snapshotBeforeEdit = snapshot.toString();
 
         // Append v2 with different content: the admitted Run must not drift.
         assertEquals(HttpStatus.OK, putUserTemplates(
-                "[" + fragment(1, "用户模板 v1") + "," + fragment(2, "用户模板 v2") + "]")
+                "[" + publishedFragment(1, "用户模板 v1") + "," + publishedFragment(2, "用户模板 v2") + "]")
                 .getStatusCode());
         ChatRun afterEdit = chatRunRepository.findById(run.getId()).orElseThrow();
         assertEquals(snapshotBeforeEdit, afterEdit.getContextTemplateSnapshot().toString());
@@ -347,13 +425,18 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
         // Next Run after an explicit rebind follows the Session's CURRENT binding
         // (v2), while run1 above keeps its admission-time v1 snapshot.
         awaitRunTerminal(run.getId());
-        ResponseEntity<Map> reboundV2 = patchClient.exchange(
-                url("/api/v1/sessions/" + sessionId + "/context-template"),
+        Session reboundSession = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow();
+        Map<String, Object> rebindV2 = new HashMap<>();
+        rebindV2.put("layer", "user");
+        rebindV2.put("templateId", TEMPLATE_ID);
+        rebindV2.put("version", 2);
+        rebindV2.put("connectionRevision", reboundSession.getConnectionRevision());
+        ResponseEntity<Map> rebindV2Response = patchClient.exchange(
+                url("/api/v1/sessions/" + sessionId + "/api-request-template"),
                 HttpMethod.PATCH,
-                new HttpEntity<>(Map.of("layer", "user", "templateId", TEMPLATE_ID, "version", 2),
-                        bearerJson(token)),
+                new HttpEntity<>(rebindV2, bearerJson(token)),
                 Map.class);
-        assertEquals(HttpStatus.OK, reboundV2.getStatusCode());
+        assertEquals(HttpStatus.OK, rebindV2Response.getStatusCode(), String.valueOf(rebindV2Response.getBody()));
         wireMock.resetAll();
         wireMock.stubFor(post(urlEqualTo("/internal/v1/agent/chat"))
                 .willReturn(aResponse()
@@ -427,47 +510,28 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
     }
 
     private ResponseEntity<Map> putUserTemplates(String templatesJson) {
+        return putUserTemplateConfig(Map.of("templates", templatesJson));
+    }
+
+    private ResponseEntity<Map> putUserTemplateConfig(Map<String, String> entries) {
         return restTemplate.exchange(
-                url("/api/v1/config/user/context-templates"),
-                HttpMethod.PUT, new HttpEntity<>(Map.of("templates", templatesJson), bearerJson(token)),
+                url("/api/v1/config/user/api-request-templates"),
+                HttpMethod.PUT, new HttpEntity<>(entries, bearerJson(token)),
                 Map.class);
     }
 
-    private Map<String, Object> createSession(String title) {
-        return createSession(title, null, null);
-    }
-
     private Map<String, Object> createSession(String title, String provider, String model) {
-        Map<String, Object> body = new java.util.HashMap<>();
+        Map<String, Object> body = new HashMap<>();
         body.put("title", title);
         body.put("agentPrincipalId", principalId);
-        if (provider != null) {
-            body.put("modelProvider", provider);
-        }
-        if (model != null) {
-            body.put("modelName", model);
-        }
+        body.put("modelProvider", provider);
+        body.put("modelName", model);
         ResponseEntity<Map> response = restTemplate.exchange(
                 url("/api/v1/sessions"), HttpMethod.POST,
                 new HttpEntity<>(body, bearerJson(token)),
                 Map.class);
-        assertEquals(HttpStatus.CREATED, response.getStatusCode());
+        assertEquals(HttpStatus.CREATED, response.getStatusCode(), String.valueOf(response.getBody()));
         return response.getBody();
-    }
-
-    private ResponseEntity<Map> putUserTemplatesWithDefaults(
-            String templatesJson, String userDefaultJson, String providerDefaultsJson) {
-        Map<String, String> body = new java.util.HashMap<>();
-        body.put("templates", templatesJson);
-        if (userDefaultJson != null) {
-            body.put("userDefault", userDefaultJson);
-        }
-        if (providerDefaultsJson != null) {
-            body.put("providerModelDefaults", providerDefaultsJson);
-        }
-        return restTemplate.exchange(
-                url("/api/v1/config/user/context-templates"),
-                HttpMethod.PUT, new HttpEntity<>(body, bearerJson(token)), Map.class);
     }
 
     private void createAgentSession(String sessionId, String title) {
@@ -475,14 +539,18 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
         session.setId(UUID.fromString(sessionId));
         session.setAgentPrincipalId(principalId);
         session.setAgentPermissionsSnapshot(principalPermissions.deepCopy());
+        ChatBindingTestSupport.bindNewChatConnection(
+                session, providerConnectionRepository, apiRequestTemplates, userId);
         sessionRepository.saveAndFlush(session);
     }
 
-    private static String fragment(int version, String name) {
-        return "{\"id\":\"" + TEMPLATE_ID + "\",\"version\":" + version + ",\"name\":\"" + name + "\","
-                + "\"description\":\"d\",\"document\":\"{{component:" + COMPONENT_ID + "}}\","
-                + "\"components\":[{\"instanceId\":\"" + COMPONENT_ID + "\",\"type\":\"text\","
-                + "\"enabled\":true,\"config\":{\"text\":\"hello\"}}]}";
+    /** A published, Type-valid revision of the shared TEMPLATE_ID. */
+    private String publishedFragment(int version, String name) {
+        var node = objectMapper.createObjectNode();
+        node.put("id", TEMPLATE_ID).put("version", version).put("name", name)
+                .put("description", "d").put("apiTypeId", CHAT_TYPE_ID).put("apiTypeVersion", CHAT_TYPE_VERSION)
+                .put("bodySource", VALID_BODY_SOURCE).put("status", "published");
+        return node.toString();
     }
 
     private static HttpHeaders bearerJson(String bearer) {

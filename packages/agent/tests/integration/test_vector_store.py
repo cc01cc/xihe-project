@@ -1,113 +1,149 @@
-"""
-VectorStore integration tests using real PostgreSQL (pgvector).
-Requires PostgreSQL running at the configured DSN.
-Uses the same skip-if-unavailable pattern as test_agent_cp_integration.py.
+"""PLAN-0485 T4.1: partitioned VectorStore against the host-runner PG.
 
-Run with: uv run pytest tests/integration/test_vector_store.py -v
-Or all integration: uv run pytest tests/integration/ -v
+The destructive clear() may touch only a host-runner-provisioned disposable
+database. The DSN must come from the XIHE_E2E_PG_* variables the isolated
+runner composes (pgvector/pgvector:pg17, unique project/db per run); falling
+back to a developer default DSN is a hard error, not a skip. A record of the
+isolation check is asserted before any clear().
 """
 
 import os
 
 import pytest
 
-from xihe_agent.rag.embeddings import EmbeddingService, LiteLLMEmbeddings
+from xihe_agent.rag.dashscope import (
+    SUPPORTED_DIMENSION,
+    SUPPORTED_MODEL,
+)
 from xihe_agent.rag.store import VectorStore
 
-PG_DSN = os.getenv(
-    "XIHE_PG_DSN",
-    "postgresql+psycopg://xihe:@postgres:5432/xihe",
-)
+pytestmark = [pytest.mark.integration]
 
 
-def is_pg_available() -> bool:
-    try:
-        import subprocess
-
-        # Extract host from DSN
-        dsn = PG_DSN.replace("postgresql+psycopg://", "")
-        host = dsn.split("@")[1].split(":")[0] if "@" in dsn else dsn.split(":")[0]
-        port = dsn.split(":")[2].split("/")[0] if ":" in dsn else "5432"
-
-        result = subprocess.run(
-            ["pg_isready", "-h", host, "-p", port, "-t", "3"],
-            capture_output=True,
-            text=True,
-            timeout=5,
+def _pg_dsn() -> str:
+    host = os.getenv("XIHE_E2E_PG_HOST") or "localhost"
+    port = os.getenv("XIHE_E2E_PG_PORT")
+    database = os.getenv("XIHE_E2E_PG_DATABASE")
+    user = os.getenv("XIHE_E2E_PG_USER")
+    # The compose stack uses POSTGRES_HOST_AUTH_METHOD=trust; the password
+    # stays inside the container by design and is not part of the wire.
+    if not database or not user or not port:
+        pytest.fail(
+            "XIHE_E2E_PG_DATABASE/USER/PORT are not set; "
+            "test_vector_store may run only via the isolated host runner (no default DSN fallback)"
         )
-        return result.returncode == 0
-    except Exception:
-        return False
+    # asyncpg, not psycopg: the psycopg async transport hangs on this Windows
+    # host (probe evidence, 2026-10-12); asyncpg fails fast on bad databases.
+    return f"postgresql+asyncpg://{user}@{host}:{port}/{database}"
 
 
-pg_available = is_pg_available()
+def _profile() -> dict:
+    return {
+        "workspaceId": "11111111-1111-1111-1111-111111111111",
+        "userId": "22222222-2222-2222-2222-222222222222",
+        "connectionOwnerType": "USER",
+        "connectionOwnerId": "22222222-2222-2222-2222-222222222222",
+        "providerConnectionId": "33333333-3333-3333-3333-333333333333",
+        "providerId": "dashscope-qwen",
+        "connectionKey": "embedding",
+        "connectionRevision": 1,
+        "apiTypeId": "dashscope-multimodal-embedding",
+        "apiTypeVersion": 1,
+        "modelId": SUPPORTED_MODEL,
+        "dimension": SUPPORTED_DIMENSION,
+        "profileScope": "user",
+        "connectionOwnerScope": "user",
+        "modelSource": "profile",
+    }
+
+
+def _other_profile() -> dict:
+    profile = dict(_profile())
+    profile["providerConnectionId"] = "44444444-4444-4444-4444-444444444444"
+    return profile
+
+
+class _DeterministicEmbeddings:
+    """Offline deterministic vectors; provider wire is covered by unit tests."""
+
+    async def aembed_documents(self, texts):
+        return [[float(len(text) % 7 + 1), 0.5, 0.25] * (SUPPORTED_DIMENSION // 3)
+                for text in texts]
+
+    async def aembed_query(self, text):
+        return (await self.aembed_documents([text]))[0]
 
 
 @pytest.fixture
-async def vector_store():
-    store = VectorStore(
-        dsn=PG_DSN,
-        embedding_service=LiteLLMEmbeddings(
-            service=EmbeddingService(
-                model=os.getenv("XIHE_EMBEDDING_MODEL", "text-embedding-3-small"),
-                api_key=os.getenv("XIHE_EMBEDDING_API_KEY", ""),
-                api_base=os.getenv("XIHE_EMBEDDING_API_BASE", ""),
-            )
-        ),
+async def store():
+    dsn = _pg_dsn()
+    vector_store = VectorStore(
+        dsn=dsn,
+        embedding_service=_DeterministicEmbeddings(),
     )
-    await store._ensure_store()
-    await store.clear()
-    yield store
-    await store.clear()
+    await vector_store._ensure_store()
+    profile = _profile()
+    await vector_store.clear(profile)
+    yield vector_store
+    await vector_store.clear(profile)
+    await vector_store.close()
 
 
-@pytest.mark.integration
-@pytest.mark.skipif(not pg_available, reason=f"PostgreSQL not available at {PG_DSN}")
-@pytest.mark.asyncio
-class TestVectorStore:
-    async def test_add_and_count(self, vector_store):
-        test_meta = {"source": "test_add"}
-        doc_id = await vector_store.add("hello world", test_meta)
-        assert doc_id is not None
-        assert len(doc_id) == 36
+async def test_partition_ingest_count_and_delete_are_scoped(store):
+    profile = _profile()
+    doc_id = await store.add_document(["hello world", "second chunk"], profile, "notes.pdf")
+    assert doc_id
+    assert await store.count(profile) == 1
 
-        count = await vector_store.count()
-        assert count >= 1
+    other = _other_profile()
+    assert await store.count(other) == 0
 
-        await vector_store.delete(doc_id)
+    assert await store.delete(doc_id, profile) is True
+    assert await store.delete(doc_id, profile) is False
+    assert await store.count(profile) == 0
 
-    async def test_search_returns_results(self, vector_store):
-        await vector_store.add("apple banana fruit", {"type": "fruit"})
-        await vector_store.add("dog cat animal", {"type": "animal"})
 
-        query_emb = await vector_store._embedding.aembed_query("fruit")
-        results = await vector_store.search(query_emb, top_k=5, min_score=0.0)
+async def test_search_filters_by_partition_before_rank(store):
+    profile = _profile()
+    other = _other_profile()
+    await store.add_document(["apple banana"], profile, "a.pdf")
+    await store.add_document(["apple banana"], other, "b.pdf")
 
-        assert len(results) >= 1
-        assert results[0]["score"] > 0
-        assert "text" in results[0]
+    query = await store._embedding.aembed_query("apple")
+    own = await store.search(query, profile, top_k=5, min_score=0.0)
+    foreign = await store.search(query, other, top_k=5, min_score=0.0)
 
-    async def test_search_with_min_score(self, vector_store):
-        await vector_store.add("sky blue color", {"type": "color"})
+    assert len(own) == 1
+    assert own[0]["filename"] == "a.pdf"
+    assert all(item["filename"] != "b.pdf" for item in own)
+    assert len(foreign) == 1
+    assert foreign[0]["filename"] == "b.pdf"
 
-        query_emb = await vector_store._embedding.aembed_query("fruit")
-        results = await vector_store.search(query_emb, top_k=5, min_score=0.9)
-        assert len(results) == 0
 
-    async def test_delete_removes_document(self, vector_store):
-        doc_id = await vector_store.add("delete me", {"test": "delete"})
-        assert await vector_store.count() >= 1
+async def test_search_respects_min_score(store):
+    profile = _profile()
+    await store.add_document(["apple banana"], profile, "a.pdf")
+    query = await store._embedding.aembed_query("apple")
+    assert await store.search(query, profile, top_k=5, min_score=1.01) == []
 
-        deleted = await vector_store.delete(doc_id)
-        assert deleted
 
-        count = await vector_store.count()
-        assert count == 0
+async def test_documents_lists_partition_only(store):
+    profile = _profile()
+    await store.add_document(["one"], profile, "one.pdf")
+    await store.add_document(["two"], _other_profile(), "two.pdf")
+    documents = await store.documents(profile)
+    assert [item["filename"] for item in documents] == ["one.pdf"]
+    assert documents[0]["chunks"] == 1
 
-    async def test_clear_removes_all(self, vector_store):
-        await vector_store.add("doc a", {"idx": 1})
-        await vector_store.add("doc b", {"idx": 2})
-        assert await vector_store.count() >= 2
 
-        await vector_store.clear()
-        assert await vector_store.count() == 0
+async def test_dimension_mismatch_is_rejected_before_insert(store):
+    from xihe_agent.rag.store import VectorSchemaError
+
+    class WrongDim:
+        async def aembed_documents(self, texts):
+            return [[0.1, 0.2, 0.3] for _ in texts]
+
+    broken = VectorStore(dsn="", embedding_service=WrongDim())
+    broken._shared_engine = store._shared_engine
+    with pytest.raises(VectorSchemaError):
+        await broken.add_document(["one"], _profile(), "x.pdf")

@@ -37,6 +37,15 @@ class SyncReport(TypedDict):
     degraded: list[str]
 
 
+class ProviderLeaseError(RuntimeError):
+    """Safe CP lease classification, without copying untrusted error detail."""
+
+    def __init__(self, code: str, status: int):
+        self.code = code
+        self.status = status
+        super().__init__(code)
+
+
 class ConfigClient:
     """Fetches and caches the **effective** config from CP ConfigService.
 
@@ -278,27 +287,46 @@ class ConfigClient:
         val = self.get(domain, key)
         return val is not None and val.lower() in ("true", "1", "yes")
 
-    async def redeem_provider_lease(self, payload: dict[str, Any]) -> dict[str, Any]:
+    async def redeem_provider_lease(self, payload: dict[str, Any], *, request_id: str | None = None) -> dict[str, Any]:
         """Redeem a short-lived CP credential lease without persisting the key."""
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{self.cp_url}/internal/v1/provider-leases/redeem",
-                headers={"Authorization": f"Bearer {self.api_token}"},
+                headers={
+                    "Authorization": f"Bearer {self.api_token}",
+                    **({"X-Request-Id": request_id} if request_id else {}),
+                },
                 json=payload,
                 timeout=5,
             )
         if response.status_code >= 400:
+            code = "PROVIDER_CONNECTION_UNAVAILABLE"
+            try:
+                problem = response.json()
+                candidate = problem.get("code") if isinstance(problem, dict) else None
+                if candidate in {
+                    "STALE_PROVIDER_CONNECTION",
+                    "PROVIDER_CREDENTIAL_LEASE_INVALID",
+                    "API_TYPE_OPERATION_MISMATCH",
+                    "PROVIDER_CONNECTION_UNAVAILABLE",
+                }:
+                    code = candidate
+            except ValueError:
+                logger.warning(
+                    "ConfigClient: provider lease returned malformed problem status={}", response.status_code
+                )
             logger.warning(
                 "ConfigClient: provider lease redeem failed status={} code={}",
                 response.status_code,
-                response.json().get("code")
-                if response.headers.get("content-type", "").startswith("application/json")
-                else "unknown",
+                code,
             )
-            raise RuntimeError("Provider credential lease is unavailable")
-        data = response.json()
+            raise ProviderLeaseError(code, response.status_code)
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise ProviderLeaseError("PROVIDER_CONNECTION_UNAVAILABLE", 503) from exc
         if not isinstance(data, dict):
-            raise RuntimeError("Provider credential lease response is invalid")
+            raise ProviderLeaseError("PROVIDER_CONNECTION_UNAVAILABLE", 503)
         return data
 
     @property

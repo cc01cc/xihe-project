@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -36,8 +37,17 @@ class ProviderConnectionServiceTest {
     private final ProviderCatalogService catalog = mock(ProviderCatalogService.class);
     private final ApiInputTypeService apiTypes = new ApiInputTypeService(new ObjectMapper());
     private final EnvelopeEncryptionService encryption = new EnvelopeEncryptionService(new byte[32]);
+    private final com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService requestTemplates =
+            mock(com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService.class);
     private final ProviderConnectionService service = new ProviderConnectionService(
-            repository, auditRepository, leaseRepository, catalog, apiTypes, encryption, new ObjectMapper());
+            repository, auditRepository, leaseRepository, catalog, apiTypes, encryption, new ObjectMapper(),
+            requestTemplates);
+
+    @org.junit.jupiter.api.BeforeEach
+    void wireLockedConnectionDelegation() {
+        org.mockito.Mockito.lenient().when(requestTemplates.lockConnection(anyString())).thenAnswer(
+                invocation -> repository.findById(UUID.fromString(invocation.getArgument(0))).orElseThrow());
+    }
 
     @AfterEach
     void clearTenant() {
@@ -355,7 +365,8 @@ class ProviderConnectionServiceTest {
         pair.put("defaultBaseUrl", "https://pair.example/v1");
         pair.put("modelDiscovery", "manual");
         ProviderConnectionService pairService = new ProviderConnectionService(
-                repository, auditRepository, leaseRepository, realCatalog, apiTypes, encryption, mapper);
+                repository, auditRepository, leaseRepository, realCatalog, apiTypes, encryption, mapper,
+                requestTemplates);
         when(repository.save(any(ProviderConnection.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 

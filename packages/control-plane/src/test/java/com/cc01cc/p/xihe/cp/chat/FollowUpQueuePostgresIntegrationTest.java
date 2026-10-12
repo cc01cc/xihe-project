@@ -83,6 +83,12 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
     private SessionRepository sessionRepository;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository providerConnectionRepository;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService apiRequestTemplates;
+
+    @Autowired
     private ChatRunRepository chatRunRepository;
 
     @Autowired
@@ -984,6 +990,7 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
         String workspaceId = workspace.getId().toString();
         Session session = new Session(workspaceId, userId, "Follow-up session");
         session.setId(UUID.randomUUID());
+        ChatBindingTestSupport.bindNewChatConnection(session, providerConnectionRepository, apiRequestTemplates, userId);
         Session persisted = sessionRepository.saveAndFlush(session);
         return new Fixture(userId, workspaceId, persisted.getId().toString());
     }
@@ -1011,6 +1018,7 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
         session.setId(UUID.randomUUID());
         session.setAgentPrincipalId(principal.getId().toString());
         session.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
+        ChatBindingTestSupport.bindNewChatConnection(session, providerConnectionRepository, apiRequestTemplates, userId);
         Session persisted = sessionRepository.saveAndFlush(session);
         return new Fixture(userId, workspaceId, persisted.getId().toString());
     }

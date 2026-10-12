@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
-import { api, type ApiSession } from "../composables/api";
+import { api, type ApiSession, type SessionBindingPatch } from "../composables/api";
 import type {
     Session,
     SessionContext,
@@ -46,6 +46,9 @@ function toSession(record: ApiSession): Session {
         modelName: record.modelName,
         providerConnectionId: record.providerConnectionId,
         connectionRevision: record.connectionRevision,
+        contextTemplateLayer: record.contextTemplateLayer,
+        contextTemplateId: record.contextTemplateId,
+        contextTemplateVersion: record.contextTemplateVersion,
         context: createEmptyContext(),
     };
 }
@@ -216,15 +219,7 @@ export const useSessionStore = defineStore("session", () => {
         }
     }
 
-    async function updateSession(
-        id: string,
-        patch: {
-            title?: string;
-            modelProvider?: string;
-            modelName?: string;
-            providerConnectionId?: string;
-        },
-    ): Promise<Session> {
+    async function updateSession(id: string, patch: SessionBindingPatch): Promise<Session> {
         const updated = toSession(await api.updateSession(id, patch));
         upsertSession(updated);
         return updated;

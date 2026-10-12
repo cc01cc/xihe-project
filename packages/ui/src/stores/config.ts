@@ -19,7 +19,7 @@ export const INSTANCE_DOMAINS = [
     "logging",
     "approval-policy",
     "agent-templates",
-    "context-templates",
+    "api-request-templates",
     "job-policy",
 ] as const;
 
@@ -27,14 +27,14 @@ export type ConfigDomain = (typeof INSTANCE_DOMAINS)[number];
 
 /**
  * Merged-config domains; agent/context templates only have explicit-layer reads
- * (PLAN-0414: context-templates rejects merged effective on the CP side).
+ * (PLAN-0414: api-request-templates rejects merged effective on the CP side).
  */
 export const CONFIG_DOMAINS: readonly Exclude<
     ConfigDomain,
-    "agent-templates" | "context-templates"
+    "agent-templates" | "api-request-templates"
 >[] = INSTANCE_DOMAINS.filter(
-    (domain): domain is Exclude<ConfigDomain, "agent-templates" | "context-templates"> =>
-        domain !== "agent-templates" && domain !== "context-templates",
+    (domain): domain is Exclude<ConfigDomain, "agent-templates" | "api-request-templates"> =>
+        domain !== "agent-templates" && domain !== "api-request-templates",
 );
 
 export const LAYER_DOMAINS: Record<ConfigLayer, readonly ConfigDomain[]> = {
@@ -48,7 +48,7 @@ export const LAYER_DOMAINS: Record<ConfigLayer, readonly ConfigDomain[]> = {
         "agent-profile",
         "user-preference",
         "agent-templates",
-        "context-templates",
+        "api-request-templates",
     ],
     workspace: [
         "llm-provider",
@@ -58,7 +58,7 @@ export const LAYER_DOMAINS: Record<ConfigLayer, readonly ConfigDomain[]> = {
         "agent-runtime",
         "approval-policy",
         "agent-templates",
-        "context-templates",
+        "api-request-templates",
         "job-policy",
     ],
 };

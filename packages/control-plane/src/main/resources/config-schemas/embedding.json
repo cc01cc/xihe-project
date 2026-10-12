@@ -1,9 +1,18 @@
 {
   "type": "object",
   "properties": {
-    "model": { "type": "string" },
-    "dimensions": { "type": ["integer", "string"] }
+    "profile": {
+      "type": "object",
+      "description": "Complete embedding profile unit; omitted or empty clears the layer to inherit.",
+      "properties": {
+        "providerId": { "type": "string" },
+        "connectionKey": { "type": "string" },
+        "model": { "type": "string" }
+      },
+      "required": ["providerId", "connectionKey", "model"],
+      "additionalProperties": false
+    }
   },
-  "required": ["model", "dimensions"],
+  "required": [],
   "additionalProperties": false
 }

@@ -64,6 +64,18 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     private SessionRepository sessionRepository;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository providerConnectionRepository;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService apiRequestTemplates;
+
+    private Session saveBoundChatSession(Session session, User user) {
+        ChatBindingTestSupport.bindNewChatConnection(
+                session, providerConnectionRepository, apiRequestTemplates, user.getId().toString());
+        return sessionRepository.saveAndFlush(session);
+    }
+
+    @Autowired
     private ChatRunRepository chatRunRepository;
 
     @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
@@ -107,7 +119,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         Workspace workspace = workspaceRepository.save(new Workspace("Chat Submit Workspace", user.getId().toString()));
         Session session = new Session(workspace.getId().toString(), user.getId().toString(), "Chat Submit Session");
         session.setId(UUID.randomUUID());
-        Session persistedSession = sessionRepository.save(session);
+        Session persistedSession = saveBoundChatSession(session, user);
 
         String runId = UUID.randomUUID().toString();
         // PLAN-0464 T1.1: startOperation is gone; the failure point after the
@@ -139,7 +151,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         Workspace workspace = workspaceRepository.save(new Workspace("Chat Admission Workspace", user.getId().toString()));
         Session session = new Session(workspace.getId().toString(), user.getId().toString(), "Admission Session");
         session.setId(UUID.randomUUID());
-        Session persistedSession = sessionRepository.saveAndFlush(session);
+        Session persistedSession = saveBoundChatSession(session, user);
 
         String missingPrincipalRunId = UUID.randomUUID().toString();
         CpApiException missing = assertThrows(CpApiException.class,
@@ -169,7 +181,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 user.getId().toString(), WorkspaceRole.OWNER));
         Session session = new Session(workspace.getId().toString(), user.getId().toString(), "Empty placeholder");
         session.setId(UUID.randomUUID());
-        Session persistedSession = sessionRepository.saveAndFlush(session);
+        Session persistedSession = saveBoundChatSession(session, user);
         AgentPrincipal principal = savePrincipal(user);
         addPrincipalGrant(principal, user, "read");
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
@@ -209,7 +221,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 user.getId().toString(), WorkspaceRole.OWNER));
         Session session = new Session(workspace.getId().toString(), user.getId().toString(), "Imported history");
         session.setId(UUID.randomUUID());
-        Session persistedSession = sessionRepository.saveAndFlush(session);
+        Session persistedSession = saveBoundChatSession(session, user);
         messageRepository.saveAndFlush(new Message(persistedSession.getId().toString(), MessageRole.USER, "Old content"));
         AgentPrincipal principal = savePrincipal(user);
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
@@ -293,7 +305,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 user.getId().toString(), WorkspaceRole.OWNER));
         Session session = new Session(workspace.getId().toString(), user.getId().toString(), "In-flight Session");
         session.setId(UUID.randomUUID());
-        Session persistedSession = sessionRepository.saveAndFlush(session);
+        Session persistedSession = saveBoundChatSession(session, user);
         AgentPrincipal principal = savePrincipal(user);
         sessionRepository.saveAndFlush(boundSession(persistedSession, principal));
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
@@ -364,7 +376,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     private Session saveEmptySession(User user, Workspace workspace, String title) {
         Session session = new Session(workspace.getId().toString(), user.getId().toString(), title);
         session.setId(UUID.randomUUID());
-        return sessionRepository.saveAndFlush(session);
+        return saveBoundChatSession(session, user);
     }
 
     private void assertRejectedWithoutWrites(String runId, Session session, User user, Workspace workspace) {

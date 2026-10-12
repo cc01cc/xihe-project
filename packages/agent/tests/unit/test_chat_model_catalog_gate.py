@@ -16,8 +16,9 @@ def test_model_catalog_accessor_reads_latest_hot_swap(monkeypatch):
     monkeypatch.setattr(app_state, "_model_catalog", swapped)
 
     assert app_state.get_model_catalog() is swapped
-    # chat must consume the accessor, never a stale by-value catalog binding.
+    # Chat now requires a concrete Connection/template/lease (PLAN-0439).
+    # The process-level accessor remains for summary/discovery consumers.
     assert not hasattr(chat, "_model_catalog")
-    info = chat.get_model_catalog().get("providers", {}).get("deepseek")
+    info = app_state.get_model_catalog().get("providers", {}).get("deepseek")
     assert info is not None
     assert info["status"] == "ready"

@@ -49,6 +49,8 @@ class SessionDeleteWithBranchIntegrationTest extends AbstractIntegrationTest {
     private String workspaceId;
 
     @Autowired private UserRepository userRepository;
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository providerConnectionRepository;
     @Autowired private WorkspaceRepository workspaceRepository;
     @Autowired private WorkspaceUserRepository workspaceUserRepository;
     @Autowired private ChatRunRepository chatRunRepository;
@@ -82,8 +84,10 @@ class SessionDeleteWithBranchIntegrationTest extends AbstractIntegrationTest {
     @Test
     void deleteSessionWithChildBranchRemovesBranchAnchoredRowsWithoutFkViolation() {
         String sessionId = UUID.randomUUID().toString();
+        com.cc01cc.p.xihe.cp.entity.ProviderConnection chatConnection = ChatBindingTestSupport.ensureChatConnection(
+                providerConnectionRepository, "USER", userId, "del-branch-" + UUID.randomUUID().toString().substring(0, 8), "openai");
         sessionService.createWithId(sessionId, userId, workspaceId,
-                "Delete with child branch", "openai", "gpt-test", null);
+                "Delete with child branch", "openai", "gpt-test", chatConnection.getId().toString());
         String rootBranchId = branchPathService.ensureRootBranchId(sessionId);
 
         String runId = UUID.randomUUID().toString();

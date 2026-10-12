@@ -18,7 +18,6 @@ import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionFollowUpItemRepository;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
-import com.cc01cc.p.xihe.cp.service.ContextTemplateService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -43,6 +42,9 @@ import java.util.function.Supplier;
  */
 @Service
 public class ChatSubmissionService {
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService apiRequestTemplates;
     public static final String SPAWN_TOOL_NAME = "spawn_agent";
 
     private static final int MAX_SPAWN_ARGUMENTS_PREVIEW_LENGTH = 4096;
@@ -58,7 +60,6 @@ public class ChatSubmissionService {
     private final DbLockTimeout dbLockTimeout;
     private final ObjectMapper objectMapper;
     private final AgentPrincipalService agentPrincipalService;
-    private final ContextTemplateService contextTemplateService;
     private final com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService;
     private final EntityManager entityManager;
     private final ApprovalService approvalService;
@@ -80,7 +81,6 @@ public class ChatSubmissionService {
                                  DbLockTimeout dbLockTimeout,
                                  ObjectMapper objectMapper,
                                  AgentPrincipalService agentPrincipalService,
-                                 ContextTemplateService contextTemplateService,
                                  com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService,
                                  EntityManager entityManager,
                                  ApprovalService approvalService,
@@ -97,7 +97,6 @@ public class ChatSubmissionService {
         this.dbLockTimeout = dbLockTimeout;
         this.objectMapper = objectMapper;
         this.agentPrincipalService = agentPrincipalService;
-        this.contextTemplateService = contextTemplateService;
         this.branchPathService = branchPathService;
         this.entityManager = entityManager;
         this.approvalService = approvalService;
@@ -523,6 +522,11 @@ public class ChatSubmissionService {
                                 List<String> attachmentIds, String requestedPrincipalId,
                                 boolean followUpAdmission) {
         Session session = bindOrValidateAgentSession(sessionId, userId, workspaceId, requestedPrincipalId);
+        var requestSnapshot = apiRequestTemplates.admissionSnapshot(session);
+        provider = session.getModelProvider();
+        model = session.getModelName();
+        providerConnectionId = session.getProviderConnectionId();
+        connectionRevision = session.getConnectionRevision();
         if (session.getDeleteRequestedAt() != null) {
             throw new CpApiException(HttpStatus.CONFLICT, "SESSION_DELETING",
                     "Session deletion is in progress");
@@ -547,9 +551,7 @@ public class ChatSubmissionService {
         chatRun.setBranchId(branchId);
         // PLAN-0414 T1.4: admission fixes one atomic Context Template snapshot
         // from the Session binding; template edits cannot mutate a live Run.
-        chatRun.setContextTemplateSnapshot(contextTemplateService.resolveSnapshot(
-                session.getContextTemplateLayer(), session.getContextTemplateId().toString(),
-                session.getContextTemplateVersion(), userId, workspaceId));
+        chatRun.setContextTemplateSnapshot(requestSnapshot);
         chatRun.setLeaseOwner(leaseOwner);
         chatRun.setLeaseExpiresAt(Instant.now().plus(LEASE_TTL));
         chatRun.setProviderConnectionId(providerConnectionId);
