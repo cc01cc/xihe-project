@@ -10,39 +10,40 @@ import {
     verifyProviderConnection,
 } from "../../../services/providerConnectionService";
 import { request } from "../../../composables/api";
+import { listVisibleTemplates, readTemplateConfig } from "../../../services/apiRequestTemplates";
+
+vi.mock("../../../services/apiRequestTemplates", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../../../services/apiRequestTemplates")>()),
+    listVisibleTemplates: vi.fn<typeof listVisibleTemplates>(),
+    readTemplateConfig: vi.fn<typeof readTemplateConfig>(),
+}));
 
 vi.mock("../../../services/providerConnectionService", () => ({
     listProviderCatalog:
-        vi.fn<
-            (typeof import("../../../services/providerConnectionService"))["listProviderCatalog"]
-        >(),
+        vi.fn<typeof import("../../../services/providerConnectionService").listProviderCatalog>(),
     listProviderConnections:
         vi.fn<
-            (typeof import("../../../services/providerConnectionService"))["listProviderConnections"]
+            typeof import("../../../services/providerConnectionService").listProviderConnections
         >(),
     createProviderConnection:
         vi.fn<
-            (typeof import("../../../services/providerConnectionService"))["createProviderConnection"]
+            typeof import("../../../services/providerConnectionService").createProviderConnection
         >(),
     updateProviderConnection:
         vi.fn<
-            (typeof import("../../../services/providerConnectionService"))["updateProviderConnection"]
+            typeof import("../../../services/providerConnectionService").updateProviderConnection
         >(),
     verifyProviderConnection:
         vi.fn<
-            (typeof import("../../../services/providerConnectionService"))["verifyProviderConnection"]
+            typeof import("../../../services/providerConnectionService").verifyProviderConnection
         >(),
     deleteProviderConnection:
         vi.fn<
-            (typeof import("../../../services/providerConnectionService"))["deleteProviderConnection"]
+            typeof import("../../../services/providerConnectionService").deleteProviderConnection
         >(),
 }));
-vi.mock("../../../composables/api", () => ({
-    request: vi.fn<(typeof import("../../../composables/api"))["request"]>(),
-}));
-vi.mock("../../../lib/logger", () => ({
-    logger: { warn: vi.fn<(message: string, ...rest: unknown[]) => void>() },
-}));
+vi.mock("../../../composables/api", () => ({ request: vi.fn<typeof request>() }));
+vi.mock("../../../lib/logger", () => ({ logger: { warn: vi.fn<(...args: unknown[]) => void>() } }));
 vi.mock("vue-sonner", () => ({
     toast: {
         success: vi.fn<(message: string) => void>(),
@@ -96,6 +97,8 @@ async function mountHub(readonly = false) {
 beforeEach(() => {
     vi.restoreAllMocks();
     vi.resetAllMocks();
+    vi.mocked(listVisibleTemplates).mockResolvedValue([]);
+    vi.mocked(readTemplateConfig).mockResolvedValue({});
     vi.mocked(listProviderCatalog).mockResolvedValue({
         catalogRevision: "1",
         providers: [provider],
@@ -112,6 +115,27 @@ beforeEach(() => {
 });
 
 describe("ProviderHub master-detail", () => {
+    it("writes a Workspace default to the same explicit Workspace used for its read", async () => {
+        const target = { ...workspace, apiTypeId: user.apiTypeId, workspaceId: "workspace-b" };
+        vi.mocked(listProviderConnections).mockResolvedValue({ connections: [target] });
+        vi.mocked(listVisibleTemplates).mockResolvedValue([{ layer: "instance", templateId: "builtin", version: 1, name: "Built in", apiTypeId: user.apiTypeId, apiTypeVersion: 1 }]);
+        const wrapper = mount(ProviderHub, { props: { scope: "WORKSPACE", workspaceId: "workspace-a" } });
+        await flushPromises();
+        await wrapper.get('select[aria-label="连接默认请求模板"]').setValue("instance:builtin:1");
+        await flushPromises();
+        expect(readTemplateConfig).toHaveBeenCalledWith("workspace", "workspace-b");
+        expect(request).toHaveBeenCalledWith("/config/workspace/api-request-templates?workspaceId=workspace-b", expect.objectContaining({ method: "PUT" }));
+        wrapper.unmount();
+    });
+    it("loads Workspace templates using the current context for a User connection", async () => {
+        const wrapper = mount(ProviderHub, {
+            props: { scope: "USER", workspaceId: "current-workspace" },
+        });
+        await flushPromises();
+        expect(listVisibleTemplates).toHaveBeenCalledWith("current-workspace");
+        expect(readTemplateConfig).toHaveBeenCalledWith("user", "current-workspace");
+        wrapper.unmount();
+    });
     it("groups connections by Provider and switches the entire detail by connection ID", async () => {
         const wrapper = await mountHub();
         const rows = wrapper.findAll('[data-testid="provider-connection-example"]');
@@ -130,7 +154,7 @@ describe("ProviderHub master-detail", () => {
         expect(detail.get('[data-testid="provider-connection-readonly-type"]').text()).toContain(
             "other-type@1",
         );
-        expect(detail.find("select").exists()).toBe(false);
+        expect(detail.find("select").exists()).toBe(true);
         expect(detail.text()).toContain("Configured · hidden");
         expect(wrapper.text()).not.toContain("个人连接对同一 Provider 优先");
         expect(wrapper.get('[data-testid="provider-master-detail"]').classes()).toContain("grid");
@@ -161,7 +185,11 @@ describe("ProviderHub master-detail", () => {
             .trigger("click");
         const modal = wrapper.get('[data-testid="provider-connection-modal"]');
         expect(modal.get<HTMLInputElement>('input[type="password"]').element.value).toBe("");
-        expect(modal.get<HTMLSelectElement>("select").element.value).toBe("curated");
+        expect(
+            modal
+                .findAll<HTMLSelectElement>("select")
+                .find((item) => item.element.value === "curated")?.element.value,
+        ).toBe("curated");
         expect(
             modal.get('[data-testid="provider-connection-form-key"]').attributes("readonly"),
         ).toBeDefined();
