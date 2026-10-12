@@ -12,17 +12,43 @@ import {
 import { request } from "../../../composables/api";
 
 vi.mock("../../../services/providerConnectionService", () => ({
-    listProviderCatalog: vi.fn(),
-    listProviderConnections: vi.fn(),
-    createProviderConnection: vi.fn(),
-    updateProviderConnection: vi.fn(),
-    verifyProviderConnection: vi.fn(),
-    deleteProviderConnection: vi.fn(),
+    listProviderCatalog:
+        vi.fn<
+            (typeof import("../../../services/providerConnectionService"))["listProviderCatalog"]
+        >(),
+    listProviderConnections:
+        vi.fn<
+            (typeof import("../../../services/providerConnectionService"))["listProviderConnections"]
+        >(),
+    createProviderConnection:
+        vi.fn<
+            (typeof import("../../../services/providerConnectionService"))["createProviderConnection"]
+        >(),
+    updateProviderConnection:
+        vi.fn<
+            (typeof import("../../../services/providerConnectionService"))["updateProviderConnection"]
+        >(),
+    verifyProviderConnection:
+        vi.fn<
+            (typeof import("../../../services/providerConnectionService"))["verifyProviderConnection"]
+        >(),
+    deleteProviderConnection:
+        vi.fn<
+            (typeof import("../../../services/providerConnectionService"))["deleteProviderConnection"]
+        >(),
 }));
-vi.mock("../../../composables/api", () => ({ request: vi.fn() }));
-vi.mock("../../../lib/logger", () => ({ logger: { warn: vi.fn() } }));
+vi.mock("../../../composables/api", () => ({
+    request: vi.fn<(typeof import("../../../composables/api"))["request"]>(),
+}));
+vi.mock("../../../lib/logger", () => ({
+    logger: { warn: vi.fn<(message: string, ...rest: unknown[]) => void>() },
+}));
 vi.mock("vue-sonner", () => ({
-    toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+    toast: {
+        success: vi.fn<(message: string) => void>(),
+        error: vi.fn<(message: string) => void>(),
+        warning: vi.fn<(message: string) => void>(),
+    },
 }));
 
 const provider: ProviderDefinition = {

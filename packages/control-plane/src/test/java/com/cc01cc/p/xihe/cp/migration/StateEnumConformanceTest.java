@@ -108,10 +108,10 @@ class StateEnumConformanceTest extends AbstractIntegrationTest {
 
         Method isTerminal;
         try {
-            isTerminal = ChatRunTerminalService.class.getDeclaredMethod("isTerminal", String.class);
+            isTerminal = ChatRunTerminalService.class.getDeclaredMethod("isTerminalStatus", String.class);
             isTerminal.setAccessible(true);
         } catch (NoSuchMethodException e) {
-            throw new AssertionError("ChatRunTerminalService.isTerminal(String) no longer exists", e);
+            throw new AssertionError("ChatRunTerminalService.isTerminalStatus(String) no longer exists", e);
         }
         for (String status : RUN_TERMINAL_STATUSES) {
             assertTrue(invokeBoolean(isTerminal, status), status + " must stay terminal");
