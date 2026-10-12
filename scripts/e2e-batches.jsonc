@@ -76,6 +76,11 @@
       "llmMode": "success",
       "specs": ["e2e/real/config-run-effective.spec.ts"]
     },
+    "run-budget": {
+      "description": "PLAN-0492 run budget exhaustion surface: config -> run failed -> takeover entry",
+      "llmMode": "write_file",
+      "specs": ["e2e/real/run-budget-exhaustion.spec.ts"]
+    },
     "evidence": {
       "description": "visual/manual evidence artifacts — run last, not a regular gate",
       "llmMode": "mock",

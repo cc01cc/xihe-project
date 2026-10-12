@@ -514,18 +514,20 @@ async def chat(request: Request):
                         )
                         if not error_sent:
                             error_sent = True
-                            yield render_sse(
-                                "error",
-                                correlated_data(
-                                    {
-                                        "code": terminal_error_code,
-                                        "detail": error_detail,
-                                        "retryable": retryable,
-                                        "outcome": terminal_outcome,
-                                        "type": "error",
-                                    }
-                                ),
-                            )
+                            error_payload = {
+                                "code": terminal_error_code,
+                                "detail": error_detail,
+                                "retryable": retryable,
+                                "outcome": terminal_outcome,
+                                "type": "error",
+                            }
+                            # PLAN-0492 T2.2: the exhausted run-budget dimension
+                            # must survive the SSE mapping — the CP relay records
+                            # it as the durable terminal fact (`budgetDimension`).
+                            exhausted_dimension = event.data.get("dimension")
+                            if isinstance(exhausted_dimension, str) and exhausted_dimension:
+                                error_payload["dimension"] = exhausted_dimension
+                            yield render_sse("error", correlated_data(error_payload))
                     elif event.type == "done":
                         if terminal_sent:
                             continue

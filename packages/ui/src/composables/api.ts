@@ -1554,6 +1554,8 @@ export const api = {
                 runStatus?: string;
                 terminalOutcome?: string;
                 errorCode?: string;
+                /** CP `MessageReadService` field name for the terminal error text. */
+                errorDetail?: string;
                 error?: string;
                 retryable?: boolean;
                 attachments?: Array<{ fileId: string; name: string; type: string; size: number }>;

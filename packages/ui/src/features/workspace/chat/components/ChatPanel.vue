@@ -230,7 +230,10 @@ async function loadSessionMessages(sessionId: string, requiredMessageIds?: Reado
             runStatus: message.runStatus as Message["runStatus"],
             terminalOutcome: message.terminalOutcome as Message["terminalOutcome"],
             errorCode: message.errorCode,
-            error: message.error,
+            // PLAN-0492 T3.1: the messages DTO carries the terminal failure text as
+            // `errorDetail` (MessageReadService); map it so a history refresh keeps
+            // the exhausted-run reason instead of wiping the local error state.
+            error: message.errorDetail ?? message.error,
             retryable: message.retryable,
             // PLAN-0344 T1.4 / PLAN-0465 T2.2：刷新后 job 卡片唯一重建源
             //（messages DTO 的 jobSummary ← workspace_jobs 投影）。

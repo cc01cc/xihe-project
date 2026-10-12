@@ -324,14 +324,27 @@ class LangGraphRunner(AgentRunner):
                                 paused_seconds += (now - pause_started_at).total_seconds()
                                 pause_started_at = None
                             if event.type == "llm_usage":
-                                # 1 turn = 1 LLM call (PLAN-0492 decision #15).
+                                # 1 turn = 1 LLM call (PLAN-0492 decision #15). The
+                                # counter advances when the call's usage lands — not
+                                # on the turn's first token — so a max_turns check
+                                # never fires mid-turn and maxTokens sees the
+                                # finalized total instead of a pre-usage zero.
                                 llm_calls += 1
-                            budget_dimension = _exceeded_budget_dimension(
-                                budget,
-                                llm_calls=llm_calls,
-                                total_tokens=usage.total_tokens,
-                                elapsed_seconds=(now - budget_started_at).total_seconds() - paused_seconds,
-                            )
+                                budget_dimension = _exceeded_budget_dimension(
+                                    budget,
+                                    llm_calls=llm_calls,
+                                    total_tokens=usage.total_tokens,
+                                    elapsed_seconds=(now - budget_started_at).total_seconds() - paused_seconds,
+                                )
+                            elif event.type == "done":
+                                # The elapsed dimension can trip at the run's
+                                # natural end (no usage event needed).
+                                budget_dimension = _exceeded_budget_dimension(
+                                    budget,
+                                    llm_calls=llm_calls,
+                                    total_tokens=usage.total_tokens,
+                                    elapsed_seconds=(now - budget_started_at).total_seconds() - paused_seconds,
+                                )
                             yield event
                         if budget_dimension:
                             logger.info(

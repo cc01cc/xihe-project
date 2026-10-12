@@ -558,6 +558,10 @@ const messages = {
             contextSourcesUpdated: "规则已更新（本轮起生效）",
             contextOverflowRetry: "上下文超限，已压缩并重试一次",
             contextInterrupted: "已中断",
+            budgetExhaustedTurns: "本次运行已达到轮数上限",
+            budgetExhaustedElapsed: "本次运行已达到累计耗时上限",
+            budgetExhaustedTokens: "本次运行已达到 Token 上限",
+            budgetExhaustedHint: "可在下方输入框继续发送，接续本次会话",
             contextCompactionCircuitOpen: "自动压缩已暂停（上下文未见改善）",
             contextCompactionCircuitClosed: "自动压缩已恢复",
             approvalUnclassifiedNotice:
@@ -1689,6 +1693,10 @@ const messages = {
             contextSourcesUpdated: "Rules updated (applies this turn)",
             contextOverflowRetry: "Context limit exceeded; compacted and retrying once",
             contextInterrupted: "Interrupted",
+            budgetExhaustedTurns: "This run reached its turn limit",
+            budgetExhaustedElapsed: "This run reached its elapsed-time limit",
+            budgetExhaustedTokens: "This run reached its token limit",
+            budgetExhaustedHint: "Continue in the input below to resume this session",
             contextCompactionCircuitOpen: "Auto-compaction paused (no improvement seen)",
             contextCompactionCircuitClosed: "Auto-compaction resumed",
             approvalUnclassifiedNotice:
