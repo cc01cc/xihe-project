@@ -903,6 +903,7 @@ export type WorkspaceEventKind =
     | "file_changed"
     | "snapshot_required"
     | "workspace_event_error"
+    | "scheduled_tasks_changed"
     | "heartbeat";
 
 export interface WorkspaceEvent {
@@ -943,6 +944,74 @@ export interface UploadItem {
 }
 
 export type ViewMode = "single" | "scrollable" | "dual";
+
+/** PLAN-0489 T2.1: scheduled-task read DTO (openapi `ScheduledTask`, 17 camelCase fields). */
+export type ScheduledTaskStatus =
+    | "scheduled"
+    | "firing"
+    | "missed"
+    | "expired"
+    | "cancelled"
+    | "completed";
+
+export type ScheduledTaskTriggerKind = "delay_once" | "cron";
+
+export type ScheduledTaskTargetKind = "session_wakeup" | "job_dispatch";
+
+export type ScheduledTaskMissedReason = "target_gone" | "dispatch_failed" | "overdue_grace";
+
+export interface ScheduledTaskCreatedBy {
+    name: string | null;
+    type: "human" | "agent";
+}
+
+export interface ScheduledTask {
+    id: string;
+    triggerKind: ScheduledTaskTriggerKind;
+    cronExpr: string | null;
+    timezone: string;
+    targetKind: ScheduledTaskTargetKind;
+    targetSessionId: string | null;
+    /** Truncated to 120 characters in list items; the detail route returns the full text. */
+    prompt: string | null;
+    status: ScheduledTaskStatus;
+    nextFireAt: string | null;
+    expiresAt: string | null;
+    missedCount: number;
+    lastMissedAt: string | null;
+    missedReason: ScheduledTaskMissedReason | null;
+    lastRunId: string | null;
+    createdBy: ScheduledTaskCreatedBy;
+    createdAt: string | null;
+    updatedAt: string | null;
+}
+
+export interface ScheduledTaskCreateRequest {
+    triggerKind: ScheduledTaskTriggerKind;
+    cronExpr?: string;
+    timezone?: string;
+    targetKind: ScheduledTaskTargetKind;
+    targetSessionId?: string;
+    prompt?: string;
+    payload?: { command: string; args?: string[]; cwd?: string; timeoutSecs?: number };
+    /** delay_once only: future ISO-8601 UTC instant within the 7d TTL. */
+    at?: string;
+}
+
+export interface ScheduledTaskListPage {
+    workspaceId: string;
+    page: number;
+    size: number;
+    tasks: ScheduledTask[];
+}
+
+export interface ScheduledTaskDisposeResult {
+    taskId: string;
+    status: ScheduledTaskStatus;
+    /** false when the task was already cancelled (idempotent remove/delete). */
+    changed: boolean;
+    task: ScheduledTask;
+}
 
 export interface ThemeContext {
     theme: Ref<"light" | "dark">;

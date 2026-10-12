@@ -95,8 +95,9 @@ class SpecFieldConformanceTest extends AbstractIntegrationTest {
                 "spec §3.3: chat_runs.origin must exist");
         assertEquals("NO", columnInfo("chat_runs", "origin", "is_nullable"),
                 "spec §3.3: every run carries its origin once the V39 backfill has run");
-        assertEquals(Set.of("user_submission", "spawn"), checkAllowedValues("ck_chat_runs_origin"),
-                "spec §3.3: origin ∈ {user_submission, spawn} — exactly two values, no extras");
+        // PLAN-0489 决策 #7（V59）: scheduled wakeup carriers join the origin set.
+        assertEquals(Set.of("user_submission", "spawn", "scheduled"), checkAllowedValues("ck_chat_runs_origin"),
+                "spec §3.3 + PLAN-0489 #7: origin ∈ {user_submission, spawn, scheduled} — exactly three values, no extras");
 
         assertEquals("uuid", columnInfo("chat_runs", "waiting_on_run_id", "data_type"),
                 "spec §3.3: the waiting link is chat_runs.waiting_on_run_id");

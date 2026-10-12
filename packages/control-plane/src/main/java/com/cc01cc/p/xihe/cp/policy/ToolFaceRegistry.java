@@ -26,6 +26,10 @@ public class ToolFaceRegistry {
     public static final String ACTION_CREATE_TEMPLATE = "CREATE_TEMPLATE";
     public static final String ACTION_MANAGE_WORKSPACE_AGENTS = "MANAGE_WORKSPACE_AGENTS";
     public static final String ACTION_SPAWN_AGENT = "SPAWN_AGENT";
+    // PLAN-0489 T1.4 (0486 #9/#10): scheduled-task create and non-creator disposition
+    // are independent opt-in action classes, default deny like CREATE_ACCOUNT above.
+    public static final String ACTION_CREATE_SCHEDULED_TASK = "CREATE_SCHEDULED_TASK";
+    public static final String ACTION_MANAGE_SCHEDULED_TASK = "MANAGE_SCHEDULED_TASK";
 
     private static final Set<String> READ_TOOLS = Set.of(
             "read_file", "read_file_range", "list_directory", "glob", "grep",
@@ -80,6 +84,7 @@ public class ToolFaceRegistry {
     /** Built-in action classes; callers may add their own (e.g. {@code db-migration}). */
     public static Set<String> builtinActionClasses() {
         return Set.of(ACTION_READ, ACTION_WRITE, ACTION_DELETE, ACTION_EXEC, ACTION_NETWORK, ACTION_CREDENTIAL,
-                ACTION_CREATE_ACCOUNT, ACTION_CREATE_TEMPLATE, ACTION_MANAGE_WORKSPACE_AGENTS, ACTION_SPAWN_AGENT);
+                ACTION_CREATE_ACCOUNT, ACTION_CREATE_TEMPLATE, ACTION_MANAGE_WORKSPACE_AGENTS, ACTION_SPAWN_AGENT,
+                ACTION_CREATE_SCHEDULED_TASK, ACTION_MANAGE_SCHEDULED_TASK);
     }
 }

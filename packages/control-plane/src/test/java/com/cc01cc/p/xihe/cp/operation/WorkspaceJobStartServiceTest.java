@@ -78,6 +78,23 @@ class WorkspaceJobStartServiceTest {
         assertEquals("IDEMPOTENCY_KEY_REQUIRED", error.getCode());
     }
 
+    /** PLAN-0489 T1.3（0486 §4）：SOURCES 收编 'scheduled'，normalizeSource 不得再回落 ui。 */
+    @Test
+    void scheduledSourceIsAcceptedWithoutUiFallback() {
+        when(runtimeJobClient.startJob(any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new RuntimeJobClient.JobStartResult(true, true, false, "job-1", null));
+        when(jobStateService.wireViewById(any()))
+                .thenReturn(Optional.of(Map.of("jobId", "domain-s", "status", "running")));
+
+        service.start(WORKSPACE_ID, USER_ID,
+                new WorkspaceJobStartService.StartRequest("echo", List.of(), null, 0L,
+                        "workspace", null, null, "scheduled", null), "key-s", "docker");
+
+        ArgumentCaptor<WorkspaceJob> row = ArgumentCaptor.forClass(WorkspaceJob.class);
+        verify(jobStateService).createJob(row.capture(), any());
+        assertEquals("scheduled", row.getValue().getSource());
+    }
+
     @Test
     void rejectsBlankCommand() {
         CpApiException error = assertThrows(CpApiException.class,

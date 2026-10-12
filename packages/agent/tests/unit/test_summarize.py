@@ -7,7 +7,6 @@ from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
 
 import xihe_agent.app_state as main_module
-from xihe_agent.main import app as agent_app
 from xihe_agent.llm.summarize import (
     SUMMARIZE_SECTIONS,
     SUMMARIZE_SYSTEM_PROMPT,
@@ -15,6 +14,7 @@ from xihe_agent.llm.summarize import (
     extract_usage,
     summarize_with_llm,
 )
+from xihe_agent.main import app as agent_app
 
 DEV_TOKEN = {"Authorization": "Bearer dev-token-not-secure"}
 

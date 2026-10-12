@@ -4,13 +4,13 @@ import pytest
 
 import xihe_agent.app_state as main_module
 import xihe_agent.main as agent_composition
-from xihe_agent.llm.base import LLMConfig
 from xihe_agent.app_state import (
     _classify_llm_exception,
     _derive_llm_ready,
     _has_instance_fallback_credentials,
     _llm_readiness_error_code,
 )
+from xihe_agent.llm.base import LLMConfig
 
 
 def _report(status: str) -> dict:

@@ -747,6 +747,9 @@ paths:
         Workspace-scoped Server-Sent Events for users who can access the Workspace,
         including Workspaces without a Session. The stream carries compact `file_changed` hints;
         file contents and directory listings are always re-read through the existing Workspace HTTP/MCP APIs.
+        Scheduled-task state changes (PLAN-0489 T1.5) are broadcast on the same stream as a coarse
+        `kind: scheduled_tasks_changed` invalidation hint with no per-row payload; on receipt the
+        client refetches `GET /api/v1/workspaces/{workspaceId}/scheduled-tasks`.
         Each event has a Workspace-local sequence. v1 keeps no replay log: a gap or reconnect may require
         an HTTP/MCP refresh. An overflow, or a stale `Last-Event-ID` gap, is signalled with
         `kind: snapshot_required` plus a `reason` (`overflow` for a Runtime buffer overflow,
@@ -776,8 +779,12 @@ paths:
                 event: file_changed
                 data: {"workspaceId":"ws-123","sequence":12,"kind":"file_changed","path":"src/app.ts","changeType":"modified","source":"runtime"}
 
+                id: 13
+                event: scheduled_tasks_changed
+                data: {"workspaceId":"ws-123","sequence":13,"kind":"scheduled_tasks_changed","source":"control-plane"}
+
                 event: heartbeat
-                data: {"workspaceId":"ws-123","sequence":12,"type":"heartbeat"}
+                data: {"workspaceId":"ws-123","sequence":13,"type":"heartbeat"}
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
@@ -1758,6 +1765,165 @@ paths:
         - { in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }
         - { in: path, name: jobId, required: true, schema: { type: string, format: uuid } }
       responses: { '200': { description: 'Cancel outcome: jobId/status/changed (domain jobId)', content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceJobCancelResult' } } } }, '400': { $ref: '#/components/responses/Problem' }, '404': { description: 'WORKSPACE_NOT_FOUND (foreign or missing; no 403) or JOB_ARCHIVE_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '502': { description: 'JOB_CANCEL_UNCONFIRMED (termination unconfirmed; archive unchanged) or RUNTIME_UNAVAILABLE', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } }
+  /api/v1/workspaces/{workspaceId}/scheduled-tasks:
+    get:
+      operationId: listScheduledTasks
+      summary: List workspace scheduled tasks (PLAN-0489 T1.4)
+      description: |
+        PLAN-0489 T1.4 (contract PLAN-0486 spec §4): workspace-scoped read of
+        `scheduled_tasks`, newest-created first. Items are the 17-field read DTO
+        (`ScheduledTask`); `prompt` is truncated to 120 characters in list items
+        (the detail route returns the full text). `createdBy` projects the
+        creating principal (name + type `human`/`agent`).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: page, schema: { type: integer, minimum: 0, default: 0 } }
+        - { in: query, name: size, schema: { type: integer, minimum: 1, maximum: 200, default: 100 } }
+      responses:
+        '200':
+          description: Paged scheduled-task list
+          content: { application/json: { schema: { $ref: '#/components/schemas/ScheduledTaskListPage' } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { description: WORKSPACE_NOT_FOUND (missing or no Workspace access), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+    post:
+      operationId: createScheduledTask
+      summary: Create a scheduled task (human or agent principal, PLAN-0489 T1.4)
+      description: |
+        PLAN-0489 T1.4 (contract PLAN-0486 spec §4, decisions #9/#10): creates one
+        `delay_once` or `cron` task. Requires the `CREATE_SCHEDULED_TASK` grant
+        (user grants for humans; agent-principal grants when `agentPrincipalId`
+        is supplied — agent `session_wakeup` targets are limited to Sessions of
+        the creating principal). `delay_once` schedules beyond the 7d TTL
+        (`expires_at = created_at + 7d`) are rejected at creation. Quotas: 50
+        active tasks per Workspace, 10 per principal (counted by `user_id`).
+        Creation is audited (`scheduled_task_created`).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ScheduledTaskCreateRequest' } } }
+      responses:
+        '201':
+          description: Created scheduled task (full-prompt read DTO)
+          content: { application/json: { schema: { $ref: '#/components/schemas/ScheduledTask' } } }
+        '400':
+          description: 'INVALID_REQUEST (shape/at), INVALID_CRON_EXPR (field count, syntax, no future occurrence), or INVALID_TIMEZONE'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN — missing CREATE_SCHEDULED_TASK grant, disabled/unbound agent principal, or agent wakeup target outside the creating principal', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: WORKSPACE_NOT_FOUND or SESSION_NOT_FOUND (target session missing/foreign), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: 'SCHEDULED_TASK_LIMIT (50 per Workspace) or SCHEDULED_TASK_PRINCIPAL_LIMIT (10 per principal)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/workspaces/{workspaceId}/scheduled-tasks/{taskId}:
+    get:
+      operationId: getScheduledTask
+      summary: Read one scheduled task (PLAN-0489 T1.4)
+      description: Full-prompt 17-field read DTO; foreign/missing tasks collapse to 404 (CP convention).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: taskId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Scheduled task detail, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduledTask' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { description: 'SCHEDULED_TASK_NOT_FOUND (foreign or missing) or WORKSPACE_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+    delete:
+      operationId: deleteScheduledTask
+      summary: Cancel a scheduled task (scheduled only; PLAN-0489 T1.4)
+      description: |
+        Equivalent removal path for `scheduled` tasks (`scheduled → cancelled`).
+        Missed/expired tasks must use `POST .../remove` (this route answers
+        `409 SCHEDULED_TASK_STATE` pointing there). An already `cancelled` task
+        returns idempotent `200` with `changed: false`. Requires creator rights
+        (0486 #10) or the `MANAGE_SCHEDULED_TASK` grant; audited
+        (`scheduled_task_cancelled`).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: taskId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: false
+        content: { application/json: { schema: { $ref: '#/components/schemas/ScheduledTaskDisposeRequest' } } }
+      responses:
+        '200': { description: 'Disposition outcome: taskId/status/changed + refreshed task view', content: { application/json: { schema: { $ref: '#/components/schemas/ScheduledTaskDisposeResult' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN — non-creator without MANAGE_SCHEDULED_TASK', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: SCHEDULED_TASK_NOT_FOUND (foreign or missing), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: 'SCHEDULED_TASK_STATE — task is not `scheduled` (missed/expired use /remove)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/workspaces/{workspaceId}/scheduled-tasks/{taskId}/rerun:
+    post:
+      operationId: rerunScheduledTask
+      summary: Rerun a missed/expired scheduled task once (PLAN-0489 T1.4)
+      description: |
+        One-shot manual rerun of a `missed`/`expired` task (`completed`/`cancelled`
+        answer `409 SCHEDULED_TASK_STATE`). Double-click protection = the
+        `claimForRerun` CAS (a second request finds no claimable row) plus the
+        dedicated retry idempotency key `sched:{task_id}:{fire_at_ms}:retry:{uuid}`
+        on the dispatched job. On success cron tasks return to `scheduled` with a
+        recomputed next fire; `delay_once` becomes `completed`. Audited
+        (`scheduled_task_rerun`).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: taskId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: false
+        content: { application/json: { schema: { $ref: '#/components/schemas/ScheduledTaskDisposeRequest' } } }
+      responses:
+        '200': { description: Refreshed task view after the rerun dispatch settles, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduledTask' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN — non-creator without MANAGE_SCHEDULED_TASK', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: SCHEDULED_TASK_NOT_FOUND (foreign or missing), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: SCHEDULED_TASK_STATE (task not missed/expired), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/workspaces/{workspaceId}/scheduled-tasks/{taskId}/remove:
+    post:
+      operationId: removeScheduledTask
+      summary: Remove a missed/expired scheduled task (idempotent, PLAN-0489 T1.4)
+      description: |
+        `missed`/`expired → cancelled` disposition; `missed_count` is cleared
+        with the row cancellation. Idempotent: an already `cancelled` task
+        returns `200` with `changed: false`. `scheduled` tasks use DELETE;
+        other states answer `409 SCHEDULED_TASK_STATE`. Audited
+        (`scheduled_task_removed`; agent actors are explicitly marked).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: taskId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: false
+        content: { application/json: { schema: { $ref: '#/components/schemas/ScheduledTaskDisposeRequest' } } }
+      responses:
+        '200': { description: 'Disposition outcome: taskId/status/changed + refreshed task view', content: { application/json: { schema: { $ref: '#/components/schemas/ScheduledTaskDisposeResult' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN — non-creator without MANAGE_SCHEDULED_TASK', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: SCHEDULED_TASK_NOT_FOUND (foreign or missing), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: SCHEDULED_TASK_STATE (task not missed/expired/cancelled), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/workspaces/{workspaceId}/scheduled-tasks/{taskId}/postpone:
+    post:
+      operationId: postponeScheduledTask
+      summary: Postpone a scheduled task to a future instant (PLAN-0489 T1.4)
+      description: |
+        `missed`/`expired`/`scheduled → scheduled` with a new `nextFireAt`
+        (`at` must be a future ISO-8601 UTC instant; `delay_once` may not pass
+        `expiresAt`, else `400`). Cron tasks only re-set the next fire — the
+        expression phase is untouched. Clears `missedCount`. Audited
+        (`scheduled_task_postponed`).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: taskId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ScheduledTaskPostponeRequest' } } }
+      responses:
+        '200': { description: Refreshed task view with the new nextFireAt, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduledTask' } } } }
+        '400': { description: 'INVALID_REQUEST — at missing, not future, or beyond delay_once expiresAt', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN — non-creator without MANAGE_SCHEDULED_TASK', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: SCHEDULED_TASK_NOT_FOUND (foreign or missing), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: SCHEDULED_TASK_STATE (task not missed/expired/scheduled), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /internal/v1/agents/spawn:
     post:
       operationId: spawnAgentSession
@@ -2650,7 +2816,7 @@ components:
         workspaceId: { type: string }
         sessionId: { type: [string, 'null'] }
         runId: { type: [string, 'null'] }
-        source: { type: string, enum: [ui, agent, runtime, system, mcp] }
+        source: { type: string, enum: [ui, agent, runtime, system, mcp, scheduled] }
         scope: { type: string, enum: [run, session, workspace], default: session }
         status: { type: string, enum: [pending, running, succeeded, cancelled, timeout, orphaned, interrupted] }
         startedAt: { type: [string, 'null'], format: date-time }
@@ -2675,8 +2841,69 @@ components:
         scope: { type: string, enum: [run, session, workspace], default: session }
         sessionId: { type: [string, 'null'] }
         runId: { type: [string, 'null'] }
-        source: { type: string, enum: [ui, agent, runtime, system, mcp], default: ui }
+        source: { type: string, enum: [ui, agent, runtime, system, mcp, scheduled], default: ui }
         env: { type: object, additionalProperties: { type: string } }
+    ScheduledTaskCreatedBy: { type: object, required: [name, type], properties: { name: { type: [string, 'null'], description: 'Principal display name (user name/email; agent principal name).' }, type: { type: string, enum: [human, agent] } } }
+    ScheduledTask:
+      type: object
+      description: |
+        PLAN-0489 T1.4 read DTO (PLAN-0486 spec §1/§4): 17 camelCase fields; wire never
+        echoes snake_case or internal columns (`payload`, `cancel_reason` stay internal).
+        List items truncate `prompt` to 120 characters; the detail route returns the
+        full text. `createdBy` is projected from the creating principal
+        (`agent_principal_id` when set → type `agent` + `agent_principals.name`,
+        else `user_id` → type `human`; a deleted principal degrades to `human`).
+      required: [id, triggerKind, timezone, targetKind, status, nextFireAt, missedCount, createdBy, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        triggerKind: { type: string, enum: [delay_once, cron] }
+        cronExpr: { type: [string, 'null'], description: 'cron only (5 fields, minute grain); always null for delay_once.' }
+        timezone: { type: string, description: 'Creation-time snapshot (D3-A); never editable.' }
+        targetKind: { type: string, enum: [session_wakeup, job_dispatch] }
+        targetSessionId: { type: [string, 'null'], format: uuid, description: 'session_wakeup only; null after a hard session delete (target_gone).' }
+        prompt: { type: [string, 'null'], description: 'session_wakeup payload; truncated to 120 chars in list items.' }
+        status: { type: string, enum: [scheduled, firing, missed, expired, cancelled, completed] }
+        nextFireAt: { type: string, format: date-time }
+        expiresAt: { type: [string, 'null'], format: date-time, description: 'delay_once only: created_at + 7d TTL; cron is always null.' }
+        missedCount: { type: integer, minimum: 0, description: 'Consecutive missed rounds (E1); cleared on user disposition.' }
+        lastMissedAt: { type: [string, 'null'], format: date-time }
+        missedReason: { type: [string, 'null'], enum: [target_gone, dispatch_failed, overdue_grace, null] }
+        lastRunId: { type: [string, 'null'], format: uuid, description: 'Latest dispatch carrier (chat_run / workspace_job domain id).' }
+        createdBy: { $ref: '#/components/schemas/ScheduledTaskCreatedBy' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ScheduledTaskCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [triggerKind, targetKind]
+      properties:
+        triggerKind: { type: string, enum: [delay_once, cron] }
+        cronExpr: { type: string, description: 'Required for cron; exactly 5 fields (minute grain, no seconds).' }
+        timezone: { type: string, default: UTC, description: 'IANA zone snapshot; invalid zones answer 400 INVALID_TIMEZONE.' }
+        targetKind: { type: string, enum: [session_wakeup, job_dispatch] }
+        targetSessionId: { type: string, format: uuid, description: 'Required for session_wakeup; forbidden for job_dispatch.' }
+        prompt: { type: string, description: 'Required for session_wakeup.' }
+        payload: { type: object, additionalProperties: true, description: 'Required for job_dispatch: {command, args?, cwd?, timeoutSecs?}; dispatched with scope=workspace and source=scheduled.' }
+        at: { type: string, format: date-time, description: 'Required for delay_once: future ISO-8601 UTC instant within the 7d TTL.' }
+        agentPrincipalId: { type: string, format: uuid, description: 'Optional agent creator (0486 #9): grants are read from agent_principal and session_wakeup targets are limited to this principal.' }
+    ScheduledTaskDisposeRequest: { type: object, additionalProperties: false, properties: { agentPrincipalId: { type: string, format: uuid, description: 'Optional agent actor marker; agent dispositions are explicitly marked in the audit record (0486 #10).' } } }
+    ScheduledTaskPostponeRequest: { type: object, additionalProperties: false, required: [at], properties: { at: { type: string, format: date-time, description: 'Future ISO-8601 UTC instant; delay_once may not pass expiresAt.' }, agentPrincipalId: { type: string, format: uuid } } }
+    ScheduledTaskListPage:
+      type: object
+      required: [workspaceId, page, size, tasks]
+      properties:
+        workspaceId: { type: string, format: uuid }
+        page: { type: integer, minimum: 0 }
+        size: { type: integer, minimum: 1, maximum: 200 }
+        tasks: { type: array, items: { $ref: '#/components/schemas/ScheduledTask' } }
+    ScheduledTaskDisposeResult:
+      type: object
+      required: [taskId, status, changed, task]
+      properties:
+        taskId: { type: string, format: uuid }
+        status: { type: string, enum: [scheduled, firing, missed, expired, cancelled, completed] }
+        changed: { type: boolean, description: 'false when the task was already cancelled (idempotent remove/delete).' }
+        task: { $ref: '#/components/schemas/ScheduledTask' }
     DirectAttachProbeRequest: { type: object, required: [storageMode, hostPath, executionMode], properties: { storageMode: { type: string, enum: [direct_attach] }, hostPath: { type: string }, executionMode: { type: string, enum: [windows-mxc, windows-host] } } }
     WorkspaceCapabilityPreflightRequest: { type: object, required: [hostPath], properties: { storageMode: { type: string, enum: [direct_attach], default: direct_attach, description: Omitted defaults to direct_attach; managed_import is rejected with 400 INVALID_STORAGE_MODE. }, hostPath: { type: string, description: Absolute host directory to attach; invalid/missing values return 400 INVALID_REQUEST. }, executionMode: { type: string, enum: [windows-mxc, windows-host], default: windows-mxc, description: Omitted defaults to windows-mxc on direct_attach. } } }
     WorkspaceJobCapability:
