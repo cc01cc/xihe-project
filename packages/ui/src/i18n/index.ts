@@ -768,7 +768,8 @@ const messages = {
             domainEmbedding: "嵌入模型",
             embeddingConnection: "嵌入连接",
             embeddingConnectionNone: "未选择（继承下一层）",
-            embeddingNoConnections: "尚无可用的嵌入连接；请先在提供商设置中创建 type 为嵌入的连接。",
+            embeddingNoConnections:
+                "尚无可用的嵌入连接；请先在提供商设置中创建 type 为嵌入的连接。",
             embeddingModel: "模型",
             embeddingDimension: "维度",
             embeddingEffectiveScope: "生效层",

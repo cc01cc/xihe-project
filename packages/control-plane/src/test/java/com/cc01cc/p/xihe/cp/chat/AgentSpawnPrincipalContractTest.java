@@ -82,6 +82,12 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
     private SessionRepository sessionRepository;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository providerConnectionRepository;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService apiRequestTemplates;
+
+    @Autowired
     private MessageRepository messageRepository;
 
     @Autowired
@@ -672,6 +678,7 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
         parentSession.setAgentPrincipalId(restricted.getId().toString());
         parentSession.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
         parentSession.setApprovalMode("auto");
+        ChatBindingTestSupport.bindNewChatConnection(parentSession, providerConnectionRepository, apiRequestTemplates, userId);
         sessionRepository.saveAndFlush(parentSession);
 
         String parentRunId = UUID.randomUUID().toString();
@@ -698,6 +705,7 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
         parentSession.setAgentPrincipalId(principalId.toString());
         parentSession.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
         parentSession.setApprovalMode("auto");
+        ChatBindingTestSupport.bindNewChatConnection(parentSession, providerConnectionRepository, apiRequestTemplates, userId);
         sessionRepository.saveAndFlush(parentSession);
 
         String parentRunId = UUID.randomUUID().toString();
@@ -827,6 +835,7 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
         parentSession.setAgentPrincipalId(principalId.toString());
         parentSession.setAgentPermissionsSnapshot(expectedSessionCapNode());
         parentSession.setApprovalMode("auto");
+        ChatBindingTestSupport.bindNewChatConnection(parentSession, providerConnectionRepository, apiRequestTemplates, userId);
         sessionRepository.saveAndFlush(parentSession);
 
         String parentRunId = UUID.randomUUID().toString();

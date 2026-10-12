@@ -1,6 +1,5 @@
 package com.cc01cc.p.xihe.cp.config;
 
-import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.provider.ProviderCredentialLeaseService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;

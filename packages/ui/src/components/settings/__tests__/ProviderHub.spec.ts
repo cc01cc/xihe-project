@@ -118,13 +118,27 @@ describe("ProviderHub master-detail", () => {
     it("writes a Workspace default to the same explicit Workspace used for its read", async () => {
         const target = { ...workspace, apiTypeId: user.apiTypeId, workspaceId: "workspace-b" };
         vi.mocked(listProviderConnections).mockResolvedValue({ connections: [target] });
-        vi.mocked(listVisibleTemplates).mockResolvedValue([{ layer: "instance", templateId: "builtin", version: 1, name: "Built in", apiTypeId: user.apiTypeId, apiTypeVersion: 1 }]);
-        const wrapper = mount(ProviderHub, { props: { scope: "WORKSPACE", workspaceId: "workspace-a" } });
+        vi.mocked(listVisibleTemplates).mockResolvedValue([
+            {
+                layer: "instance",
+                templateId: "builtin",
+                version: 1,
+                name: "Built in",
+                apiTypeId: user.apiTypeId,
+                apiTypeVersion: 1,
+            },
+        ]);
+        const wrapper = mount(ProviderHub, {
+            props: { scope: "WORKSPACE", workspaceId: "workspace-a" },
+        });
         await flushPromises();
         await wrapper.get('select[aria-label="连接默认请求模板"]').setValue("instance:builtin:1");
         await flushPromises();
         expect(readTemplateConfig).toHaveBeenCalledWith("workspace", "workspace-b");
-        expect(request).toHaveBeenCalledWith("/config/workspace/api-request-templates?workspaceId=workspace-b", expect.objectContaining({ method: "PUT" }));
+        expect(request).toHaveBeenCalledWith(
+            "/config/workspace/api-request-templates?workspaceId=workspace-b",
+            expect.objectContaining({ method: "PUT" }),
+        );
         wrapper.unmount();
     });
     it("loads Workspace templates using the current context for a User connection", async () => {

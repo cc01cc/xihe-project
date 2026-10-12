@@ -86,6 +86,12 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
     private SessionRepository sessionRepository;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository providerConnectionRepository;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService apiRequestTemplates;
+
+    @Autowired
     private WorkspaceRepository workspaceRepository;
 
     @Autowired
@@ -571,6 +577,7 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
         parentSession.setId(UUID.randomUUID());
         parentSession.setAgentPrincipalId(principalId.toString());
         parentSession.setAgentPermissionsSnapshot(capNode());
+        ChatBindingTestSupport.bindNewChatConnection(parentSession, providerConnectionRepository, apiRequestTemplates, userId);
         sessionRepository.saveAndFlush(parentSession);
 
         String parentRunId = saveRun(parentSession, "running");

@@ -23,7 +23,9 @@ const current = computed(() => binding.value);
 const loading = ref(false);
 let generation = 0;
 let loadedSessionId = "";
-onBeforeUnmount(() => { generation++; });
+onBeforeUnmount(() => {
+    generation++;
+});
 function findOption(layer: string, templateId: string, version: number) {
     return options.value.find(
         (item) =>
@@ -103,7 +105,14 @@ async function handleChange(event: Event) {
     const sessionId = props.sessionId;
     const currentGeneration = generation;
     const revision = session.value?.connectionRevision;
-    if (!option || busy.value || loading.value || loadedSessionId !== sessionId || revision === undefined) return;
+    if (
+        !option ||
+        busy.value ||
+        loading.value ||
+        loadedSessionId !== sessionId ||
+        revision === undefined
+    )
+        return;
     busy.value = true;
     error.value = null;
     try {
@@ -120,7 +129,8 @@ async function handleChange(event: Event) {
         binding.value = option;
         toast.success(t("chat.contextTemplateLabel") + ": " + option.name + " v" + option.version);
     } catch (cause) {
-        if (generation === currentGeneration && props.sessionId === sessionId) error.value = t("chat.contextTemplateUnavailable");
+        if (generation === currentGeneration && props.sessionId === sessionId)
+            error.value = t("chat.contextTemplateUnavailable");
         logger.warn("Request template rebind failed", cause);
     } finally {
         if (generation === currentGeneration) busy.value = false;

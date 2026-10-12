@@ -36,12 +36,11 @@ export interface EmbeddingProfileInput {
     model: string;
 }
 
-export function embeddingConnections(connections: ProviderConnection[]): ProviderConnection[] {
-    return connections.filter(
-        (item) =>
-            item.enabled &&
-            item.status === "READY" &&
-            item.operation === "embedding",
+export function embeddingConnections(
+    connections: ProviderConnection[] | undefined | null,
+): ProviderConnection[] {
+    return (connections ?? []).filter(
+        (item) => item.enabled && item.status === "READY" && item.operation === "embedding",
     );
 }
 

@@ -11,12 +11,12 @@ import {
 
 vi.mock("../../../services/providerConnectionService", () => ({
     listProviderConnections:
-        vi.fn<typeof import("../../../services/providerConnectionService").listProviderConnections>(),
+        vi.fn<
+            typeof import("../../../services/providerConnectionService").listProviderConnections
+        >(),
 }));
 vi.mock("../../../services/embeddingProfile", async (importOriginal) => ({
-    ...(await importOriginal<
-        typeof import("../../../services/embeddingProfile")
-    >()),
+    ...(await importOriginal<typeof import("../../../services/embeddingProfile")>()),
     fetchEmbeddingEffective: vi.fn<typeof fetchEmbeddingEffective>(),
     saveEmbeddingProfile: vi.fn<typeof saveEmbeddingProfile>(),
     testEmbedding: vi.fn<typeof testEmbedding>(),
@@ -75,7 +75,11 @@ describe("EmbeddingSettingsPanel", () => {
         mockedConnections.mockResolvedValue({
             connections: [
                 connection({ id: "embed-1", operation: "embedding" }),
-                connection({ id: "chat-1", operation: "chat", apiTypeId: "openai-chat-completions" }),
+                connection({
+                    id: "chat-1",
+                    operation: "chat",
+                    apiTypeId: "openai-chat-completions",
+                }),
                 connection({ id: "off-1", operation: "embedding", status: "UNVERIFIED" }),
             ],
         } as never);
@@ -91,7 +95,9 @@ describe("EmbeddingSettingsPanel", () => {
             connections: [connection({ id: "embed-1" })],
         } as never);
         mockedEffective.mockResolvedValue({ profile: null, profileScope: null, resolved: null });
-        const wrapper = mount(EmbeddingSettingsPanel, { props: { layer: "workspace", workspaceId: "ws-1" } });
+        const wrapper = mount(EmbeddingSettingsPanel, {
+            props: { layer: "workspace", workspaceId: "ws-1" },
+        });
         await flushPromises();
         await wrapper.find("select[data-testid='embedding-connection-select']").setValue("embed-1");
         await wrapper.find("button[data-testid='embedding-save']").trigger("click");
@@ -124,8 +130,10 @@ describe("EmbeddingSettingsPanel", () => {
         const wrapper = mount(EmbeddingSettingsPanel, { props: { layer: "user" } });
         await flushPromises();
         expect(
-            (wrapper.find("select[data-testid='embedding-connection-select']").element as HTMLSelectElement)
-                .value,
+            (
+                wrapper.find("select[data-testid='embedding-connection-select']")
+                    .element as HTMLSelectElement
+            ).value,
         ).toBe("embed-1");
         expect(wrapper.find("[data-testid='embedding-contract']").text()).toContain("768");
     });
@@ -161,13 +169,16 @@ describe("EmbeddingSettingsPanel", () => {
         const wrapper = mount(EmbeddingSettingsPanel, { props: { layer: "user" } });
         await flushPromises();
         expect(
-            (wrapper.find("button[data-testid='embedding-save']").element as HTMLButtonElement).disabled,
+            (wrapper.find("button[data-testid='embedding-save']").element as HTMLButtonElement)
+                .disabled,
         ).toBe(true);
         expect(
-            (wrapper.find("button[data-testid='embedding-clear']").element as HTMLButtonElement).disabled,
+            (wrapper.find("button[data-testid='embedding-clear']").element as HTMLButtonElement)
+                .disabled,
         ).toBe(true);
         expect(
-            (wrapper.find("button[data-testid='embedding-test']").element as HTMLButtonElement).disabled,
+            (wrapper.find("button[data-testid='embedding-test']").element as HTMLButtonElement)
+                .disabled,
         ).toBe(true);
     });
 });

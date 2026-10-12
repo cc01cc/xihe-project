@@ -110,6 +110,22 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
     private SessionRepository sessionRepository;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository providerConnectionRepository;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService apiRequestTemplates;
+
+    private com.cc01cc.p.xihe.cp.entity.ProviderConnection chatConnection;
+
+    private com.cc01cc.p.xihe.cp.entity.ProviderConnection chatConnection() {
+        if (chatConnection == null) {
+            chatConnection = ChatBindingTestSupport.ensureChatConnection(
+                    providerConnectionRepository, "USER", userId, "integration-chat");
+        }
+        return chatConnection;
+    }
+
+    @Autowired
     private UserRepository userRepository;
 
     @Autowired
@@ -742,6 +758,9 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
         session.setId(UUID.fromString(sessionId));
         session.setAgentPrincipalId(principalId);
         session.setAgentPermissionsSnapshot(principalPermissions.deepCopy());
+        session.setModelProvider("custom-openai-compatible");
+        session.setModelName("wire-model");
+        ChatBindingTestSupport.bind(session, chatConnection(), apiRequestTemplates);
         sessionRepository.save(session);
     }
 

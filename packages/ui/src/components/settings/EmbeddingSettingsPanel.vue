@@ -40,10 +40,12 @@ const loading = ref(true);
 const candidateConnections = computed(() => embeddingConnections(connections.value));
 
 const contractModel = computed(() => effective.value?.contract?.modelId ?? FALLBACK_MODEL);
-const contractDimension = computed(() => effective.value?.contract?.dimension ?? FALLBACK_DIMENSION);
+const contractDimension = computed(
+    () => effective.value?.contract?.dimension ?? FALLBACK_DIMENSION,
+);
 
-const selectedConnection = computed(() =>
-    candidateConnections.value.find((item) => item.id === selectedConnectionId.value) ?? null,
+const selectedConnection = computed(
+    () => candidateConnections.value.find((item) => item.id === selectedConnectionId.value) ?? null,
 );
 
 const currentProfileConnectionId = computed(() => {
@@ -123,9 +125,10 @@ async function handleTest() {
         }
     } catch (cause) {
         logger.warn("Embedding test failed", cause);
-        const code = cause instanceof ApiError
-            ? cause.problem.code || "EMBEDDING_PROVIDER_UNREACHABLE"
-            : "EMBEDDING_PROVIDER_UNREACHABLE";
+        const code =
+            cause instanceof ApiError
+                ? cause.problem.code || "EMBEDDING_PROVIDER_UNREACHABLE"
+                : "EMBEDDING_PROVIDER_UNREACHABLE";
         testResult.value = { status: "error", errorCode: code };
         toast.error(code);
     } finally {
@@ -167,20 +170,30 @@ onMounted(load);
                             ({{ connection.scope === "USER" ? "个人" : "工作区" }})
                         </option>
                     </select>
-                    <p v-if="candidateConnections.length === 0" class="text-xs text-muted-foreground">
+                    <p
+                        v-if="candidateConnections.length === 0"
+                        class="text-xs text-muted-foreground"
+                    >
                         {{ t("settings.embeddingNoConnections") }}
                     </p>
                 </div>
 
-                <dl class="grid grid-cols-2 gap-x-4 gap-y-1 text-sm" data-testid="embedding-contract">
+                <dl
+                    class="grid grid-cols-2 gap-x-4 gap-y-1 text-sm"
+                    data-testid="embedding-contract"
+                >
                     <dt class="text-muted-foreground">{{ t("settings.embeddingModel") }}</dt>
                     <dd class="font-mono text-xs break-all">{{ contractModel }}</dd>
                     <dt class="text-muted-foreground">{{ t("settings.embeddingDimension") }}</dt>
                     <dd class="font-mono">{{ contractDimension }}</dd>
                     <template v-if="effective?.profile">
-                        <dt class="text-muted-foreground">{{ t("settings.embeddingEffectiveScope") }}</dt>
+                        <dt class="text-muted-foreground">
+                            {{ t("settings.embeddingEffectiveScope") }}
+                        </dt>
                         <dd>{{ effective.profileScope }}</dd>
-                        <dt class="text-muted-foreground">{{ t("settings.embeddingModelSource") }}</dt>
+                        <dt class="text-muted-foreground">
+                            {{ t("settings.embeddingModelSource") }}
+                        </dt>
                         <dd>{{ effective.resolved?.modelSource ?? effective.profile.model }}</dd>
                     </template>
                 </dl>

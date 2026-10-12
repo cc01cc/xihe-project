@@ -145,7 +145,10 @@ async function saveBinding(model: string | null, value: string) {
             entries.providerModelBindings = JSON.stringify(refs);
         }
         const workspaceId = connection.workspaceId ?? props.workspaceId;
-        const query = layer === "workspace" && workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
+        const query =
+            layer === "workspace" && workspaceId
+                ? `?workspaceId=${encodeURIComponent(workspaceId)}`
+                : "";
         await request(`/config/${layer}/api-request-templates${query}`, {
             method: "PUT",
             body: JSON.stringify(entries),

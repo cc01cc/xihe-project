@@ -1341,9 +1341,9 @@ paths:
   /internal/v1/agent/rag/search:
     post: { operationId: agentRagSearch, security: [{ bearerAuth: [] }], responses: { '200': { description: RAG result } } }
   /internal/v1/agent/rag/stats:
-    get: { operationId: agentRagStats, security: [{ bearerAuth: [] }], responses: { '200': { description: RAG statistics, content: { application/json: { schema: { $ref: '#/components/schemas/RagStatsResponse' } } } }, '401': { $ref: '#/components/responses/Problem' } } }
-  /internal/v1/agent/rag/documents/{docId}:
-    delete: { operationId: agentRagDelete, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: docId, required: true, schema: { type: string } }], responses: { '200': { description: Deleted, content: { application/json: { schema: { $ref: '#/components/schemas/DeletedResponse' } } } }, '401': { $ref: '#/components/responses/Problem' } } }
+    post: { operationId: agentRagStats, security: [{ bearerAuth: [] }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [embeddingProfile], properties: { embeddingProfile: { type: string } } } } } }, responses: { '200': { description: RAG statistics, content: { application/json: { schema: { type: object } } } }, '401': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' }, '502': { $ref: '#/components/responses/Problem' } } }
+  /internal/v1/agent/rag/documents/{docId}/delete:
+    post: { operationId: agentRagDelete, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: docId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [embeddingProfile], properties: { embeddingProfile: { type: string } } } } } }, responses: { '200': { description: Deleted, content: { application/json: { schema: { $ref: '#/components/schemas/DeletedResponse' } } } }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/agent/rag/embedding/test:
     post:
       operationId: agentRagEmbeddingTest

@@ -374,7 +374,8 @@ public class SessionService {
             providerConnectionId = candidates.getFirst().getId().toString();
         }
         try {
-            ProviderConnection connection = providerConnectionService.requireUsable(providerConnectionId);
+            ProviderConnection connection = providerConnectionService.requireUsableForOwner(
+                    providerConnectionId, userId, workspaceId);
             if (requestedProvider != null && !requestedProvider.isBlank()
                     && !connection.getProviderId().equals(requestedProvider.trim())) {
                 throw new IllegalArgumentException("Provider connection does not match model provider");

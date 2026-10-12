@@ -151,7 +151,7 @@ test.describe.serial("@host PLAN-0485 embedding provider settings", () => {
         const authHeaders = { Authorization: `Bearer ${auth.accessToken}` };
 
         // stats reads only the active partition and never touches a provider.
-        const stats = await request.post(`${CP_URL}/api/v1/rag/stats`, { headers: authHeaders });
+        const stats = await request.get(`${CP_URL}/api/v1/rag/stats`, { headers: authHeaders });
         expect(stats.status(), await stats.text()).toBe(200);
         const statsBody = (await stats.json()) as { totalDocuments: number; documents: unknown[] };
         expect(statsBody.totalDocuments).toBe(0);

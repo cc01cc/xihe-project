@@ -200,10 +200,10 @@ test.describe("@host PLAN-0439 owner-scope connection resolver matrix", () => {
             // (5) fallback: disabling the workspace connection falls back to the user one.
             expect(
                 (
-                await patch(wsShared.id, {
-                    enabled: false,
-                    expectedRevision: wsShared.revision,
-                })
+                    await patch(wsShared.id, {
+                        enabled: false,
+                        expectedRevision: wsShared.revision,
+                    })
                 ).status(),
             ).toBe(200);
             const fallbackSession = await createSession({
@@ -216,10 +216,10 @@ test.describe("@host PLAN-0439 owner-scope connection resolver matrix", () => {
             // (6) explicit selection wins while both slots are usable again.
             expect(
                 (
-                await patch(wsShared.id, {
-                    enabled: true,
-                    expectedRevision: wsShared.revision + 1,
-                })
+                    await patch(wsShared.id, {
+                        enabled: true,
+                        expectedRevision: wsShared.revision + 1,
+                    })
                 ).status(),
             ).toBe(200);
             const reverified = await request.post(

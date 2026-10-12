@@ -205,25 +205,46 @@ for (const wire of cases) {
                 const hub = page.getByTestId("provider-hub");
                 await hub.getByTestId(`provider-connection-${wire.providerId}`).click();
                 const refKey = `user:${template.id}:${template.version}`;
-                const defaultSelect = hub.getByRole("combobox", { name: "连接默认请求模板", exact: true });
+                const defaultSelect = hub.getByRole("combobox", {
+                    name: "连接默认请求模板",
+                    exact: true,
+                });
                 await expect(defaultSelect).toBeEnabled();
-                const defaultSaved = page.waitForResponse((r) => r.url().includes("/config/user/api-request-templates") && r.request().method() === "PUT");
+                const defaultSaved = page.waitForResponse(
+                    (r) =>
+                        r.url().includes("/config/user/api-request-templates") &&
+                        r.request().method() === "PUT",
+                );
                 await defaultSelect.selectOption(refKey);
                 expect((await defaultSaved).status()).toBe(200);
-                const modelSelect = hub.getByRole("combobox", { name: "wire-model 请求模板", exact: true });
+                const modelSelect = hub.getByRole("combobox", {
+                    name: "wire-model 请求模板",
+                    exact: true,
+                });
                 await expect(modelSelect).toBeEnabled();
-                const overrideSaved = page.waitForResponse((r) => r.url().includes("/config/user/api-request-templates") && r.request().method() === "PUT");
+                const overrideSaved = page.waitForResponse(
+                    (r) =>
+                        r.url().includes("/config/user/api-request-templates") &&
+                        r.request().method() === "PUT",
+                );
                 await modelSelect.selectOption(refKey);
                 expect((await overrideSaved).status()).toBe(200);
                 await expect(modelSelect).toBeEnabled();
-                const inheritanceSaved = page.waitForResponse((r) => r.url().includes("/config/user/api-request-templates") && r.request().method() === "PUT");
+                const inheritanceSaved = page.waitForResponse(
+                    (r) =>
+                        r.url().includes("/config/user/api-request-templates") &&
+                        r.request().method() === "PUT",
+                );
                 await modelSelect.selectOption("");
                 expect((await inheritanceSaved).status()).toBe(200);
                 await page.reload();
                 await hub.getByTestId(`provider-connection-${wire.providerId}`).click();
                 await expect(defaultSelect).toHaveValue(refKey);
                 await expect(modelSelect).toHaveValue("");
-                await hub.screenshot({ path: test.info().outputPath("template-bindings-persisted.png"), animations: "disabled" });
+                await hub.screenshot({
+                    path: test.info().outputPath("template-bindings-persisted.png"),
+                    animations: "disabled",
+                });
                 const sessionResponse = await request.post(`${CP_URL}/api/v1/sessions`, {
                     headers,
                     data: {

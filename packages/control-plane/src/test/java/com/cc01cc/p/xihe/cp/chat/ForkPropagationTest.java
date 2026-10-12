@@ -86,6 +86,12 @@ class ForkPropagationTest extends AbstractIntegrationTest {
     private SessionRepository sessionRepository;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository providerConnectionRepository;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService apiRequestTemplates;
+
+    @Autowired
     private SessionService sessionService;
 
     @Autowired
@@ -292,6 +298,7 @@ class ForkPropagationTest extends AbstractIntegrationTest {
         parent.setId(UUID.randomUUID());
         parent.setAgentPrincipalId(principalId.toString());
         parent.setAgentPermissionsSnapshot(capNode());
+        ChatBindingTestSupport.bindNewChatConnection(parent, providerConnectionRepository, apiRequestTemplates, userId);
         parent = sessionRepository.saveAndFlush(parent);
         String parentRunId = saveRun(parent, "running");
         Session forkChild = forkSession(parent.getId().toString(), parentRunId);
@@ -319,6 +326,7 @@ class ForkPropagationTest extends AbstractIntegrationTest {
         parent.setAgentPermissionsSnapshot(capNode());
         parent.setModelProvider("openai");
         parent.setModelName("gpt-test");
+        ChatBindingTestSupport.bind(parent, ChatBindingTestSupport.ensureChatConnection(providerConnectionRepository, "USER", userId, "fork-openai-" + UUID.randomUUID().toString().substring(0, 8), "openai"), apiRequestTemplates);
         parent = sessionRepository.saveAndFlush(parent);
         String sourceId = parent.getId().toString();
 
@@ -435,6 +443,7 @@ class ForkPropagationTest extends AbstractIntegrationTest {
         parentSession.setId(UUID.randomUUID());
         parentSession.setAgentPrincipalId(principalId.toString());
         parentSession.setAgentPermissionsSnapshot(capNode());
+        ChatBindingTestSupport.bindNewChatConnection(parentSession, providerConnectionRepository, apiRequestTemplates, userId);
         sessionRepository.saveAndFlush(parentSession);
 
         String parentRunId = saveRun(parentSession, "running");
@@ -462,6 +471,7 @@ class ForkPropagationTest extends AbstractIntegrationTest {
         derived.setSpawnedAt(Instant.now());
         derived.setAgentPrincipalId(principalId.toString());
         derived.setAgentPermissionsSnapshot(capNode());
+        ChatBindingTestSupport.bindNewChatConnection(derived, providerConnectionRepository, apiRequestTemplates, userId);
         return sessionRepository.saveAndFlush(derived);
     }
 

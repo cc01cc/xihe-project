@@ -31,9 +31,6 @@ import java.util.regex.Pattern;
 @Service
 public class ProviderConnectionService {
 
-    @org.springframework.beans.factory.annotation.Autowired
-    private com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService requestTemplates;
-
     private static final Logger logger = LoggerFactory.getLogger(ProviderConnectionService.class);
     private static final Duration VERIFY_TIMEOUT = Duration.ofSeconds(8);
     private static final Pattern CONNECTION_KEY_PATTERN =
@@ -48,6 +45,7 @@ public class ProviderConnectionService {
     private final ApiInputTypeService apiTypes;
     private final EnvelopeEncryptionService encryption;
     private final ObjectMapper objectMapper;
+    private final com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService requestTemplates;
     private final HttpClient httpClient;
 
     public ProviderConnectionService(
@@ -57,7 +55,8 @@ public class ProviderConnectionService {
             ProviderCatalogService catalog,
             ApiInputTypeService apiTypes,
             @Qualifier("providerCredentialEncryption") EnvelopeEncryptionService encryption,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService requestTemplates) {
         this.repository = repository;
         this.auditRepository = auditRepository;
         this.leaseRepository = leaseRepository;
@@ -65,6 +64,7 @@ public class ProviderConnectionService {
         this.apiTypes = apiTypes;
         this.encryption = encryption;
         this.objectMapper = objectMapper;
+        this.requestTemplates = requestTemplates;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
                 .followRedirects(HttpClient.Redirect.NEVER)

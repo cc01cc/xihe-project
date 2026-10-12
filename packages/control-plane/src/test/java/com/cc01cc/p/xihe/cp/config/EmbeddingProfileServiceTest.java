@@ -7,7 +7,6 @@ import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;

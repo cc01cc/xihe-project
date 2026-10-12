@@ -81,6 +81,9 @@ class SessionForkFailureInjectionIntegrationTest extends AbstractIntegrationTest
     @Autowired private AuthorizationGrantRepository authorizationGrantRepository;
     @Autowired private WorkspaceAgentRepository workspaceAgentRepository;
     @Autowired private SessionRepository sessionRepository;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository providerConnectionRepository;
     @Autowired private SessionService sessionService;
     @Autowired private ChatRunRepository chatRunRepository;
     @Autowired private MessageRepository messageRepository;
@@ -326,8 +329,10 @@ class SessionForkFailureInjectionIntegrationTest extends AbstractIntegrationTest
     }
 
     private Source createSource(String promptContent) throws Exception {
+        com.cc01cc.p.xihe.cp.entity.ProviderConnection chatConnection = ChatBindingTestSupport.ensureChatConnection(
+                providerConnectionRepository, "USER", userId, "fork-failure-" + UUID.randomUUID().toString().substring(0, 8), "openai");
         Session source = sessionService.createAgentSession(
-                userId, workspaceId, "Fork failure source", "openai", "gpt-test", null, principalId.toString());
+                userId, workspaceId, "Fork failure source", "openai", "gpt-test", chatConnection.getId().toString(), principalId.toString());
         String branchId = branchPathService.ensureRootBranchId(source.getId().toString());
         String runId = UUID.randomUUID().toString();
         ChatRun run = new ChatRun(runId, source.getId().toString(), userId, workspaceId,

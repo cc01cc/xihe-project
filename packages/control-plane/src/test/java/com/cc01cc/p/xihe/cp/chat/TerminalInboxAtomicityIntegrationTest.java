@@ -87,6 +87,12 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
     @Autowired private AgentPrincipalRepository agentPrincipalRepository;
     @Autowired private WorkspaceAgentRepository workspaceAgentRepository;
     @Autowired private SessionRepository sessionRepository;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository providerConnectionRepository;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService apiRequestTemplates;
     @Autowired private ChatRunRepository chatRunRepository;
     @Autowired private ChatRunHistoryRepository historyRepository;
     @Autowired private com.cc01cc.p.xihe.cp.repository.McpInvocationRepository mcpInvocationRepository;
@@ -898,6 +904,8 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
             session.setSpawnedFromRunId(parent.run().getId());
             session.setSpawnedAt(Instant.now());
         }
+        ChatBindingTestSupport.bindNewChatConnection(
+                session, providerConnectionRepository, apiRequestTemplates, userId);
         return sessionRepository.saveAndFlush(session);
     }
 

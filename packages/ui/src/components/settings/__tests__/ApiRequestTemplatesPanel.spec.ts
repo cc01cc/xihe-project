@@ -36,8 +36,19 @@ beforeEach(() => {
 describe("API request template lifecycle", () => {
     it("clears the previous scope selection and ignores its late publication", async () => {
         let finish!: (value: { valid: boolean; diagnostics: [] }) => void;
-        vi.mocked(validateTemplate).mockReturnValue(new Promise((resolve) => { finish = resolve; }));
-        const wrapper = mount(Panel, { props: { entries: { templates: JSON.stringify([builtin]) }, saving: false, layer: "user", workspaceId: "a" } });
+        vi.mocked(validateTemplate).mockReturnValue(
+            new Promise((resolve) => {
+                finish = resolve;
+            }),
+        );
+        const wrapper = mount(Panel, {
+            props: {
+                entries: { templates: JSON.stringify([builtin]) },
+                saving: false,
+                layer: "user",
+                workspaceId: "a",
+            },
+        });
         await flushPromises();
         await wrapper.get('[data-testid="api-request-publish"]').trigger("click");
         await wrapper.setProps({ layer: "workspace", workspaceId: "b", entries: {} });
@@ -50,8 +61,18 @@ describe("API request template lifecycle", () => {
 
     it("does not emit a publication after its scope instance unmounts", async () => {
         let finish!: (value: { valid: boolean; diagnostics: [] }) => void;
-        vi.mocked(validateTemplate).mockReturnValue(new Promise((resolve) => { finish = resolve; }));
-        const wrapper = mount(Panel, { props: { entries: { templates: JSON.stringify([builtin]) }, saving: false, layer: "user" } });
+        vi.mocked(validateTemplate).mockReturnValue(
+            new Promise((resolve) => {
+                finish = resolve;
+            }),
+        );
+        const wrapper = mount(Panel, {
+            props: {
+                entries: { templates: JSON.stringify([builtin]) },
+                saving: false,
+                layer: "user",
+            },
+        });
         await flushPromises();
         await wrapper.get('[data-testid="api-request-publish"]').trigger("click");
         wrapper.unmount();
@@ -61,7 +82,14 @@ describe("API request template lifecycle", () => {
     });
 
     it("resets between Workspaces even when the layer stays the same", async () => {
-        const wrapper = mount(Panel, { props: { entries: { templates: JSON.stringify([builtin]) }, saving: false, layer: "workspace", workspaceId: "a" } });
+        const wrapper = mount(Panel, {
+            props: {
+                entries: { templates: JSON.stringify([builtin]) },
+                saving: false,
+                layer: "workspace",
+                workspaceId: "a",
+            },
+        });
         await flushPromises();
         await wrapper.setProps({ workspaceId: "b", entries: {} });
         expect(wrapper.find('[data-testid="api-request-body-source"]').exists()).toBe(false);

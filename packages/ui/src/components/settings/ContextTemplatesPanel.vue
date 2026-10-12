@@ -31,7 +31,9 @@ const diagnostics = ref<TemplateDiagnostic[]>([]);
 const validating = ref(false);
 const error = ref("");
 let generation = 0;
-onBeforeUnmount(() => { generation++; });
+onBeforeUnmount(() => {
+    generation++;
+});
 const sourceInput = ref<HTMLTextAreaElement | null>(null);
 const palette = ["user_input", "agent_instructions", "model", "conversation_history", "tools"];
 const latest = computed(() => {
