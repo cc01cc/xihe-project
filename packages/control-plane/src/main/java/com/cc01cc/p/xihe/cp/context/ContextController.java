@@ -57,8 +57,9 @@ public class ContextController {
         Object payload = body.getOrDefault("payload", Map.of());
         var event = contextService.appendEvent(
                 sessionId, resolveWorkspaceId(sessionId), resolveUserId(sessionId), eventType, payload,
-                correlationIdOf(body));
+                correlationIdOf(body), eventIdOf(body));
         return ResponseEntity.ok(Map.of(
+                "event_id", event.getId().toString(),
                 "sequence", event.getSequence(),
                 "eventType", event.getEventType(),
                 "created_at", event.getCreatedAt().toString()
@@ -77,14 +78,15 @@ public class ContextController {
                 .map(e -> {
                     rejectBranchOverride(e);
                     return new EventStoreService.EventPayload(
-                            (String) e.get("type"), e.getOrDefault("payload", Map.of()),
+                            eventIdOf(e), (String) e.get("type"), e.getOrDefault("payload", Map.of()),
                             correlationIdOf(e));
                 })
                 .toList();
         var saved = contextService.appendBatch(
                 sessionId, resolveWorkspaceId(sessionId), resolveUserId(sessionId), payloads);
         List<Long> sequences = saved.stream().map(e -> e.getSequence()).toList();
-        return ResponseEntity.ok(Map.of("sequences", sequences));
+        List<String> eventIds = saved.stream().map(e -> e.getId().toString()).toList();
+        return ResponseEntity.ok(Map.of("sequences", sequences, "event_ids", eventIds));
     }
 
     /**
@@ -105,6 +107,16 @@ public class ContextController {
             return null;
         }
         String value = String.valueOf(correlationId).trim();
+        return value.isEmpty() || "null".equals(value) ? null : value;
+    }
+
+    /** PLAN-0416 T2.1: caller-stable {@code event_id} for idempotent retries. */
+    private String eventIdOf(Map<String, Object> body) {
+        Object eventId = body.get("event_id");
+        if (eventId == null) {
+            return null;
+        }
+        String value = String.valueOf(eventId).trim();
         return value.isEmpty() || "null".equals(value) ? null : value;
     }
 

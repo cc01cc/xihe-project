@@ -104,19 +104,109 @@ public class EventStoreService {
 
     @Transactional
     public ContextEvent append(String sessionId, String workspaceId, String userId,
-                               String eventType, Object payload, String correlationId,
-                               String branchId) {
+            String eventType, Object payload, String correlationId,
+            String branchId) {
+        return append(sessionId, workspaceId, userId, eventType, payload, correlationId, branchId, null);
+    }
+
+    /**
+     * PLAN-0416 T2.1: a caller-stable {@code eventId} reuses the existing
+     * primary key. The same identity with identical Session/type/payload/
+     * correlation/branch returns the original row without inserting; any
+     * differing content or owner is a conflict and nothing is written.
+     */
+    @Transactional
+    public ContextEvent append(String sessionId, String workspaceId, String userId,
+            String eventType, Object payload, String correlationId,
+            String branchId, String eventId) {
         requireRegistered(eventType);
         validateNativeCarrier(eventType, payload, correlationId);
         dbLockTimeout.apply();
         String effectiveBranch = resolveEffectiveBranch(sessionId, correlationId, branchId);
-        lockSessionForSequence(UUID.fromString(sessionId));
-        Long nextSequence = getLatestSequence(sessionId) + 1;
         String payloadJson = toJson(payload);
+        UUID requested = parseEventId(eventId);
+        lockSessionForSequence(UUID.fromString(sessionId));
+        if (requested != null) {
+            var existing = eventStoreRepository.findById(requested);
+            if (existing.isPresent()) {
+                return sameIdentityOrConflict(existing.get(), sessionId, workspaceId, userId,
+                        eventType, payloadJson, correlationId, effectiveBranch);
+            }
+        }
+        Long nextSequence = getLatestSequence(sessionId) + 1;
         ContextEvent event = new ContextEvent(sessionId, workspaceId, userId, eventType, nextSequence, payloadJson);
+        if (requested != null) {
+            event.setId(requested);
+        }
         event.setCorrelationId(correlationId);
         event.setBranchId(effectiveBranch);
         return eventStoreRepository.save(event);
+    }
+
+    private static UUID parseEventId(String eventId) {
+        if (eventId == null || eventId.isBlank()) {
+            return null;
+        }
+        String value = eventId.trim();
+        // Accept the compact 32-hex form alongside the canonical dashed UUID.
+        if (value.length() == 32 && value.indexOf('-') < 0) {
+            value = value.replaceFirst(
+                    "(\\p{XDigit}{8})(\\p{XDigit}{4})(\\p{XDigit}{4})(\\p{XDigit}{4})(\\p{XDigit}{12})",
+                    "$1-$2-$3-$4-$5");
+        }
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException e) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "event_id must be a UUID: " + eventId);
+        }
+    }
+
+    private ContextEvent sameIdentityOrConflict(ContextEvent existing, String sessionId,
+            String workspaceId, String userId, String eventType, String payloadJson,
+            String correlationId, String branchId) {
+        java.util.List<String> differing = new java.util.ArrayList<>();
+        if (!java.util.Objects.equals(existing.getSessionId(), sessionId)) {
+            differing.add("sessionId");
+        }
+        if (!java.util.Objects.equals(existing.getWorkspaceId(), workspaceId)) {
+            differing.add("workspaceId");
+        }
+        if (!java.util.Objects.equals(existing.getUserId(), userId)) {
+            differing.add("userId");
+        }
+        if (!java.util.Objects.equals(existing.getEventType(), eventType)) {
+            differing.add("eventType");
+        }
+        if (!payloadMatches(existing.getPayload(), payloadJson)) {
+            differing.add("payload");
+        }
+        if (!java.util.Objects.equals(existing.getCorrelationId(), correlationId)) {
+            differing.add("correlationId");
+        }
+        if (!java.util.Objects.equals(existing.getBranchId(), branchId)) {
+            differing.add("branchId");
+        }
+        if (!differing.isEmpty()) {
+            throw new CpApiException(HttpStatus.CONFLICT, "EVENT_ID_CONFLICT",
+                    "event_id already exists with different content or owner: " + String.join(",", differing));
+        }
+        return existing;
+    }
+
+    /**
+     * PostgreSQL jsonb normalizes text (e.g. inserts spaces), so an identity
+     * replay must compare the parsed JSON trees, not the raw column text.
+     */
+    private boolean payloadMatches(String stored, String incoming) {
+        if (stored == null || incoming == null) {
+            return java.util.Objects.equals(stored, incoming);
+        }
+        try {
+            return java.util.Objects.equals(objectMapper.readTree(stored), objectMapper.readTree(incoming));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            return java.util.Objects.equals(stored, incoming);
+        }
     }
 
     @Transactional
@@ -137,16 +227,34 @@ public class EventStoreService {
         lockSessionForSequence(UUID.fromString(sessionId));
         Long nextSequence = getLatestSequence(sessionId) + 1;
         List<ContextEvent> events = new java.util.ArrayList<>();
-        for (int i = 0; i < payloads.size(); i++) {
-            EventPayload ep = payloads.get(i);
+        List<ContextEvent> fresh = new java.util.ArrayList<>();
+        for (EventPayload ep : payloads) {
             String payloadJson = toJson(ep.payload());
-            ContextEvent event = new ContextEvent(sessionId, workspaceId, userId, ep.eventType(), nextSequence + i, payloadJson);
-            event.setCorrelationId(ep.correlationId());
             boolean runScoped = ep.correlationId() != null && !ep.correlationId().isBlank();
-            event.setBranchId(runScoped ? branchByRun.get(ep.correlationId()) : null);
+            String branchId = runScoped ? branchByRun.get(ep.correlationId()) : null;
+            UUID requested = parseEventId(ep.eventId());
+            if (requested != null) {
+                var existing = eventStoreRepository.findById(requested);
+                if (existing.isPresent()) {
+                    // Same identity replays the original row and never consumes
+                    // a new sequence slot; differing content is a conflict.
+                    events.add(sameIdentityOrConflict(existing.get(), sessionId, workspaceId,
+                            userId, ep.eventType(), payloadJson, ep.correlationId(), branchId));
+                    continue;
+                }
+            }
+            ContextEvent event = new ContextEvent(sessionId, workspaceId, userId, ep.eventType(),
+                    nextSequence++, payloadJson);
+            if (requested != null) {
+                event.setId(requested);
+            }
+            event.setCorrelationId(ep.correlationId());
+            event.setBranchId(branchId);
             events.add(event);
+            fresh.add(event);
         }
-        return eventStoreRepository.saveAll(events);
+        eventStoreRepository.saveAll(fresh);
+        return events;
     }
 
     /**
@@ -310,9 +418,13 @@ public class EventStoreService {
         }
     }
 
-    public record EventPayload(String eventType, Object payload, String correlationId) {
+    public record EventPayload(String eventId, String eventType, Object payload, String correlationId) {
         public EventPayload(String eventType, Object payload) {
-            this(eventType, payload, null);
+            this(null, eventType, payload, null);
+        }
+
+        public EventPayload(String eventType, Object payload, String correlationId) {
+            this(null, eventType, payload, correlationId);
         }
     }
 }

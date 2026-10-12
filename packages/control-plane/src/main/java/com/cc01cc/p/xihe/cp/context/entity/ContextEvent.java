@@ -3,23 +3,31 @@ package com.cc01cc.p.xihe.cp.context.entity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.PostLoad;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import com.cc01cc.p.xihe.cp.entity.UuidStringConverter;
 import java.time.Instant;
 import java.util.UUID;
 
 @Entity
 @Table(name = "context_events")
-public class ContextEvent {
+public class ContextEvent implements org.springframework.data.domain.Persistable<UUID> {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
     @Column(name = "id", length = 36)
     private UUID id;
+
+    /**
+     * PLAN-0416 T2.1: the primary key is caller-stable — the id is assigned by
+     * the caller (idempotent retry identity) or generated once in
+     * {@code onCreate}. {@link Persistable#isNew()} keeps Spring Data on the
+     * insert path for an explicitly assigned id.
+     */
+    @Transient
+    private boolean newEntity = true;
 
     @Column(name = "session_id", nullable = false, length = 36)
     @Convert(converter = UuidStringConverter.class)
@@ -76,7 +84,20 @@ public class ContextEvent {
 
     @PrePersist
     protected void onCreate() {
+        if (id == null) {
+            id = UUID.randomUUID();
+        }
         createdAt = Instant.now();
+    }
+
+    @PostLoad
+    protected void onLoad() {
+        newEntity = false;
+    }
+
+    @Override
+    public boolean isNew() {
+        return newEntity;
     }
 
     public UUID getId() { return id; }

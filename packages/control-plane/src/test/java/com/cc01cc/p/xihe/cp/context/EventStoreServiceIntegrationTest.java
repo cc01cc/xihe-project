@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.context;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
@@ -26,6 +27,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * PLAN-0346 (gap E): context_events sequence allocation runs under the session
@@ -36,6 +38,9 @@ class EventStoreServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private EventStoreService eventStoreService;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository eventStoreRepository;
 
     @Autowired
     private SessionRepository sessionRepository;
@@ -70,6 +75,63 @@ class EventStoreServiceIntegrationTest extends AbstractIntegrationTest {
         Session session = new Session(workspaceId, userId, "Event Store Session");
         session.setId(UUID.randomUUID());
         sessionId = sessionRepository.save(session).getId().toString();
+    }
+
+    @Test
+    void callerStableEventIdReplaysOriginalRowWithoutInserting() {
+        String eventId = UUID.randomUUID().toString();
+        var first = eventStoreService.append(sessionId, workspaceId, userId,
+                "context.source_changed", java.util.Map.of("marker", "t21"),
+                null, null, eventId);
+        long countAfterFirst = eventStoreRepository.count();
+
+        var replay = eventStoreService.append(sessionId, workspaceId, userId,
+                "context.source_changed", java.util.Map.of("marker", "t21"),
+                null, null, eventId);
+
+        assertEquals(first.getId(), replay.getId());
+        assertEquals(first.getSequence(), replay.getSequence());
+        assertEquals(countAfterFirst, eventStoreRepository.count(),
+                "an identical identity replay must not insert a new row");
+    }
+
+    @Test
+    void callerStableEventIdWithDifferentContentConflictsWithoutInsert() {
+        String eventId = UUID.randomUUID().toString();
+        eventStoreService.append(sessionId, workspaceId, userId,
+                "context.source_changed", java.util.Map.of("marker", "first"),
+                null, null, eventId);
+        long countAfterFirst = eventStoreRepository.count();
+
+        CpApiException failure = assertThrows(CpApiException.class, () ->
+                eventStoreService.append(sessionId, workspaceId, userId,
+                        "context.source_changed", java.util.Map.of("marker", "second"),
+                        null, null, eventId));
+
+        assertEquals("EVENT_ID_CONFLICT", failure.getCode());
+        assertEquals(countAfterFirst, eventStoreRepository.count(),
+                "a conflicting identity must not insert a row");
+    }
+
+    @Test
+    void appendBatchReusesStableIdentitiesAndAllocatesDenseSequences() {
+        String reusedId = UUID.randomUUID().toString();
+        var first = eventStoreService.appendBatch(sessionId, workspaceId, userId, java.util.List.of(
+                new com.cc01cc.p.xihe.cp.context.service.EventStoreService.EventPayload(
+                        reusedId, "context.source_changed", java.util.Map.of("marker", "batch-1"), null)));
+        long countAfterFirst = eventStoreRepository.count();
+
+        var second = eventStoreService.appendBatch(sessionId, workspaceId, userId, java.util.List.of(
+                new com.cc01cc.p.xihe.cp.context.service.EventStoreService.EventPayload(
+                        reusedId, "context.source_changed", java.util.Map.of("marker", "batch-1"), null),
+                new com.cc01cc.p.xihe.cp.context.service.EventStoreService.EventPayload(
+                        null, "context.env_updated", java.util.Map.of("marker", "batch-2"), null)));
+
+        assertEquals(first.get(0).getSequence(), second.get(0).getSequence(),
+                "the reused identity replays the original sequence");
+        assertEquals(first.get(0).getSequence() + 1, second.get(1).getSequence(),
+                "only new payloads consume the next sequence slot");
+        assertEquals(countAfterFirst + 1, eventStoreRepository.count());
     }
 
     @Test

@@ -1,5 +1,6 @@
 """HTTP client for the CP Context Service and Event Store."""
 
+import uuid
 from datetime import datetime
 from typing import Any
 
@@ -126,6 +127,7 @@ class CPEventStoreClient(EventStore):
 
     def _event_to_dict(self, event: Event) -> dict[str, Any]:
         return {
+            "event_id": event.event_id,
             "aggregate_id": event.aggregate_id,
             "sequence": event.sequence,
             "type": event.type,
@@ -149,4 +151,7 @@ class CPEventStoreClient(EventStore):
             created_at=created_at,
             correlation_id=raw.get("correlation_id"),
             causation_id=raw.get("causation_id"),
+            # The frozen CP read contract carries no event_id; read-derived
+            # events are never re-appended, so a fresh identity is safe here.
+            event_id=raw.get("event_id") or str(uuid.uuid4()),
         )
