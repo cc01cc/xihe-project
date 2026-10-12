@@ -31,6 +31,9 @@ import java.util.regex.Pattern;
 @Service
 public class ProviderConnectionService {
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService requestTemplates;
+
     private static final Logger logger = LoggerFactory.getLogger(ProviderConnectionService.class);
     private static final Duration VERIFY_TIMEOUT = Duration.ofSeconds(8);
     private static final Pattern CONNECTION_KEY_PATTERN =
@@ -127,11 +130,20 @@ public class ProviderConnectionService {
 
     @Transactional
     public ProviderConnection create(ConnectionInput input) {
+        return create(input, null, null);
+    }
+
+    @Transactional
+    public ProviderConnection create(ConnectionInput input, String apiTypeId, Integer apiTypeVersion) {
         String userId = requireUserId();
         String scope = normalizeScope(input.scope());
         String ownerId = resolveOwnerId(scope, userId);
         String connectionKey = requireConnectionKey(input.connectionKey());
         ProviderCatalogService.ApiTypeRef defaultType = catalog.defaultApiType(input.providerId());
+        if (apiTypeId != null && apiTypeVersion != null) {
+            catalog.supportedPair(input.providerId(), apiTypeId, apiTypeVersion);
+            defaultType = new ProviderCatalogService.ApiTypeRef(apiTypeId, apiTypeVersion, apiTypes.operation(apiTypeId, apiTypeVersion));
+        }
         JsonNode pair = catalog.supportedPair(input.providerId(), defaultType.apiTypeId(), defaultType.version());
         String baseUrl = normalizeBaseUrl(input.baseUrl(), pair);
         validateBaseUrl(baseUrl, defaultType.apiTypeId(), defaultType.version());
@@ -170,7 +182,8 @@ public class ProviderConnectionService {
 
     @Transactional
     public ProviderConnection update(String id, ConnectionInput input) {
-        ProviderConnection connection = requireVisible(id);
+        ProviderConnection connection = requestTemplates.lockConnection(id);
+        requireVisible(id);
         ensureCanManage(connection);
         if (input.connectionKey() != null
                 && !input.connectionKey().equals(connection.getConnectionKey())) {
@@ -267,7 +280,8 @@ public class ProviderConnectionService {
 
     @Transactional
     public void delete(String id) {
-        ProviderConnection connection = requireVisible(id);
+        ProviderConnection connection = requestTemplates.lockConnection(id);
+        requireVisible(id);
         ensureCanManage(connection);
         revokeLeases(connection.getId().toString());
         audit(connection, "DELETED", connection.getStatus(), "DELETED");
@@ -343,6 +357,45 @@ public class ProviderConnectionService {
             return;
         }
         throw new IllegalArgumentException("Provider connection owner type is not writable");
+    }
+
+    @Transactional(readOnly = true)
+    public java.util.Map<String, Object> typeImpact(String id, String type, int version) {
+        ProviderConnection connection = requireVisible(id);
+        ensureCanManage(connection);
+        catalog.supportedPair(connection.getProviderId(), type, version);
+        return requestTemplates.impact(connection, type, version);
+    }
+
+    @Transactional
+    public ProviderConnection updateType(String id, ConnectionInput input, String type, Integer version,
+                                          Long expectedRevision, JsonNode defaultRef, boolean confirmed) {
+        ProviderConnection connection = requestTemplates.lockConnection(id);
+        requireVisible(id);
+        ensureCanManage(connection);
+        if (expectedRevision != null && connection.getRevision() != expectedRevision) {
+            throw com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService.conflict("CONNECTION_REVISION_CHANGED", "Refresh the impact preview");
+        }
+        boolean changed = type != null && (!connection.getApiTypeId().equals(type) || connection.getApiTypeVersion() != version);
+        if (changed && (expectedRevision == null || !confirmed || ("chat".equals(apiTypes.operation(type, version)) && defaultRef == null))) {
+            throw com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService.invalid("Type change requires revision, confirmation and compatible default");
+        }
+        long previous = connection.getRevision();
+        if (type != null) {
+            catalog.supportedPair(connection.getProviderId(), type, version);
+            connection.setApiTypeId(type);
+            connection.setApiTypeVersion(version);
+            validateBaseUrl(connection.getBaseUrl(), type, version);
+        }
+        repository.saveAndFlush(connection);
+        if (defaultRef != null || changed) {
+            requestTemplates.changeConnectionDefault(connection, defaultRef);
+        }
+        ProviderConnection updated = update(id, input);
+        if (changed && updated.getRevision() == previous) {
+            updated.setRevision(previous + 1);
+        }
+        return repository.saveAndFlush(updated);
     }
 
     private String resolveOwnerId(String scope, String userId) {

@@ -10,6 +10,10 @@ import java.util.Optional;
 
 public interface ProviderConnectionRepository extends JpaRepository<ProviderConnection, UUID> {
 
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @org.springframework.data.jpa.repository.Query("select c from ProviderConnection c where c.id = :id")
+    Optional<ProviderConnection> findByIdForUpdate(@org.springframework.data.repository.query.Param("id") UUID id);
+
     List<ProviderConnection> findByOwnerTypeAndOwnerId(String ownerType, String ownerId);
 
     List<ProviderConnection> findByOwnerTypeAndOwnerIdAndProviderId(

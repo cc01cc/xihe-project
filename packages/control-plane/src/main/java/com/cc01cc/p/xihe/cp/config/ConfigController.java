@@ -43,6 +43,9 @@ import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 @RestController
 public class ConfigController {
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService apiRequestTemplates;
+
     private static final Logger log = LoggerFactory.getLogger(ConfigController.class);
 
     private final ConfigService configService;
@@ -209,6 +212,9 @@ public class ConfigController {
     }
 
     private Map<String, String> readLayer(String domain, String layer, UUID userId, UUID workspaceId) {
+        if ("api-request-templates".equals(domain)) {
+            return apiRequestTemplates.readLayer(layer, userId, workspaceId);
+        }
         if ("context-templates".equals(domain)) {
             if ("user".equals(layer) && userId == null) {
                 return null;

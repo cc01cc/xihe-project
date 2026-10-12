@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestParam;
 
 import java.util.Map;
 import java.util.List;
@@ -48,7 +49,7 @@ public class ProviderConnectionController {
             if (rejected != null) {
                 return rejected;
             }
-            var created = connections.create(request.toInput());
+            var created = connections.create(request.toInput(), request.typeId(), request.typeVersion());
             return ResponseEntity.status(HttpStatus.CREATED).body(connections.view(created));
         } catch (ProviderConnectionService.KeyInvalidException e) {
             logger.warn("Provider connection create rejected errorCode={}", e.getMessage());
@@ -59,6 +60,9 @@ public class ProviderConnectionController {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.CONFLICT, "PROVIDER_CONNECTION_KEY_CONFLICT", e.getMessage());
         } catch (IllegalArgumentException e) {
+            if (e instanceof com.cc01cc.p.xihe.cp.config.CpApiException domainFailure) {
+                throw domainFailure;
+            }
             logger.warn("Provider connection create rejected errorCode={}", e.getMessage());
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.BAD_REQUEST, "PROVIDER_CONNECTION_INVALID", e.getMessage());
@@ -75,7 +79,10 @@ public class ProviderConnectionController {
             if (rejected != null) {
                 return rejected;
             }
-            var updated = connections.update(connectionId, request.toInput());
+            com.fasterxml.jackson.databind.JsonNode ref = request.connectionDefaultTemplateRef() == null ? null
+                    : new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(request.connectionDefaultTemplateRef());
+            var updated = connections.updateType(connectionId, request.toInput(), request.typeId(), request.typeVersion(),
+                    request.expectedRevision(), ref, Boolean.TRUE.equals(request.confirmedTypeChange()));
             return ResponseEntity.ok(connections.view(updated));
         } catch (ProviderConnectionService.KeyInvalidException e) {
             logger.warn("Provider connection update rejected connectionId={} errorCode={}",
@@ -88,6 +95,9 @@ public class ProviderConnectionController {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.CONFLICT, "PROVIDER_CONNECTION_KEY_IMMUTABLE", e.getMessage());
         } catch (IllegalArgumentException e) {
+            if (e instanceof com.cc01cc.p.xihe.cp.config.CpApiException domainFailure) {
+                throw domainFailure;
+            }
             logger.warn("Provider connection update rejected connectionId={} errorCode={}",
                     connectionId, e.getMessage());
             return ProblemDetailsHandler.problemResponse(
@@ -103,11 +113,20 @@ public class ProviderConnectionController {
                     "connection", connections.view(verified),
                     "models", List.of()));
         } catch (IllegalArgumentException e) {
+            if (e instanceof com.cc01cc.p.xihe.cp.config.CpApiException domainFailure) {
+                throw domainFailure;
+            }
             logger.warn("Provider connection verify rejected connectionId={} errorCode={}",
                     connectionId, e.getMessage());
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.BAD_REQUEST, "PROVIDER_CONNECTION_INVALID", e.getMessage());
         }
+    }
+
+    @GetMapping("/{connectionId}/api-type-change-impact")
+    public ResponseEntity<?> impact(@PathVariable String connectionId, @RequestParam String apiTypeId,
+                                    @RequestParam int version) {
+        return ResponseEntity.ok(connections.typeImpact(connectionId, apiTypeId, version));
     }
 
     @DeleteMapping("/{connectionId}")
@@ -116,6 +135,9 @@ public class ProviderConnectionController {
             connections.delete(connectionId);
             return ResponseEntity.noContent().build();
         } catch (IllegalArgumentException e) {
+            if (e instanceof com.cc01cc.p.xihe.cp.config.CpApiException domainFailure) {
+                throw domainFailure;
+            }
             logger.warn("Provider connection delete rejected connectionId={} errorCode={}",
                     connectionId, e.getMessage());
             return ProblemDetailsHandler.problemResponse(
@@ -137,21 +159,19 @@ public class ProviderConnectionController {
                 || !request.apiTypeVersion().isIntegralNumber()
                 || !request.apiTypeVersion().canConvertToInt()) {
             return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
-                    "PROVIDER_API_TYPE_UNSUPPORTED", "Unsupported provider API Type pair");
+                    "INVALID_REQUEST", "Complete non-null API Type pair is required");
         }
         String id = request.apiTypeId().asText();
         int version = request.apiTypeVersion().asInt();
         try {
             catalog.supportedPair(providerId, id, version);
         } catch (IllegalArgumentException e) {
+            if (e instanceof com.cc01cc.p.xihe.cp.config.CpApiException domainFailure) {
+                throw domainFailure;
+            }
             logger.warn("Provider connection Type rejected provider={}", providerId);
             return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
                     "PROVIDER_API_TYPE_UNSUPPORTED", "Unsupported provider API Type pair");
-        }
-        var active = catalog.defaultApiType(providerId);
-        if (!active.apiTypeId().equals(id) || active.version() != version) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT,
-                    "PROVIDER_API_TYPE_NOT_ACTIVE", "Provider API Type is not active");
         }
         return null;
     }
@@ -168,7 +188,24 @@ public class ProviderConnectionController {
             JsonNode connectionKey,
             JsonNode apiTypeId,
             JsonNode apiTypeVersion,
-            JsonNode operation) {
+            JsonNode operation,
+            Long expectedRevision,
+            Map<String, Object> connectionDefaultTemplateRef,
+            Boolean confirmedTypeChange) {
+        public ConnectionRequest(String providerId, String label, String scope, String apiKey, String baseUrl,
+                                  String modelDiscovery, List<String> manualModels, Boolean enabled,
+                                  JsonNode connectionKey, JsonNode apiTypeId, JsonNode apiTypeVersion, JsonNode operation) {
+            this(providerId, label, scope, apiKey, baseUrl, modelDiscovery, manualModels, enabled,
+                    connectionKey, apiTypeId, apiTypeVersion, operation, null, null, null);
+        }
+
+        String typeId() {
+            return apiTypeId == null ? null : apiTypeId.asText();
+        }
+
+        Integer typeVersion() {
+            return apiTypeVersion == null ? null : apiTypeVersion.asInt();
+        }
         ProviderConnectionService.ConnectionInput toInput() {
             String key = null;
             if (connectionKey != null && !connectionKey.isMissingNode()) {

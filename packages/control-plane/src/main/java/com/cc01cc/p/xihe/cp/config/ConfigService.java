@@ -47,6 +47,9 @@ import java.util.UUID;
 @Service
 public class ConfigService {
 
+    @Autowired
+    private org.springframework.beans.factory.ObjectProvider<com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService> apiRequestTemplates;
+
     private static final Logger log = LoggerFactory.getLogger(ConfigService.class);
 
     /**
@@ -60,7 +63,7 @@ public class ConfigService {
     public static final Set<String> DOMAINS = Set.of(
         "llm-provider", "context-policy", "embedding", "rag",
         "agent-runtime", "agent-profile", "user-preference", "logging",
-          "approval-policy", "agent-templates", "context-templates", "pricing", "job-policy");
+          "approval-policy", "agent-templates", "context-templates", "api-request-templates", "pricing", "job-policy");
 
     private static final Set<String> USER_WRITABLE_DOMAINS = Set.of(
         "llm-provider", "context-policy", "embedding", "rag",
@@ -270,7 +273,7 @@ public class ConfigService {
     }
 
     private static void rejectEffectiveContextTemplates(String domain) {
-        if ("context-templates".equals(domain)) {
+        if ("context-templates".equals(domain) || "api-request-templates".equals(domain)) {
             throw new ConfigAccessException("Context templates must be read from one explicit config layer");
         }
     }
@@ -315,6 +318,10 @@ public class ConfigService {
     @Transactional
     public void putLayer(String layer, String domain, Map<String, String> entries,
                          String changedBy, UUID userId, UUID workspaceId) {
+        if ("api-request-templates".equals(domain)) {
+            apiRequestTemplates.getObject().putLayer(layer, entries, changedBy, userId, workspaceId);
+            return;
+        }
         validateLayerScope(layer, domain, entries, userId, workspaceId);
         rejectProviderSecrets(domain, entries);
         validateInstructionsScope(layer, domain, entries);
@@ -598,6 +605,10 @@ public class ConfigService {
 
     private void putLayerInternal(String layer, String domain, Map<String, String> entries,
                                   String changedBy, UUID userId, UUID workspaceId) {
+        if ("api-request-templates".equals(domain)) {
+            apiRequestTemplates.getObject().putLayer(layer, entries, changedBy, userId, workspaceId);
+            return;
+        }
         for (Map.Entry<String, String> entry : entries.entrySet()) {
             String key = entry.getKey();
             String value = entry.getValue();
@@ -638,6 +649,10 @@ public class ConfigService {
     @Transactional
     public void deleteKey(String layer, String domain, String configKey, String changedBy,
                           UUID userId, UUID workspaceId) {
+        if ("api-request-templates".equals(domain)) {
+            throw new CpApiException(org.springframework.http.HttpStatus.CONFLICT,
+                    "API_REQUEST_TEMPLATE_REVISION_IMMUTABLE", "Use the dedicated template/binding writer");
+        }
         Optional<ConfigEntity> existing = findExisting(layer, domain, configKey, userId, workspaceId);
         if (existing.isPresent()) {
             ConfigEntity entity = existing.get();
@@ -842,7 +857,8 @@ public class ConfigService {
     }
 
     private String auditValue(ConfigEntity entity, String value) {
-        if ("agent-templates".equals(entity.getDomain()) || "context-templates".equals(entity.getDomain())) {
+        if ("agent-templates".equals(entity.getDomain()) || "context-templates".equals(entity.getDomain())
+                || "api-request-templates".equals(entity.getDomain())) {
             if (value == null || value.isBlank()) {
                 return "missing";
             }

@@ -23,6 +23,9 @@ import java.util.UUID;
 @Service
 public class ProviderCredentialLeaseService {
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService requestTemplates;
+
     private static final Duration DEFAULT_TTL = Duration.ofMinutes(5);
 
     private final ProviderCredentialLeaseRepository repository;
@@ -94,13 +97,22 @@ public class ProviderCredentialLeaseService {
             String model,
             Long expectedRevision,
             Duration ttl) {
-        ProviderConnection connection = connectionService.requireUsableForOwner(
-                providerConnectionId, userId, workspaceId);
+        ProviderConnection connection = requestTemplates.lockConnection(providerConnectionId);
+        if (expectedRevision != null && connection.getRevision() != expectedRevision) {
+            throw com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService.conflict(
+                    "STALE_PROVIDER_CONNECTION", "Provider connection revision is stale");
+        }
+        connectionService.requireUsableForOwner(providerConnectionId, userId, workspaceId);
+        if (runId != null) {
+            requestTemplates.requireChat(connection);
+            requestTemplates.requireModel(connection, model);
+        }
         if (!connection.getProviderId().equals(providerId)) {
             throw new IllegalArgumentException("Provider connection does not match provider");
         }
         if (expectedRevision != null && connection.getRevision() != expectedRevision) {
-            throw new IllegalArgumentException("Provider connection revision is stale");
+            throw com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService.conflict(
+                    "STALE_PROVIDER_CONNECTION", "Provider connection revision is stale");
         }
         String token = "pl_" + randomToken();
         ProviderCredentialLease lease = new ProviderCredentialLease();
@@ -120,6 +132,7 @@ public class ProviderCredentialLeaseService {
 
     @Transactional
     public CredentialGrant redeem(RedeemRequest request) {
+        ProviderConnection connection = requestTemplates.lockConnection(request.providerConnectionId());
         ProviderCredentialLease lease = repository.findByLeaseHash(hash(request.lease()))
                 .orElseThrow(() -> new IllegalArgumentException("Provider credential lease not found"));
         Instant now = Instant.now();
@@ -134,13 +147,21 @@ public class ProviderCredentialLeaseService {
                 || !lease.getModel().equals(request.model())) {
             throw new IllegalArgumentException("Provider credential lease binding mismatch");
         }
-        ProviderConnection connection = connectionRepository.findById(UUID.fromString(lease.getProviderConnectionId()))
-                .orElseThrow(() -> new IllegalArgumentException("Provider connection not found"));
-        if (!connection.isEnabled() || !ProviderConnection.STATUS_READY.equals(connection.getStatus())) {
-            throw new IllegalArgumentException("Provider connection is not ready");
+        requestTemplates.requireVisible(connection, lease.getUserId(), lease.getWorkspaceId());
+        if (connection.getRevision() != request.connectionRevision()) {
+            throw com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService.conflict(
+                    "STALE_PROVIDER_CONNECTION", "Provider credential lease revision mismatch");
+        }
+        if (lease.getRunId() != null) {
+            requestTemplates.requireChat(connection);
+            requestTemplates.requireModel(connection, request.model());
         }
         if (connection.getRevision() != request.connectionRevision()) {
-            throw new IllegalArgumentException("Provider credential lease revision mismatch");
+            throw com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService.conflict(
+                    "STALE_PROVIDER_CONNECTION", "Provider credential lease revision mismatch");
+        }
+        if (!connection.isEnabled() || !ProviderConnection.STATUS_READY.equals(connection.getStatus())) {
+            throw new IllegalArgumentException("Provider connection is not ready");
         }
         lease.setRedeemedAt(now);
         repository.save(lease);
