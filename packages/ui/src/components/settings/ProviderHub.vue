@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { toast } from "vue-sonner";
 import { logger } from "../../lib/logger";
 import { request } from "../../composables/api";
@@ -12,7 +12,16 @@ import {
     listProviderConnections,
     updateProviderConnection,
     verifyProviderConnection,
+    getConnectionTypeImpact,
+    type ConnectionTypeImpact,
 } from "../../services/providerConnectionService";
+import {
+    listVisibleTemplates,
+    readTemplateConfig,
+    templateKey,
+    type TemplateOption,
+    type TemplateRef,
+} from "../../services/apiRequestTemplates";
 import type {
     ProviderConnection,
     ProviderConnectionInput,
@@ -23,6 +32,7 @@ import type {
 const props = withDefaults(
     defineProps<{
         scope: ProviderScope;
+        workspaceId?: string;
         readonly?: boolean;
     }>(),
     {
@@ -45,6 +55,112 @@ const pickerSearch = ref("");
 const selectedConnectionId = ref<string | null>(null);
 const modelCatalogs = ref<Record<string, ProviderCatalog>>({});
 const modelsError = ref(false);
+const templateOptions = ref<TemplateOption[]>([]);
+const ownerTemplateEntries = ref<Record<string, string>>({});
+const userTemplateEntries = ref<Record<string, string>>({});
+const bindingBusy = ref(false);
+const typeImpact = ref<ConnectionTypeImpact | null>(null);
+const confirmedTypeChange = ref(false);
+const targetDefaultKey = ref("");
+function parseMap<T>(source?: string): Record<string, T> {
+    if (!source) return {};
+    try {
+        return JSON.parse(source) as Record<string, T>;
+    } catch (cause) {
+        logger.warn("Invalid template binding configuration", cause);
+        return {};
+    }
+}
+const connectionDefaults = computed(() =>
+    parseMap<TemplateRef>(ownerTemplateEntries.value.connectionDefaultTemplates),
+);
+const modelBindings = computed(() =>
+    parseMap<Record<string, TemplateRef>>(userTemplateEntries.value.providerModelBindings),
+);
+const activeTemplates = computed(() =>
+    templateOptions.value.filter(
+        (item) =>
+            item.apiTypeId === activeConnection.value?.apiTypeId &&
+            item.apiTypeVersion === activeConnection.value?.apiTypeVersion,
+    ),
+);
+const formType = computed(() =>
+    selectedProvider.value?.supportedApiTypes.find(
+        (item) => item.apiTypeId + "@" + item.version === form.apiType,
+    ),
+);
+const formOperation = computed(
+    () =>
+        apiInputTypes.value.find(
+            (item) =>
+                item.apiTypeId === formType.value?.apiTypeId &&
+                item.version === formType.value?.version,
+        )?.operation,
+);
+const apiInputTypes = ref<import("../../types/providerConnection").ApiInputType[]>([]);
+const formTemplates = computed(() =>
+    templateOptions.value.filter(
+        (item) =>
+            item.apiTypeId === formType.value?.apiTypeId &&
+            item.apiTypeVersion === formType.value?.version,
+    ),
+);
+function refOnly(item: TemplateRef): TemplateRef {
+    return { layer: item.layer, templateId: item.templateId, version: item.version };
+}
+function currentDefaultKey() {
+    const connection = activeConnection.value;
+    const ref = connection && connectionDefaults.value[connection.id];
+    return ref ? templateKey(ref) : "";
+}
+function currentModelKey(model: string) {
+    const ref = activeConnection.value && modelBindings.value[activeConnection.value.id]?.[model];
+    return ref ? templateKey(ref) : "";
+}
+async function saveBinding(model: string | null, value: string) {
+    const connection = activeConnection.value;
+    if (!connection || bindingBusy.value || props.readonly) return;
+    const option = activeTemplates.value.find((item) => templateKey(item) === value);
+    if (value && !option) return;
+    bindingBusy.value = true;
+    try {
+        const layer =
+            model === null ? (connection.scope === "USER" ? "user" : "workspace") : "user";
+        const entries = await readTemplateConfig(
+            layer,
+            connection.workspaceId ?? props.workspaceId,
+        );
+        if (model === null) {
+            const refs = parseMap<TemplateRef>(entries.connectionDefaultTemplates);
+            if (option) refs[connection.id] = refOnly(option);
+            else delete refs[connection.id];
+            entries.connectionDefaultTemplates = JSON.stringify(refs);
+        } else {
+            const refs = parseMap<Record<string, TemplateRef>>(entries.providerModelBindings);
+            const models = { ...refs[connection.id] };
+            if (option) models[model] = refOnly(option);
+            else delete models[model];
+            if (Object.keys(models).length) refs[connection.id] = models;
+            else delete refs[connection.id];
+            entries.providerModelBindings = JSON.stringify(refs);
+        }
+        const workspaceId = connection.workspaceId ?? props.workspaceId;
+        const query = layer === "workspace" && workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
+        await request(`/config/${layer}/api-request-templates${query}`, {
+            method: "PUT",
+            body: JSON.stringify(entries),
+        });
+        if (activeConnection.value?.id !== connection.id) return;
+        if (model === null) ownerTemplateEntries.value = entries;
+        else userTemplateEntries.value = entries;
+    } catch (cause) {
+        logger.warn("Template binding save failed", cause);
+        toast.error(cause instanceof Error ? cause.message : "模板绑定失败");
+    } finally {
+        bindingBusy.value = false;
+    }
+}
+
 const connectionGroups = computed(() => {
     const query = search.value.trim().toLowerCase();
     const groups = new Map<string, ProviderConnection[]>();
@@ -74,6 +190,31 @@ const activeModels = computed(() => {
     return connection.modelDiscovery === "manual" ? connection.manualModels : [];
 });
 
+watch(
+    () => [activeConnection.value?.id, props.workspaceId] as const,
+    async ([id]) => {
+        const connection = activeConnection.value;
+        if (!id || !connection) return;
+        try {
+            const [options, owner, user] = await Promise.all([
+                listVisibleTemplates(connection.workspaceId ?? props.workspaceId),
+                readTemplateConfig(
+                    connection.scope === "USER" ? "user" : "workspace",
+                    connection.workspaceId ?? props.workspaceId,
+                ),
+                readTemplateConfig("user"),
+            ]);
+            if (activeConnection.value?.id !== id) return;
+            templateOptions.value = options;
+            ownerTemplateEntries.value = owner;
+            userTemplateEntries.value = user;
+        } catch (cause) {
+            logger.warn("Connection templates load failed", cause);
+            toast.error("请求模板加载失败");
+        }
+    },
+);
+
 async function loadModels() {
     try {
         const data = await request<{ providers?: Record<string, ProviderCatalog> }>("/models");
@@ -93,6 +234,7 @@ const form = reactive({
     connectionKey: "default",
     modelDiscovery: "remote-models" as ProviderDefinition["modelDiscovery"],
     manualModels: "",
+    apiType: "",
 });
 
 const connectedProviderIds = computed(
@@ -180,6 +322,13 @@ function resetForm(provider: ProviderDefinition, connection?: ProviderConnection
     formScope.value = connection?.scope === "WORKSPACE" ? "WORKSPACE" : props.scope;
     form.label = connection?.label ?? `${provider.displayName} 连接`;
     form.apiKey = "";
+    form.apiType =
+        (connection?.apiTypeId ?? provider.defaultApiType.apiTypeId) +
+        "@" +
+        (connection?.apiTypeVersion ?? provider.defaultApiType.version);
+    typeImpact.value = null;
+    confirmedTypeChange.value = false;
+    targetDefaultKey.value = "";
     const pair = provider.supportedApiTypes.find(
         (item) =>
             item.apiTypeId === (connection?.apiTypeId ?? provider.defaultApiType.apiTypeId) &&
@@ -193,6 +342,34 @@ function resetForm(provider: ProviderDefinition, connection?: ProviderConnection
     form.modelDiscovery =
         connection?.modelDiscovery ?? pair?.modelDiscovery ?? provider.modelDiscovery;
     form.manualModels = connection?.manualModels.join("\n") ?? "";
+}
+
+async function previewTypeChange() {
+    const connection = editingConnection.value;
+    const pair = formType.value;
+    typeImpact.value = null;
+    confirmedTypeChange.value = false;
+    targetDefaultKey.value = "";
+    if (!pair) return;
+    form.baseUrl = pair.defaultBaseUrl ?? selectedProvider.value?.defaultBaseUrl ?? "";
+    form.modelDiscovery = pair.modelDiscovery ?? selectedProvider.value?.modelDiscovery ?? "manual";
+    try {
+        if (connection) {
+            const impact = await getConnectionTypeImpact(
+                connection.id,
+                pair.apiTypeId,
+                pair.version,
+            );
+            if (editingConnection.value?.id !== connection.id || formType.value !== pair) return;
+            typeImpact.value = impact;
+        }
+        const options = await listVisibleTemplates(connection?.workspaceId ?? props.workspaceId);
+        if (formType.value !== pair) return;
+        templateOptions.value = options;
+    } catch (cause) {
+        logger.warn("Connection Type impact failed", cause);
+        toast.error(cause instanceof Error ? cause.message : "影响预览失败");
+    }
 }
 
 function openPicker() {
@@ -235,6 +412,15 @@ async function load() {
         // (template and computed read `.length`/`.map`).
         providers.value = catalog.providers ?? [];
         connections.value = connected.connections ?? [];
+        try {
+            const typeList = await request<{
+                types: import("../../types/providerConnection").ApiInputType[];
+            }>("/api-input-types");
+            apiInputTypes.value = typeList.types ?? [];
+        } catch (cause) {
+            logger.warn("API Type metadata load failed", cause);
+            apiInputTypes.value = [];
+        }
         if (!connections.value.some((connection) => connection.id === selectedConnectionId.value)) {
             selectedConnectionId.value = connections.value[0]?.id ?? null;
         }
@@ -250,6 +436,24 @@ async function load() {
 async function save() {
     const provider = selectedProvider.value;
     if (!provider) return;
+    const pair = formType.value;
+    if (!pair) return;
+    const existing = editingConnection.value;
+    const changedType =
+        existing &&
+        (existing.apiTypeId !== pair.apiTypeId || existing.apiTypeVersion !== pair.version);
+    const defaultTemplate = formTemplates.value.find(
+        (item) => templateKey(item) === targetDefaultKey.value,
+    );
+    if (
+        changedType &&
+        (!typeImpact.value ||
+            !confirmedTypeChange.value ||
+            (formOperation.value === "chat" && !defaultTemplate))
+    ) {
+        toast.error("请先预览影响、选择兼容默认模板并确认协议变更");
+        return;
+    }
     if (provider.credential.required && !editingConnection.value && !form.apiKey.trim()) {
         toast.error("请输入 API key");
         return;
@@ -267,6 +471,19 @@ async function save() {
             label: form.label.trim(),
             scope: formScope.value,
             connectionKey,
+            apiTypeId: pair.apiTypeId,
+            apiTypeVersion: pair.version,
+            ...(existing
+                ? { expectedRevision: typeImpact.value?.connectionRevision ?? existing.revision }
+                : {}),
+            ...(changedType
+                ? {
+                      confirmedTypeChange: true,
+                      ...(defaultTemplate
+                          ? { connectionDefaultTemplateRef: refOnly(defaultTemplate) }
+                          : {}),
+                  }
+                : {}),
             ...(form.apiKey.trim() ? { apiKey: form.apiKey.trim() } : {}),
             baseUrl: form.baseUrl.trim(),
             modelDiscovery: form.modelDiscovery,
@@ -535,6 +752,29 @@ onMounted(() => {
                             </dd>
                         </div>
                     </dl>
+                    <section v-if="activeConnection.operation === 'chat'" class="border-t pt-4">
+                        <label class="block text-xs"
+                            >连接默认请求模板
+                            <select
+                                :value="currentDefaultKey()"
+                                :disabled="readonly || bindingBusy"
+                                class="mt-1 w-full rounded border bg-background p-2"
+                                aria-label="连接默认请求模板"
+                                @change="
+                                    saveBinding(null, ($event.target as HTMLSelectElement).value)
+                                "
+                            >
+                                <option value="">API Type 内置默认模板</option>
+                                <option
+                                    v-for="item in activeTemplates"
+                                    :key="templateKey(item)"
+                                    :value="templateKey(item)"
+                                >
+                                    {{ item.name }} v{{ item.version }}
+                                </option>
+                            </select>
+                        </label>
+                    </section>
                     <section data-testid="provider-connection-models" class="border-t pt-4">
                         <h5 class="text-sm font-semibold">Models</h5>
                         <p class="mt-1 text-xs text-muted-foreground">
@@ -550,6 +790,28 @@ onMounted(() => {
                                 class="flex flex-wrap justify-between gap-2 py-2 text-xs"
                             >
                                 <span class="break-all">{{ model }}</span>
+                                <select
+                                    v-if="activeConnection.operation === 'chat'"
+                                    :value="currentModelKey(model)"
+                                    :disabled="readonly || bindingBusy"
+                                    class="max-w-full rounded border bg-background p-1"
+                                    :aria-label="model + ' 请求模板'"
+                                    @change="
+                                        saveBinding(
+                                            model,
+                                            ($event.target as HTMLSelectElement).value,
+                                        )
+                                    "
+                                >
+                                    <option value="">继承连接默认模板</option>
+                                    <option
+                                        v-for="item in activeTemplates"
+                                        :key="templateKey(item)"
+                                        :value="templateKey(item)"
+                                    >
+                                        {{ item.name }} v{{ item.version }}
+                                    </option>
+                                </select>
                                 <span class="break-all text-muted-foreground"
                                     >{{ activeConnection.apiTypeId }}@{{
                                         activeConnection.apiTypeVersion
@@ -577,8 +839,8 @@ onMounted(() => {
                 >
                 <div>
                     <strong class="font-semibold text-foreground">连接作用域</strong><br />
-                    按连接 key 选择具体的 User 或 Workspace 作用域记录；Workspace/User overlay
-                    由后续连接解析功能处理。API key 由 Control Plane
+                    按连接 key 选择具体的 User 或 Workspace 作用域记录；Workspace/User overlay 按同
+                    key 的完整记录执行 Workspace 优先与 User 回退。API key 由 Control Plane
                     加密存储，不会出现在浏览器存储或日志中。
                 </div>
             </div>
@@ -719,9 +981,61 @@ onMounted(() => {
                                     : `${selectedProvider.defaultApiType.apiTypeId}@${selectedProvider.defaultApiType.version}`
                             }}</span
                         >
-                        <span class="mt-1 block text-xs text-muted-foreground"
-                            >API Type 只读，暂不支持切换。</span
+                        <label class="mt-3 block text-xs"
+                            >API Type
+                            <select
+                                v-model="form.apiType"
+                                data-testid="provider-connection-api-type"
+                                class="mt-1 w-full rounded border bg-background p-2 text-sm"
+                                @change="previewTypeChange"
+                            >
+                                <option
+                                    v-for="pair in selectedProvider.supportedApiTypes"
+                                    :key="pair.apiTypeId + '@' + pair.version"
+                                    :value="pair.apiTypeId + '@' + pair.version"
+                                >
+                                    {{ pair.apiTypeId }}@{{ pair.version }}
+                                </option>
+                            </select>
+                        </label>
+                        <div
+                            v-if="typeImpact"
+                            class="mt-3 space-y-2 rounded border p-3 text-xs"
+                            data-testid="connection-type-impact"
                         >
+                            <p>
+                                将移除不兼容的模型模板覆盖：{{
+                                    typeImpact.incompatibleOverrides.reduce(
+                                        (sum, item) => sum + item.count,
+                                        0,
+                                    )
+                                }}；{{ typeImpact.sessionRebindCount }}
+                                个会话需显式重新绑定。共享模板与历史记录保留。
+                            </p>
+                            <label v-if="formOperation === 'chat'" class="block"
+                                >新连接默认模板
+                                <select
+                                    v-model="targetDefaultKey"
+                                    class="mt-1 w-full rounded border bg-background p-2"
+                                    aria-label="新连接默认模板"
+                                >
+                                    <option value="" disabled>选择兼容模板</option>
+                                    <option
+                                        v-for="item in formTemplates"
+                                        :key="templateKey(item)"
+                                        :value="templateKey(item)"
+                                    >
+                                        {{ item.name }} v{{ item.version }}
+                                    </option>
+                                </select>
+                            </label>
+                            <label class="flex items-center gap-2"
+                                ><input
+                                    v-model="confirmedTypeChange"
+                                    type="checkbox"
+                                />确认协议变更及覆盖清理</label
+                            >
+                        </div>
                     </div>
 
                     <label class="block">

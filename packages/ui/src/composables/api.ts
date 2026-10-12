@@ -95,6 +95,21 @@ export interface ApiSession {
     modelName?: string;
     providerConnectionId?: string;
     connectionRevision?: number;
+    contextTemplateLayer?: "instance" | "user" | "workspace" | null;
+    contextTemplateId?: string | null;
+    contextTemplateVersion?: number | null;
+}
+
+export interface SessionBindingPatch {
+    title?: string;
+    modelProvider?: string;
+    modelName?: string;
+    providerConnectionId?: string;
+    connectionRevision?: number;
+    contextTemplateLayer?: "instance" | "user" | "workspace";
+    contextTemplateId?: string;
+    contextTemplateVersion?: number;
+    confirmedTypeChange?: boolean;
 }
 
 export interface ApiSessionBranch {
@@ -1087,6 +1102,24 @@ function normalizeSession(value: unknown): SessionResponse {
         updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : undefined,
         modelProvider: typeof record.modelProvider === "string" ? record.modelProvider : undefined,
         modelName: typeof record.modelName === "string" ? record.modelName : undefined,
+        providerConnectionId:
+            typeof record.providerConnectionId === "string"
+                ? record.providerConnectionId
+                : undefined,
+        connectionRevision:
+            typeof record.connectionRevision === "number" ? record.connectionRevision : undefined,
+        contextTemplateLayer:
+            record.contextTemplateLayer === "instance" ||
+            record.contextTemplateLayer === "user" ||
+            record.contextTemplateLayer === "workspace"
+                ? record.contextTemplateLayer
+                : null,
+        contextTemplateId:
+            typeof record.contextTemplateId === "string" ? record.contextTemplateId : null,
+        contextTemplateVersion:
+            typeof record.contextTemplateVersion === "number"
+                ? record.contextTemplateVersion
+                : null,
         workspace,
     };
 }
@@ -1468,15 +1501,7 @@ export const api = {
             { method: "DELETE" },
         );
     },
-    async updateSession(
-        id: string,
-        patch: {
-            title?: string;
-            modelProvider?: string;
-            modelName?: string;
-            providerConnectionId?: string;
-        },
-    ): Promise<SessionResponse> {
+    async updateSession(id: string, patch: SessionBindingPatch): Promise<SessionResponse> {
         return normalizeSession(
             await request<unknown>(`/sessions/${encodeURIComponent(id)}`, {
                 method: "PATCH",

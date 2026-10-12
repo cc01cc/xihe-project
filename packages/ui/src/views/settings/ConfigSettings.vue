@@ -43,7 +43,7 @@ const domainLabels: Record<string, string> = {
     logging: t("settings.domainLogging"),
     "approval-policy": t("settings.domainApprovalPolicy"),
     "agent-templates": t("settings.domainAgentTemplates"),
-    "context-templates": t("settings.domainContextTemplates"),
+    "api-request-templates": t("settings.domainContextTemplates"),
     "job-policy": t("settings.domainJobPolicy"),
 };
 
@@ -688,6 +688,7 @@ async function handleImportFile(event: Event) {
 
                     <template v-for="domain in visibleDomains" :key="domain">
                         <ProviderHub
+                            :workspace-id="currentWorkspaceId() || undefined"
                             v-if="domain === 'llm-provider' && activeTab !== 'instance'"
                             :scope="activeTab === 'user' ? 'USER' : 'WORKSPACE'"
                         />
@@ -698,10 +699,12 @@ async function handleImportFile(event: Event) {
                             @save="handleSave(domain, $event)"
                         />
                         <ContextTemplatesPanel
-                            v-else-if="domain === 'context-templates'"
+                            :key="`${activeTab}:${currentWorkspaceId()}`"
+                            v-else-if="domain === 'api-request-templates'"
                             :entries="configStore.layerConfig[activeTab][domain] || {}"
                             :saving="savingDomains[domain] || false"
                             :layer="activeTab"
+                            :workspace-id="currentWorkspaceId() || undefined"
                             @save="handleSave(domain, $event)"
                         />
                         <ConfigDomainPanel

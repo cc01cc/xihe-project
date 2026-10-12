@@ -24,6 +24,21 @@ export interface ProviderVerifyResponse {
     models: Array<{ name: string }>;
 }
 
+export interface ConnectionTypeImpact {
+    connectionRevision: number;
+    currentType: { apiTypeId: string; version: number };
+    targetType: { apiTypeId: string; version: number };
+    compatibleTemplates: import("./apiRequestTemplates").TemplateOption[];
+    incompatibleOverrides: Array<{ scope: string; count: number }>;
+    sessionRebindCount: number;
+}
+export function getConnectionTypeImpact(id: string, apiTypeId: string, version: number) {
+    const query = new URLSearchParams({ apiTypeId, version: String(version) });
+    return request<ConnectionTypeImpact>(
+        `/provider-connections/${encodeURIComponent(id)}/api-type-change-impact?${query}`,
+    );
+}
+
 export function listProviderCatalog(): Promise<ProviderCatalogResponse> {
     return request<ProviderCatalogResponse>("/provider-catalog");
 }
