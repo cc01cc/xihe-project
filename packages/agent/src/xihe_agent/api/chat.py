@@ -4,7 +4,7 @@ Moved verbatim from `main.py` (PLAN-0473 T2.2); request parsing, run-config
 resolution, event translation, and terminal-outcome semantics unchanged.
 """
 
-from typing import Any, cast
+from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Request
@@ -12,46 +12,41 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from litellm import get_llm_provider as _litellm_get_llm_provider  # noqa: F401  (provider util parity)
 from loguru import logger
 
+from xihe_agent.adapters.api_chat_model import ApiChatModel, native_history, native_tools
 from xihe_agent.adapters.approval_tool import ApprovalExecutorUnsupportedError, ApprovalTerminalError
 from xihe_agent.adapters.sse_adapter import render_sse
 from xihe_agent.agent_runner import LangGraphRunner
+from xihe_agent.agent_runner.langgraph_runner import prune_history_tool_results
 from xihe_agent.api.shared import problem_details, verify_api_token
 from xihe_agent.app_state import (
     AGENT_INSTRUCTIONS,
     AGENT_USER_NAME,
-    USE_REGISTRY,
     USE_SUPERVISOR,
     _classify_llm_exception,
     _content_length,
-    _deserialize_messages,
     _enrich_with_rag_context,
     _estimate_input_tokens,
     _get_tools_for_mode,
-    _has_instance_fallback_credentials,
-    _llm_readiness_error_code,
     _merge_run_domain,
     _model_window_tokens,
     _normalize_run_overrides,
     _normalize_tool_timeouts,
     _resolve_policy_for_model,
-    _to_langchain_messages,
-    _token_counter,
     _validate_run_overrides,
     approval_tool,
     config_client,
     context_provider,
     cp_event_store_client,
     generate_image_tool,
-    get_model_catalog,
-    llm_config,
     run_cancel_registry,
-    worker_registry,
 )
-from xihe_agent.context.builder import build_context
+from xihe_agent.config_client import ProviderLeaseError
 from xihe_agent.interfaces.agent_runner import RunnerConfig
-from xihe_agent.interfaces.chat_run_context import ChatRunContext, ContextBuildError
+from xihe_agent.interfaces.chat_run_context import ContextBuildError
+from xihe_agent.interfaces.event import Event
 from xihe_agent.interfaces.message import TextMessage
-from xihe_agent.llm.base import LLMConfig, ProviderName, create_llm, fallback_provider_configs
+from xihe_agent.llm.api_request import ApiRequestError, render_request, validate_snapshot
+from xihe_agent.llm.base import LLMConfig
 from xihe_agent.llm.models import fetch_model_catalog  # noqa: F401  (import parity with prior main)
 
 router = APIRouter()
@@ -97,7 +92,6 @@ async def chat(request: Request):
     tool_mode: str = data.get("toolMode", "none")
     safe_agent_instructions: str = data.get("instructions", "")
     instructions: str = safe_agent_instructions or AGENT_INSTRUCTIONS
-    chat_history_raw: list[dict[str, Any]] = data.get("history", [])
     credential_lease: str | None = data.get("credentialLease") or None
     provider_connection_id: str | None = data.get("providerConnectionId") or None
     connection_revision = data.get("connectionRevision")
@@ -161,151 +155,78 @@ async def chat(request: Request):
     profile_entries = _merge_run_domain("agent-profile", user_overrides, workspace_overrides)
     user_name: str = data.get("userName") or profile_entries.get("userName") or AGENT_USER_NAME
 
-    from xihe_agent.app_state import _llm_ready
-
-    if _llm_ready != "ready" and not credential_lease:
-        error_code = _llm_readiness_error_code(_llm_ready)
-        return JSONResponse(
-            status_code=503,
-            media_type="application/problem+json",
-            headers={"X-Request-Id": request_id},
-            content={
-                "type": "https://xihe.dev/problems/llm-not-ready",
-                "title": "LLM is not ready",
-                "status": 503,
-                "code": error_code,
-                "detail": f"Agent LLM readiness is {_llm_ready}",
-                "retryable": True,
-                "provider": llm_config.provider,
-                "model": model_override or llm_config.model,
-                "requestId": request_id,
-                "runId": run_id,
-            },
-        )
-
     if tool_mode not in {"none", "workspace"}:
+        return problem_details(request_id, 400, "INVALID_REQUEST", "toolMode must be none or workspace")
+
+    try:
+        api_type, template_snapshot = validate_snapshot(data)
+        # Validate the source before consuming the one-use lease. Source values
+        # and authorized tools are resolved later, but syntax/placement checks
+        # use non-secret typed fixtures and send no provider request.
+        render_request(
+            template_snapshot["template"]["bodySource"],
+            api_type,
+            {
+                "model": str(model_override or ""),
+                "user_input": content,
+                "agent_instructions": instructions,
+                "conversation_history": [{"role": "user", "content": ""}],
+                "tools": [],
+            },
+        )
+        grant = await config_client.redeem_provider_lease(
+            {
+                "lease": credential_lease,
+                "runId": run_id,
+                "providerConnectionId": provider_connection_id,
+                "providerId": provider_override,
+                "model": model_override,
+                "connectionRevision": connection_revision,
+            },
+            request_id=request_id,
+        )
+        if (
+            grant.get("apiTypeId") != api_type.id
+            or grant.get("apiTypeVersion") != api_type.version
+            or grant.get("operation") != "chat"
+            or grant.get("connectionRevision") != connection_revision
+            or grant.get("provider") != provider_override
+            or grant.get("model") != model_override
+        ):
+            raise ApiRequestError("API_TYPE_TEMPLATE_MISMATCH", 409)
+    except (ApiRequestError, ProviderLeaseError) as exc:
+        code = exc.terminal_code if isinstance(exc, ApiRequestError) else exc.code
+        logger.warning("Chat rejected requestId={} runId={} code={}", request_id, run_id, exc.code)
         return JSONResponse(
-            status_code=400,
+            status_code=exc.status,
             media_type="application/problem+json",
             headers={"X-Request-Id": request_id},
             content={
-                "type": "https://xihe.dev/problems/invalid-tool-mode",
-                "title": "Invalid tool mode",
-                "status": 400,
-                "code": "INVALID_REQUEST",
-                "detail": "toolMode must be none or workspace",
+                "type": "https://xihe.dev/problems/api-request",
+                "title": "Chat request unavailable",
+                "status": exc.status,
+                "code": code,
+                "detail": str(exc),
+                "retryable": False,
                 "requestId": request_id,
                 "runId": run_id,
             },
         )
+    except Exception as exc:
+        logger.warning(
+            "Provider lease transport unavailable requestId={} runId={} errorType={}",
+            request_id,
+            run_id,
+            type(exc).__name__,
+        )
+        return problem_details(request_id, 503, "PROVIDER_CONNECTION_UNAVAILABLE", "Provider connection unavailable")
 
     run_llm_entries = _merge_run_domain("llm-provider", user_overrides, workspace_overrides)
-    run_llm_config = LLMConfig.from_entries(run_llm_entries)
-
-    request_config: LLMConfig
-    if credential_lease:
-        try:
-            grant = await config_client.redeem_provider_lease(
-                {
-                    "lease": credential_lease,
-                    "runId": run_id,
-                    "providerConnectionId": provider_connection_id or "",
-                    "providerId": provider_override or "",
-                    "model": model_override or "",
-                    "connectionRevision": int(connection_revision or 0),
-                }
-            )
-        except Exception as exc:
-            logger.warning(
-                "Provider credential lease unavailable runId={} connectionId={} errorType={}",
-                run_id,
-                provider_connection_id,
-                type(exc).__name__,
-            )
-            return JSONResponse(
-                status_code=503,
-                media_type="application/problem+json",
-                headers={"X-Request-Id": request_id},
-                content={
-                    "type": "https://xihe.dev/problems/provider-connection-unavailable",
-                    "title": "Provider connection unavailable",
-                    "status": 503,
-                    "code": "PROVIDER_CONNECTION_UNAVAILABLE",
-                    "detail": "The selected provider connection is unavailable",
-                    "retryable": True,
-                    "provider": provider_override or "",
-                    "model": model_override or "",
-                    "requestId": request_id,
-                    "runId": run_id,
-                },
-            )
-        request_config = LLMConfig(
-            provider=str(grant.get("provider", provider_override or "")),
-            route_provider=str(grant.get("routeProvider", grant.get("provider", ""))),
-            api_key=str(grant.get("apiKey") or ""),
-            api_base=str(grant.get("baseUrl") or ""),
-            model=str(grant.get("model") or model_override or ""),
-            # T2.7: user/workspace model params apply even when the lease owns
-            # the credential (grant carries key/base/model only).
-            timeout=run_llm_config.timeout,
-            max_tokens=run_llm_config.max_tokens,
-            temperature=run_llm_config.temperature,
-        )
-    else:
-        request_config = run_llm_config
-    if not credential_lease and provider_override and provider_override != run_llm_config.provider:
-        provider_info = get_model_catalog().get("providers", {}).get(provider_override)
-        provider_runtime = fallback_provider_configs(run_llm_entries).get(provider_override)
-        if not isinstance(provider_info, dict) or provider_info.get("status") != "ready" or not provider_runtime:
-            return JSONResponse(
-                status_code=503,
-                media_type="application/problem+json",
-                headers={"X-Request-Id": request_id},
-                content={
-                    "type": "https://xihe.dev/problems/model-unavailable",
-                    "title": "Provider is not ready",
-                    "status": 503,
-                    "code": "LLM_MODEL_UNAVAILABLE",
-                    "detail": "Selected provider is not ready",
-                    "retryable": True,
-                    "provider": provider_override,
-                    "model": model_override or "",
-                    "requestId": request_id,
-                    "runId": run_id,
-                },
-            )
-        request_config = LLMConfig(
-            provider=cast(ProviderName, provider_override),
-            api_key=str(provider_runtime.get("apiKey", "")),
-            api_base=str(provider_runtime.get("baseUrl", "")),
-            model=str(provider_runtime.get("model", "")),
-            timeout=run_llm_config.timeout,
-            max_tokens=run_llm_config.max_tokens,
-            temperature=run_llm_config.temperature,
-        )
-    if model_override:
-        request_config = request_config.with_model(model_override)
-
-    # PLAN-0307 T2.13 fail-closed: a run without a lease relies on the instance
-    # env fallback; stop before calling the provider with empty credentials.
-    if not credential_lease and not _has_instance_fallback_credentials(request_config):
-        return JSONResponse(
-            status_code=503,
-            media_type="application/problem+json",
-            headers={"X-Request-Id": request_id},
-            content={
-                "type": "https://xihe.dev/problems/llm-not-configured",
-                "title": "LLM credentials are not configured",
-                "status": 503,
-                "code": "LLM_NOT_CONFIGURED",
-                "detail": "No provider connection lease and no instance fallback credentials",
-                "retryable": True,
-                "provider": request_config.provider,
-                "model": request_config.model,
-                "requestId": request_id,
-                "runId": run_id,
-            },
-        )
+    request_config = LLMConfig(
+        provider=str(provider_override),
+        model=str(model_override),
+        timeout=float(run_llm_entries.get("timeout") or "60"),
+    )
 
     logger.info(
         "[LIFECYCLE] service=agent event=chat_stream_started requestId={} sessionId={} workspaceId={} runId={} provider={} model={} contentLength={}",
@@ -321,14 +242,8 @@ async def chat(request: Request):
     # Enrich with RAG context if knowledge base has content
     instructions = await _enrich_with_rag_context(content, instructions)
 
-    chat_history = _deserialize_messages(chat_history_raw)
-    model = create_llm(request_config)
     # Register before streaming so CP cancel can reach an in-flight run.
     cancel_event = run_cancel_registry.register(run_id)
-    request_runner = LangGraphRunner(
-        model_factory=lambda _model: create_llm(request_config),
-        event_store=cp_event_store_client,
-    )
 
     async def event_stream():
         terminal_sent = False
@@ -351,38 +266,6 @@ async def chat(request: Request):
             mcp_tools = await _get_tools_for_mode(tool_mode, workspace_id)
             if USE_SUPERVISOR and tool_mode == "workspace":
                 raise ApprovalExecutorUnsupportedError("Approval is not supported by the buffered supervisor executor")
-                # Supervisor path remains on legacy tools until full migration.
-                from langchain_core.messages import HumanMessage
-
-                from xihe_agent.agent.supervisor import build_supervisor
-
-                custom_tools = [approval_tool, generate_image_tool]
-                supervisor = build_supervisor(
-                    model,
-                    mcp_tools,
-                    custom_tools,
-                    registry=worker_registry if USE_REGISTRY else None,
-                )
-                result = await supervisor.ainvoke(
-                    {"messages": _to_langchain_messages(chat_history) + [HumanMessage(content=content)]}
-                )
-                for msg in result["messages"]:
-                    if hasattr(msg, "content") and msg.content:
-                        token_count += 1
-                        msg_content = _content_length(msg.content)
-                        assistant_chars += msg_content
-                        event_index += 1
-                        logger.debug(
-                            "[LIFECYCLE] service=agent event=chat_stream_chunk requestId={} sessionId={} runId={} eventIndex={} tokenChars={}",
-                            request_id,
-                            session_id,
-                            run_id,
-                            event_index,
-                            msg_content,
-                        )
-                        yield render_sse("token", correlated_data({"content": msg.content, "type": "token"}))
-                terminal_sent = True
-                yield render_sse("done", correlated_data({"type": "done"}))
             else:
                 # PLAN-0410 T2.3: the snapshot is scoped to this Run's branch;
                 # CP resolves/validates the branch from the durable runId.
@@ -407,54 +290,48 @@ async def chat(request: Request):
                 if mcp_tools:
                     all_tools = list(mcp_tools) + all_tools
 
-                has_template = "contextTemplateSnapshot" in data
-                if has_template:
-                    run_context = ChatRunContext.from_request(
-                        {
-                            **data,
-                            "runId": run_id,
-                            "sessionId": session_id,
-                            "workspaceId": workspace_id,
-                            "requestId": request_id,
-                            "provider": request_config.provider,
-                            "model": model_override or request_config.model,
-                            "toolMode": tool_mode,
-                            "instructions": safe_agent_instructions,
-                            "platformInstructions": AGENT_INSTRUCTIONS,
-                        },
-                        context,
-                    )
-                    built = build_context(run_context, all_tools, content, token_counter=_token_counter)
-                    messages = list(built.messages)
-                    for component_result in built.components:
-                        raw_source = component_result.source
-                        source_kind = raw_source.get("kind") if isinstance(raw_source, dict) else "unknown"
-                        if source_kind not in {"context_projection", "runtime_workspace", "runtime"}:
-                            source_kind = "unknown"
-                        diagnostic_codes = [
-                            code
-                            for code in component_result.diagnostics
-                            if code in _SAFE_CONTEXT_DIAGNOSTIC_CODES
-                        ]
-                        logger.info(
-                            "Context component resolved type={} status={} sourceKind={} estimatedTokens={} truncated={} diagnosticCodes={}",
-                            component_result.type,
-                            component_result.status,
-                            source_kind,
-                            component_result.estimated_tokens,
-                            component_result.truncated,
-                            diagnostic_codes,
+                policy = _resolve_policy_for_model(
+                    model_override or request_config.model, user_overrides, workspace_overrides
+                )
+                pruned = prune_history_tool_results(context.messages, policy.prune_window_chars)
+                if pruned.tombstones:
+                    from datetime import UTC, datetime
+
+                    await cp_event_store_client.append(
+                        Event(
+                            aggregate_id=context.aggregate_id,
+                            sequence=0,
+                            type="context.prune",
+                            payload={
+                                "tombstones": [item.to_payload() for item in pruned.tombstones],
+                                "pruned_count": len(pruned.tombstones),
+                                "runId": run_id,
+                            },
+                            created_at=datetime.now(UTC),
+                            correlation_id=run_id,
                         )
-                    logger.info(
-                        "Context template built templateId={} version={} components={} estimatedTokens={}",
-                        run_context.template_snapshot.get("templateId"),
-                        run_context.template_snapshot.get("version"),
-                        len(built.components),
-                        built.estimated_tokens,
                     )
-                else:
-                    messages = list(chat_history)
-                    messages.append(TextMessage(role="human", content=content))
+                context.messages = pruned.messages
+
+                model = ApiChatModel(
+                    api_type=api_type,
+                    grant=grant,
+                    body_source=template_snapshot["template"]["bodySource"],
+                    values={
+                        "model": str(model_override),
+                        "user_input": content,
+                        "agent_instructions": instructions,
+                        "conversation_history": native_history(context.messages, api_type),
+                        "tools": native_tools(all_tools, api_type),
+                    },
+                    request_id=request_id,
+                    timeout=request_config.timeout,
+                )
+                request_runner = LangGraphRunner(model_factory=lambda _model: model, event_store=cp_event_store_client)
+                # The Runner owns approval/durable/tool execution. This prompt is
+                # its admitted event input, not a provider-neutral body builder.
+                messages = [TextMessage(role="human", content=content)]
+                has_template = True
 
                 config = RunnerConfig(
                     model=model_override or request_config.model,
@@ -462,11 +339,7 @@ async def chat(request: Request):
                     tools=all_tools,
                     context=context,
                     cancel_event=cancel_event,
-                    prune_window_chars=_resolve_policy_for_model(
-                        model_override or request_config.model,
-                        user_overrides,
-                        workspace_overrides,
-                    ).prune_window_chars,
+                    prune_window_chars=policy.prune_window_chars,
                     branch_id=context.branch_id,
                     template_context=has_template,
                     admitted_prompt=content,
@@ -588,6 +461,25 @@ async def chat(request: Request):
                         }
                     ),
                 )
+        except ApiRequestError as exc:
+            error_seen = True
+            terminal_error_code = exc.terminal_code
+            terminal_outcome = "partial" if assistant_chars else "error"
+            logger.warning("API request rejected requestId={} runId={} code={}", request_id, run_id, exc.code)
+            if not error_sent:
+                error_sent = True
+                yield render_sse(
+                    "error",
+                    correlated_data(
+                        {
+                            "code": exc.terminal_code,
+                            "detail": exc.code,
+                            "retryable": False,
+                            "outcome": terminal_outcome,
+                            "type": "error",
+                        }
+                    ),
+                )
         except ContextBuildError as exc:
             error_seen = True
             terminal_error_code = "CONTEXT_BUILD_FAILED"
@@ -603,13 +495,15 @@ async def chat(request: Request):
                 error_sent = True
                 yield render_sse(
                     "error",
-                    correlated_data({
-                        "code": terminal_error_code,
-                        "detail": "Context template snapshot is invalid",
-                        "retryable": False,
-                        "outcome": terminal_outcome,
-                        "type": "error",
-                    }),
+                    correlated_data(
+                        {
+                            "code": terminal_error_code,
+                            "detail": "Context template snapshot is invalid",
+                            "retryable": False,
+                            "outcome": terminal_outcome,
+                            "type": "error",
+                        }
+                    ),
                 )
         except Exception as exc:
             error_seen = True
