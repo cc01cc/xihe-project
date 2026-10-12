@@ -31,6 +31,8 @@ public class EventStoreService {
     private final ObjectMapper objectMapper;
     private final DbLockTimeout dbLockTimeout;
     private final BranchPathService branchPathService;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.cc01cc.p.xihe.cp.provider.ApiInputTypeService apiTypes;
 
     public EventStoreService(EventStoreRepository eventStoreRepository,
                              SessionLockService sessionLockService,
@@ -105,6 +107,7 @@ public class EventStoreService {
                                String eventType, Object payload, String correlationId,
                                String branchId) {
         requireRegistered(eventType);
+        validateNativeCarrier(eventType, payload, correlationId);
         dbLockTimeout.apply();
         String effectiveBranch = resolveEffectiveBranch(sessionId, correlationId, branchId);
         lockSessionForSequence(UUID.fromString(sessionId));
@@ -121,6 +124,7 @@ public class EventStoreService {
                                           List<EventPayload> payloads) {
         for (EventPayload ep : payloads) {
             requireRegistered(ep.eventType());
+            validateNativeCarrier(ep.eventType(), ep.payload(), ep.correlationId());
         }
         dbLockTimeout.apply();
         Map<String, String> branchByRun = new HashMap<>();
@@ -253,6 +257,34 @@ public class EventStoreService {
             return branchId;
         }
         return null;
+    }
+
+    /** Validate the approved optional native carrier before any durable append. */
+    private void validateNativeCarrier(String eventType, Object payload, String correlationId) {
+        if (!"assistant.responded".equals(eventType)) {
+            return;
+        }
+        com.fasterxml.jackson.databind.JsonNode message = objectMapper.valueToTree(payload).path("message");
+        boolean any = message.has("apiTypeId") || message.has("apiTypeVersion") || message.has("nativeRecords");
+        if (!any) {
+            return;
+        }
+        if (!message.path("apiTypeId").isTextual() || !message.path("apiTypeVersion").isIntegralNumber()
+                || !message.path("apiTypeVersion").canConvertToInt()
+                || !message.path("nativeRecords").isArray() || message.path("nativeRecords").isEmpty()
+                || correlationId == null || correlationId.isBlank()) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Incomplete native history carrier");
+        }
+        String type = message.path("apiTypeId").asText();
+        int version = message.path("apiTypeVersion").asInt();
+        if (!apiTypes.contains(type, version) || !"chat".equals(apiTypes.operation(type, version))) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Native history requires a registered chat Type");
+        }
+        for (var record : message.path("nativeRecords")) {
+            if (!record.isObject()) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Native history records must be objects");
+            }
+        }
     }
 
     private String toJson(Object payload) {

@@ -43,6 +43,9 @@ import java.util.function.Supplier;
  */
 @Service
 public class ChatSubmissionService {
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService apiRequestTemplates;
     public static final String SPAWN_TOOL_NAME = "spawn_agent";
 
     private static final int MAX_SPAWN_ARGUMENTS_PREVIEW_LENGTH = 4096;
@@ -503,6 +506,11 @@ public class ChatSubmissionService {
                                 List<String> attachmentIds, String requestedPrincipalId,
                                 boolean followUpAdmission) {
         Session session = bindOrValidateAgentSession(sessionId, userId, workspaceId, requestedPrincipalId);
+        var requestSnapshot = apiRequestTemplates.admissionSnapshot(session);
+        provider = session.getModelProvider();
+        model = session.getModelName();
+        providerConnectionId = session.getProviderConnectionId();
+        connectionRevision = session.getConnectionRevision();
         if (session.getDeleteRequestedAt() != null) {
             throw new CpApiException(HttpStatus.CONFLICT, "SESSION_DELETING",
                     "Session deletion is in progress");
@@ -527,9 +535,7 @@ public class ChatSubmissionService {
         chatRun.setBranchId(branchId);
         // PLAN-0414 T1.4: admission fixes one atomic Context Template snapshot
         // from the Session binding; template edits cannot mutate a live Run.
-        chatRun.setContextTemplateSnapshot(contextTemplateService.resolveSnapshot(
-                session.getContextTemplateLayer(), session.getContextTemplateId().toString(),
-                session.getContextTemplateVersion(), userId, workspaceId));
+        chatRun.setContextTemplateSnapshot(requestSnapshot);
         chatRun.setLeaseOwner(leaseOwner);
         chatRun.setLeaseExpiresAt(Instant.now().plus(LEASE_TTL));
         chatRun.setProviderConnectionId(providerConnectionId);
