@@ -610,4 +610,89 @@ class ConfigServiceTest {
         assertEquals("1800", entries.get("defaultTimeoutSecs"));
         assertEquals("600", entries.get("maxTimeoutSecs"));
     }
+
+    // ------------------------------------------------------------------
+    // PLAN-0492: agent-runtime run budget — 值键写层 / ceiling 键级 instance 锁 /
+    // schema / 代码默认 / token 键不被凭据拦截
+    // ------------------------------------------------------------------
+
+    @Test
+    void putLayer_runBudgetValuesAreUserAndWorkspaceWritable() {
+        configService.putLayer("instance", "agent-runtime",
+            Map.of("runMaxTurns", "25", "runMaxElapsedSeconds", "600", "runMaxTokens", "0"),
+            "admin", null, null);
+        configService.putLayer("user", "agent-runtime",
+            Map.of("runMaxTurns", "10"), "user", userA, null);
+        configService.putLayer("workspace", "agent-runtime",
+            Map.of("runMaxTurns", "5"), "user", null, wsA);
+
+        assertEquals("25", configService.resolve("agent-runtime", "runMaxTurns", null, null));
+        assertEquals("10", configService.resolve("agent-runtime", "runMaxTurns", userA, null));
+        assertEquals("5", configService.resolve("agent-runtime", "runMaxTurns", userA, wsA));
+        assertEquals("workspace",
+            configService.effective("agent-runtime", userA, wsA).source());
+    }
+
+    @Test
+    void putLayer_runBudgetCeilingsAreInstanceOnly() {
+        configService.putLayer("instance", "agent-runtime",
+            Map.of("runMaxTurnsCeiling", "100",
+                "runMaxElapsedSecondsCeiling", "3600",
+                "runMaxTokensCeiling", "0"),
+            "admin", null, null);
+        assertEquals("100",
+            configService.layerEntries("instance", "agent-runtime", null, null)
+                .get("runMaxTurnsCeiling"));
+
+        for (String key : List.of("runMaxTurnsCeiling", "runMaxElapsedSecondsCeiling",
+                "runMaxTokensCeiling")) {
+            assertThrows(ConfigService.ConfigAccessException.class, () ->
+                configService.putLayer("user", "agent-runtime",
+                    Map.of(key, "50"), "user", userA, null),
+                "user layer must not write " + key);
+            assertThrows(ConfigService.ConfigAccessException.class, () ->
+                configService.putLayer("workspace", "agent-runtime",
+                    Map.of(key, "50"), "user", null, wsA),
+                "workspace layer must not write " + key);
+        }
+    }
+
+    @Test
+    void effective_runBudget_includesCodeDefaultsWhenUnset() {
+        ConfigService.EffectiveConfig effective = configService.effective("agent-runtime", null, null);
+
+        assertEquals("default", effective.source());
+        assertEquals("25", effective.entries().get("runMaxTurns"));
+        assertEquals("600", effective.entries().get("runMaxElapsedSeconds"));
+        assertEquals("0", effective.entries().get("runMaxTokens"));
+        assertEquals("100", effective.entries().get("runMaxTurnsCeiling"));
+        assertEquals("3600", effective.entries().get("runMaxElapsedSecondsCeiling"));
+        assertEquals("0", effective.entries().get("runMaxTokensCeiling"));
+    }
+
+    @Test
+    void putLayer_runBudgetSchemaRejectsInvalidValues() {
+        // 六键均 >=0（0 = 该维度不启用 / ceiling 不钳制）；负数与未知键被拒。
+        assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "agent-runtime",
+                Map.of("runMaxTurns", "-1"), "admin", null, null));
+        assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "agent-runtime",
+                Map.of("runMaxElapsedSecondsCeiling", "-5"), "admin", null, null));
+        Map<String, String> extra = new java.util.LinkedHashMap<>();
+        extra.put("runMaxTurns", "25");
+        extra.put("unknownBudgetKey", "1");
+        assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "agent-runtime", extra, "admin", null, null));
+    }
+
+    @Test
+    void putLayer_runMaxTokensIsNotTreatedAsProviderSecret() {
+        // 凭据拦截规则只对含 token 的键生效；runMaxTokens 与 maxTokens 一样是生成参数。
+        configService.putLayer("instance", "agent-runtime",
+            Map.of("runMaxTokens", "65536"), "admin", null, null);
+
+        assertEquals("65536", configService.layerEntries("instance", "agent-runtime", null, null)
+            .get("runMaxTokens"));
+    }
 }

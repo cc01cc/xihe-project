@@ -107,6 +107,7 @@ __all__ = [
     "get_llm_initialization_status",
     "_refresh_embedding_config",
     "_resolve_policy_for_model",
+    "_resolve_run_budget",
     "_model_window_tokens",
     "_estimate_input_tokens",
     "_content_length",
@@ -546,6 +547,89 @@ def _resolve_policy_for_model(
         policy.recovery_band,
     )
     return policy
+
+
+# PLAN-0492 T2.1: run-budget keys and code defaults for the `agent-runtime`
+# domain (mirrors CP CODE_DEFAULTS). Token stays 0 = observation-only until the
+# p95 x1.5 backfill; ceilings 0 = no clamp.
+_RUN_BUDGET_KEYS = {
+    "runMaxTurns": "max_turns",
+    "runMaxElapsedSeconds": "max_elapsed_seconds",
+    "runMaxTokens": "max_tokens",
+}
+_RUN_BUDGET_CEILING_KEYS = {
+    "runMaxTurnsCeiling": "max_turns",
+    "runMaxElapsedSecondsCeiling": "max_elapsed_seconds",
+    "runMaxTokensCeiling": "max_tokens",
+}
+_RUN_BUDGET_CODE_DEFAULTS = {
+    "runMaxTurns": 25,
+    "runMaxElapsedSeconds": 600,
+    "runMaxTokens": 0,
+    "runMaxTurnsCeiling": 100,
+    "runMaxElapsedSecondsCeiling": 3600,
+    "runMaxTokensCeiling": 0,
+}
+
+
+def _parse_budget_int(raw: str | None, fallback: int) -> int:
+    """Config string -> non-negative int; blank/invalid/negative falls back."""
+    if raw is None or raw == "":
+        return fallback
+    try:
+        value = int(raw.strip())
+    except (TypeError, ValueError):
+        logger.warning("Ignoring invalid run budget config value {!r}", raw)
+        return fallback
+    if value < 0:
+        logger.warning("Ignoring negative run budget config value {}", value)
+        return fallback
+    return value
+
+
+def _resolve_run_budget(
+    user_overrides: dict[str, dict[str, str]] | None = None,
+    workspace_overrides: dict[str, dict[str, str]] | None = None,
+):
+    """PLAN-0492 T2.1: effective RunBudget for this run = clamped value keys.
+
+    Values resolve through the run merge chain (pulled effective -> user ->
+    workspace) and are clamped by the instance-only ceilings:
+    ``ceiling > 0 ? min(value, ceiling) : value`` (decision #19). Each clamp is
+    logged as ``run_budget_clamp`` with the key origin (aligned with the
+    existing ``job_timeout_clamp`` logging).
+    """
+    from xihe_agent.interfaces.agent_runner import RunBudget
+
+    entries = dict(config_client.get_domain("agent-runtime"))
+    if user_overrides:
+        entries.update(user_overrides.get("agent-runtime", {}))
+    if workspace_overrides:
+        entries.update(workspace_overrides.get("agent-runtime", {}))
+    resolved = {
+        key: _parse_budget_int(entries.get(key), default)
+        for key, default in _RUN_BUDGET_CODE_DEFAULTS.items()
+    }
+    for value_key, field_name in _RUN_BUDGET_KEYS.items():
+        ceiling_key = next(
+            ceiling for ceiling, field in _RUN_BUDGET_CEILING_KEYS.items() if field == field_name
+        )
+        value = resolved[value_key]
+        ceiling = resolved[ceiling_key]
+        if ceiling > 0 and value > ceiling:
+            logger.info(
+                "[LIFECYCLE] service=agent event=run_budget_clamp key={} value={} ceiling={} effective={}",
+                value_key,
+                value,
+                ceiling,
+                ceiling,
+            )
+            resolved[value_key] = ceiling
+    return RunBudget(
+        max_turns=resolved["runMaxTurns"],
+        max_elapsed_seconds=resolved["runMaxElapsedSeconds"],
+        max_tokens=resolved["runMaxTokens"],
+    )
 
 
 def _model_window_tokens(

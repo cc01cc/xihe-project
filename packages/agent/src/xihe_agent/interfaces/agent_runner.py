@@ -32,11 +32,13 @@ class AgentEvent:
 
 @dataclass(frozen=True)
 class RunBudget:
-    """PLAN-0492: CP-resolved cumulative budget for one ChatRun.
+    """PLAN-0492: effective cumulative budget for one ChatRun.
 
-    CP owns the effective value and its ceiling clamp; the runner only
-    enforces. A zero value disables that dimension (observation-only):
-    the runner still counts and reports it, but never stops the run.
+    Resolved from the CP ``agent-runtime`` config (merged effective + run
+    overrides) and clamped by the instance-only ceilings at consumption time
+    (``ceiling > 0 ? min(value, ceiling) : value``); the runner only enforces.
+    A zero value disables that dimension (observation-only): the runner still
+    counts and reports it, but never stops the run.
 
     - ``max_turns``: 1 turn = 1 LLM call (the ``llm_usage`` event, emitted
       once per ``on_chat_model_end``).

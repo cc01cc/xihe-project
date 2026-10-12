@@ -86,7 +86,7 @@ public class ChatRunRecoveryService {
                                     List.of(run.getStatus()), "ambiguous", "ambiguous", "CP_RESTARTED",
                                     "Control plane restarted while the chat run was active",
                                     run.getTokenCount(), run.getAssistantChars(),
-                                    ChatRunTerminalService.TerminalSource.RECONCILIATION, null));
+                                    ChatRunTerminalService.TerminalSource.RECONCILIATION, null, null));
                     if (result.committed()) {
                         ambiguous++;
                         logger.info("[LIFECYCLE] service=cp event=chat_run_recovered runId={} sessionId={} status=ambiguous errorCode=CP_RESTARTED",
@@ -131,7 +131,7 @@ public class ChatRunRecoveryService {
                         new ChatRunTerminalService.TerminalRequest(run.getId().toString(),
                                 List.of("cancelling"), "cancelled", "cancelled", null, null,
                                 run.getTokenCount(), run.getAssistantChars(),
-                                ChatRunTerminalService.TerminalSource.CANCELLATION, null));
+                                ChatRunTerminalService.TerminalSource.CANCELLATION, null, null));
                 if (result.committed()) {
                     cancelled++;
                     logger.info("[LIFECYCLE] service=cp event=chat_run_recovered runId={} sessionId={} status=cancelled reason=restart_during_cancel",

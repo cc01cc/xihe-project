@@ -72,7 +72,10 @@ public class ConfigService {
 
     /** Decision #17: instructions is instance-level behaviour, never user/workspace writable. */
     private static final Map<String, Set<String>> INSTANCE_ONLY_KEYS = Map.of(
-        "agent-runtime", Set.of("instructions"));
+        "agent-runtime", Set.of("instructions",
+            // PLAN-0492 决策 #19/#20: run budget hard ceilings are instance-level
+            // only (0 = no ceiling); non-instance writes throw ConfigAccessException.
+            "runMaxTurnsCeiling", "runMaxElapsedSecondsCeiling", "runMaxTokensCeiling"));
 
     /**
      * PLAN-0343 decision #11: pricing is the single cost authority and is an
@@ -103,7 +106,17 @@ public class ConfigService {
         // until instance/env sets a positive ceiling).
         "job-policy", Map.of(
             "defaultTimeoutSecs", "3600",
-            "maxTimeoutSecs", "0"));
+            "maxTimeoutSecs", "0"),
+        // PLAN-0492 decision #17/#19/#21: agent-runtime run-budget code defaults —
+        // turns 25 / elapsed 600s (user 2026-10-12); token stays 0 (observation
+        // mode until real p95 x1.5 backfill); ceilings 0 = no clamp.
+        "agent-runtime", Map.of(
+            "runMaxTurns", "25",
+            "runMaxElapsedSeconds", "600",
+            "runMaxTokens", "0",
+            "runMaxTurnsCeiling", "100",
+            "runMaxElapsedSecondsCeiling", "3600",
+            "runMaxTokensCeiling", "0"));
 
     @Autowired
     private ConfigJpaRepository repo;
@@ -527,8 +540,12 @@ public class ConfigService {
                 || normalized.contains("password")) {
             return true;
         }
-        // maxTokens is a generation parameter, not a credential.
-        return normalized.contains("token") && !normalized.contains("maxtoken");
+        // maxTokens is a generation parameter, not a credential; runMaxTokens is
+        // the PLAN-0492 run-budget parameter (same rule).
+        if (normalized.contains("maxtoken")) {
+            return false;
+        }
+        return normalized.contains("token");
     }
 
     private List<String> validateProviderBinding(String layer, Map<String, String> entries,

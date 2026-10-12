@@ -154,6 +154,33 @@ const domainSchemas: Record<string, DomainField[]> = {
             max: 30,
         },
         { key: "toolOutputLimitBytes", label: t("settings.fieldToolOutputLimit"), type: "number" },
+        // PLAN-0492: ChatRun 累计预算（值键 user/workspace 可写；*Ceiling 仅 instance
+        // 层可写，0 = 不钳制；runMaxTokens 当前观测模式）。
+        { key: "runMaxTurns", label: t("settings.fieldRunMaxTurns"), type: "number" },
+        {
+            key: "runMaxElapsedSeconds",
+            label: t("settings.fieldRunMaxElapsedSeconds"),
+            type: "number",
+        },
+        { key: "runMaxTokens", label: t("settings.fieldRunMaxTokens"), type: "number" },
+        {
+            key: "runMaxTurnsCeiling",
+            label: t("settings.fieldRunMaxTurnsCeiling"),
+            type: "number",
+            instanceOnly: true,
+        },
+        {
+            key: "runMaxElapsedSecondsCeiling",
+            label: t("settings.fieldRunMaxElapsedSecondsCeiling"),
+            type: "number",
+            instanceOnly: true,
+        },
+        {
+            key: "runMaxTokensCeiling",
+            label: t("settings.fieldRunMaxTokensCeiling"),
+            type: "number",
+            instanceOnly: true,
+        },
     ],
     "agent-profile": [{ key: "userName", label: t("settings.fieldUserName"), type: "text" }],
     "user-preference": [

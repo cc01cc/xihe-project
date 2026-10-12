@@ -34,6 +34,7 @@ from xihe_agent.app_state import (
     _normalize_run_overrides,
     _normalize_tool_timeouts,
     _resolve_policy_for_model,
+    _resolve_run_budget,
     _to_langchain_messages,
     _token_counter,
     _validate_run_overrides,
@@ -462,6 +463,9 @@ async def chat(request: Request):
                     tools=all_tools,
                     context=context,
                     cancel_event=cancel_event,
+                    # PLAN-0492 T2.1: CP-resolved cumulative budget (ceiling-clamped
+                    # observation-only when 0); the runner only enforces.
+                    budget=_resolve_run_budget(user_overrides, workspace_overrides),
                     prune_window_chars=_resolve_policy_for_model(
                         model_override or request_config.model,
                         user_overrides,
