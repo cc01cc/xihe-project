@@ -140,6 +140,13 @@ flowchart TD
 - **已废弃表述**：旧的「四级解析链 + min 语义 + 冷启动 ×3（`firstToolCallDone`）」不再适用；冷启动宽限机制未实施，按 PLAN-0308 决策 #35 ④ **显式延期**（需要时再立）。
 - 离线兜底：各模块 `XIHE_MCP_TOOL_TIMEOUT_S`（Agent）/ `XIHE_EXEC_COLLECT_TIMEOUT_S`（Runtime）/ `xihe.mcp.forward-timeout-s`（CP）仅作部署者**本跳覆盖**，正常路径由 CP 预算派生，各跳不做跨层比较。
 
+**Agent Run 累计预算（PLAN-0492，2026-10-13）**
+
+- **维度与键**：`agent-runtime` 域三组键——值键 `runMaxTurns`（一轮 = 一次完成的 LLM 调用，按 `llm_usage` 事件计）、`runMaxElapsedSeconds`（累计墙钟，审批/人工等待暂停计时）、`runMaxTokens`；硬上限键 `runMaxTurnsCeiling` / `runMaxElapsedSecondsCeiling` / `runMaxTokensCeiling` 仅 instance 层可写（`0` = 不钳制），生效值 = `ceiling > 0 ? min(值, ceiling) : 值`，钳制记 `run_budget_clamp`。任一值 `0` = 该维度仅观测（仍计数上报，不停止 Run）。
+- **归属**：Agent 从 CP 配置（合并链 + run payload 层覆盖）解析生效预算并在消费时执行；CP 拥有配置面、钳制语义与 durable 终态，不重复计算。
+- **触发与终态**：超限时 Agent 发结构化 `error`（`code=RUN_BUDGET_EXHAUSTED` + `dimension=turns|elapsed|tokens`，SSE 映射必须透传 `dimension`）；CP relay 将维度写入 durable 终态（`errorDetail=budgetDimension=<dim>` + run history payload）并把 Run 收敛为 `failed`（已有助手内容时 `partial`）；UI 呈现本地化原因，接管复用普通发送/Follow-up Queue，不恢复旧 Run 图状态。
+- **不变式**：预算耗尽不替代授权/审批/沙盒门禁；非 instance 层不能扩大上限（键级锁 + 钳制）。与输入窗口预算、per-tool 超时/输出上限相互独立。
+
 | 层 | 事件 |
 |----|------|
 | SSE 协议 `AgentEvent` | `token` / `tool_call` / `tool_result` / `status` / `error` / `done`；工具事件携带 `toolCallId` + `origin`（`local`/`mcp`）供 CP 按通道事实记账，`request_approval` 工具事件抑制、以审批事件为正规记录 |
