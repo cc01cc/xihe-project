@@ -50,6 +50,8 @@ uv sync          # 安装依赖（见 pyproject.toml）
 - model 格式为 `provider/model`（litellm 要求）
 - Agent 启动和周期 refresh 使用 atomic runtime snapshot；`llmReady` 必须独立于 HTTP liveness，并按 `missing_credentials`/`invalid_credentials`/`unreachable`/`model_unavailable`/`ready` fail-closed
 - `/internal/v1/agent/chat` 显式接收 `provider`、`model` 和 `toolMode`；`toolMode=none` 不初始化 MCP，`workspace` 模式必须绑定 workspace 且不得复用其他 workspace 的 MCP context
+- type-specific sender（PLAN-0439）：Chat 按连接 `apiTypeId/version` 直发 CP 快照的用户请求体（`${xh.*}` 单遍替换、`$${...}` 字面量、结构化历史 splice 仅在约定槽位）；model/凭据/baseUrl 取租约 grant，非 chat 类型 dispatch 前 fail-closed
+- RAG 请求级适配（PLAN-0485）：`/internal/v1/agent/rag/*` 按请求携带非密 `embeddingProfile` + 一次性租约，逐请求换取 grant 构造 adapter 并按完整身份 tuple 分区（详见 [`DEV-013 §3.7`](../../docs/i18n/zh-Hans/DEV-013-agent-architecture.md)）
 - 每个 catch 必须有日志 + stacktrace
 - `interfaces/` 目录下禁止直接 import `langchain*`；LangChain 特定代码收敛到 `agent_runner/langgraph_runner.py` 和 `adapters/`
 - Agent 编排通过 `AgentRunner` 接口，不直接调用 LangGraph

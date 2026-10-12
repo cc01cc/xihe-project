@@ -27,6 +27,13 @@ public class ProviderCredentialLeaseService {
     private com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService requestTemplates;
 
     private static final Duration DEFAULT_TTL = Duration.ofMinutes(5);
+    /**
+     * Catalog discovery leases carry the wildcard instead of a concrete model:
+     * the models proxy enumerates a connection's catalog (manual models are
+     * returned by the Agent from the redeemed grant), so the dispatch-time
+     * model registration check does not apply.
+     */
+    private static final String CATALOG_WILDCARD = "*";
 
     private final ProviderCredentialLeaseRepository repository;
     private final ProviderConnectionRepository connectionRepository;
@@ -110,7 +117,7 @@ public class ProviderCredentialLeaseService {
         // validate against the connection's actual operation without a new
         // purpose column. Model applicability stays operation-aware.
         String operation = apiTypes.operation(connection.getApiTypeId(), connection.getApiTypeVersion());
-        if ("chat".equals(operation)) {
+        if ("chat".equals(operation) && !CATALOG_WILDCARD.equals(model)) {
             requestTemplates.requireModel(connection, model);
         }
         if (!connection.getProviderId().equals(providerId)) {

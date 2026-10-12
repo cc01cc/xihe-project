@@ -958,6 +958,30 @@ paths:
     put: { operationId: putWorkspaceConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }, { in: query, name: workspaceId, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Updated }, '403': { $ref: '#/components/responses/Problem' } } }
   /api/v1/config/user/{domain}:
     put: { operationId: putUserConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }], responses: { '200': { description: Updated } } }
+  /api/v1/config/embedding/effective:
+    get:
+      operationId: getEmbeddingEffectiveProfile
+      summary: Read-only effective embedding profile for the settings surface
+      description: 'PLAN-0485: CP serves the pinned V1 contract (modelId/dimension) instead of letting the client re-declare it. profile/profileScope show the whole-unit layer profile; resolved is the non-secret owner view of the same-key READY embedding connection, or null with a stable conflict code. A pure read never fails on a missing profile/connection. A client-supplied workspaceId is authorized for the caller.'
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: query, name: workspaceId, required: false, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Effective embedding profile, content: { application/json: { schema: { $ref: '#/components/schemas/EmbeddingEffectiveProfile' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+  /api/v1/config/embedding/test:
+    post:
+      operationId: testEmbeddingProfile
+      summary: Probe the resolved embedding profile through the Agent
+      description: 'PLAN-0485: resolves the authenticated caller profile, issues a one-use credential lease and asks the Agent to embed a probe text. Takes no request body (a non-empty body is rejected). The response is sanitized: no credential, provider payload or vector is returned.'
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Sanitized probe result, content: { application/json: { schema: { $ref: '#/components/schemas/EmbeddingTestResult' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '502': { $ref: '#/components/responses/Problem' }
   /api/v1/config/import:
     post: { operationId: importConfig, security: [{ bearerAuth: [] }], parameters: [{ in: query, name: layer, required: false, schema: { type: string, enum: [instance] } }], responses: { '200': { description: Imported (merge semantics) } } }
   /api/v1/config/export:
@@ -1320,6 +1344,18 @@ paths:
     get: { operationId: agentRagStats, security: [{ bearerAuth: [] }], responses: { '200': { description: RAG statistics, content: { application/json: { schema: { $ref: '#/components/schemas/RagStatsResponse' } } } }, '401': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/agent/rag/documents/{docId}:
     delete: { operationId: agentRagDelete, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: docId, required: true, schema: { type: string } }], responses: { '200': { description: Deleted, content: { application/json: { schema: { $ref: '#/components/schemas/DeletedResponse' } } } }, '401': { $ref: '#/components/responses/Problem' } } }
+  /internal/v1/agent/rag/embedding/test:
+    post:
+      operationId: agentRagEmbeddingTest
+      summary: Embedding provider probe behind the CP settings test action
+      description: 'PLAN-0485: request-scoped embedding call. CP sends the non-secret embeddingProfile plus a separate one-use embeddingCredentialLease; the Agent redeems the lease and calls the pinned Multimodal-Embedding endpoint. Errors are sanitized RFC 9457 problems with stable codes.'
+      security: [{ bearerAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [embeddingProfile, embeddingCredentialLease], properties: { embeddingProfile: { type: string, description: 'JSON string of the non-secret profile (providerId/connectionKey/modelId/providerConnectionId/connectionRevision/dimension).' }, embeddingCredentialLease: { type: string, writeOnly: true }, requestId: { type: string } } } } } }
+      responses:
+        '200': { description: 'Sanitized probe result (status/model/dimension/requestId)', content: { application/json: { schema: { $ref: '#/components/schemas/EmbeddingTestResult' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '502': { $ref: '#/components/responses/Problem' }
   /internal/v1/agent/models:
     get: { operationId: agentModelsLegacy, security: [{ bearerAuth: [] }], responses: { '200': { description: Legacy global models } } }
     post:
@@ -2801,7 +2837,25 @@ components:
     OAuthTokenRequest: { type: object, required: [userId, workspaceId, serverId, scope], properties: { userId: { type: string }, workspaceId: { type: string }, serverId: { type: string }, scope: { type: string } } }
     StatusResponse: { type: object, required: [status], properties: { status: { type: string } }, additionalProperties: true }
     DeletedResponse: { type: object, required: [deleted], properties: { deleted: { type: boolean } } }
-    RagIngestRequest: { type: object, required: [file], properties: { file: { type: string, format: binary }, chunkSize: { type: integer, default: 1000 }, chunkOverlap: { type: integer, default: 200 } } }
+    RagIngestRequest: { type: object, required: [file, embeddingProfile, embeddingCredentialLease], properties: { file: { type: string, format: binary }, chunkSize: { type: integer, default: 1000 }, chunkOverlap: { type: integer, default: 200 }, embeddingProfile: { type: string, description: 'JSON string of the CP-resolved non-secret profile; the Agent partitions every stored row by its full identity tuple.' }, embeddingCredentialLease: { type: string, writeOnly: true } } }
+    RagSearchRequest: { type: object, required: [query, embeddingProfile, embeddingCredentialLease], properties: { query: { type: string }, topK: { type: integer, default: 5 }, embeddingProfile: { type: string }, embeddingCredentialLease: { type: string, writeOnly: true } } }
+    EmbeddingEffectiveProfile:
+      type: object
+      required: [contract, profile, profileScope, resolved]
+      properties:
+        contract: { type: object, required: [modelId, dimension], properties: { modelId: { type: string }, dimension: { type: integer } }, description: 'Pinned V1 embedding contract served by CP.' }
+        profile: { type: ['object', 'null'], properties: { providerId: { type: string }, connectionKey: { type: string }, model: { type: string } } }
+        profileScope: { type: ['string', 'null'], enum: [instance, user, workspace, null] }
+        resolved: { type: ['object', 'null'], description: 'Non-secret owner view of the same-key READY embedding connection; null when absent or conflicting (code carries the stable conflict code).' }
+        code: { type: string }
+    EmbeddingTestResult:
+      type: object
+      required: [status, model, dimension, requestId]
+      properties:
+        status: { type: string, enum: [ok] }
+        model: { type: string }
+        dimension: { type: integer }
+        requestId: { type: string }
     RagIngestResponse: { type: object, required: [status, chunks, docIds], properties: { status: { type: string }, chunks: { type: integer }, docIds: { type: array, items: { type: string } } } }
     RagStatsResponse: { type: object, required: [totalDocuments], properties: { totalDocuments: { type: integer } } }
     WorkspaceExecutionSpec: { type: object, required: [workspaceId, generation, sandboxSpecHash, sandboxSpec, storageBackend, storageRef, storageMode, executionMode], properties: { workspaceId: { type: string }, generation: { type: integer }, sandboxSpecHash: { type: string }, sandboxSpec: { type: object, additionalProperties: true }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'] }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] } } }

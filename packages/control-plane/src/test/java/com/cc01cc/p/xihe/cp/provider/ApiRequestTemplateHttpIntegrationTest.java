@@ -41,6 +41,7 @@ class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
     @Autowired private SessionRepository sessions;
     @Autowired private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository connections;
     @Autowired private ApiRequestTemplateService templates;
+    @Autowired private ProviderCredentialLeaseService leases;
     @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbc;
     @Autowired private ProviderCatalogService catalog;
     private JsonNode originalSupportedPairs;
@@ -198,6 +199,176 @@ class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
         assertEquals(connection.path("revision").asLong() + 1, updated.getRevision());
     }
 
+    @Test
+    void effectiveConnectionSetOverlaysSameKeyFallsBackToUserAndUnionsDistinctKeys() throws Exception {
+        JsonNode userShared = createConnection("custom-openai-compatible", "USER", "shared", "manual",
+                java.util.List.of("m1"), null, null, "https://provider.invalid/v1", "isolated-test-only");
+        JsonNode workspaceShared = createConnection("custom-openai-compatible", "WORKSPACE", "shared", "manual",
+                java.util.List.of("m1"), null, null, "https://provider.invalid/v1", "isolated-test-only");
+
+        var effective = templates.effectiveConnections(userId, workspaceId, "custom-openai-compatible");
+        assertEquals(1, effective.size());
+        assertEquals("WORKSPACE", effective.get(0).getOwnerType());
+        assertEquals(workspaceShared.path("id").asText(), effective.get(0).getId().toString());
+
+        var disable = json.createObjectNode().put("enabled", false)
+                .put("expectedRevision", workspaceShared.path("revision").asLong());
+        assertEquals(200, send("PATCH", "/api/v1/provider-connections/" + workspaceShared.path("id").asText(),
+                disable.toString()).statusCode());
+        effective = templates.effectiveConnections(userId, workspaceId, "custom-openai-compatible");
+        assertEquals(1, effective.size());
+        assertEquals("USER", effective.get(0).getOwnerType());
+        assertEquals(userShared.path("id").asText(), effective.get(0).getId().toString());
+
+        createConnection("custom-openai-compatible", "USER", "solo", "manual", java.util.List.of("m1"),
+                null, null, "https://provider.invalid/v1", "isolated-test-only");
+        createConnection("dashscope-qwen", "USER", "emb", "manual",
+                java.util.List.of("tongyi-embedding-vision-flash-2026-03-06"),
+                "dashscope-multimodal-embedding", 1, null, "isolated-test-only");
+        effective = templates.effectiveConnections(userId, workspaceId, "custom-openai-compatible");
+        assertEquals(java.util.List.of("shared", "solo"),
+                effective.stream().map(com.cc01cc.p.xihe.cp.entity.ProviderConnection::getConnectionKey).toList(),
+                "the embedding connection must stay out of the Chat slot set");
+        assertTrue(templates.effectiveConnections(userId, workspaceId, "openai").isEmpty());
+    }
+
+    @Test
+    void credentialKeysAreRejectedAndImpactPreviewMatchesCrossScopeRemovals() throws Exception {
+        for (String body : java.util.List.of(
+                "{\"model\":\"${xh.model}\",\"messages\":[\"${xh.user_input}\"],\"apiKey\":\"leak\"}",
+                "{\"model\":\"${xh.model}\",\"messages\":[\"${xh.user_input}\"],\"authorization\":\"Bearer leak\"}",
+                "{\"model\":\"${xh.model}\",\"messages\":[\"${xh.user_input}\"],\"baseurl\":\"https://evil.invalid\"}")) {
+            var response = send("POST", "/api/v1/api-input-types/openai-chat-completions/versions/1/validate",
+                    json.writeValueAsString(Map.of("bodySource", body)));
+            assertEquals(200, response.statusCode());
+            assertEquals(false, json.readTree(response.body()).path("valid").asBoolean(), body);
+        }
+
+        var catalogDefinition = (com.fasterxml.jackson.databind.node.ObjectNode) catalog.require("custom-openai-compatible");
+        originalSupportedPairs = catalogDefinition.path("supportedApiTypes").deepCopy();
+        ((com.fasterxml.jackson.databind.node.ArrayNode) catalogDefinition.path("supportedApiTypes"))
+                .add(json.createObjectNode().put("apiTypeId", "anthropic-messages").put("version", 1));
+
+        String material = "credential-material-" + UUID.randomUUID();
+        JsonNode connection = createConnection("custom-openai-compatible", "WORKSPACE", "impact", "manual",
+                java.util.List.of("m1", "m2"), null, null, "https://provider.invalid/v1", material);
+        String id = connection.path("id").asText();
+        JsonNode definitions = json.readTree(json.readTree(send("GET",
+                "/api/v1/config/api-request-templates?layer=instance", null).body()).path("templates").asText());
+        JsonNode openai = null;
+        JsonNode anthropic = null;
+        for (JsonNode definition : definitions) {
+            if (definition.path("apiTypeId").asText().equals("openai-chat-completions")) {
+                openai = ref(definition);
+            }
+            if (definition.path("apiTypeId").asText().equals("anthropic-messages")) {
+                anthropic = ref(definition);
+            }
+        }
+        assertNotNull(openai);
+        assertNotNull(anthropic);
+
+        var innerA = json.createObjectNode();
+        innerA.set("m1", openai);
+        innerA.set("m2", openai);
+        var modelsA = json.createObjectNode();
+        modelsA.set(id, innerA);
+        assertEquals(200, send("PUT", "/api/v1/config/user/api-request-templates",
+                json.writeValueAsString(Map.of("providerModelBindings", modelsA.toString()))).statusCode());
+
+        var second = restTemplate.postForEntity(url("/api/v1/auth/register"),
+                new RegisterRequest("template-http-b-" + UUID.randomUUID() + "@test.com", TestDataFactory.PASSWORD, "Template HTTP B"),
+                AuthResponse.class);
+        assertEquals(201, second.getStatusCode().value());
+        assertNotNull(second.getBody());
+        String userB = second.getBody().getUser().getId();
+        // A second user-scope row for the same connection (the user-scope write
+        // path itself is exercised by the request above; the token workspace
+        // claim is JWT-bound, so a second scope is seeded directly).
+        var innerB = json.createObjectNode();
+        innerB.set("m1", openai);
+        var modelsB = json.createObjectNode();
+        modelsB.set(id, innerB);
+        jdbc.update("INSERT INTO config (id, layer, domain, config_key, config_value, user_id, updated_at, created_at) "
+                        + "VALUES (?, 'user', 'api-request-templates', 'providerModelBindings', ?, ?, now(), now())",
+                UUID.randomUUID(), modelsB.toString(), UUID.fromString(userB));
+
+        Session pinned = new Session(workspaceId, userId, "Rebind count");
+        pinned.setId(UUID.randomUUID());
+        pinned.setProviderConnectionId(id);
+        sessions.saveAndFlush(pinned);
+
+        var preview = send("GET", "/api/v1/provider-connections/" + id
+                + "/api-type-change-impact?apiTypeId=anthropic-messages&version=1", null);
+        assertEquals(200, preview.statusCode(), preview.body());
+        JsonNode impact = json.readTree(preview.body());
+        assertEquals(3, impact.path("incompatibleOverrides").get(0).path("count").asInt(), preview.body());
+        assertEquals(1, impact.path("sessionRebindCount").asInt(), preview.body());
+
+        var patch = json.createObjectNode().put("apiTypeId", "anthropic-messages").put("apiTypeVersion", 1)
+                .put("expectedRevision", connection.path("revision").asLong()).put("confirmedTypeChange", true);
+        patch.set("connectionDefaultTemplateRef", anthropic);
+        assertEquals(200, send("PATCH", "/api/v1/provider-connections/" + id, patch.toString()).statusCode());
+        assertEquals(0, bindingCount(token, id));
+        Integer remainingB = jdbc.queryForObject(
+                "SELECT count(*) FROM config WHERE layer='user' AND domain='api-request-templates' "
+                        + "AND user_id = ? AND config_value LIKE ?",
+                Integer.class, UUID.fromString(userB), "%" + id + "%");
+        assertEquals(0, remainingB, "the second user scope must lose its overrides too");
+
+        Integer leaked = jdbc.queryForObject(
+                "SELECT count(*) FROM config WHERE domain='api-request-templates' AND config_value LIKE ?",
+                Integer.class, "%" + material + "%");
+        assertEquals(0, leaked, "credential material must never reach the template config domain");
+    }
+
+    @Test
+    void catalogWildcardLeaseEnumeratesManualConnectionsWithoutModelRegistration() throws Exception {
+        JsonNode connection = createConnection("custom-openai-compatible", "USER", "catalog", "manual",
+                java.util.List.of("m1"), null, null, "https://provider.invalid/v1", "isolated-test-only");
+        String connectionId = connection.path("id").asText();
+        long revision = connection.path("revision").asLong();
+
+        var lease = leases.issue(userId, workspaceId, null, null, connectionId, "custom-openai-compatible", "*");
+        assertNotNull(lease.token());
+        var grant = leases.redeem(new ProviderCredentialLeaseService.RedeemRequest(
+                lease.token(), null, connectionId, "custom-openai-compatible", "*", revision));
+        assertEquals("manual", grant.modelDiscovery());
+        assertEquals(java.util.List.of("m1"), grant.manualModels());
+        assertNotNull(grant.apiKey());
+
+        CpApiException failure = assertThrows(CpApiException.class, () -> leases.issue(
+                userId, workspaceId, null, null, connectionId, "custom-openai-compatible", "not-registered"));
+        assertEquals("INVALID_REQUEST", failure.getCode());
+    }
+
+    private JsonNode createConnection(String provider, String scope, String key, String discovery,
+                                      java.util.List<String> models, String apiTypeId, Integer apiTypeVersion,
+                                      String baseUrl, String apiKey) throws Exception {
+        var node = json.createObjectNode().put("providerId", provider).put("label", "T3.2 " + key).put("scope", scope)
+                .put("apiKey", apiKey).put("modelDiscovery", discovery).put("connectionKey", key);
+        node.set("manualModels", json.valueToTree(models));
+        if (baseUrl != null) {
+            node.put("baseUrl", baseUrl);
+        }
+        if (apiTypeId != null) {
+            node.put("apiTypeId", apiTypeId).put("apiTypeVersion", apiTypeVersion);
+        }
+        var created = send("POST", "/api/v1/provider-connections", node.toString());
+        assertEquals(201, created.statusCode(), created.body());
+        JsonNode connection = json.readTree(created.body());
+        var verified = send("POST", "/api/v1/provider-connections/" + connection.path("id").asText() + "/verify", null);
+        assertEquals(200, verified.statusCode(), verified.body());
+        return json.readTree(verified.body()).path("connection");
+    }
+
+    private int bindingCount(String bearer, String connectionId) throws Exception {
+        var layer = json.readTree(sendAs(bearer, workspaceId, "GET",
+                "/api/v1/config/api-request-templates?layer=user", null).body());
+        JsonNode node = json.readTree(layer.path("providerModelBindings").asText()).path(connectionId);
+        return node.isObject() ? node.size() : 0;
+    }
+
     private JsonNode ref(JsonNode definition) {
         return json.createObjectNode().put("layer", "instance").put("templateId", definition.path("id").asText())
                 .put("version", definition.path("version").asInt());
@@ -209,8 +380,12 @@ class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
     }
 
     private HttpResponse<String> send(String method, String path, String body) throws Exception {
+        return sendAs(token, workspaceId, method, path, body);
+    }
+
+    private HttpResponse<String> sendAs(String bearer, String workspace, String method, String path, String body) throws Exception {
         return http.send(HttpRequest.newBuilder(URI.create(url(path))).timeout(Duration.ofSeconds(20))
-                .header("Authorization", "Bearer " + token).header("X-Workspace-Id", workspaceId)
+                .header("Authorization", "Bearer " + bearer).header("X-Workspace-Id", workspace)
                 .header("Content-Type", "application/json").header("X-Request-Id", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
                 .method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body)).build(),
                 HttpResponse.BodyHandlers.ofString());
