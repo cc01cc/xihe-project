@@ -80,8 +80,6 @@ __all__ = [
     "_runtime_refresh_lock",
     "_instance_id",
     "embedding_model",
-    "_embedding_api_key",
-    "_embedding_api_base",
     "embedding_enabled",
     "shared_pg_engine",
     "_token_counter",
@@ -176,8 +174,6 @@ run_cancel_registry = RunCancelRegistry()
 # RAG
 PG_DSN = get_env("XIHE_PG_DSN") or "postgresql+psycopg://xihe:@localhost:12634/xihe"
 embedding_model: str | None = None
-_embedding_api_key: str | None = None
-_embedding_api_base: str | None = None
 embedding_enabled = False
 # PLAN-0485: the process shares only the DB engine/pool. Embedding adapters,
 # credential grants and per-profile stores are request-scoped; the legacy
@@ -211,7 +207,7 @@ def shared_pg_engine() -> Any:
 
 
 def _refresh_embedding_config() -> None:
-    global embedding_model, _embedding_api_key, _embedding_api_base
+    global embedding_model
     global embedding_enabled
 
     embedding_model = config_client.get("embedding", "profile")

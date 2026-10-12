@@ -26,8 +26,9 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const SUPPORTED_MODEL = "tongyi-embedding-vision-flash-2026-03-06";
-const SUPPORTED_DIMENSION = 768;
+// Pre-load fallback only; the server-served contract wins once loaded.
+const FALLBACK_MODEL = "tongyi-embedding-vision-flash-2026-03-06";
+const FALLBACK_DIMENSION = 768;
 
 const connections = ref<ProviderConnection[]>([]);
 const effective = ref<EmbeddingEffectiveProfile | null>(null);
@@ -37,6 +38,9 @@ const testResult = ref<EmbeddingTestResult | null>(null);
 const loading = ref(true);
 
 const candidateConnections = computed(() => embeddingConnections(connections.value));
+
+const contractModel = computed(() => effective.value?.contract?.modelId ?? FALLBACK_MODEL);
+const contractDimension = computed(() => effective.value?.contract?.dimension ?? FALLBACK_DIMENSION);
 
 const selectedConnection = computed(() =>
     candidateConnections.value.find((item) => item.id === selectedConnectionId.value) ?? null,
@@ -81,7 +85,7 @@ async function handleSave() {
             {
                 providerId: selectedConnection.value.providerId,
                 connectionKey: selectedConnection.value.connectionKey,
-                model: SUPPORTED_MODEL,
+                model: contractModel.value,
             },
             props.workspaceId,
         );
@@ -170,9 +174,9 @@ onMounted(load);
 
                 <dl class="grid grid-cols-2 gap-x-4 gap-y-1 text-sm" data-testid="embedding-contract">
                     <dt class="text-muted-foreground">{{ t("settings.embeddingModel") }}</dt>
-                    <dd class="font-mono text-xs break-all">{{ SUPPORTED_MODEL }}</dd>
+                    <dd class="font-mono text-xs break-all">{{ contractModel }}</dd>
                     <dt class="text-muted-foreground">{{ t("settings.embeddingDimension") }}</dt>
-                    <dd class="font-mono">{{ SUPPORTED_DIMENSION }}</dd>
+                    <dd class="font-mono">{{ contractDimension }}</dd>
                     <template v-if="effective?.profile">
                         <dt class="text-muted-foreground">{{ t("settings.embeddingEffectiveScope") }}</dt>
                         <dd>{{ effective.profileScope }}</dd>

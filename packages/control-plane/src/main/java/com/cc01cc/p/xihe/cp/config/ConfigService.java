@@ -342,6 +342,12 @@ public class ConfigService {
             }
         }
         if ("embedding".equals(domain)) {
+            if (entries.isEmpty()) {
+                // An empty PUT replaces the layer profile with nothing: delete
+                // the whole-unit row so the layer inherits again (round-4 item 1).
+                deleteKey(layer, "embedding", "profile", changedBy, userId, workspaceId);
+                return;
+            }
             validateEmbeddingLayer(layer, entries);
         }
         putLayerInternal(layer, domain, entries, changedBy, userId, workspaceId);

@@ -36,6 +36,7 @@ import java.util.UUID;
 public class EmbeddingTestController {
 
     private final EmbeddingProfileService profiles;
+    private final com.cc01cc.p.xihe.cp.service.WorkspaceService workspaceService;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5))
@@ -45,13 +46,25 @@ public class EmbeddingTestController {
 
     public EmbeddingTestController(
             EmbeddingProfileService profiles,
+            com.cc01cc.p.xihe.cp.service.WorkspaceService workspaceService,
             ObjectMapper objectMapper,
             @Value("${cp.agent-base-url:http://localhost:12632}") String agentBaseUrl,
             @Value("${cp.agent-api-token:dev-token-not-secure}") String agentApiToken) {
         this.profiles = profiles;
+        this.workspaceService = workspaceService;
         this.objectMapper = objectMapper;
         this.agentBaseUrl = agentBaseUrl.replaceAll("/+$", "");
         this.agentApiToken = agentApiToken;
+    }
+
+    /**
+     * A client-supplied workspace must be authorized for the caller before it
+     * is used for profile resolution (same rule as ConfigController).
+     */
+    private void requireWorkspaceAccess(String wsValue, String userIdValue) {
+        if (wsValue != null && !wsValue.isBlank()) {
+            workspaceService.requireAccessibleWorkspace(wsValue, userIdValue);
+        }
     }
 
     /**
@@ -76,9 +89,15 @@ public class EmbeddingTestController {
                 : queryWorkspaceId != null && !queryWorkspaceId.isBlank()
                         ? queryWorkspaceId
                         : TenantContext.getWorkspaceId();
+        requireWorkspaceAccess(wsValue, userIdValue);
         UUID workspaceId = wsValue == null || wsValue.isBlank() ? null : UUID.fromString(wsValue);
 
         Map<String, Object> response = new LinkedHashMap<>();
+        // The pinned V1 contract is served, not re-declared by the client.
+        Map<String, Object> contract = new LinkedHashMap<>();
+        contract.put("modelId", EmbeddingProfileService.FIXED_MODEL);
+        contract.put("dimension", EmbeddingProfileService.FIXED_DIMENSION);
+        response.put("contract", contract);
         EmbeddingProfileService.EffectiveProfile effective = profiles.effectiveProfile(userId, workspaceId);
         if (effective.profile() == null) {
             response.put("profile", null);
@@ -118,6 +137,7 @@ public class EmbeddingTestController {
         String wsValue = headerWorkspaceId != null && !headerWorkspaceId.isBlank()
                 ? headerWorkspaceId
                 : TenantContext.getWorkspaceId();
+        requireWorkspaceAccess(wsValue, userIdValue);
         UUID workspaceId = wsValue == null || wsValue.isBlank() ? null : UUID.fromString(wsValue);
 
         EmbeddingProfileService.ResolvedProfile profile = profiles.resolve(userId, workspaceId);

@@ -41,7 +41,6 @@ public class SessionService {
     private final SessionPolicyState sessionPolicyState;
     private final DbLockTimeout dbLockTimeout;
     private final AgentPrincipalService agentPrincipalService;
-    private final ContextTemplateService contextTemplateService;
     private final EntityManager entityManager;
     // PLAN-0470 (decision #15): cross-domain Session cleanup goes through the
     // Context/MCP/Policy owner services inside this delete transaction — the
@@ -60,7 +59,6 @@ public class SessionService {
                           SessionPolicyState sessionPolicyState,
                           DbLockTimeout dbLockTimeout,
                           AgentPrincipalService agentPrincipalService,
-                          ContextTemplateService contextTemplateService,
                           EntityManager entityManager,
                           ContextService contextService,
                           McpInvocationService mcpInvocationService,
@@ -75,7 +73,6 @@ public class SessionService {
         this.sessionPolicyState = sessionPolicyState;
         this.dbLockTimeout = dbLockTimeout;
         this.agentPrincipalService = agentPrincipalService;
-        this.contextTemplateService = contextTemplateService;
         this.entityManager = entityManager;
         this.contextService = contextService;
         this.mcpInvocationService = mcpInvocationService;
@@ -358,23 +355,6 @@ public class SessionService {
         session.setContextTemplateLayer(snapshot.path("layer").asText());
         session.setContextTemplateId(UUID.fromString(snapshot.path("templateId").asText()));
         session.setContextTemplateVersion(snapshot.path("version").asInt());
-    }
-
-    @Transactional
-    public Session updateContextTemplate(String sessionId, String userId, String workspaceId,
-                                         String layer, String templateId, int version) {
-        Session session = lockCurrentForMutation(sessionId, userId, workspaceId);
-        ContextTemplateService.TemplateBinding binding = contextTemplateService.binding(
-                layer, templateId, version, "explicit", UUID.fromString(userId), UUID.fromString(workspaceId));
-        applyContextTemplateBinding(session, binding);
-        return sessionRepository.save(session);
-    }
-
-    private static void applyContextTemplateBinding(Session session,
-                                                     ContextTemplateService.TemplateBinding binding) {
-        session.setContextTemplateLayer(binding.layer());
-        session.setContextTemplateId(UUID.fromString(binding.templateId()));
-        session.setContextTemplateVersion(binding.version());
     }
 
     private void bindProviderConnection(

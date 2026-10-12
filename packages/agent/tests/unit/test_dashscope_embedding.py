@@ -13,10 +13,10 @@ import httpx
 import pytest
 
 from xihe_agent.rag.dashscope import (
-    DashScopeEmbeddings,
-    EmbeddingProviderError,
     SUPPORTED_DIMENSION,
     SUPPORTED_MODEL,
+    DashScopeEmbeddings,
+    EmbeddingProviderError,
     partition_fields,
     validate_profile,
 )
@@ -28,7 +28,6 @@ from xihe_agent.rag.store import (
     partition_filter,
     partition_metadata,
 )
-
 
 PROFILE: dict[str, Any] = {
     "workspaceId": "11111111-1111-1111-1111-111111111111",
@@ -270,9 +269,13 @@ async def test_add_document_inserts_all_chunks_in_one_transaction(monkeypatch):
     doc_id = await store.add_document(["one", "two", "three"], PROFILE, "notes.pdf")
     assert doc_id
     inserts = [entry for entry in engine.statements if "INSERT INTO" in entry[0]]
-    assert len(inserts) == 3
+    # One executemany call carries all three rows (single transaction, no
+    # per-chunk round-trips).
+    assert len(inserts) == 1
+    _, rows = inserts[0]
+    assert isinstance(rows, list) and len(rows) == 3
     doc_ids = set()
-    for _, params in inserts:
+    for params in rows:
         assert params["workspace_id"] == PROFILE["workspaceId"]
         assert params["doc_id"] == doc_id
         assert params["filename"] == "notes.pdf"

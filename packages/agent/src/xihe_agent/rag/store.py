@@ -41,9 +41,6 @@ PARTITION_COLUMNS: list[Column] = [
 ]
 
 PARTITION_KEYS = [column.name for column in PARTITION_COLUMNS]
-# The partition predicate covers the identity tuple; doc_id/filename are
-# document columns inside the partition, not identity fields.
-IDENTITY_KEYS = PARTITION_KEYS[:-2]
 
 
 class VectorSchemaError(RuntimeError):
@@ -221,15 +218,19 @@ class VectorStore:
             f'INSERT INTO "public"."{TABLE_NAME}" ({", ".join(columns)}) '
             f'VALUES ({", ".join(placeholders)})'
         )
+        rows: list[dict[str, Any]] = []
+        for chunk_text, vector in zip(chunks, vectors):
+            params: dict[str, Any] = {
+                "chunk_id": str(uuid4()),
+                "content": chunk_text,
+                "embedding": f"[{', '.join(repr(float(value)) for value in vector)}]",
+            }
+            params.update(metadata)
+            rows.append(params)
         async with engine.begin() as conn:
-            for chunk_text, vector in zip(chunks, vectors):
-                params: dict[str, Any] = {
-                    "chunk_id": str(uuid4()),
-                    "content": chunk_text,
-                    "embedding": f"[{', '.join(repr(float(value)) for value in vector)}]",
-                }
-                params.update(metadata)
-                await conn.execute(text(insert_sql), params)
+            # One executemany call keeps the whole document atomic while avoiding
+            # one round-trip per chunk.
+            await conn.execute(text(insert_sql), rows)
         return doc_id
 
     async def search(
@@ -296,18 +297,20 @@ class VectorStore:
             value = result.scalar()
             return int(value) if value is not None else 0
 
-    async def documents(self, profile: dict[str, Any]) -> list[dict[str, Any]]:
+    async def documents(self, profile: dict[str, Any], limit: int = 500) -> list[dict[str, Any]]:
         engine = await self._ensure_engine()
         if not await self._table_exists(engine):
             return []
         predicate = partition_filter(profile)
         clause, params = _sql_predicate(predicate)
+        params = dict(params)
+        params["limit"] = max(1, min(int(limit), 5000))
         async with engine.connect() as conn:
             result = await conn.execute(
                 text(
                     f'SELECT "doc_id", MAX("filename") AS filename, COUNT(*) AS chunks '
                     f'FROM "public"."{TABLE_NAME}" WHERE {clause} '
-                    f'GROUP BY "doc_id" ORDER BY "doc_id"'
+                    f'GROUP BY "doc_id" ORDER BY "doc_id" LIMIT :limit'
                 ),
                 params,
             )

@@ -51,22 +51,6 @@ from xihe_agent.llm.models import fetch_model_catalog  # noqa: F401  (import par
 
 router = APIRouter()
 
-_SAFE_CONTEXT_DIAGNOSTIC_CODES = {
-    "root_agents_md_missing",
-    "runtime_environment_missing",
-    "tool_definitions_max_tools_reached",
-    "tool_definitions_budget_truncated",
-    "artifact_status_available",
-    "artifact_status_expired",
-    "artifact_status_unavailable",
-    "artifact_status_unknown",
-    "invalid_session_workspace_binding",
-    "unsupported_tree_root",
-    "runtime_returned_invalid_path",
-    "entry_limit_reached",
-}
-
-
 def _rag_config_defaults() -> dict[str, Any]:
     """PLAN-0307 T2.4: RAG defaults come from the DB `rag` domain; request params win."""
     from xihe_agent.app_state import embedding_enabled  # noqa: F401
@@ -569,4 +553,4 @@ async def chat(request: Request):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-__all__ = ["router", "_rag_config_defaults", "_SAFE_CONTEXT_DIAGNOSTIC_CODES", "problem_details"]
+__all__ = ["router", "_rag_config_defaults", "problem_details"]

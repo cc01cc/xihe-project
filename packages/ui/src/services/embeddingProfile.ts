@@ -17,6 +17,8 @@ export interface EmbeddingEffectiveProfile {
     profile: { providerId: string; connectionKey: string; model: string } | null;
     profileScope: string | null;
     resolved: EmbeddingResolvedProfile | null;
+    /** Server-owned pinned contract; clients must not re-declare it. */
+    contract?: { modelId: string; dimension: number };
     code?: string;
 }
 

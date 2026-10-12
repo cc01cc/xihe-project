@@ -2,7 +2,6 @@ package com.cc01cc.p.xihe.cp.config;
 
 import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
-import com.cc01cc.p.xihe.cp.provider.ApiInputTypeService;
 import com.cc01cc.p.xihe.cp.provider.ProviderCredentialLeaseService;
 import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
@@ -31,8 +30,7 @@ class EmbeddingProfileServiceTest {
     private final EnvOverlayRegistry envOverlay = mock(EnvOverlayRegistry.class);
     private final ProviderCredentialLeaseService leaseService = mock(ProviderCredentialLeaseService.class);
     private final EmbeddingProfileService service = new EmbeddingProfileService(
-            configs, connections, envOverlay,
-            new ApiInputTypeService(new ObjectMapper()), leaseService, new ObjectMapper());
+            configs, connections, envOverlay, leaseService, new ObjectMapper());
 
     private static final UUID USER = UUID.fromString("22222222-2222-2222-2222-222222222222");
     private static final UUID WORKSPACE = UUID.fromString("11111111-1111-1111-1111-111111111111");

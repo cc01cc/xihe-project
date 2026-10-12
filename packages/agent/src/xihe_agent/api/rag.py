@@ -31,14 +31,6 @@ from xihe_agent.rag.store import VectorSchemaError, VectorStore
 
 router = APIRouter()
 
-REDEEM_ATTEMPTED_CODES = {
-    "EMBEDDING_PROVIDER_UNREACHABLE",
-    "EMBEDDING_PROVIDER_AUTH_FAILED",
-    "EMBEDDING_RESPONSE_INVALID",
-    "EMBEDDING_DIMENSION_MISMATCH",
-}
-
-
 def _rag_config_defaults() -> dict[str, int | float]:
     """PLAN-0307 T2.4: RAG defaults come from the DB `rag` domain; request params win."""
     from xihe_agent.app_state import config_client

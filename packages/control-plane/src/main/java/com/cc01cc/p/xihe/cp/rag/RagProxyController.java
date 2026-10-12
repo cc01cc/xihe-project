@@ -123,7 +123,8 @@ public class RagProxyController {
             HttpResponse<String> response = httpClient.send(agentRequest, HttpResponse.BodyHandlers.ofString());
             Map<String, Object> payload = objectMapper.readValue(
                     response.body(), new TypeReference<Map<String, Object>>() { });
-            return mapAgentResponse(response.statusCode(), payload, requestId);
+            requireOk(response.statusCode(), payload, requestId);
+            return ResponseEntity.ok(payload);
         } catch (CpApiException e) {
             throw e;
         } catch (Exception e) {
@@ -213,16 +214,6 @@ public class RagProxyController {
                 : status >= 500 ? HttpStatus.BAD_GATEWAY
                 : HttpStatus.BAD_REQUEST;
         throw new CpApiException(http, code, "RAG operation failed", requestId);
-    }
-
-    private ResponseEntity<Map<String, Object>> mapAgentResponse(
-            int status, Map<String, Object> payload, String requestId) {
-        if (status >= 200 && status < 300) {
-            return ResponseEntity.ok(payload);
-        }
-        String code = String.valueOf(payload.getOrDefault("code", "EMBEDDING_PROVIDER_UNREACHABLE"));
-        HttpStatus http = status >= 500 ? HttpStatus.BAD_GATEWAY : HttpStatus.CONFLICT;
-        throw new CpApiException(http, code, "RAG ingest failed", requestId);
     }
 
     private UUID currentUserId() {

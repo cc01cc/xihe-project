@@ -71,7 +71,8 @@ public class ApiRequestValidator {
                 if (field.getKey().contains("${")) {
                     errors.add(new Diagnostic("INVALID_VARIABLE_POSITION", path, "Variables cannot occur in object keys"));
                 }
-                if (Set.of("api_key", "apiKey", "authorization", "headers", "endpoint", "baseUrl").contains(field.getKey())) {
+                if (Set.of("api_key", "apiKey", "api-key", "apikey", "authorization", "credentials",
+                        "credential", "headers", "endpoint", "baseUrl", "baseurl").contains(field.getKey())) {
                     errors.add(new Diagnostic("RUNTIME_FIELD_CONFLICT", path, "Transport and credentials are runtime-owned"));
                 }
                 walk(field.getValue(), path + "." + field.getKey(), input, errors);

@@ -20,9 +20,6 @@ public class Session {
 
     public static final String KIND_SPAWN = "spawn";
     public static final String KIND_FORK = "fork";
-    public static final String DEFAULT_CONTEXT_TEMPLATE_LAYER = "instance";
-    public static final UUID DEFAULT_CONTEXT_TEMPLATE_ID =
-            UUID.fromString("00000000-0000-4000-8000-000000000001");
 
     @Id
     @Column(name = "id", columnDefinition = "uuid")

@@ -14,7 +14,6 @@ class ApiRequestError(RuntimeError):
     """Safe, classified failure; never includes provider body or credentials."""
 
     def __init__(self, code: str, status: int = 400):
-        self.diagnostic = code
         self.code = {
             "LLM_PROVIDER_INVALID_RESPONSE": "AGENT_STREAM_FAILED",
             "LLM_PROVIDER_STREAM_TRUNCATED": "AGENT_STREAM_FAILED",
@@ -48,7 +47,6 @@ class ChatApiType:
     path: str
     input_field: str
     version: int = 1
-    operation: str = "chat"
 
 
 CHAT_TYPES = {

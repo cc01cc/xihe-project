@@ -2,7 +2,6 @@ package com.cc01cc.p.xihe.cp.config;
 
 import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
-import com.cc01cc.p.xihe.cp.provider.ApiInputTypeService;
 import com.cc01cc.p.xihe.cp.provider.ProviderCredentialLeaseService;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
@@ -11,7 +10,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -37,7 +35,6 @@ public class EmbeddingProfileService {
     private final ConfigJpaRepository configs;
     private final ProviderConnectionRepository connections;
     private final EnvOverlayRegistry envOverlay;
-    private final ApiInputTypeService apiTypes;
     private final ObjectMapper json;
 
     /** Validated, complete single-layer profile as stored under one config key. */
@@ -179,13 +176,11 @@ public class EmbeddingProfileService {
     public EmbeddingProfileService(ConfigJpaRepository configs,
                                    ProviderConnectionRepository connections,
                                    EnvOverlayRegistry envOverlay,
-                                   ApiInputTypeService apiTypes,
                                    com.cc01cc.p.xihe.cp.provider.ProviderCredentialLeaseService leaseService,
                                    ObjectMapper json) {
         this.configs = configs;
         this.connections = connections;
         this.envOverlay = envOverlay;
-        this.apiTypes = apiTypes;
         this.leaseService = leaseService;
         this.json = json;
     }
@@ -267,15 +262,5 @@ public class EmbeddingProfileService {
         view.put("profileScope", profile.profileScope());
         view.put("modelSource", profile.modelSource());
         return view;
-    }
-
-    /** Whole-layer write validator shared by PUT/import/delete (round-4 item 1). */
-    public String validateLayerValue(String layer, String value) {
-        LayerProfile parsed = parseProfile(value);
-        return parsed == null ? null : json.valueToTree(parsed).toString();
-    }
-
-    public List<String> profileKeys() {
-        return List.of("profile");
     }
 }

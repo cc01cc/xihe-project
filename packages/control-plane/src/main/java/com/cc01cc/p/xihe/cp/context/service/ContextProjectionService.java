@@ -86,11 +86,14 @@ public class ContextProjectionService {
     public ObjectNode project(String sessionId, Long afterSequence,
                               com.cc01cc.p.xihe.cp.service.BranchPathService.BranchVisibility visibility) {
         ObjectNode context = emptyContext(sessionId);
-        // A carrier replaces earlier events in its Run; a cursor cannot replay that suffix in isolation.
+        // A carrier replaces earlier events in its Run; a cursor cannot replay
+        // that suffix in isolation, so the read widens to the full history only
+        // when a carrier actually exists. Without one the incremental cursor
+        // read stays valid and bounded.
         ReplayState replay = new ReplayState();
-        List<ContextEvent> events = eventStoreService.read(sessionId, 0L, visibility);
-        boolean hasCarrier = events.stream().anyMatch(event -> "assistant.responded".equals(event.getEventType())
-                && parsePayload(event.getPayload()).path("message").has("nativeRecords"));
+        boolean hasCarrier = eventStoreService.hasNativeCarrier(sessionId);
+        List<ContextEvent> events = eventStoreService.read(
+                sessionId, hasCarrier ? 0L : afterSequence, visibility);
         for (ContextEvent event : events) {
             if (!hasCarrier && afterSequence != null && event.getSequence() <= afterSequence) {
                 continue;

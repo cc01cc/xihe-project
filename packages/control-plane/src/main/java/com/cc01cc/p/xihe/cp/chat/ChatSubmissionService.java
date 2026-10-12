@@ -18,7 +18,6 @@ import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionFollowUpItemRepository;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
-import com.cc01cc.p.xihe.cp.service.ContextTemplateService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -61,7 +60,6 @@ public class ChatSubmissionService {
     private final DbLockTimeout dbLockTimeout;
     private final ObjectMapper objectMapper;
     private final AgentPrincipalService agentPrincipalService;
-    private final ContextTemplateService contextTemplateService;
     private final com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService;
     private final EntityManager entityManager;
     private final ApprovalService approvalService;
@@ -83,7 +81,6 @@ public class ChatSubmissionService {
                                  DbLockTimeout dbLockTimeout,
                                  ObjectMapper objectMapper,
                                  AgentPrincipalService agentPrincipalService,
-                                 ContextTemplateService contextTemplateService,
                                  com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService,
                                  EntityManager entityManager,
                                  ApprovalService approvalService,
@@ -100,7 +97,6 @@ public class ChatSubmissionService {
         this.dbLockTimeout = dbLockTimeout;
         this.objectMapper = objectMapper;
         this.agentPrincipalService = agentPrincipalService;
-        this.contextTemplateService = contextTemplateService;
         this.branchPathService = branchPathService;
         this.entityManager = entityManager;
         this.approvalService = approvalService;
