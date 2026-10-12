@@ -1,9 +1,11 @@
 {
   "type": "object",
   "properties": {
-    "model": { "type": "string" },
-    "dimensions": { "type": ["integer", "string"] }
+    "profile": {
+      "type": "string",
+      "description": "Complete embedding profile unit: {providerId, connectionKey, model} serialized as JSON; empty clears the layer to inherit."
+    }
   },
-  "required": ["model", "dimensions"],
+  "required": [],
   "additionalProperties": false
 }

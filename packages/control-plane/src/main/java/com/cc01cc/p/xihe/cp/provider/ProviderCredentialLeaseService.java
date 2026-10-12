@@ -103,8 +103,14 @@ public class ProviderCredentialLeaseService {
                     "STALE_PROVIDER_CONNECTION", "Provider connection revision is stale");
         }
         connectionService.requireUsableForOwner(providerConnectionId, userId, workspaceId);
-        if (runId != null) {
-            requestTemplates.requireChat(connection);
+        // PLAN-0485 round-4 item 4: the connection's API Type operation governs
+        // lease validation instead of the presence of a runId. Chat admission
+        // keeps its explicit chat gate; a Run-bound embedding lease (0416) and
+        // an operation-scoped lease without a run (embedding test/RAG) both
+        // validate against the connection's actual operation without a new
+        // purpose column. Model applicability stays operation-aware.
+        String operation = apiTypes.operation(connection.getApiTypeId(), connection.getApiTypeVersion());
+        if ("chat".equals(operation)) {
             requestTemplates.requireModel(connection, model);
         }
         if (!connection.getProviderId().equals(providerId)) {
@@ -153,7 +159,6 @@ public class ProviderCredentialLeaseService {
                     "STALE_PROVIDER_CONNECTION", "Provider credential lease revision mismatch");
         }
         if (lease.getRunId() != null) {
-            requestTemplates.requireChat(connection);
             requestTemplates.requireModel(connection, request.model());
         }
         if (connection.getRevision() != request.connectionRevision()) {

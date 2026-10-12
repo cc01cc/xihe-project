@@ -1,5 +1,11 @@
 package com.cc01cc.p.xihe.cp.rag;
 
+import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.config.EmbeddingProfileService;
+import com.cc01cc.p.xihe.cp.config.TenantContext;
+import com.cc01cc.p.xihe.cp.provider.ProviderCredentialLeaseService;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -7,115 +13,280 @@ import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * PLAN-0485 RAG proxy: owner/profile are derived from the authenticated
+ * TenantContext, never from the request body (spec §RAG Route / Caller
+ * Matrix). Each provider-touching operation receives its own resolved
+ * profile and one-use embedding credential lease; stats/delete need only the
+ * resolved partition and no lease. Failures keep stable RFC 9457 codes and
+ * the original requestId; provider payloads never surface.
+ */
 @RestController
-    @RequestMapping("/api/v1/rag")
+@RequestMapping("/api/v1/rag")
 @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
 public class RagProxyController {
 
     private static final Logger logger = LoggerFactory.getLogger(RagProxyController.class);
 
-    private final RestTemplate restTemplate;
+    private final EmbeddingProfileService profiles;
+    private final ObjectMapper objectMapper;
+    private final HttpClient httpClient = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(5))
+            .build();
     private final String agentBaseUrl;
     private final String agentApiToken;
 
     public RagProxyController(
-            @Value("${cp.agent-url:http://localhost:12632}") String agentBaseUrl,
+            EmbeddingProfileService profiles,
+            ObjectMapper objectMapper,
+            @Value("${cp.agent-base-url:http://localhost:12632}") String agentBaseUrl,
             @Value("${cp.agent-api-token:dev-token-not-secure}") String agentApiToken) {
-        this.restTemplate = new RestTemplate();
-        this.agentBaseUrl = agentBaseUrl;
+        this.profiles = profiles;
+        this.objectMapper = objectMapper;
+        this.agentBaseUrl = agentBaseUrl.replaceAll("/+$", "");
         this.agentApiToken = agentApiToken;
     }
 
-    private HttpHeaders headersWithToken() {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(agentApiToken);
-        return headers;
+    public record SearchRequest(String query, Integer topK, Double minScore) {
     }
 
-    @GetMapping("/stats")
-    public ResponseEntity<String> stats() {
-        try {
-            HttpEntity<Void> entity = new HttpEntity<>(headersWithToken());
-            return restTemplate.exchange(agentBaseUrl + "/internal/v1/agent/rag/stats", HttpMethod.GET, entity, String.class);
-        } catch (Exception e) {
-            logger.error("RAG stats proxy failed: {}", e.getMessage(), e);
-            return problem("RAG_UNAVAILABLE", "RAG service unavailable");
-        }
+    @PostMapping("/stats")
+    public ResponseEntity<Map<String, Object>> stats() {
+        UUID userId = currentUserId();
+        UUID workspaceId = currentWorkspaceId();
+        EmbeddingProfileService.ResolvedProfile profile = profiles.resolve(userId, workspaceId);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("embeddingProfile", profiles.describe(profile));
+        Map<String, Object> agentPayload = postAgent(
+                "/internal/v1/agent/rag/stats", body, requestId(), false);
+        return ResponseEntity.ok(agentPayload);
     }
 
     @PostMapping(value = "/ingest", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<String> ingest(@RequestParam("file") MultipartFile file,
-                                          @RequestParam(value = "chunkSize", defaultValue = "1000") int chunkSize,
-                                          @RequestParam(value = "chunkOverlap", defaultValue = "200") int chunkOverlap) {
+    public ResponseEntity<Map<String, Object>> ingest(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "chunkSize", required = false) Integer chunkSize,
+            @RequestParam(value = "chunkOverlap", required = false) Integer chunkOverlap) {
+        UUID userId = currentUserId();
+        UUID workspaceId = currentWorkspaceId();
+        EmbeddingProfileService.ResolvedProfile profile = profiles.resolve(userId, workspaceId);
+        ProviderCredentialLeaseService.IssuedLease lease = profiles.issueLease(
+                profile, userId.toString(), workspaceId == null ? null : workspaceId.toString(), null, null);
+        String requestId = requestId();
         try {
             MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
-            body.add("file", new ByteArrayResource(file.getBytes(), file.getOriginalFilename()) {
+            body.add("file", new ByteArrayResource(file.getBytes()) {
                 @Override
-                public String getFilename() { return file.getOriginalFilename(); }
+                public String getFilename() {
+                    return file.getOriginalFilename();
+                }
             });
-            body.add("chunkSize", String.valueOf(chunkSize));
-            body.add("chunkOverlap", String.valueOf(chunkOverlap));
-
-            HttpHeaders headers = headersWithToken();
+            if (chunkSize != null) {
+                body.add("chunkSize", String.valueOf(chunkSize));
+            }
+            if (chunkOverlap != null) {
+                body.add("chunkOverlap", String.valueOf(chunkOverlap));
+            }
+            body.add("embeddingProfile", objectMapper.writeValueAsString(profiles.describe(profile)));
+            body.add("embeddingCredentialLease", lease.token());
+            HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.MULTIPART_FORM_DATA);
-            HttpEntity<MultiValueMap<String, Object>> request = new HttpEntity<>(body, headers);
-
-            return restTemplate.postForEntity(agentBaseUrl + "/internal/v1/agent/rag/ingest", request, String.class);
+            headers.setBearerAuth(agentApiToken);
+            HttpRequest agentRequest = HttpRequest.newBuilder(URI.create(agentBaseUrl + "/internal/v1/agent/rag/ingest"))
+                    .header("Authorization", "Bearer " + agentApiToken)
+                    .timeout(Duration.ofSeconds(120))
+                    .POST(ofMultipart(body, headers))
+                    .build();
+            HttpResponse<String> response = httpClient.send(agentRequest, HttpResponse.BodyHandlers.ofString());
+            Map<String, Object> payload = objectMapper.readValue(
+                    response.body(), new TypeReference<Map<String, Object>>() { });
+            return mapAgentResponse(response.statusCode(), payload, requestId);
+        } catch (CpApiException e) {
+            throw e;
         } catch (Exception e) {
-            logger.error("RAG ingest proxy failed: {}", e.getMessage(), e);
-            return problem("RAG_INGEST_FAILED", "RAG ingest failed");
+            logger.warn("RAG ingest proxy failed requestId={} errorType={}", requestId, e.getClass().getSimpleName());
+            throw new CpApiException(HttpStatus.BAD_GATEWAY, "EMBEDDING_PROVIDER_UNREACHABLE",
+                    "RAG ingest is unavailable");
         }
     }
 
     @PostMapping("/search")
-    public ResponseEntity<String> search(@RequestParam("query") String query,
-                                          @RequestParam(value = "topK", defaultValue = "5") int topK,
-                                          @RequestParam(value = "minScore", defaultValue = "0.0") double minScore) {
-        try {
-            MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
-            params.add("query", query);
-            params.add("topK", String.valueOf(topK));
-            params.add("minScore", String.valueOf(minScore));
-            HttpEntity<MultiValueMap<String, String>> searchEntity = new HttpEntity<>(params, headersWithToken());
-            return restTemplate.exchange(agentBaseUrl + "/internal/v1/agent/rag/search", HttpMethod.POST, searchEntity, String.class);
-        } catch (Exception e) {
-            logger.error("RAG search proxy failed: {}", e.getMessage(), e);
-            return problem("RAG_SEARCH_FAILED", "RAG search failed");
+    public ResponseEntity<Map<String, Object>> search(@RequestBody SearchRequest request) {
+        UUID userId = currentUserId();
+        UUID workspaceId = currentWorkspaceId();
+        if (request.query() == null || request.query().isBlank()) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "query is required");
         }
+        EmbeddingProfileService.ResolvedProfile profile = profiles.resolve(userId, workspaceId);
+        ProviderCredentialLeaseService.IssuedLease lease = profiles.issueLease(
+                profile, userId.toString(), workspaceId == null ? null : workspaceId.toString(), null, null);
+        String requestId = requestId();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("query", request.query());
+        if (request.topK() != null) {
+            body.put("topK", request.topK());
+        }
+        if (request.minScore() != null) {
+            body.put("minScore", request.minScore());
+        }
+        body.put("embeddingProfile", profiles.describe(profile));
+        body.put("embeddingCredentialLease", lease.token());
+        Map<String, Object> agentPayload = postAgent(
+                "/internal/v1/agent/rag/search", body, requestId, true);
+        return ResponseEntity.ok(agentPayload);
     }
 
     @DeleteMapping("/documents/{docId}")
-    public ResponseEntity<String> delete(@PathVariable String docId) {
+    public ResponseEntity<Map<String, Object>> delete(@PathVariable String docId) {
+        UUID userId = currentUserId();
+        UUID workspaceId = currentWorkspaceId();
+        if (docId == null || docId.isBlank()) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "docId is required");
+        }
+        EmbeddingProfileService.ResolvedProfile profile = profiles.resolve(userId, workspaceId);
+        String requestId = requestId();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("embeddingProfile", profiles.describe(profile));
+        Map<String, Object> agentPayload = postAgent(
+                "/internal/v1/agent/rag/documents/" + docId + "/delete", body, requestId, true);
+        return ResponseEntity.ok(agentPayload);
+    }
+
+    private Map<String, Object> postAgent(String path, Map<String, Object> body, String requestId, boolean mapErrors) {
         try {
-            HttpEntity<Void> entity = new HttpEntity<>(headersWithToken());
-            restTemplate.exchange(agentBaseUrl + "/internal/v1/agent/rag/documents/" + docId, HttpMethod.DELETE, entity, String.class);
-            return ResponseEntity.ok("{\"deleted\":true}");
+            HttpRequest agentRequest = HttpRequest.newBuilder(URI.create(agentBaseUrl + path))
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "application/json")
+                    .header("Authorization", "Bearer " + agentApiToken)
+                    .timeout(Duration.ofSeconds(60))
+                    .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body)))
+                    .build();
+            HttpResponse<String> response = httpClient.send(agentRequest, HttpResponse.BodyHandlers.ofString());
+            Map<String, Object> payload = objectMapper.readValue(
+                    response.body(), new TypeReference<Map<String, Object>>() { });
+            if (mapErrors) {
+                return requireOk(response.statusCode(), payload, requestId);
+            }
+            return payload;
+        } catch (CpApiException e) {
+            throw e;
         } catch (Exception e) {
-            logger.error("RAG delete proxy failed: {}", e.getMessage(), e);
-            return problem("RAG_DELETE_FAILED", "RAG delete failed");
+            logger.warn("RAG proxy call failed path={} requestId={} errorType={}", path, requestId,
+                    e.getClass().getSimpleName());
+            throw new CpApiException(HttpStatus.BAD_GATEWAY, "EMBEDDING_PROVIDER_UNREACHABLE",
+                    "RAG service is unavailable");
         }
     }
 
-    private ResponseEntity<String> problem(String code, String detail) {
-        String requestId = java.util.UUID.randomUUID().toString();
-        return ResponseEntity.status(502)
-                .contentType(MediaType.parseMediaType("application/problem+json"))
-                .header("X-Request-Id", requestId)
-                .body("{\"type\":\"https://xihe.dev/problems/" + code.toLowerCase() + "\",\"title\":\"Bad Gateway\",\"status\":502,\"code\":\"" + code + "\",\"detail\":\"" + detail + "\",\"requestId\":\"" + requestId + "\"}");
+    private Map<String, Object> requireOk(int status, Map<String, Object> payload, String requestId) {
+        if (status >= 200 && status < 300) {
+            return payload;
+        }
+        String code = String.valueOf(payload.getOrDefault("code", "EMBEDDING_PROVIDER_UNREACHABLE"));
+        HttpStatus http = status == 404 ? HttpStatus.NOT_FOUND
+                : status == 409 ? HttpStatus.CONFLICT
+                : status == 401 ? HttpStatus.UNAUTHORIZED
+                : status == 403 ? HttpStatus.FORBIDDEN
+                : status >= 500 ? HttpStatus.BAD_GATEWAY
+                : HttpStatus.BAD_REQUEST;
+        throw new CpApiException(http, code, "RAG operation failed", requestId);
+    }
+
+    private ResponseEntity<Map<String, Object>> mapAgentResponse(
+            int status, Map<String, Object> payload, String requestId) {
+        if (status >= 200 && status < 300) {
+            return ResponseEntity.ok(payload);
+        }
+        String code = String.valueOf(payload.getOrDefault("code", "EMBEDDING_PROVIDER_UNREACHABLE"));
+        HttpStatus http = status >= 500 ? HttpStatus.BAD_GATEWAY : HttpStatus.CONFLICT;
+        throw new CpApiException(http, code, "RAG ingest failed", requestId);
+    }
+
+    private HttpRequest.BodyPublisher ofMultipart(MultiValueMap<String, Object> body, HttpHeaders headers) {
+        BoundaryResource resource = new BoundaryResource(body, headers);
+        return HttpRequest.BodyPublishers.ofByteArray(resource.bytes());
+    }
+
+    private UUID currentUserId() {
+        String value = TenantContext.getUserId();
+        if (value == null || value.isBlank()) {
+            throw new CpApiException(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED",
+                    "Authentication is required");
+        }
+        return UUID.fromString(value);
+    }
+
+    private UUID currentWorkspaceId() {
+        String value = TenantContext.getWorkspaceId();
+        return value == null || value.isBlank() ? null : UUID.fromString(value);
+    }
+
+    private String requestId() {
+        return UUID.randomUUID().toString();
+    }
+
+    /** Minimal multipart encoder for the agent ingest hop. */
+    private static final class BoundaryResource {
+        private final byte[] bytes;
+
+        BoundaryResource(MultiValueMap<String, Object> body, HttpHeaders headers) {
+            String boundary = "xihe-rag-" + UUID.randomUUID().toString().replace("-", "");
+            headers.setContentType(MediaType.parseMediaType("multipart/form-data; boundary=" + boundary));
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            try {
+                for (Map.Entry<String, java.util.List<Object>> entry : body.entrySet()) {
+                    for (Object part : entry.getValue()) {
+                        out.write(("--" + boundary + "\r\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        if (part instanceof ByteArrayResource file) {
+                            out.write(("Content-Disposition: form-data; name=\"" + entry.getKey()
+                                    + "\"; filename=\"" + file.getFilename() + "\"\r\n")
+                                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                            out.write("Content-Type: application/octet-stream\r\n\r\n".getBytes(
+                                    java.nio.charset.StandardCharsets.UTF_8));
+                            out.write(file.getByteArray());
+                            out.write("\r\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        } else {
+                            out.write(("Content-Disposition: form-data; name=\"" + entry.getKey()
+                                    + "\"\r\n\r\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                            out.write(String.valueOf(part).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                            out.write("\r\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        }
+                    }
+                }
+                out.write(("--" + boundary + "--\r\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            } catch (java.io.IOException e) {
+                throw new IllegalStateException("Multipart encoding failed", e);
+            }
+            this.bytes = out.toByteArray();
+        }
+
+        byte[] bytes() {
+            return bytes;
+        }
     }
 }

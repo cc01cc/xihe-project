@@ -69,7 +69,7 @@ _SAFE_CONTEXT_DIAGNOSTIC_CODES = {
 
 def _rag_config_defaults() -> dict[str, Any]:
     """PLAN-0307 T2.4: RAG defaults come from the DB `rag` domain; request params win."""
-    from xihe_agent.app_state import embedding_enabled, vector_store  # noqa: F401
+    from xihe_agent.app_state import embedding_enabled  # noqa: F401
 
     return {
         "chunkSize": int(config_client.get("rag", "chunkSize") or 1000),

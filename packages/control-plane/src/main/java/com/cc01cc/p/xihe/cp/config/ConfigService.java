@@ -93,9 +93,6 @@ public class ConfigService {
             "chunkOverlap", "200",
             "topK", "5",
             "minScore", "0.0"),
-        "embedding", Map.of(
-            "model", "text-embedding-3-small",
-            "dimensions", "1536"),
         "logging", Map.of(
             "logLevel", "INFO",
             "levelCp", "INFO",
@@ -128,6 +125,9 @@ public class ConfigService {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private EmbeddingProfileService embeddingProfiles;
 
     public record EffectiveConfig(String domain, String revision, String source,
                                   Map<String, String> entries) {}
@@ -341,8 +341,33 @@ public class ConfigService {
                     "Provider validation failed: " + String.join("; ", providerErrors));
             }
         }
+        if ("embedding".equals(domain)) {
+            validateEmbeddingLayer(layer, entries);
+        }
         putLayerInternal(layer, domain, entries, changedBy, userId, workspaceId);
         publishLoggingChanged(domain, layer);
+    }
+
+    /**
+     * PLAN-0485 round-4 item 1: the embedding domain only carries the whole
+     * profile unit. A PUT must replace that layer's profile atomically — an
+     * empty map clears it to inherit, anything else must be exactly the
+     * complete three-field profile (no partial key writes/merges).
+     */
+    private void validateEmbeddingLayer(String layer, Map<String, String> entries) {
+        if (entries.isEmpty()) {
+            return;
+        }
+        Set<String> keys = entries.keySet();
+        if (keys.size() != 1 || !keys.contains("profile")) {
+            throw new CpApiException(org.springframework.http.HttpStatus.BAD_REQUEST,
+                "INVALID_REQUEST", "Embedding config accepts only the whole profile unit");
+        }
+        String value = entries.get("profile");
+        if (value == null || value.isBlank()) {
+            return;
+        }
+        embeddingProfiles.parseProfile(value);
     }
 
     private void validateContextTemplateUpdate(String layer, Map<String, String> proposedEntries,
@@ -652,6 +677,10 @@ public class ConfigService {
         if ("api-request-templates".equals(domain)) {
             throw new CpApiException(org.springframework.http.HttpStatus.CONFLICT,
                     "API_REQUEST_TEMPLATE_REVISION_IMMUTABLE", "Use the dedicated template/binding writer");
+        }
+        if ("embedding".equals(domain) && !"profile".equals(configKey)) {
+            throw new CpApiException(org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "INVALID_REQUEST", "Embedding config only has the whole profile unit");
         }
         Optional<ConfigEntity> existing = findExisting(layer, domain, configKey, userId, workspaceId);
         if (existing.isPresent()) {
