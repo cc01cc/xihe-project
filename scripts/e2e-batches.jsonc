@@ -46,6 +46,11 @@
       "llmMode": "credential_acquire",
       "specs": ["e2e/real/credential-acquire.spec.ts"]
     },
+    "credential-manager": {
+      "description": "PLAN-0498 credential manager UI: registration, role block (ceiling), binding, lease use and reveal",
+      "llmMode": "credential_acquire",
+      "specs": ["e2e/real/credential-manager.spec.ts"]
+    },
     "history-marker": {
       "description": "fake LLM history markers (journey-d D1/D2, circuit breaker)",
       "llmMode": "history-marker",

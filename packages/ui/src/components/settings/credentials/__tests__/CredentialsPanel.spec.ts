@@ -163,4 +163,33 @@ describe("CredentialsPanel (PLAN-0498 T1.1/T1.3)", () => {
         );
         expect(mockedApi.listCredentials.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
+
+    it("shows the reveal entry only for reveal-tier credentials", async () => {
+        mockedApi.listCredentials.mockResolvedValue({
+            credentials: [credential({ deliveryTier: "reveal" })],
+            count: 1,
+        });
+
+        await mountPanel();
+        await clickBody('[data-testid="credentials-row-11111111-2222-3333-4444-555555555555"]');
+        await flushPromises();
+        expect(bodyEl('[data-testid="credentials-detail-reveal"]')).toBeTruthy();
+
+        await clickBody('[data-testid="credentials-detail-reveal"]');
+        await flushPromises();
+        expect(bodyEl('[data-testid="credentials-reveal-dialog"]')).toBeTruthy();
+        expect(bodyEl('[data-testid="credentials-reveal-password"]')).toBeTruthy();
+    });
+
+    it("hides the reveal entry for lease-tier credentials", async () => {
+        mockedApi.listCredentials.mockResolvedValue({
+            credentials: [credential()],
+            count: 1,
+        });
+
+        await mountPanel();
+        await clickBody('[data-testid="credentials-row-11111111-2222-3333-4444-555555555555"]');
+        await flushPromises();
+        expect(bodyEl('[data-testid="credentials-detail-reveal"]')).toBeNull();
+    });
 });

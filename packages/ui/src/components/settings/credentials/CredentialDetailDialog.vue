@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { LoaderCircle, Pencil, Trash2 } from "@lucide/vue";
+import { LoaderCircle, Eye, Pencil, Trash2 } from "@lucide/vue";
 import Dialog from "../../ui/dialog/Dialog.vue";
 import DialogContent from "../../ui/dialog/DialogContent.vue";
 import DialogHeader from "../../ui/dialog/DialogHeader.vue";
@@ -11,6 +11,8 @@ import DialogDescription from "../../ui/dialog/DialogDescription.vue";
 import DialogFooter from "../../ui/dialog/DialogFooter.vue";
 import { Button } from "../../ui/button";
 import { Badge } from "../../ui/badge";
+import CredentialBindingsSection from "./CredentialBindingsSection.vue";
+import CredentialAuditSection from "./CredentialAuditSection.vue";
 import { ApiError, api } from "../../../composables/api";
 import { logger } from "../../../lib/logger";
 import { useCredentialsStore } from "../../../stores/credentials";
@@ -28,6 +30,7 @@ const props = withDefaults(
 const emit = defineEmits<{
     close: [];
     replace: [];
+    reveal: [];
     changed: [];
 }>();
 
@@ -38,7 +41,8 @@ const confirmingDelete = ref(false),
     references = ref<CredentialReference[]>([]),
     referencesLoading = ref(false),
     deleting = ref(false),
-    deleteError = ref("");
+    deleteError = ref(""),
+    activeTab = ref<"overview" | "bindings" | "audit">("overview");
 
 const fingerprintShort = computed(() => {
     const value = props.credential?.fingerprint ?? "";
@@ -52,6 +56,7 @@ watch(
         references.value = [];
         deleteError.value = "";
         deleting.value = false;
+        activeTab.value = "overview";
     },
 );
 
@@ -115,158 +120,214 @@ function formatTime(value?: string | null): string {
             </DialogHeader>
 
             <div v-if="credential" class="space-y-4">
-                <div class="flex flex-wrap items-center gap-2">
-                    <Badge
-                        :variant="credential.status === 'active' ? 'secondary' : 'outline'"
-                        data-testid="credentials-detail-status"
+                <div class="flex gap-2 border-b border-border pb-1">
+                    <button
+                        type="button"
+                        class="rounded-md px-2 py-1 text-xs"
+                        :class="
+                            activeTab === 'overview'
+                                ? 'bg-muted font-medium'
+                                : 'text-muted-foreground'
+                        "
+                        data-testid="credentials-tab-overview"
+                        @click="activeTab = 'overview'"
                     >
-                        {{
-                            credential.status === "active"
-                                ? t("credentials.statusActive")
-                                : t("credentials.statusDisabled")
-                        }}
-                    </Badge>
-                    <Badge variant="outline" data-testid="credentials-detail-kind">
-                        {{
-                            credential.kind === "token"
-                                ? t("credentials.kindToken")
-                                : t("credentials.kindKeyPair")
-                        }}
-                    </Badge>
-                    <Badge variant="outline" data-testid="credentials-detail-tier">
-                        {{
-                            credential.deliveryTier === "lease"
-                                ? t("credentials.tierLease")
-                                : t("credentials.tierReveal")
-                        }}
-                    </Badge>
+                        {{ t("credentials.overviewTab") }}
+                    </button>
+                    <button
+                        type="button"
+                        class="rounded-md px-2 py-1 text-xs"
+                        :class="
+                            activeTab === 'bindings'
+                                ? 'bg-muted font-medium'
+                                : 'text-muted-foreground'
+                        "
+                        data-testid="credentials-tab-bindings"
+                        @click="activeTab = 'bindings'"
+                    >
+                        {{ t("credentials.bindTab") }}
+                    </button>
+                    <button
+                        type="button"
+                        class="rounded-md px-2 py-1 text-xs"
+                        :class="
+                            activeTab === 'audit' ? 'bg-muted font-medium' : 'text-muted-foreground'
+                        "
+                        data-testid="credentials-tab-audit"
+                        @click="activeTab = 'audit'"
+                    >
+                        {{ t("credentials.auditTab") }}
+                    </button>
                 </div>
 
-                <dl class="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
-                    <div>
-                        <dt class="text-xs text-muted-foreground">
-                            {{ t("credentials.fingerprint") }}
-                        </dt>
-                        <dd
-                            class="mt-1 break-all font-mono text-xs"
-                            :title="credential.fingerprint"
-                            data-testid="credentials-detail-fingerprint"
+                <template v-if="activeTab === 'overview'">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <Badge
+                            :variant="credential.status === 'active' ? 'secondary' : 'outline'"
+                            data-testid="credentials-detail-status"
                         >
-                            {{ fingerprintShort }}
-                        </dd>
-                    </div>
-                    <div>
-                        <dt class="text-xs text-muted-foreground">{{ t("credentials.owner") }}</dt>
-                        <dd class="mt-1">
                             {{
-                                credential.ownerType === "WORKSPACE"
-                                    ? t("credentials.ownerWorkspace")
-                                    : t("credentials.ownerUser")
+                                credential.status === "active"
+                                    ? t("credentials.statusActive")
+                                    : t("credentials.statusDisabled")
                             }}
-                        </dd>
-                    </div>
-                    <div>
-                        <dt class="text-xs text-muted-foreground">
-                            {{ t("credentials.revision") }}
-                        </dt>
-                        <dd class="mt-1" data-testid="credentials-detail-revision">
-                            {{ credential.revision }}
-                        </dd>
-                    </div>
-                    <div>
-                        <dt class="text-xs text-muted-foreground">
-                            {{ t("credentials.references") }}
-                        </dt>
-                        <dd class="mt-1" data-testid="credentials-detail-refcount">
+                        </Badge>
+                        <Badge variant="outline" data-testid="credentials-detail-kind">
                             {{
-                                credential.referenceCount > 0
-                                    ? t("credentials.refCount", {
-                                          count: credential.referenceCount,
-                                      })
-                                    : t("credentials.refEmpty")
+                                credential.kind === "token"
+                                    ? t("credentials.kindToken")
+                                    : t("credentials.kindKeyPair")
                             }}
-                        </dd>
+                        </Badge>
+                        <Badge variant="outline" data-testid="credentials-detail-tier">
+                            {{
+                                credential.deliveryTier === "lease"
+                                    ? t("credentials.tierLease")
+                                    : t("credentials.tierReveal")
+                            }}
+                        </Badge>
                     </div>
-                    <div>
-                        <dt class="text-xs text-muted-foreground">
-                            {{ t("credentials.createdAt") }}
-                        </dt>
-                        <dd class="mt-1">{{ formatTime(credential.createdAt) }}</dd>
-                    </div>
-                    <div>
-                        <dt class="text-xs text-muted-foreground">
-                            {{ t("credentials.replacedAt") }}
-                        </dt>
-                        <dd class="mt-1">{{ formatTime(credential.replacedAt) }}</dd>
-                    </div>
-                </dl>
 
-                <div
-                    v-if="confirmingDelete"
-                    data-testid="credentials-delete-confirm"
-                    class="space-y-3 rounded-md border border-destructive/30 bg-destructive/10 p-3"
-                >
-                    <p class="text-sm text-destructive">{{ t("credentials.deleteDesc") }}</p>
-                    <div v-if="referencesLoading" class="text-xs text-muted-foreground">
-                        {{ t("common.loading") }}
-                    </div>
-                    <ul
-                        v-else-if="references.length > 0"
-                        data-testid="credentials-delete-references"
-                        class="space-y-1 text-xs"
-                    >
-                        <li
-                            v-for="(reference, index) in references"
-                            :key="`${reference.source}-${reference.subjectId}-${index}`"
-                            class="flex flex-wrap items-center gap-x-2 text-foreground"
-                        >
-                            <span class="font-medium">{{ referenceLabel(reference) }}</span>
-                            <span class="font-mono"
-                                >{{ reference.subjectType }}/{{ reference.subjectId }}</span
+                    <dl class="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+                        <div>
+                            <dt class="text-xs text-muted-foreground">
+                                {{ t("credentials.fingerprint") }}
+                            </dt>
+                            <dd
+                                class="mt-1 break-all font-mono text-xs"
+                                :title="credential.fingerprint"
+                                data-testid="credentials-detail-fingerprint"
                             >
-                        </li>
-                    </ul>
-                    <p
-                        v-else
-                        data-testid="credentials-delete-no-refs"
-                        class="text-xs text-muted-foreground"
+                                {{ fingerprintShort }}
+                            </dd>
+                        </div>
+                        <div>
+                            <dt class="text-xs text-muted-foreground">
+                                {{ t("credentials.owner") }}
+                            </dt>
+                            <dd class="mt-1">
+                                {{
+                                    credential.ownerType === "WORKSPACE"
+                                        ? t("credentials.ownerWorkspace")
+                                        : t("credentials.ownerUser")
+                                }}
+                            </dd>
+                        </div>
+                        <div>
+                            <dt class="text-xs text-muted-foreground">
+                                {{ t("credentials.revision") }}
+                            </dt>
+                            <dd class="mt-1" data-testid="credentials-detail-revision">
+                                {{ credential.revision }}
+                            </dd>
+                        </div>
+                        <div>
+                            <dt class="text-xs text-muted-foreground">
+                                {{ t("credentials.references") }}
+                            </dt>
+                            <dd class="mt-1" data-testid="credentials-detail-refcount">
+                                {{
+                                    credential.referenceCount > 0
+                                        ? t("credentials.refCount", {
+                                              count: credential.referenceCount,
+                                          })
+                                        : t("credentials.refEmpty")
+                                }}
+                            </dd>
+                        </div>
+                        <div>
+                            <dt class="text-xs text-muted-foreground">
+                                {{ t("credentials.createdAt") }}
+                            </dt>
+                            <dd class="mt-1">{{ formatTime(credential.createdAt) }}</dd>
+                        </div>
+                        <div>
+                            <dt class="text-xs text-muted-foreground">
+                                {{ t("credentials.replacedAt") }}
+                            </dt>
+                            <dd class="mt-1">{{ formatTime(credential.replacedAt) }}</dd>
+                        </div>
+                    </dl>
+
+                    <div
+                        v-if="confirmingDelete"
+                        data-testid="credentials-delete-confirm"
+                        class="space-y-3 rounded-md border border-destructive/30 bg-destructive/10 p-3"
                     >
-                        {{ t("credentials.deleteNoRefs") }}
-                    </p>
-                    <p
-                        v-if="deleteError"
-                        data-testid="credentials-delete-error"
-                        class="text-xs text-destructive"
-                    >
-                        {{ deleteError }}
-                    </p>
-                    <div class="flex justify-end gap-2">
-                        <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            data-testid="credentials-delete-cancel"
-                            @click="confirmingDelete = false"
+                        <p class="text-sm text-destructive">{{ t("credentials.deleteDesc") }}</p>
+                        <div v-if="referencesLoading" class="text-xs text-muted-foreground">
+                            {{ t("common.loading") }}
+                        </div>
+                        <ul
+                            v-else-if="references.length > 0"
+                            data-testid="credentials-delete-references"
+                            class="space-y-1 text-xs"
                         >
-                            {{ t("credentials.cancel") }}
-                        </Button>
-                        <Button
-                            type="button"
-                            variant="destructive"
-                            size="sm"
-                            data-testid="credentials-delete-submit"
-                            :disabled="deleting || referencesLoading"
-                            @click="confirmDelete"
+                            <li
+                                v-for="(reference, index) in references"
+                                :key="`${reference.source}-${reference.subjectId}-${index}`"
+                                class="flex flex-wrap items-center gap-x-2 text-foreground"
+                            >
+                                <span class="font-medium">{{ referenceLabel(reference) }}</span>
+                                <span class="font-mono"
+                                    >{{ reference.subjectType }}/{{ reference.subjectId }}</span
+                                >
+                            </li>
+                        </ul>
+                        <p
+                            v-else
+                            data-testid="credentials-delete-no-refs"
+                            class="text-xs text-muted-foreground"
                         >
-                            <LoaderCircle v-if="deleting" class="animate-spin" aria-hidden="true" />
-                            {{
-                                deleting
-                                    ? t("credentials.deleting")
-                                    : t("credentials.deleteConfirm")
-                            }}
-                        </Button>
+                            {{ t("credentials.deleteNoRefs") }}
+                        </p>
+                        <p
+                            v-if="deleteError"
+                            data-testid="credentials-delete-error"
+                            class="text-xs text-destructive"
+                        >
+                            {{ deleteError }}
+                        </p>
+                        <div class="flex justify-end gap-2">
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                data-testid="credentials-delete-cancel"
+                                @click="confirmingDelete = false"
+                            >
+                                {{ t("credentials.cancel") }}
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="destructive"
+                                size="sm"
+                                data-testid="credentials-delete-submit"
+                                :disabled="deleting || referencesLoading"
+                                @click="confirmDelete"
+                            >
+                                <LoaderCircle
+                                    v-if="deleting"
+                                    class="animate-spin"
+                                    aria-hidden="true"
+                                />
+                                {{
+                                    deleting
+                                        ? t("credentials.deleting")
+                                        : t("credentials.deleteConfirm")
+                                }}
+                            </Button>
+                        </div>
                     </div>
-                </div>
+                </template>
+
+                <CredentialBindingsSection
+                    v-else-if="activeTab === 'bindings'"
+                    :credential-id="credential.id"
+                    @changed="emit('changed')"
+                />
+
+                <CredentialAuditSection v-else :credential-id="credential.id" />
 
                 <DialogFooter>
                     <Button
@@ -278,6 +339,17 @@ function formatTime(value?: string | null): string {
                     >
                         <Trash2 aria-hidden="true" />
                         {{ t("credentials.delete") }}
+                    </Button>
+                    <Button
+                        v-if="credential.deliveryTier === 'reveal'"
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        data-testid="credentials-detail-reveal"
+                        @click="emit('reveal')"
+                    >
+                        <Eye aria-hidden="true" />
+                        {{ t("credentials.reveal") }}
                     </Button>
                     <Button
                         type="button"

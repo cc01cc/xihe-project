@@ -32,7 +32,7 @@ export const useCredentialsStore = defineStore("credentials", () => {
         try {
             const result = await api.listCredentials(ownerType ? { ownerType } : {});
             if (token !== requestToken) return;
-            credentials.value = result.credentials;
+            credentials.value = Array.isArray(result.credentials) ? result.credentials : [];
         } catch (e) {
             if (token !== requestToken) return;
             credentials.value = [];

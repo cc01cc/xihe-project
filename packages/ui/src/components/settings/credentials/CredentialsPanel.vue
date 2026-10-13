@@ -7,6 +7,7 @@ import { Badge } from "../../ui/badge";
 import CredentialCreateDialog from "./CredentialCreateDialog.vue";
 import CredentialDetailDialog from "./CredentialDetailDialog.vue";
 import CredentialReplaceDialog from "./CredentialReplaceDialog.vue";
+import CredentialRevealDialog from "./CredentialRevealDialog.vue";
 import { useCredentialsStore } from "../../../stores/credentials";
 import type { CredentialSummary } from "../../../types";
 
@@ -14,7 +15,7 @@ const { t } = useI18n(),
     store = useCredentialsStore();
 
 const createOpen = ref(false),
-    activeDialog = ref<"detail" | "replace" | null>(null),
+    activeDialog = ref<"detail" | "replace" | "reveal" | null>(null),
     selectedId = ref<string | null>(null),
     reloading = ref(false);
 
@@ -29,6 +30,12 @@ function selectRow(credential: CredentialSummary) {
 
 function closeDialogs() {
     activeDialog.value = null;
+}
+
+/** PLAN-0498: bind/unbind keeps the detail dialog open — refresh the list only.
+ *  Deletion closes the detail dialog itself (the detail emits `close` after `changed`). */
+function refreshAfterChange() {
+    void store.load();
 }
 
 async function refresh() {
@@ -180,7 +187,8 @@ onMounted(() => {
             :credential="selected"
             @close="closeDialogs"
             @replace="activeDialog = 'replace'"
-            @changed="closeDialogs"
+            @reveal="activeDialog = 'reveal'"
+            @changed="refreshAfterChange"
         />
         <CredentialReplaceDialog
             :open="activeDialog === 'replace'"
@@ -188,6 +196,12 @@ onMounted(() => {
             :kind="selected?.kind ?? 'token'"
             @close="activeDialog = selected ? 'detail' : null"
             @replaced="activeDialog = selected ? 'detail' : null"
+        />
+        <CredentialRevealDialog
+            :open="activeDialog === 'reveal'"
+            :credential-id="selectedId ?? ''"
+            :label="selected?.label ?? ''"
+            @close="activeDialog = selected ? 'detail' : null"
         />
     </div>
 </template>

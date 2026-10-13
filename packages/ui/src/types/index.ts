@@ -1083,3 +1083,32 @@ export interface CredentialDeleteReport {
     deleted: boolean;
     references: CredentialReference[];
 }
+
+export interface CredentialBindPayload {
+    workspaceId: string;
+    agentPrincipalIds: string[];
+}
+
+export interface CredentialBindResult {
+    credentialId: string;
+    agentPrincipalIds: string[];
+    bound: boolean;
+}
+
+export interface CredentialRevealResponse {
+    credentialId: string;
+    revision: number;
+    /** The plaintext for this response only; the UI never persists it. */
+    value: string;
+}
+
+export interface CredentialEventView {
+    id: string;
+    eventType: string;
+    actor: string;
+    createdAt: string;
+}
+
+export interface CredentialEventsResponse {
+    events: CredentialEventView[];
+}

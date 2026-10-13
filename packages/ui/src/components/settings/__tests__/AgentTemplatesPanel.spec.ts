@@ -1,9 +1,15 @@
 import { flushPromises, mount } from "@vue/test-utils";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import { createPinia, setActivePinia } from "pinia";
 import { i18n } from "../../../i18n";
 import AgentTemplatesPanel from "../AgentTemplatesPanel.vue";
 
 describe("AgentTemplatesPanel (PLAN-0374 T3.3)", () => {
+    beforeEach(() => {
+        // The role editor now hosts the credential block, which reads the credentials store.
+        setActivePinia(createPinia());
+    });
+
     it("persists only the frozen template fields and canonical role permission atoms", async () => {
         const wrapper = mount(AgentTemplatesPanel, {
             props: { entries: {} },

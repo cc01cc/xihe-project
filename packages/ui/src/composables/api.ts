@@ -24,12 +24,16 @@ import type {
     CheckpointResult,
     CheckpointResultCounts,
     CheckpointResultEntry,
+    CredentialBindPayload,
+    CredentialBindResult,
     CredentialCreateRequest,
     CredentialDeleteReport,
+    CredentialEventsResponse,
     CredentialListResponse,
     CredentialOwnerType,
     CredentialReferencesResponse,
     CredentialReplaceRequest,
+    CredentialRevealResponse,
     CredentialSummary,
     SafePolicySummaryView,
     PolicyDomainView,
@@ -1255,8 +1259,11 @@ async function checkedFetch(path: string, options?: RequestInit): Promise<Respon
             ...options,
             headers: apiAuthHeaders(options?.headers, includeContentType),
         }),
-        isAuthEndpoint = path === "/auth/login" || path === "/auth/register";
-    if (res.status === 401 && !isAuthEndpoint) {
+        isAuthEndpoint = path === "/auth/login" || path === "/auth/register",
+        // PLAN-0498 T3.1: a wrong reveal step-up password is a 401 domain outcome,
+        // not session expiry — it must stay inline in the reveal dialog.
+        isStepUpEndpoint = /^\/credentials\/[^/]+\/reveal$/.test(path);
+    if (res.status === 401 && !isAuthEndpoint && !isStepUpEndpoint) {
         localStorage.removeItem("xihe-token");
         localStorage.removeItem("xihe-user");
         if (!["/login", "/register"].includes(window.location.pathname))
@@ -2361,6 +2368,63 @@ export const api = {
     async getCredentialReferences(credentialId: string): Promise<CredentialReferencesResponse> {
         return request<CredentialReferencesResponse>(
             `/credentials/${encodeURIComponent(credentialId)}/references`,
+        );
+    },
+    /** PLAN-0498 T2.1: read-only pre-check of candidate role atoms against the caller's grants. */
+    async precheckCredentialAtoms(
+        permissions: Array<{ actionClass: string; resource?: string }>,
+    ): Promise<{ uncovered: string[] }> {
+        return request<{ uncovered: string[] }>("/credentials/precheck", {
+            method: "POST",
+            body: JSON.stringify({ permissions }),
+        });
+    },
+    /** PLAN-0498 T2.2: bind the credential to Agent principals (all-or-nothing). */
+    async bindCredential(
+        credentialId: string,
+        payload: CredentialBindPayload,
+    ): Promise<CredentialBindResult> {
+        return request<CredentialBindResult>(
+            `/credentials/${encodeURIComponent(credentialId)}/bindings`,
+            {
+                method: "POST",
+                body: JSON.stringify(payload),
+            },
+        );
+    },
+    /** PLAN-0498 T2.2: remove the credential_use atoms added by the binding. */
+    async unbindCredential(
+        credentialId: string,
+        payload: CredentialBindPayload,
+    ): Promise<CredentialBindResult> {
+        return request<CredentialBindResult>(
+            `/credentials/${encodeURIComponent(credentialId)}/bindings`,
+            {
+                method: "DELETE",
+                body: JSON.stringify(payload),
+            },
+        );
+    },
+    /** PLAN-0498 T3.1: one-shot reveal (step-up password; 5 failures / 15 min → 429; no-store). */
+    async revealCredential(
+        credentialId: string,
+        password: string,
+    ): Promise<CredentialRevealResponse> {
+        return request<CredentialRevealResponse>(
+            `/credentials/${encodeURIComponent(credentialId)}/reveal`,
+            {
+                method: "POST",
+                body: JSON.stringify({ password }),
+            },
+        );
+    },
+    /** PLAN-0498 T3.2: owner-visible audit trail (never a value; newest first). */
+    async getCredentialEvents(
+        credentialId: string,
+        limit = 200,
+    ): Promise<CredentialEventsResponse> {
+        return request<CredentialEventsResponse>(
+            `/credentials/${encodeURIComponent(credentialId)}/events?limit=${limit}`,
         );
     },
 };
