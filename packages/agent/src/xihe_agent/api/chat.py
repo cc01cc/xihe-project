@@ -26,6 +26,7 @@ from xihe_agent.app_state import (
     _content_length,
     _enrich_with_rag_context,
     _estimate_input_tokens,
+    _estimate_native_body_tokens,
     _get_tools_for_mode,
     _merge_run_domain,
     _model_window_tokens,
@@ -50,6 +51,44 @@ from xihe_agent.llm.base import LLMConfig
 from xihe_agent.llm.models import fetch_model_catalog  # noqa: F401  (import parity with prior main)
 
 router = APIRouter()
+
+# PLAN-0416 T2.3: normalized provider counter -> usage wire field.
+_PROVIDER_USAGE_WIRE: dict[str, str] = {
+    "input_tokens": "inputTokens",
+    "output_tokens": "outputTokens",
+    "cache_read_input_tokens": "cacheReadInputTokens",
+}
+
+
+def _apply_provider_usage(usage_data: dict[str, Any], model: ApiChatModel) -> None:
+    """Separate provider truth from local estimation (PLAN-0416 T2.3).
+
+    Only counters the provider actually returned are surfaced; a counter no
+    dispatched step reported is dropped from the wire and listed as unknown
+    instead of being reported as 0. `source` keeps describing the provider
+    counters, so cost mapping still sees `real` only for real numbers.
+    """
+    reported = model.provider_reported
+    totals = model.provider_usage_totals
+    for counter, wire in _PROVIDER_USAGE_WIRE.items():
+        if counter in reported:
+            usage_data[wire] = totals[counter]
+        else:
+            usage_data.pop(wire, None)
+    if {"input_tokens", "output_tokens"} <= reported:
+        usage_data["totalTokens"] = totals["input_tokens"] + totals["output_tokens"]
+    else:
+        usage_data.pop("totalTokens", None)
+    unknown = sorted(model.provider_unknown)
+    if unknown:
+        usage_data["providerUnknownFields"] = unknown
+    else:
+        usage_data.pop("providerUnknownFields", None)
+    if reported:
+        usage_data["source"] = "real"
+    else:
+        usage_data["source"] = "estimated" if usage_data.get("estimatedInputTokens") else "fallback"
+
 
 def _rag_config_defaults() -> dict[str, Any]:
     """PLAN-0307 T2.4: RAG defaults come from the DB `rag` domain; request params win."""
@@ -310,6 +349,7 @@ async def chat(request: Request):
                     },
                     request_id=request_id,
                     timeout=request_config.timeout,
+                    token_estimator=_estimate_native_body_tokens,
                 )
                 request_runner = LangGraphRunner(model_factory=lambda _model: model, event_store=cp_event_store_client)
                 # The Runner owns approval/durable/tool execution. This prompt is
@@ -388,17 +428,16 @@ async def chat(request: Request):
                             done_data["errorCode"] = terminal_error_code
                         yield render_sse("done", correlated_data(done_data))
                     elif event.type == "usage":
-                        # PLAN-294 decision #14: when no provider usage chunk
-                        # arrived (source=fallback), estimate the input size
-                        # from the assembled request so the compression signal
-                        # and audit trail still carry a usable value.
+                        # PLAN-0416 T2.3: the estimate is the final serialized
+                        # native request body of the steps this Run actually
+                        # dispatched (tools/history/RAG/instructions/current
+                        # input), recorded beside — never in place of — the
+                        # provider's own counters.
                         usage_data = dict(event.data.get("usage") or {})
-                        if usage_data.get("source") in (None, "fallback"):
-                            estimated = _estimate_input_tokens(messages)
-                            usage_data.setdefault("estimatedInputTokens", estimated)
-                            usage_data["source"] = "estimated" if estimated else "fallback"
-                        else:
-                            usage_data.setdefault("estimatedInputTokens", 0)
+                        usage_data["estimatedInputTokens"] = model.estimated_input_tokens or _estimate_input_tokens(
+                            messages
+                        )
+                        _apply_provider_usage(usage_data, model)
                         # PLAN-294 M3 (decision #5): the model window rides
                         # along so the CP compaction gate can evaluate the
                         # percentage threshold without a config dependency.

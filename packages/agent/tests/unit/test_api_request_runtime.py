@@ -691,3 +691,160 @@ def test_native_carrier_partial_fields_rejected(carrier):
 
     with pytest.raises(ValueError, match="native history"):
         message_from_dict({"role": "ai", "content": "final", **carrier})
+
+
+# --- PLAN-0416 T2.3: native-body budget estimate + provider usage truth ---
+
+
+def _tool(type_id):
+    tool = {"type": "function", "function": {"name": "read_file", "parameters": {"type": "object"}}}
+    if type_id == TYPES[1]:
+        tool = {"name": "read_file", "input_schema": {"type": "object"}}
+    if type_id == TYPES[2]:
+        tool = {"type": "function", "name": "read_file", "parameters": {"type": "object"}, "strict": False}
+    return tool
+
+
+def test_native_body_estimate_covers_more_than_the_prompt():
+    from xihe_agent.app_state import _estimate_native_body_tokens
+
+    prompt_only = {"model": "m", "messages": [{"role": "user", "content": "hello"}]}
+    full = {
+        **prompt_only,
+        "tools": [
+            {
+                "type": "function",
+                "function": {"name": "read_file", "description": "x" * 400, "parameters": {"type": "object"}},
+            }
+        ],
+    }
+    assert _estimate_native_body_tokens(prompt_only) > 0
+    assert _estimate_native_body_tokens(full) > _estimate_native_body_tokens(prompt_only)
+
+
+@pytest.mark.parametrize("type_id", TYPES)
+async def test_estimate_is_taken_per_dispatched_step_and_aggregated(type_id):
+    from xihe_agent.app_state import _estimate_native_body_tokens
+
+    async with recorder(response(type_id, True)) as (base, captures):
+        model = ApiChatModel(
+            api_type=chat_type(type_id, 1),
+            grant=grant(type_id, base),
+            body_source=json.dumps(body(type_id, False)),
+            values={**VALUES, "tools": [_tool(type_id)]},
+            request_id="request-1",
+            timeout=3,
+            token_estimator=_estimate_native_body_tokens,
+        )
+        first = await model.ainvoke([HumanMessage(content=VALUES["user_input"])])
+        await model.ainvoke(
+            [HumanMessage(content=VALUES["user_input"]), first, ToolMessage(content="tool-result", tool_call_id="c1")]
+        )
+
+    assert model.estimated_step_count == 2
+    # Each step's estimate is the body that actually went on the wire.
+    step_estimates = [_estimate_native_body_tokens(captured[2]) for captured in captures]
+    assert model.estimated_input_tokens == sum(step_estimates)
+    assert model.estimated_input_tokens > 0
+
+
+@pytest.mark.parametrize("type_id", TYPES)
+async def test_provider_usage_truth_keeps_absent_counters_unknown(type_id):
+    async with recorder(response(type_id, True)) as (base, _captures):
+        model = ApiChatModel(
+            api_type=chat_type(type_id, 1),
+            grant=grant(type_id, base),
+            body_source=json.dumps(body(type_id, False)),
+            values={**VALUES, "tools": [_tool(type_id)]},
+            request_id="request-1",
+            timeout=3,
+        )
+        await model.ainvoke([HumanMessage(content=VALUES["user_input"])])
+
+    assert model.provider_reported == {"input_tokens", "output_tokens"}
+    # No provider reported a cache counter, so it is unknown - not a zero.
+    assert model.provider_unknown == {"cache_read_input_tokens"}
+    assert model.provider_usage_totals == {"input_tokens": 3, "output_tokens": 2}
+
+
+async def test_absent_provider_usage_is_all_unknown_not_zero():
+    payload = dict(response(TYPES[0], False))
+    payload.pop("usage")
+    async with recorder(payload) as (base, _captures):
+        model = ApiChatModel(
+            api_type=chat_type(TYPES[0], 1),
+            grant=grant(TYPES[0], base),
+            body_source=json.dumps(body(TYPES[0], False)),
+            values=VALUES,
+            request_id="request-1",
+            timeout=3,
+        )
+        await model.ainvoke([HumanMessage(content="hello")])
+
+    assert model.provider_reported == set()
+    assert model.provider_usage_totals == {}
+    assert model.provider_unknown == {"input_tokens", "output_tokens", "cache_read_input_tokens"}
+
+
+async def test_usage_wire_separates_estimate_from_provider_counters():
+    from xihe_agent.api.chat import _apply_provider_usage
+
+    payload = dict(response(TYPES[1], False))
+    payload["usage"] = {"input_tokens": 7, "output_tokens": 4, "cache_read_input_tokens": 5}
+    async with recorder(payload) as (base, _captures):
+        model = ApiChatModel(
+            api_type=chat_type(TYPES[1], 1),
+            grant=grant(TYPES[1], base),
+            body_source=json.dumps(body(TYPES[1], False)),
+            values=VALUES,
+            request_id="request-1",
+            timeout=3,
+            token_estimator=lambda _body: 1234,
+        )
+        await model.ainvoke([HumanMessage(content="hello")])
+    assert model.estimated_input_tokens == 1234
+
+    usage = {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "totalTokens": 0,
+        "source": "real",
+        "estimatedInputTokens": 1234,
+    }
+    _apply_provider_usage(usage, model)
+    assert usage["estimatedInputTokens"] == 1234
+    assert usage["inputTokens"] == 7
+    assert usage["outputTokens"] == 4
+    assert usage["totalTokens"] == 11
+    assert usage["cacheReadInputTokens"] == 5
+    assert usage["source"] == "real"
+    assert "providerUnknownFields" not in usage
+
+    # A counter the provider never returned must be dropped, not published as 0.
+    payload = dict(response(TYPES[0], False))
+    payload.pop("usage")
+    unreported = {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "totalTokens": 0,
+        "source": "real",
+        "estimatedInputTokens": 9,
+    }
+    async with recorder(payload) as (base, _captures):
+        empty_model = ApiChatModel(
+            api_type=chat_type(TYPES[0], 1),
+            grant=grant(TYPES[0], base),
+            body_source=json.dumps(body(TYPES[0], False)),
+            values=VALUES,
+            request_id="request-1",
+            timeout=3,
+            token_estimator=lambda _body: 9,
+        )
+        await empty_model.ainvoke([HumanMessage(content="hello")])
+    _apply_provider_usage(unreported, empty_model)
+    assert "inputTokens" not in unreported
+    assert "outputTokens" not in unreported
+    assert "totalTokens" not in unreported
+    assert unreported["providerUnknownFields"] == ["cache_read_input_tokens", "input_tokens", "output_tokens"]
+    assert unreported["source"] == "estimated"
+    assert unreported["estimatedInputTokens"] == 9

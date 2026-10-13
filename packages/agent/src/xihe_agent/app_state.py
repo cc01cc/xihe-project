@@ -9,6 +9,7 @@ atomically (design §行为不变量).
 """
 
 import asyncio
+import json
 import os
 from typing import Any
 from uuid import uuid4
@@ -103,6 +104,7 @@ __all__ = [
     "_resolve_policy_for_model",
     "_model_window_tokens",
     "_estimate_input_tokens",
+    "_estimate_native_body_tokens",
     "_content_length",
     "_deserialize_messages",
     "_to_langchain_messages",
@@ -554,6 +556,26 @@ def _estimate_input_tokens(messages: list[Any]) -> int:
         content = getattr(m, "content", "")
         payload.append({"role": role, "content": content})
     return _token_counter.estimate_messages(payload)
+
+
+def _estimate_native_body_tokens(body: dict[str, Any]) -> int:
+    """PLAN-0416 T2.3: estimate the final serialized native request body.
+
+    The estimate covers exactly what the provider receives (tools, rendered
+    history, RAG/instructions slots and the current input) and is taken before
+    every provider step, so a Run's total is the sum over dispatched steps.
+    Provider usage stays the calibration truth and is recorded separately.
+    """
+    try:
+        payload = json.dumps(body, ensure_ascii=False, separators=(",", ":"), default=str)
+    except (TypeError, ValueError) as exc:
+        logger.warning(
+            "native body could not be serialized for estimation; recording 0 ({})",
+            type(exc).__name__,
+            exc_info=True,
+        )
+        return 0
+    return _token_counter.estimate_text(payload)
 
 
 def _content_length(content: Any) -> int:
