@@ -39,6 +39,9 @@ updated: 2026-10-08
 | | B. 工作区从 `paused` 回到可用 | **`unpause`**（中文：**解除暂停**） | 裸 `resume` 指 workspace；`恢复消费者` 作唯一正名 | 见 §2 unpause 路径 |
 | **scope** | A. Job 的存活边界 | **`job scope`**（值 `run/session/workspace`） | 裸 `scope` 指策略层 | 0390；canonical identity is domain `jobId` (`workspace_jobs.id`), backend handle is `runtimeJobId` |
 | | B. 策略/工具面的作用层 | **`policy scope`**（`instance/workspace/user`；tool-face 另有 `builtin`） | 裸 `scope` 指 Job | 0328 |
+| **账本 / ledger** | A. 已退役的 Operation Ledger（`ledger_operations` 系，V56 退役） | **`Operation Ledger（已退役）`**（中文：**操作账本（已退役）**） | 裸「账本 / ledger」指现行机制；把退役谱系写成现行事实 | PLAN-0464/0467/0486 | 
+| | B. 现行 `DiagnosticsLedger`（进程内诊断项跨反馈轮去重） | **`DiagnosticsLedger`**（中文：**诊断去重账本**）；引用其约定时写明「进程内、非权威、淘汰只损失检测」 | 把 `DiagnosticsLedger` 表述为 durable 账本或权威记录 | PLAN-0342 | 
+| | C. 泛指任何新的运行态记录结构 | **禁止**：先过概念膨胀门（既有概念/原生机制能否表达）再命名；观察窗口等新结构的正名为 **`observation window`（观察窗口）** | 用「账本 / ledger」命名新结构（如 PLAN-0493 观察窗口） | PLAN-0493 T4.2 正名 |
 | **interrupted** | Job 因 Runtime 重启或派发未确认落定的终态 | **`job interrupted`** | 与 run `ambiguous` 混用；称「已恢复/已重放」 | 0390；不自动重放 |
 | **runtimeBootId** | Runtime 单进程 boot 标识 | **`runtimeBootId`** | 当作业务 identity | 0390；变化即把未确认 Job 判 `interrupted` |
 | **job** | 现行后台任务 | **`durable job`**（中文：**持久后台任务**） | 混指已删表 | 0344 |
