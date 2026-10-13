@@ -105,7 +105,8 @@ class JobTimeoutClampTest {
                 new org.springframework.mock.env.MockEnvironment(),
                 agentSpawnExecutionService,
                 mock(com.cc01cc.p.xihe.cp.mcp.McpInvocationService.class),
-                toolTimeoutService
+                toolTimeoutService,
+                mock(com.cc01cc.p.xihe.cp.credentials.CredentialLeaseService.class)
         );
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 

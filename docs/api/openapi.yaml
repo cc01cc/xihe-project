@@ -239,6 +239,44 @@ paths:
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
+  /api/v1/credentials/{id}/reveal:
+    post:
+      operationId: revealCredential
+      summary: 'Reveal the plaintext once (credential_reveal@credential:<id> + step-up)'
+      description: 'PLAN-0497 T3.1: user-only credential_reveal intersection, reveal-tier gate, step-up password re-verification throttled at 5 failures / 15 minutes, response Cache-Control: no-store, audit credential_revealed without the value; v1 never creates an approval.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CredentialRevealRequest' } } }
+      responses:
+        '200':
+          description: The plaintext for this response only (no-store)
+          content: { application/json: { schema: { $ref: '#/components/schemas/CredentialRevealView' } } }
+        '400': { description: 'INVALID_REQUEST (malformed body/id) or INVALID_ACTOR', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { description: 'AUTHORIZATION_REQUIRED (unauthenticated) or CREDENTIAL_REVEAL_STEP_UP_FAILED — the step-up password is wrong (audited as credential_reveal_failed)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '403': { description: 'FORBIDDEN (credential_reveal@credential:<id> missing or no workspace context) or CREDENTIAL_DISABLED (credential not active)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'CREDENTIAL_NOT_FOUND or USER_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '422': { description: 'CREDENTIAL_TIER_MISMATCH — only reveal-tier credentials can be revealed', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '429': { description: 'CREDENTIAL_REVEAL_RATE_LIMITED — 5 failed step-ups within 15 minutes', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/credentials/{id}/events:
+    get:
+      operationId: getCredentialEvents
+      summary: Owner-visible credential audit trail (never a value)
+      description: 'PLAN-0497 T3.2 (0498 audit view): the credential_events trail newest first — created/replaced/deleted/lease_issued/lease_redeemed/revealed with actor; owner visibility applies; bounded by limit (default 200, max 500).'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: limit, required: false, schema: { type: integer, minimum: 1, maximum: 500, default: 200 }, description: Newest-first bound; values outside 1..500 are clamped. }
+      responses:
+        '200':
+          description: Credential events
+          content: { application/json: { schema: { $ref: '#/components/schemas/CredentialEventsView' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /api/v1/credentials/{id}/bindings:
     post:
       operationId: bindCredentialToAgents
@@ -2983,6 +3021,28 @@ components:
          id: { type: string }
          deleted: { type: boolean }
          references: { type: array, items: { $ref: '#/components/schemas/CredentialReference' } }
+    CredentialRevealRequest:
+       type: object
+       required: [password]
+       properties:
+         password: { type: string, description: 'The caller login password (step-up); never logged or stored.' }
+    CredentialRevealView:
+       type: object
+       properties:
+         credentialId: { type: string }
+         revision: { type: integer }
+         value: { type: string, description: 'The plaintext secret for this response only; Cache-Control: no-store.' }
+    CredentialEventsView:
+       type: object
+       properties:
+         events: { type: array, items: { $ref: '#/components/schemas/CredentialEventView' } }
+    CredentialEventView:
+       type: object
+       properties:
+         id: { type: string }
+         eventType: { type: string }
+         actor: { type: string }
+         createdAt: { type: string }
     CredentialPrecheckRequest:
        type: object
        required: [permissions]

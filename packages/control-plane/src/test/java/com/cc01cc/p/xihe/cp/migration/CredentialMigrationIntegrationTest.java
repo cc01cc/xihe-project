@@ -104,6 +104,60 @@ class CredentialMigrationIntegrationTest {
     }
 
     @Test
+    void v65CredentialLeasesTableApplied() throws SQLException {
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '65' AND success = true"),
+                "V65 must be recorded as applied");
+        for (String column : new String[] {"lease_hash", "credential_id", "principal_id",
+                "session_id", "run_id", "workspace_id", "expected_revision", "expires_at"}) {
+            assertEquals("NO", scalarString(
+                    "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' "
+                            + "AND table_name = 'credential_leases' AND column_name = '" + column + "'"),
+                    "credential_leases." + column + " must be NOT NULL (0497 I1: bindings are mandatory)");
+        }
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM pg_indexes WHERE schemaname = 'public' "
+                        + "AND indexname = 'uq_credential_leases_hash'"),
+                "the lease token exists only as a unique hash (0497 I2)");
+        assertEquals(2, scalarInt(
+                "SELECT count(*) FROM pg_indexes WHERE schemaname = 'public' "
+                        + "AND indexname IN ('idx_credential_leases_expires', 'idx_credential_leases_credential')"),
+                "expiry and per-credential lease indexes must exist");
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM pg_constraint WHERE conname = 'ck_credential_leases_revision' "
+                        + "AND contype = 'c'"),
+                "expected_revision must respect the 0495 monotonic floor");
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM pg_constraint conf "
+                        + "JOIN pg_attribute src ON src.attrelid = conf.conrelid "
+                        + "AND src.attnum = ANY (conf.conkey) "
+                        + "WHERE conf.contype = 'f' AND conf.conrelid = 'credential_leases'::regclass "
+                        + "AND conf.confrelid = 'credentials'::regclass "
+                        + "AND src.attname = 'credential_id' AND conf.confdeltype = 'c'"),
+                "credential leases reference their credential with ON DELETE CASCADE");
+
+        UUID credentialId = UUID.randomUUID();
+        execute("INSERT INTO credentials (id, owner_type, owner_id, label, kind, delivery_tier, "
+                + "status, secret_ciphertext, fingerprint, key_version) VALUES ('"
+                + credentialId + "'::uuid, 'USER', '" + UUID.randomUUID()
+                + "'::uuid, 'lease-target', 'token', 'lease', 'active', 'v1:a:b', 'fp', 'v1')");
+        assertThrows(SQLException.class, () -> execute(
+                "INSERT INTO credential_leases (id, lease_hash, credential_id, principal_id, "
+                + "session_id, run_id, workspace_id, expected_revision, expires_at) VALUES ('"
+                + UUID.randomUUID() + "'::uuid, 'hash', '" + credentialId + "'::uuid, '"
+                + UUID.randomUUID() + "'::uuid, '" + UUID.randomUUID() + "'::uuid, NULL, '"
+                + UUID.randomUUID() + "'::uuid, 1, NOW())"),
+                "run_id is a mandatory binding (0497 I1)");
+        assertThrows(SQLException.class, () -> execute(
+                "INSERT INTO credential_leases (id, lease_hash, credential_id, principal_id, "
+                + "session_id, run_id, workspace_id, expected_revision, expires_at) VALUES ('"
+                + UUID.randomUUID() + "'::uuid, 'hash', '" + credentialId + "'::uuid, '"
+                + UUID.randomUUID() + "'::uuid, '" + UUID.randomUUID() + "'::uuid, '"
+                + UUID.randomUUID() + "'::uuid, '" + UUID.randomUUID() + "'::uuid, 0, NOW())"),
+                "expected_revision keeps the 0495 monotonic floor");
+    }
+
+    @Test
     void valid_rows_insert_and_events_cascade_on_credential_delete() throws SQLException {
         UUID credentialId = UUID.randomUUID();
         UUID ownerId = UUID.randomUUID();

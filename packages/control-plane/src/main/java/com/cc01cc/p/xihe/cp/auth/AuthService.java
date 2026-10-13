@@ -109,6 +109,20 @@ public class AuthService {
         return userRepository.existsById(userId);
     }
 
+    /**
+     * PLAN-0497 T3.1 (0497 design §方案 3, decision #3): the step-up primitive —
+     * re-verifies the caller's login password against the stored hash without
+     * issuing tokens or writing login audit. Callers own throttling and audit.
+     */
+    public boolean verifyPassword(UUID userId, String rawPassword) {
+        if (rawPassword == null || rawPassword.isBlank()) {
+            return false;
+        }
+        return userRepository.findById(userId)
+                .map(user -> passwordEncoder.matches(rawPassword, user.getPasswordHash()))
+                .orElse(false);
+    }
+
     public UserResponse getCurrentUser(String userId) {
         User user = userRepository.findById(UUID.fromString(userId))
                 .orElseThrow(() -> new IllegalArgumentException("User not found"));

@@ -6,6 +6,10 @@ from langchain_core.messages import BaseMessage, ToolMessage
 
 from xihe_agent.interfaces.agent_runner import AgentEvent
 from xihe_agent.interfaces.event_adapter import EventAdapter
+from xihe_agent.interfaces.tool import (
+    ACQUIRE_CREDENTIAL_TOOL_NAME,
+    CREDENTIAL_DELIVERED_PLACEHOLDER,
+)
 
 FINAL_CHAIN_NAME = "LangGraph"
 
@@ -119,6 +123,10 @@ class LangGraphEventAdapter(EventAdapter):
             diagnostics: dict[str, Any] | None = None
             if isinstance(tool_output, ToolMessage):
                 formatted = tool_output.content
+                # PLAN-0497 T2.1: the credential value must never stream to the
+                # UI/projection channel — the model call consumed it in-run.
+                if name == ACQUIRE_CREDENTIAL_TOOL_NAME:
+                    formatted = CREDENTIAL_DELIVERED_PLACEHOLDER
                 # Provider ToolMessage IDs only pair LangGraph messages; CP
                 # MCP headers use the callback lifecycle run ID.
                 tool_call_id = run_id or tool_output.tool_call_id
@@ -131,6 +139,10 @@ class LangGraphEventAdapter(EventAdapter):
                         diagnostics = candidate
             else:
                 formatted = str(tool_output or "")
+                # PLAN-0497 T2.1: raw (non-ToolMessage) outputs must not fail open —
+                # the credential value may never reach the SSE/UI channel.
+                if name == ACQUIRE_CREDENTIAL_TOOL_NAME:
+                    formatted = CREDENTIAL_DELIVERED_PLACEHOLDER
                 tool_call_id = run_id
             tool_event_data: dict[str, Any] = {
                 "tool": name,

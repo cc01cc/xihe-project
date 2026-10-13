@@ -70,6 +70,10 @@ public class ToolFaceRegistry {
         NETWORK_TOOLS.forEach(tool -> builder.put(tool, new Face(ACTION_NETWORK, ToolShape.STRUCTURED)));
         EXEC_TOOLS.forEach(tool -> builder.put(tool, new Face(ACTION_EXEC, ToolShape.INTERPRETER)));
         builder.put("spawn_agent", new Face(ACTION_SPAWN_AGENT, ToolShape.STRUCTURED));
+        // PLAN-0497 M0 冻结：CP-owned credential delivery tool — face=credential_use,
+        // STRUCTURED; authorization runs the credential_use evaluation on the
+        // credential:<id> resource extracted from the tool arguments.
+        builder.put("acquire_credential", new Face(ACTION_CREDENTIAL_USE, ToolShape.STRUCTURED));
         builder.putAll(extraFaces);
         this.faces = Map.copyOf(builder);
     }

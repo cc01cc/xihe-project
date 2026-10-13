@@ -16,5 +16,5 @@ CP `AuditLogger` 写入专用 AUDIT JSONL logger，并保留有界的 recent-mem
 - Logs 和 audit **MUST NOT** 包含 token、secret、Cookie、完整 Authorization、raw tool arguments 或 provider credentials。
 - 关联使用 requestId/runId/sessionId/workspaceId 与 owner-domain entry IDs 和安全 hash/summary；不引入跨域 operationId。
 - 脱敏发生在 serialization boundary，不能只依赖调用点自觉处理。
-- Authentication failure、authorization denial、capability rejection、approval decision、credential refresh/scope mismatch 和 operation 终态 **MUST** 可区分。
+- Authentication failure、authorization denial、capability rejection、approval decision、credential refresh/scope mismatch、凭据交付动作（`credential_lease_issued` / `credential_lease_redeemed` / `credential_revealed` / `credential_reveal_failed`，均不含值）和 operation 终态 **MUST** 可区分。
 - Log/audit scan 测试使用固定 fake credentials，断言原文不存在，同时保留安全 code/requestId。

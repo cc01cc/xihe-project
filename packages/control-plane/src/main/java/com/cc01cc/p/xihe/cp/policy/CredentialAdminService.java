@@ -7,11 +7,14 @@ import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.Credential;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
+import com.cc01cc.p.xihe.cp.repository.CredentialEventRepository;
+import com.cc01cc.p.xihe.cp.repository.CredentialRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,25 +41,34 @@ public class CredentialAdminService {
 
     private static final Logger log = LoggerFactory.getLogger(CredentialAdminService.class);
 
+    /** PLAN-0497 T3.2 read face bound (wave review): newest-first, max 500 per request. */
+    static final int MAX_EVENT_LIMIT = 500;
+
     private final CredentialService credentialService;
     private final GrantIntersectionEvaluator evaluator;
     private final AuthorizationGrantRepository grantRepository;
     private final WorkspaceAgentRepository workspaceAgentRepository;
     private final WorkspaceService workspaceService;
     private final AuthService authService;
+    private final CredentialRepository credentialRepository;
+    private final CredentialEventRepository credentialEventRepository;
 
     public CredentialAdminService(CredentialService credentialService,
             GrantIntersectionEvaluator evaluator,
             AuthorizationGrantRepository grantRepository,
             WorkspaceAgentRepository workspaceAgentRepository,
             WorkspaceService workspaceService,
-            AuthService authService) {
+            AuthService authService,
+            CredentialRepository credentialRepository,
+            CredentialEventRepository credentialEventRepository) {
         this.credentialService = credentialService;
         this.evaluator = evaluator;
         this.grantRepository = grantRepository;
         this.workspaceAgentRepository = workspaceAgentRepository;
         this.workspaceService = workspaceService;
         this.authService = authService;
+        this.credentialRepository = credentialRepository;
+        this.credentialEventRepository = credentialEventRepository;
     }
 
     public record CredentialSummary(String id, String label, String kind, String deliveryTier,
@@ -67,6 +79,8 @@ public class CredentialAdminService {
             String resource) {}
 
     public record DeleteReport(String id, List<ReferenceEntry> references) {}
+
+    public record CredentialEventView(String id, String eventType, String actor, String createdAt) {}
 
     @Transactional(readOnly = true)
     public List<CredentialSummary> list(String actorUserId, String ownerType, String ownerId) {
@@ -124,6 +138,29 @@ public class CredentialAdminService {
         UUID actorId = requireUser(actorUserId);
         requireManageConcrete(actorId, credentialId);
         return references(credentialId);
+    }
+
+    /**
+     * PLAN-0497 T3.2 (0497 design §方案 6, decision #9): the credentials audit
+     * trail read surface consumed by 0498 — owner-visible events, newest first,
+     * never a value or suffix.
+     */
+    @Transactional(readOnly = true)
+    public List<CredentialEventView> eventsForActor(String actorUserId, UUID credentialId, int limit) {
+        UUID actorId = requireUser(actorUserId);
+        Credential credential = credentialRepository.findByIdAndDeletedAtIsNull(credentialId)
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "CREDENTIAL_NOT_FOUND",
+                        "Credential not found"));
+        requireOwnerVisible(actorId, credential.getOwnerType(), credential.getOwnerId());
+        // Wave review: bound the read face 0498 consumes — newest events, 1..MAX_EVENT_LIMIT.
+        int bounded = Math.max(1, Math.min(limit, MAX_EVENT_LIMIT));
+        return credentialEventRepository
+                .findByCredentialIdOrderByCreatedAtDesc(credentialId.toString(),
+                        PageRequest.of(0, bounded)).stream()
+                .map(event -> new CredentialEventView(event.getId().toString(), event.getEventType(),
+                        event.getActor(),
+                        event.getCreatedAt() == null ? null : event.getCreatedAt().toString()))
+                .toList();
     }
 
     @Transactional(readOnly = true)

@@ -42,6 +42,19 @@ public final class PolicyResourceExtractor {
             return FALLBACK;
         }
         LinkedHashSet<String> resources = new LinkedHashSet<>();
+        // PLAN-0497 T2.1: acquire_credential carries the credential id — normalize it
+        // into the credential:<uuid> namespace so the PolicyRequest concrete-id rule
+        // (0496 I2) and the credential_use evaluation both see the canonical form.
+        JsonNode credentialId = arguments.get("credentialId");
+        if (credentialId != null && credentialId.isTextual()) {
+            String raw = credentialId.textValue().trim();
+            if (!raw.isEmpty()) {
+                String canonical = raw.startsWith(ToolFaceRegistry.CREDENTIAL_RESOURCE_PREFIX)
+                        ? raw
+                        : ToolFaceRegistry.CREDENTIAL_RESOURCE_PREFIX + raw;
+                add(resources, MAPPER.valueToTree(canonical));
+            }
+        }
         for (String key : SCALAR_KEYS) {
             add(resources, arguments.get(key));
         }

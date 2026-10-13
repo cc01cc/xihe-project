@@ -9,6 +9,7 @@ import com.cc01cc.p.xihe.cp.credentials.CredentialService;
 import com.cc01cc.p.xihe.cp.entity.Credential;
 import com.cc01cc.p.xihe.cp.policy.CredentialAdminService;
 import com.cc01cc.p.xihe.cp.policy.CredentialBindingService;
+import com.cc01cc.p.xihe.cp.policy.CredentialRevealService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -41,13 +42,16 @@ public class CredentialController {
 
     private final CredentialAdminService adminService;
     private final CredentialBindingService bindingService;
+    private final CredentialRevealService revealService;
     private final ObjectMapper objectMapper;
 
     public CredentialController(CredentialAdminService adminService,
             CredentialBindingService bindingService,
+            CredentialRevealService revealService,
             ObjectMapper objectMapper) {
         this.adminService = adminService;
         this.bindingService = bindingService;
+        this.revealService = revealService;
         this.objectMapper = objectMapper;
     }
 
@@ -155,6 +159,64 @@ public class CredentialController {
         try {
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("references", adminService.referencesForActor(actorUserId, credentialId));
+            return noStore(ResponseEntity.ok(body));
+        } catch (CpApiException e) {
+            return problem(e);
+        }
+    }
+
+    /**
+     * PLAN-0497 T3.1 (0497 design §方案 3): the human reveal — user-only
+     * credential_reveal intersection + step-up + failure throttle; the response
+     * carries the plaintext once and is never cacheable (no-store).
+     */
+    @PostMapping("/{id}/reveal")
+    public ResponseEntity<?> reveal(@PathVariable("id") String id,
+                                    @RequestBody RevealRequest request) {
+        String actorUserId = requireActor();
+        if (actorUserId == null) {
+            return unauthorized();
+        }
+        UUID credentialId;
+        try {
+            credentialId = UUID.fromString(id);
+        } catch (IllegalArgumentException e) {
+            return badRequest(e);
+        }
+        try {
+            CredentialRevealService.RevealedCredential revealed = revealService.reveal(actorUserId,
+                    credentialId, TenantContext.getWorkspaceId(),
+                    request.password());
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("credentialId", revealed.credentialId());
+            body.put("revision", revealed.revision());
+            body.put("value", revealed.plaintext());
+            return noStore(ResponseEntity.ok(body));
+        } catch (CpApiException e) {
+            return problem(e);
+        }
+    }
+
+    /**
+     * PLAN-0497 T3.2 (0497 design §方案 6, decision #9): the credentials audit
+     * trail read surface consumed by 0498 — owner-visible events, never a value.
+     */
+    @GetMapping("/{id}/events")
+    public ResponseEntity<?> events(@PathVariable("id") String id,
+            @RequestParam(value = "limit", required = false, defaultValue = "200") int limit) {
+        String actorUserId = requireActor();
+        if (actorUserId == null) {
+            return unauthorized();
+        }
+        UUID credentialId;
+        try {
+            credentialId = UUID.fromString(id);
+        } catch (IllegalArgumentException e) {
+            return badRequest(e);
+        }
+        try {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("events", adminService.eventsForActor(actorUserId, credentialId, limit));
             return noStore(ResponseEntity.ok(body));
         } catch (CpApiException e) {
             return problem(e);
@@ -299,4 +361,6 @@ public class CredentialController {
     }
 
     public record BindRequest(String workspaceId, List<String> agentPrincipalIds) {}
+
+    public record RevealRequest(String password) {}
 }

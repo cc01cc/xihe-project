@@ -126,6 +126,17 @@ class CredentialAtomVocabularyTest {
                 "credential:" + UUID.randomUUID()));
     }
 
+    @Test
+    void acquireCredentialToolFaceIsCredentialUseStructured() {
+        ToolFaceRegistry registry = new ToolFaceRegistry();
+        ToolFaceRegistry.Face face = registry.faceOf("acquire_credential");
+
+        assertEquals("credential_use", face.actionClass(),
+                "PLAN-0497 M0 freeze: acquire_credential runs the credential_use evaluation");
+        assertEquals(ToolShape.STRUCTURED, face.shape());
+        assertTrue(registry.known("acquire_credential"));
+    }
+
     private void assertAtomRejected(String json, String message) {
         assertThrows(IllegalArgumentException.class,
                 () -> evaluator.parse(objectMapper.readTree(json)), message);

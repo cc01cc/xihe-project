@@ -2,7 +2,7 @@
 
 > 契约状态：`proposed`；实现状态：`partial`；Profile：`security`；Owner：Security（授权/审计）+ CP ConfigService（存储/密钥）；来源：PLAN-0495（承接 PLAN-0494 决策基线 22 条）；更新：2026-10-13。
 > 消费者：CP 凭据域（存储/生命周期/轮换）、PLAN-0496（授权接入与 API）、PLAN-0497（交付通道）、PLAN-0498（UI）、运维轮换（XH CLI）。
-> 实现状态说明：存储、生命周期与轮换（PLAN-0495 M1–M3）已实现并验证；交付通道（0497）、用户管理 API（0496）与 UI（0498）未实现——本节所有 `MUST` 均为目标契约，不得当作当前运行事实。
+> 实现状态说明：存储、生命周期与轮换（PLAN-0495 M1–M3）、授权接入与管理 API（PLAN-0496 M1–M3）、交付通道（PLAN-0497 M1–M3：租约交付、工具获取、reveal、事件读面）已实现并验证；UI（0498）未实现——本节所有 `MUST` 均为目标契约，不得当作当前运行事实。
 
 ## 1. 范围与边界
 
@@ -46,13 +46,15 @@
 
 - 动作 `credential_created` / `credential_replaced` / `credential_deleted` / `credential_rotated`；detail 只含 id、owner、kind、tier 与 fingerprint；明文与后缀一律不入。
 - 域事件落 `credential_events`（`created`/`replaced`/`deleted` + 0497 交付事件；轮换为批次级审计，不逐行写事件）。
-- 交付与 reveal 的审计注记归 0497（`security/audit.md` 消费注记）。
+- 交付与 reveal 的审计注记归 0497（`security/audit.md` 消费注记）。0497 动作：`credential_lease_issued` / `credential_lease_redeemed`（actor `agent:<principalId>`，与租约行同事务）与 `credential_revealed`（actor `user:<userId>`，成功）；step-up 失败记 `credential_reveal_failed`（只入 AUDIT 流，不写域事件行）；以上均不含值。
+- 审计读面（0497 M3，供 0498）：`GET /api/v1/credentials/{id}/events` 返回 owner 可见的 `credential_events` 轨迹（eventType/actor/时间，无值）；交付动作同时写域事件行与 AUDIT 流。
 
 ## 7. 交付边界（v1）
 
 - 密文只经受控交付通道离开存储：`lease` 档仅一次性租约；`reveal` 档仅 step-up reveal（`no-store`）；两通道均以 grant 求交，缺 grant fail-closed；细节归 0497 交付契约。
-- `reveal` 为例外通道：仅限 reveal 档凭据、必须经 step-up、限流与 `no-store`；不得扩展为通用读。
-- `broker` 预留：不经第三方注入代理；出现「凭据必须不经任何消费方内存」的真实场景时再评估。
+- Agent 获取通道：CP-owned 工具 `acquire_credential`（tool-call 边界完成 `credential_use` 求交与既有 ask 审批）；CP handler 内一步完成租约签发 + 单次兑换 + 解密交付；明文只进 Agent 进程内存，durable `tool.result` preview 与 SSE `tool_result` 以占位替换，模型本轮 ToolMessage 保留。
+- `reveal` 为例外通道：仅限 reveal 档凭据、必须经 step-up（重输登录密码）与失败限流（进程内 5 次/15 分钟）、响应 `no-store` 且仅本次明文；审计 `credential_revealed` 可区分且不含值；v1 不接 ask（不建 pending approval）；不得扩展为通用读。
+- `broker` 预留：档位语义为服务端注入、消费方只持引用（不经第三方注入代理、不把明文交给消费方内存）；出现「凭据必须不经任何消费方内存」的真实场景时再评估。
 
 ## 8. 承接与消费者
 

@@ -62,6 +62,11 @@ async function sendCompletion(response, provider, requestBody) {
         return;
     }
 
+    if (mode === "credential_acquire") {
+        sendCredentialAcquireCompletion(response, requestBody);
+        return;
+    }
+
     if (mode === "write_file") {
         sendWriteFileCompletion(response, requestBody);
         return;
@@ -152,6 +157,60 @@ function sendApprovalCompletion(response, requestBody) {
     }
 
     const chunks = ["Approval received. ", "The requested action was approved by the user."];
+    for (const content of chunks) {
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
+    }
+    response.end("data: [DONE]\n\n");
+}
+
+// PLAN-0497 T2.2 (mode: credential_acquire): deterministic acquire_credential
+// tool call. The spec embeds the target id in the user message:
+// XIHE-E2E-ACQUIRE <credentialId> — the first turn issues the tool call; the
+// tool-result follow-up answers with a fixed confirmation that never echoes the
+// delivered value, so the spec can prove memory-only delivery (UI, history and
+// durable surfaces stay value-free while the run completes successfully).
+function sendCredentialAcquireCompletion(response, requestBody) {
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [],
+        last = messages.at(-1) ?? {};
+    const followUp = last.role === "tool";
+    if (!followUp) {
+        const text = typeof last.content === "string" ? last.content : "",
+            marker = text.indexOf("XIHE-E2E-ACQUIRE ");
+        if (marker < 0) {
+            sendApprovalCompletion(response, requestBody);
+            return;
+        }
+        const credentialId = text
+            .slice(marker + "XIHE-E2E-ACQUIRE ".length)
+            .trim()
+            .split(/\s+/)[0];
+        const toolCallDelta = {
+            choices: [
+                {
+                    delta: {
+                        tool_calls: [
+                            {
+                                index: 0,
+                                id: "call-acquire-credential-e2e-1",
+                                type: "function",
+                                function: {
+                                    name: "acquire_credential",
+                                    arguments: JSON.stringify({ credentialId }),
+                                },
+                            },
+                        ],
+                    },
+                    finish_reason: null,
+                },
+            ],
+        };
+        const finishDelta = { choices: [{ delta: {}, finish_reason: "tool_calls" }] };
+        response.write(`data: ${JSON.stringify(toolCallDelta)}\n\n`);
+        response.write(`data: ${JSON.stringify(finishDelta)}\n\n`);
+        response.end("data: [DONE]\n\n");
+        return;
+    }
+    const chunks = ["Acquired. ", "OK"];
     for (const content of chunks) {
         response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
     }

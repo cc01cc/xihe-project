@@ -195,7 +195,8 @@ class McpProxyTest {
                 environment,
                 agentSpawnExecutionService,
                 mcpInvocationService,
-                toolTimeoutService
+                toolTimeoutService,
+                mock(com.cc01cc.p.xihe.cp.credentials.CredentialLeaseService.class)
         );
         ReflectionTestUtils.setField(controller, "sessionIdHmacSecret", "test-only-key");
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
