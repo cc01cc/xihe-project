@@ -151,6 +151,10 @@ def _snapshot_message(message: Message) -> dict[str, Any]:
     fields are emitted only when set (backward-compatible with old readers)."""
     data: dict[str, Any] = {"role": message.role, "content": message.content}
     if isinstance(message, TextMessage):
+        if message.origin_sequence:
+            data["sequence"] = message.origin_sequence
+        if message.pruned:
+            data["pruned"] = True
         if message.native_records is not None:
             import copy
 
@@ -228,6 +232,8 @@ def message_from_dict(raw: dict[str, Any]) -> TextMessage:
         artifact_status=str(raw.get("artifact_status", "") or ""),
         size_bytes=size_bytes if isinstance(size_bytes, int) and not isinstance(size_bytes, bool) else None,
         error_code=str(raw.get("error_code", "") or ""),
+        origin_sequence=int(raw.get("sequence", 0) or 0),
+        pruned=bool(raw.get("pruned", False)),
         degraded=bool(raw.get("degraded", False)),
         legacy_normalized=bool(raw.get("legacy_normalized", False)),
         tool_calls=tool_calls,
@@ -272,6 +278,47 @@ def _derive_l1_status(payload: dict[str, Any], legacy_status: str) -> str:
     return ""
 
 
+_EPOCH_TEXT_KEYS = (
+    "epoch_id",
+    "baseline_hash",
+    "source_hash",
+    "summary_hash",
+    "l1_rendered",
+    "l1_status",
+    "env_status",
+    "env_branch",
+    "env_head",
+    "env_observed_at",
+    "env_cwd",
+    "env_platform",
+    "env_shell",
+)
+_EPOCH_LIST_KEYS = ("system_messages", "sources", "l1_sources")
+
+
+def _epoch_has_content(raw: Any) -> bool:
+    """True when a serialized epoch carries an actual baseline (PLAN-0416 D2).
+
+    CP's projection seeds an epoch object unconditionally, so a branch that
+    never established one still arrives as `{"epoch_id": "", ...}`. Restoring
+    that placeholder as a ContextEpoch would make the snapshot path disagree
+    with event replay, which leaves `epoch` as None for the same state — so
+    only an epoch with content is reconstructed; an empty one stays "no epoch".
+    A non-object value is treated the same way.
+    """
+    if not isinstance(raw, dict):
+        return False
+    for key in _EPOCH_TEXT_KEYS:
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+    for key in _EPOCH_LIST_KEYS:
+        value = raw.get(key)
+        if isinstance(value, list) and len(value) > 0:
+            return True
+    return bool(raw.get("env_is_repository"))
+
+
 @dataclass(frozen=True)
 class ContextEpoch:
     """Versioned system-context baseline with L1/SUM slot separation (PLAN-0340)."""
@@ -314,6 +361,8 @@ class AgentContext:
     metadata: dict[str, Any] = field(default_factory=dict)
     _message_run_ids: dict[int, str] = field(default_factory=dict, repr=False)
     _native_replaced_hashes: dict[int, set[str]] = field(default_factory=dict, repr=False)
+    _native_replaced_occurrences: dict[int, set[tuple[int, str]]] = field(default_factory=dict, repr=False)
+    _blocked_native_runs: set[str] = field(default_factory=set, repr=False)
     # PLAN-0410 T2.3: the branch CP resolved for this snapshot ("" when the
     # snapshot predates branch awareness). The Agent never fills this itself.
     branch_id: str = ""
@@ -359,22 +408,38 @@ class AgentContext:
             if isinstance(raw_message, dict) and any(
                 key in raw_message for key in ("apiTypeId", "apiTypeVersion", "nativeRecords")
             ):
-                native_message = message_from_dict(raw_message)
+                native_message = replace(message_from_dict(raw_message), origin_sequence=event.sequence)
                 if not run_id:
                     raise ValueError("Native history requires existing Run identity")
                 import hashlib
 
+                replaced_messages = [
+                    message
+                    for message in self.messages
+                    if message.role in {"ai", "tool"} and self._message_run_ids.get(id(message)) == run_id
+                ]
+                occurrences = {(message.origin_sequence, message.tool_call_id) for message in replaced_messages}
+                for message in replaced_messages:
+                    occurrences.update(self._native_replaced_occurrences.get(id(message), set()))
                 self._native_replaced_hashes[id(native_message)] = {
                     hashlib.sha256(message.content.encode("utf-8", errors="replace")).hexdigest()
                     for message in self.messages
                     if message.role in {"ai", "tool"} and self._message_run_ids.get(id(message)) == run_id
                 }
+                for message in replaced_messages:
+                    self._native_replaced_hashes[id(native_message)].update(
+                        self._native_replaced_hashes.get(id(message), set())
+                    )
                 self.messages = [
                     message
                     for message in self.messages
                     if message.role not in {"ai", "tool"} or self._message_run_ids.get(id(message)) != run_id
                 ]
-                self.messages.append(native_message)
+                if any(message.pruned for message in replaced_messages):
+                    self._blocked_native_runs.add(run_id)
+                if run_id not in self._blocked_native_runs:
+                    self.messages.append(native_message)
+                    self._native_replaced_occurrences[id(native_message)] = occurrences
             else:
                 self._add_message_from_payload(payload, "ai")
         elif event_type == "tool.result":
@@ -443,6 +508,11 @@ class AgentContext:
             # PLAN-0410 D7-B1=C: manual compaction writes the branch-targeted
             # type but applies identically — both types carry the same payload.
             keep_from = max(0, len(self.messages) - 10)
+            self._blocked_native_runs.update(
+                self._message_run_ids[id(message)]
+                for message in self.messages[:keep_from]
+                if id(message) in self._message_run_ids and message.role in {"ai", "tool"}
+            )
             self.messages = list(self.messages[keep_from:])
             prev = self.epoch or ContextEpoch(epoch_id="", baseline_hash="", system_messages=[])
             self.epoch = ContextEpoch(
@@ -568,6 +638,9 @@ class AgentContext:
         self._native_replaced_hashes = {
             key: value for key, value in self._native_replaced_hashes.items() if key in live_ids
         }
+        self._native_replaced_occurrences = {
+            key: value for key, value in self._native_replaced_occurrences.items() if key in live_ids
+        }
         return self
 
     def _apply_fork_seed(self, payload: dict[str, Any]) -> None:
@@ -669,6 +742,7 @@ class AgentContext:
                 error_code=parsed.error_code,
                 legacy_normalized=parsed.legacy_normalized,
                 degraded=not call_id,
+                origin_sequence=self.latest_sequence,
             )
         )
 
@@ -689,7 +763,7 @@ class AgentContext:
             # the same way message_from_dict does instead of storing it.
             valid_roles: dict[str, MessageRole] = {"system": "system", "human": "human", "ai": "ai", "tool": "tool"}
             resolved_role = valid_roles.get(role, "human")
-            self.messages.append(TextMessage(role=resolved_role, content=content))
+            self.messages.append(TextMessage(role=resolved_role, content=content, origin_sequence=self.latest_sequence))
 
     def _apply_prune_tombstones(self, payload: dict[str, Any]) -> None:
         import hashlib
@@ -697,29 +771,57 @@ class AgentContext:
         tombstones = payload.get("tombstones") or []
         if not tombstones:
             return
-        pruned_hashes = {t.get("content_hash", "") for t in tombstones if isinstance(t, dict) and t.get("content_hash")}
-        if not pruned_hashes:
+        pruned_hashes = {t["content_hash"] for t in tombstones if isinstance(t, dict) and t.get("content_hash")}
+        targets = [
+            (
+                t["sequence"] if type(t.get("sequence")) is int and t["sequence"] > 0 else 0,
+                str(t.get("tool_call_id") or ""),
+            )
+            for t in tombstones
+            if isinstance(t, dict)
+        ]
+        precise = any(sequence or call_id for sequence, call_id in targets)
+        if not precise and not pruned_hashes:
             return
+
+        def occurrence_hit(sequence: int, call_id: str) -> bool:
+            # A known event sequence is authoritative. Preserve each tuple:
+            # reusing a tool-call id in another Run must not widen this target.
+            return any(
+                sequence == target_sequence and (not target_call_id or call_id == target_call_id)
+                if target_sequence
+                else bool(target_call_id and call_id == target_call_id)
+                for target_sequence, target_call_id in targets
+            )
+
+        def hit(message: TextMessage) -> bool:
+            if precise:
+                return occurrence_hit(message.origin_sequence, message.tool_call_id) or any(
+                    occurrence_hit(sequence, call_id)
+                    for sequence, call_id in self._native_replaced_occurrences.get(id(message), set())
+                )
+            digest = hashlib.sha256(message.content.encode("utf-8", errors="replace")).hexdigest()
+            return digest in pruned_hashes or bool(self._native_replaced_hashes.get(id(message), set()) & pruned_hashes)
+
         placeholder = "[old tool result cleared]"
         retained: list[TextMessage] = []
         for message in self.messages:
-            if isinstance(message, TextMessage) and message.native_records is not None:
-                digest = hashlib.sha256(message.content.encode("utf-8", errors="replace")).hexdigest()
-                if digest in pruned_hashes or self._native_replaced_hashes.get(id(message), set()) & pruned_hashes:
-                    continue
-            retained.append(message)
-        self.messages = retained
-        for i, msg in enumerate(self.messages):
-            if msg.role != "tool" or msg.content == placeholder:
+            if not precise and message.native_records is None and message.role != "tool":
+                retained.append(message)
                 continue
-            digest = hashlib.sha256(msg.content.encode("utf-8", errors="replace")).hexdigest()
-            if digest in pruned_hashes:
-                # PLAN-0381 contract §8: mask replaces content only — pair
-                # identity (id/name/status/degraded) survives tombstones.
-                if isinstance(msg, TextMessage):
-                    self.messages[i] = replace(msg, content=placeholder)
-                else:
-                    self.messages[i] = TextMessage(role="tool", content=placeholder)
+            if not hit(message):
+                retained.append(message)
+                continue
+            run_id = self._message_run_ids.get(id(message))
+            if run_id:
+                self._blocked_native_runs.add(run_id)
+            if message.native_records is not None or message.role != "tool":
+                continue
+            if not message.content.strip() or message.content.startswith("[old tool result"):
+                retained.append(message)
+            else:
+                retained.append(replace(message, content=placeholder, pruned=True))
+        self.messages = retained
 
     def _apply_source_changed(self, payload: dict[str, Any]) -> None:
         status = payload.get("status", "updated")
@@ -828,7 +930,9 @@ class AgentContext:
         for raw in snapshot.get("messages", []):
             ctx.messages.append(message_from_dict(raw))
         epoch_raw = snapshot.get("epoch")
-        if epoch_raw:
+        # PLAN-0416 D2: see _epoch_has_content — an all-empty epoch object is
+        # CP's placeholder, not a baseline, and must not become a ContextEpoch.
+        if epoch_raw and _epoch_has_content(epoch_raw):
             ctx.epoch = ContextEpoch(
                 epoch_id=epoch_raw.get("epoch_id", ""),
                 baseline_hash=epoch_raw.get("baseline_hash", epoch_raw.get("source_hash", "")),

@@ -1,8 +1,11 @@
 package com.cc01cc.p.xihe.cp.crossmodule;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
+import static com.github.tomakehurst.wiremock.client.WireMock.matchingJsonPath;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
+import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -98,6 +101,7 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
     private String userId;
     private String workspaceId;
     private String principalId;
+    private String principalInstructions;
     private com.fasterxml.jackson.databind.JsonNode principalPermissions;
     private org.springframework.web.client.RestTemplate patchClient;
 
@@ -134,6 +138,7 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
         AgentPrincipal principal = agentPrincipalService.createPrincipal(
                 userId, "Context template test principal", null, defaultTemplate.snapshot());
         principalId = principal.getId().toString();
+        principalInstructions = principal.getTemplateSnapshot().path("systemPrompt").asText();
         principalPermissions = principal.getTemplateSnapshot().get("permissions");
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(
                 principalId, workspaceId, principalPermissions.deepCopy()));
@@ -425,6 +430,11 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
         // Next Run after an explicit rebind follows the Session's CURRENT binding
         // (v2), while run1 above keeps its admission-time v1 snapshot.
         awaitRunTerminal(run.getId());
+        // PLAN-0416 T3.1/D1: a template-less principal now carries the CP-owned
+        // default baseline, and that resolved value (not any principal authority)
+        // is what crosses to the Agent.
+        wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/agent/chat"))
+                .withRequestBody(matchingJsonPath("$.instructions", equalTo(principalInstructions))));
         Session reboundSession = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow();
         Map<String, Object> rebindV2 = new HashMap<>();
         rebindV2.put("layer", "user");

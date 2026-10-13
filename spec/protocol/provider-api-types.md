@@ -1,7 +1,7 @@
 # XH Provider API Types and Connection Identity
 
 > Contract status: `proposed`; implementation status: `partial`; Profile: `protocol`.
-> Canonical owner: CP Provider owner; active writer: PLAN-0439 (handoff from completed PLAN-0438); checked 2026-10-12.
+> Canonical owner: CP Provider owner; active writer: none — PLAN-0416 closed its dynamic retrieval slot sections on 2026-10-13 (sequential handoff from completed PLAN-0439); checked 2026-10-13.
 > Consumers: CP Provider/Models/Lease, Agent model catalog, UI ProviderHub, downstream PLAN-0439/0485/0416.
 
 ## Registry
@@ -29,7 +29,7 @@
 - PLAN-0438 owns Registry/Catalog/Connection persistence and multi-key CRUD/discovery. Its completed baseline assigns Type server-side; PLAN-0439 extends the mutation contract.
 - PLAN-0439 extends generic Type selection, connection overlay and Session binding; only its Chat templates/selectors/senders require `operation=chat`.
 - PLAN-0485 adds the dedicated Embedding Type and per-request profile/lease/RAG storage consumer. PLAN-0416 consumes that profile for ChatRun retrieval; neither replaces the canonical Registry.
-- PLAN-0438 handed this file to PLAN-0439 after merge 692b89fb. PLAN-0485 and PLAN-0416 consume it until their sequential handoff; only the active owner edits its sections. Authentication/authorization remains owned by Security; HTTP fields/errors remain in OpenAPI/inventory.
+- PLAN-0438 handed this file to PLAN-0439 after merge 692b89fb. PLAN-0485 and PLAN-0416 consumed it until their sequential handoff; both are complete (2026-10-13), so the canonical owner has editing authority again. Authentication/authorization remains owned by Security; HTTP fields/errors remain in OpenAPI/inventory.
 
 ## Development Cutover and Evidence
 
@@ -48,3 +48,15 @@
 - Successful one-use redemption acquires the ephemeral grant. Already acquired grants may complete their Run after a Connection update; subsequent redemption must pass the revision check. Credentials and rendered bodies are not persisted or logged.
 - Chat uses the selected Type’s direct sender/parser; it has no legacy provider or context-builder fallback and never automatically replays a failed HTTP step. Summary and discovery retain their separate boundaries.
 - Cross-Run native history uses the existing `assistant.responded.payload.message` with the optional atomic `apiTypeId/apiTypeVersion/nativeRecords` triple. Native records exclude admitted user input and replace the same Run's projected ai/tool history using existing correlation/sequence. Replay (full/incremental), restart and fork preserve the carrier; prune/compaction remove it atomically with replaced history. Different Type carriers fail closed. Tool argument/result bounds remain in force; signatures/encrypted reasoning remain exact. Serialized Type/nativeRecords carrier must fit the resolved `context-policy.pruneWindowChars`; oversize fails safely before publication. No new table, sequence, credential or rendered-body persistence.
+
+## Dynamic retrieval slot (PLAN-0416)
+
+`xh.rag_context` is a read-only string. Only an unescaped token in the authored snapshot triggers retrieval; `$${xh.rag_context}` remains literal. CP publication and Agent dispatch enforce the same placement rules:
+
+| Chat Type | Allowed data positions |
+|---|---|
+| `openai-chat-completions` | `messages[i].content` strings for `user`, `assistant`, or `tool` roles |
+| `anthropic-messages` | `messages[i].content[j].text` in text blocks, or string `.content` in tool-result blocks, for `user` or `assistant` messages |
+| `mimo-responses` | `input[i].content` strings |
+
+Object keys, system/developer messages, top-level `system`/`instructions`, model and tools are forbidden positions. Retrieval data never replaces authorized Agent instructions or stable ContextEpoch. One Run obtains its own embedding grant, and each provider step renders the data slot from the original template before adding the native continuation. Empty successful retrieval renders `""`; unavailable/failed retrieval fails before Chat provider dispatch with a stable Run error.

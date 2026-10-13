@@ -71,6 +71,16 @@ updated: 2026-10-08
 - **U2** 仅在 `AGENTS.md` 链 `created/updated` 时经 SSE `context_sources_changed` + toast；env（date/HEAD）静默替换符合设计。
 - JIT 磁盘内嵌套 `AGENTS.md`：run 级 cwd 恒为 workspace root，基准链退化为根文件；目录标记已接，事件化全量就近账本见 PLAN 边界。
 
+## PLAN-0416 上下文 epoch — 契约与实现不一致（2026-10-13 登记，部分收口）
+
+- **现象**：`epoch.started` / `epoch.replaced` 与 `session.created` 在两条投影路径（CP `ContextProjectionService`、Agent `AgentContext.apply_event`）都有消费者，但**生产代码没有任何 producer 写入它们**——全仓只有 taxonomy 声明、投影消费、`V43` 分类排除清单与测试里的手工 append。因此 `session.created` 的「payload 带 `epoch_id` 即建首个 epoch」分支线上不可达，`epoch_id` / `baseline_hash` 在真实会话中恒为空；epoch 只有 L1（`context.source_changed`）、env（`context.env_updated`）与 SUM（compaction）三个子槽被真实更新（唯一例外：`session.forked` 的 child 会分配 `contextEpoch`）。
+- **后果（当前无用户可见故障）**：普通会话在事件重放路径上 `epoch` 恒为 `None`，而 CP 投影无条件输出字段全空的 epoch 对象——两条恢复路径对「尚无 epoch」的表达不一致（`null` vs 空对象、语义等价但形态不同）。正常路径上首轮 chat 必写一次 `context.source_changed`，两端都会得到非空 epoch，故分歧被掩盖。命中场景 = 绕过 source refresh 直接写事件的路径（合成会话、测试夹具、未来的导入/迁移工具）、首轮 chat 之前的快照比对，以及未来真正接上 `epoch.*` producer 时的 payload 键映射等价性（legacy `baseline_hash` 会同时映射到 `source_hash` 与 `summary_hash`，无测试覆盖）。
+- **证据**：隔离 CP+PG 恢复探针曾因此在 `agent_live_cp_recovery_equivalent` 判不等；V13 冻结判据只要求 messages 侧 `(sequence/type/payload/prune 状态)` 相等，故 V13 判通过。见 `plans/PLAN-0416-XH-context-reliability-and-retrieval/evidence/host-verification-2026-10-13.md`。
+- **收口状态**：
+  - **恢复路径表达不一致 — 已收口**（2026-10-13 用户裁定选项 ①，CH `1c005f92`）：`AgentContext.from_snapshot()` 仅在 epoch 携带内容时重建 `ContextEpoch`，CP 的全空占位对象读作「无 epoch」；隔离探针复测 **18/18 全绿**。
+  - **`epoch.*`/`session.created` 无 producer 与 `session.created` 消费分支线上不可达 — 仍待裁定**（登记 known issue 不改 spec／修订 spec 声明为未实现／另立「接上 producer」任务）。
+  - **`epoch.*` 的 payload 键映射等价性 — 无测试覆盖**，待真正接上 producer 时补。
+
 ## 已修复 — Chat SSE 生命周期与真实流式（PLAN-230 已完成 M1-M4）
 
 - **会话 SSE 一次性连接导致连续消息 409**：已修复。原因有二：CP 在每轮末尾无条件 `complete(sessionId)` 使会话 SSE 一次性，且旧 emitter `onCompletion` 按 sessionId 清理可能误删新连接；UI 侧 `onclose` 未重连。修复：CP 改持久会话 SSE（`SseEmitterManager` 按 `{sessionId, generation, emitter}` 存储 + `removeIfCurrent` 身份比对，误删记 `stale_cleanup_ignored`；`complete` 由客户端断开/发送失败等内部清理触发，服务端主动收尾仅会话删除成功路径，见下节 PLAN-0352）；UI `chatTransport` 单飞 + 指数退避重连，`SSEStream` 发送前手工确认连接。验证：同一页面连续两条 `POST /api/v1/chat` 均 202 且助手回复不空；多 `token` 事件在 `done` 前多次增长。

@@ -4,19 +4,20 @@ from __future__ import annotations
 
 import copy
 import json
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from typing import Any, cast
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.messages.ai import UsageMetadata
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
+from loguru import logger
 from pydantic import PrivateAttr
 
 from xihe_agent.interfaces.message import Message
 from xihe_agent.interfaces.tool import BaseAgentTool
 from xihe_agent.llm.api_request import ApiRequestError, ChatApiType, render_request
-from xihe_agent.llm.api_sender import ApiSender, NativeResponse
+from xihe_agent.llm.api_sender import NATIVE_USAGE_COUNTERS, ApiSender, NativeResponse
 
 
 def native_tools(tools: Sequence[BaseAgentTool], api_type: ChatApiType) -> list[dict[str, Any]]:
@@ -220,10 +221,19 @@ class ApiChatModel(BaseChatModel):
     _api_type: ChatApiType = PrivateAttr()
     _sender: ApiSender = PrivateAttr()
     _base: dict[str, Any] = PrivateAttr()
+    _body_source: str = PrivateAttr()
+    _values: dict[str, Any] = PrivateAttr()
     _initial_count: int | None = PrivateAttr(default=None)
     _tool_names: set[str] = PrivateAttr(default_factory=set)
     _native_turns: list[dict[str, Any]] = PrivateAttr(default_factory=list)
     _current_suffix: list[dict[str, Any]] = PrivateAttr(default_factory=list)
+    # PLAN-0416 T2.3: budget estimation over the final serialized native body,
+    # taken once per dispatched provider step, plus the provider counters each
+    # step actually returned (absent counters stay unknown, never 0).
+    _token_estimator: Callable[[dict[str, Any]], int] | None = PrivateAttr(default=None)
+    _step_estimates: list[int] = PrivateAttr(default_factory=list)
+    _provider_usage: dict[str, int] = PrivateAttr(default_factory=dict)
+    _provider_reported: set[str] = PrivateAttr(default_factory=set)
 
     def __init__(
         self,
@@ -234,11 +244,15 @@ class ApiChatModel(BaseChatModel):
         values: dict[str, Any],
         request_id: str,
         timeout: float,
+        token_estimator: Callable[[dict[str, Any]], int] | None = None,
     ):
         super().__init__(cache=False)
         self._api_type = api_type
         self._sender = ApiSender(api_type, grant, request_id, timeout)
         self._base = render_request(body_source, api_type, values)
+        self._body_source = body_source
+        self._values = copy.deepcopy(values)
+        self._token_estimator = token_estimator
         self._tool_names = {
             str(tool.get("function", tool).get("name"))
             for tool in self._base.get("tools", [])
@@ -252,6 +266,29 @@ class ApiChatModel(BaseChatModel):
     @property
     def api_type(self) -> ChatApiType:
         return self._api_type
+
+    @property
+    def estimated_input_tokens(self) -> int:
+        """Run aggregate of the per-step native body estimate (PLAN-0416 T2.3)."""
+        return sum(self._step_estimates)
+
+    @property
+    def estimated_step_count(self) -> int:
+        return len(self._step_estimates)
+
+    @property
+    def provider_usage_totals(self) -> dict[str, int]:
+        """Provider counters summed over the steps that reported them."""
+        return dict(self._provider_usage)
+
+    @property
+    def provider_reported(self) -> set[str]:
+        return set(self._provider_reported)
+
+    @property
+    def provider_unknown(self) -> set[str]:
+        """Counters no dispatched step reported — unknown, not 0."""
+        return set(NATIVE_USAGE_COUNTERS) - self._provider_reported
 
     @property
     def _llm_type(self) -> str:
@@ -270,7 +307,9 @@ class ApiChatModel(BaseChatModel):
             self._initial_count = len(messages)
         if len(messages) < self._initial_count:
             raise ApiRequestError("INVALID_REQUEST_SHAPE")
-        body = copy.deepcopy(self._base)
+        # RAG stays in its independent template data slot on every step; it is
+        # never appended to baseline instructions or admitted durable messages.
+        body = render_request(self._body_source, self._api_type, self._values)
         suffix = messages[self._initial_count :]
         if any(not isinstance(message, (AIMessage, ToolMessage)) for message in suffix):
             raise ApiRequestError("INVALID_REQUEST_SHAPE")
@@ -278,9 +317,33 @@ class ApiChatModel(BaseChatModel):
         body[self._api_type.input_field].extend(copy.deepcopy(self._current_suffix))
         return body
 
+    def _dispatch_body(self, messages: list[BaseMessage]) -> dict[str, Any]:
+        """Final native body for this provider step, estimated before dispatch.
+
+        PLAN-0416 T2.3: the estimate covers the complete serialized body the
+        provider receives (tools/history/RAG/instructions/current input). It is
+        an observation only — no threshold is invented and no request is
+        replayed from the result.
+        """
+        body = self._body(messages)
+        if self._token_estimator is None:
+            return body
+        estimated = self._token_estimator(body)
+        self._step_estimates.append(estimated)
+        logger.info(
+            "[LIFECYCLE] service=agent event=native_request_estimated requestId={} step={} estimatedTokens={}",
+            self._sender.request_id,
+            len(self._step_estimates),
+            estimated,
+        )
+        return body
+
     def _check_response(self, response: NativeResponse) -> None:
         if any(call["name"] not in self._tool_names for call in response.calls):
             raise ApiRequestError("TOOL_NOT_AUTHORIZED", 403)
+        for name, value in response.provider_usage.items():
+            self._provider_usage[name] = self._provider_usage.get(name, 0) + value
+            self._provider_reported.add(name)
         self._native_turns = copy.deepcopy([*self._current_suffix, *response.records])
 
     def _generate(
@@ -292,7 +355,7 @@ class ApiChatModel(BaseChatModel):
         self, messages: list[BaseMessage], stop: list[str] | None = None, run_manager: Any = None, **kwargs: Any
     ) -> ChatResult:
         result = None
-        async for _text, _reasoning, final in self._sender.stream(self._body(messages)):
+        async for _text, _reasoning, final in self._sender.stream(self._dispatch_body(messages)):
             if final is not None:
                 result = final
         if result is None:
@@ -313,7 +376,7 @@ class ApiChatModel(BaseChatModel):
     async def _astream(
         self, messages: list[BaseMessage], stop: list[str] | None = None, run_manager: Any = None, **kwargs: Any
     ) -> AsyncIterator[ChatGenerationChunk]:
-        async for text, reasoning, result in self._sender.stream(self._body(messages)):
+        async for text, reasoning, result in self._sender.stream(self._dispatch_body(messages)):
             if text or reasoning:
                 yield ChatGenerationChunk(
                     message=AIMessageChunk(

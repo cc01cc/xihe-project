@@ -55,7 +55,12 @@ test.describe("@host PLAN-0307 V17 — UI config reaches the Agent run", () => {
         await modelInput.fill(uniqueModel);
         // Also override defaultModel: it keeps the chat UI from resolving an
         // available catalog model and sending its own `model` override, which
-        // would shadow the Agent-side merged config.
+        // would shadow the Agent-side merged config. PLAN-0503: defaultModel is
+        // a catalog-driven select now — switch to the free-text escape first.
+        await panel
+            .getByTestId("config-field-llm-provider-defaultModel")
+            .locator("select")
+            .selectOption("__custom__");
         await panel
             .getByTestId("config-field-llm-provider-defaultModel")
             .locator("input")

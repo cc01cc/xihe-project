@@ -330,3 +330,102 @@ def test_agent_context_from_events():
     assert len(ctx.messages) == 2
     assert ctx.messages[0].role == "human"
     assert ctx.messages[1].role == "ai"
+
+
+# --- PLAN-0416 D2: "no epoch" must read the same on every recovery path ---
+
+# CP's emptyContextSlots() emits exactly these seven keys for a branch that
+# never established a baseline (ContextProjectionService.emptyContext).
+_CP_PLACEHOLDER_EPOCH = {
+    "epoch_id": "",
+    "source_hash": "",
+    "summary_hash": "",
+    "system_messages": [],
+    "l1_sources": [],
+    "l1_rendered": "",
+    "sources": [],
+}
+
+# The same absence, plus the keys a richer legacy snapshot carries as empty:
+# none of them may count as content either.
+_EXTENDED_EMPTY_EPOCH = {
+    **_CP_PLACEHOLDER_EPOCH,
+    "baseline_hash": "",
+    "l1_status": "",
+    "env_status": "",
+    "env_branch": "",
+    "env_head": "",
+    "env_is_repository": False,
+    "env_observed_at": "",
+    "env_cwd": None,
+    "env_platform": None,
+    "env_shell": None,
+}
+
+
+def _snapshot_with_epoch(epoch):
+    return {
+        "aggregate_id": "session-1",
+        "latest_sequence": 1,
+        "messages": [{"role": "human", "content": "hello", "sequence": 1}],
+        "epoch": epoch,
+        "runtime_state": {},
+    }
+
+
+def test_from_snapshot_normalizes_placeholder_epoch_to_none():
+    for placeholder in (_CP_PLACEHOLDER_EPOCH, _EXTENDED_EMPTY_EPOCH):
+        ctx = AgentContext.from_snapshot(_snapshot_with_epoch(placeholder))
+
+        assert ctx.epoch is None
+        assert ctx.to_snapshot()["epoch"] is None
+
+
+def test_from_snapshot_keeps_epoch_when_any_slot_carries_content():
+    filled_shapes = [
+        {"epoch_id": "epoch-1"},
+        {"baseline_hash": "hash-1"},
+        {"summary_hash": "summary-1"},
+        {"system_messages": ["SUMMARY"]},
+        {"l1_rendered": "rendered rules"},
+        {"l1_status": "missing"},
+        {"env_status": "ok"},
+        {"env_branch": "main"},
+        {"env_is_repository": True},
+        {
+            "sources": [
+                {"key": "agents_md", "source_type": "agents_md", "content": "hi", "content_hash": "h1"}
+            ]
+        },
+    ]
+    for filled in filled_shapes:
+        ctx = AgentContext.from_snapshot(_snapshot_with_epoch({**_CP_PLACEHOLDER_EPOCH, **filled}))
+        assert ctx.epoch is not None, filled
+        assert ctx.to_snapshot()["epoch"] is not None, filled
+
+
+def test_from_snapshot_tolerates_non_dict_epoch():
+    ctx = AgentContext.from_snapshot(_snapshot_with_epoch("unexpected"))
+
+    assert ctx.epoch is None
+
+
+def test_no_epoch_reads_the_same_on_replay_and_restore():
+    """T2.4/V13: both recovery paths must report the same absent-epoch value."""
+    replayed = AgentContext.empty("session-1")
+    replayed.apply_event(
+        Event(
+            aggregate_id="session-1",
+            sequence=1,
+            type="prompt.admitted",
+            payload={"message": {"role": "human", "content": "hello"}},
+            created_at=datetime.now(UTC),
+        )
+    )
+    restored = AgentContext.from_snapshot(_snapshot_with_epoch(_CP_PLACEHOLDER_EPOCH))
+
+    replayed_epoch = replayed.to_snapshot()["epoch"]
+    restored_epoch = restored.to_snapshot()["epoch"]
+    assert replayed_epoch is None
+    assert restored_epoch is None
+    assert replayed.messages[0].content == restored.messages[0].content

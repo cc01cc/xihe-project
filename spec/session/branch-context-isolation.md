@@ -39,6 +39,12 @@
 - CP `ContextProjectionService` 与 Agent `AgentContext.apply_event("session.forked")` 对 seed 产生等价 messages/SUM。Parent L1/env 不复制；既有 per-run `ContextSourceRefreshService` 在 child 首次 Chat 前重新装入 Workspace L1。
 - Agent 只消费 CP 为当前 durable Run 解析的 snapshot。不得按 sessionId 重新读取整段历史覆盖 path filter。必需 ContextEvent append 或 snapshot 失败时必须可观测并使 Run 显式失败，禁止静默继续或回退到完整 Session history。
 
+## PLAN-0416 快照与 occurrence 恢复约束
+
+- snapshot 始终返回该 branch 的完整可见投影；`afterSequence` 只作游标或缓存提示，不得返回可被误当完整状态的孤立后缀。Agent 从空态恢复时必须全量 replay。
+- 新 prune 以事件 `sequence` 和 `toolCallId` 指定 occurrence；同文本不同事件独立存活。内容 hash 只用于读取历史 tombstone，不作为新 prune 身份。
+- 增量读取、空态 replay、Agent 重启及 compaction 后，同一 branch 的可见事件投影必须逐项等价（sequence、type、payload、prune 状态），被 prune 的历史不得复活。
+
 ## 存量数据
 
 - Fresh 与 upgrade migration 均须为每个 Session 创建唯一 root branch，并将既有 Message、ChatRun、ContextEvent 和 ContextProjection 归入 root；迁移前后数量、外键和唯一性必须可对账。

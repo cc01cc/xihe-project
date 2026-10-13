@@ -43,7 +43,6 @@ class NativeCarrierProjectionTest {
         var input = new ArrayList<ContextEvent>();
         input.add(event("epoch.started", null, Map.of("epoch_id", "stable", "system_messages", List.of("base"))));
         input.addAll(runEvents());
-        when(events.hasNativeCarrier("session")).thenReturn(true);
         when(events.read("session", 0L, null)).thenReturn(input);
         ObjectNode full = projector.project("session", 0L, null);
         assertEquals(full, projector.project("session", 3L, null));
@@ -61,7 +60,6 @@ class NativeCarrierProjectionTest {
     void lateOldToolTombstoneRemovesItsWholeCarrier() throws Exception {
         var input = runEvents();
         input.add(event("context.prune", null, Map.of("tombstones", List.of(Map.of("content_hash", hash("bounded tool output"))))));
-        when(events.hasNativeCarrier("session")).thenReturn(true);
         when(events.read("session", 0L, null)).thenReturn(input);
         JsonNode messages = projector.project("session", 0L, null).path("messages");
         assertEquals(3, messages.size());
@@ -78,7 +76,6 @@ class NativeCarrierProjectionTest {
         input.add(finalCarrier);
         input.add(finalCarrier); // repeated final publication must remain blocked after prune
         input.add(event("tool.result", "current", Map.of("toolCallId", "call", "result", "bounded tool output")));
-        when(events.hasNativeCarrier("session")).thenReturn(true);
         when(events.read("session", 0L, null)).thenReturn(input);
         JsonNode messages = projector.project("session", 0L, null).path("messages");
         assertEquals(3, messages.size());
@@ -87,13 +84,11 @@ class NativeCarrierProjectionTest {
 
     @Test
     void forkPreservesCarrierAndCarrierHashPruneRemovesItAtomically() throws Exception {
-        when(events.hasNativeCarrier("session")).thenReturn(true);
         when(events.read("session", 0L, null)).thenReturn(runEvents());
         JsonNode original = projector.project("session", 0L, null).path("messages");
         var fork = new ArrayList<ContextEvent>();
         fork.add(event("session.forked", null, Map.of("source_session_id", "source", "anchor_message_id", "anchor",
                 "summary_seed", Map.of("messages", original, "contextEpoch", "child-epoch"))));
-        when(events.hasNativeCarrier("child")).thenReturn(true);
         when(events.read("child", 0L, null)).thenReturn(fork);
         assertEquals(original, projector.project("child", 0L, null).path("messages"));
         fork.add(event("context.prune", null, Map.of("tombstones", List.of(Map.of("content_hash", hash("final answer"))))));
@@ -107,7 +102,6 @@ class NativeCarrierProjectionTest {
             input.add(event("prompt.admitted", "later-" + i, Map.of("content", "human " + i)));
         }
         input.add(event("compaction.applied", null, Map.of("summary", "summary", "summaryHash", "sum")));
-        when(events.hasNativeCarrier("session")).thenReturn(true);
         when(events.read("session", 0L, null)).thenReturn(input);
         ObjectNode result = projector.project("session", 0L, null);
         assertEquals(10, result.path("messages").size());
@@ -146,6 +140,64 @@ class NativeCarrierProjectionTest {
                         Map.of("role", "user", "content", List.of(Map.of("type", "tool_result", "tool_use_id", "call", "content", "bounded tool output"))),
                         Map.of("role", "assistant", "content", List.of(Map.of("type", "text", "text", "final answer"))))))));
         return input;
+    }
+
+    @Test
+    void precisePruneAfterCarrierKeepsOccurrenceAndBlocksLateCarrierAcrossFullReplays() throws Exception {
+        var input = runEvents();
+        ContextEvent toolResult = input.get(4);
+        ContextEvent carrier = input.get(5);
+        when(events.read("session", 0L, null)).thenReturn(input);
+        assertEquals(carrier.getSequence(), projector.project("session", 0L, null)
+                .path("messages").get(3).path("sequence").asLong());
+        input.add(event("context.prune", "current", Map.of("tombstones", List.of(Map.of(
+                "sequence", toolResult.getSequence(), "tool_call_id", "call")))));
+        ObjectNode pruned = projector.project("session", 0L, null);
+        assertFalse(pruned.path("messages").toString().contains("nativeRecords"));
+        assertEquals(3, pruned.path("messages").size());
+        assertEquals(pruned, projector.project("session", carrier.getSequence(), null));
+        input.add(event("assistant.responded", "current", json.readValue(carrier.getPayload(), Map.class)));
+        ObjectNode restarted = projector.project("session", 0L, null);
+        assertEquals(pruned.path("messages"), restarted.path("messages"));
+        assertEquals(restarted, projector.project("session", toolResult.getSequence(), null));
+        assertFalse(restarted.path("messages").toString().contains("bounded tool output"));
+    }
+
+    @Test
+    void reusedCallIdInDifferentRunsKeepsDistinctOccurrencesAndOnlyPrunesNamedSequence() throws Exception {
+        var input = new ArrayList<ContextEvent>();
+        input.add(event("tool.called", "run-a", Map.of("toolCallId", "reused", "toolName", "read")));
+        input.add(event("tool.called", "run-b", Map.of("toolCallId", "reused", "toolName", "read")));
+        ContextEvent first = event("tool.result", "run-a", Map.of("toolCallId", "reused", "result", "same"));
+        ContextEvent second = event("tool.result", "run-b", Map.of("toolCallId", "reused", "result", "same"));
+        input.add(first);
+        input.add(second);
+        input.add(event("context.prune", "run-b", Map.of("tombstones", List.of(Map.of(
+                "sequence", second.getSequence(), "tool_call_id", "reused")))));
+        when(events.read("session", 0L, null)).thenReturn(input);
+        JsonNode messages = projector.project("session", 0L, null).path("messages");
+        assertEquals(4, messages.size());
+        assertEquals("same", messages.get(2).path("content").asText());
+        assertEquals(first.getSequence(), messages.get(2).path("sequence").asLong());
+        assertFalse(messages.get(2).path("pruned").asBoolean());
+        assertEquals("[old tool result cleared]", messages.get(3).path("content").asText());
+    }
+
+    @Test
+    void multipleTombstonesKeepSequenceAndCallIdPairsInsteadOfCrossMatchingSets() throws Exception {
+        var input = new ArrayList<ContextEvent>();
+        ContextEvent a = event("tool.result", "run-a", Map.of("toolCallId", "a", "result", "one"));
+        ContextEvent b = event("tool.result", "run-b", Map.of("toolCallId", "b", "result", "two"));
+        input.add(a);
+        input.add(b);
+        input.add(event("context.prune", "run-b", Map.of("tombstones", List.of(
+                Map.of("sequence", a.getSequence(), "tool_call_id", "b"),
+                Map.of("sequence", b.getSequence(), "tool_call_id", "a")))));
+        when(events.read("session", 0L, null)).thenReturn(input);
+        JsonNode messages = projector.project("session", 0L, null).path("messages");
+        assertEquals("one", messages.get(0).path("content").asText());
+        assertEquals("two", messages.get(1).path("content").asText());
+        assertFalse(messages.toString().contains("pruned"));
     }
 
     private ContextEvent event(String type, String run, Object payload) throws Exception {

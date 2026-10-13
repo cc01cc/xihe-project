@@ -180,6 +180,16 @@ function readJson(path) {
   }
 }
 
+// `xihe-e2e-host-<runId with punctuation stripped>-postgres-1` — the compose
+// project prefix names the run (and therefore the worktree) that owns the
+// residue, so the operator can tell "another run is live" from "an interrupted
+// run left this behind" before deciding to wait or tear down.
+function e2eOwnerOf(name) {
+  const prefix = 'xihe-e2e-host-'
+  if (!name.startsWith(prefix)) return ''
+  return name.slice(prefix.length).replace(/-postgres-1$/, '')
+}
+
 const now = Date.now()
 console.log(`XH host E2E preflight (read-only)  ${new Date(now).toISOString()}`)
 console.log(`project: ${projectDir}`)
@@ -212,11 +222,11 @@ if (!dockerVersion.ok) {
       const [name, status = '', labels = ''] = line.split('\t')
       if (name.startsWith('xihe-e2e-')) {
         if (ownComposePrefix && name.toLowerCase().startsWith(ownComposePrefix)) ownComposeContainers.push({ name, status })
-        else residueContainers.push({ name, status })
+        else residueContainers.push({ name, status, owner: e2eOwnerOf(name) })
       } else if (name.startsWith('xihe-workspace-')) {
         const label = /xihe\.e2e\.run-id=([^,\s]+)/.exec(labels)
         if (label && ownRunId && label[1] === ownRunId) ownSandboxes.push({ name, status })
-        else if (labels.includes('xihe.e2e.run-id=')) e2eSandboxes.push({ name, status })
+        else if (labels.includes('xihe.e2e.run-id=')) e2eSandboxes.push({ name, status, owner: label ? label[1] : '' })
         else devSandboxes.push({ name, status })
       }
     }
@@ -230,12 +240,12 @@ if (!dockerVersion.ok) {
   const residueVolumes = allE2eVolumes.filter((n) => !ownComposeVolumes.includes(n))
   const residueNetworks = allE2eNetworks.filter((n) => !ownComposeNetworks.includes(n))
   if (residueContainers.length > 0) {
-    add('FAIL', 'docker', `${residueContainers.length} residual xihe-e2e-* container(s)`, 'interrupted run; tear down before starting a new one (or reuse via XIHE_E2E_EXTERNAL_SERVER=1)')
-    for (const item of residueContainers) console.log(`  FAIL  container ${item.name} (${item.status})`)
+    add('FAIL', 'docker', `${residueContainers.length} residual xihe-e2e-* container(s)`, 'belongs to another run (or an interrupted one); isolate e2e runs are serial by design. Reuse your own stack via XIHE_E2E_EXTERNAL_SERVER=1, or — only after confirming that run is not live — tear it down from its own worktree (node scripts/e2e-host.mjs --teardown)')
+    for (const item of residueContainers) console.log(`  FAIL  container ${item.name} (${item.status})${item.owner ? ` — run ${item.owner}` : ''}`)
   }
   if (e2eSandboxes.length > 0) {
-    add('FAIL', 'docker', `${e2eSandboxes.length} e2e-labelled sandbox container(s) (label xihe.e2e.run-id)`, 'leftover Sandbox from a failed run; remove after confirming no live run')
-    for (const item of e2eSandboxes) console.log(`  FAIL  sandbox ${item.name} (${item.status})`)
+    add('FAIL', 'docker', `${e2eSandboxes.length} e2e-labelled sandbox container(s) (label xihe.e2e.run-id)`, 'leftover Sandbox from a failed run; remove after confirming no live run owns its run id')
+    for (const item of e2eSandboxes) console.log(`  FAIL  sandbox ${item.name} (${item.status})${item.owner ? ` — run ${item.owner}` : ''}`)
   }
   if (residueVolumes.length > 0) {
     add('FAIL', 'docker', `${residueVolumes.length} residual e2e volume(s)`, residueVolumes.join(', '))

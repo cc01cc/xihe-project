@@ -96,7 +96,7 @@ flowchart TD
 
 - CP 是唯一真相源，负责事件持久化与读模型构建。
 - Agent 无状态，通过 `/internal/v1/context/{sessionId}/snapshot` 获取读模型快照。
-- 上下文模板（PLAN-0414/0415）：CP Session 钉 `context_template_layer/id/version`，admission 把模板修订复制进 `chat_runs.context_template_snapshot`；`/internal/v1/agent/chat` additive 传 snapshot、可选 safe `instructions` 和 path-only `componentSources`（Workspace tree 由 CP PolicyEngine + Runtime list resolver 提供）；Agent 构造 typed per-dispatch `ChatRunContext`/有序 `BuildContext`，只有 `system_prompt` marker 命中时才在文档位置加入平台/Agent instructions，不在 template-run 头尾 hidden append。AgentPrincipal ID/permission snapshot 不出 CP；组件/Run 不得扩大工具能力。`root_agents_md` 刷新值 `per_chat_run/per_session` 见 DEV-014 §8f。
+- 上下文模板（PLAN-0414/0415）：CP Session 钉 `context_template_layer/id/version`，admission 把模板修订复制进 `chat_runs.context_template_snapshot`；`/internal/v1/agent/chat` additive 传 snapshot、CP-owned `instructions` 和 path-only `componentSources`（Workspace tree 由 CP PolicyEngine + Runtime list resolver 提供）。`instructions` 的唯一来源是 AgentPrincipal `templateSnapshot.systemPrompt`（CP `resolveSystemInstructionsForRun`）；缺失或空白时 Agent 以 `BASELINE_UNAUTHORIZED` fail-closed，**没有进程级 fallback**（PLAN-0416 T3.1，原 `AGENT_INSTRUCTIONS` 常量与 `agent-runtime.instructions` 回退已删除）。Agent 构造 typed per-dispatch `ChatRunContext`/有序 `BuildContext`，只有 `system_prompt` marker 命中时才在文档位置加入平台/Agent instructions，不在 template-run 头尾 hidden append。AgentPrincipal ID/permission snapshot 不出 CP；组件/Run 不得扩大工具能力。`root_agents_md` 刷新值 `per_chat_run/per_session` 见 DEV-014 §8f。
 - **分支上下文（PLAN-0410/V43）**：snapshot 携 `?runId`/`?branchId` 选择器（两者并存必须一致，未知/伪造 404、冲突 409 fail-closed，缺省=root）；Agent 只消费 CP 给定的 branch（`AgentContext.branch_id`），从不自选或回退整 Session history；run-scoped Event 写 `correlation_id=runId`，必需 append 失败使 Run 收敛失败而非静默续跑。
 - 事件写入当前为同步；性能测试显示批量写入已足够快（~17k events/s），未引入异步队列。
 
@@ -202,12 +202,20 @@ CP `ContextSourceRefreshService`（**每 run** 在 `ChatController.execAsync` �
 - **usage 三档**：`usage_metadata` 命中 → `source=real`；未命中 → 本地 `TokenCounter` 估算 → `estimated`；两者皆无 → `fallback` + 计数 0；`main.py` 追加 `model=provider/model`（CP pricing 查表键）。
 - **边界**：端点不写事件、不碰 SC/审批、无持久化；请求/响应日志不含摘要正文与凭据。
 
-### 3.7 type-specific Chat sender 与请求级 RAG 适配（PLAN-0439/0485）
+### 3.7 type-specific Chat sender 与请求级 RAG 适配（PLAN-0439/0485/0416）
 
 - **Chat sender（PLAN-0439）**：Chat 请求不再由 provider-neutral `messages` 序列化器重建；Agent 按连接的 `apiTypeId/version` 选择 type-specific sender/stream parser（内置 `openai-chat-completions`、`anthropic-messages`、`mimo-responses`），直接发送 CP 快照中的用户请求体：`${xh.*}` 单遍替换（`$${...}` 输出字面量）、结构化历史 splice 只出现在约定槽位；model 槽、凭据与 baseUrl 一律取租约 grant，模板声明这些字段会被 CP validator 拒绝。非 chat 类型在 dispatch 前 fail-closed。
 - **RAG 请求级适配（PLAN-0485）**：`/internal/v1/agent/rag/{ingest,search,stats,embedding/test}` 按请求携带非密 `embeddingProfile` 与一次性 `embeddingCredentialLease`；Agent 逐请求兑换 grant 构造 request-scoped embedding adapter（不再持有全局凭据单例），并按 profile 的完整身份 tuple 建立/检索分区（langchain_postgres 过滤下推，WHERE 先于 ORDER BY/LIMIT）；维度来自 profile（fresh store 固定 768），profile/租约缺失或不匹配 → stable `409 EMBEDDING_PROFILE_*`，provider 故障按类别返回可区分错误码，响应不泄漏凭据或向量。
 
+PLAN-0416 动态检索使用只读字符串 `${xh.rag_context}`，不改变授权 `instructions` 或稳定 ContextEpoch。只有原模板未转义 token 触发检索，`$${xh.rag_context}` 保留字面量。CP/Agent 同时限制在 API-native 数据槽：OpenAI user/assistant/tool `messages[].content`、Anthropic user/assistant 消息的 text block `.text` 或 tool_result 字符串 `.content`、MiMo 字面量 user/assistant/tool 角色的 `input[].content`。对象键、system/developer 角色与顶层 system/instructions 禁止注入。
+
+Chat Run 的 `embeddingProfile` 与独立 `embeddingCredentialLease` 由 CP 按认证 scope 解析，Agent 兑换携 Run `runId`，不复用 Chat lease 或全局 embedding singleton。成功零命中渲染空字符串；profile/租约不可用与 provider/DB 查询失败在 Chat dispatch 前返回 `RAG_PROFILE_UNAVAILABLE`、`RAG_LEASE_*` 或 `RAG_QUERY_FAILED`，沿既有 Run 错误事件呈现。检索日志只记录 Run、错误码和异常类型，不记录原始 traceback、检索文本、向量或凭据。
+
+每个 provider step 从原模板渲染数据槽并追加本 Run 原生 continuation，按最终序列化 request body 估算预算；provider usage 单独累计，缺失字段保持 unknown。
+
 ## 4. 崩溃恢复
+
+PLAN-0416 的 snapshot `afterSequence` 只作游标提示，返回完整 branch 投影；空态恢复从 sequence 0 全量 replay。新 prune 以 sequence/toolCallId 定位 occurrence，纯内容 hash 只用于历史 tombstone 兼容。恢复不得重新引入已清除的工具结果或原生 carrier。
 
 Agent 启动恢复流程：
 

@@ -69,6 +69,8 @@ class ChatControllerScheduledDispatchTest {
                 healthMonitor,
                 Mockito.mock(com.cc01cc.p.xihe.cp.status.RequestQueue.class),
                 Mockito.mock(com.cc01cc.p.xihe.cp.provider.ProviderCredentialLeaseService.class),
+                Mockito.mock(com.cc01cc.p.xihe.cp.config.EmbeddingProfileService.class),
+                Mockito.mock(com.cc01cc.p.xihe.cp.provider.ApiRequestValidator.class),
                 Mockito.mock(com.cc01cc.p.xihe.cp.config.ConfigService.class),
                 Mockito.mock(com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder.class),
                 Mockito.mock(com.cc01cc.p.xihe.cp.mcp.McpToolTimeoutService.class),

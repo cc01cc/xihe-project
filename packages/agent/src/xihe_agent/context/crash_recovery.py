@@ -23,14 +23,23 @@ class CrashRecovery:
         self._event_store = event_store
 
     async def recover(self, session_id: str, after_sequence: int = 0) -> AgentContext:
-        """Read events after ``after_sequence`` and rebuild the context.
+        """Rebuild the context from the session's full durable history.
 
-        The returned context contains the latest known sequence so callers can
-        resume appending events without gaps.
+        PLAN-0416 T2.4: recovery is never a suffix replay. ``after_sequence``
+        is the caller's cursor (the last sequence it had already seen); the
+        rebuild always starts at 0 so a resumed Run sees exactly the projection
+        a live read returns — never an empty state built from an empty suffix,
+        and never an orphaned suffix whose tool pair, prune tombstone or native
+        carrier predates the cursor.
         """
-        logger.info("Recovering session {} from sequence {}", session_id, after_sequence)
+        if after_sequence > 0:
+            logger.info(
+                "Recovering session {} (caller cursor {} is a hint; replaying full history)",
+                session_id,
+                after_sequence,
+            )
         events: list[Event] = []
-        async for event in self._event_store.read(session_id, after_sequence=after_sequence):
+        async for event in self._event_store.read(session_id, after_sequence=0):
             events.append(event)
 
         context = AgentContext.from_events(session_id, events)

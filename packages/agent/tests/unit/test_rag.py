@@ -70,3 +70,22 @@ class TestRagConfigDefaults:
             "topK": 5,
             "minScore": 0.0,
         }
+
+
+def _bare_request():
+    from starlette.requests import Request
+
+    return Request({"type": "http", "method": "POST", "path": "/", "headers": []})
+
+
+def test_request_id_reuses_the_middleware_id():
+    """The response header and any problem body must carry one id even when the
+    caller (CP's RAG proxy) sends no X-Request-Id."""
+    request = _bare_request()
+    request.state.request_id = "middleware-generated"
+
+    assert rag_api._request_id(request) == "middleware-generated"
+
+
+def test_request_id_is_empty_without_state_or_header():
+    assert rag_api._request_id(_bare_request()) == ""

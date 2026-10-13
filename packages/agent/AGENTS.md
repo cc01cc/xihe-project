@@ -26,7 +26,7 @@ uv sync          # 安装依赖（见 pyproject.toml）
 - Lint single file: `ruff check src/xihe_agent/path/to/file.py`
 
 ### Full Suite
-- `uv run pytest` — 全部测试
+- `uv run pytest` — 全部测试（含需隔离栈环境的集成用例：`tests/integration/test_vector_store.py` 缺 `XIHE_E2E_PG_*` 时按设计硬失败、非 skip；收尾/本地批量门禁用 `uv run pytest tests/unit -q`，真实 PG 集成经 host runner 注入环境运行）
 - `uv run ruff check src/` — lint
 - `uv run mypy src/` — 类型检查（真实阻断门：`pyproject.toml` 无全局 `ignore_errors`；发现类型错误必须修复，禁止恢复全局/整模块吞错）
 
@@ -52,6 +52,7 @@ uv sync          # 安装依赖（见 pyproject.toml）
 - `/internal/v1/agent/chat` 显式接收 `provider`、`model` 和 `toolMode`；`toolMode=none` 不初始化 MCP，`workspace` 模式必须绑定 workspace 且不得复用其他 workspace 的 MCP context
 - type-specific sender（PLAN-0439）：Chat 按连接 `apiTypeId/version` 直发 CP 快照的用户请求体（`${xh.*}` 单遍替换、`$${...}` 字面量、结构化历史 splice 仅在约定槽位）；model/凭据/baseUrl 取租约 grant，非 chat 类型 dispatch 前 fail-closed
 - RAG 请求级适配（PLAN-0485）：`/internal/v1/agent/rag/*` 按请求携带非密 `embeddingProfile` + 一次性租约，逐请求换取 grant 构造 adapter 并按完整身份 tuple 分区（详见 [`DEV-013 §3.7`](../../docs/i18n/zh-Hans/DEV-013-agent-architecture.md)）
+- Chat RAG（PLAN-0416）：仅原 API-native 模板未转义 `xh.rag_context` 数据槽触发检索；独立 embedding lease 兑换携 Run `runId`，失败在 Chat dispatch 前拒绝；RAG 不进入 instructions/ContextEpoch。检索日志不得记录原始异常 traceback。
 - 每个 catch 必须有日志 + stacktrace
 - `interfaces/` 目录下禁止直接 import `langchain*`；LangChain 特定代码收敛到 `agent_runner/langgraph_runner.py` 和 `adapters/`
 - Agent 编排通过 `AgentRunner` 接口，不直接调用 LangGraph

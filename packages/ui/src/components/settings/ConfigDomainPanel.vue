@@ -13,6 +13,18 @@ export interface DomainField {
     max?: number;
     /** Written by the instance layer only (e.g. agent-runtime.instructions, decision #17). */
     instanceOnly?: boolean;
+    /**
+     * PLAN-0503: candidates computed at render time from a sibling field's
+     * editing value (e.g. defaultModel options filtered by defaultProvider).
+     */
+    optionsFor?: (dependencyValue: string) => { label: string; value: string }[];
+    /** PLAN-0503: sibling field whose editing value feeds `optionsFor`. */
+    optionsDependsOn?: string;
+    /**
+     * PLAN-0503: select keeps out-of-candidate values (drift) and offers a
+     * free-text escape, so a directory outage never blocks manual input.
+     */
+    allowCustom?: boolean;
 }
 
 const props = defineProps<{
@@ -25,6 +37,8 @@ const props = defineProps<{
     schema: DomainField[];
     /** domain key -> env-effective value when an env overlay wins (decision #22). */
     envLocked?: Record<string, string>;
+    /** PLAN-0503: optional directory-freshness line (revision / verifiedAt). */
+    note?: string;
 }>();
 
 const emit = defineEmits<{
@@ -65,6 +79,45 @@ function isPasswordKey(key: string): boolean {
         normalized.includes("secret") ||
         normalized.includes("password")
     );
+}
+
+/** Sentinel option value that flips a select into free-text mode (PLAN-0503). */
+const CUSTOM_OPTION = "__custom__";
+
+const customMode = ref<Record<string, boolean>>({});
+
+function fieldCandidates(field: DomainField): { label: string; value: string }[] {
+    if (field.optionsFor) {
+        const dependency = field.optionsDependsOn
+            ? (editing.value[field.optionsDependsOn] ?? "")
+            : "";
+        return field.optionsFor(dependency);
+    }
+    return field.options ?? [];
+}
+
+/**
+ * PLAN-0503 I3 / design「目录更新处置矩阵」: any select whose stored value is
+ * outside the current candidate set must be annotated (catalog removal must not
+ * leave a blank, unlabelled field). The free-text escape stays allowCustom-only.
+ */
+function isDrifted(field: DomainField): boolean {
+    if (field.type !== "select") return false;
+    const value = editing.value[field.key] ?? "";
+    if (!value || customMode.value[field.key]) return false;
+    return !fieldCandidates(field).some((option) => option.value === value);
+}
+
+function onSelectChange(field: DomainField, value: string) {
+    if (field.allowCustom && value === CUSTOM_OPTION) {
+        customMode.value = { ...customMode.value, [field.key]: true };
+        return;
+    }
+    editing.value[field.key] = value;
+}
+
+function exitCustomMode(field: DomainField) {
+    customMode.value = { ...customMode.value, [field.key]: false };
 }
 
 const validationError = ref("");
@@ -111,6 +164,13 @@ function handleReset(key: string) {
             </span>
         </button>
         <div v-if="expanded" class="px-4 pb-3 space-y-2">
+            <p
+                v-if="note"
+                :data-testid="`config-domain-note-${domain}`"
+                class="text-[11px] text-muted-foreground"
+            >
+                {{ note }}
+            </p>
             <div
                 v-for="field in schema"
                 :key="field.key"
@@ -134,15 +194,39 @@ function handleReset(key: string) {
                     >
                 </template>
 
-                <select
-                    v-else-if="!readonly && field.type === 'select'"
-                    v-model="editing[field.key]"
-                    class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
-                >
-                    <option v-for="opt in field.options ?? []" :key="opt.value" :value="opt.value">
-                        {{ opt.label }}
-                    </option>
-                </select>
+                <template v-else-if="!readonly && field.type === 'select'">
+                    <input
+                        v-if="field.allowCustom && customMode[field.key]"
+                        v-model="editing[field.key]"
+                        :data-testid="`config-custom-${domain}-${field.key}`"
+                        class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
+                        :placeholder="t('settings.customPlaceholder')"
+                    />
+                    <select
+                        v-else
+                        :value="editing[field.key]"
+                        :data-testid="`config-select-${domain}-${field.key}`"
+                        class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
+                        @change="onSelectChange(field, ($event.target as HTMLSelectElement).value)"
+                    >
+                        <option v-if="field.allowCustom" value="">
+                            {{ t("settings.notSet") }}
+                        </option>
+                        <option v-if="isDrifted(field)" :value="editing[field.key]">
+                            {{ t("settings.driftedOption", { value: editing[field.key] }) }}
+                        </option>
+                        <option
+                            v-for="opt in fieldCandidates(field)"
+                            :key="opt.value"
+                            :value="opt.value"
+                        >
+                            {{ opt.label }}
+                        </option>
+                        <option v-if="field.allowCustom" :value="CUSTOM_OPTION">
+                            {{ t("settings.customOption") }}
+                        </option>
+                    </select>
+                </template>
 
                 <textarea
                     v-else-if="!readonly && (field.type === 'json' || field.type === 'textarea')"
@@ -179,6 +263,31 @@ function handleReset(key: string) {
                             : editing[field.key] || t("settings.empty")
                     }}
                 </span>
+
+                <span
+                    v-if="isDrifted(field)"
+                    :data-testid="`config-drift-${domain}-${field.key}`"
+                    class="shrink-0 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border border-amber-500/60 text-amber-600"
+                    :title="t('settings.driftedHint')"
+                    >{{ t("settings.driftedBadge") }}</span
+                >
+                <button
+                    v-if="isDrifted(field) && !readonly && !isLocked(field.key)"
+                    class="shrink-0 text-xs text-muted-foreground hover:text-foreground px-1"
+                    :data-testid="`config-drift-clear-${domain}-${field.key}`"
+                    :title="t('settings.driftedClear')"
+                    @click="handleReset(field.key)"
+                >
+                    {{ t("settings.driftedClear") }}
+                </button>
+                <button
+                    v-if="field.allowCustom && customMode[field.key] && !readonly"
+                    class="shrink-0 text-xs text-muted-foreground hover:text-foreground px-1"
+                    :data-testid="`config-custom-exit-${domain}-${field.key}`"
+                    @click="exitCustomMode(field)"
+                >
+                    {{ t("settings.customBack") }}
+                </button>
 
                 <button
                     v-if="admin && !readonly && !isLocked(field.key)"

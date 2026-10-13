@@ -241,6 +241,11 @@ export const useConfigStore = defineStore("config", () => {
         return getChatModels(provider, connectionId).includes(model);
     }
 
+    /**
+     * PLAN-0503: ready + chat-capable models for a provider. An empty
+     * `provider` returns the union across providers (config-page candidates
+     * when no provider is selected yet).
+     */
     function getChatModels(provider: string, connectionId?: string): string[] {
         const entries = connectionId
             ? ([[connectionId, modelCache.value.providers?.[connectionId]]] as const)
@@ -251,7 +256,10 @@ export const useConfigStore = defineStore("config", () => {
                     // Legacy provider-keyed catalogs omit providerId; the map key IS the
                     // provider id for that shape. Scoped catalogs carry providerId explicitly.
                     const catalogProvider = catalog?.providerId ?? catalogKey;
-                    if (!catalog || catalogProvider !== provider || catalog.status !== "ready") {
+                    if (!catalog || catalog.status !== "ready") {
+                        return [];
+                    }
+                    if (provider && catalogProvider !== provider) {
                         return [];
                     }
                     return catalog.models
@@ -264,8 +272,11 @@ export const useConfigStore = defineStore("config", () => {
 
     function getEffectiveModel(sessionId: string): SessionModelBinding | undefined {
         const sessionBinding = sessionModels.value[sessionId];
+        // PLAN-0503 review P2: legacy migrated bindings may carry provider "" —
+        // availability is unverifiable for them, so fall through to the merged
+        // defaults (restores the pre-union semantics for that population).
         if (
-            sessionBinding &&
+            sessionBinding?.provider &&
             isChatModelAvailable(
                 sessionBinding.provider,
                 sessionBinding.model,

@@ -1,5 +1,6 @@
 """HTTP client for the CP Context Service and Event Store."""
 
+import uuid
 from datetime import datetime
 from typing import Any
 
@@ -29,6 +30,10 @@ class CPContextServiceClient:
         PLAN-0410 T2.3: the branch selector rides as `runId` (CP derives the
         durable branch) and/or the CP-given `branchId`; CP validates both and
         fails closed (404/409) instead of degrading to the full Session.
+
+        PLAN-0416 T2.4: `afterSequence` is a cursor/cache hint. CP always
+        replays the full visible branch state, so a resumed read is
+        recover-equivalent to a live one — it is never a read filter.
         """
         url = f"{self._base_url}/internal/v1/context/{session_id}/snapshot"
         params: dict[str, Any] = {"afterSequence": after_sequence}
@@ -126,6 +131,7 @@ class CPEventStoreClient(EventStore):
 
     def _event_to_dict(self, event: Event) -> dict[str, Any]:
         return {
+            "event_id": event.event_id,
             "aggregate_id": event.aggregate_id,
             "sequence": event.sequence,
             "type": event.type,
@@ -149,4 +155,7 @@ class CPEventStoreClient(EventStore):
             created_at=created_at,
             correlation_id=raw.get("correlation_id"),
             causation_id=raw.get("causation_id"),
+            # The frozen CP read contract carries no event_id; read-derived
+            # events are never re-appended, so a fresh identity is safe here.
+            event_id=raw.get("event_id") or str(uuid.uuid4()),
         )

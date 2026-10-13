@@ -4,6 +4,7 @@ These events are the single source of truth for a session's context. They are
 persisted by the CP Event Store and projected into an `AgentContext` snapshot.
 """
 
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
@@ -45,6 +46,10 @@ class Event:
     created_at: datetime
     correlation_id: str | None = None
     causation_id: str | None = None
+    # PLAN-0416 T2.1: caller-stable identity, allocated once at construction
+    # and reused verbatim by bounded unknown-commit retries so the CP can
+    # replay the original row instead of inserting a duplicate.
+    event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     def with_sequence(self, sequence: int) -> "Event":
         """Return a new event with the assigned sequence number."""
@@ -56,6 +61,7 @@ class Event:
             created_at=self.created_at,
             correlation_id=self.correlation_id,
             causation_id=self.causation_id,
+            event_id=self.event_id,
         )
 
 

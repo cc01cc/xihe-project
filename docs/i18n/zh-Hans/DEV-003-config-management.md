@@ -144,6 +144,8 @@ curl -X PUT "http://localhost:12631/api/v1/config/workspace/rag?workspaceId=$WS"
   -d '{"topK": "8"}'
 ```
 
+`llm-provider.defaultProvider` 的写时接受集 = CP provider catalog 全量 id（`provider-catalog/providers.json`，经 `ProviderCatalogService.providerIds()` 派生，`GET /api/v1/provider-catalog` 同源）：catalog 增删 provider 无需改代码；catalog 外值以 `defaultProvider is unsupported` 拒绝。instance 层不要求 READY 连接，user/workspace 层要求同 provider 的 READY `provider_connections`。legacy `dashscope` 不在 catalog（catalog id 为 `dashscope-qwen`），写入即被拒（PLAN-0503 决策 #1，无兼容映射）。
+
 凭证**不写 config 层**（`rejectProviderSecrets` 会以 403 拒绝任何 `*ApiKey`/secret/password/token 类键），统一走 `provider_connections`：
 
 `isProviderSecretKey` 对通用 `token` 键名匹配必须排除 `maxTokens`：它是 `llm-provider` 的数值配置，不是凭证；`ConfigServiceTest.importJsonc_acceptsNumericValues` 覆盖该行为。
