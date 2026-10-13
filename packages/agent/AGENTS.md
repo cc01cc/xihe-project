@@ -26,7 +26,7 @@ uv sync          # 安装依赖（见 pyproject.toml）
 - Lint single file: `ruff check src/xihe_agent/path/to/file.py`
 
 ### Full Suite
-- `uv run pytest` — 全部测试
+- `uv run pytest` — 全部测试（含需隔离栈环境的集成用例：`tests/integration/test_vector_store.py` 缺 `XIHE_E2E_PG_*` 时按设计硬失败、非 skip；收尾/本地批量门禁用 `uv run pytest tests/unit -q`，真实 PG 集成经 host runner 注入环境运行）
 - `uv run ruff check src/` — lint
 - `uv run mypy src/` — 类型检查（真实阻断门：`pyproject.toml` 无全局 `ignore_errors`；发现类型错误必须修复，禁止恢复全局/整模块吞错）
 
