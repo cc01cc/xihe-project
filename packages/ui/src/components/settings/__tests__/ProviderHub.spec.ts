@@ -298,3 +298,36 @@ describe("ProviderHub master-detail", () => {
         wrapper.unmount();
     });
 });
+
+describe("ProviderHub orphan template bindings (PLAN-0503)", () => {
+    it("lists bindings whose model left the catalog and clears them only on user action", async () => {
+        // Fresh object per call: the component mutates the returned entries and
+        // relies on a new reference to trigger reactivity (same as the service).
+        vi.mocked(readTemplateConfig).mockImplementation(async () => ({
+            providerModelBindings: JSON.stringify({
+                [user.id]: {
+                    "ghost-model": { layer: "instance", templateId: "builtin", version: 1 },
+                },
+            }),
+        }));
+        const wrapper = await mountHub();
+
+        const orphanSection = wrapper.get('[data-testid="provider-orphan-bindings"]');
+        expect(orphanSection.text()).toContain("ghost-model");
+        expect(orphanSection.text()).toContain("已绑定但当前不可用");
+        // Drift alone never triggers a write (I4: kept, visible, cleared by user).
+        expect(
+            vi.mocked(request).mock.calls.filter(([, init]) => init?.method === "PUT"),
+        ).toHaveLength(0);
+
+        await orphanSection.get("select").setValue("");
+        await flushPromises();
+        const put = vi.mocked(request).mock.calls.find(([, init]) => init?.method === "PUT");
+        expect(put).toBeTruthy();
+        expect(String(put![0])).toContain("/config/user/api-request-templates");
+        const body = JSON.parse(String(put![1]!.body)) as Record<string, string>;
+        expect(JSON.parse(body.providerModelBindings)).toEqual({});
+        expect(wrapper.find('[data-testid="provider-orphan-bindings"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+});
