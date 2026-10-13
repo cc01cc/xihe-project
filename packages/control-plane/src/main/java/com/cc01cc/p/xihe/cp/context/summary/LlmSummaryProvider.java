@@ -255,18 +255,21 @@ public class LlmSummaryProvider implements SummaryProvider {
     private SummarySettings resolveSettings(SummaryRequest request, SessionReadService.SummaryRoutingView routing) {
         Map<String, String> domain = resolveDomainSafely(
                 "context-policy", uuidOrNull(request.userId()), uuidOrNull(request.workspaceId()));
-        Map<String, String> llmDomain = resolveDomainSafely(
-                "llm-provider", uuidOrNull(request.userId()), uuidOrNull(request.workspaceId()));
+        ConfigService.EffectiveLlmProfile llmProfile = resolveLlmProfileSafely(
+                uuidOrNull(request.userId()), uuidOrNull(request.workspaceId()));
         JsonNode defaults = parseObject(domain.get("defaults"));
         JsonNode models = parseObject(domain.get("models"));
 
+        // PLAN-0504: the default identity is the resolved profile unit; the
+        // legacy defaultProvider/defaultModel/{provider}Model reads are retired.
+        String profileProvider = llmProfile.profile() == null
+                ? null : llmProfile.profile().providerId();
+        String profileModel = llmProfile.profile() == null
+                ? null : llmProfile.profile().model();
         String providerId = routing != null && !isBlank(routing.modelProvider())
-                ? routing.modelProvider() : text(llmDomain.get("defaultProvider"));
+                ? routing.modelProvider() : text(profileProvider);
         String baseModel = routing != null && !isBlank(routing.modelName())
-                ? routing.modelName() : text(llmDomain.get("defaultModel"));
-        if (isBlank(baseModel) && !isBlank(providerId)) {
-            baseModel = text(llmDomain.get(providerId + "Model"));
-        }
+                ? routing.modelName() : text(profileModel);
         JsonNode modelCfg = !isBlank(baseModel) ? models.path(baseModel) : objectMapper.createObjectNode();
 
         // PLAN-0355 M2 (2026-09-19): gate outcome = reject → shipped default is
@@ -305,6 +308,17 @@ public class LlmSummaryProvider implements SummaryProvider {
             logger.warn("[LIFECYCLE] service=cp event=compaction_summary_config_unavailable domain={} error={}",
                     domain, e.getMessage());
             return Map.of();
+        }
+    }
+
+    /** PLAN-0504: a profile parse/lookup failure degrades to the rule path (I1). */
+    private ConfigService.EffectiveLlmProfile resolveLlmProfileSafely(UUID userId, UUID workspaceId) {
+        try {
+            return configService.effectiveLlmProfile(userId, workspaceId);
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=compaction_summary_config_unavailable domain=llm-provider error={}",
+                    e.getMessage());
+            return new ConfigService.EffectiveLlmProfile(null, null);
         }
     }
 

@@ -1,19 +1,17 @@
 {
   "type": "object",
   "properties": {
-    "defaultProvider": { "type": "string" },
-    "defaultModel": { "type": "string" },
-    "openaiModel": { "type": "string" },
-    "openaiApiBase": { "type": "string", "format": "uri" },
-    "deepseekModel": { "type": "string" },
-    "deepseekApiBase": { "type": "string", "format": "uri" },
-    "xiaomiModel": { "type": "string" },
-    "xiaomiApiBase": { "type": "string", "format": "uri" },
-    "anthropicModel": { "type": "string" },
-    "anthropicApiBase": { "type": "string", "format": "uri" },
-    "dashscopeModel": { "type": "string" },
-    "dashscopeApiBase": { "type": "string", "format": "uri" },
-    "baseUrl": { "type": "string", "format": "uri" },
+    "profile": {
+      "type": "object",
+      "description": "Complete llm-provider default profile unit (PLAN-0504); an empty value clears the layer to inherit.",
+      "properties": {
+        "providerId": { "type": "string" },
+        "connectionKey": { "type": "string" },
+        "model": { "type": "string" }
+      },
+      "required": ["providerId", "connectionKey", "model"],
+      "additionalProperties": false
+    },
     "imageProvider": { "type": "string" },
     "maxTokens": { "type": ["integer", "string"], "minimum": 1, "maximum": 128000 },
     "temperature": { "type": ["number", "string"], "minimum": 0, "maximum": 2 },
