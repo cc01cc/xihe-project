@@ -197,8 +197,13 @@ public class ContextController {
         var result = contextService.replay(
                 sessionId, resolveWorkspaceId(sessionId), resolveUserId(sessionId), afterSequence);
         // The service transaction completes before response mapping begins.
+        // Jackson tree types from the legacy mapper are serialized as bean
+        // metadata by the Spring Boot 4 converter, so the payload is returned
+        // explicitly - same guard as the snapshot endpoint (PLAN-0416 T2.4).
         var response = responseMapper.replay(result);
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(response.toString());
     }
 
     /**
