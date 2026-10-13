@@ -71,6 +71,11 @@ const router = createRouter({
                     component: () => import("../views/settings/ToolFacesView.vue"),
                 },
                 {
+                    path: "credentials",
+                    name: "settings-credentials",
+                    component: () => import("../views/settings/CredentialsView.vue"),
+                },
+                {
                     path: "knowledge",
                     name: "settings-knowledge",
                     component: () => import("../views/settings/KnowledgeBaseView.vue"),

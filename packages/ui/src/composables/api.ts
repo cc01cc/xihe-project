@@ -24,6 +24,13 @@ import type {
     CheckpointResult,
     CheckpointResultCounts,
     CheckpointResultEntry,
+    CredentialCreateRequest,
+    CredentialDeleteReport,
+    CredentialListResponse,
+    CredentialOwnerType,
+    CredentialReferencesResponse,
+    CredentialReplaceRequest,
+    CredentialSummary,
     SafePolicySummaryView,
     PolicyDomainView,
     PolicyModeUpdateResponse,
@@ -2305,5 +2312,47 @@ export const api = {
         );
         if (!result) throw new Error("Invalid checkpoint cleanup response");
         return result;
+    },
+    /** PLAN-0498 T1.1: owner-scoped credential metadata (never ciphertext/suffixes). */
+    async listCredentials(
+        params: { ownerType?: CredentialOwnerType; ownerId?: string } = {},
+    ): Promise<CredentialListResponse> {
+        const query = new URLSearchParams();
+        if (params.ownerType) query.set("ownerType", params.ownerType);
+        if (params.ownerId) query.set("ownerId", params.ownerId);
+        const suffix = query.toString() ? `?${query.toString()}` : "";
+        return request<CredentialListResponse>(`/credentials${suffix}`);
+    },
+    /** PLAN-0498 T1.2: register a credential (encrypted at rest, plaintext is never echoed). */
+    async createCredential(payload: CredentialCreateRequest): Promise<CredentialSummary> {
+        return request<CredentialSummary>("/credentials", {
+            method: "POST",
+            body: JSON.stringify(payload),
+        });
+    },
+    /** PLAN-0498 T1.3: replace the stored secret in place (revision +1, id preserved). */
+    async replaceCredential(
+        credentialId: string,
+        payload: CredentialReplaceRequest,
+    ): Promise<CredentialSummary> {
+        return request<CredentialSummary>(
+            `/credentials/${encodeURIComponent(credentialId)}/replace`,
+            {
+                method: "POST",
+                body: JSON.stringify(payload),
+            },
+        );
+    },
+    /** PLAN-0498 T1.3: soft-delete; the report lists referring grants/caps for the warning. */
+    async deleteCredential(credentialId: string): Promise<CredentialDeleteReport> {
+        return request<CredentialDeleteReport>(`/credentials/${encodeURIComponent(credentialId)}`, {
+            method: "DELETE",
+        });
+    },
+    /** PLAN-0498 T3.2 (M1 delete confirmation): exact references for one credential. */
+    async getCredentialReferences(credentialId: string): Promise<CredentialReferencesResponse> {
+        return request<CredentialReferencesResponse>(
+            `/credentials/${encodeURIComponent(credentialId)}/references`,
+        );
     },
 };

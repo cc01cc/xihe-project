@@ -21,7 +21,9 @@ vi.mock("../../../services/embeddingProfile", async (importOriginal) => ({
     saveEmbeddingProfile: vi.fn<typeof saveEmbeddingProfile>(),
     testEmbedding: vi.fn<typeof testEmbedding>(),
 }));
-vi.mock("../../../composables/api", () => ({ request: vi.fn() }));
+vi.mock("../../../composables/api", () => ({
+    request: vi.fn<(...args: unknown[]) => unknown>(),
+}));
 vi.mock("../../../lib/logger", () => ({
     logger: { warn: vi.fn<(...args: unknown[]) => void>() },
 }));

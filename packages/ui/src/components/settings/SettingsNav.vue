@@ -8,6 +8,7 @@ const route = useRoute();
 const tabs = [
     { name: "settings-config", label: "settings.configTab", path: "/settings/config" },
     { name: "settings-tool-faces", label: "settings.toolFaces", path: "/settings/tool-faces" },
+    { name: "settings-credentials", label: "credentials.title", path: "/settings/credentials" },
     { name: "settings-knowledge", label: "settings.knowledge", path: "/settings/knowledge" },
     { name: "settings-data", label: "settings.dataControls", path: "/settings/data" },
     { name: "settings-monitoring", label: "settings.monitoring", path: "/settings/monitoring" },
