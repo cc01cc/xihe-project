@@ -9,6 +9,7 @@ atomically (design §行为不变量).
 """
 
 import asyncio
+import json
 import os
 from typing import Any
 from uuid import uuid4
@@ -102,6 +103,7 @@ __all__ = [
     "_refresh_embedding_config",
     "_resolve_policy_for_model",
     "_resolve_run_budget",
+    "_resolve_loop_guard",
     "_model_window_tokens",
     "_estimate_input_tokens",
     "_content_length",
@@ -607,6 +609,133 @@ def _resolve_run_budget(
         max_elapsed_seconds=resolved["runMaxElapsedSeconds"],
         max_tokens=resolved["runMaxTokens"],
     )
+
+
+# PLAN-0493 T2.2: loop/no-progress keys and code defaults for the
+# `agent-runtime` domain (mirrors CP CODE_DEFAULTS; M0 calibrated 2026-10-13 —
+# all defaults kept, see PLAN-0493 evidence/m0-observed-repeats.md §2).
+_LOOP_VALUE_KEYS = {
+    "loopRepeatWarn": "repeat_warn",
+    "loopRepeatRefuse": "repeat_refuse",
+    "loopRepeatEscalate": "repeat_escalate",
+    "loopErrorRunWarn": "error_warn",
+    "loopErrorRunEscalate": "error_escalate",
+    "loopStaleResultWarn": "stale_warn",
+    "loopStaleResultEscalate": "stale_escalate",
+    "loopWindowSize": "window",
+}
+_LOOP_CEILING_KEYS = {
+    "loopRepeatEscalateCeiling": "repeat_escalate",
+    "loopErrorRunEscalateCeiling": "error_escalate",
+    "loopStaleResultEscalateCeiling": "stale_escalate",
+    "loopWindowSizeCeiling": "window",
+}
+_LOOP_CODE_DEFAULTS = {
+    "loopRepeatWarn": 2,
+    "loopRepeatRefuse": 3,
+    "loopRepeatEscalate": 5,
+    "loopErrorRunWarn": 3,
+    "loopErrorRunEscalate": 5,
+    "loopStaleResultWarn": 2,
+    "loopStaleResultEscalate": 5,
+    "loopWindowSize": 20,
+    "loopRepeatEscalateCeiling": 10,
+    "loopErrorRunEscalateCeiling": 10,
+    "loopStaleResultEscalateCeiling": 10,
+    "loopWindowSizeCeiling": 50,
+}
+
+
+def _parse_loop_int(raw: str | None, fallback: int) -> int:
+    """Config string -> int >= 1; blank/invalid/<1 falls back (0 has no defined
+    meaning for loop thresholds — the schema already rejects it at write)."""
+    if raw is None or raw == "":
+        return fallback
+    try:
+        value = int(raw.strip())
+    except (TypeError, ValueError):
+        logger.warning("Ignoring invalid loop guard config value {!r}", raw)
+        return fallback
+    if value < 1:
+        logger.warning("Ignoring non-positive loop guard config value {}", value)
+        return fallback
+    return value
+
+
+def _resolve_loop_guard(
+    user_overrides: dict[str, dict[str, str]] | None = None,
+    workspace_overrides: dict[str, dict[str, str]] | None = None,
+):
+    """PLAN-0493 T2.2: effective loop thresholds + exempt set for this run.
+
+    Value keys resolve through the run merge chain (pulled effective -> user ->
+    workspace) and are clamped by the instance-only ceilings
+    (``ceiling > 0 ? min(value, ceiling) : value``, mirroring run budgets; each
+    clamp logs ``loop_guard_clamp``). ``loopExemptTools`` (JSON text array)
+    appends to the builtin exempt set — builtin items are structurally
+    irremovable (decision #12); an absent/invalid value falls back to the
+    builtin list with a log (schema rejects wildcards and >64 items at write).
+    """
+    from xihe_agent.context.loop_detection import BUILTIN_EXEMPT_TOOLS, LoopThresholds
+
+    entries = dict(config_client.get_domain("agent-runtime"))
+    if user_overrides:
+        entries.update(user_overrides.get("agent-runtime", {}))
+    if workspace_overrides:
+        entries.update(workspace_overrides.get("agent-runtime", {}))
+    resolved = {
+        key: (_parse_budget_int if key in _LOOP_CEILING_KEYS else _parse_loop_int)(
+            entries.get(key), default
+        )
+        for key, default in _LOOP_CODE_DEFAULTS.items()
+    }
+    for value_key, field_name in _LOOP_VALUE_KEYS.items():
+        ceiling_key = next(
+            (
+                ceiling
+                for ceiling, field in _LOOP_CEILING_KEYS.items()
+                if field == field_name
+            ),
+            None,
+        )
+        if ceiling_key is None:
+            # tier-1 thresholds (warn/refuse) carry no ceiling by design —
+            # raising them only delays a gentle hint (design §方案 3 原则).
+            continue
+        value = resolved[value_key]
+        ceiling = resolved[ceiling_key]
+        if ceiling > 0 and value > ceiling:
+            logger.info(
+                "[LIFECYCLE] service=agent event=loop_guard_clamp key={} value={} ceiling={} effective={}",
+                value_key,
+                value,
+                ceiling,
+                ceiling,
+            )
+            resolved[value_key] = ceiling
+    thresholds = LoopThresholds(
+        repeat_warn=resolved["loopRepeatWarn"],
+        repeat_refuse=resolved["loopRepeatRefuse"],
+        repeat_escalate=resolved["loopRepeatEscalate"],
+        error_warn=resolved["loopErrorRunWarn"],
+        error_escalate=resolved["loopErrorRunEscalate"],
+        stale_warn=resolved["loopStaleResultWarn"],
+        stale_escalate=resolved["loopStaleResultEscalate"],
+        window=resolved["loopWindowSize"],
+    )
+    raw = entries.get("loopExemptTools")
+    configured: set[str] = set()
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list) and all(isinstance(item, str) for item in parsed):
+                configured = {item.strip().casefold() for item in parsed if item.strip()}
+            else:
+                logger.warning("Ignoring invalid loopExemptTools config value {!r}", raw)
+        except (TypeError, ValueError):
+            logger.warning("Ignoring unparseable loopExemptTools config value {!r}", raw)
+    exempt = frozenset(set(BUILTIN_EXEMPT_TOOLS) | configured)
+    return thresholds, exempt
 
 
 def _model_window_tokens(

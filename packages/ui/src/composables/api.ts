@@ -2186,6 +2186,8 @@ export const api = {
         origin: "user_submission" | "spawn";
         status: string;
         terminalOutcome?: string | null;
+        // PLAN-0493 T3.1: terminal cause fact (e.g. RUN_NO_PROGRESS).
+        errorCode?: string | null;
         leaseExpired: boolean;
         pendingApprovals: ApprovalRequest[];
     }> {
@@ -2214,6 +2216,10 @@ export const api = {
             terminalOutcome:
                 typeof record.terminalOutcome === "string" || record.terminalOutcome === null
                     ? record.terminalOutcome
+                    : undefined,
+            errorCode:
+                typeof record.errorCode === "string" || record.errorCode === null
+                    ? record.errorCode
                     : undefined,
             leaseExpired: record.leaseExpired === true,
             pendingApprovals,

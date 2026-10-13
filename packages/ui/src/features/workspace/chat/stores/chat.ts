@@ -13,10 +13,12 @@ import { useAgentStore } from "../../../../stores/agent";
 
 export const XIHE_STORAGE_KEYS = ["xihe-token", "xihe-user", "xihe-workspace"] as const;
 
-// PLAN-292 M3 (C3): recovery banner tri-state — resumed (run still alive
+// PLAN-292 M3 (C3): recovery banner states — resumed (run still alive
 // server-side, approvals replayable) / cancelled (terminal, nothing running)
-// / retry (lease expired or status unknown). 'succeeded' runs set no banner.
-export type RunRecoveryState = "resumed" | "cancelled" | "retry";
+// / retry (lease expired or status unknown) / failed (PLAN-0493: terminal with
+// a guard-caused errorCode, message carries the reason + takeover hint).
+// 'succeeded' runs set no banner.
+export type RunRecoveryState = "resumed" | "cancelled" | "retry" | "failed";
 
 export interface RunRecovery {
     state: RunRecoveryState;
@@ -528,10 +530,26 @@ export const useChatStore = defineStore("chat", () => {
                     await agentStore.refreshPendingApprovals();
                 }
                 setSessionRunState(sessionId, "idle");
+                // PLAN-0493 T3.1: a failed run caused by a run guard presents
+                // the reason plus the takeover hint in the recovery banner — a
+                // zero-content stop (tool-only loops) leaves no assistant
+                // message to carry the error box; other terminal states keep
+                // the generic copy.
+                let recoveryMessage = "任务已取消或结束，未完成的执行不会继续";
+                let recoveryState: RunRecoveryState = "cancelled";
+                if (res.status === "failed" && res.errorCode === "RUN_NO_PROGRESS") {
+                    recoveryMessage =
+                        "检测到重复或无进展动作，运行已停止；可在下方输入框继续发送，接续本次会话";
+                    recoveryState = "failed";
+                } else if (res.status === "failed" && res.errorCode === "RUN_BUDGET_EXHAUSTED") {
+                    recoveryMessage =
+                        "本次运行已达到累计预算上限；可在下方输入框继续发送，接续本次会话";
+                    recoveryState = "failed";
+                }
                 runRecovery.value[sessionId] = {
-                    state: "cancelled",
+                    state: recoveryState,
                     runId,
-                    message: "任务已取消或结束，未完成的执行不会继续",
+                    message: recoveryMessage,
                 };
             } else if (res.status === "running" && res.leaseExpired) {
                 agentStore.resolveApprovalsForRun(sessionId, runId);

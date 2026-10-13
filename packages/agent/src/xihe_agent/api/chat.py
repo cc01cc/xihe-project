@@ -31,6 +31,7 @@ from xihe_agent.app_state import (
     _model_window_tokens,
     _normalize_run_overrides,
     _normalize_tool_timeouts,
+    _resolve_loop_guard,
     _resolve_policy_for_model,
     _resolve_run_budget,
     _validate_run_overrides,
@@ -318,6 +319,9 @@ async def chat(request: Request):
                 messages = [TextMessage(role="human", content=content)]
                 has_template = True
 
+                loop_thresholds, loop_exempt_tools = _resolve_loop_guard(
+                    user_overrides, workspace_overrides
+                )
                 config = RunnerConfig(
                     model=model_override or request_config.model,
                     system_prompt="" if has_template else instructions,
@@ -327,6 +331,10 @@ async def chat(request: Request):
                     # PLAN-0492 T2.1: CP-resolved cumulative budget (ceiling-clamped
                     # observation-only when 0); the runner only enforces.
                     budget=_resolve_run_budget(user_overrides, workspace_overrides),
+                    # PLAN-0493 T2.1/T2.2: CP-resolved loop/no-progress guard
+                    # (thresholds ceiling-clamped; exempt = builtin ∪ configured).
+                    loop=loop_thresholds,
+                    loop_exempt_tools=loop_exempt_tools,
                     prune_window_chars=policy.prune_window_chars,
                     branch_id=context.branch_id,
                     template_context=has_template,

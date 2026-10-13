@@ -1279,7 +1279,7 @@ public class ChatController {
                     "AGENT_CIRCUIT_OPEN", "AGENT_STREAM_FAILED", "SSE_SUBSCRIPTION_REQUIRED", "CHAT_IN_PROGRESS",
                     "IDEMPOTENCY_KEY_CONFLICT", "APPROVAL_REJECTED", "APPROVAL_EXPIRED",
                     "APPROVAL_EXECUTOR_UNSUPPORTED", "APPROVAL_DECISION_CONFLICT", "AGENT_EVENT_ID_MISMATCH",
-                    "CONTEXT_OVERFLOW", "RUN_BUDGET_EXHAUSTED" -> code;
+                    "CONTEXT_OVERFLOW", "RUN_BUDGET_EXHAUSTED", "RUN_NO_PROGRESS" -> code;
             default -> "AGENT_UNAVAILABLE";
         };
     }
@@ -1305,6 +1305,9 @@ public class ChatController {
             case "CONTEXT_OVERFLOW" -> "上下文超限，已压缩并重试一次，仍超出限制";
             // PLAN-0492: the exhausted dimension is carried in errorDetail.
             case "RUN_BUDGET_EXHAUSTED" -> "本次运行已达到累计预算上限";
+            // PLAN-0493: tier-2 no-progress terminal (signal detail stays in
+            // errorDetail only — window internals never cross the wire).
+            case "RUN_NO_PROGRESS" -> "检测到重复或无进展动作，运行已停止";
             default -> "Agent service unavailable";
         };
     }

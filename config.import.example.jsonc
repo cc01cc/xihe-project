@@ -155,7 +155,23 @@
     "runMaxTokens": "38303",
     "runMaxTurnsCeiling": "100",
     "runMaxElapsedSecondsCeiling": "3600",
-    "runMaxTokensCeiling": "51070"
+    "runMaxTokensCeiling": "51070",
+    // PLAN-0493：语义重复/无进展检测（观察窗口）阈值与窗口；escalate/window 的
+    // ceiling 仅 instance 层可写（0 = 不设上限）；loopExemptTools 只追加内置豁免
+    // 清单（轮询/探活类工具），拒绝通配符。
+    "loopRepeatWarn": "2",
+    "loopRepeatRefuse": "3",
+    "loopRepeatEscalate": "5",
+    "loopErrorRunWarn": "3",
+    "loopErrorRunEscalate": "5",
+    "loopStaleResultWarn": "2",
+    "loopStaleResultEscalate": "5",
+    "loopWindowSize": "20",
+    "loopRepeatEscalateCeiling": "10",
+    "loopErrorRunEscalateCeiling": "10",
+    "loopStaleResultEscalateCeiling": "10",
+    "loopWindowSizeCeiling": "50",
+    "loopExemptTools": []
   },
 
   // agent-profile — 用户展示名（instance 默认，user 可覆盖）

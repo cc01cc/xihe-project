@@ -130,6 +130,13 @@ const budgetExhaustedReason = computed(() => {
     return t("chat.budgetExhaustedTurns");
 });
 
+// PLAN-0493 T3.1: a no-progress run carries RUN_NO_PROGRESS (tier-2 terminal,
+// trigger fact = the code itself); surface a localized reason plus the same
+// takeover hint (resume by sending in the input / Follow-up Queue).
+const noProgressReason = computed(() =>
+    props.message.errorCode === "RUN_NO_PROGRESS" ? t("chat.noProgressReason") : null,
+);
+
 onUnmounted(() => {
     props.message.attachments?.forEach((attachment) => {
         if (attachment.url.startsWith("blob:")) {
@@ -235,6 +242,12 @@ onUnmounted(() => {
                         >: {{ budgetExhaustedReason }}</span
                     >
                     <span data-testid="message-budget-exhausted-hint" class="text-muted-foreground">
+                        {{ t("chat.budgetExhaustedHint") }}
+                    </span>
+                </template>
+                <template v-else-if="noProgressReason">
+                    <span>{{ message.errorCode }}: {{ noProgressReason }}</span>
+                    <span data-testid="message-no-progress-hint" class="text-muted-foreground">
                         {{ t("chat.budgetExhaustedHint") }}
                     </span>
                 </template>

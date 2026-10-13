@@ -143,3 +143,48 @@ describe("MessageItem budget exhaustion (PLAN-0492)", () => {
         wrapper.unmount();
     });
 });
+
+describe("MessageItem no-progress terminal (PLAN-0493)", () => {
+    function mountNoProgressMessage(code = "RUN_NO_PROGRESS") {
+        return mount(MessageItem, {
+            props: {
+                message: {
+                    id: "message-no-progress",
+                    sessionId: "session-1",
+                    role: "assistant",
+                    content: "partial answer",
+                    timestamp: "2026-10-13T00:00:00Z",
+                    runId: "run-loop",
+                    runStatus: "failed",
+                    terminalOutcome: "error",
+                    errorCode: code,
+                    error: "No progress detected (repeat)",
+                    retryable: false,
+                },
+            },
+            global: { plugins: [i18n, createPinia()] },
+        });
+    }
+
+    it("renders the localized reason with the takeover hint and no retry", () => {
+        const wrapper = mountNoProgressMessage();
+
+        const error = wrapper.get('[data-testid="message-error"]');
+        expect(error.text()).toContain("RUN_NO_PROGRESS");
+        expect(error.text()).toContain(i18n.global.t("chat.noProgressReason"));
+        expect(wrapper.get('[data-testid="message-no-progress-hint"]').text()).toContain(
+            i18n.global.t("chat.budgetExhaustedHint"),
+        );
+        expect(wrapper.find('[data-testid="message-retry-button"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+
+    it("keeps the raw rendering for other error codes", () => {
+        const wrapper = mountNoProgressMessage("AGENT_STREAM_FAILED");
+
+        const error = wrapper.get('[data-testid="message-error"]');
+        expect(error.text()).toContain("AGENT_STREAM_FAILED: No progress detected (repeat)");
+        expect(wrapper.find('[data-testid="message-no-progress-hint"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+});

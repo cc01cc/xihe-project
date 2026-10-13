@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from xihe_agent.interfaces.message import Message
 
 if TYPE_CHECKING:
+    from xihe_agent.context.loop_detection import LoopThresholds
     from xihe_agent.interfaces.context import AgentContext
     from xihe_agent.interfaces.tool import BaseAgentTool
 
@@ -63,6 +64,10 @@ class RunnerConfig:
     metadata: dict[str, Any] = field(default_factory=dict)
     # PLAN-0492: CP-resolved run budget; None = no budget (legacy behavior).
     budget: RunBudget | None = None
+    # PLAN-0493: CP-resolved loop/no-progress thresholds; None = code defaults.
+    # ``loop_exempt_tools`` is the effective exempt set (builtin ∪ configured).
+    loop: "LoopThresholds | None" = None
+    loop_exempt_tools: frozenset[str] | None = None
     # PLAN-290 M0.3: when set, stream() must observe it and terminate the
     # LangGraph run, emitting error(code=cancelled) before usage.
     cancel_event: asyncio.Event | None = None
