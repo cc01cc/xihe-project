@@ -33,7 +33,6 @@ from xihe_agent.app_state import (
     _normalize_tool_timeouts,
     _resolve_policy_for_model,
     _resolve_run_budget,
-    _to_langchain_messages,
     _validate_run_overrides,
     approval_tool,
     config_client,

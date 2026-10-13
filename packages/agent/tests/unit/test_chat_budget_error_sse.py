@@ -34,6 +34,24 @@ class _StubContextProvider:
         return AgentContext(aggregate_id=session_id)
 
 
+class _StubApiType:
+    """PLAN-0439/0485 lease-gate stand-in: only `.id`/`.version` are compared."""
+
+    id = "stub-api-type"
+    version = 1
+
+
+class _StubApiChatModel:
+    """Native sender stand-in: the runner is stubbed, so no provider call ever runs."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        self._kwargs = kwargs
+
+    @property
+    def native_records(self) -> list[dict[str, Any]]:
+        return []
+
+
 def _sse_events(response: Any) -> Iterator[tuple[str, dict[str, Any]]]:
     event_name = ""
     for line in response.iter_lines():
@@ -62,6 +80,28 @@ def stub_budget_runner(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     ]
     monkeypatch.setattr(chat_api, "LangGraphRunner", lambda *a, **k: _StubRunner(events))
     monkeypatch.setattr(chat_api, "context_provider", _StubContextProvider())
+    monkeypatch.setattr(chat_api, "ApiChatModel", _StubApiChatModel)
+    # PLAN-0439/0485: the chat endpoint preflights an api-type snapshot and
+    # redeems a one-use provider lease. This test pins the budget-dimension
+    # wire contract, so the lease gate is stubbed to a self-consistent grant.
+    monkeypatch.setattr(
+        chat_api,
+        "validate_snapshot",
+        lambda data: (_StubApiType(), {"template": {"bodySource": ""}}),
+    )
+    monkeypatch.setattr(chat_api, "render_request", lambda *a, **k: {})
+
+    async def _redeem(payload: dict[str, Any], request_id: str | None = None) -> dict[str, Any]:
+        return {
+            "apiTypeId": _StubApiType.id,
+            "apiTypeVersion": _StubApiType.version,
+            "operation": "chat",
+            "connectionRevision": payload.get("connectionRevision"),
+            "provider": payload.get("providerId"),
+            "model": payload.get("model"),
+        }
+
+    monkeypatch.setattr(app_state.config_client, "redeem_provider_lease", _redeem)
     monkeypatch.setattr(app_state, "_llm_ready", "ready")
     monkeypatch.setattr(app_state.config_client, "_effective_cache", {})
     yield
