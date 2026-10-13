@@ -460,6 +460,47 @@ class ConfigServiceTest {
     }
 
     // ------------------------------------------------------------------
+    // PLAN-0503 T1.1: catalog-derived provider acceptance
+    // ------------------------------------------------------------------
+
+    @Test
+    void putLayer_instanceAcceptsNonBuiltinCatalogProvider() {
+        // The accept set is the CP provider catalog, so a non-builtin catalog
+        // provider (openrouter) passes instance-layer validation.
+        configService.putLayer("instance", "llm-provider",
+            Map.of("defaultProvider", "openrouter"), "admin", null, null);
+
+        assertEquals("openrouter",
+            configService.layerEntries("instance", "llm-provider", null, null).get("defaultProvider"));
+    }
+
+    @Test
+    void putLayer_rejectsProviderOutsideCatalog() {
+        // Legacy inline "dashscope" is not a catalog id (the catalog id is
+        // dashscope-qwen) and must be rejected after the single-source switch.
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "llm-provider",
+                Map.of("defaultProvider", "dashscope"), "admin", null, null));
+
+        assertTrue(error.getMessage().contains("defaultProvider is unsupported: dashscope"));
+    }
+
+    @Test
+    void putLayer_userCatalogProviderStillRequiresReadyConnection() {
+        // Catalog membership does not bypass the user-layer readiness gate.
+        assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("user", "llm-provider",
+                Map.of("defaultProvider", "openrouter"), "user", userA, null));
+
+        saveConnection("USER", userA.toString(), "openrouter", true, "READY");
+        configService.putLayer("user", "llm-provider",
+            Map.of("defaultProvider", "openrouter"), "user", userA, null);
+
+        assertEquals("openrouter",
+            configService.layerEntries("user", "llm-provider", userA, null).get("defaultProvider"));
+    }
+
+    // ------------------------------------------------------------------
     // PLAN-0307 T2.15 (decision #23): logging hot reload
     // ------------------------------------------------------------------
 

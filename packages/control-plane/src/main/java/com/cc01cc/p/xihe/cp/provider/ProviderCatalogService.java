@@ -12,6 +12,8 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 public class ProviderCatalogService {
@@ -19,6 +21,7 @@ public class ProviderCatalogService {
     private static final Logger logger = LoggerFactory.getLogger(ProviderCatalogService.class);
 
     private final List<JsonNode> definitions;
+    private final Set<String> providerIds;
     private final ObjectMapper objectMapper;
     private final ApiInputTypeService apiTypes;
 
@@ -34,6 +37,9 @@ public class ProviderCatalogService {
             root.forEach(loaded::add);
             definitions = List.copyOf(loaded);
             validate();
+            providerIds = definitions.stream()
+                    .map(definition -> definition.path("id").asText())
+                    .collect(Collectors.toUnmodifiableSet());
         } catch (IOException | RuntimeException e) {
             logger.error("Provider catalog initialization failed", e);
             throw new IllegalStateException("Provider catalog initialization failed", e);
@@ -75,6 +81,14 @@ public class ProviderCatalogService {
                 .map(definition -> objectMapper.convertValue(
                         definition, new TypeReference<Map<String, Object>>() {}))
                 .toList();
+    }
+
+    /**
+     * PLAN-0503 T1.1: the catalog id set is the single source for provider
+     * acceptance in config validation (replaces the legacy inline whitelist).
+     */
+    public Set<String> providerIds() {
+        return providerIds;
     }
 
     public JsonNode require(String providerId) {
