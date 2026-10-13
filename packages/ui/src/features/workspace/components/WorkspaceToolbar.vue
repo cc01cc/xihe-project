@@ -6,6 +6,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { useSessionStore } from "../../../stores/session";
 import { useAuthStore } from "../../../stores/auth";
 import {
+    Activity,
     Bot,
     Clock,
     Code,
@@ -26,6 +27,7 @@ const props = defineProps<{
     treeCollapsed?: boolean;
     codeOpen?: boolean;
     changesOpen?: boolean;
+    monitorOpen?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -38,6 +40,7 @@ const emit = defineEmits<{
     toggleTree: [];
     toggleCode: [];
     toggleChanges: [];
+    toggleMonitor: [];
 }>();
 
 const { t } = useI18n();
@@ -117,6 +120,15 @@ function switchSession(id: string) {
         >
             <FileDiff class="size-3.5" />
         </button>
+        <button
+            data-testid="workspace-toolbar-monitor-mobile"
+            class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors md:hidden"
+            :title="t('workspace.panelMonitor')"
+            :aria-label="t('workspace.panelMonitor')"
+            @click="emit('toggleMonitor')"
+        >
+            <Activity class="size-3.5" />
+        </button>
         <div
             class="flex min-w-0 items-center gap-1 pr-12 text-xs text-muted-foreground flex-1"
             :title="props.workspaceId"
@@ -187,6 +199,22 @@ function switchSession(id: string) {
                 @click="emit('toggleChanges')"
             >
                 <FileDiff class="size-3.5" />
+            </button>
+            <button
+                type="button"
+                data-testid="workspace-toolbar-monitor"
+                class="p-1.5 rounded transition-colors"
+                :class="
+                    monitorOpen
+                        ? 'bg-accent text-foreground'
+                        : 'text-muted-foreground hover:bg-accent'
+                "
+                :title="t('workspace.toggleMonitor')"
+                :aria-label="t('workspace.toggleMonitor')"
+                :aria-pressed="monitorOpen === true"
+                @click="emit('toggleMonitor')"
+            >
+                <Activity class="size-3.5" />
             </button>
             <select
                 :value="sessionStore.currentSessionId ?? ''"

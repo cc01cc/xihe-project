@@ -101,6 +101,83 @@ export interface SessionRunsResponse {
     runs: SessionRunSummary[];
 }
 
+/**
+ * PLAN-0507: read-only Session monitor aggregate
+ * (`GET /api/v1/chat/sessions/{id}/monitor`). `null` components are explicit
+ * "unavailable" facts, never zero-filled placeholders.
+ */
+export interface SessionMonitorSession {
+    id: string;
+    title: string | null;
+    agentPrincipalId: string | null;
+    modelProvider: string | null;
+    modelName: string | null;
+    providerConnectionId: string | null;
+    connectionRevision: number | null;
+    createdAt: string | null;
+    updatedAt: string | null;
+}
+
+export interface SessionMonitorActivityItem {
+    runId: string;
+    origin: string;
+    /** Effective status; `awaiting_approval` is synthesized by Control Plane. */
+    status: string;
+    createdAt: string | null;
+    waitingOnRunId: string | null;
+    waitingToolCallId: string | null;
+    leaseExpired: boolean;
+}
+
+export interface SessionMonitorHistoryItem {
+    runId: string;
+    origin: string;
+    terminalOutcome: string | null;
+    errorCode: string | null;
+    createdAt: string | null;
+    terminalAt: string | null;
+}
+
+export interface SessionMonitorHistory {
+    windowSize: number;
+    counts: Record<string, number>;
+    recent: SessionMonitorHistoryItem[];
+}
+
+export interface SessionMonitorConnectionFact {
+    status: import("./providerConnection").ProviderConnectionStatus;
+    lastErrorCode: string | null;
+    lastVerifiedAt: string | null;
+}
+
+export interface SessionMonitorAgentFact {
+    status: string;
+    llmReady: string;
+    verifiedAt: string | null;
+    configRevision: string;
+}
+
+export interface SessionMonitorLastObservedRun {
+    runId: string;
+    terminalOutcome: string | null;
+    errorCode: string | null;
+    terminalAt: string | null;
+}
+
+export interface SessionMonitorReadiness {
+    connection: SessionMonitorConnectionFact | null;
+    agent: SessionMonitorAgentFact;
+    lastObservedRun: SessionMonitorLastObservedRun | null;
+}
+
+export interface SessionMonitorResponse {
+    generatedAt: string;
+    session: SessionMonitorSession;
+    activity: SessionMonitorActivityItem[];
+    history: SessionMonitorHistory;
+    readiness: SessionMonitorReadiness;
+}
+
 /** UI join of the PLAN-0464 waiting link and the derived child projection. */
 export interface ToolCallWaitingOn {
     childRunId: string;

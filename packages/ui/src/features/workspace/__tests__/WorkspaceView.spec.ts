@@ -50,6 +50,7 @@ const i18n = createI18n({
             workspace: {
                 panelCode: "Code",
                 panelChanges: "Changes",
+                panelMonitor: "Monitor",
                 chatHeader: "Workspace chat",
                 noSession: "No active session",
                 createSession: "New chat",
@@ -94,6 +95,7 @@ const i18n = createI18n({
                 collapseFiles: "Collapse the file tree",
                 toggleCode: "Toggle the code panel",
                 toggleDiff: "Toggle the changes panel",
+                toggleMonitor: "Toggle the monitor panel",
             },
         },
     },
@@ -104,6 +106,7 @@ const stubs = {
     FileEditor: { template: '<div data-testid="file-editor-stub" />' },
     FileTreePanel: { template: '<div data-testid="file-tree-stub" />' },
     WorkspaceChangesPanel: { template: '<div data-testid="changes-panel-stub" />' },
+    SessionMonitorPanel: { template: '<div data-testid="session-monitor-stub" />' },
 };
 
 function mountView(): VueWrapper {
@@ -172,7 +175,7 @@ beforeEach(() => {
 });
 
 describe("WorkspaceView conversation-first layout (PLAN-0328 M3 T3.7)", () => {
-    it("renders the conversation as the main column with the file tree rail visible and the auxiliary panel collapsed", async () => {
+    it("renders the conversation as the main column with the file tree rail visible and the Monitor panel open by default", async () => {
         useSessionStore().currentSessionId = SESSION_A;
         const wrapper = mountView();
         await settle();
@@ -186,7 +189,8 @@ describe("WorkspaceView conversation-first layout (PLAN-0328 M3 T3.7)", () => {
                 .exists(),
         ).toBe(true);
         expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="session-monitor-stub"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="file-editor-stub"]').exists()).toBe(false);
     });
 
@@ -220,6 +224,10 @@ describe("WorkspaceView conversation-first layout (PLAN-0328 M3 T3.7)", () => {
 
         await wrapper.find('[data-testid="workspace-toolbar-changes"]').trigger("click");
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
+
+        await wrapper.find('[data-testid="workspace-toolbar-monitor"]').trigger("click");
+        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="session-monitor-stub"]').exists()).toBe(true);
     });
 
     it("closes the auxiliary panel from its own close action", async () => {
@@ -248,7 +256,9 @@ describe("WorkspaceView conversation-first layout (PLAN-0328 M3 T3.7)", () => {
         sessionStore.currentSessionId = SESSION_B;
         await settle();
         expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="session-monitor-stub"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="file-editor-stub"]').exists()).toBe(false);
 
         sessionStore.currentSessionId = SESSION_A;
         await settle();
