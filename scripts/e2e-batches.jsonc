@@ -81,6 +81,11 @@
       "llmMode": "write_file",
       "specs": ["e2e/real/run-budget-exhaustion.spec.ts"]
     },
+    "run-budget-calibration": {
+      "description": "PLAN-0492 T0.3 token calibration over the real provider (requires XIHE_E2E_REAL_XIAOMI_KEY + XIHE_E2E_REAL_ROUTE=openai-compat; llmMode must be non-mock so the runner imports the real provider config)",
+      "llmMode": "success",
+      "specs": ["e2e/real/run-budget-calibration.spec.ts"]
+    },
     "evidence": {
       "description": "visual/manual evidence artifacts — run last, not a regular gate",
       "llmMode": "mock",

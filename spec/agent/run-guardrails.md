@@ -50,7 +50,7 @@
 
 | 候选 | 结论 | 去向 |
 |---|---|---|
-| Agent Run 累计/循环预算 | 已实现（PLAN-0492：三维度预算、instance-only 上限、结构化上报与 durable 终态） | backlog BL-89（实现已落地；剩余 token 标定回填与文档同步随 PLAN-0492 收尾） |
+| Agent Run 累计/循环预算 | 已实现（PLAN-0492：三维度预算、instance-only 上限、结构化上报与 durable 终态；token 默认已按真实数据标定 38303/51070） | backlog BL-89（实现已落地；标定回填完成 2026-10-13，见 PLAN-0492 evidence/m0-token-calibration.md，含可复采脚本） |
 | 语义重复/无进展检测 | 已证实缺口 | backlog BL-90 → PLAN-0493（判定窗口与触发行为由该 PLAN 裁定） |
 | ChatRun 内 LangGraph 图状态 checkpoint/恢复 | 未接线已证实、需求未证实 → 触发式后置 | backlog BL-91（观察；与 ExecutionJob 续跑、BL-24 区分） |
 | 计划执行预算/重规划上限 | 无生产者 → 触发式候选 | 已有登记 P0-2（PLAN-0330 后置），不新建 |

@@ -142,7 +142,7 @@ flowchart TD
 
 **Agent Run 累计预算（PLAN-0492，2026-10-13）**
 
-- **维度与键**：`agent-runtime` 域三组键——值键 `runMaxTurns`（一轮 = 一次完成的 LLM 调用，按 `llm_usage` 事件计）、`runMaxElapsedSeconds`（累计墙钟，审批/人工等待暂停计时）、`runMaxTokens`；硬上限键 `runMaxTurnsCeiling` / `runMaxElapsedSecondsCeiling` / `runMaxTokensCeiling` 仅 instance 层可写（`0` = 不钳制），生效值 = `ceiling > 0 ? min(值, ceiling) : 值`，钳制记 `run_budget_clamp`。任一值 `0` = 该维度仅观测（仍计数上报，不停止 Run）。
+- **维度与键**：`agent-runtime` 域三组键——值键 `runMaxTurns`（一轮 = 一次完成的 LLM 调用，按 `llm_usage` 事件计）、`runMaxElapsedSeconds`（累计墙钟，审批/人工等待暂停计时）、`runMaxTokens`；硬上限键 `runMaxTurnsCeiling` / `runMaxElapsedSecondsCeiling` / `runMaxTokensCeiling` 仅 instance 层可写（`0` = 不钳制），生效值 = `ceiling > 0 ? min(值, ceiling) : 值`，钳制记 `run_budget_clamp`。任一值 `0` = 该维度仅观测（仍计数上报，不停止 Run）。代码默认：turns 25/100、elapsed 600/3600、tokens 38303/51070（2026-10-13 真实数据标定，p95=25535/15 run，复采脚本 batch `run-budget-calibration`，见 PLAN-0492 `evidence/m0-token-calibration.md`）。
 - **归属**：Agent 从 CP 配置（合并链 + run payload 层覆盖）解析生效预算并在消费时执行；CP 拥有配置面、钳制语义与 durable 终态，不重复计算。
 - **触发与终态**：超限时 Agent 发结构化 `error`（`code=RUN_BUDGET_EXHAUSTED` + `dimension=turns|elapsed|tokens`，SSE 映射必须透传 `dimension`）；CP relay 将维度写入 durable 终态（`errorDetail=budgetDimension=<dim>` + run history payload）并把 Run 收敛为 `failed`（已有助手内容时 `partial`）；UI 呈现本地化原因，接管复用普通发送/Follow-up Queue，不恢复旧 Run 图状态。
 - **不变式**：预算耗尽不替代授权/审批/沙盒门禁；非 instance 层不能扩大上限（键级锁 + 钳制）。与输入窗口预算、per-tool 超时/输出上限相互独立。

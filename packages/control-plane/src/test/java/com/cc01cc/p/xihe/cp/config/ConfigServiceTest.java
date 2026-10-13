@@ -664,10 +664,11 @@ class ConfigServiceTest {
         assertEquals("default", effective.source());
         assertEquals("25", effective.entries().get("runMaxTurns"));
         assertEquals("600", effective.entries().get("runMaxElapsedSeconds"));
-        assertEquals("0", effective.entries().get("runMaxTokens"));
+        // PLAN-0492 T0.3 回填（2026-10-13 真实数据标定，见 evidence/m0-token-calibration.md）。
+        assertEquals("38303", effective.entries().get("runMaxTokens"));
         assertEquals("100", effective.entries().get("runMaxTurnsCeiling"));
         assertEquals("3600", effective.entries().get("runMaxElapsedSecondsCeiling"));
-        assertEquals("0", effective.entries().get("runMaxTokensCeiling"));
+        assertEquals("51070", effective.entries().get("runMaxTokensCeiling"));
     }
 
     @Test

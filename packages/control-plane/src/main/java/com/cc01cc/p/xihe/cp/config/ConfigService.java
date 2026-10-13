@@ -108,15 +108,18 @@ public class ConfigService {
             "defaultTimeoutSecs", "3600",
             "maxTimeoutSecs", "0"),
         // PLAN-0492 decision #17/#19/#21: agent-runtime run-budget code defaults —
-        // turns 25 / elapsed 600s (user 2026-10-12); token stays 0 (observation
-        // mode until real p95 x1.5 backfill); ceilings 0 = no clamp.
+        // turns 25 / elapsed 600s (user 2026-10-12); token defaults calibrated
+        // 2026-10-13 from real-provider runs (p95=25535 over 15 runs; see
+        // PLAN-0492 evidence/m0-token-calibration.md): 38303 = p95×1.5,
+        // 51070 = 2×p95. Ceilings 100/3600 clamp turns/elapsed; token ceiling
+        // clamps the calibrated default upward only.
         "agent-runtime", Map.of(
             "runMaxTurns", "25",
             "runMaxElapsedSeconds", "600",
-            "runMaxTokens", "0",
+            "runMaxTokens", "38303",
             "runMaxTurnsCeiling", "100",
             "runMaxElapsedSecondsCeiling", "3600",
-            "runMaxTokensCeiling", "0"));
+            "runMaxTokensCeiling", "51070"));
 
     @Autowired
     private ConfigJpaRepository repo;

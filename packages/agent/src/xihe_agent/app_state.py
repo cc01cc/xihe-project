@@ -550,8 +550,9 @@ def _resolve_policy_for_model(
 
 
 # PLAN-0492 T2.1: run-budget keys and code defaults for the `agent-runtime`
-# domain (mirrors CP CODE_DEFAULTS). Token stays 0 = observation-only until the
-# p95 x1.5 backfill; ceilings 0 = no clamp.
+# domain (mirrors CP CODE_DEFAULTS). Token defaults calibrated 2026-10-13 from
+# real-provider runs (p95=25535 over 15 runs; PLAN-0492 evidence
+# m0-token-calibration.md): 38303 = p95×1.5, 51070 = 2×p95 (ceiling).
 _RUN_BUDGET_KEYS = {
     "runMaxTurns": "max_turns",
     "runMaxElapsedSeconds": "max_elapsed_seconds",
@@ -565,10 +566,10 @@ _RUN_BUDGET_CEILING_KEYS = {
 _RUN_BUDGET_CODE_DEFAULTS = {
     "runMaxTurns": 25,
     "runMaxElapsedSeconds": 600,
-    "runMaxTokens": 0,
+    "runMaxTokens": 38303,
     "runMaxTurnsCeiling": 100,
     "runMaxElapsedSecondsCeiling": 3600,
-    "runMaxTokensCeiling": 0,
+    "runMaxTokensCeiling": 51070,
 }
 
 

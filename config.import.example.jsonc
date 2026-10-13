@@ -148,13 +148,14 @@
     // PLAN-0492：ChatRun 累计预算（轮数 / 累计耗时秒 / token；0 = 该维度不启用）。
     // 值键在 user/workspace 层可写；*Ceiling 硬上限仅 instance 层可写（0 = 不钳制），
     // 生效值 = ceiling > 0 ? min(值, ceiling) : 值；被钳制时记 run_budget_clamp 日志。
-    // runMaxTokens 当前为观测模式（0，仅采集上报），待真实数据按 p95×1.5 回填。
+    // token 默认值 2026-10-13 真实数据标定（p95=25535 / 15 runs，mimo-v2.5）：
+    // 38303 = p95×1.5，51070 = 2×p95（见 PLAN-0492 evidence/m0-token-calibration.md）。
     "runMaxTurns": "25",
     "runMaxElapsedSeconds": "600",
-    "runMaxTokens": "0",
+    "runMaxTokens": "38303",
     "runMaxTurnsCeiling": "100",
     "runMaxElapsedSecondsCeiling": "3600",
-    "runMaxTokensCeiling": "0"
+    "runMaxTokensCeiling": "51070"
   },
 
   // agent-profile — 用户展示名（instance 默认，user 可覆盖）

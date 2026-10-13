@@ -17,7 +17,9 @@ def test_run_budget_defaults_when_nothing_configured(monkeypatch):
 
     budget = _resolve_run_budget({}, {})
 
-    assert (budget.max_turns, budget.max_elapsed_seconds, budget.max_tokens) == (25, 600, 0)
+    # Token defaults calibrated 2026-10-13 from real-provider runs
+    # (p95=25535 over 15 runs; PLAN-0492 evidence/m0-token-calibration.md).
+    assert (budget.max_turns, budget.max_elapsed_seconds, budget.max_tokens) == (25, 600, 38303)
 
 
 def test_run_budget_positive_ceiling_clamps_value(monkeypatch):
