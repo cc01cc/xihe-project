@@ -1311,6 +1311,12 @@ public class ChatController {
                     "IDEMPOTENCY_KEY_CONFLICT", "APPROVAL_REJECTED", "APPROVAL_EXPIRED",
                     "APPROVAL_EXECUTOR_UNSUPPORTED", "APPROVAL_DECISION_CONFLICT", "AGENT_EVENT_ID_MISMATCH",
                     "CONTEXT_OVERFLOW" -> code;
+            // PLAN-0416 V12/V6: these are Agent-side fail-closed rejections raised
+            // BEFORE any provider dispatch. Their whole point is a stable,
+            // actionable code on the wire; collapsing them to AGENT_UNAVAILABLE
+            // hides the real cause from the run terminal and the UI.
+            case "RAG_PROFILE_UNAVAILABLE", "RAG_LEASE_INVALID", "RAG_LEASE_UNAVAILABLE",
+                    "RAG_LEASE_MISMATCH", "RAG_QUERY_FAILED", "BASELINE_UNAUTHORIZED" -> code;
             default -> "AGENT_UNAVAILABLE";
         };
     }
@@ -1334,6 +1340,14 @@ public class ChatController {
             case "AGENT_EVENT_ID_MISMATCH" -> "Agent event does not match the active chat run";
             // PLAN-0341 Q2 freeze (2026-09-17): second-overflow terminal copy.
             case "CONTEXT_OVERFLOW" -> "上下文超限，已压缩并重试一次，仍超出限制";
+            // PLAN-0416 V12/V6: Agent-side fail-closed reasons (raised before any
+            // provider dispatch), kept distinct so the run terminal stays actionable.
+            case "RAG_PROFILE_UNAVAILABLE" -> "The Run embedding profile is unavailable";
+            case "RAG_LEASE_INVALID" -> "The embedding credential lease is invalid";
+            case "RAG_LEASE_UNAVAILABLE" -> "The embedding credential lease is unavailable";
+            case "RAG_LEASE_MISMATCH" -> "The embedding credential lease does not match this Run";
+            case "RAG_QUERY_FAILED" -> "The embedding provider rejected the RAG query";
+            case "BASELINE_UNAUTHORIZED" -> "Agent instructions baseline is missing or empty";
             default -> "Agent service unavailable";
         };
     }
@@ -1342,7 +1356,11 @@ public class ChatController {
         return switch (code) {
             case "SSE_SUBSCRIPTION_REQUIRED", "CHAT_IN_PROGRESS", "IDEMPOTENCY_KEY_CONFLICT",
                     "APPROVAL_REJECTED", "APPROVAL_EXPIRED", "APPROVAL_EXECUTOR_UNSUPPORTED",
-                    "APPROVAL_DECISION_CONFLICT", "AGENT_EVENT_ID_MISMATCH" -> false;
+                    "APPROVAL_DECISION_CONFLICT", "AGENT_EVENT_ID_MISMATCH",
+                    // PLAN-0416 V12/V6: the Agent marks these retryable=false; a
+                    // client must not be invited to retry a fail-closed baseline.
+                    "RAG_PROFILE_UNAVAILABLE", "RAG_LEASE_INVALID", "RAG_LEASE_MISMATCH",
+                    "RAG_QUERY_FAILED", "BASELINE_UNAUTHORIZED" -> false;
             default -> true;
         };
     }
