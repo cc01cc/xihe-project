@@ -86,6 +86,11 @@
       "llmMode": "success",
       "specs": ["e2e/real/run-budget-calibration.spec.ts"]
     },
+    "loop-observation": {
+      "description": "PLAN-0493 T0.2 raw repeat/no-progress observation over the real provider (same env gates as run-budget-calibration)",
+      "llmMode": "success",
+      "specs": ["e2e/real/loop-observation.spec.ts"]
+    },
     "evidence": {
       "description": "visual/manual evidence artifacts — run last, not a regular gate",
       "llmMode": "mock",
