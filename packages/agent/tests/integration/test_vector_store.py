@@ -7,6 +7,7 @@ back to a developer default DSN is a hard error, not a skip. A record of the
 isolation check is asserted before any clear().
 """
 
+import json
 import os
 
 import pytest
@@ -116,6 +117,10 @@ async def test_search_filters_by_partition_before_rank(store):
     assert len(own) == 1
     assert own[0]["filename"] == "a.pdf"
     assert all(item["filename"] != "b.pdf" for item in own)
+    # The result becomes the JSON body of /api/v1/rag/search: doc_id is a uuid
+    # column, so a DB-native UUID would fail only after a successful query.
+    assert isinstance(own[0]["docId"], str)
+    json.dumps(own)
     assert len(foreign) == 1
     assert foreign[0]["filename"] == "b.pdf"
 
@@ -182,6 +187,7 @@ async def test_documents_lists_partition_only(store):
     documents = await store.documents(profile)
     assert [item["filename"] for item in documents] == ["one.pdf"]
     assert documents[0]["chunks"] == 1
+    json.dumps(documents)
 
 
 async def test_dimension_mismatch_is_rejected_before_insert(store):

@@ -116,6 +116,8 @@ public class RagProxyController {
                     .header("Authorization", "Bearer " + agentApiToken)
                     .header("Content-Type", multipart.contentType())
                     .header("Accept", "application/json")
+                    // Correlate the Agent hop with this proxy request id.
+                    .header("X-Request-Id", requestId)
                     .timeout(Duration.ofSeconds(120))
                     .POST(HttpRequest.BodyPublishers.ofByteArray(multipart.bytes()))
                     .build();
@@ -181,6 +183,8 @@ public class RagProxyController {
                     .header("Content-Type", "application/json")
                     .header("Accept", "application/json")
                     .header("Authorization", "Bearer " + agentApiToken)
+                    // Correlate the Agent hop with this proxy request id.
+                    .header("X-Request-Id", requestId)
                     .timeout(Duration.ofSeconds(60))
                     .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body)))
                     .build();

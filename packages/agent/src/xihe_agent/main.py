@@ -336,6 +336,8 @@ app.include_router(registry_router)
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
     request_id = request.headers.get("X-Request-Id") or str(uuid4())
+    # Handlers and error bodies must reuse this id, not mint their own.
+    request.state.request_id = request_id
     with logger.contextualize(request_id=request_id):
         response = await call_next(request)
     response.headers["X-Request-Id"] = request_id
@@ -344,7 +346,7 @@ async def request_id_middleware(request: Request, call_next):
 
 @app.exception_handler(HTTPException)
 async def problem_details_handler(request: Request, exc: HTTPException) -> JSONResponse:
-    request_id = request.headers.get("X-Request-Id") or str(uuid4())
+    request_id = getattr(request.state, "request_id", "") or request.headers.get("X-Request-Id") or str(uuid4())
     # Do not expose dependency, validation, or internal exception messages.
     detail = "Agent request failed"
     return JSONResponse(
