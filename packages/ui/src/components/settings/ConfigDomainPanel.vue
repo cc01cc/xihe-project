@@ -96,9 +96,13 @@ function fieldCandidates(field: DomainField): { label: string; value: string }[]
     return field.options ?? [];
 }
 
-/** PLAN-0503 I3: stored value outside the current candidate set must stay visible. */
+/**
+ * PLAN-0503 I3 / design「目录更新处置矩阵」: any select whose stored value is
+ * outside the current candidate set must be annotated (catalog removal must not
+ * leave a blank, unlabelled field). The free-text escape stays allowCustom-only.
+ */
 function isDrifted(field: DomainField): boolean {
-    if (field.type !== "select" || !field.allowCustom) return false;
+    if (field.type !== "select") return false;
     const value = editing.value[field.key] ?? "";
     if (!value || customMode.value[field.key]) return false;
     return !fieldCandidates(field).some((option) => option.value === value);

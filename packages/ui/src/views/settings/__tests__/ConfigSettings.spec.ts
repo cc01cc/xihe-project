@@ -430,6 +430,42 @@ describe("ConfigSettings llm-provider catalog sourcing (PLAN-0503)", () => {
         wrapper.unmount();
     });
 
+    it("P1-fix: a catalog-external provider is annotated and clear uses the PUT path", async () => {
+        // Design「目录更新处置矩阵」: catalog removal must mark the stored
+        // provider unavailable instead of leaving a blank, unlabelled select.
+        mockFetchWithDirectory({
+            catalog: {
+                catalogRevision: "rev-cat",
+                providers: [{ id: "openai", displayName: "OpenAI" }],
+            },
+            llmEntries: { defaultProvider: "dashscope" },
+        });
+        const wrapper = await mountView();
+        await openLlmPanel(wrapper);
+        await flushPromises();
+
+        const providerSelect = wrapper.find<HTMLSelectElement>(
+            '[data-testid="config-select-llm-provider-defaultProvider"]',
+        );
+        expect(providerSelect.element.value).toBe("dashscope");
+        expect(
+            wrapper.find('[data-testid="config-drift-llm-provider-defaultProvider"]').exists(),
+        ).toBe(true);
+
+        const clearButton = wrapper.find(
+            '[data-testid="config-drift-clear-llm-provider-defaultProvider"]',
+        );
+        expect(clearButton.exists()).toBe(true);
+        await clearButton.trigger("click");
+        await flushPromises();
+        const llmPuts = putBodies().filter((call) =>
+            call.url.includes("/config/instance/llm-provider"),
+        );
+        expect(llmPuts).toHaveLength(1);
+        expect(llmPuts[0].body).toEqual({ defaultProvider: "" });
+        wrapper.unmount();
+    });
+
     it("T2.2/V5: an empty directory still allows manual model entry and save", async () => {
         mockFetchWithDirectory({
             models: { models: {}, providers: {}, configRevision: "rev-empty" },
@@ -445,6 +481,25 @@ describe("ConfigSettings llm-provider catalog sourcing (PLAN-0503)", () => {
         const input = wrapper.find('[data-testid="config-custom-llm-provider-defaultModel"]');
         expect(input.exists()).toBe(true);
         await input.setValue("hand-written-model");
+
+        // The escape is reversible: exiting returns to the select, re-entering
+        // keeps the typed value.
+        await wrapper
+            .find('[data-testid="config-custom-exit-llm-provider-defaultModel"]')
+            .trigger("click");
+        expect(
+            wrapper.find('[data-testid="config-custom-llm-provider-defaultModel"]').exists(),
+        ).toBe(false);
+        expect(
+            wrapper.find('[data-testid="config-select-llm-provider-defaultModel"]').exists(),
+        ).toBe(true);
+        await wrapper
+            .find('[data-testid="config-select-llm-provider-defaultModel"]')
+            .setValue("__custom__");
+        const resumed = wrapper.find<HTMLInputElement>(
+            '[data-testid="config-custom-llm-provider-defaultModel"]',
+        );
+        expect(resumed.element.value).toBe("hand-written-model");
 
         await savePanel(panel);
         const llmPuts = putBodies().filter((call) =>

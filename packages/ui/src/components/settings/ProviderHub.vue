@@ -204,6 +204,17 @@ const orphanModels = computed(() => {
     const active = new Set(activeModels.value);
     return bound.filter((model) => !active.has(model));
 });
+/**
+ * PLAN-0503 review P2: a directory fetch failure means availability is
+ * unknown, not "gone" — never nudge clearing in that state, and only mention
+ * clearing when the row actually has the control (chat connections).
+ */
+const orphanNotice = computed(() => {
+    if (modelsError.value) return "目录加载失败 · 无法判定，绑定保留";
+    return activeConnection.value?.operation === "chat"
+        ? "不在当前目录 · 绑定保留，可清除"
+        : "不在当前目录 · 绑定保留";
+});
 
 watch(
     () => [activeConnection.value?.id, props.workspaceId] as const,
@@ -846,7 +857,13 @@ onMounted(() => {
                             data-testid="provider-orphan-bindings"
                             class="mt-3"
                         >
-                            <h6 class="text-xs font-semibold text-amber-600">已绑定但当前不可用</h6>
+                            <h6 class="text-xs font-semibold text-amber-600">
+                                {{
+                                    modelsError
+                                        ? "已绑定（目录不可达，无法判定）"
+                                        : "已绑定但当前不可用"
+                                }}
+                            </h6>
                             <ul class="mt-1 divide-y">
                                 <li
                                     v-for="model in orphanModels"
@@ -878,7 +895,7 @@ onMounted(() => {
                                         </option>
                                     </select>
                                     <span class="break-all text-amber-600">
-                                        不在当前目录 · 绑定保留，可清除
+                                        {{ orphanNotice }}
                                     </span>
                                 </li>
                             </ul>

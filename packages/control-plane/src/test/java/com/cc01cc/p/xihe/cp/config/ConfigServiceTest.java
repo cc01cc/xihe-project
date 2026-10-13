@@ -488,9 +488,10 @@ class ConfigServiceTest {
     @Test
     void putLayer_userCatalogProviderStillRequiresReadyConnection() {
         // Catalog membership does not bypass the user-layer readiness gate.
-        assertThrows(IllegalArgumentException.class, () ->
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
             configService.putLayer("user", "llm-provider",
                 Map.of("defaultProvider", "openrouter"), "user", userA, null));
+        assertTrue(error.getMessage().contains("No ready provider connection for: openrouter"));
 
         saveConnection("USER", userA.toString(), "openrouter", true, "READY");
         configService.putLayer("user", "llm-provider",

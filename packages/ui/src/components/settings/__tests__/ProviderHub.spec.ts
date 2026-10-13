@@ -330,4 +330,22 @@ describe("ProviderHub orphan template bindings (PLAN-0503)", () => {
         expect(wrapper.find('[data-testid="provider-orphan-bindings"]').exists()).toBe(false);
         wrapper.unmount();
     });
+
+    it("labels availability as unknown (not clearable) when the directory fetch fails", async () => {
+        vi.mocked(request).mockRejectedValue(new Error("directory down"));
+        vi.mocked(readTemplateConfig).mockImplementation(async () => ({
+            providerModelBindings: JSON.stringify({
+                [user.id]: {
+                    "ghost-model": { layer: "instance", templateId: "builtin", version: 1 },
+                },
+            }),
+        }));
+        const wrapper = await mountHub();
+
+        const orphanSection = wrapper.get('[data-testid="provider-orphan-bindings"]');
+        expect(orphanSection.text()).toContain("ghost-model");
+        expect(orphanSection.text()).toContain("目录不可达，无法判定");
+        expect(orphanSection.text()).not.toContain("可清除");
+        wrapper.unmount();
+    });
 });

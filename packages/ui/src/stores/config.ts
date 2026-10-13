@@ -272,8 +272,11 @@ export const useConfigStore = defineStore("config", () => {
 
     function getEffectiveModel(sessionId: string): SessionModelBinding | undefined {
         const sessionBinding = sessionModels.value[sessionId];
+        // PLAN-0503 review P2: legacy migrated bindings may carry provider "" —
+        // availability is unverifiable for them, so fall through to the merged
+        // defaults (restores the pre-union semantics for that population).
         if (
-            sessionBinding &&
+            sessionBinding?.provider &&
             isChatModelAvailable(
                 sessionBinding.provider,
                 sessionBinding.model,

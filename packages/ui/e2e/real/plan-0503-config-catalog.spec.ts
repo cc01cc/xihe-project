@@ -99,6 +99,7 @@ async function waitForDirectoryCatalog(
 
 test.describe.serial("@host PLAN-0503 config catalog sourcing", () => {
     test.beforeAll(async ({ request }) => {
+        expect(FAKE_LLM_PORT, "XIHE_FAKE_LLM_PORT must be provided by e2e-host").not.toBe("");
         await loginAsAdmin(request);
         const registration = await request.post(`${CP_URL}/api/v1/auth/register`, {
             data: {
@@ -133,13 +134,25 @@ test.describe.serial("@host PLAN-0503 config catalog sourcing", () => {
         const catalogIds = catalog.providers.map((provider) => provider.id);
         expect(catalogIds.length).toBeGreaterThan(5);
 
+        const directoryResponse = await request.get(`${CP_URL}/api/v1/models`, {
+            headers: { Authorization: `Bearer ${adminAuth.accessToken}` },
+        });
+        expect(directoryResponse.ok()).toBe(true);
+        const directory = (await directoryResponse.json()) as { configRevision?: string };
+        const directoryRevision = directory.configRevision ?? "";
+        expect(directoryRevision).not.toBe("");
+
         await injectSession(page, adminAuth);
         await page.goto(`${UI_URL}/settings/config`);
         await expandLlmPanel(page);
 
-        // V2: option-by-option comparison against the catalog.
+        // V2: option-by-option comparison against the catalog after the async
+        // catalog fetch settles.
         const providerSelect = page.getByTestId("config-select-llm-provider-defaultProvider");
         await expect(providerSelect).toBeVisible({ timeout: 15000 });
+        await expect(providerSelect.locator("option")).toHaveCount(catalogIds.length, {
+            timeout: 15000,
+        });
         const optionValues = await providerSelect
             .locator("option")
             .evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value));
@@ -149,7 +162,9 @@ test.describe.serial("@host PLAN-0503 config catalog sourcing", () => {
         const modelSelect = page.getByTestId("config-select-llm-provider-defaultModel");
         await expect(modelSelect).toHaveValue(DRIFT_MODEL);
         await expect(page.getByTestId("config-drift-llm-provider-defaultModel")).toBeVisible();
-        await expect(page.getByTestId("config-domain-note-llm-provider")).toContainText("revision");
+        await expect(page.getByTestId("config-domain-note-llm-provider")).toContainText(
+            directoryRevision,
+        );
         await page.screenshot({
             path: test.info().outputPath("plan0503-instance-drift.png"),
             fullPage: true,
@@ -252,6 +267,53 @@ test.describe.serial("@host PLAN-0503 config catalog sourcing", () => {
         await expect(page.getByTestId("config-select-llm-provider-defaultModel")).toHaveValue(
             "manual-model-0503",
         );
+    });
+
+    test("V5: an empty directory still allows manual entry; the provider gate holds", async ({
+        page,
+        request,
+    }) => {
+        test.setTimeout(120000);
+        const registration = await request.post(`${CP_URL}/api/v1/auth/register`, {
+            data: {
+                email: `plan0503-noconn-${randomUUID()}@test.local`,
+                password: generateE2EPassword(),
+                name: "PLAN-0503 no-conn",
+            },
+        });
+        expect(registration.status()).toBe(201);
+        const noConnAuth = (await registration.json()) as LoginResult;
+
+        await injectSession(page, noConnAuth);
+        await page.goto(`${UI_URL}/settings/config`);
+        await page.getByTestId("config-tab-user").click();
+        const panel = await expandLlmPanel(page);
+
+        // V5: with no READY connection the model field still accepts a manual
+        // value through the escape and saves through the real PUT.
+        await page
+            .getByTestId("config-select-llm-provider-defaultModel")
+            .selectOption("__custom__");
+        await page
+            .getByTestId("config-custom-llm-provider-defaultModel")
+            .fill("manual-no-conn-0503");
+        const [saved] = await Promise.all([
+            page.waitForResponse(
+                (response) =>
+                    response.url().includes("/api/v1/config/user/llm-provider") &&
+                    response.request().method() === "PUT",
+            ),
+            panel.getByRole("button", { name: "保存", exact: true }).click(),
+        ]);
+        expect(saved.status()).toBe(200);
+
+        // The user-layer readiness gate is unchanged: writing a provider
+        // without a READY connection is rejected by CP.
+        const rejected = await request.put(`${CP_URL}/api/v1/config/user/llm-provider`, {
+            headers: { Authorization: `Bearer ${noConnAuth.accessToken}` },
+            data: { defaultProvider: "openai" },
+        });
+        expect(rejected.status()).toBe(400);
     });
 
     test("V7: provider hub lists orphan bindings and clears them on demand", async ({

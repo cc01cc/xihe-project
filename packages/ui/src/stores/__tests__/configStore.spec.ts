@@ -238,6 +238,43 @@ describe("useConfigStore", () => {
                 model: "deepseek-reasoner",
             });
         });
+
+        it("returns the ready chat union when the provider filter is empty (PLAN-0503)", () => {
+            const store = useConfigStore();
+            store.modelCache = {
+                models: {},
+                providers: {
+                    openai: {
+                        providerId: "openai",
+                        status: "ready",
+                        models: [
+                            { name: "gpt-4o", capabilities: { chat: true } },
+                            { name: "gpt-4o-mini-tts", capabilities: { chat: false } },
+                        ],
+                    },
+                    deepseek: {
+                        providerId: "deepseek",
+                        status: "ready",
+                        models: [{ name: "deepseek-chat", capabilities: { chat: true } }],
+                    },
+                },
+            };
+
+            expect(store.getChatModels("")).toEqual(["gpt-4o", "deepseek-chat"]);
+        });
+
+        it("ignores provider-less legacy bindings so merged defaults win (PLAN-0503 review)", () => {
+            const store = useConfigStore();
+            seedReadyModel(store, "openai", "gpt-4o");
+            store.mergedConfig = {
+                "llm-provider": { defaultProvider: "openai", defaultModel: "gpt-4o" },
+            };
+            // Migration writes provider "" when a legacy string binding cannot be
+            // attributed; availability is unverifiable, so defaults must win.
+            store.setSessionModel("s1", "", "gpt-4o");
+
+            expect(store.getEffectiveModel("s1")).toEqual({ provider: "openai", model: "gpt-4o" });
+        });
     });
 
     describe("findProviderForModel", () => {
