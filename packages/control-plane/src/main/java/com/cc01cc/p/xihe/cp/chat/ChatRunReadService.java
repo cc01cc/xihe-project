@@ -50,6 +50,9 @@ public class ChatRunReadService {
         body.put("origin", run.getOrigin());
         body.put("status", effectiveStatus);
         body.put("terminalOutcome", run.getTerminalOutcome());
+        // PLAN-0493 T3.1: terminal cause fact (e.g. RUN_NO_PROGRESS) so the
+        // recovery banner can present the reason; free-form like the runs list.
+        body.put("errorCode", run.getErrorCode());
         body.put("leaseExpired", leaseExpired);
         body.put("pendingApprovals", pendingApprovals);
         return body;

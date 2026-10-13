@@ -562,6 +562,7 @@ const messages = {
             budgetExhaustedElapsed: "本次运行已达到累计耗时上限",
             budgetExhaustedTokens: "本次运行已达到 Token 上限",
             budgetExhaustedHint: "可在下方输入框继续发送，接续本次会话",
+            noProgressReason: "检测到重复或无进展动作，运行已停止",
             contextCompactionCircuitOpen: "自动压缩已暂停（上下文未见改善）",
             contextCompactionCircuitClosed: "自动压缩已恢复",
             approvalUnclassifiedNotice:
@@ -1749,6 +1750,7 @@ const messages = {
             budgetExhaustedElapsed: "This run reached its elapsed-time limit",
             budgetExhaustedTokens: "This run reached its token limit",
             budgetExhaustedHint: "Continue in the input below to resume this session",
+            noProgressReason: "Repeated or no-progress actions detected; the run was stopped",
             contextCompactionCircuitOpen: "Auto-compaction paused (no improvement seen)",
             contextCompactionCircuitClosed: "Auto-compaction resumed",
             approvalUnclassifiedNotice:
