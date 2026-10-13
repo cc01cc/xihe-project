@@ -230,7 +230,6 @@ async def run() -> dict[str, Any]:
             model="openai/plan0381-fixture",
             system_prompt="Use the available file reader when asked.",
             tools=[tool],
-            max_turns=3,
             context=context,
         )
         first_events = await _consume(runner, first_config, "Read large.txt and summarize its marker.")
@@ -281,7 +280,6 @@ async def run() -> dict[str, Any]:
             model="openai/plan0381-fixture",
             system_prompt="Continue using restored session history.",
             tools=[tool],
-            max_turns=2,
             context=restored,
         )
         second_runner = LangGraphRunner(

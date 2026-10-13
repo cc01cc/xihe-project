@@ -524,6 +524,23 @@ describe("refreshRunRecovery tri-state (PLAN-292 M3 C2/C3)", () => {
         expect(store.runRecovery[SESSION_ID]?.state).toBe("cancelled");
     });
 
+    it("presents the loop-guard reason for a failed RUN_NO_PROGRESS run", async () => {
+        await mockStatus("failed", { errorCode: "RUN_NO_PROGRESS" });
+        const store = useChatStore();
+        await store.refreshRunRecovery(SESSION_ID, RUN_ID);
+        expect(store.runRecovery[SESSION_ID]?.state).toBe("failed");
+        expect(store.runRecovery[SESSION_ID]?.message).toContain("检测到重复或无进展动作");
+        expect(store.runRecovery[SESSION_ID]?.message).toContain("接续本次会话");
+    });
+
+    it("presents the budget reason for a failed RUN_BUDGET_EXHAUSTED run", async () => {
+        await mockStatus("failed", { errorCode: "RUN_BUDGET_EXHAUSTED" });
+        const store = useChatStore();
+        await store.refreshRunRecovery(SESSION_ID, RUN_ID);
+        expect(store.runRecovery[SESSION_ID]?.state).toBe("failed");
+        expect(store.runRecovery[SESSION_ID]?.message).toContain("累计预算上限");
+    });
+
     it("expires the local approval when a ChatRun is cancelled", async () => {
         const { useAgentStore } = await import("../../../../stores/agent"),
             agent = useAgentStore(),

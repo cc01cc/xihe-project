@@ -73,7 +73,7 @@ public class ChatRunReconciliationService {
                                 run.getTokenCount(), run.getAssistantChars(),
                                 userCancelled ? ChatRunTerminalService.TerminalSource.CANCELLATION
                                         : ChatRunTerminalService.TerminalSource.RECONCILIATION,
-                                null));
+                                null, null));
                 if (result.committed() && userCancelled) {
                     cancelled++;
                 } else if (result.committed()) {

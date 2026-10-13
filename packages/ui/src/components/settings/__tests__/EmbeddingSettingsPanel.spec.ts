@@ -22,7 +22,7 @@ vi.mock("../../../services/embeddingProfile", async (importOriginal) => ({
     testEmbedding: vi.fn<typeof testEmbedding>(),
 }));
 vi.mock("../../../composables/api", () => ({
-    request: vi.fn<(...args: unknown[]) => unknown>(),
+    request: vi.fn<typeof import("../../../composables/api").request>(),
 }));
 vi.mock("../../../lib/logger", () => ({
     logger: { warn: vi.fn<(...args: unknown[]) => void>() },

@@ -4,7 +4,6 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
 from xihe_agent.agent.executor import (
-    DEFAULT_MAX_ITERATIONS,
     DEFAULT_RETRY_COUNT,
     stream_agent_events,
 )
@@ -58,10 +57,6 @@ class FakeAgentTool:
 
 def _make_runner() -> LangGraphRunner:
     return LangGraphRunner(model_factory=lambda _model: create_llm())
-
-
-def test_default_max_iterations():
-    assert DEFAULT_MAX_ITERATIONS == 4
 
 
 def test_default_retry_count():

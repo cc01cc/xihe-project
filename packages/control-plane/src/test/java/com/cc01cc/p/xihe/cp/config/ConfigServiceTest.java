@@ -622,4 +622,173 @@ class ConfigServiceTest {
         assertEquals("1800", entries.get("defaultTimeoutSecs"));
         assertEquals("600", entries.get("maxTimeoutSecs"));
     }
+
+    // ------------------------------------------------------------------
+    // PLAN-0492: agent-runtime run budget — 值键写层 / ceiling 键级 instance 锁 /
+    // schema / 代码默认 / token 键不被凭据拦截
+    // ------------------------------------------------------------------
+
+    @Test
+    void putLayer_runBudgetValuesAreUserAndWorkspaceWritable() {
+        configService.putLayer("instance", "agent-runtime",
+            Map.of("runMaxTurns", "25", "runMaxElapsedSeconds", "600", "runMaxTokens", "0"),
+            "admin", null, null);
+        configService.putLayer("user", "agent-runtime",
+            Map.of("runMaxTurns", "10"), "user", userA, null);
+        configService.putLayer("workspace", "agent-runtime",
+            Map.of("runMaxTurns", "5"), "user", null, wsA);
+
+        assertEquals("25", configService.resolve("agent-runtime", "runMaxTurns", null, null));
+        assertEquals("10", configService.resolve("agent-runtime", "runMaxTurns", userA, null));
+        assertEquals("5", configService.resolve("agent-runtime", "runMaxTurns", userA, wsA));
+        assertEquals("workspace",
+            configService.effective("agent-runtime", userA, wsA).source());
+    }
+
+    @Test
+    void putLayer_runBudgetCeilingsAreInstanceOnly() {
+        configService.putLayer("instance", "agent-runtime",
+            Map.of("runMaxTurnsCeiling", "100",
+                "runMaxElapsedSecondsCeiling", "3600",
+                "runMaxTokensCeiling", "0"),
+            "admin", null, null);
+        assertEquals("100",
+            configService.layerEntries("instance", "agent-runtime", null, null)
+                .get("runMaxTurnsCeiling"));
+
+        for (String key : List.of("runMaxTurnsCeiling", "runMaxElapsedSecondsCeiling",
+                "runMaxTokensCeiling")) {
+            assertThrows(ConfigService.ConfigAccessException.class, () ->
+                configService.putLayer("user", "agent-runtime",
+                    Map.of(key, "50"), "user", userA, null),
+                "user layer must not write " + key);
+            assertThrows(ConfigService.ConfigAccessException.class, () ->
+                configService.putLayer("workspace", "agent-runtime",
+                    Map.of(key, "50"), "user", null, wsA),
+                "workspace layer must not write " + key);
+        }
+    }
+
+    @Test
+    void effective_runBudget_includesCodeDefaultsWhenUnset() {
+        ConfigService.EffectiveConfig effective = configService.effective("agent-runtime", null, null);
+
+        assertEquals("default", effective.source());
+        assertEquals("25", effective.entries().get("runMaxTurns"));
+        assertEquals("600", effective.entries().get("runMaxElapsedSeconds"));
+        // PLAN-0492 T0.3 回填（2026-10-13 真实数据标定，见 evidence/m0-token-calibration.md）。
+        assertEquals("38303", effective.entries().get("runMaxTokens"));
+        assertEquals("100", effective.entries().get("runMaxTurnsCeiling"));
+        assertEquals("3600", effective.entries().get("runMaxElapsedSecondsCeiling"));
+        assertEquals("51070", effective.entries().get("runMaxTokensCeiling"));
+    }
+
+    // ------------------------------------------------------------------
+    // PLAN-0493: agent-runtime loop guard — 值键写层 / ceiling 键级 instance 锁 /
+    // schema（值键 0 拒绝 + 通配符拒绝）/ 代码默认
+    // ------------------------------------------------------------------
+
+    @Test
+    void putLayer_loopGuardValuesAreUserAndWorkspaceWritable() {
+        configService.putLayer("instance", "agent-runtime",
+            Map.of("loopRepeatWarn", "2", "loopWindowSize", "20"),
+            "admin", null, null);
+        configService.putLayer("user", "agent-runtime",
+            Map.of("loopRepeatWarn", "3"), "user", userA, null);
+        configService.putLayer("workspace", "agent-runtime",
+            Map.of("loopRepeatWarn", "4"), "user", null, wsA);
+
+        assertEquals("2", configService.resolve("agent-runtime", "loopRepeatWarn", null, null));
+        assertEquals("3", configService.resolve("agent-runtime", "loopRepeatWarn", userA, null));
+        assertEquals("4", configService.resolve("agent-runtime", "loopRepeatWarn", userA, wsA));
+    }
+
+    @Test
+    void putLayer_loopGuardCeilingsAreInstanceOnly() {
+        configService.putLayer("instance", "agent-runtime",
+            Map.of("loopRepeatEscalateCeiling", "10", "loopWindowSizeCeiling", "50"),
+            "admin", null, null);
+        assertEquals("10",
+            configService.layerEntries("instance", "agent-runtime", null, null)
+                .get("loopRepeatEscalateCeiling"));
+
+        for (String key : List.of("loopRepeatEscalateCeiling", "loopErrorRunEscalateCeiling",
+                "loopStaleResultEscalateCeiling", "loopWindowSizeCeiling")) {
+            assertThrows(ConfigService.ConfigAccessException.class, () ->
+                configService.putLayer("user", "agent-runtime",
+                    Map.of(key, "5"), "user", userA, null),
+                "user layer must not write " + key);
+            assertThrows(ConfigService.ConfigAccessException.class, () ->
+                configService.putLayer("workspace", "agent-runtime",
+                    Map.of(key, "5"), "user", null, wsA),
+                "workspace layer must not write " + key);
+        }
+    }
+
+    @Test
+    void effective_loopGuard_includesCodeDefaultsWhenUnset() {
+        ConfigService.EffectiveConfig effective =
+            configService.effective("agent-runtime", null, null);
+
+        assertEquals("default", effective.source());
+        assertEquals("2", effective.entries().get("loopRepeatWarn"));
+        assertEquals("3", effective.entries().get("loopRepeatRefuse"));
+        assertEquals("5", effective.entries().get("loopRepeatEscalate"));
+        assertEquals("3", effective.entries().get("loopErrorRunWarn"));
+        assertEquals("5", effective.entries().get("loopErrorRunEscalate"));
+        assertEquals("2", effective.entries().get("loopStaleResultWarn"));
+        assertEquals("5", effective.entries().get("loopStaleResultEscalate"));
+        assertEquals("20", effective.entries().get("loopWindowSize"));
+        assertEquals("10", effective.entries().get("loopRepeatEscalateCeiling"));
+        assertEquals("10", effective.entries().get("loopErrorRunEscalateCeiling"));
+        assertEquals("10", effective.entries().get("loopStaleResultEscalateCeiling"));
+        assertEquals("50", effective.entries().get("loopWindowSizeCeiling"));
+    }
+
+    @Test
+    void putLayer_loopGuardSchemaRejectsZeroAndWildcardEntries() {
+        // 值键 0 无定义语义 → schema 拒绝（ceiling 键仍允许 0 = 不钳制）。
+        assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "agent-runtime",
+                Map.of("loopRepeatWarn", "0"), "admin", null, null));
+        assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "agent-runtime",
+                Map.of("loopWindowSize", "-3"), "admin", null, null));
+        // 通配符条目被 pattern 拒绝。
+        assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "agent-runtime",
+                Map.of("loopExemptTools", "[\"*\"]"), "admin", null, null));
+        // 合法追加项通过并原样往返。
+        configService.putLayer("instance", "agent-runtime",
+            Map.of("loopExemptTools", "[\"my_poll_tool\"]"), "admin", null, null);
+        assertEquals("[\"my_poll_tool\"]",
+            configService.layerEntries("instance", "agent-runtime", null, null)
+                .get("loopExemptTools"));
+    }
+
+    @Test
+    void putLayer_runBudgetSchemaRejectsInvalidValues() {
+        // 六键均 >=0（0 = 该维度不启用 / ceiling 不钳制）；负数与未知键被拒。
+        assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "agent-runtime",
+                Map.of("runMaxTurns", "-1"), "admin", null, null));
+        assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "agent-runtime",
+                Map.of("runMaxElapsedSecondsCeiling", "-5"), "admin", null, null));
+        Map<String, String> extra = new java.util.LinkedHashMap<>();
+        extra.put("runMaxTurns", "25");
+        extra.put("unknownBudgetKey", "1");
+        assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "agent-runtime", extra, "admin", null, null));
+    }
+
+    @Test
+    void putLayer_runMaxTokensIsNotTreatedAsProviderSecret() {
+        // 凭据拦截规则只对含 token 的键生效；runMaxTokens 与 maxTokens 一样是生成参数。
+        configService.putLayer("instance", "agent-runtime",
+            Map.of("runMaxTokens", "65536"), "admin", null, null);
+
+        assertEquals("65536", configService.layerEntries("instance", "agent-runtime", null, null)
+            .get("runMaxTokens"));
+    }
 }

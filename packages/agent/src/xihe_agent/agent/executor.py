@@ -9,7 +9,6 @@ from xihe_agent.agent.prompts import XIHE_SYSTEM_PROMPT
 from xihe_agent.interfaces.agent_runner import AgentEvent, AgentRunner, RunnerConfig
 from xihe_agent.interfaces.message import Message, TextMessage
 
-DEFAULT_MAX_ITERATIONS = 4
 DEFAULT_RETRY_COUNT = 3
 DEFAULT_RETRY_DELAY = 1.0
 

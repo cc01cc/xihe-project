@@ -1586,6 +1586,8 @@ export const api = {
                 runStatus?: string;
                 terminalOutcome?: string;
                 errorCode?: string;
+                /** CP `MessageReadService` field name for the terminal error text. */
+                errorDetail?: string;
                 error?: string;
                 retryable?: boolean;
                 attachments?: Array<{ fileId: string; name: string; type: string; size: number }>;
@@ -2191,6 +2193,8 @@ export const api = {
         origin: "user_submission" | "spawn";
         status: string;
         terminalOutcome?: string | null;
+        // PLAN-0493 T3.1: terminal cause fact (e.g. RUN_NO_PROGRESS).
+        errorCode?: string | null;
         leaseExpired: boolean;
         pendingApprovals: ApprovalRequest[];
     }> {
@@ -2219,6 +2223,10 @@ export const api = {
             terminalOutcome:
                 typeof record.terminalOutcome === "string" || record.terminalOutcome === null
                     ? record.terminalOutcome
+                    : undefined,
+            errorCode:
+                typeof record.errorCode === "string" || record.errorCode === null
+                    ? record.errorCode
                     : undefined,
             leaseExpired: record.leaseExpired === true,
             pendingApprovals,

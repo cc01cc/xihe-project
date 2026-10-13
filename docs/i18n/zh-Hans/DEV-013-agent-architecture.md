@@ -140,6 +140,20 @@ flowchart TD
 - **已废弃表述**：旧的「四级解析链 + min 语义 + 冷启动 ×3（`firstToolCallDone`）」不再适用；冷启动宽限机制未实施，按 PLAN-0308 决策 #35 ④ **显式延期**（需要时再立）。
 - 离线兜底：各模块 `XIHE_MCP_TOOL_TIMEOUT_S`（Agent）/ `XIHE_EXEC_COLLECT_TIMEOUT_S`（Runtime）/ `xihe.mcp.forward-timeout-s`（CP）仅作部署者**本跳覆盖**，正常路径由 CP 预算派生，各跳不做跨层比较。
 
+**Agent Run 累计预算（PLAN-0492，2026-10-13）**
+
+- **维度与键**：`agent-runtime` 域三组键——值键 `runMaxTurns`（一轮 = 一次完成的 LLM 调用，按 `llm_usage` 事件计）、`runMaxElapsedSeconds`（累计墙钟，审批/人工等待暂停计时）、`runMaxTokens`；硬上限键 `runMaxTurnsCeiling` / `runMaxElapsedSecondsCeiling` / `runMaxTokensCeiling` 仅 instance 层可写（`0` = 不钳制），生效值 = `ceiling > 0 ? min(值, ceiling) : 值`，钳制记 `run_budget_clamp`。任一值 `0` = 该维度仅观测（仍计数上报，不停止 Run）。代码默认：turns 25/100、elapsed 600/3600、tokens 38303/51070（2026-10-13 真实数据标定，p95=25535/15 run，复采脚本 batch `run-budget-calibration`，见 PLAN-0492 `evidence/m0-token-calibration.md`）。
+- **归属**：Agent 从 CP 配置（合并链 + run payload 层覆盖）解析生效预算并在消费时执行；CP 拥有配置面、钳制语义与 durable 终态，不重复计算。
+- **触发与终态**：超限时 Agent 发结构化 `error`（`code=RUN_BUDGET_EXHAUSTED` + `dimension=turns|elapsed|tokens`，SSE 映射必须透传 `dimension`）；CP relay 将维度写入 durable 终态（`errorDetail=budgetDimension=<dim>` + run history payload）并把 Run 收敛为 `failed`（已有助手内容时 `partial`）；UI 呈现本地化原因，接管复用普通发送/Follow-up Queue，不恢复旧 Run 图状态。
+- **不变式**：预算耗尽不替代授权/审批/沙盒门禁；非 instance 层不能扩大上限（键级锁 + 钳制）。与输入窗口预算、per-tool 超时/输出上限相互独立。
+
+**Agent Run 语义重复与无进展检测（PLAN-0493，2026-10-13）**
+
+- **窗口与签名**：per-Run 进程内观察窗口（`observation window`：最近 `loopWindowSize` 次调用，默认 20；有界淘汰最旧、非权威——重启/淘汰只损失检测状态）；签名 = `sha256(tool_name + canonical_json(args))`（键大小写归一、trim、空参归一、易变字段剔除；不含 `toolCallId`）。三类**连续**信号：同签名重复、同类连续失败（同 error name/code/HTTP status）、幂等/只读工具的同签名同结果。
+- **键与默认**：值键 `loopRepeatWarn/Refuse/Escalate`（2/3/5）、`loopErrorRunWarn/Escalate`（3/5）、`loopStaleResultWarn/Escalate`（2/5）、`loopWindowSize`（20）在 user/workspace 可写；四 ceiling（10/10/10/50，`0` = 不钳制）仅 instance 层可写，钳制记 `loop_guard_clamp`；`loopExemptTools` 只追加内置豁免清单（轮询/探活类，恒并集、禁通配符、≤64、非法回落内置并记日志）。默认值 2026-10-13 真实观测校准**全部维持**（`../plans/PLAN-0493-xh-agent-loop-progress-detection/evidence/m0-observed-repeats.md`）。
+- **两级动作**：tier-1——达 2 次随结果追加提示（调用照常）、达 3 次**拒绝该次调用**且 Run 继续（不产生执行副作用，durable 事件对以失败闭合）；tier-2——达 5 次停流并发 `error(code=RUN_NO_PROGRESS, signal=repeat|error|stale)`，经 0492 `{stop, interrupt}` 同管道收敛 `failed`（有内容 `partial`）；`errorDetail` 不携带 signal（触发事实 = `errorCode`）。UI：有助手内容走消息错误框、零内容停止走恢复横幅（`failed` 态：原因 + 接续提示），接管复用普通发送/Follow-up Queue。
+- **边界**：审批等待点重置连续计数（静默重试不计重复）；豁免只免检测不免预算；窗口/签名原文不出进程；检测不替代授权/审批/沙盒/预算、不新增 wire 状态；工具参数 schema 校验失败发生在观测点之前（模型反复发非法参数由 turns 预算兜底）——已知检测盲区，见 PLAN-0493 收尾报告。
+
 | 层 | 事件 |
 |----|------|
 | SSE 协议 `AgentEvent` | `token` / `tool_call` / `tool_result` / `status` / `error` / `done`；工具事件携带 `toolCallId` + `origin`（`local`/`mcp`）供 CP 按通道事实记账，`request_approval` 工具事件抑制、以审批事件为正规记录 |

@@ -307,6 +307,34 @@ describe("ChatPanel branch actions", () => {
         expect(store.getMessages(SESSION_ID).map((message) => message.id)).toEqual([canonicalId]);
         wrapper.unmount();
     });
+
+    it("keeps the terminal error detail through a history refresh (PLAN-0492)", async () => {
+        const canonicalId = "88888888-8888-4888-8888-888888888888";
+        vi.mocked(api.getMessages).mockResolvedValue([
+            {
+                id: canonicalId,
+                sessionId: SESSION_ID,
+                role: "ASSISTANT",
+                content: "partial answer",
+                createdAt: "2026-10-12T00:00:00Z",
+                runId: RUN_ID,
+                runStatus: "failed",
+                terminalOutcome: "error",
+                errorCode: "RUN_BUDGET_EXHAUSTED",
+                errorDetail: "budgetDimension=tokens",
+                attachments: [],
+            },
+        ]);
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        const refreshed = useChatStore()
+            .getMessages(SESSION_ID)
+            .find((message) => message.id === canonicalId);
+        expect(refreshed?.errorCode).toBe("RUN_BUDGET_EXHAUSTED");
+        expect(refreshed?.error).toBe("budgetDimension=tokens");
+        wrapper.unmount();
+    });
 });
 
 describe("ChatPanel approval dismiss and reopen pill (PLAN-0404)", () => {

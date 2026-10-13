@@ -34,6 +34,7 @@ from xihe_agent.context.diagnostics import (
     sort_diagnostics,
     truncate_middle,
 )
+from xihe_agent.context.loop_detection import LOOP_WINDOW_KEY, NO_PROGRESS_SIGNAL_KEY, LoopObservationWindow
 from xihe_agent.interfaces.context import AgentContext, bound_tool_arguments
 from xihe_agent.interfaces.event import Event
 from xihe_agent.interfaces.event_store import EventStore
@@ -457,17 +458,53 @@ class LCToolAdapter(BaseTool):
         previous_tool_call_id = self._context.metadata.get("toolCallId")
         self._context.metadata["toolCallId"] = call_id
         try:
+            # PLAN-0493 T2.1: tier-1 admission before execution. Refuse closes
+            # the durable pair with the hint text (Run keeps going); escalate
+            # flips the metadata flag the runner reads to stop the stream.
+            window = self._context.metadata.get(LOOP_WINDOW_KEY)
+            pre_message = ""
+            if isinstance(window, LoopObservationWindow):
+                pre = window.pre_check(self._tool.spec.name, kwargs)
+                if pre.level in ("refuse", "escalate"):
+                    notice = pre.message or (
+                        f"Run stopped: no progress detected ({pre.signal})."
+                    )
+                    if pre.level == "escalate":
+                        self._context.metadata[NO_PROGRESS_SIGNAL_KEY] = pre.signal
+                    await self._append_tool_result(
+                        call_id,
+                        build_tool_event_result(notice, {}),
+                        status="failed",
+                    )
+                    return wrap_untrusted_tool_output(notice), None
+                pre_message = pre.message
             try:
                 result = await self._tool.execute(kwargs, self._context)
             except ApprovalTerminalError:
                 # PLAN-0381 T3.2 / m3-contract §1.1：审批终态走独立事件序列，
                 # 不落 failed tool.result（已知边界，契约登记）。
+                if isinstance(window, LoopObservationWindow):
+                    window.record_result(
+                        self._tool.spec.name,
+                        kwargs,
+                        ok=False,
+                        error_key="approval_terminal",
+                    )
                 raise
             except Exception as exc:
                 # T3.2 failed write path：先闭合 durable 事件对（有界 error
                 # preview + status=failed），再原样 re-raise——缺果声明在下一轮
                 # 会被回放成「run interrupted」，failed 被缺省读成 completed 都
                 # 是伪造。append 自身失败只记日志，不吞原异常。
+                if isinstance(window, LoopObservationWindow):
+                    rec = window.record_result(
+                        self._tool.spec.name,
+                        kwargs,
+                        ok=False,
+                        error_key=type(exc).__name__,
+                    )
+                    if rec.level == "escalate":
+                        self._context.metadata[NO_PROGRESS_SIGNAL_KEY] = rec.signal
                 try:
                     preview, preview_meta = bound_tool_preview(
                         f"Tool execution failed: {type(exc).__name__}: {exc}", None
@@ -517,6 +554,17 @@ class LCToolAdapter(BaseTool):
                 build_tool_event_result(durable_preview, durable_meta),
                 diagnostics=diagnostics,
             )
+            if isinstance(window, LoopObservationWindow):
+                # PLAN-0493 T2.1: post-execution bookkeeping (window + error/
+                # stale signals); an escalate verdict flips the runner flag.
+                rec = window.record_result(
+                    self._tool.spec.name,
+                    kwargs,
+                    ok=True,
+                    result_text=content,
+                )
+                if rec.level == "escalate":
+                    self._context.metadata[NO_PROGRESS_SIGNAL_KEY] = rec.signal
 
             # PLAN-0342 P2-4 → PLAN-0381 T2.3：48k middle truncation 保留为命令
             # 分支兜底（对 ≤4096 的 preview 恒 no-op）；非命令载荷同样只出
@@ -528,6 +576,10 @@ class LCToolAdapter(BaseTool):
             wrapped = wrap_untrusted_tool_output(body)
             jit = _jit_rules_for_input(self._tool.spec.name, kwargs, self._context)
             text = f"{wrapped}\n{jit}" if jit else wrapped
+            if pre_message:
+                # PLAN-0493 T2.1 tier-1 warn: the hint rides along with the
+                # executed result (the call runs; only the text is added).
+                text = f"{text}\n{pre_message}"
             artifact = {"diagnostics": diagnostics} if diagnostics is not None else None
             return text, artifact
         finally:
