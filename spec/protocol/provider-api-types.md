@@ -1,7 +1,7 @@
 # XH Provider API Types and Connection Identity
 
 > Contract status: `proposed`; implementation status: `partial`; Profile: `protocol`.
-> Canonical owner: CP Provider owner; active writer: PLAN-0416 for dynamic retrieval slots (sequential handoff from completed PLAN-0439); checked 2026-10-13.
+> Canonical owner: CP Provider owner; active writer: none — PLAN-0416 closed its dynamic retrieval slot sections on 2026-10-13 (sequential handoff from completed PLAN-0439); checked 2026-10-13.
 > Consumers: CP Provider/Models/Lease, Agent model catalog, UI ProviderHub, downstream PLAN-0439/0485/0416.
 
 ## Registry
@@ -28,7 +28,7 @@
 - PLAN-0438 owns Registry/Catalog/Connection persistence and multi-key CRUD/discovery. Its completed baseline assigns Type server-side; PLAN-0439 extends the mutation contract.
 - PLAN-0439 extends generic Type selection, connection overlay and Session binding; only its Chat templates/selectors/senders require `operation=chat`.
 - PLAN-0485 adds the dedicated Embedding Type and per-request profile/lease/RAG storage consumer. PLAN-0416 consumes that profile for ChatRun retrieval; neither replaces the canonical Registry.
-- PLAN-0438 handed this file to PLAN-0439 after merge 692b89fb. PLAN-0485 and PLAN-0416 consume it until their sequential handoff; only the active owner edits its sections. Authentication/authorization remains owned by Security; HTTP fields/errors remain in OpenAPI/inventory.
+- PLAN-0438 handed this file to PLAN-0439 after merge 692b89fb. PLAN-0485 and PLAN-0416 consumed it until their sequential handoff; both are complete (2026-10-13), so the canonical owner has editing authority again. Authentication/authorization remains owned by Security; HTTP fields/errors remain in OpenAPI/inventory.
 
 ## Development Cutover and Evidence
 
