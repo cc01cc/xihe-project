@@ -108,14 +108,13 @@ class TestLLMConfig:
         assert cfg.model == "mimo-v2.5"
         assert cfg.api_base == "https://api.xiaomimimo.com/v1"
 
-    def test_from_config_client_uses_xiaomi_specific_values(self, monkeypatch: pytest.MonkeyPatch):
+    def test_from_config_client_reads_profile_unit(self, monkeypatch: pytest.MonkeyPatch):
+        """PLAN-0504: the whole profile unit is the only identity source."""
         monkeypatch.setenv("XIHE_XIAOMI_API_KEY", "sk-mimo-env")
+        monkeypatch.delenv("XIHE_API_BASE", raising=False)
         client = ConfigClient("http://test-cp", "test-token")
         client._effective_cache["llm-provider"] = {
-            "defaultProvider": "xiaomi",
-            "xiaomiApiBase": "https://api.xiaomimimo.com/v1",
-            "xiaomiModel": "mimo-v2.5",
-            "defaultModel": "deepseek-chat",
+            "profile": '{"providerId":"xiaomi","connectionKey":"default","model":"mimo-v2.5"}',
         }
         cfg = LLMConfig.from_config_client(client)
 
@@ -129,80 +128,93 @@ class TestLLMConfig:
         monkeypatch.setenv("XIHE_XIAOMI_API_KEY", "sk-mimo-env")
         client = ConfigClient("http://test-cp", "test-token")
         client._effective_cache["llm-provider"] = {
-            "defaultProvider": "xiaomi",
+            "profile": '{"providerId":"xiaomi","connectionKey":"default","model":"mimo-v2.5"}',
             "xiaomiApiKey": "sk-from-config-must-be-ignored",
-            "xiaomiApiBase": "https://api.xiaomimimo.com/v1",
-            "xiaomiModel": "mimo-v2.5",
         }
         cfg = LLMConfig.from_config_client(client)
 
         assert cfg.api_key == "sk-mimo-env"
 
-    def test_from_config_client_keeps_explicit_provider_with_different_user_model(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_from_config_client_ignores_legacy_keys(self, monkeypatch: pytest.MonkeyPatch):
+        """PLAN-0504 decision #2: legacy identity/base keys have no compat reads."""
         for env_name in ENV_PROVIDER_KEY_MAP.values():
             monkeypatch.delenv(env_name, raising=False)
         client = ConfigClient("http://test-cp", "test-token")
         client._effective_cache["llm-provider"] = {
-            "defaultProvider": "deepseek",
+            "defaultProvider": "xiaomi",
             "defaultModel": "mimo-v2.5",
+            "xiaomiModel": "mimo-v2.5",
+            "xiaomiApiBase": "https://api.xiaomimimo.com/v1",
+            "baseUrl": "https://shared.example/v1",
         }
 
         cfg = LLMConfig.from_config_client(client)
 
-        assert cfg.provider == "deepseek"
+        assert cfg.provider == ""
+        assert cfg.model == ""
+        assert cfg.api_base == ""
+
+    def test_from_config_client_without_profile_has_no_implicit_default(self, monkeypatch: pytest.MonkeyPatch):
+        """PLAN-0504 decision #10: no profile → no implicit mock/provider default."""
+        for env_name in ENV_PROVIDER_KEY_MAP.values():
+            monkeypatch.delenv(env_name, raising=False)
+        client = ConfigClient("http://test-cp", "test-token")
+
+        cfg = LLMConfig.from_config_client(client)
+
+        assert cfg.provider == ""
+        assert cfg.model == ""
         assert cfg.api_key == ""
-        assert cfg.model == "mimo-v2.5"
 
 
 class TestFallbackProviderConfigs:
-    """PLAN-0307 T2.13: env-keyed offline provider registry (decision #21)."""
+    """PLAN-0504 decision #9: env-only offline registry (config reads retired)."""
 
-    def test_returns_env_keyed_providers_with_config_base(self, monkeypatch: pytest.MonkeyPatch):
+    def test_returns_env_keyed_providers_with_default_base(self, monkeypatch: pytest.MonkeyPatch):
         for env_name in ENV_PROVIDER_KEY_MAP.values():
             monkeypatch.delenv(env_name, raising=False)
+        monkeypatch.delenv("XIHE_API_BASE", raising=False)
         monkeypatch.setenv("XIHE_XIAOMI_API_KEY", "sk-mimo")
 
-        registry = fallback_provider_configs(
-            {
-                "xiaomiApiBase": "https://api.xiaomimimo.com/v1",
-                "xiaomiModel": "mimo-v2.5",
-            }
-        )
+        registry = fallback_provider_configs()
 
         assert registry == {
             "xiaomi": {
                 "provider": "xiaomi",
                 "apiKey": "sk-mimo",
                 "baseUrl": "https://api.xiaomimimo.com/v1",
-                "model": "mimo-v2.5",
+                "model": "",
             }
         }
 
-    def test_base_url_falls_back_to_provider_default(self, monkeypatch: pytest.MonkeyPatch):
+    def test_xihe_api_base_beats_provider_default_and_model_stays_empty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         for env_name in ENV_PROVIDER_KEY_MAP.values():
             monkeypatch.delenv(env_name, raising=False)
         monkeypatch.setenv("XIHE_DEEPSEEK_API_KEY", "sk-ds")
+        monkeypatch.setenv("XIHE_API_BASE", "https://proxy.example.test/v1")
 
-        registry = fallback_provider_configs({})
+        registry = fallback_provider_configs()
 
-        assert registry["deepseek"]["baseUrl"] == "https://api.deepseek.com/v1"
+        assert registry["deepseek"]["baseUrl"] == "https://proxy.example.test/v1"
+        assert registry["deepseek"]["model"] == ""
 
     def test_provider_without_env_key_is_absent(self, monkeypatch: pytest.MonkeyPatch):
         for env_name in ENV_PROVIDER_KEY_MAP.values():
             monkeypatch.delenv(env_name, raising=False)
 
-        registry = fallback_provider_configs({"baseUrl": "https://ignored.example/v1"})
+        registry = fallback_provider_configs()
 
         assert registry == {}
 
     def test_dashscope_default_base_comes_from_single_source(self, monkeypatch: pytest.MonkeyPatch):
         for env_name in ENV_PROVIDER_KEY_MAP.values():
             monkeypatch.delenv(env_name, raising=False)
+        monkeypatch.delenv("XIHE_API_BASE", raising=False)
         monkeypatch.setenv("XIHE_DASHSCOPE_API_KEY", "sk-ds")
 
-        registry = fallback_provider_configs({})
+        registry = fallback_provider_configs()
 
         assert registry["dashscope"]["baseUrl"] == default_api_base("dashscope")
         assert registry["dashscope"]["baseUrl"] == ("https://dashscope.aliyuncs.com/compatible-mode/v1")
@@ -212,33 +224,17 @@ class TestFallbackProviderConfigs:
 
 
 class TestResolveProviderBaseUrl:
-    """Shared precedence used by the fallback registry and embedding config."""
+    """PLAN-0504 decision #9: env-only endpoint precedence (config reads retired)."""
 
-    def test_provider_specific_beats_shared_and_fallback(self):
-        assert (
-            resolve_provider_base_url(
-                {
-                    "xiaomiApiBase": "https://specific.test/v1",
-                    "baseUrl": "https://shared.test/v1",
-                },
-                "xiaomi",
-                "https://fallback.test/v1",
-            )
-            == "https://specific.test/v1"
-        )
+    def test_env_base_url_beats_fallback(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("XIHE_API_BASE", "https://env.test/v1")
 
-    def test_shared_base_url_beats_fallback(self):
-        assert (
-            resolve_provider_base_url(
-                {"baseUrl": "https://shared.test/v1"},
-                "xiaomi",
-                "https://fallback.test/v1",
-            )
-            == "https://shared.test/v1"
-        )
+        assert resolve_provider_base_url("xiaomi", "https://fallback.test/v1") == "https://env.test/v1"
 
-    def test_falls_back_when_unset(self):
-        assert resolve_provider_base_url({}, "xiaomi", "https://fallback.test/v1") == "https://fallback.test/v1"
+    def test_falls_back_when_unset(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delenv("XIHE_API_BASE", raising=False)
+
+        assert resolve_provider_base_url("xiaomi", "https://fallback.test/v1") == "https://fallback.test/v1"
 
 
 class TestCreateLLM:

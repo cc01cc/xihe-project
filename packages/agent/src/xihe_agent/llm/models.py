@@ -52,7 +52,7 @@ async def fetch_model_catalog(config_client: Any) -> dict[str, Any]:
     if config_client is None:
         return {"models": {}, "providers": {}, "configRevision": ""}
 
-    providers = fallback_provider_configs(config_client.get_domain("llm-provider"))
+    providers = fallback_provider_configs()
     results: dict[str, list[str]] = {}
     provider_catalog: dict[str, dict[str, Any]] = {}
     async with httpx.AsyncClient() as client:
@@ -301,7 +301,7 @@ async def list_embedding_models(_token: None = Depends(verify_service_token)):
     cc = _models_router.config_client
     if cc is None:
         return {"models": []}
-    providers = fallback_provider_configs(cc.get_domain("llm-provider"))
+    providers = fallback_provider_configs()
     if not providers:
         return {"models": []}
     result: list[dict[str, Any]] = []

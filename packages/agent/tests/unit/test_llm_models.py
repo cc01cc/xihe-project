@@ -10,6 +10,8 @@ from xihe_agent.llm.base import ENV_PROVIDER_KEY_MAP
 def _clear_provider_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for env_name in ENV_PROVIDER_KEY_MAP.values():
         monkeypatch.delenv(env_name, raising=False)
+    # PLAN-0504 decision #9: the fallback registry endpoint is env-only.
+    monkeypatch.delenv("XIHE_API_BASE", raising=False)
 
 
 @pytest.fixture
@@ -37,9 +39,6 @@ async def test_list_models_httpx_failure_returns_empty(patch_config_client, monk
 
     _clear_provider_env(monkeypatch)
     monkeypatch.setenv("XIHE_OPENAI_API_KEY", "sk-test")
-    patch_config_client.config_client.get_domain.return_value = {
-        "baseUrl": "https://api.openai.com",
-    }
     with patch("xihe_agent.llm.models.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
         mock_client_cls.return_value.__aenter__.return_value = mock_client
@@ -67,9 +66,6 @@ async def test_list_models_success_includes_chat_capability(patch_config_client,
     _clear_provider_env(monkeypatch)
     monkeypatch.setenv("XIHE_XIAOMI_API_KEY", "test-key")
     patch_config_client.config_client.config_revision = "rev-1"
-    patch_config_client.config_client.get_domain.return_value = {
-        "xiaomiApiBase": "https://provider.test/v1",
-    }
     response = MagicMock(status_code=200)
     response.json.return_value = {
         "data": [{"id": "mimo-v2.5"}, {"id": "mimo-v2.5-asr"}],
@@ -95,9 +91,6 @@ async def test_list_models_auth_failure_has_actionable_status(patch_config_clien
     _clear_provider_env(monkeypatch)
     monkeypatch.setenv("XIHE_OPENAI_API_KEY", "invalid-key")
     patch_config_client.config_client.config_revision = "rev-2"
-    patch_config_client.config_client.get_domain.return_value = {
-        "openaiApiBase": "https://provider.test/v1",
-    }
     response = MagicMock(status_code=401)
     with patch("xihe_agent.llm.models.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()

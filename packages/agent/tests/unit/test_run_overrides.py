@@ -26,7 +26,7 @@ class TestRunOverrideValidation:
         )
 
     def test_valid_shape_passes(self):
-        assert main._validate_run_overrides({"llm-provider": {"defaultModel": "mimo-v2.5"}}, "userOverrides") is None
+        assert main._validate_run_overrides({"llm-provider": {"timeout": "60"}}, "userOverrides") is None
 
 
 class TestRunOverrideNormalize:
@@ -36,8 +36,8 @@ class TestRunOverrideNormalize:
         assert main._normalize_run_overrides({"llm-provider": "nope"}) == {}
 
     def test_valid_shape_passes_through(self):
-        assert main._normalize_run_overrides({"llm-provider": {"defaultModel": "mimo-v2.5"}}) == {
-            "llm-provider": {"defaultModel": "mimo-v2.5"}
+        assert main._normalize_run_overrides({"llm-provider": {"timeout": "60"}}) == {
+            "llm-provider": {"timeout": "60"}
         }
 
 
@@ -46,28 +46,28 @@ class TestMergeRunDomain:
         monkeypatch.setattr(
             main.config_client,
             "get_domain",
-            lambda domain: {"defaultProvider": "deepseek", "timeout": "30"} if domain == "llm-provider" else {},
+            lambda domain: {"temperature": "0.9", "timeout": "30"} if domain == "llm-provider" else {},
         )
 
         merged = main._merge_run_domain(
             "llm-provider",
-            {"llm-provider": {"defaultProvider": "xiaomi", "temperature": "0.2"}},
-            {"llm-provider": {"defaultProvider": "openai"}},
+            {"llm-provider": {"temperature": "0.2", "maxTokens": "2048"}},
+            {"llm-provider": {"temperature": "0.1"}},
         )
 
-        assert merged["defaultProvider"] == "openai"
-        assert merged["temperature"] == "0.2"
+        assert merged["temperature"] == "0.1"
+        assert merged["maxTokens"] == "2048"
         assert merged["timeout"] == "30"
 
     def test_has_no_side_effects_on_process_snapshot(self, monkeypatch: pytest.MonkeyPatch):
-        snapshot = {"defaultProvider": "deepseek"}
+        snapshot = {"temperature": "0.9"}
         monkeypatch.setattr(main.config_client, "get_domain", lambda domain: snapshot)
         before = main.llm_config
 
-        merged = main._merge_run_domain("llm-provider", {"llm-provider": {"defaultProvider": "xiaomi"}}, {})
-        merged["defaultProvider"] = "mutated"
+        merged = main._merge_run_domain("llm-provider", {"llm-provider": {"temperature": "0.2"}}, {})
+        merged["temperature"] = "mutated"
 
-        assert snapshot == {"defaultProvider": "deepseek"}
+        assert snapshot == {"temperature": "0.9"}
         assert main.llm_config is before
 
     def test_unknown_domain_returns_pulled_entries(self, monkeypatch: pytest.MonkeyPatch):
@@ -76,14 +76,13 @@ class TestMergeRunDomain:
 
 
 class TestLLMConfigFromEntries:
-    def test_parses_run_merged_entries(self, monkeypatch: pytest.MonkeyPatch):
+    def test_reads_profile_unit(self, monkeypatch: pytest.MonkeyPatch):
         for env_name in ENV_PROVIDER_KEY_MAP.values():
             monkeypatch.delenv(env_name, raising=False)
 
         cfg = LLMConfig.from_entries(
             {
-                "defaultProvider": "openai",
-                "defaultModel": "gpt-4o-mini",
+                "profile": '{"providerId":"openai","connectionKey":"default","model":"gpt-4o-mini"}',
                 "timeout": "120",
                 "maxTokens": "2048",
                 "temperature": "0.1",
@@ -96,20 +95,55 @@ class TestLLMConfigFromEntries:
         assert cfg.max_tokens == 2048
         assert cfg.temperature == 0.1
 
-    def test_user_override_switches_provider_and_uses_env_fallback_key(self, monkeypatch: pytest.MonkeyPatch):
+    def test_profile_uses_env_fallback_key_and_ignores_legacy_keys(self, monkeypatch: pytest.MonkeyPatch):
         for env_name in ENV_PROVIDER_KEY_MAP.values():
             monkeypatch.delenv(env_name, raising=False)
+        monkeypatch.delenv("XIHE_API_BASE", raising=False)
         monkeypatch.setenv("XIHE_XIAOMI_API_KEY", "sk-mimo")
 
-        base = {"defaultProvider": "deepseek", "deepseekModel": "deepseek-v4-flash"}
-        merged = {
-            **base,
-            "defaultProvider": "xiaomi",
-            "xiaomiModel": "mimo-v2.5",
-        }
-
-        cfg = LLMConfig.from_entries(merged)
+        cfg = LLMConfig.from_entries(
+            {
+                "profile": '{"providerId":"xiaomi","connectionKey":"default","model":"mimo-v2.5"}',
+                "defaultProvider": "deepseek",
+                "xiaomiModel": "legacy-model-must-be-ignored",
+                "xiaomiApiBase": "https://legacy.example/v1",
+                "baseUrl": "https://legacy-shared.example/v1",
+            }
+        )
 
         assert cfg.provider == "xiaomi"
         assert cfg.model == "mimo-v2.5"
         assert cfg.api_key == "sk-mimo"
+        assert cfg.api_base == "https://api.xiaomimimo.com/v1"
+
+    def test_env_base_url_beats_provider_default(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("XIHE_API_BASE", "https://proxy.example.test/v1")
+
+        cfg = LLMConfig.from_entries(
+            {"profile": '{"providerId":"deepseek","connectionKey":"default","model":"deepseek-chat"}'}
+        )
+
+        assert cfg.api_base == "https://proxy.example.test/v1"
+
+    def test_no_profile_has_no_implicit_default(self, monkeypatch: pytest.MonkeyPatch):
+        """PLAN-0504 decision #10: empty identity, readiness fails closed."""
+        for env_name in ENV_PROVIDER_KEY_MAP.values():
+            monkeypatch.delenv(env_name, raising=False)
+
+        cfg = LLMConfig.from_entries({})
+
+        assert cfg.provider == ""
+        assert cfg.model == ""
+        assert cfg.api_key == ""
+
+    def test_malformed_profile_degrades_to_no_identity(self):
+        cfg = LLMConfig.from_entries({"profile": "not-json"})
+
+        assert cfg.provider == ""
+        assert cfg.model == ""
+
+    def test_partial_profile_degrades_to_no_identity(self):
+        cfg = LLMConfig.from_entries({"profile": '{"providerId":"openai","model":"gpt-4o"}'})
+
+        assert cfg.provider == ""
+        assert cfg.model == ""
