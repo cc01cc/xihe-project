@@ -54,7 +54,54 @@ CHAT_TYPES = {
     "anthropic-messages": ChatApiType("anthropic-messages", "/messages", "messages"),
     "mimo-responses": ChatApiType("mimo-responses", "/responses", "input"),
 }
-VARIABLES = {"user_input": str, "agent_instructions": str, "model": str, "tools": list, "conversation_history": list}
+VARIABLES = {
+    "user_input": str,
+    "agent_instructions": str,
+    "rag_context": str,
+    "model": str,
+    "tools": list,
+    "conversation_history": list,
+}
+
+
+def uses_rag_context(source: str) -> bool:
+    """Walk strict JSON tokens; escaped literals never activate retrieval."""
+
+    def walk(node: Any) -> bool:
+        if isinstance(node, str):
+            return ("variable", "rag_context") in tokenize(node)
+        if isinstance(node, list):
+            return any(walk(item) for item in node)
+        if isinstance(node, dict):
+            return any(walk(key) or walk(value) for key, value in node.items())
+        return False
+
+    return walk(strict_json(source))
+
+
+def _rag_location(parsed: dict[str, Any], api_type: ChatApiType, path: tuple[Any, ...]) -> bool:
+    """Frozen PLAN-0416 path whitelist, mirrored by CP ApiRequestValidator."""
+    if len(path) < 3 or path[0] != api_type.input_field or type(path[1]) is not int:
+        return False
+    record = parsed[api_type.input_field][path[1]]
+    if not isinstance(record, dict):
+        return False
+    if api_type.id == "mimo-responses":
+        return len(path) == 3 and path[2] == "content" and record.get("role") in {"user", "assistant", "tool"}
+    if record.get("role") not in (
+        {"user", "assistant"} if api_type.id == "anthropic-messages" else {"user", "assistant", "tool"}
+    ):
+        return False
+    if api_type.id == "openai-chat-completions":
+        return len(path) == 3 and path[2] == "content"
+    if len(path) != 5 or path[2] != "content" or type(path[3]) is not int:
+        return False
+    block = record["content"][path[3]]
+    if not isinstance(block, dict):
+        return False
+    return (block.get("type") == "text" and path[4] == "text") or (
+        block.get("type") == "tool_result" and path[4] == "content"
+    )
 
 
 def chat_type(type_id: Any, version: Any, operation: Any = "chat") -> ChatApiType:
@@ -152,6 +199,8 @@ def render_request(source: str, api_type: ChatApiType, values: dict[str, Any]) -
                 if VARIABLES[name] is not str:
                     raise ApiRequestError("WRONG_VARIABLE_LOCATION")
                 if name == "model" and (path != ("model",) or node != "${xh.model}"):
+                    raise ApiRequestError("WRONG_VARIABLE_LOCATION")
+                if name == "rag_context" and not _rag_location(parsed, api_type, path):
                     raise ApiRequestError("WRONG_VARIABLE_LOCATION")
                 output += resolve(name)
             return output

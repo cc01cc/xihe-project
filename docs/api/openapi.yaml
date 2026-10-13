@@ -723,7 +723,7 @@ paths:
                 data: {"tool":"execute_command","toolCallId":"call-2","origin":"mcp","type":"tool_result","runId":"run-abc","result":"...","diagnostics":{"items":[{"file":"src/app.ts","line":12,"column":3,"severity":"error","kind":"compile","message":"TS2345: Argument of type 'string' is not assignable to parameter of type 'number'","confidence":"high"}],"total":5,"confidence":"high"}}
 
                 event: usage
-                data: {"usage":{"inputTokens":372,"outputTokens":56,"totalTokens":428,"estimatedInputTokens":0,"source":"real","windowTokens":131072,"model":"deepseek/deepseek-v4-flash","cost":0.1620,"costCurrency":"USD","costSource":"price_table","costNote":null}}
+                data: {"usage":{"inputTokens":372,"outputTokens":56,"totalTokens":428,"estimatedInputTokens":351,"source":"real","providerUnknownFields":["cache_read_input_tokens"],"windowTokens":131072,"model":"deepseek/deepseek-v4-flash","cost":0.1620,"costCurrency":"USD","costSource":"price_table","costNote":null}}
 
                 event: done
                 data: {"type":"done","runId":"run-abc"}
@@ -2746,8 +2746,16 @@ components:
         runId: { type: string, format: uuid }
         sessionId: { type: string }
         content: { type: string }
-        instructions: { type: string, description: CP-selected safe Agent profile instructions text only; AgentPrincipal IDs and permission snapshots are forbidden on this wire. }
+        instructions: { type: string, minLength: 1, description: 'CP-authorized nonempty Agent baseline only. Missing/blank/non-string values fail before lease redemption or Chat provider dispatch with BASELINE_UNAUTHORIZED; no process-level fallback. AgentPrincipal IDs and permission snapshots are forbidden on this wire.' }
         contextTemplateSnapshot: { $ref: '#/components/schemas/ContextTemplateSnapshot' }
+        embeddingProfile:
+          type: object
+          description: 'PLAN-0416: CP-resolved non-secret 0485 profile. Present only when the original API-native template contains an unescaped xh.rag_context data slot. Includes authenticated workspace/owner, connection identity/revision, API Type/version, model and dimension; callers cannot select these authority fields.'
+          additionalProperties: true
+        embeddingCredentialLease:
+          type: string
+          writeOnly: true
+          description: 'Separate one-use embedding lease bound to this runId; never reuse the Chat credentialLease. Unavailable profile/lease fails the Run before Chat provider dispatch; empty successful retrieval renders an empty data string.'
         componentSources:
           type: object
           additionalProperties: { $ref: '#/components/schemas/ContextComponentSource' }
@@ -2832,7 +2840,7 @@ components:
       required: [summary, usage]
       properties:
         summary: { type: string, description: "Six sectioned summary ([Goal]/[Work State]/[Next Move]/[Files&Artifacts]/[Errors]/[Recent]); never carries [Constraints] (CP appends the code-extracted section)." }
-        usage: { type: object, additionalProperties: true, description: "0343-named usage: inputTokens/outputTokens/totalTokens/estimatedInputTokens/source (real|estimated|fallback)/model (provider/model)." }
+        usage: { type: object, additionalProperties: true, description: "0343-named usage: inputTokens/outputTokens/totalTokens/estimatedInputTokens/source (real|estimated|fallback)/model (provider/model). Chat additionally carries cacheReadInputTokens and providerUnknownFields (PLAN-0416: estimatedInputTokens is the serialized native request body of the dispatched steps; a provider counter that was never returned is omitted and listed in providerUnknownFields instead of being reported as 0)." }
     OAuthBindingRequest: { type: object, required: [workspaceId, serverId], properties: { workspaceId: { type: string }, serverId: { type: string } } }
     OAuthTokenRequest: { type: object, required: [userId, workspaceId, serverId, scope], properties: { userId: { type: string }, workspaceId: { type: string }, serverId: { type: string }, scope: { type: string } } }
     StatusResponse: { type: object, required: [status], properties: { status: { type: string } }, additionalProperties: true }

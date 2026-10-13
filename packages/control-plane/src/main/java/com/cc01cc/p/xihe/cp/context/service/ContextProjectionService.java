@@ -81,23 +81,29 @@ public class ContextProjectionService {
         return project(sessionId, afterSequence, branchPathService.rootVisibility(sessionId));
     }
 
-    /** PLAN-0410 T2.1: branch-path filtered projection of the visible events. */
+    /**
+     * PLAN-0410 T2.1 / PLAN-0416 T2.4: branch-path filtered projection of the
+     * visible events.
+     *
+     * <p>The projection always replays the full visible history. {@code
+     * afterSequence} is a caller cursor/cache hint only and never a read
+     * filter: a suffix rebuild cannot resolve the facts later events depend on
+     * (a native carrier replaces its Run's earlier events, a prune tombstone
+     * names an earlier sequence, a compaction truncates earlier messages), so a
+     * truncated read yields an empty or orphaned-suffix projection that no
+     * longer equals the state a live run sees.</p>
+     */
     @Transactional(readOnly = true)
     public ObjectNode project(String sessionId, Long afterSequence,
                               com.cc01cc.p.xihe.cp.service.BranchPathService.BranchVisibility visibility) {
+        if (afterSequence != null && afterSequence > 0) {
+            logger.debug("afterSequence={} is a cursor hint; replaying full visible history for session {}",
+                    afterSequence, sessionId);
+        }
         ObjectNode context = emptyContext(sessionId);
-        // A carrier replaces earlier events in its Run; a cursor cannot replay
-        // that suffix in isolation, so the read widens to the full history only
-        // when a carrier actually exists. Without one the incremental cursor
-        // read stays valid and bounded.
         ReplayState replay = new ReplayState();
-        boolean hasCarrier = eventStoreService.hasNativeCarrier(sessionId);
-        List<ContextEvent> events = eventStoreService.read(
-                sessionId, hasCarrier ? 0L : afterSequence, visibility);
+        List<ContextEvent> events = eventStoreService.read(sessionId, 0L, visibility);
         for (ContextEvent event : events) {
-            if (!hasCarrier && afterSequence != null && event.getSequence() <= afterSequence) {
-                continue;
-            }
             context = apply(context, event, replay);
         }
         return context;
@@ -154,6 +160,8 @@ public class ContextProjectionService {
     private static final class ReplayState {
         final java.util.Map<String, java.util.List<JsonNode>> runMessages = new java.util.HashMap<>();
         final java.util.Map<JsonNode, java.util.Set<String>> carrierHashes = new java.util.IdentityHashMap<>();
+        final java.util.Map<JsonNode, java.util.List<JsonNode>> carrierOccurrences = new java.util.IdentityHashMap<>();
+        final java.util.Map<JsonNode, String> runOfMessage = new java.util.IdentityHashMap<>();
         final java.util.Set<String> blockedRuns = new java.util.HashSet<>();
     }
 
@@ -177,24 +185,24 @@ public class ContextProjectionService {
                 setWorkspaceAndUser(context, payload);
                 setEpoch(context, payload);
             }
-            case "prompt.admitted" -> addMessage(context, payload, "human");
-            case "llm.token" -> addMessage(context, payload, "ai");
+            case "prompt.admitted" -> addMessage(context, payload, "human", sequence);
+            case "llm.token" -> addMessage(context, payload, "ai", sequence);
             // PLAN-294 M1: durable assistant reply (decision #2/#6) — same
             // projection shape as llm.token so snapshots carry the AI side of
             // the conversation for history assembly and compaction.
             case "assistant.responded" -> {
                 if (carrier) {
-                    addNativeCarrier(context, payload, runId, replay);
+                    addNativeCarrier(context, payload, runId, sequence, replay);
                 } else {
-                    addMessage(context, payload, "ai");
+                    addMessage(context, payload, "ai", sequence);
                 }
             }
             // PLAN-0381 T1.3 (contract §6): assistant tool-call declarations
             // join history so tool results pair by call id, never by adjacency.
-            case "tool.called" -> addToolCalled(context, payload);
+            case "tool.called" -> addToolCalled(context, payload, runId, replay);
             // PLAN-0381 T1.3 (contract §3): shape-based result read — B1 fix,
             // object/array results must never collapse to an empty string.
-            case "tool.result" -> addToolResult(context, payload);
+            case "tool.result" -> addToolResult(context, payload, sequence, runId, replay);
             // PLAN-0340: source updates replace the epoch L1 slot; they must not
             // append into messages (old path was truncated by HISTORY_LIMIT).
             case "context.source_changed" -> applySourceChanged(context, payload);
@@ -213,6 +221,7 @@ public class ContextProjectionService {
             var tracked = replay.runMessages.computeIfAbsent(runId, ignored -> new java.util.ArrayList<>());
             for (int i = beforeSize; i < current.size(); i++) {
                 tracked.add(current.get(i));
+                replay.runOfMessage.put(current.get(i), runId);
             }
         }
         context.put("latest_sequence", sequence);
@@ -230,7 +239,7 @@ public class ContextProjectionService {
         return context;
     }
 
-    private void addMessage(ObjectNode context, ObjectNode payload, String role) {
+    private void addMessage(ObjectNode context, ObjectNode payload, String role, long sequence) {
         String content = "";
         if (payload.has("message") && payload.get("message").isObject()) {
             ObjectNode msg = (ObjectNode) payload.get("message");
@@ -247,22 +256,32 @@ public class ContextProjectionService {
         ObjectNode message = objectMapper.createObjectNode();
         message.put("role", role);
         message.put("content", content);
+        // PLAN-0416 T2.2: origin event sequence keeps prune targeting precise;
+        // equal content in different events stays independently addressable.
+        putSequence(message, sequence);
+        String callId = pairingField(payload, "toolCallId", "call_id");
+        if (!callId.isBlank()) {
+            message.put("tool_call_id", callId);
+        }
         ArrayNode messages = (ArrayNode) context.get("messages");
         messages.add(message);
     }
 
     /** One native suffix replaces only its correlated Run's projected ai/tool facts. */
-    private void addNativeCarrier(ObjectNode context, ObjectNode payload, String runId, ReplayState replay) {
+    private void addNativeCarrier(ObjectNode context, ObjectNode payload, String runId, long sequence, ReplayState replay) {
         if (runId == null || runId.isBlank()) {
             throw new IllegalArgumentException("Native carrier requires existing Run correlation");
         }
         ArrayNode messages = (ArrayNode) context.get("messages");
         var replaced = replay.runMessages.computeIfAbsent(runId, ignored -> new java.util.ArrayList<>());
         java.util.Set<String> hashes = new java.util.HashSet<>();
+        java.util.List<JsonNode> occurrences = new java.util.ArrayList<>();
         boolean removed = replay.blockedRuns.contains(runId);
         for (JsonNode previous : replaced) {
             hashes.add(sha256Hex(previous.path("content").asText("")));
             hashes.addAll(replay.carrierHashes.getOrDefault(previous, java.util.Set.of()));
+            occurrences.add(previous);
+            occurrences.addAll(replay.carrierOccurrences.getOrDefault(previous, java.util.List.of()));
             boolean present = false;
             for (JsonNode current : messages) {
                 present |= current == previous;
@@ -285,12 +304,15 @@ public class ContextProjectionService {
         ObjectNode message = objectMapper.createObjectNode();
         message.put("role", "ai");
         message.put("content", source.path("content").asText(""));
+        putSequence(message, sequence);
         for (String field : List.of("apiTypeId", "apiTypeVersion", "nativeRecords")) {
             message.set(field, source.get(field).deepCopy());
         }
         messages.add(message);
         replaced.add(message);
         replay.carrierHashes.put(message, hashes);
+        replay.carrierOccurrences.put(message, occurrences);
+        replay.runOfMessage.put(message, runId);
     }
 
     // ------------------------------------------------------------------
@@ -403,8 +425,11 @@ public class ContextProjectionService {
      * duplicate checks are linear scans over the current messages — the
      * accepted O(events×messages) cost of the contract.
      */
-    private static boolean hasDeclarationFor(ArrayNode messages, String callId) {
+    private static boolean hasDeclarationFor(ArrayNode messages, String callId, String runId, ReplayState replay) {
         for (JsonNode message : messages) {
+            if (runId != null && !runId.equals(replay.runOfMessage.get(message))) {
+                continue;
+            }
             if (!"ai".equals(message.path("role").asText(""))) {
                 continue;
             }
@@ -422,9 +447,10 @@ public class ContextProjectionService {
     }
 
     /** m3-contract §3: first-wins — a replayed {@code tool.result} repeats one fact. */
-    private static boolean hasResultFor(ArrayNode messages, String callId) {
+    private static boolean hasResultFor(ArrayNode messages, String callId, String runId, ReplayState replay) {
         for (JsonNode message : messages) {
-            if (isToolResult(message) && callId.equals(message.path("tool_call_id").asText(""))) {
+            if ((runId == null || runId.equals(replay.runOfMessage.get(message)))
+                    && isToolResult(message) && callId.equals(message.path("tool_call_id").asText(""))) {
                 return true;
             }
         }
@@ -438,7 +464,7 @@ public class ContextProjectionService {
      * degrades to an explicit ai text fact (the snapshot never emits
      * {@code system}: buildForkSeed only accepts human/ai/tool roles).
      */
-    private void addToolCalled(ObjectNode context, ObjectNode payload) {
+    private void addToolCalled(ObjectNode context, ObjectNode payload, String runId, ReplayState replay) {
         String callId = pairingField(payload, "toolCallId", "call_id");
         String toolName = pairingField(payload, "toolName", "tool_name");
         JsonNode rawArguments = payload.hasNonNull("arguments") ? payload.get("arguments") : payload.get("tool_input");
@@ -456,13 +482,14 @@ public class ContextProjectionService {
         // m3-contract §3: a declaration already present for this call id wins —
         // no second ref, no second message (degraded payloads carry no id and
         // are never deduplicated).
-        if (hasDeclarationFor(messages, callId)) {
+        if (hasDeclarationFor(messages, callId, runId, replay)) {
             logger.info("[LIFECYCLE] service=cp event=duplicate_declaration_ignored toolCallId={}", callId);
             return;
         }
         if (!messages.isEmpty()) {
             JsonNode last = messages.get(messages.size() - 1);
-            if (last.isObject() && "ai".equals(last.path("role").asText())) {
+            if ((runId == null || runId.equals(replay.runOfMessage.get(last)))
+                    && last.isObject() && "ai".equals(last.path("role").asText())) {
                 JsonNode existing = last.get("tool_calls");
                 if (existing != null && existing.isArray() && !existing.isEmpty()) {
                     ((ArrayNode) existing).add(toolCallEntry(callId, toolName, arguments));
@@ -552,20 +579,21 @@ public class ContextProjectionService {
         }
     }
 
-    private void addToolResult(ObjectNode context, ObjectNode payload) {
+    private void addToolResult(ObjectNode context, ObjectNode payload, long sequence, String runId, ReplayState replay) {
         String callId = pairingField(payload, "toolCallId", "call_id");
         String toolName = pairingField(payload, "toolName", "tool_name");
         ArrayNode messages = (ArrayNode) context.get("messages");
         // m3-contract §3: first-wins on the call id — a replayed event is the
         // same fact, so the first result stays authoritative. A blank/absent
         // id keeps the legacy degraded path (no dedup key to compare).
-        if (!callId.isBlank() && hasResultFor(messages, callId)) {
+        if (!callId.isBlank() && hasResultFor(messages, callId, runId, replay)) {
             logger.info("[LIFECYCLE] service=cp event=duplicate_result_ignored toolCallId={}", callId);
             return;
         }
         ObjectNode message = objectMapper.createObjectNode();
         message.put("role", "tool");
         putResultContent(message, payload.get("result"));
+        putSequence(message, sequence);
         if (callId.isBlank()) {
             message.put("degraded", true);
         } else {
@@ -826,7 +854,7 @@ public class ContextProjectionService {
      * PLAN-0341 T1.2 (I5 anti-resurrection): apply prune tombstones in-place.
      * Matching tool messages are replaced with the placeholder so replay or a
      * changed window constant cannot resurrect the original content.
-     * Match key: sha256(content) — projected messages carry no tool_call_id.
+     * Precise tombstones preserve sequence/call-id pairs; hashes are legacy-only.
      */
     private void applyPrune(ObjectNode context, ObjectNode payload, ReplayState replay) {
         if (!payload.has("tombstones") || !payload.get("tombstones").isArray()) {
@@ -836,14 +864,31 @@ public class ContextProjectionService {
         if (messages == null || messages.isEmpty()) {
             return;
         }
-        java.util.Set<String> prunedHashes = new java.util.HashSet<>();
+        java.util.List<JsonNode> preciseTargets = new java.util.ArrayList<>();
+        java.util.Set<String> legacyHashes = new java.util.HashSet<>();
         for (var tombstone : payload.get("tombstones")) {
+            long sequence = tombstone.path("sequence").asLong(0L);
+            String callId = tombstone.path("tool_call_id").asText("");
+            if (sequence > 0L || !callId.isBlank()) {
+                preciseTargets.add(tombstone);
+            }
             String hash = tombstone.path("content_hash").asText("");
             if (!hash.isBlank()) {
-                prunedHashes.add(hash);
+                legacyHashes.add(hash);
             }
         }
-        if (prunedHashes.isEmpty()) {
+        boolean precise = !preciseTargets.isEmpty();
+        if (precise) {
+            // A precise target inside a run's replaced set makes that run's
+            // native carrier irreversibly pruned, matching the hash path's
+            // pruned-marker rule: the run must never resurrect later.
+            for (var entry : replay.runMessages.entrySet()) {
+                if (entry.getValue().stream()
+                        .anyMatch(node -> matchesPrecise(node, preciseTargets, replay))) {
+                    replay.blockedRuns.add(entry.getKey());
+                }
+            }
+        } else if (legacyHashes.isEmpty()) {
             return;
         }
         int replaced = 0;
@@ -852,17 +897,32 @@ public class ContextProjectionService {
             if (!node.isObject()) {
                 continue;
             }
-            if (node.has("nativeRecords")) {
-                java.util.Set<String> hashes = new java.util.HashSet<>(
-                        replay.carrierHashes.getOrDefault(node, java.util.Set.of()));
-                hashes.add(sha256Hex(node.path("content").asText("")));
-                if (hashes.stream().anyMatch(prunedHashes::contains)) {
-                    messages.remove(i--);
-                    replaced++;
-                }
+            boolean carrierNode = node.has("nativeRecords");
+            if (!precise && !carrierNode && !"tool".equals(node.path("role").asText(""))) {
+                continue;
+            }
+            boolean hit = precise
+                    ? matchesPrecise(node, preciseTargets, replay)
+                    : matchesLegacy(node, legacyHashes, replay);
+            if (!hit) {
+                continue;
+            }
+            String runId = replay.runOfMessage.get(node);
+            if (runId != null) {
+                replay.blockedRuns.add(runId);
+            }
+            if (carrierNode) {
+                messages.remove(i--);
+                replaced++;
                 continue;
             }
             if (!"tool".equals(node.path("role").asText(""))) {
+                // Precise targeting may name a non-tool fact; the legacy hash
+                // path only ever matched tool results.
+                if (precise) {
+                    messages.remove(i--);
+                    replaced++;
+                }
                 continue;
             }
             String content = node.path("content").asText("");
@@ -870,16 +930,64 @@ public class ContextProjectionService {
             if (content.isBlank() || content.startsWith("[old tool result")) {
                 continue;
             }
-            String hash = sha256Hex(content);
-            if (prunedHashes.contains(hash)) {
-                ((ObjectNode) node).put("content", "[old tool result cleared]");
-                ((ObjectNode) node).put("pruned", true);
-                replaced++;
-            }
+            ((ObjectNode) node).put("content", "[old tool result cleared]");
+            ((ObjectNode) node).put("pruned", true);
+            replaced++;
         }
         if (replaced > 0) {
-            logger.info("Applied prune tombstones: replaced={} candidates={}", replaced, prunedHashes.size());
+            logger.info("Applied prune tombstones: replaced={} precise={} targets={} legacyHashes={}",
+                    replaced, precise, preciseTargets.size(), legacyHashes.size());
         }
+    }
+
+    /**
+     * PLAN-0416 T2.2: sequence identifies an occurrence; an optional call id
+     * must agree. Only a target without sequence falls back to call id.
+     */
+    private static boolean matchesPrecise(JsonNode node, java.util.List<JsonNode> targets, ReplayState replay) {
+        return matchesOccurrence(node, targets)
+                || replay.carrierOccurrences.getOrDefault(node, List.of()).stream()
+                .anyMatch(occurrence -> matchesOccurrence(occurrence, targets));
+    }
+
+    private static boolean matchesOccurrence(JsonNode node, java.util.List<JsonNode> targets) {
+        long sequence = node.path("sequence").asLong(0L);
+        String callId = node.path("tool_call_id").asText("");
+        for (JsonNode target : targets) {
+            long targetSequence = target.path("sequence").asLong(0L);
+            String targetCallId = target.path("tool_call_id").asText("");
+            if (targetSequence > 0L) {
+                if (sequence == targetSequence && (targetCallId.isBlank() || targetCallId.equals(callId))) {
+                    return true;
+                }
+            } else if (!targetCallId.isBlank() && targetCallId.equals(callId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Numbers round-trip as IntNode when they fit: writing the smallest node
+     * type keeps live projections equal to re-projected (stored) ones.
+     */
+    private static void putSequence(ObjectNode message, long sequence) {
+        if (sequence <= Integer.MAX_VALUE) {
+            message.put("sequence", (int) sequence);
+        } else {
+            message.put("sequence", sequence);
+        }
+    }
+
+    /**
+     * Legacy tombstones (written before PLAN-0416) carry only content hashes;
+     * they stay replayable but are never produced by new prune writes.
+     */
+    private static boolean matchesLegacy(JsonNode node, java.util.Set<String> legacyHashes, ReplayState replay) {
+        java.util.Set<String> hashes = new java.util.HashSet<>(
+                replay.carrierHashes.getOrDefault(node, java.util.Set.of()));
+        hashes.add(sha256Hex(node.path("content").asText("")));
+        return hashes.stream().anyMatch(legacyHashes::contains);
     }
 
     private static String sha256Hex(String data) {

@@ -73,11 +73,15 @@ class PruneTombstone:
     tail: str
     reason: str
     tool_call_id: str = ""
+    # PLAN-0416 T2.2: origin event sequence — the precise prune target;
+    # content_hash stays only for legacy replay readers.
+    sequence: int = 0
     pruned: bool = True
 
     def to_payload(self) -> dict[str, Any]:
         return {
             "tool_call_id": self.tool_call_id,
+            "sequence": self.sequence,
             "content_hash": self.content_hash,
             "size": self.size,
             "head": self.head,
@@ -162,6 +166,7 @@ def prune_history_tool_results(
                     tail=tail,
                     reason=prune_reasons[i],
                     tool_call_id=tool_call_id,
+                    sequence=int(getattr(msg, "origin_sequence", 0) or 0),
                 )
             )
             # PLAN-0381 contract §8: mask swaps content only — pairing fields

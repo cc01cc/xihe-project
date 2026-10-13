@@ -51,7 +51,6 @@ __all__ = [
     "PG_DSN",
     "AGENT_HOST",
     "AGENT_PORT",
-    "AGENT_INSTRUCTIONS",
     "AGENT_USER_NAME",
     "USE_REGISTRY",
     "USE_SUPERVISOR",
@@ -106,6 +105,7 @@ __all__ = [
     "_resolve_loop_guard",
     "_model_window_tokens",
     "_estimate_input_tokens",
+    "_estimate_native_body_tokens",
     "_content_length",
     "_deserialize_messages",
     "_to_langchain_messages",
@@ -225,12 +225,6 @@ _refresh_embedding_config()
 
 _token_counter = TokenCounter()
 
-AGENT_INSTRUCTIONS = (
-    config_client.get("agent-runtime", "instructions")
-    or "You are xihe Agent. Answer in Chinese by default. "
-    "Use the provided tools whenever the user asks about workspace files, directories, "
-    "or commands, then answer with the tool results."
-)
 AGENT_USER_NAME = config_client.get("agent-profile", "userName") or "User"
 USE_SUPERVISOR = config_client.get_bool("agent-runtime", "useSupervisor")
 USE_REGISTRY = config_client.get_bool("agent-runtime", "useRegistry")
@@ -427,8 +421,9 @@ def _classify_llm_exception(error: Exception) -> tuple[str, str, bool]:
         provider_status = getattr(getattr(error, "response", None), "status_code", None)
     if isinstance(error, litellm.exceptions.BadRequestError) or provider_status == 400:
         # The provider rejected the payload (message shape / params / tool schema).
-        # Non-retryable: the same request cannot succeed; log the raw text for triage.
-        logger.error("[LLM] provider rejected the request: {}", str(error)[:500])
+        # Provider detail can echo prompt data or credentials. Keep only the
+        # classification and exception type in diagnostics.
+        logger.error("[LLM] provider rejected the request errorType={}", type(error).__name__)
         return (
             "LLM_REQUEST_REJECTED",
             "模型提供方拒绝了该请求（消息格式或参数不被接受）",
@@ -446,12 +441,14 @@ def _classify_llm_exception(error: Exception) -> tuple[str, str, bool]:
 
 
 async def _enrich_with_rag_context(content: str, instructions: str) -> str:
-    """Search RAG knowledge base and append relevant context to instructions.
+    """Chat-time RAG handoff (PLAN-0485/0416 boundary).
 
-    PLAN-0485/0416 boundary: Chat-time RAG query uses the per-Run
-    embeddingProfile + embeddingCredentialLease that CP attaches to the
-    internal chat request; without them there is no profile to partition by
-    and enrichment is skipped rather than falling back to a global adapter.
+    The Agent must not fall back to a global adapter: without a per-Run
+    embeddingProfile + embeddingCredentialLease from the CP internal chat
+    request there is no profile to partition by, so enrichment is skipped.
+    PLAN-0416 T3.1: retrieved context must never fill the authority slot -
+    returned instructions are the CP-owned baseline, passed through unchanged;
+    RAG context belongs in its own ``xh.rag_context`` slot (PLAN-0416 M1).
     """
     if not embedding_enabled:
         return instructions
@@ -768,6 +765,26 @@ def _estimate_input_tokens(messages: list[Any]) -> int:
         content = getattr(m, "content", "")
         payload.append({"role": role, "content": content})
     return _token_counter.estimate_messages(payload)
+
+
+def _estimate_native_body_tokens(body: dict[str, Any]) -> int:
+    """PLAN-0416 T2.3: estimate the final serialized native request body.
+
+    The estimate covers exactly what the provider receives (tools, rendered
+    history, RAG/instructions slots and the current input) and is taken before
+    every provider step, so a Run's total is the sum over dispatched steps.
+    Provider usage stays the calibration truth and is recorded separately.
+    """
+    try:
+        payload = json.dumps(body, ensure_ascii=False, separators=(",", ":"), default=str)
+    except (TypeError, ValueError) as exc:
+        logger.warning(
+            "native body could not be serialized for estimation; recording 0 ({})",
+            type(exc).__name__,
+            exc_info=True,
+        )
+        return 0
+    return _token_counter.estimate_text(payload)
 
 
 def _content_length(content: Any) -> int:

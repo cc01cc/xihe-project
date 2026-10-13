@@ -64,8 +64,6 @@ class ContextEventReadContractIntegrationTest extends AbstractIntegrationTest {
     private JdbcTemplate jdbcTemplate;
     @Autowired
     private ObjectMapper objectMapper;
-    @Autowired
-    private tools.jackson.databind.ObjectMapper runtimeObjectMapper;
     @TempDir
     private Path tempDir;
 
@@ -122,11 +120,16 @@ class ContextEventReadContractIntegrationTest extends AbstractIntegrationTest {
         assertThat(filtered.size()).isEqualTo(1);
         assertEvent(filtered.get(0), 2L);
         var expectedSnapshot = projectionService.projectAndSave(sessionId, workspaceId, userId, 0L);
-        // Existing replay snapshot uses the Boot 4 legacy-tree bean shape; do not fix it here.
-        var snapshotWire = objectMapper.readTree(runtimeObjectMapper.writeValueAsString(expectedSnapshot));
+        // PLAN-0416 T2.4: the replay snapshot travels as the projected JSON
+        // object itself. It used to be bean-serialized by the Boot 4 Jackson 3
+        // converter into isInt/nodeType/pojo/... metadata, which made the
+        // replay projection unrecoverable for the real Python client.
+        var snapshotWire = objectMapper.readTree(expectedSnapshot.toString());
         var replay = json(request("POST", replayPath(), SERVICE_TOKEN, "{}"));
         assertThat(replay.path("events")).isEqualTo(all);
         assertThat(replay.path("snapshot")).isEqualTo(snapshotWire);
+        assertThat(replay.path("snapshot").path("epoch").path("epoch_id").asText()).isEqualTo("two");
+        assertThat(replay.path("snapshot").path("latest_sequence").asLong()).isEqualTo(2L);
         assertThat(keys(replay)).containsExactlyInAnyOrder("snapshot", "events");
     }
 

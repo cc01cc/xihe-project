@@ -7,7 +7,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
-import java.util.LinkedHashMap;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -21,6 +21,8 @@ public class ContextEventResponseMapper {
 
     private static final Logger logger = LoggerFactory.getLogger(ContextEventResponseMapper.class);
 
+    private final ObjectMapper mapper = new ObjectMapper();
+
     private final ObjectReader payloadReader = new ObjectMapper()
             .readerFor(new TypeReference<Map<String, Object>>() { })
             .with(DeserializationFeature.USE_BIG_INTEGER_FOR_INTS,
@@ -31,10 +33,12 @@ public class ContextEventResponseMapper {
         return events.stream().map(this::event).toList();
     }
 
-    public Map<String, Object> replay(Map<String, Object> result) {
+    public ObjectNode replay(Map<String, Object> result) {
         var responses = events(replayEvents(result));
-        var response = new LinkedHashMap<>(result);
-        response.put("events", responses);
+        ObjectNode snapshot = replaySnapshot(result);
+        ObjectNode response = mapper.createObjectNode();
+        response.set("snapshot", snapshot);
+        response.set("events", mapper.valueToTree(responses));
         return response;
     }
 
@@ -47,6 +51,18 @@ public class ContextEventResponseMapper {
             throw failure(null, "invalid_replay_events");
         }
         return (List<ContextEvent>) list;
+    }
+
+    private ObjectNode replaySnapshot(Map<String, Object> result) {
+        // PLAN-0416 T2.4: the replay snapshot must be the same projected object
+        // the snapshot endpoint returns. Jackson tree types reach the Spring
+        // Boot 4 converter as bean metadata (isInt/nodeType/pojo/...), so the
+        // tree is carried explicitly rather than through the legacy Map.
+        Object value = result.get("snapshot");
+        if (!(value instanceof ObjectNode snapshot)) {
+            throw failure(null, "invalid_replay_snapshot");
+        }
+        return snapshot;
     }
 
     private ContextEventResponse event(ContextEvent event) {

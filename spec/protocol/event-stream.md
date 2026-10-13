@@ -15,6 +15,11 @@
 - `token`、`tool_call`、`tool_result`、`approval_request`、`error` 和 `done` 的顺序/字段以事件实现和 OpenAPI 为准；重连只能回放被授权 Session 的可恢复事件。
 - `requestId`、`runId`、`sessionId`、`workspaceId` 必须贯通日志、durable record 和 UI 本地视图；不得把 raw tool arguments 放入 approval event。
 
+## Context durable append（PLAN-0416）
+
+- caller 在首次 append 前生成稳定 `eventId`，复用现有 `context_events` UUID 主键；超时或响应丢失后重试沿用同一身份。同 owner/identity/content 返回原 sequence，owner 或内容冲突必须拒绝。
+- append 重试不重放 provider 请求或工具 dispatch，不增加第二套事件身份或持久化表。Context projection 和 UI 不应把同一逻辑事件显示两次。
+
 ## 2. Workspace SSE
 
 入口：`GET /api/v1/workspaces/{workspaceId}/events`，Runtime ingress：`POST /internal/v1/runtime/workspaces/{workspaceId}/events`。

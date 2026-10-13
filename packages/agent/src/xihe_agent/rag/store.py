@@ -253,7 +253,10 @@ class VectorStore:
             output.append(
                 {
                     "id": str(document.id),
-                    "docId": document.metadata.get("doc_id"),
+                    # doc_id is a uuid column, so Postgres hands back a uuid.UUID;
+                    # the search result becomes a JSON response body, so it must
+                    # leave here as a string.
+                    "docId": str(document.metadata.get("doc_id") or ""),
                     "filename": document.metadata.get("filename"),
                     "text": document.page_content,
                     "metadata": {

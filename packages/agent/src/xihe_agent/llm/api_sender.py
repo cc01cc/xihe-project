@@ -17,6 +17,10 @@ import httpx
 
 from xihe_agent.llm.api_request import ApiRequestError, ChatApiType, strict_json, validate_body
 
+# PLAN-0416 T2.3: provider counters surfaced per API Type. A counter the
+# provider did not return is *unknown* — never a synthesized 0.
+NATIVE_USAGE_COUNTERS: frozenset[str] = frozenset({"input_tokens", "output_tokens", "cache_read_input_tokens"})
+
 
 @dataclass
 class NativeResponse:
@@ -24,6 +28,42 @@ class NativeResponse:
     records: list[dict[str, Any]] = field(default_factory=list)
     calls: list[dict[str, Any]] = field(default_factory=list)
     usage: dict[str, int] = field(default_factory=dict)
+    # PLAN-0416 T2.3: counters the provider actually returned, kept separately
+    # from `usage` (which must stay in the LangChain UsageMetadata shape so
+    # chunk merging stays valid). Keys outside this map are unknown.
+    provider_usage: dict[str, int] = field(default_factory=dict)
+
+
+def _counter(mapping: dict[str, Any], key: str) -> int | None:
+    """Return a provider counter, or ``None`` when the field is absent/invalid.
+
+    Absence is recorded as unknown (PLAN-0416 T2.3); it is never coerced to 0.
+    """
+    value = mapping.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return int(value)
+
+
+def _reported(usage: dict[str, Any], keys: tuple[tuple[str, str], ...]) -> dict[str, int]:
+    """Map provider usage keys to normalized counter names, dropping absent ones."""
+    reported: dict[str, int] = {}
+    for name, provider_key in keys:
+        value = _counter(usage, provider_key)
+        if value is not None:
+            reported[name] = value
+    return reported
+
+
+def _langchain_usage(reported: dict[str, int]) -> dict[str, int]:
+    """Build the UsageMetadata-shaped dict; unknown counters read as 0 here only."""
+    input_tokens = reported.get("input_tokens", 0)
+    output_tokens = reported.get("output_tokens", 0)
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+    }
 
 
 def _object(value: Any) -> dict[str, Any]:
@@ -88,10 +128,16 @@ def parse_response(data: Any, api_type: ChatApiType) -> NativeResponse:
                 raise ApiRequestError("LLM_PROVIDER_INVALID_RESPONSE", 502)
             result.calls.append(_call(call.get("id"), function.get("name"), function.get("arguments")))
         usage = _object(data.get("usage") or {})
-        result.usage = {
-            "input_tokens": int(usage.get("prompt_tokens", 0)),
-            "output_tokens": int(usage.get("completion_tokens", 0)),
-        }
+        result.provider_usage = _reported(
+            usage,
+            (("input_tokens", "prompt_tokens"), ("output_tokens", "completion_tokens")),
+        )
+        details = usage.get("prompt_tokens_details")
+        if isinstance(details, dict):
+            cached = _counter(details, "cached_tokens")
+            if cached is not None:
+                result.provider_usage["cache_read_input_tokens"] = cached
+        result.usage = _langchain_usage(result.provider_usage)
     elif api_type.id == "anthropic-messages":
         blocks = _array(data.get("content"))
         if data.get("role") != "assistant" or not data.get("stop_reason"):
@@ -109,10 +155,15 @@ def parse_response(data: Any, api_type: ChatApiType) -> NativeResponse:
             elif block.get("type") != "redacted_thinking":
                 raise ApiRequestError("LLM_PROVIDER_INVALID_RESPONSE", 502)
         usage = _object(data.get("usage") or {})
-        result.usage = {
-            "input_tokens": int(usage.get("input_tokens", 0)),
-            "output_tokens": int(usage.get("output_tokens", 0)),
-        }
+        result.provider_usage = _reported(
+            usage,
+            (
+                ("input_tokens", "input_tokens"),
+                ("output_tokens", "output_tokens"),
+                ("cache_read_input_tokens", "cache_read_input_tokens"),
+            ),
+        )
+        result.usage = _langchain_usage(result.provider_usage)
     else:
         if data.get("status") != "completed":
             raise ApiRequestError("LLM_PROVIDER_INVALID_RESPONSE", 502)
@@ -132,11 +183,16 @@ def parse_response(data: Any, api_type: ChatApiType) -> NativeResponse:
             elif item.get("type") != "reasoning":
                 raise ApiRequestError("LLM_PROVIDER_INVALID_RESPONSE", 502)
         usage = _object(data.get("usage") or {})
-        result.usage = {
-            "input_tokens": int(usage.get("input_tokens", 0)),
-            "output_tokens": int(usage.get("output_tokens", 0)),
-        }
-    result.usage["total_tokens"] = sum(result.usage.values())
+        result.provider_usage = _reported(
+            usage,
+            (("input_tokens", "input_tokens"), ("output_tokens", "output_tokens")),
+        )
+        details = usage.get("input_tokens_details")
+        if isinstance(details, dict):
+            cached = _counter(details, "cached_tokens")
+            if cached is not None:
+                result.provider_usage["cache_read_input_tokens"] = cached
+        result.usage = _langchain_usage(result.provider_usage)
     return result
 
 

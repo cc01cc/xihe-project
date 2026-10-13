@@ -11,6 +11,8 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.context.entity.ContextEvent;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.time.Instant;
@@ -89,8 +91,8 @@ class ContextEventResponseMapperTest {
         assertThat(responses.getFirst().correlationId()).isEqualTo(first.getCorrelationId());
         assertThat(responses.getFirst().causationId()).isEqualTo(first.getCausationId());
         assertThat(mapper.events(List.of())).isEmpty();
-        assertThat(mapper.replay(Map.of("snapshot", Map.of(), "events", List.of()))
-                .get("events")).isEqualTo(List.of());
+        assertThat(mapper.replay(Map.of("snapshot", new ObjectMapper().createObjectNode(), "events", List.of()))
+                .get("events")).isEmpty();
     }
 
     @ParameterizedTest
@@ -146,22 +148,34 @@ class ContextEventResponseMapperTest {
     }
 
     @Test
-    void replayOnlyReplacesEventsWithoutMutatingEnvelopeOrSnapshot() {
-        Object snapshot = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode();
+    void replayCarriesSnapshotTreeAndEventsWithoutMutatingEnvelope() {
+        ObjectNode snapshot = new ObjectMapper().createObjectNode().put("latest_sequence", 3L);
         var originalEvents = List.of(event("{}"));
         Map<String, Object> original = new LinkedHashMap<>();
         original.put("snapshot", snapshot);
         original.put("events", originalEvents);
-        original.put("extra", Map.of("retained", true));
-        original.put("nullable", null);
+
         var response = mapper.replay(original);
-        assertThat(response).isNotSameAs(original).containsOnlyKeys("snapshot", "events", "extra", "nullable");
+
+        assertThat(response.size()).isEqualTo(2);
         assertThat(response.get("snapshot")).isSameAs(snapshot);
-        assertThat(response.get("extra")).isSameAs(original.get("extra"));
-        assertThat(response).containsEntry("nullable", null);
-        assertThat(response.get("events")).isEqualTo(mapper.events(originalEvents));
+        assertThat(response.get("events")).hasSize(1);
+        assertThat(response.get("events").get(0).get("sequence")).isNotNull();
+        // PLAN-0416 T2.4: the Spring Boot 4 converter runs Jackson 3, which
+        // bean-serializes the Jackson 2 JsonNode into isInt/nodeType/pojo/...
+        // metadata. The tree must travel as JSON, never as bean properties.
+        assertThat(response.toString())
+                .doesNotContain("nodeType", "bigDecimal", "\"pojo\"", "\"valueNode\"", "\"isInt\"");
         assertThat(original.get("events")).isSameAs(originalEvents);
         assertThat(original.get("snapshot")).isSameAs(snapshot);
+    }
+
+    @Test
+    void replayRejectsSnapshotThatIsNotATree() {
+        Map<String, Object> original = new LinkedHashMap<>();
+        original.put("snapshot", new Object());
+        original.put("events", List.of());
+        assertSafeFailure(assertThrows(CpApiException.class, () -> mapper.replay(original)));
     }
 
     @Test

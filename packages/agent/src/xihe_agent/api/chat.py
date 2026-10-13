@@ -19,13 +19,12 @@ from xihe_agent.agent_runner import LangGraphRunner
 from xihe_agent.agent_runner.langgraph_runner import prune_history_tool_results
 from xihe_agent.api.shared import problem_details, verify_api_token
 from xihe_agent.app_state import (
-    AGENT_INSTRUCTIONS,
     AGENT_USER_NAME,
     USE_SUPERVISOR,
     _classify_llm_exception,
     _content_length,
-    _enrich_with_rag_context,
     _estimate_input_tokens,
+    _estimate_native_body_tokens,
     _get_tools_for_mode,
     _merge_run_domain,
     _model_window_tokens,
@@ -47,11 +46,50 @@ from xihe_agent.interfaces.agent_runner import RunnerConfig
 from xihe_agent.interfaces.chat_run_context import ContextBuildError
 from xihe_agent.interfaces.event import Event
 from xihe_agent.interfaces.message import TextMessage
-from xihe_agent.llm.api_request import ApiRequestError, render_request, validate_snapshot
+from xihe_agent.llm.api_request import ApiRequestError, render_request, uses_rag_context, validate_snapshot
 from xihe_agent.llm.base import LLMConfig
 from xihe_agent.llm.models import fetch_model_catalog  # noqa: F401  (import parity with prior main)
+from xihe_agent.rag.chat_context import retrieve_chat_context
 
 router = APIRouter()
+
+# PLAN-0416 T2.3: normalized provider counter -> usage wire field.
+_PROVIDER_USAGE_WIRE: dict[str, str] = {
+    "input_tokens": "inputTokens",
+    "output_tokens": "outputTokens",
+    "cache_read_input_tokens": "cacheReadInputTokens",
+}
+
+
+def _apply_provider_usage(usage_data: dict[str, Any], model: ApiChatModel) -> None:
+    """Separate provider truth from local estimation (PLAN-0416 T2.3).
+
+    Only counters the provider actually returned are surfaced; a counter no
+    dispatched step reported is dropped from the wire and listed as unknown
+    instead of being reported as 0. `source` keeps describing the provider
+    counters, so cost mapping still sees `real` only for real numbers.
+    """
+    reported = model.provider_reported
+    totals = model.provider_usage_totals
+    for counter, wire in _PROVIDER_USAGE_WIRE.items():
+        if counter in reported:
+            usage_data[wire] = totals[counter]
+        else:
+            usage_data.pop(wire, None)
+    if {"input_tokens", "output_tokens"} <= reported:
+        usage_data["totalTokens"] = totals["input_tokens"] + totals["output_tokens"]
+    else:
+        usage_data.pop("totalTokens", None)
+    unknown = sorted(model.provider_unknown)
+    if unknown:
+        usage_data["providerUnknownFields"] = unknown
+    else:
+        usage_data.pop("providerUnknownFields", None)
+    if reported:
+        usage_data["source"] = "real"
+    else:
+        usage_data["source"] = "estimated" if usage_data.get("estimatedInputTokens") else "fallback"
+
 
 def _rag_config_defaults() -> dict[str, Any]:
     """PLAN-0307 T2.4: RAG defaults come from the DB `rag` domain; request params win."""
@@ -76,8 +114,26 @@ async def chat(request: Request):
     model_override: str | None = data.get("model")
     provider_override: str | None = data.get("provider")
     tool_mode: str = data.get("toolMode", "none")
-    safe_agent_instructions: str = data.get("instructions", "")
-    instructions: str = safe_agent_instructions or AGENT_INSTRUCTIONS
+    # PLAN-0416 T3.1: instructions are CP-owned and arrive only via the chat
+    # request (resolved from the AgentPrincipal). The Agent keeps no
+    # process-level AGENT_INSTRUCTIONS fallback; an absent/blank baseline fails
+    # closed before any provider dispatch. Summary/RAG/tool/file data must never
+    # fill this authority slot - the check runs before RAG enrichment so
+    # retrieved context cannot stand in for the CP-owned baseline.
+    raw_instructions = data.get("instructions", "")
+    instructions: str = raw_instructions if isinstance(raw_instructions, str) else ""
+    if not instructions.strip():
+        logger.warning(
+            "Chat rejected requestId={} runId={} code=BASELINE_UNAUTHORIZED",
+            request_id,
+            run_id,
+        )
+        return problem_details(
+            request_id,
+            400,
+            "BASELINE_UNAUTHORIZED",
+            "Agent instructions baseline is missing or empty",
+        )
     credential_lease: str | None = data.get("credentialLease") or None
     provider_connection_id: str | None = data.get("providerConnectionId") or None
     connection_revision = data.get("connectionRevision")
@@ -156,6 +212,7 @@ async def chat(request: Request):
                 "model": str(model_override or ""),
                 "user_input": content,
                 "agent_instructions": instructions,
+                "rag_context": "",
                 "conversation_history": [{"role": "user", "content": ""}],
                 "tools": [],
             },
@@ -180,6 +237,10 @@ async def chat(request: Request):
             or grant.get("model") != model_override
         ):
             raise ApiRequestError("API_TYPE_TEMPLATE_MISMATCH", 409)
+        rag_context, rag_matches = "", 0
+        rag_state: str | None = "disabled"
+        if uses_rag_context(template_snapshot["template"]["bodySource"]):
+            rag_context, rag_state, rag_matches = await retrieve_chat_context(data, content, run_id, request_id)
     except (ApiRequestError, ProviderLeaseError) as exc:
         code = exc.terminal_code if isinstance(exc, ApiRequestError) else exc.code
         logger.warning("Chat rejected requestId={} runId={} code={}", request_id, run_id, exc.code)
@@ -225,9 +286,6 @@ async def chat(request: Request):
         len(content),
     )
 
-    # Enrich with RAG context if knowledge base has content
-    instructions = await _enrich_with_rag_context(content, instructions)
-
     # Register before streaming so CP cancel can reach an in-flight run.
     cancel_event = run_cancel_registry.register(run_id)
 
@@ -249,6 +307,10 @@ async def chat(request: Request):
             return payload
 
         try:
+            rag_observation: dict[str, Any] = {"phase": "rag", "matches": rag_matches}
+            if rag_state is not None:
+                rag_observation["state"] = rag_state
+            yield render_sse("status", correlated_data(rag_observation))
             mcp_tools = await _get_tools_for_mode(tool_mode, workspace_id)
             if USE_SUPERVISOR and tool_mode == "workspace":
                 raise ApprovalExecutorUnsupportedError("Approval is not supported by the buffered supervisor executor")
@@ -307,11 +369,13 @@ async def chat(request: Request):
                         "model": str(model_override),
                         "user_input": content,
                         "agent_instructions": instructions,
+                        "rag_context": rag_context,
                         "conversation_history": native_history(context.messages, api_type),
                         "tools": native_tools(all_tools, api_type),
                     },
                     request_id=request_id,
                     timeout=request_config.timeout,
+                    token_estimator=_estimate_native_body_tokens,
                 )
                 request_runner = LangGraphRunner(model_factory=lambda _model: model, event_store=cp_event_store_client)
                 # The Runner owns approval/durable/tool execution. This prompt is
@@ -402,17 +466,16 @@ async def chat(request: Request):
                             done_data["errorCode"] = terminal_error_code
                         yield render_sse("done", correlated_data(done_data))
                     elif event.type == "usage":
-                        # PLAN-294 decision #14: when no provider usage chunk
-                        # arrived (source=fallback), estimate the input size
-                        # from the assembled request so the compression signal
-                        # and audit trail still carry a usable value.
+                        # PLAN-0416 T2.3: the estimate is the final serialized
+                        # native request body of the steps this Run actually
+                        # dispatched (tools/history/RAG/instructions/current
+                        # input), recorded beside — never in place of — the
+                        # provider's own counters.
                         usage_data = dict(event.data.get("usage") or {})
-                        if usage_data.get("source") in (None, "fallback"):
-                            estimated = _estimate_input_tokens(messages)
-                            usage_data.setdefault("estimatedInputTokens", estimated)
-                            usage_data["source"] = "estimated" if estimated else "fallback"
-                        else:
-                            usage_data.setdefault("estimatedInputTokens", 0)
+                        usage_data["estimatedInputTokens"] = model.estimated_input_tokens or _estimate_input_tokens(
+                            messages
+                        )
+                        _apply_provider_usage(usage_data, model)
                         # PLAN-294 M3 (decision #5): the model window rides
                         # along so the CP compaction gate can evaluate the
                         # percentage threshold without a config dependency.
@@ -513,13 +576,14 @@ async def chat(request: Request):
                 if assistant_chars > 0
                 else "error"
             )
-            logger.exception(
-                "[LIFECYCLE] service=agent event=chat_stream_failed requestId={} sessionId={} workspaceId={} runId={} errorCode={}",
+            logger.error(
+                "[LIFECYCLE] service=agent event=chat_stream_failed requestId={} sessionId={} workspaceId={} runId={} errorCode={} errorType={}",
                 request_id,
                 session_id,
                 workspace_id,
                 run_id,
                 terminal_error_code,
+                type(exc).__name__,
             )
             if not error_sent:
                 error_sent = True

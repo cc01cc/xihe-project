@@ -35,7 +35,14 @@ onBeforeUnmount(() => {
     generation++;
 });
 const sourceInput = ref<HTMLTextAreaElement | null>(null);
-const palette = ["user_input", "agent_instructions", "model", "conversation_history", "tools"];
+const palette = [
+    "user_input",
+    "agent_instructions",
+    "model",
+    "conversation_history",
+    "tools",
+    "rag_context",
+];
 const latest = computed(() => {
     const result = new Map<string, ApiRequestTemplate>();
     for (const item of templates.value)

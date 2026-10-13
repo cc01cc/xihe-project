@@ -55,7 +55,9 @@ def _parse_profile(raw: str | None) -> dict[str, Any]:
 
 
 def _request_id(request: Request) -> str:
-    return request.headers.get("X-Request-Id") or ""
+    """Correlate with the middleware id when the caller sends none, so the
+    response header and any problem body carry the same request id."""
+    return getattr(request.state, "request_id", "") or request.headers.get("X-Request-Id") or ""
 
 
 def _problem(request_id: str, exc: EmbeddingProviderError) -> JSONResponse:

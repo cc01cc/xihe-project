@@ -87,7 +87,18 @@ def stub_budget_runner(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr(
         chat_api,
         "validate_snapshot",
-        lambda data: (_StubApiType(), {"template": {"bodySource": ""}}),
+        lambda data: (
+            _StubApiType(),
+            {
+                "template": {
+                    # A published body source is always valid JSON; the chat path
+                    # parses it again for the RAG-slot trigger, so an empty stub
+                    # would fail as CONTEXT_BUILD_FAILED/INVALID_JSON.
+                    "bodySource": '{"model":"${xh.model}","messages":['
+                    '{"role":"user","content":"${xh.user_input}"}]}'
+                }
+            },
+        ),
     )
     monkeypatch.setattr(chat_api, "render_request", lambda *a, **k: {})
 
@@ -113,13 +124,20 @@ def test_budget_error_sse_carries_the_exhausted_dimension(stub_budget_runner: No
     with client.stream(
         "POST",
         "/internal/v1/agent/chat",
-        json={"content": "loop until the budget stops me", "sessionId": "s1", "toolMode": "none"},
+        json={
+            "content": "loop until the budget stops me",
+            "sessionId": "s1",
+            "toolMode": "none",
+            # T3.1: instructions are CP-owned and required; the Agent has no
+            # process-level fallback, so a chat without them fails closed.
+            "instructions": "budget lane baseline",
+        },
         headers={
             "Authorization": "Bearer dev-token-not-secure",
             "X-Chat-Run-Id": "run-budget-sse",
         },
     ) as response:
-        assert response.status_code == 200
+        assert response.status_code == 200, response.read().decode("utf-8", "replace")[:400]
         events = dict(_sse_events(response))
 
     error = events["error"]

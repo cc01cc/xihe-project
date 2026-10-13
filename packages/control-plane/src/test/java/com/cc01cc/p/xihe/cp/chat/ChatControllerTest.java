@@ -110,7 +110,7 @@ class ChatControllerTest extends AbstractH2Test {
     @Autowired
     private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository providerConnectionRepository;
 
-    @Autowired
+    @MockitoSpyBean
     private com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService apiRequestTemplates;
 
     private com.cc01cc.p.xihe.cp.entity.ProviderConnection chatConnection;
@@ -293,6 +293,39 @@ class ChatControllerTest extends AbstractH2Test {
                 // context may not exist; ignore
             }
         }
+    }
+
+    @Test
+    void chatRagWithoutProfileFailsDurablyBeforeAgentDispatch() {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        agentServer.createContext("/internal/v1/agent/chat", exchange -> {
+            calls.incrementAndGet();
+            exchange.sendResponseHeaders(500, -1);
+            exchange.close();
+        });
+        Session session = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow();
+        var snapshot = (com.fasterxml.jackson.databind.node.ObjectNode) apiRequestTemplates.admissionSnapshot(session);
+        ((com.fasterxml.jackson.databind.node.ObjectNode) snapshot.path("template")).put("bodySource", """
+                {"model":"${xh.model}","messages":[{"role":"user","content":"${xh.rag_context}"}]}
+                """);
+        doReturn(snapshot).when(apiRequestTemplates).admissionSnapshot(any(Session.class));
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<Map> response = restTemplate.exchange(baseUrl + "/api/v1/chat", HttpMethod.POST,
+                chatEntity(Map.of("sessionId", sessionId, "content", "query", "workspaceId", workspaceId,
+                        "userId", userId), headers), Map.class);
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        String runId = (String) response.getBody().get("runId");
+        await().atMost(java.time.Duration.ofSeconds(10)).untilAsserted(() -> {
+            ChatRun run = chatRunRepository.findById(UUID.fromString(runId)).orElseThrow();
+            assertEquals("failed", run.getStatus());
+            assertEquals("RAG_PROFILE_UNAVAILABLE", run.getErrorCode());
+        });
+        assertEquals(0, calls.get());
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM chat_run_history WHERE run_id = CAST(? AS UUID)", Integer.class, runId));
+        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("error"), any());
     }
 
     @Test
@@ -1541,6 +1574,44 @@ class ChatControllerTest extends AbstractH2Test {
         String runId = (String) response.getBody().get("runId");
 
         verify(runCheckpointService, timeout(5000)).requestCapture(runId);
+    }
+
+    @Test
+    void chatAgentFailClosedCodeSurvivesToRunTerminalAndSseError() {
+        agentServer.createContext("/internal/v1/agent/chat", exchange -> {
+            byte[] body = "{\"code\":\"RAG_QUERY_FAILED\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", MediaType.APPLICATION_JSON_VALUE);
+            exchange.sendResponseHeaders(502, body.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(body);
+            }
+        });
+
+        Map<String, Object> request = Map.of(
+                "sessionId", sessionId,
+                "content", "agent fail-closed code",
+                "workspaceId", workspaceId,
+                "userId", userId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST, chatEntity(request, headers), Map.class);
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        String runId = (String) response.getBody().get("runId");
+
+        // PLAN-0416 V12/V6: these codes are raised by the Agent BEFORE any provider
+        // dispatch. The run terminal and the SSE error event are driven by one
+        // upstreamCode value, so asserting the persisted code also pins the wire
+        // the UI reads; they must not collapse to the generic AGENT_UNAVAILABLE.
+        await().atMost(java.time.Duration.ofSeconds(10)).untilAsserted(() -> {
+            ChatRun run = chatRunRepository.findById(UUID.fromString(runId)).orElseThrow();
+            assertEquals("failed", run.getStatus());
+            assertEquals("RAG_QUERY_FAILED", run.getErrorCode());
+        });
+        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("error"), any());
+        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("done"), any());
     }
 
     @Test

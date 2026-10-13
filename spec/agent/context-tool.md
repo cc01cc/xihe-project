@@ -31,9 +31,17 @@
 5. tool result 中的原始 secret、Bearer、凭据和未脱敏 arguments MUST 不进入模型历史、UI projection 或 audit log。
 6. Context、diagnostic、checkpoint 和 approval 是不同域；工具结果可引用它们，但不得把它们合并为一个通用 payload。
 
+## PLAN-0416 已冻结的检索与指令边界
+
+- `instructions` 只接受 CP 解析的授权非空 Agent baseline。缺失、空白或非字符串在租约兑换及 Chat provider dispatch 前以 `BASELINE_UNAUTHORIZED` 拒绝；不读取进程级默认指令。Summary、工具结果、文件和 RAG 文本不得代填 baseline。
+- RAG 是每个 Run 的动态数据，使用 API-native 模板的只读字符串槽 `xh.rag_context`，不写入稳定 ContextEpoch，也不追加到 `instructions`。只有渲染前真实的未转义 token 才触发检索；转义 token 和无 token 请求不解析 embedding profile、不签发租约、不查询向量。
+- CP 从 authenticated Workspace/owner 解析 0485 profile，向 Agent 传递非密 `embeddingProfile` 与独立、Run-bound 的 `embeddingCredentialLease`。Agent 兑换时携带该 Run 的 `runId`，构建 request-scoped adapter；只允许共享数据库连接池，不跨请求缓存凭据或 profile。
+- 向量查询在 PostgreSQL 相似度排序和 topK 之前按完整 Workspace、owner、Connection、API Type/version、model、dimension tuple 过滤；不得使用应用层 post-filter 或 legacy 全局 collection 兜底。
+- 未启用槽位为 `disabled`，成功零命中为 `empty` 并渲染空字符串。profile/租约不可用为 `unavailable`，实际 provider/DB 查询失败为 `failed`；后两者在 Chat dispatch 前失败，经既有 Run 事件呈现稳定错误码 `RAG_PROFILE_UNAVAILABLE`、`RAG_LEASE_*` 或 `RAG_QUERY_FAILED`。
+
 ## 未冻结边界
 
-PLAN-0381 负责 tool-call/result durable message shape、projection round-trip、artifact TTL 状态；PLAN-0382 负责 snapshot/env/source 字段、最终 Runtime provenance 和 failure semantics。两者完成前，本文件不晋升为 `active`，也不新增 wire/schema 字段。
+本文其他领域的状态不因 PLAN-0416 局部契约冻结而整体晋升；tool-call/result durable message shape、artifact TTL 及 Runtime source/env provenance 仍由各领域 canonical owner 管理。
 
 ## 当前实现差距
 

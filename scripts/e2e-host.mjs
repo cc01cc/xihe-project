@@ -139,7 +139,7 @@ const realXiaomiKey = process.env.XIHE_E2E_REAL_XIAOMI_KEY ?? ''
 const realRoute = process.env.XIHE_E2E_REAL_ROUTE ?? 'native'
 const realOpenAiBase = process.env.XIHE_E2E_REAL_OPENAI_BASE ?? 'https://api.xiaomimimo.com/v1'
 const fakeMcpAccessToken = randomPassword(24)
-const e2eAdminPassword = randomPassword(24)
+let e2eAdminPassword = randomPassword(24)
 
 // PLAN-0465: reuse 模式下按栈 runId 恢复（与 pgProjectName 同批）——DB 名由栈
 // runId 派生，调用方 runId 派生的名字在持久栈上不存在。
@@ -673,7 +673,13 @@ async function launchUIVite() {
   await waitForHttp('UI', `http://127.0.0.1:${uiPort}`, readinessTimeoutMs, {}, child)
 }
 
-async function startFixtures() {
+async function fixtureAlive(port) {
+  return await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(500) })
+    .then((response) => response.ok)
+    .catch(() => false)
+}
+
+function describeFixtures() {
   const fixtures = [
     { name: 'Fake OAuth', script: 'fake-oauth-server.mjs', port: fakeOAuthPort, env: {
       XIHE_FAKE_OAUTH_PORT: fakeOAuthPort,
@@ -694,6 +700,11 @@ async function startFixtures() {
                 XIHE_FAKE_LLM_MODE: llmMode,
             } })
   }
+  return fixtures
+}
+
+async function startFixtures(only = null) {
+  const fixtures = describeFixtures().filter(({ name }) => !only || only.includes(name))
   for (const { name, script, port, env } of fixtures) {
     const child = spawnCommand(nodeCommand, [join(uiDir, 'e2e', 'fixtures', script)], {
       cwd: projectDir,
@@ -1200,6 +1211,9 @@ async function main() {
         // Bearer must stay the recorded one; without this the external run
         // signs with a fresh token and every service-authed call is a 401.
         if (state.serviceToken) serviceToken = state.serviceToken
+        // D4: reuse-mode logins (configureFakeLlm, UI fixtures) must present the
+        // stack's admin password, not this process's fresh random one.
+        if (state.adminPassword) e2eAdminPassword = state.adminPassword
         runIdForTests = state.runId
     // PLAN-0465: PG fixture 元数据同样由栈 runId 派生——端口/fixture 已恢复
     // （PLAN-0365 root cause A）但 pg project/DB 名仍取本进程 runId，导致
@@ -1233,11 +1247,20 @@ async function main() {
     // config nor the fixture process; restore both here so external spec runs
     // can use a different mode than the boot run.
     if (llmMode !== 'mock' && !process.env.XIHE_E2E_SKIP_FIXTURES) {
-      const existing = await fetch(`http://127.0.0.1:${fakeLlmPort}/openai/v1/models`, {
-        signal: AbortSignal.timeout(500),
-      }).then((r) => r.ok).catch(() => false)
-      if (!existing) await startFixtures()
-      await configureFakeLlm()
+      // PLAN-0365 (root cause E) + D4: a persistent stack already owns some or
+      // all of the fixtures. Probe every fixture and start only the missing
+      // ones — re-spawning the running OAuth/MCP pair hits EADDRINUSE on the
+      // reused ports and aborts the run before Playwright ever starts.
+      const fixtures = describeFixtures()
+      const missing = []
+      for (const fixture of fixtures) {
+        if (!(await fixtureAlive(fixture.port))) missing.push(fixture.name)
+      }
+      if (missing.length > 0) {
+        console.log(`[e2e-host] reuse: starting missing fixture(s) ${missing.join(', ')}`)
+        await startFixtures(missing)
+      }
+      if (fixtures.some(({ name }) => name === 'Fake LLM')) await configureFakeLlm()
     }
   } else {
   // PLAN-294 F.5 L1+L2: parallel boot orchestration. Fixtures and PostgreSQL
@@ -1405,6 +1428,9 @@ async function main() {
       // The service token is otherwise unknowable to the operator; checkpoint-budget.mjs
       // (documented --token=<XIHE_CP_API_TOKEN>) reads it from here against a persistent stack.
       serviceToken,
+      // D4: reuse-mode runs must authenticate against the stack that is already
+      // up; the dev admin password is regenerated per process otherwise.
+      adminPassword: e2eAdminPassword,
     }, null, 2))
     console.log(`[e2e-host] persistent stack ready; state written to ${stateFile}`)
     console.log('[e2e-host] run specs with: XIHE_E2E_EXTERNAL_SERVER=1 node scripts/e2e-host.mjs --llm-mode=<mode> <specs...>')

@@ -58,6 +58,8 @@ Compiler、Checkstyle 和架构规则用途互补。PMD 候选已实际试跑，
 
 ## 实现边界
 
+- Chat RAG（PLAN-0416）：仅未转义 `xh.rag_context` 的 native 数据槽触发 authenticated profile 解析与独立 Run-bound embedding lease；变量发布校验必须阻止伪装路径、动态 authority role 和 foreign literal 内层 token。失败沿既有 durable Run/SSE 收敛，禁止继续 Chat dispatch。
+
 - Policy、audit 记录不得写入原始 arguments/secret；仅保存必要的 canonical hash、摘要与脱敏元数据。MCP/审批 preview 只作**有界预览**（≤4096 裸前缀截断），不做正则脱敏/改写，也不参与授权或批准后执行；结构化审计仍用 hash/白名单字段，日志出口由序列化层统一脱敏（PLAN-0407 T1.3 措辞，收敛后落位于本节）。
 - 不绕过状态机直接写入状态表或 durable 记录；状态变更必须经既有 service/transition 路径。
 - CP→Runtime/Agent 调用保持显式超时与错误结果，禁止 host fallback 或静默降级。
