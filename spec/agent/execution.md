@@ -34,6 +34,12 @@ Agent Run 相关护栏（Context 预算、工具超时/输出、循环与无进�
 4. Agent MUST 将取消、审批等待、provider failure 和 partial/ambiguous 结果交给 CP 的终态路径；Agent 本地 `done` 不得单独宣称 durable ChatRun 已完成。
 5. `toolMode=none` MUST 不初始化 Workspace MCP；Workspace 工具模式 MUST 使用请求携带的 Workspace 绑定，禁止复用其他 Workspace 的已发现工具。
 
+## PLAN-0416 输入预算与 provider usage
+
+每次 provider step 前，Agent MUST 按现有 tokenizer/policy 估算序列化后的最终 API-native request body，覆盖 tools、history、RAG、instructions、当前输入及本 Run 的 continuation。不得只估算中立 history 或首个 step。超预算不得自动重放 provider 请求。
+
+本地估算与 provider usage MUST 分开。provider 未返回的 input/output/cache/window 字段记为 unknown，不伪造为零；只累计实际报告的计数，不把本地估算冒充 provider truth。
+
 ## MCP 关联键与迟到终止
 
 1. Agent MUST 为同一次 MCP 工具调用在 `AgentEvent.tool_call` 与 `AgentEvent.tool_result` 使用相同的 `toolCallId`；不得按阶段重新派生另一关联键。

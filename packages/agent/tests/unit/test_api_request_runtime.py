@@ -379,6 +379,8 @@ async def test_chat_route_uses_product_model_and_safe_terminal(monkeypatch, type
 
     # Only CP seams are substituted; HTTP sender, model and LangGraph Runner
     # are product implementations, exercised through the actual Chat route.
+    retrieval = AsyncMock(side_effect=AssertionError("Default templates must not retrieve"))
+    monkeypatch.setattr(route, "retrieve_chat_context", retrieval)
     payload = sse(type_id)
     if type_id == TYPES[0]:
         payload = 'data: {"choices":[{"delta":{"content":"answer"}}]}\n\ndata: [DONE]\n\n'
@@ -410,9 +412,6 @@ async def test_chat_route_uses_product_model_and_safe_terminal(monkeypatch, type
         )
         append = AsyncMock()
         monkeypatch.setattr(route.cp_event_store_client, "append", append)
-        monkeypatch.setattr(
-            route, "_enrich_with_rag_context", AsyncMock(side_effect=lambda content, instructions: instructions)
-        )
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://agent-fixture") as client:
             result = await client.post(
                 "/internal/v1/agent/chat",
@@ -424,6 +423,7 @@ async def test_chat_route_uses_product_model_and_safe_terminal(monkeypatch, type
         assert result.text.count('"content": "answer"') == 1
         assert "event: error" not in result.text
         lease.assert_awaited_once()
+        retrieval.assert_not_awaited()
         assert lease.await_args.kwargs["request_id"] == "request-fixture"
         assert len(captures) == 1
         assert captures[0][2]["model"] == "fixture"

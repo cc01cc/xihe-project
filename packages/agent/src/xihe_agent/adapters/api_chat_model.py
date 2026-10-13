@@ -181,6 +181,8 @@ class ApiChatModel(BaseChatModel):
     _api_type: ChatApiType = PrivateAttr()
     _sender: ApiSender = PrivateAttr()
     _base: dict[str, Any] = PrivateAttr()
+    _body_source: str = PrivateAttr()
+    _values: dict[str, Any] = PrivateAttr()
     _initial_count: int | None = PrivateAttr(default=None)
     _tool_names: set[str] = PrivateAttr(default_factory=set)
     _native_turns: list[dict[str, Any]] = PrivateAttr(default_factory=list)
@@ -208,6 +210,8 @@ class ApiChatModel(BaseChatModel):
         self._api_type = api_type
         self._sender = ApiSender(api_type, grant, request_id, timeout)
         self._base = render_request(body_source, api_type, values)
+        self._body_source = body_source
+        self._values = copy.deepcopy(values)
         self._token_estimator = token_estimator
         self._tool_names = {
             str(tool.get("function", tool).get("name"))
@@ -263,7 +267,9 @@ class ApiChatModel(BaseChatModel):
             self._initial_count = len(messages)
         if len(messages) < self._initial_count:
             raise ApiRequestError("INVALID_REQUEST_SHAPE")
-        body = copy.deepcopy(self._base)
+        # RAG stays in its independent template data slot on every step; it is
+        # never appended to baseline instructions or admitted durable messages.
+        body = render_request(self._body_source, self._api_type, self._values)
         suffix = messages[self._initial_count :]
         if any(not isinstance(message, (AIMessage, ToolMessage)) for message in suffix):
             raise ApiRequestError("INVALID_REQUEST_SHAPE")

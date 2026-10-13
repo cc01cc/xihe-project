@@ -419,8 +419,9 @@ def _classify_llm_exception(error: Exception) -> tuple[str, str, bool]:
         provider_status = getattr(getattr(error, "response", None), "status_code", None)
     if isinstance(error, litellm.exceptions.BadRequestError) or provider_status == 400:
         # The provider rejected the payload (message shape / params / tool schema).
-        # Non-retryable: the same request cannot succeed; log the raw text for triage.
-        logger.error("[LLM] provider rejected the request: {}", str(error)[:500])
+        # Provider detail can echo prompt data or credentials. Keep only the
+        # classification and exception type in diagnostics.
+        logger.error("[LLM] provider rejected the request errorType={}", type(error).__name__)
         return (
             "LLM_REQUEST_REJECTED",
             "模型提供方拒绝了该请求（消息格式或参数不被接受）",

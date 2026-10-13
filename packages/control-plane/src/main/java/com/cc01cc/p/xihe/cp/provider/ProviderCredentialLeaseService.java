@@ -165,7 +165,8 @@ public class ProviderCredentialLeaseService {
             throw com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService.conflict(
                     "STALE_PROVIDER_CONNECTION", "Provider credential lease revision mismatch");
         }
-        if (lease.getRunId() != null) {
+        if (lease.getRunId() != null && "chat".equals(
+                apiTypes.operation(connection.getApiTypeId(), connection.getApiTypeVersion()))) {
             requestTemplates.requireModel(connection, request.model());
         }
         if (connection.getRevision() != request.connectionRevision()) {

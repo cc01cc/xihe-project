@@ -326,7 +326,6 @@ export async function ensureChatBinding(page: Page, sessionId: string): Promise<
                         connectionKey: "e2e-chat",
                         label: "E2E chat binding",
                         scope: "USER",
-                        baseUrl: "https://provider.invalid/v1",
                         modelDiscovery: "manual",
                         manualModels: [modelName],
                         baseUrl: chatBaseUrl,

@@ -120,6 +120,54 @@ async def test_search_filters_by_partition_before_rank(store):
     assert foreign[0]["filename"] == "b.pdf"
 
 
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("workspaceId", "55555555-5555-5555-5555-555555555555"),
+        ("connectionOwnerType", "WORKSPACE"),
+        ("connectionOwnerId", "66666666-6666-6666-6666-666666666666"),
+        ("providerConnectionId", "77777777-7777-7777-7777-777777777777"),
+    ],
+)
+async def test_chat_rag_full_partition_predicate_precedes_top_k(store, field, value):
+    """Observe PostgreSQL's actual search SQL and adversarial scope isolation.
+
+    Run only on the existing isolated host-runner DB. The fixed API/model/
+    dimension identity is checked in the emitted SQL; mutable owner/workspace/
+    connection identities are also exercised with real competing rows.
+    """
+    from sqlalchemy import event
+
+    from xihe_agent.rag.store import partition_filter
+
+    profile = _profile()
+    foreign = {**profile, field: value}
+    await store.add_document(["same query text"], profile, "chat-own.pdf")
+    await store.add_document(["same query text"] * 3, foreign, "chat-foreign.pdf")
+    query = await store._embedding.aembed_query("same query text")
+    engine = await store._ensure_engine()
+    statements = []
+
+    def record(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if "ORDER BY" in statement.upper() and "embedding" in statement.lower():
+            statements.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", record)
+    try:
+        own = await store.search(query, profile, top_k=1, min_score=0.0)
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", record)
+    assert len(own) == 1
+    assert own[0]["filename"] == "chat-own.pdf"
+    assert statements, "Must capture actual PostgreSQL search, not a constructed SQL fixture"
+    for statement in statements:
+        sql = statement.upper()
+        predicate = sql[sql.index("WHERE"):sql.index("ORDER BY")]
+        assert "LIMIT" in sql[sql.index("ORDER BY"):]
+        for column in partition_filter(profile):
+            assert column.upper() in predicate
+
+
 async def test_search_respects_min_score(store):
     profile = _profile()
     await store.add_document(["apple banana"], profile, "a.pdf")

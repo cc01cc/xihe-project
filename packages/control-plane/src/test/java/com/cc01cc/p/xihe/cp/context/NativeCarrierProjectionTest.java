@@ -142,6 +142,64 @@ class NativeCarrierProjectionTest {
         return input;
     }
 
+    @Test
+    void precisePruneAfterCarrierKeepsOccurrenceAndBlocksLateCarrierAcrossFullReplays() throws Exception {
+        var input = runEvents();
+        ContextEvent toolResult = input.get(4);
+        ContextEvent carrier = input.get(5);
+        when(events.read("session", 0L, null)).thenReturn(input);
+        assertEquals(carrier.getSequence(), projector.project("session", 0L, null)
+                .path("messages").get(3).path("sequence").asLong());
+        input.add(event("context.prune", "current", Map.of("tombstones", List.of(Map.of(
+                "sequence", toolResult.getSequence(), "tool_call_id", "call")))));
+        ObjectNode pruned = projector.project("session", 0L, null);
+        assertFalse(pruned.path("messages").toString().contains("nativeRecords"));
+        assertEquals(3, pruned.path("messages").size());
+        assertEquals(pruned, projector.project("session", carrier.getSequence(), null));
+        input.add(event("assistant.responded", "current", json.readValue(carrier.getPayload(), Map.class)));
+        ObjectNode restarted = projector.project("session", 0L, null);
+        assertEquals(pruned.path("messages"), restarted.path("messages"));
+        assertEquals(restarted, projector.project("session", toolResult.getSequence(), null));
+        assertFalse(restarted.path("messages").toString().contains("bounded tool output"));
+    }
+
+    @Test
+    void reusedCallIdInDifferentRunsKeepsDistinctOccurrencesAndOnlyPrunesNamedSequence() throws Exception {
+        var input = new ArrayList<ContextEvent>();
+        input.add(event("tool.called", "run-a", Map.of("toolCallId", "reused", "toolName", "read")));
+        input.add(event("tool.called", "run-b", Map.of("toolCallId", "reused", "toolName", "read")));
+        ContextEvent first = event("tool.result", "run-a", Map.of("toolCallId", "reused", "result", "same"));
+        ContextEvent second = event("tool.result", "run-b", Map.of("toolCallId", "reused", "result", "same"));
+        input.add(first);
+        input.add(second);
+        input.add(event("context.prune", "run-b", Map.of("tombstones", List.of(Map.of(
+                "sequence", second.getSequence(), "tool_call_id", "reused")))));
+        when(events.read("session", 0L, null)).thenReturn(input);
+        JsonNode messages = projector.project("session", 0L, null).path("messages");
+        assertEquals(4, messages.size());
+        assertEquals("same", messages.get(2).path("content").asText());
+        assertEquals(first.getSequence(), messages.get(2).path("sequence").asLong());
+        assertFalse(messages.get(2).path("pruned").asBoolean());
+        assertEquals("[old tool result cleared]", messages.get(3).path("content").asText());
+    }
+
+    @Test
+    void multipleTombstonesKeepSequenceAndCallIdPairsInsteadOfCrossMatchingSets() throws Exception {
+        var input = new ArrayList<ContextEvent>();
+        ContextEvent a = event("tool.result", "run-a", Map.of("toolCallId", "a", "result", "one"));
+        ContextEvent b = event("tool.result", "run-b", Map.of("toolCallId", "b", "result", "two"));
+        input.add(a);
+        input.add(b);
+        input.add(event("context.prune", "run-b", Map.of("tombstones", List.of(
+                Map.of("sequence", a.getSequence(), "tool_call_id", "b"),
+                Map.of("sequence", b.getSequence(), "tool_call_id", "a")))));
+        when(events.read("session", 0L, null)).thenReturn(input);
+        JsonNode messages = projector.project("session", 0L, null).path("messages");
+        assertEquals("one", messages.get(0).path("content").asText());
+        assertEquals("two", messages.get(1).path("content").asText());
+        assertFalse(messages.toString().contains("pruned"));
+    }
+
     private ContextEvent event(String type, String run, Object payload) throws Exception {
         var event = new ContextEvent("session", "ws", "user", type, ++sequence, json.writeValueAsString(payload));
         event.setCorrelationId(run);

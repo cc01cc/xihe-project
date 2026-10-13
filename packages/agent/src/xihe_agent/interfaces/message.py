@@ -53,6 +53,7 @@ class TextMessage:
     # prune tombstones target it so equal content in a different event
     # stays independently addressable.
     origin_sequence: int = 0
+    pruned: bool = False
     # PLAN-0381 T1.1 — pairing/degradation markers (both sides)
     degraded: bool = False
     legacy_normalized: bool = False

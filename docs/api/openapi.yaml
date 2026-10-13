@@ -2746,8 +2746,16 @@ components:
         runId: { type: string, format: uuid }
         sessionId: { type: string }
         content: { type: string }
-        instructions: { type: string, description: CP-selected safe Agent profile instructions text only; AgentPrincipal IDs and permission snapshots are forbidden on this wire. }
+        instructions: { type: string, minLength: 1, description: 'CP-authorized nonempty Agent baseline only. Missing/blank/non-string values fail before lease redemption or Chat provider dispatch with BASELINE_UNAUTHORIZED; no process-level fallback. AgentPrincipal IDs and permission snapshots are forbidden on this wire.' }
         contextTemplateSnapshot: { $ref: '#/components/schemas/ContextTemplateSnapshot' }
+        embeddingProfile:
+          type: object
+          description: 'PLAN-0416: CP-resolved non-secret 0485 profile. Present only when the original API-native template contains an unescaped xh.rag_context data slot. Includes authenticated workspace/owner, connection identity/revision, API Type/version, model and dimension; callers cannot select these authority fields.'
+          additionalProperties: true
+        embeddingCredentialLease:
+          type: string
+          writeOnly: true
+          description: 'Separate one-use embedding lease bound to this runId; never reuse the Chat credentialLease. Unavailable profile/lease fails the Run before Chat provider dispatch; empty successful retrieval renders an empty data string.'
         componentSources:
           type: object
           additionalProperties: { $ref: '#/components/schemas/ContextComponentSource' }

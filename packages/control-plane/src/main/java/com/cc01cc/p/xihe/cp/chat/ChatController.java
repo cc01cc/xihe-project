@@ -16,6 +16,8 @@ import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 import com.cc01cc.p.xihe.cp.status.RequestQueue;
 import com.cc01cc.p.xihe.cp.status.CircuitBreaker;
 import com.cc01cc.p.xihe.cp.provider.ProviderCredentialLeaseService;
+import com.cc01cc.p.xihe.cp.provider.ApiRequestValidator;
+import com.cc01cc.p.xihe.cp.config.EmbeddingProfileService;
 import com.cc01cc.p.xihe.cp.files.ChatAttachmentService;
 import com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo;
 
@@ -76,6 +78,8 @@ public class ChatController {
     private final HealthMonitor healthMonitor;
     private final RequestQueue requestQueue;
     private final ProviderCredentialLeaseService credentialLeases;
+    private final EmbeddingProfileService embeddingProfiles;
+    private final ApiRequestValidator requestValidator;
     private final ConfigService configService;
     private final com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder mcpRelayToolRecorder;
     private final com.cc01cc.p.xihe.cp.mcp.McpToolTimeoutService mcpToolTimeoutService;
@@ -127,6 +131,8 @@ public class ChatController {
             HealthMonitor healthMonitor,
             RequestQueue requestQueue,
             ProviderCredentialLeaseService credentialLeases,
+            EmbeddingProfileService embeddingProfiles,
+            ApiRequestValidator requestValidator,
             ConfigService configService,
             com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder mcpRelayToolRecorder,
             com.cc01cc.p.xihe.cp.mcp.McpToolTimeoutService mcpToolTimeoutService,
@@ -156,6 +162,8 @@ public class ChatController {
         this.healthMonitor = healthMonitor;
         this.requestQueue = requestQueue;
         this.credentialLeases = credentialLeases;
+        this.embeddingProfiles = embeddingProfiles;
+        this.requestValidator = requestValidator;
         this.configService = configService;
         this.mcpRelayToolRecorder = mcpRelayToolRecorder;
         this.mcpToolTimeoutService = mcpToolTimeoutService;
@@ -880,6 +888,8 @@ public class ChatController {
                     throw new IllegalStateException("ChatRun Session is missing its AgentPrincipal binding");
                 }
                 agentRequest.put("contextTemplateSnapshot", persistedRun.context().contextTemplateSnapshot());
+                addRagCredentials(agentRequest, persistedRun.context().contextTemplateSnapshot(),
+                        userId, workspaceId, sessionId, runId);
                 Map<String, Object> componentSources =
                         contextTemplateSourceService.resolve(persistedRun.context(), boundSession);
                 if (!componentSources.isEmpty()) {
@@ -1053,6 +1063,10 @@ public class ChatController {
                             requestId, runId, currentRunStatus);
                 }
 
+            } catch (CpApiException e) {
+                logger.warn("[LIFECYCLE] service=cp event=chat_run_failed requestId={} runId={} errorCode={}",
+                        requestId, runId, e.getCode(), e);
+                sendRunErrorAndDone(sessionId, requestId, runId, e.getCode(), e.getMessage(), "error", terminalSent);
             } catch (java.net.http.HttpTimeoutException e) {
                 logger.warn("[LIFECYCLE] service=cp event=chat_run_failed requestId={} sessionId={} runId={} errorCode=AGENT_TIMEOUT timeoutMs=30000",
                         requestId, sessionId, runId, e);
@@ -1093,6 +1107,30 @@ public class ChatController {
             releaseRun(sessionId, runId, "worker_start_failed");
             throw e;
         }
+    }
+
+    /** Resolve solely from authenticated dispatch scope; request bodies carry no profile selector. */
+    void addRagCredentials(Map<String, Object> request, com.fasterxml.jackson.databind.JsonNode snapshot,
+                           String userId, String workspaceId, String sessionId, String runId) {
+        if (!requestValidator.usesRagContext(snapshot)) {
+            return;
+        }
+        EmbeddingProfileService.ResolvedProfile profile;
+        try {
+            profile = embeddingProfiles.resolve(uuidOrNull(userId), uuidOrNull(workspaceId));
+        } catch (RuntimeException e) {
+            throw new CpApiException(HttpStatus.CONFLICT, "RAG_PROFILE_UNAVAILABLE",
+                    "The Run embedding profile is unavailable", e);
+        }
+        ProviderCredentialLeaseService.IssuedLease lease;
+        try {
+            lease = embeddingProfiles.issueLease(profile, userId, workspaceId, sessionId, runId);
+        } catch (RuntimeException e) {
+            throw new CpApiException(HttpStatus.CONFLICT, "RAG_LEASE_UNAVAILABLE",
+                    "The Run embedding credential lease is unavailable", e);
+        }
+        request.put("embeddingProfile", embeddingProfiles.describe(profile));
+        request.put("embeddingCredentialLease", lease.token());
     }
 
     private boolean shouldRefreshRootAgentsMd(

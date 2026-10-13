@@ -186,6 +186,8 @@ flowchart LR
 
 ## 8h. Embedding Provider Connection 与 RAG 代理（PLAN-0485）
 
+PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native 模板含真实未转义 `xh.rag_context` 时，从认证 dispatch user/workspace 解析 profile，并签发绑定 Session/Run 的独立 embedding lease。wire 沿用 `embeddingProfile`、`embeddingCredentialLease`，与 Chat `credentialLease` 分离。Run-bound redemption 校验 Run/revision/operation，不按 Chat 模型能力误拒 embedding。profile/签发失败经现有 durable terminal/SSE 返回稳定错误，不向 Agent dispatch。发布校验按真实 JSON 路径和字面量数据角色限制，不能用伪装对象键或动态 role 注入 authority 槽。
+
 - **类型与连接**：内置类型 `dashscope-multimodal-embedding/v1`（`operation=embedding`）由 type contract 钉住 host/路径（`https://dashscope.aliyuncs.com/api/v1`），CP 拒绝自定义 host；固定模型 `tongyi-embedding-vision-flash-2026-03-06`、维度 768；`modelDiscovery=manual`。
 - **profile 解析**：`EmbeddingProfileService` 按认证 TenantContext 解析 `(providerId, connectionKey, model)` 整组 profile（workspace 覆盖 user，再 instance）；`GET /api/v1/config/embedding/effective` 只读返回 `contract{modelId,dimension}` 与解析结果（缺失/冲突给稳定 `code`）；`POST /api/v1/config/embedding/test` 经 Agent 一次性租约探测，响应脱敏。客户端传入的 workspace 必须先通过成员校验。
 - **RAG 公开路由**：`/api/v1/rag/{ingest,search,stats,documents/{docId}}` 由 CP 从认证上下文解析 owner/profile 并代理到 Agent 内部路由（携带非密 `embeddingProfile` + 一次性 `embeddingCredentialLease`）；每条向量行按 `(workspaceId, connectionOwnerType/id, providerConnectionId, apiTypeId/version, modelId, dimension)` 分区，检索在 PostgreSQL 下推 tuple 过滤（WHERE 先于 ORDER BY/LIMIT），跨 scope 负向检索无返回。

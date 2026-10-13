@@ -23,7 +23,6 @@ from xihe_agent.app_state import (
     USE_SUPERVISOR,
     _classify_llm_exception,
     _content_length,
-    _enrich_with_rag_context,
     _estimate_input_tokens,
     _estimate_native_body_tokens,
     _get_tools_for_mode,
@@ -45,9 +44,10 @@ from xihe_agent.interfaces.agent_runner import RunnerConfig
 from xihe_agent.interfaces.chat_run_context import ContextBuildError
 from xihe_agent.interfaces.event import Event
 from xihe_agent.interfaces.message import TextMessage
-from xihe_agent.llm.api_request import ApiRequestError, render_request, validate_snapshot
+from xihe_agent.llm.api_request import ApiRequestError, render_request, uses_rag_context, validate_snapshot
 from xihe_agent.llm.base import LLMConfig
 from xihe_agent.llm.models import fetch_model_catalog  # noqa: F401  (import parity with prior main)
+from xihe_agent.rag.chat_context import retrieve_chat_context
 
 router = APIRouter()
 
@@ -210,6 +210,7 @@ async def chat(request: Request):
                 "model": str(model_override or ""),
                 "user_input": content,
                 "agent_instructions": instructions,
+                "rag_context": "",
                 "conversation_history": [{"role": "user", "content": ""}],
                 "tools": [],
             },
@@ -234,6 +235,10 @@ async def chat(request: Request):
             or grant.get("model") != model_override
         ):
             raise ApiRequestError("API_TYPE_TEMPLATE_MISMATCH", 409)
+        rag_context, rag_matches = "", 0
+        rag_state: str | None = "disabled"
+        if uses_rag_context(template_snapshot["template"]["bodySource"]):
+            rag_context, rag_state, rag_matches = await retrieve_chat_context(data, content, run_id, request_id)
     except (ApiRequestError, ProviderLeaseError) as exc:
         code = exc.terminal_code if isinstance(exc, ApiRequestError) else exc.code
         logger.warning("Chat rejected requestId={} runId={} code={}", request_id, run_id, exc.code)
@@ -279,9 +284,6 @@ async def chat(request: Request):
         len(content),
     )
 
-    # Enrich with RAG context if knowledge base has content
-    instructions = await _enrich_with_rag_context(content, instructions)
-
     # Register before streaming so CP cancel can reach an in-flight run.
     cancel_event = run_cancel_registry.register(run_id)
 
@@ -303,6 +305,10 @@ async def chat(request: Request):
             return payload
 
         try:
+            rag_observation: dict[str, Any] = {"phase": "rag", "matches": rag_matches}
+            if rag_state is not None:
+                rag_observation["state"] = rag_state
+            yield render_sse("status", correlated_data(rag_observation))
             mcp_tools = await _get_tools_for_mode(tool_mode, workspace_id)
             if USE_SUPERVISOR and tool_mode == "workspace":
                 raise ApprovalExecutorUnsupportedError("Approval is not supported by the buffered supervisor executor")
@@ -361,6 +367,7 @@ async def chat(request: Request):
                         "model": str(model_override),
                         "user_input": content,
                         "agent_instructions": instructions,
+                        "rag_context": rag_context,
                         "conversation_history": native_history(context.messages, api_type),
                         "tools": native_tools(all_tools, api_type),
                     },
@@ -555,13 +562,14 @@ async def chat(request: Request):
                 if assistant_chars > 0
                 else "error"
             )
-            logger.exception(
-                "[LIFECYCLE] service=agent event=chat_stream_failed requestId={} sessionId={} workspaceId={} runId={} errorCode={}",
+            logger.error(
+                "[LIFECYCLE] service=agent event=chat_stream_failed requestId={} sessionId={} workspaceId={} runId={} errorCode={} errorType={}",
                 request_id,
                 session_id,
                 workspace_id,
                 run_id,
                 terminal_error_code,
+                type(exc).__name__,
             )
             if not error_sent:
                 error_sent = True
