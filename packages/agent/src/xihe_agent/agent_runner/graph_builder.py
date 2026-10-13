@@ -36,18 +36,27 @@ def build_react_graph(
     model: BaseChatModel,
     tools: list[BaseTool],
     *,
-    name: str,
-    system_prompt: str,
+    name: str | None = None,
+    system_prompt: str | None = None,
 ) -> Any:
-    """Create a named ReAct agent graph; failure returns ``None`` (frozen)."""
-    logger.debug("Building graph for '%s' with %d tool(s)", name, len(tools))
+    """Create a ReAct agent graph; failure returns ``None`` (frozen).
+
+    ``name`` / ``system_prompt`` are optional so the chat runner can keep
+    passing its system messages through ``inputs`` (PLAN-0492 T1.2 routes
+    the runner through this module without changing graph behavior).
+    """
+    logger.debug("Building graph for '%s' with %d tool(s)", name or "<unnamed>", len(tools))
+    kwargs: dict[str, Any] = {}
+    if name is not None:
+        kwargs["name"] = name
+    if system_prompt is not None:
+        kwargs["system_prompt"] = system_prompt
     try:
         return create_react_agent(
             model,
             tools=tools,
-            name=name,
-            system_prompt=system_prompt,
+            **kwargs,
         )
     except Exception as e:
-        logger.error("Failed to create graph for worker '%s': %s", name, e, exc_info=True)
+        logger.error("Failed to create graph for worker '%s': %s", name or "<unnamed>", e, exc_info=True)
         return None

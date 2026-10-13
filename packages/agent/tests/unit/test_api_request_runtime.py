@@ -234,6 +234,115 @@ async def test_real_recording_sender_native_response(type_id, stream):
             assert final.records[0]["encrypted_content"] == "preserve"
 
 
+async def test_openai_stream_explicit_null_tool_calls_tolerated():
+    """openai-compat providers send `"tool_calls": null` in call-free chunks."""
+    payload = (
+        'data: {"choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":null}}]}\n\n'
+        'data: {"choices":[{"index":0,"delta":{"content":"answer","tool_calls":['
+        '{"index":0,"id":"c1","function":{"name":"read_file","arguments":"{}"}}'
+        ']},"finish_reason":"tool_calls"}]}\n\n'
+        "data: [DONE]\n\n"
+    )
+    async with recorder(payload, stream=True) as (base, _captures):
+        sender = ApiSender(chat_type(TYPES[0], 1), grant(TYPES[0], base), "request-1", 3)
+        parts = [
+            part
+            async for part in sender.stream(
+                render_request(json.dumps(body(TYPES[0], True)), sender.api_type, VALUES)
+            )
+        ]
+        final = parts[-1][2]
+        assert final.text == "answer"
+        assert final.calls == [{"id": "c1", "name": "read_file", "args": {}, "type": "tool_call"}]
+
+
+async def test_openai_stream_null_role_and_content_keepalive_tolerated():
+    """openai-compat keep-alive chunks carry `"role": null, "content": null`."""
+    payload = (
+        'data: {"choices":[{"index":0,"delta":{"content":null,"role":null}}]}\n\n'
+        'data: {"choices":[{"index":0,"delta":{"role":"assistant","content":"answer"},'
+        '"finish_reason":"stop"}]}\n\n'
+        "data: [DONE]\n\n"
+    )
+    async with recorder(payload, stream=True) as (base, _captures):
+        sender = ApiSender(chat_type(TYPES[0], 1), grant(TYPES[0], base), "request-1", 3)
+        parts = [
+            part
+            async for part in sender.stream(
+                render_request(json.dumps(body(TYPES[0], True)), sender.api_type, VALUES)
+            )
+        ]
+        final = parts[-1][2]
+        assert final.text == "answer"
+        assert final.calls == []
+
+
+async def test_openai_stream_null_function_fragment_fields_tolerated():
+    """Continuation tool-call fragments may repeat `"name": null` and split arguments."""
+    payload = (
+        'data: {"choices":[{"index":0,"delta":{"role":"assistant","content":null,"tool_calls":['
+        '{"index":0,"id":"c1","type":"function","function":{"name":"write_file","arguments":""}}'
+        ']}}]}\n\n'
+        'data: {"choices":[{"index":0,"delta":{"tool_calls":['
+        '{"index":0,"function":{"name":null,"arguments":"{\\"content\\": "}}'
+        ']}}]}\n\n'
+        'data: {"choices":[{"index":0,"delta":{"tool_calls":['
+        '{"index":0,"function":{"name":null,"arguments":"\\"hi\\"}"}}'
+        ']},"finish_reason":"tool_calls"}]}\n\n'
+        "data: [DONE]\n\n"
+    )
+    async with recorder(payload, stream=True) as (base, _captures):
+        sender = ApiSender(chat_type(TYPES[0], 1), grant(TYPES[0], base), "request-1", 3)
+        parts = [
+            part
+            async for part in sender.stream(
+                render_request(json.dumps(body(TYPES[0], True)), sender.api_type, VALUES)
+            )
+        ]
+        final = parts[-1][2]
+        assert final.calls == [
+            {"id": "c1", "name": "write_file", "args": {"content": "hi"}, "type": "tool_call"}
+        ]
+
+
+async def test_openai_stream_usage_only_chunk_without_choices_tolerated():
+    """A final usage chunk may omit `choices` entirely."""
+    payload = (
+        'data: {"choices":[{"index":0,"delta":{"role":"assistant","content":"answer"},'
+        '"finish_reason":"stop"}]}\n\n'
+        'data: {"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n'
+        "data: [DONE]\n\n"
+    )
+    async with recorder(payload, stream=True) as (base, _captures):
+        sender = ApiSender(chat_type(TYPES[0], 1), grant(TYPES[0], base), "request-1", 3)
+        parts = [
+            part
+            async for part in sender.stream(
+                render_request(json.dumps(body(TYPES[0], True)), sender.api_type, VALUES)
+            )
+        ]
+        final = parts[-1][2]
+        assert final.text == "answer"
+        assert final.usage == {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5}
+
+
+async def test_openai_response_explicit_null_tool_calls_tolerated():
+    """Non-stream messages may carry `"tool_calls": null` instead of omitting it."""
+    payload = response(TYPES[0], tool=False)
+    payload["choices"][0]["message"]["tool_calls"] = None
+    async with recorder(payload, stream=False) as (base, _captures):
+        sender = ApiSender(chat_type(TYPES[0], 1), grant(TYPES[0], base), "request-1", 3)
+        parts = [
+            part
+            async for part in sender.stream(
+                render_request(json.dumps(body(TYPES[0], False)), sender.api_type, VALUES)
+            )
+        ]
+        final = parts[-1][2]
+        assert final.text == "answer"
+        assert final.calls == []
+
+
 @pytest.mark.parametrize(
     "payload,status,stream,disconnect,code",
     [

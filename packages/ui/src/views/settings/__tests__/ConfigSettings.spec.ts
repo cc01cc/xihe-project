@@ -245,3 +245,102 @@ describe("ConfigSettings API request templates (PLAN-0439 rename of PLAN-0414)",
         wrapper.unmount();
     });
 });
+
+describe("ConfigSettings agent-runtime run budget (PLAN-0492)", () => {
+    it("registers agent-runtime on the writable layers, ceilings stay instance-only", () => {
+        expect(LAYER_DOMAINS.instance).toContain("agent-runtime");
+        expect(LAYER_DOMAINS.workspace).toContain("agent-runtime");
+        expect(LAYER_DOMAINS.user).toContain("agent-runtime");
+    });
+
+    it("renders the six budget fields on the instance tab", async () => {
+        const wrapper = await mountView();
+
+        const panel = wrapper.find('[data-testid="config-domain-agent-runtime"]');
+        expect(panel.exists()).toBe(true);
+        await panel.find("button").trigger("click");
+
+        for (const key of [
+            "runMaxTurns",
+            "runMaxElapsedSeconds",
+            "runMaxTokens",
+            "runMaxTurnsCeiling",
+            "runMaxElapsedSecondsCeiling",
+            "runMaxTokensCeiling",
+        ]) {
+            const field = wrapper.find(`[data-testid="config-field-agent-runtime-${key}"]`);
+            expect(field.exists(), `${key} must render on the instance tab`).toBe(true);
+            expect(field.find("input").exists(), `${key} must be editable`).toBe(true);
+        }
+    });
+
+    it("renders the loop guard fields on the instance tab and hides ceilings elsewhere", async () => {
+        const wrapper = await mountView();
+
+        const panel = wrapper.find('[data-testid="config-domain-agent-runtime"]');
+        expect(panel.exists()).toBe(true);
+        await panel.find("button").trigger("click");
+
+        for (const key of [
+            "loopRepeatWarn",
+            "loopRepeatRefuse",
+            "loopRepeatEscalate",
+            "loopErrorRunWarn",
+            "loopErrorRunEscalate",
+            "loopStaleResultWarn",
+            "loopStaleResultEscalate",
+            "loopWindowSize",
+            "loopRepeatEscalateCeiling",
+            "loopErrorRunEscalateCeiling",
+            "loopStaleResultEscalateCeiling",
+            "loopWindowSizeCeiling",
+        ]) {
+            const field = wrapper.find(`[data-testid="config-field-agent-runtime-${key}"]`);
+            expect(field.exists(), `${key} must render on the instance tab`).toBe(true);
+            expect(field.find("input").exists(), `${key} must be editable`).toBe(true);
+        }
+
+        await wrapper.find('[data-testid="config-tab-user"]').trigger("click");
+        await flushPromises();
+        const userPanel = wrapper.find('[data-testid="config-domain-agent-runtime"]');
+        await userPanel.find("button").trigger("click");
+        expect(
+            wrapper.find('[data-testid="config-field-agent-runtime-loopRepeatWarn"]').exists(),
+        ).toBe(true);
+        expect(
+            wrapper
+                .find('[data-testid="config-field-agent-runtime-loopRepeatEscalateCeiling"]')
+                .exists(),
+        ).toBe(false);
+    });
+
+    it("hides the ceiling keys from the user and workspace tabs", async () => {
+        const wrapper = await mountView();
+
+        await wrapper.find('[data-testid="config-tab-user"]').trigger("click");
+        await flushPromises();
+        const userPanel = wrapper.find('[data-testid="config-domain-agent-runtime"]');
+        await userPanel.find("button").trigger("click");
+        expect(
+            wrapper.find('[data-testid="config-field-agent-runtime-runMaxTurns"]').exists(),
+        ).toBe(true);
+        expect(
+            wrapper.find('[data-testid="config-field-agent-runtime-runMaxTurnsCeiling"]').exists(),
+        ).toBe(false);
+
+        await wrapper.find('[data-testid="config-tab-workspace"]').trigger("click");
+        await flushPromises();
+        const wsPanel = wrapper.find('[data-testid="config-domain-agent-runtime"]');
+        await wsPanel.find("button").trigger("click");
+        expect(
+            wrapper
+                .find('[data-testid="config-field-agent-runtime-runMaxElapsedSeconds"]')
+                .exists(),
+        ).toBe(true);
+        expect(
+            wrapper
+                .find('[data-testid="config-field-agent-runtime-runMaxElapsedSecondsCeiling"]')
+                .exists(),
+        ).toBe(false);
+    });
+});

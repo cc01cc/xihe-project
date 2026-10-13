@@ -14,6 +14,8 @@ import com.cc01cc.p.xihe.cp.repository.InboxRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.RunCheckpointService;
 import jakarta.persistence.EntityManager;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -45,6 +47,8 @@ import java.util.UUID;
 public class ChatRunTerminalService {
     private static final Logger logger = LoggerFactory.getLogger(ChatRunTerminalService.class);
     private static final String TERMINAL_APPLICATION_NAME_PREFIX = "xihe-terminal-";
+    /** PLAN-0492: payload-only serializer for the safe terminal history facts. */
+    private static final ObjectMapper SHARED_OBJECT_MAPPER = new ObjectMapper();
 
     /** Who owned the terminal write; also selects the history event type. */
     public enum TerminalSource {
@@ -86,9 +90,28 @@ public class ChatRunTerminalService {
             int assistantChars,
             TerminalSource source,
             /** Relay in-memory usage payload (cost-enriched) or {@code null}. */
-            Object usagePayload) {
+            Object usagePayload,
+            /**
+             * PLAN-0492: exhausted run-budget dimension (turns/elapsed_seconds/tokens)
+             * when the run converged via {@code RUN_BUDGET_EXHAUSTED}; recorded in the
+             * durable history payload, {@code null} for every other terminal path.
+             */
+            String budgetDimension) {
         public TerminalRequest {
             expectedStatuses = expectedStatuses == null ? List.of() : List.copyOf(expectedStatuses);
+        }
+
+        /**
+         * Convenience for every non-budget terminal path (recovery, reconciliation,
+         * cancellation, follow-up dispatch): the canonical constructor keeps
+         * {@code budgetDimension} last and this overload supplies {@code null}.
+         */
+        public TerminalRequest(String runId, Collection<String> expectedStatuses, String status,
+                               String terminalOutcome, String errorCode, String errorDetail,
+                               int tokenCount, int assistantChars, TerminalSource source,
+                               Object usagePayload) {
+            this(runId, expectedStatuses, status, terminalOutcome, errorCode, errorDetail,
+                    tokenCount, assistantChars, source, usagePayload, null);
         }
     }
 
@@ -216,7 +239,7 @@ public class ChatRunTerminalService {
 
         historyWriter.append(request.source().eventType(), request.source().source(), "system",
                 runId, sessionId, fromStatus, request.status(), request.terminalOutcome(),
-                request.errorCode(), null);
+                request.errorCode(), budgetHistoryPayload(request.budgetDimension()));
         writeUsageEvent(run, request.usagePayload());
         if (parentLink != null && !parentLink.missing()) {
             settleWaitingLink(run);
@@ -312,6 +335,20 @@ public class ChatRunTerminalService {
         run.setWaitingToolCallId(null);
         chatRuns.save(run);
         logger.debug("[LIFECYCLE] service=cp event=run_waiting_link_settled runId={}", run.getId());
+    }
+
+    /**
+     * PLAN-0492 T2.2: the durable history payload carries the exhausted budget
+     * dimension (safe machine-readable value only); every other terminal path
+     * keeps {@code null} so the payload contract stays unchanged.
+     */
+    private static String budgetHistoryPayload(String budgetDimension) {
+        if (budgetDimension == null || budgetDimension.isBlank()) {
+            return null;
+        }
+        ObjectNode payload = SHARED_OBJECT_MAPPER.createObjectNode();
+        payload.put("budgetDimension", budgetDimension);
+        return payload.toString();
     }
 
     /**

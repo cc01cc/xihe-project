@@ -155,6 +155,83 @@ const domainSchemas: Record<string, DomainField[]> = {
             max: 30,
         },
         { key: "toolOutputLimitBytes", label: t("settings.fieldToolOutputLimit"), type: "number" },
+        // PLAN-0492: ChatRun 累计预算（值键 user/workspace 可写；*Ceiling 仅 instance
+        // 层可写，0 = 不钳制；runMaxTokens 当前观测模式）。
+        { key: "runMaxTurns", label: t("settings.fieldRunMaxTurns"), type: "number" },
+        {
+            key: "runMaxElapsedSeconds",
+            label: t("settings.fieldRunMaxElapsedSeconds"),
+            type: "number",
+        },
+        { key: "runMaxTokens", label: t("settings.fieldRunMaxTokens"), type: "number" },
+        {
+            key: "runMaxTurnsCeiling",
+            label: t("settings.fieldRunMaxTurnsCeiling"),
+            type: "number",
+            instanceOnly: true,
+        },
+        {
+            key: "runMaxElapsedSecondsCeiling",
+            label: t("settings.fieldRunMaxElapsedSecondsCeiling"),
+            type: "number",
+            instanceOnly: true,
+        },
+        {
+            key: "runMaxTokensCeiling",
+            label: t("settings.fieldRunMaxTokensCeiling"),
+            type: "number",
+            instanceOnly: true,
+        },
+        // PLAN-0493: 语义重复/无进展检测阈值与窗口（值键 user/workspace 可写；
+        // escalate/window 的 *Ceiling 仅 instance 层可写，0 = 不钳制）。
+        { key: "loopRepeatWarn", label: t("settings.fieldLoopRepeatWarn"), type: "number" },
+        { key: "loopRepeatRefuse", label: t("settings.fieldLoopRepeatRefuse"), type: "number" },
+        {
+            key: "loopRepeatEscalate",
+            label: t("settings.fieldLoopRepeatEscalate"),
+            type: "number",
+        },
+        { key: "loopErrorRunWarn", label: t("settings.fieldLoopErrorRunWarn"), type: "number" },
+        {
+            key: "loopErrorRunEscalate",
+            label: t("settings.fieldLoopErrorRunEscalate"),
+            type: "number",
+        },
+        {
+            key: "loopStaleResultWarn",
+            label: t("settings.fieldLoopStaleResultWarn"),
+            type: "number",
+        },
+        {
+            key: "loopStaleResultEscalate",
+            label: t("settings.fieldLoopStaleResultEscalate"),
+            type: "number",
+        },
+        { key: "loopWindowSize", label: t("settings.fieldLoopWindowSize"), type: "number" },
+        {
+            key: "loopRepeatEscalateCeiling",
+            label: t("settings.fieldLoopRepeatEscalateCeiling"),
+            type: "number",
+            instanceOnly: true,
+        },
+        {
+            key: "loopErrorRunEscalateCeiling",
+            label: t("settings.fieldLoopErrorRunEscalateCeiling"),
+            type: "number",
+            instanceOnly: true,
+        },
+        {
+            key: "loopStaleResultEscalateCeiling",
+            label: t("settings.fieldLoopStaleResultEscalateCeiling"),
+            type: "number",
+            instanceOnly: true,
+        },
+        {
+            key: "loopWindowSizeCeiling",
+            label: t("settings.fieldLoopWindowSizeCeiling"),
+            type: "number",
+            instanceOnly: true,
+        },
     ],
     "agent-profile": [{ key: "userName", label: t("settings.fieldUserName"), type: "text" }],
     "user-preference": [

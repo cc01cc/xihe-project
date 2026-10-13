@@ -349,7 +349,7 @@ public class ChatController {
             chatRunTerminalService.terminalize(new ChatRunTerminalService.TerminalRequest(
                     runId, List.of("accepted"), "ambiguous", "ambiguous", "FOLLOW_UP_DISPATCH_FAILED",
                     "The admitted Follow-up could not be dispatched; it will not be replayed",
-                    0, 0, ChatRunTerminalService.TerminalSource.RECONCILIATION, List.of()));
+                    0, 0, ChatRunTerminalService.TerminalSource.RECONCILIATION, List.of(), null));
         } catch (RuntimeException e) {
             logger.error("[LIFECYCLE] service=cp event=follow_up_dispatch_failure_terminalization_failed sessionId={} runId={} failureType={}",
                     sessionId, runId, e.getClass().getSimpleName(), e);
@@ -1027,16 +1027,22 @@ public class ChatController {
                 String status = "success".equals(outcome)
                         ? "succeeded"
                         : "partial".equals(outcome) ? "partial" : "ambiguous".equals(outcome) ? "ambiguous" : "failed";
+                // PLAN-0492 T2.2: a budget-exhausted run converges to `failed`
+                // (via the relay outcome) with the exhausted dimension written as
+                // the durable terminal fact (history payload + error detail).
+                String exhaustedDimension = "RUN_BUDGET_EXHAUSTED".equals(relayResult.errorCode())
+                        ? relayResult.budgetDimension() : null;
                 boolean terminalCommitted = transitionRun(
                         runId,
                         List.of("running", "streaming", "awaiting_approval"),
                         status,
                         outcome,
                         relayResult.errorCode(),
-                        null,
+                        exhaustedDimension == null ? null : "budgetDimension=" + exhaustedDimension,
                         relayResult.tokenCount(),
                         assistantContent == null ? 0 : assistantContent.length(),
-                        relayResult.usageEnvelope());
+                        relayResult.usageEnvelope(),
+                        exhaustedDimension);
                 // PLAN-0352 V1: the session SSE must observe the terminal error/done
                 // BEFORE the connection closes. Two real orders exist around session
                 // delete (claim `cancelling` → settleCancellation durable `cancelled`):
@@ -1295,9 +1301,10 @@ public class ChatController {
      */
     private boolean transitionRun(String runId, List<String> expectedStatuses, String status,
                                   String outcome, String errorCode, String errorDetail,
-                                  int tokenCount, int assistantChars, Object usagePayload) {
+                                  int tokenCount, int assistantChars, Object usagePayload,
+                                  String budgetDimension) {
         return chatRunLifecycleService.transition(runId, expectedStatuses, status, outcome,
-                errorCode, errorDetail, tokenCount, assistantChars, usagePayload);
+                errorCode, errorDetail, tokenCount, assistantChars, usagePayload, budgetDimension);
     }
 
     private String safeErrorCode(String code) {
@@ -1310,7 +1317,7 @@ public class ChatController {
                     "AGENT_CIRCUIT_OPEN", "AGENT_STREAM_FAILED", "SSE_SUBSCRIPTION_REQUIRED", "CHAT_IN_PROGRESS",
                     "IDEMPOTENCY_KEY_CONFLICT", "APPROVAL_REJECTED", "APPROVAL_EXPIRED",
                     "APPROVAL_EXECUTOR_UNSUPPORTED", "APPROVAL_DECISION_CONFLICT", "AGENT_EVENT_ID_MISMATCH",
-                    "CONTEXT_OVERFLOW" -> code;
+                    "CONTEXT_OVERFLOW", "RUN_BUDGET_EXHAUSTED", "RUN_NO_PROGRESS" -> code;
             // PLAN-0416 V12/V6: these are Agent-side fail-closed rejections raised
             // BEFORE any provider dispatch. Their whole point is a stable,
             // actionable code on the wire; collapsing them to AGENT_UNAVAILABLE
@@ -1340,6 +1347,11 @@ public class ChatController {
             case "AGENT_EVENT_ID_MISMATCH" -> "Agent event does not match the active chat run";
             // PLAN-0341 Q2 freeze (2026-09-17): second-overflow terminal copy.
             case "CONTEXT_OVERFLOW" -> "上下文超限，已压缩并重试一次，仍超出限制";
+            // PLAN-0492: the exhausted dimension is carried in errorDetail.
+            case "RUN_BUDGET_EXHAUSTED" -> "本次运行已达到累计预算上限";
+            // PLAN-0493: tier-2 no-progress terminal (signal detail stays in
+            // errorDetail only — window internals never cross the wire).
+            case "RUN_NO_PROGRESS" -> "检测到重复或无进展动作，运行已停止";
             // PLAN-0416 V12/V6: Agent-side fail-closed reasons (raised before any
             // provider dispatch), kept distinct so the run terminal stays actionable.
             case "RAG_PROFILE_UNAVAILABLE" -> "The Run embedding profile is unavailable";
@@ -1523,6 +1535,7 @@ public class ChatController {
         boolean awaitingApprovalSeen = false;
         String outcome = "success";
         String errorCode = null;
+        String budgetDimension = null;
         int eventIndex = 0;
         var runState = com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder.RunState.create();
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(agentStream, StandardCharsets.UTF_8))) {
@@ -1572,6 +1585,7 @@ public class ChatController {
                     if ("error".equals(eventName)) {
                         Map<?, ?> errorPayload = asMap(parsePayload(eventName, data.toString()));
                         errorCode = stringValue(errorPayload, "code");
+                        budgetDimension = budgetDimensionPreserving(errorPayload, budgetDimension);
                         String eventOutcome = stringValue(errorPayload, "outcome");
                         outcome = "ambiguous".equals(eventOutcome)
                                 ? "ambiguous" : assistantContent.isEmpty() ? "error" : "partial";
@@ -1588,6 +1602,9 @@ public class ChatController {
                         String doneErrorCode = stringValue(donePayload, "errorCode");
                         if (doneErrorCode != null) {
                             errorCode = doneErrorCode;
+                            // The Agent's `done` mirrors the error code but does not
+                            // repeat the dimension — keep the captured value.
+                            budgetDimension = budgetDimensionPreserving(donePayload, budgetDimension);
                             String doneOutcomeValue = stringValue(donePayload, "outcome");
                             outcome = "ambiguous".equals(doneOutcomeValue)
                                     ? "ambiguous" : assistantContent.isEmpty() ? "error" : "partial";
@@ -1638,6 +1655,7 @@ public class ChatController {
             if ("error".equals(eventName)) {
                 Map<?, ?> errorPayload = asMap(parsePayload(eventName, data.toString()));
                 errorCode = stringValue(errorPayload, "code");
+                budgetDimension = budgetDimension(errorPayload);
                 String eventOutcome = stringValue(errorPayload, "outcome");
                 outcome = "ambiguous".equals(eventOutcome)
                         ? "ambiguous" : assistantContent.isEmpty() ? "error" : "partial";
@@ -1647,6 +1665,7 @@ public class ChatController {
                 String doneErrorCode = stringValue(donePayload, "errorCode");
                 if (doneErrorCode != null) {
                     errorCode = doneErrorCode;
+                    budgetDimension = budgetDimension(donePayload);
                     String doneOutcomeValue = stringValue(donePayload, "outcome");
                     outcome = "ambiguous".equals(doneOutcomeValue)
                             ? "ambiguous" : assistantContent.isEmpty() ? "error" : "partial";
@@ -1686,7 +1705,7 @@ public class ChatController {
                 ? intValue(usageData.get("totalTokens"), eventCounts.getOrDefault("token", 0))
                 : eventCounts.getOrDefault("token", 0);
         return new StreamRelayResult(
-                assistantContent.toString(), outcome, errorCode,
+                assistantContent.toString(), outcome, errorCode, budgetDimension,
                 usageTotal, List.copyOf(terminalEvents), runState, usageEnvelope);
     }
 
@@ -1745,10 +1764,34 @@ public class ChatController {
         return value instanceof String string && !string.isBlank() ? string : null;
     }
 
+    /**
+     * PLAN-0492 T2.2: the exhausted budget dimension from a RUN_BUDGET_EXHAUSTED
+     * error payload; absent/malformed payloads stay {@code null} so no other
+     * error path gains a payload fact.
+     */
+    private String budgetDimension(Map<?, ?> payload) {
+        if (!"RUN_BUDGET_EXHAUSTED".equals(stringValue(payload, "code"))) {
+            return null;
+        }
+        return stringValue(payload, "dimension");
+    }
+
+    /**
+     * The Agent's {@code done} mirrors the error code but carries no dimension;
+     * only an explicit dimension overwrites the value captured from the error
+     * event (error → done ordering in the same stream).
+     */
+    private String budgetDimensionPreserving(Map<?, ?> payload, String current) {
+        String captured = budgetDimension(payload);
+        return captured == null ? current : captured;
+    }
+
     private record StreamRelayResult(
             String assistantContent,
             String outcome,
             String errorCode,
+            /** PLAN-0492: exhausted run-budget dimension when errorCode=RUN_BUDGET_EXHAUSTED. */
+            String budgetDimension,
             int tokenCount,
             List<RelayedTerminalEvent> terminalEvents,
             com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder.RunState runState,

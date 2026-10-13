@@ -77,6 +77,11 @@ async function sendCompletion(response, provider, requestBody) {
         return;
     }
 
+    if (mode === "repeat") {
+        sendRepeatCompletion(response, requestBody);
+        return;
+    }
+
     if (mode === "job") {
         sendJobCompletion(response, requestBody);
         return;
@@ -217,6 +222,62 @@ function sendWriteFileCompletion(response, requestBody) {
     for (const content of chunks) {
         response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
     }
+    response.end("data: [DONE]\n\n");
+}
+
+// PLAN-0493 T3.2/T4.1 (mode: repeat): emits the SAME glob tool call every turn
+// so the observation window deterministically walks both tiers with one
+// signature — 2nd identical attempt warns, 3rd/4th are refused without
+// execution, 5th escalates to RUN_NO_PROGRESS. The attempt counter derives
+// from prior tool messages (executed results and refusals both return as tool
+// messages); a safety stop at 25 surfaces a broken detector as a detectable
+// spec failure instead of an endless loop.
+function sendRepeatCompletion(response, requestBody) {
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
+    const attempts = messages.filter((message) => message.role === "tool").length;
+    const lastTool = [...messages].reverse().find((message) => message.role === "tool");
+    if (lastTool) {
+        const text =
+            typeof lastTool.content === "string"
+                ? lastTool.content
+                : JSON.stringify(lastTool.content);
+        console.log(
+            `[fake-llm][repeat] attempt=${attempts} lastToolResult=${String(text).slice(0, 400)}`,
+        );
+    }
+    if (attempts >= 25) {
+        response.write(
+            `data: ${JSON.stringify({ choices: [{ delta: { content: "repeat safety stop" } }] })}\n\n`,
+        );
+        response.end("data: [DONE]\n\n");
+        return;
+    }
+    const toolCallDelta = {
+        choices: [
+            {
+                delta: {
+                    tool_calls: [
+                        {
+                            index: 0,
+                            id: `call-repeat-e2e-${attempts + 1}`,
+                            type: "function",
+                            function: {
+                                name: "glob",
+                                arguments: JSON.stringify({
+                                    path: ".",
+                                    pattern: "loop-guard-never-matches-*",
+                                }),
+                            },
+                        },
+                    ],
+                },
+                finish_reason: null,
+            },
+        ],
+    };
+    const finishDelta = { choices: [{ delta: {}, finish_reason: "tool_calls" }] };
+    response.write(`data: ${JSON.stringify(toolCallDelta)}\n\n`);
+    response.write(`data: ${JSON.stringify(finishDelta)}\n\n`);
     response.end("data: [DONE]\n\n");
 }
 

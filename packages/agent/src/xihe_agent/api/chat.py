@@ -30,7 +30,9 @@ from xihe_agent.app_state import (
     _model_window_tokens,
     _normalize_run_overrides,
     _normalize_tool_timeouts,
+    _resolve_loop_guard,
     _resolve_policy_for_model,
+    _resolve_run_budget,
     _validate_run_overrides,
     approval_tool,
     config_client,
@@ -381,12 +383,22 @@ async def chat(request: Request):
                 messages = [TextMessage(role="human", content=content)]
                 has_template = True
 
+                loop_thresholds, loop_exempt_tools = _resolve_loop_guard(
+                    user_overrides, workspace_overrides
+                )
                 config = RunnerConfig(
                     model=model_override or request_config.model,
                     system_prompt="" if has_template else instructions,
                     tools=all_tools,
                     context=context,
                     cancel_event=cancel_event,
+                    # PLAN-0492 T2.1: CP-resolved cumulative budget (ceiling-clamped
+                    # observation-only when 0); the runner only enforces.
+                    budget=_resolve_run_budget(user_overrides, workspace_overrides),
+                    # PLAN-0493 T2.1/T2.2: CP-resolved loop/no-progress guard
+                    # (thresholds ceiling-clamped; exempt = builtin ∪ configured).
+                    loop=loop_thresholds,
+                    loop_exempt_tools=loop_exempt_tools,
                     prune_window_chars=policy.prune_window_chars,
                     branch_id=context.branch_id,
                     template_context=has_template,
@@ -431,18 +443,20 @@ async def chat(request: Request):
                         )
                         if not error_sent:
                             error_sent = True
-                            yield render_sse(
-                                "error",
-                                correlated_data(
-                                    {
-                                        "code": terminal_error_code,
-                                        "detail": error_detail,
-                                        "retryable": retryable,
-                                        "outcome": terminal_outcome,
-                                        "type": "error",
-                                    }
-                                ),
-                            )
+                            error_payload = {
+                                "code": terminal_error_code,
+                                "detail": error_detail,
+                                "retryable": retryable,
+                                "outcome": terminal_outcome,
+                                "type": "error",
+                            }
+                            # PLAN-0492 T2.2: the exhausted run-budget dimension
+                            # must survive the SSE mapping — the CP relay records
+                            # it as the durable terminal fact (`budgetDimension`).
+                            exhausted_dimension = event.data.get("dimension")
+                            if isinstance(exhausted_dimension, str) and exhausted_dimension:
+                                error_payload["dimension"] = exhausted_dimension
+                            yield render_sse("error", correlated_data(error_payload))
                     elif event.type == "done":
                         if terminal_sent:
                             continue

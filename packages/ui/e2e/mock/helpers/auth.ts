@@ -14,6 +14,9 @@ export interface MockSSEStream {
         code: string;
         detail: string;
         retryable?: boolean;
+        /** PLAN-0492: exhausted run-budget dimension relayed by the CP. */
+        dimension?: "turns" | "elapsed" | "tokens";
+        outcome?: string;
     };
     delayMs?: number;
     holdOpen?: boolean;
@@ -389,20 +392,18 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
         modelName: null,
         archived: false,
     }));
+    const createRootBranch = (createdAt: string): MockBranch[] => [
+        {
+            branchId: MOCK_ROOT_BRANCH_ID,
+            parentBranchId: null,
+            forkPointMessageId: null,
+            forkPointRunId: null,
+            createdAt,
+        },
+    ];
     const messages = options.messages ?? {};
     const branches = new Map<string, MockBranch[]>(
-        sessions.map((session) => [
-            session.id,
-            [
-                {
-                    branchId: MOCK_ROOT_BRANCH_ID,
-                    parentBranchId: null,
-                    forkPointMessageId: null,
-                    forkPointRunId: null,
-                    createdAt: now,
-                },
-            ],
-        ]),
+        sessions.map((session) => [session.id, createRootBranch(now)]),
     );
 
     await page.route("**/api/v1/sessions", async (route) => {
@@ -431,15 +432,7 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
                 archived: false,
             };
             sessions.unshift(created);
-            branches.set(created.id, [
-                {
-                    branchId: MOCK_ROOT_BRANCH_ID,
-                    parentBranchId: null,
-                    forkPointMessageId: null,
-                    forkPointRunId: null,
-                    createdAt: created.createdAt,
-                },
-            ]);
+            branches.set(created.id, createRootBranch(created.createdAt));
             await route.fulfill({
                 status: 201,
                 contentType: "application/json",
@@ -468,10 +461,15 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
         }
         if (parts.at(-1) === "branches") {
             if (route.request().method() === "GET") {
+                // Sessions addressed directly by URL are not always declared in
+                // `options.sessions`; mirror the auth-level fallback so branch
+                // selection and sends do not dead-end on an empty list.
+                const items = branches.get(sessionId) ?? createRootBranch(now);
+                branches.set(sessionId, items);
                 await route.fulfill({
                     status: 200,
                     contentType: "application/json",
-                    body: JSON.stringify({ sessionId, items: branches.get(sessionId) ?? [] }),
+                    body: JSON.stringify({ sessionId, items }),
                 });
                 return;
             }
@@ -498,7 +496,7 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
                     parentBranchId: body.sourceBranchId,
                     forkPointMessageId: body.anchorMessageId,
                 };
-                const items = branches.get(sessionId) ?? [];
+                const items = branches.get(sessionId) ?? createRootBranch(now);
                 items.push({
                     branchId,
                     parentBranchId: body.sourceBranchId,

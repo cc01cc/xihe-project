@@ -144,7 +144,34 @@
     "systemToolTimeoutS": "30",
     // PLAN-0308（决策 #31②）：单次工具返回的字节上限。调用方（模型）只能往小调；
     // 超出部分会被截断并标注 "[truncated to N bytes]"（当前无 artifact 留存，截断即丢）。
-    "toolOutputLimitBytes": "4096"
+    "toolOutputLimitBytes": "4096",
+    // PLAN-0492：ChatRun 累计预算（轮数 / 累计耗时秒 / token；0 = 该维度不启用）。
+    // 值键在 user/workspace 层可写；*Ceiling 硬上限仅 instance 层可写（0 = 不钳制），
+    // 生效值 = ceiling > 0 ? min(值, ceiling) : 值；被钳制时记 run_budget_clamp 日志。
+    // token 默认值 2026-10-13 真实数据标定（p95=25535 / 15 runs，mimo-v2.5）：
+    // 38303 = p95×1.5，51070 = 2×p95（见 PLAN-0492 evidence/m0-token-calibration.md）。
+    "runMaxTurns": "25",
+    "runMaxElapsedSeconds": "600",
+    "runMaxTokens": "38303",
+    "runMaxTurnsCeiling": "100",
+    "runMaxElapsedSecondsCeiling": "3600",
+    "runMaxTokensCeiling": "51070",
+    // PLAN-0493：语义重复/无进展检测（观察窗口）阈值与窗口；escalate/window 的
+    // ceiling 仅 instance 层可写（0 = 不设上限）；loopExemptTools 只追加内置豁免
+    // 清单（轮询/探活类工具），拒绝通配符。
+    "loopRepeatWarn": "2",
+    "loopRepeatRefuse": "3",
+    "loopRepeatEscalate": "5",
+    "loopErrorRunWarn": "3",
+    "loopErrorRunEscalate": "5",
+    "loopStaleResultWarn": "2",
+    "loopStaleResultEscalate": "5",
+    "loopWindowSize": "20",
+    "loopRepeatEscalateCeiling": "10",
+    "loopErrorRunEscalateCeiling": "10",
+    "loopStaleResultEscalateCeiling": "10",
+    "loopWindowSizeCeiling": "50",
+    "loopExemptTools": []
   },
 
   // agent-profile — 用户展示名（instance 默认，user 可覆盖）

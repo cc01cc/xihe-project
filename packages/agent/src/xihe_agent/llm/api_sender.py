@@ -72,7 +72,13 @@ def _object(value: Any) -> dict[str, Any]:
     return value
 
 
-def _array(value: Any) -> list[Any]:
+def _array(value: Any, *, nullable: bool = False) -> list[Any]:
+    # openai-compat providers send explicit `"tool_calls": null` in chunks or
+    # messages without calls; a present null means "no calls", while every
+    # other non-list shape stays rejected (PLAN-0493 T0.2 diagnosis, approved
+    # minimal patch).
+    if value is None and nullable:
+        return []
     if not isinstance(value, list):
         raise ApiRequestError("LLM_PROVIDER_INVALID_RESPONSE", 502)
     return value
@@ -115,7 +121,7 @@ def parse_response(data: Any, api_type: ChatApiType) -> NativeResponse:
         content = message.get("content")
         if content is not None:
             result.text = _text(content)
-        for call in _array(message.get("tool_calls", [])):
+        for call in _array(message.get("tool_calls"), nullable=True):
             call = _object(call)
             function = _object(call.get("function"))
             if call.get("type") != "function":
@@ -228,21 +234,26 @@ class StreamParser:
         ):
             raise ApiRequestError("LLM_PROVIDER_ERROR", 502)
         if self.api_type.id == "openai-chat-completions":
+            # openai-compat providers emit explicit JSON nulls where the spec
+            # omits optional fields (`choices`, `role`, `content`, `tool_calls`,
+            # `function`, per-fragment `name`/`arguments`); a present null means
+            # "absent", while every other wrong type stays rejected
+            # (PLAN-0493 T0.2 approved minimal-patch class).
             if "usage" in data and data["usage"] is not None:
                 self.usage = _object(data["usage"])
-            choices = _array(data.get("choices"))
+            choices = _array(data.get("choices"), nullable=True)
             if not choices:
                 return "", ""
             if len(choices) != 1 or choices[0].get("index", 0) != 0:
                 raise ApiRequestError("LLM_PROVIDER_INVALID_RESPONSE", 502)
             choice = _object(choices[0])
-            delta = _object(choice.get("delta", {}))
-            if delta.get("role", "assistant") != "assistant":
+            delta = _object(choice.get("delta") or {})
+            if (delta.get("role") or "assistant") != "assistant":
                 raise ApiRequestError("LLM_PROVIDER_INVALID_RESPONSE", 502)
             text = delta.get("content") or ""
             _text(text)
             self.message["content"] += text
-            for call in _array(delta.get("tool_calls", [])):
+            for call in _array(delta.get("tool_calls"), nullable=True):
                 index = call.get("index")
                 if type(index) is not int:
                     raise ApiRequestError("LLM_PROVIDER_INVALID_RESPONSE", 502)
@@ -251,9 +262,9 @@ class StreamParser:
                 )
                 if call.get("id"):
                     target["id"] = call["id"]
-                function = _object(call.get("function", {}))
+                function = _object(call.get("function") or {})
                 for field in ("name", "arguments"):
-                    target["function"][field] += _text(function.get(field, ""))
+                    target["function"][field] += _text(function.get(field) or "")
             if choice.get("finish_reason"):
                 self.finish = _text(choice["finish_reason"])
             return text, ""

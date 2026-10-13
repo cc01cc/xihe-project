@@ -27,6 +27,19 @@ public class ChatRunLifecycleService {
     public boolean transition(String runId, List<String> expectedStatuses, String status,
                               String outcome, String errorCode, String errorDetail,
                               int tokenCount, int assistantChars, Object usagePayload) {
+        return transition(runId, expectedStatuses, status, outcome, errorCode, errorDetail,
+                tokenCount, assistantChars, usagePayload, null);
+    }
+
+    /**
+     * PLAN-0492 T2.2: {@code budgetDimension} carries the exhausted run-budget
+     * dimension into the terminal write (history payload + error detail);
+     * all other callers pass {@code null} through the 9-arg overload.
+     */
+    public boolean transition(String runId, List<String> expectedStatuses, String status,
+                              String outcome, String errorCode, String errorDetail,
+                              int tokenCount, int assistantChars, Object usagePayload,
+                              String budgetDimension) {
         if (runId == null || runId.isBlank()) {
             return false;
         }
@@ -34,7 +47,8 @@ public class ChatRunLifecycleService {
             ChatRunTerminalService.TerminalResult result = chatRunTerminalService.terminalize(
                     new ChatRunTerminalService.TerminalRequest(runId, expectedStatuses, status,
                             outcome, errorCode, errorDetail, tokenCount, assistantChars,
-                            ChatRunTerminalService.TerminalSource.STREAM, usagePayload));
+                            ChatRunTerminalService.TerminalSource.STREAM, usagePayload,
+                            budgetDimension));
             if (!result.committed()) {
                 logger.debug("[LIFECYCLE] service=cp event=chat_run_transition_ignored runId={} targetStatus={} outcome={}",
                         runId, status, result.outcome());

@@ -426,7 +426,7 @@ public class ChatRunCancellationService {
         ChatRunTerminalService.TerminalResult result = terminalService.terminalize(
                 new ChatRunTerminalService.TerminalRequest(runId, List.of("cancelling"),
                         "cancelled", "cancelled", null, null, run.getTokenCount(), run.getAssistantChars(),
-                        ChatRunTerminalService.TerminalSource.CANCELLATION, null));
+                        ChatRunTerminalService.TerminalSource.CANCELLATION, null, null));
         if (!result.committed()) {
             logger.warn("[LIFECYCLE] service=cp event=run_cancel_transition_ignored runId={} outcome={} status={}",
                     runId, result.outcome(), result.currentStatus());

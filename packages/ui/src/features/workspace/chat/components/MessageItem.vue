@@ -115,6 +115,28 @@ const canCreateBranch = computed(
         ),
 );
 
+// PLAN-0492 T3.1: a budget-exhausted run carries RUN_BUDGET_EXHAUSTED with the
+// exhausted dimension in errorDetail (`budgetDimension=<dim>`); surface a
+// localized reason plus the takeover hint (resume by sending in the input).
+const budgetExhaustedDimension = computed(() => {
+    if (props.message.errorCode !== "RUN_BUDGET_EXHAUSTED") return null;
+    return /(?:^|\s)budgetDimension=(\S+)/.exec(props.message.error ?? "")?.[1] ?? "";
+});
+const budgetExhaustedReason = computed(() => {
+    if (budgetExhaustedDimension.value === null) return null;
+    if (budgetExhaustedDimension.value === "turns") return t("chat.budgetExhaustedTurns");
+    if (budgetExhaustedDimension.value === "elapsed") return t("chat.budgetExhaustedElapsed");
+    if (budgetExhaustedDimension.value === "tokens") return t("chat.budgetExhaustedTokens");
+    return t("chat.budgetExhaustedTurns");
+});
+
+// PLAN-0493 T3.1: a no-progress run carries RUN_NO_PROGRESS (tier-2 terminal,
+// trigger fact = the code itself); surface a localized reason plus the same
+// takeover hint (resume by sending in the input / Follow-up Queue).
+const noProgressReason = computed(() =>
+    props.message.errorCode === "RUN_NO_PROGRESS" ? t("chat.noProgressReason") : null,
+);
+
 onUnmounted(() => {
     props.message.attachments?.forEach((attachment) => {
         if (attachment.url.startsWith("blob:")) {
@@ -208,14 +230,33 @@ onUnmounted(() => {
             </Bubble>
 
             <div
-                v-if="message.error"
+                v-if="message.error && message.role === 'assistant'"
                 class="mt-1.5 flex flex-wrap items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-2 text-xs text-destructive"
                 data-testid="message-error"
             >
-                <span
-                    >{{ message.errorCode ? `${message.errorCode}: ` : ""
-                    }}{{ message.error }}</span
-                >
+                <template v-if="budgetExhaustedReason">
+                    <span
+                        >{{ message.errorCode
+                        }}<span v-if="budgetExhaustedDimension">
+                            (budgetDimension={{ budgetExhaustedDimension }})</span
+                        >: {{ budgetExhaustedReason }}</span
+                    >
+                    <span data-testid="message-budget-exhausted-hint" class="text-muted-foreground">
+                        {{ t("chat.budgetExhaustedHint") }}
+                    </span>
+                </template>
+                <template v-else-if="noProgressReason">
+                    <span>{{ message.errorCode }}: {{ noProgressReason }}</span>
+                    <span data-testid="message-no-progress-hint" class="text-muted-foreground">
+                        {{ t("chat.budgetExhaustedHint") }}
+                    </span>
+                </template>
+                <template v-else>
+                    <span
+                        >{{ message.errorCode ? `${message.errorCode}: ` : ""
+                        }}{{ message.error }}</span
+                    >
+                </template>
                 <button
                     v-if="canRetry"
                     type="button"
@@ -223,7 +264,7 @@ onUnmounted(() => {
                     data-testid="message-retry-button"
                     @click="emit('retry', message.id)"
                 >
-                    Retry
+                    {{ t("chat.retry") }}
                 </button>
             </div>
 

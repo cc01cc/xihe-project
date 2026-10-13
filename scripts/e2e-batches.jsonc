@@ -76,6 +76,26 @@
       "llmMode": "success",
       "specs": ["e2e/real/config-run-effective.spec.ts"]
     },
+    "run-budget": {
+      "description": "PLAN-0492 run budget exhaustion surface: config -> run failed -> takeover entry",
+      "llmMode": "write_file",
+      "specs": ["e2e/real/run-budget-exhaustion.spec.ts"]
+    },
+    "run-budget-calibration": {
+      "description": "PLAN-0492 T0.3 token calibration over the real provider (requires XIHE_E2E_REAL_XIAOMI_KEY + XIHE_E2E_REAL_ROUTE=openai-compat; llmMode must be non-mock so the runner imports the real provider config)",
+      "llmMode": "success",
+      "specs": ["e2e/real/run-budget-calibration.spec.ts"]
+    },
+    "loop-observation": {
+      "description": "PLAN-0493 T0.2 raw repeat/no-progress observation over the real provider (same env gates as run-budget-calibration)",
+      "llmMode": "success",
+      "specs": ["e2e/real/loop-observation.spec.ts"]
+    },
+    "loop-guard": {
+      "description": "PLAN-0493 T3.2/T4.1 loop-guard stop over the scripted repeat fixture (fake LLM emits one identical glob call per turn)",
+      "llmMode": "repeat",
+      "specs": ["e2e/real/loop-guard.spec.ts"]
+    },
     "evidence": {
       "description": "visual/manual evidence artifacts — run last, not a regular gate",
       "llmMode": "mock",

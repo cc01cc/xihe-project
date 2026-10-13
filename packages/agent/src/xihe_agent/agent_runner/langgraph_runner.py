@@ -10,7 +10,6 @@ from typing import Any, Literal
 from uuid import uuid4
 
 import litellm
-from langchain.agents import create_agent as create_react_agent
 from langchain.agents.middleware import InputAgentState
 from langchain_core.messages import (
     AIMessage,
@@ -24,6 +23,7 @@ from loguru import logger
 
 from xihe_agent.adapters.approval_tool import APPROVAL_EVENT_SINK_KEY, ApprovalTerminalError
 from xihe_agent.adapters.sse_adapter import LangGraphEventAdapter
+from xihe_agent.agent_runner.graph_builder import build_react_graph
 from xihe_agent.agent_runner.tool_adapter import (
     EVENT_STORE_FAILURES_KEY,
     LCToolAdapter,
@@ -32,7 +32,8 @@ from xihe_agent.agent_runner.tool_adapter import (
     _run_correlation,
     bound_tool_preview,
 )
-from xihe_agent.interfaces.agent_runner import AgentEvent, AgentRunner, RunnerConfig
+from xihe_agent.context.loop_detection import LOOP_WINDOW_KEY, NO_PROGRESS_SIGNAL_KEY, LoopObservationWindow
+from xihe_agent.interfaces.agent_runner import AgentEvent, AgentRunner, RunBudget, RunnerConfig
 from xihe_agent.interfaces.context import AgentContext, bound_tool_arguments
 from xihe_agent.interfaces.event import Event
 from xihe_agent.interfaces.event_adapter import EventAdapter
@@ -232,6 +233,12 @@ class LangGraphRunner(AgentRunner):
             await approval_events.put(AgentEvent(type="approval_request", data=payload))
 
         context.metadata[APPROVAL_EVENT_SINK_KEY] = publish_approval
+        # PLAN-0493 T2.1/T2.2: per-Run observation window (CP-resolved thresholds
+        # and exempt set; tier-1 admission in the tool adapter, tier-2 returns
+        # through NO_PROGRESS_SIGNAL_KEY).
+        context.metadata[LOOP_WINDOW_KEY] = LoopObservationWindow(
+            config.loop, config.loop_exempt_tools
+        )
 
         model = self._model_factory(config.model)
         tools = [self._adapt_tool(t, context) for t in config.tools]
@@ -259,10 +266,10 @@ class LangGraphRunner(AgentRunner):
         langchain_messages: list[AnyMessage | dict[str, Any]] = [*system_messages]
         langchain_messages.extend(_to_langchain_messages(assembled))
 
-        agent = create_react_agent(
-            model,
-            tools=tools,
-        )
+        # PLAN-0492 T1.2: the chat runner builds its graph through
+        # `graph_builder` (the single owner of `create_react_agent`); no
+        # name/system_prompt is passed so graph behavior stays identical.
+        agent = build_react_graph(model, tools)
 
         inputs: InputAgentState = {"messages": langchain_messages}
         seen_tool_ids: set[str] = set()
@@ -271,8 +278,24 @@ class LangGraphRunner(AgentRunner):
         failed = False
         assistant_parts: list[str] = []
 
+        # PLAN-0492 T1.3: cumulative budget (CP-resolved; 0 = dimension off).
+        budget = config.budget or RunBudget()
+        budget_dimension = ""
+        llm_calls = 0
+        paused_seconds = 0.0
+        pause_started_at: datetime | None = None
+        budget_started_at = datetime.now(UTC)
+        # PLAN-0492 decision #18: keep our budget ahead of the framework's
+        # implicit super-step ceiling (default 25 super-steps ≈ 12 LLM calls),
+        # so exhaustion converges to a CP terminal instead of GraphRecursionError.
+        stream_config: dict[str, Any] = {}
+        if budget.max_turns > 0:
+            stream_config["recursion_limit"] = 2 * budget.max_turns + 4
+
         try:
-            raw_stream = agent.astream_events(inputs, version="v2").__aiter__()
+            if agent is None:
+                raise RuntimeError("failed to build the LangGraph agent graph")
+            raw_stream = agent.astream_events(inputs, version="v2", config=stream_config).__aiter__()
             # ensure_future accepts the Awaitable returned by __anext__ (typeshed
             # types it as Awaitable, not Coroutine; asyncio still schedules it).
             raw_task: asyncio.Future[Any] = asyncio.ensure_future(raw_stream.__anext__())
@@ -296,6 +319,17 @@ class LangGraphRunner(AgentRunner):
                         logger.info("LangGraph stream cancelled via cancel_event")
                         break
                     if approval_task in completed:
+                        # PLAN-0492 T1.3: the elapsed clock pauses while we wait
+                        # for a human (approval requests arrive through this
+                        # queue, not the raw event stream).
+                        pause_started_at = datetime.now(UTC)
+                        # PLAN-0493 T2.1: a human approval pause is an
+                        # intervention boundary — consecutive counters reset
+                        # (window history is kept), so an authorized/approved
+                        # silent retry never counts as a repeat (verify V3).
+                        window = context.metadata.get(LOOP_WINDOW_KEY)
+                        if isinstance(window, LoopObservationWindow):
+                            window.mark_boundary("approval")
                         yield approval_task.result()
                         approval_task = asyncio.create_task(approval_events.get())
                     if raw_task in completed:
@@ -308,7 +342,51 @@ class LangGraphRunner(AgentRunner):
                                 content = event.data.get("content")
                                 if isinstance(content, str):
                                     assistant_parts.append(content)
+                            # PLAN-0492 T1.3: count, then check the budget.
+                            # Approval/human waits pause the elapsed clock
+                            # (waiting for a person is not "running away").
+                            now = datetime.now(UTC)
+                            if pause_started_at is not None:
+                                # A raw event arrived → the human wait is over.
+                                paused_seconds += (now - pause_started_at).total_seconds()
+                                pause_started_at = None
+                            if event.type == "llm_usage":
+                                # 1 turn = 1 LLM call (PLAN-0492 decision #15). The
+                                # counter advances when the call's usage lands — not
+                                # on the turn's first token — so a max_turns check
+                                # never fires mid-turn and maxTokens sees the
+                                # finalized total instead of a pre-usage zero.
+                                llm_calls += 1
+                                budget_dimension = _exceeded_budget_dimension(
+                                    budget,
+                                    llm_calls=llm_calls,
+                                    total_tokens=usage.total_tokens,
+                                    elapsed_seconds=(now - budget_started_at).total_seconds() - paused_seconds,
+                                )
+                            elif event.type == "done":
+                                # The elapsed dimension can trip at the run's
+                                # natural end (no usage event needed).
+                                budget_dimension = _exceeded_budget_dimension(
+                                    budget,
+                                    llm_calls=llm_calls,
+                                    total_tokens=usage.total_tokens,
+                                    elapsed_seconds=(now - budget_started_at).total_seconds() - paused_seconds,
+                                )
                             yield event
+                        if budget_dimension:
+                            logger.info(
+                                "Run budget exhausted: dimension={} llmCalls={} tokens={}",
+                                budget_dimension,
+                                llm_calls,
+                                usage.total_tokens,
+                            )
+                            break
+                        if context.metadata.get(NO_PROGRESS_SIGNAL_KEY):
+                            # PLAN-0493 T2.1: tier-2 escalation from the
+                            # observation window — stop the stream; the finally
+                            # below converges RUN_NO_PROGRESS via the 0492
+                            # {stop, interrupt} error-event pipe (no new state).
+                            break
                         raw_task = asyncio.ensure_future(raw_stream.__anext__())
             finally:
                 for task in (raw_task, approval_task, cancel_wait_task):
@@ -329,7 +407,11 @@ class LangGraphRunner(AgentRunner):
             yield AgentEvent(type="error", data={"error": str(e), "code": e.code})
         except ApiRequestError as e:
             failed = True
-            logger.warning("API request failed code={}", e.code)
+            # opt(exception=True) attaches the `raise ... from` cause chain
+            # (classified ApiRequestError never includes provider body or
+            # credentials); the code alone cannot distinguish stream truncation
+            # from a pre-send failure (PLAN-0493 T0.2 diagnosis).
+            logger.opt(exception=True).warning("API request failed code={}", e.code)
             context.metadata.pop(EVENT_STORE_FAILURES_KEY, None)
             yield AgentEvent(type="error", data={"error": e.code, "code": e.terminal_code, "retryable": False})
         except litellm.exceptions.ContextWindowExceededError as e:
@@ -353,14 +435,21 @@ class LangGraphRunner(AgentRunner):
             yield AgentEvent(type="error", data={"error": str(e)})
         finally:
             context.metadata.pop(APPROVAL_EVENT_SINK_KEY, None)
+            context.metadata.pop(LOOP_WINDOW_KEY, None)
             usage.finish()
             # PLAN-294 M1 (decisions #2/#6): persist the assistant reply into
             # the context event store — the UI-facing messages table (CP side)
             # and the event-sourced projection must share the same history.
-            # Only successful, non-cancelled runs carry a durable reply.
+            # Only successful, non-cancelled runs carry a durable reply; a
+            # budget-exhausted run (PLAN-0492) or a no-progress run (PLAN-0493)
+            # is a failure and must not leave a durable reply that makes it
+            # look successful.
+            no_progress_signal = str(context.metadata.pop(NO_PROGRESS_SIGNAL_KEY, "") or "")
             if (
                 not cancelled
                 and not failed
+                and not budget_dimension
+                and not no_progress_signal
                 and (assistant_parts or getattr(model, "native_records", None))
                 and self._event_store is not None
             ):
@@ -395,6 +484,31 @@ class LangGraphRunner(AgentRunner):
                     # and break GeneratorExit cleanup).
                     logger.error("Failed to append assistant.responded event: {}", e, exc_info=True)
                     _record_event_store_failure(context, "assistant.responded", e)
+            if budget_dimension:
+                # PLAN-0492 I1: converge to a CP `failed` terminal carrying the
+                # exhausted dimension — never a silent stop or a local success.
+                yield AgentEvent(
+                    type="error",
+                    data={
+                        "error": f"Run budget exhausted ({budget_dimension})",
+                        "code": "RUN_BUDGET_EXHAUSTED",
+                        "dimension": budget_dimension,
+                        "retryable": False,
+                    },
+                )
+            elif no_progress_signal:
+                # PLAN-0493 I1: tier-2 converges through the same 0492 pipe —
+                # a CP `failed` terminal carrying the trigger fact only (the
+                # window internals and signatures never cross the wire).
+                yield AgentEvent(
+                    type="error",
+                    data={
+                        "error": f"No progress detected ({no_progress_signal})",
+                        "code": "RUN_NO_PROGRESS",
+                        "signal": no_progress_signal,
+                        "retryable": False,
+                    },
+                )
             if cancelled:
                 yield AgentEvent(
                     type="error",
@@ -554,6 +668,28 @@ class LangGraphRunner(AgentRunner):
                     seen_tool_ids.add(run_id)
             result.append(event)
         return result
+
+
+def _exceeded_budget_dimension(
+    budget: RunBudget,
+    *,
+    llm_calls: int,
+    total_tokens: int,
+    elapsed_seconds: float,
+) -> str:
+    """PLAN-0492 T1.3: first exhausted dimension name, or ``""`` when within budget.
+
+    Counting rules (decision #15): failures and retries count like any other
+    event; approval/human waits are already excluded from ``elapsed_seconds``
+    by the caller. A zero budget disables that dimension (observation-only).
+    """
+    if budget.max_turns > 0 and llm_calls >= budget.max_turns:
+        return "turns"
+    if budget.max_elapsed_seconds > 0 and elapsed_seconds >= budget.max_elapsed_seconds:
+        return "elapsed"
+    if budget.max_tokens > 0 and total_tokens >= budget.max_tokens:
+        return "tokens"
+    return ""
 
 
 def _render_env_block(epoch=None) -> str:
