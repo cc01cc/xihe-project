@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
+import path from "node:path";
 import {
     test,
     expect as playwrightExpect,
@@ -9,12 +11,18 @@ import {
 } from "@playwright/test";
 import { provisionWorkspaceAgentPrincipal } from "./helpers/agent-principal";
 import { generateE2EPassword } from "./helpers/password";
-import { ensureAgentWorkspaceBinding, waitForControlPlaneAgentReady } from "./helpers/journey";
+import {
+    ensureAgentWorkspaceBinding,
+    getRootBranchId,
+    waitForControlPlaneAgentReady,
+} from "./helpers/journey";
 
 // Chat is an explicitly deterministic wire fixture; embedding uses the actual
 // DashScope service and PostgreSQL. Neither is advertised as a real chat model.
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const MODEL = "tongyi-embedding-vision-flash-2026-03-06";
+const WIRE_CREDENTIAL = "fake-context-wire-credential";
+const BASELINE_TEXT = "Use only the Workspace tools provided by CP.";
 const expect = playwrightExpect.configure({ timeout: 30000 });
 type Auth = { accessToken: string; workspaceId: string };
 type Fixture = {
@@ -72,7 +80,7 @@ async function setup(request: APIRequestContext): Promise<Fixture> {
                 providerId: "custom-openai-compatible",
                 apiTypeId: "openai-chat-completions",
                 apiTypeVersion: 1,
-                apiKey: "fake-context-wire-credential",
+                apiKey: WIRE_CREDENTIAL,
                 connectionKey: `context-${randomUUID()}`,
                 label: "Context Wire",
                 scope: "USER",
@@ -116,6 +124,7 @@ async function publishAndOpen(
     request: APIRequestContext,
     fixture: Fixture,
     dataSlot: string,
+    principalId: string = fixture.principalId,
 ): Promise<string> {
     await page.addInitScript(({ accessToken, workspaceId }) => {
         localStorage.setItem("xihe-token", accessToken);
@@ -161,7 +170,7 @@ async function publishAndOpen(
         headers: fixture.headers,
         data: {
             title: name,
-            agentPrincipalId: fixture.principalId,
+            agentPrincipalId: principalId,
             modelProvider: "custom-openai-compatible",
             modelName: "context-wire-model",
             providerConnectionId: fixture.connectionId,
@@ -242,6 +251,54 @@ async function configureRealEmbedding(
         },
     });
     expect(saved.status()).toBe(200);
+}
+
+function psqlScalar(sql: string): number {
+    const container = process.env.XIHE_E2E_PG_CONTAINER;
+    const database = process.env.XIHE_E2E_PG_DATABASE;
+    const user = process.env.XIHE_E2E_PG_USER;
+    if (!container || !database || !user)
+        throw new Error(
+            "isolated PostgreSQL fixture metadata is unavailable; run through e2e-host",
+        );
+    const output = execFileSync(
+        process.platform === "win32" ? "docker.exe" : "docker",
+        [
+            "exec",
+            "-i",
+            container,
+            "psql",
+            "-X",
+            "-A",
+            "-t",
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-U",
+            user,
+            "-d",
+            database,
+        ],
+        { input: sql, encoding: "utf8", timeout: 20000, windowsHide: true },
+    );
+    const value = Number(output.trim());
+    if (!Number.isFinite(value)) throw new Error(`unexpected psql scalar output: ${output.trim()}`);
+    return value;
+}
+
+function runLogsDir(): string {
+    const runId = process.env.XIHE_E2E_RUN_ID;
+    if (!runId) throw new Error("XIHE_E2E_RUN_ID is required; run through e2e-host");
+    return path.resolve(process.cwd(), "../../.tmp/e2e-host", runId, "logs");
+}
+
+function readRunLog(name: string): string {
+    try {
+        return readFileSync(path.join(runLogsDir(), name), "utf8");
+    } catch (error) {
+        throw new Error(
+            `cannot read ${name} from the isolated run logs: ${error instanceof Error ? error.message : String(error)}`,
+        );
+    }
 }
 
 // API tracing can retain credential-bearing setup requests.
@@ -389,6 +446,175 @@ test.describe.serial("@host PLAN-0416 context reliability", () => {
             await expectPersistedRun(request, fixture, sessionId, "failed");
             expect(fixture.observed).toHaveLength(0);
             await page.screenshot({ path: test.info().outputPath("baseline-unauthorized.png") });
+        } finally {
+            await closeProvider(fixture.provider);
+        }
+    });
+
+    test("principal/session resolution and sensitive boundaries stay isolated across principals and workspaces", async ({
+        page,
+        request,
+    }) => {
+        const fixture = await setup(request);
+        try {
+            const firstSession = await publishAndOpen(page, request, fixture, "security-first");
+            await send(page, "first principal query");
+            await expect(page.getByText("context-wire-confirmed", { exact: true })).toBeVisible();
+            await expectPersistedRun(request, fixture, firstSession, "succeeded");
+            expect(fixture.observed).toHaveLength(1);
+            const firstWireBody = JSON.stringify(fixture.observed[0]);
+            expect(firstWireBody).toContain(BASELINE_TEXT);
+
+            // A second principal in the same Workspace carries its own frozen
+            // baseline snapshot; each Session must resolve only its principal.
+            const secondBaseline = `Second principal baseline ${randomUUID()}`;
+            const secondPrincipalId = await provisionWorkspaceAgentPrincipal(
+                request,
+                fixture.auth,
+                {
+                    name: "Context Reliability Second",
+                    systemPrompt: secondBaseline,
+                },
+            );
+
+            // A different principalId on an existing Session is rejected before
+            // any provider dispatch (the Session's principal is authoritative).
+            const rootBranchId = await getRootBranchId(request, firstSession, fixture.headers);
+            let mismatchStatus = 0;
+            let mismatchCode = "";
+            for (let attempt = 0; attempt < 10; attempt += 1) {
+                const probe = await request.post(`${CP_URL}/api/v1/chat`, {
+                    headers: fixture.headers,
+                    data: {
+                        sessionId: firstSession,
+                        branchId: rootBranchId,
+                        content: "mismatched principal probe",
+                        agentPrincipalId: secondPrincipalId,
+                    },
+                });
+                mismatchStatus = probe.status();
+                mismatchCode = ((await probe.json()) as { code?: string }).code ?? "";
+                if (mismatchCode !== "CHAT_IN_PROGRESS") break;
+                await new Promise((resolve) => setTimeout(resolve, 500));
+            }
+            expect(mismatchStatus).toBe(409);
+            expect(mismatchCode).toBe("SESSION_PRINCIPAL_MISMATCH");
+            expect(fixture.observed).toHaveLength(1);
+
+            // The second principal's Session resolves its own baseline only.
+            fixture.observed.length = 0;
+            const secondSession = await publishAndOpen(
+                page,
+                request,
+                fixture,
+                "security-second",
+                secondPrincipalId,
+            );
+            await send(page, "second principal query");
+            await expect(page.getByText("context-wire-confirmed", { exact: true })).toBeVisible();
+            await expectPersistedRun(request, fixture, secondSession, "succeeded");
+            expect(fixture.observed).toHaveLength(1);
+            const secondWireBody = JSON.stringify(fixture.observed[0]);
+            expect(secondWireBody).toContain(secondBaseline);
+            await page.screenshot({
+                path: test.info().outputPath("security-second-principal.png"),
+            });
+
+            // No cross-principal bleed and no credential material in the
+            // provider-visible prompts. Boolean checks keep secrets out of
+            // assertion failure messages.
+            expect(firstWireBody.includes(secondBaseline)).toBe(false);
+            expect(secondWireBody.includes(BASELINE_TEXT)).toBe(false);
+            expect(firstWireBody.includes(WIRE_CREDENTIAL)).toBe(false);
+            expect(secondWireBody.includes(WIRE_CREDENTIAL)).toBe(false);
+            const injectedEmbeddingKey = process.env.XIHE_E2E_REAL_DASHSCOPE_KEY;
+            if (injectedEmbeddingKey) {
+                expect(firstWireBody.includes(injectedEmbeddingKey)).toBe(false);
+                expect(secondWireBody.includes(injectedEmbeddingKey)).toBe(false);
+            }
+
+            // Cross-workspace access to the Session is denied without dispatch.
+            const otherRegistered = await request.post(`${CP_URL}/api/v1/auth/register`, {
+                data: {
+                    email: `context-foreign-${randomUUID()}@test.local`,
+                    password: generateE2EPassword(),
+                    name: "Context Foreign",
+                },
+            });
+            expect(otherRegistered.status()).toBe(201);
+            const otherAuth = (await otherRegistered.json()) as Auth;
+            const otherHeaders = {
+                Authorization: `Bearer ${otherAuth.accessToken}`,
+                "X-Workspace-Id": otherAuth.workspaceId,
+            };
+            const foreignRead = await request.get(`${CP_URL}/api/v1/sessions/${firstSession}`, {
+                headers: otherHeaders,
+            });
+            expect(foreignRead.status()).toBe(404);
+            expect(((await foreignRead.json()) as { code?: string }).code).toBe(
+                "SESSION_NOT_FOUND",
+            );
+            const foreignChat = await request.post(`${CP_URL}/api/v1/chat`, {
+                headers: otherHeaders,
+                data: { sessionId: firstSession, branchId: rootBranchId, content: "foreign probe" },
+            });
+            expect([404, 409]).toContain(foreignChat.status());
+            expect(["SESSION_NOT_FOUND", "SSE_SUBSCRIPTION_REQUIRED"]).toContain(
+                ((await foreignChat.json()) as { code?: string }).code,
+            );
+            const foreignSession = await request.post(`${CP_URL}/api/v1/sessions`, {
+                headers: otherHeaders,
+                data: { title: "Foreign principal probe", agentPrincipalId: secondPrincipalId },
+            });
+            expect(foreignSession.status()).toBe(403);
+            expect(((await foreignSession.json()) as { code?: string }).code).toBe("FORBIDDEN");
+            expect(fixture.observed).toHaveLength(1);
+
+            // Durable payload boundary: the credential never enters durable
+            // context payloads, while the fixture Sessions do own durable events.
+            expect(
+                psqlScalar(
+                    `SELECT count(*) FROM context_events WHERE payload::text LIKE '%${WIRE_CREDENTIAL}%'`,
+                ),
+            ).toBe(0);
+            expect(
+                psqlScalar(
+                    `SELECT count(*) FROM messages WHERE content LIKE '%${WIRE_CREDENTIAL}%'`,
+                ),
+            ).toBe(0);
+            expect(
+                psqlScalar(
+                    `SELECT count(*) FROM context_events WHERE session_id = '${firstSession}'`,
+                ),
+            ).toBeGreaterThan(0);
+            expect(
+                psqlScalar(
+                    `SELECT count(*) FROM context_events WHERE session_id = '${secondSession}'`,
+                ),
+            ).toBeGreaterThan(0);
+
+            // Log boundary: the fixed fake credential is absent while the audit
+            // trail and correlated requestIds are retained.
+            const cpLog = readRunLog("cp.log");
+            const agentLog = readRunLog("agent.log");
+            const auditLog = readRunLog("audit.log");
+            expect(cpLog.includes(WIRE_CREDENTIAL)).toBe(false);
+            expect(agentLog.includes(WIRE_CREDENTIAL)).toBe(false);
+            expect(auditLog.includes(WIRE_CREDENTIAL)).toBe(false);
+            if (injectedEmbeddingKey) {
+                expect(cpLog.includes(injectedEmbeddingKey)).toBe(false);
+                expect(agentLog.includes(injectedEmbeddingKey)).toBe(false);
+                expect(auditLog.includes(injectedEmbeddingKey)).toBe(false);
+            }
+            expect(auditLog).toContain(fixture.principalId);
+            expect(auditLog).toContain('"requestId"');
+            expect(cpLog).toContain(`sessionId=${firstSession}`);
+            const scanner = execFileSync(
+                process.execPath,
+                [path.resolve(process.cwd(), "../../scripts/scan-log-secrets.mjs"), runLogsDir()],
+                { encoding: "utf8", timeout: 30000, windowsHide: true },
+            );
+            expect(scanner).toContain("clean");
         } finally {
             await closeProvider(fixture.provider);
         }

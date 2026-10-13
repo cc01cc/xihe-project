@@ -5,8 +5,10 @@ import { CP_URL } from "./journey";
 
 type AgentAuth = { accessToken: string; workspaceId: string };
 type ToolAction = "read" | "write";
-type PrincipalOptions = { name: string; actions?: ToolAction[] };
+type PrincipalOptions = { name: string; actions?: ToolAction[]; systemPrompt?: string };
 type SessionOptions = { principalId: string; title: string };
+
+const DEFAULT_SYSTEM_PROMPT = "Use only the Workspace tools provided by CP.";
 
 function seedPrincipalManagementGrant(
     userId: string,
@@ -53,7 +55,7 @@ function seedPrincipalManagementGrant(
 export async function provisionWorkspaceAgentPrincipal(
     request: APIRequestContext,
     auth: AgentAuth,
-    { name, actions = ["read"] }: PrincipalOptions,
+    { name, actions = ["read"], systemPrompt = DEFAULT_SYSTEM_PROMPT }: PrincipalOptions,
 ): Promise<string> {
     const headers = {
         Authorization: `Bearer ${auth.accessToken}`,
@@ -78,7 +80,7 @@ export async function provisionWorkspaceAgentPrincipal(
                     id: templateId,
                     name,
                     description: "Isolated Agent principal fixture for host E2E",
-                    systemPrompt: "Use only the Workspace tools provided by CP.",
+                    systemPrompt,
                     toolMode: "workspace",
                     provider: "openai",
                     model: "fake-openai",
