@@ -49,6 +49,10 @@ class TextMessage:
     artifact_status: str = ""
     size_bytes: int | None = None
     error_code: str = ""
+    # PLAN-0416 T2.2 — origin context_events sequence (0 = unknown);
+    # prune tombstones target it so equal content in a different event
+    # stays independently addressable.
+    origin_sequence: int = 0
     # PLAN-0381 T1.1 — pairing/degradation markers (both sides)
     degraded: bool = False
     legacy_normalized: bool = False

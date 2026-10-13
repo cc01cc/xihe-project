@@ -151,6 +151,8 @@ def _snapshot_message(message: Message) -> dict[str, Any]:
     fields are emitted only when set (backward-compatible with old readers)."""
     data: dict[str, Any] = {"role": message.role, "content": message.content}
     if isinstance(message, TextMessage):
+        if message.origin_sequence:
+            data["sequence"] = message.origin_sequence
         if message.native_records is not None:
             import copy
 
@@ -228,6 +230,7 @@ def message_from_dict(raw: dict[str, Any]) -> TextMessage:
         artifact_status=str(raw.get("artifact_status", "") or ""),
         size_bytes=size_bytes if isinstance(size_bytes, int) and not isinstance(size_bytes, bool) else None,
         error_code=str(raw.get("error_code", "") or ""),
+        origin_sequence=int(raw.get("sequence", 0) or 0),
         degraded=bool(raw.get("degraded", False)),
         legacy_normalized=bool(raw.get("legacy_normalized", False)),
         tool_calls=tool_calls,

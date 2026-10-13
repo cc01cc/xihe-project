@@ -267,6 +267,140 @@ class ContextProjectionServiceTest extends AbstractH2Test {
         assertThat(foundPlaceholder).isTrue();
     }
 
+    @Test
+    void precisePruneBySequenceKeepsEqualContentInOtherEvents() {
+        // PLAN-0416 T2.2: the tombstone names the origin sequence, so an equal
+        // payload in a different event must survive independently.
+        String sessionId = "aaaaaaab-0000-0000-0000-000000000000";
+        String shared = "duplicated tool output";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.result", Map.of(
+                "result", shared,
+                "call_id", "call-a"
+        ));
+        var second = contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.result", Map.of(
+                "result", shared,
+                "call_id", "call-b"
+        ));
+
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "context.prune", Map.of(
+                "tombstones", java.util.List.of(Map.of(
+                        "sequence", second.getSequence(),
+                        "tool_call_id", "call-b",
+                        "content_hash", sha256HexForTest(shared),
+                        "size", shared.length(),
+                        "head", shared,
+                        "tail", "",
+                        "reason", "duplicate",
+                        "pruned", true
+                )),
+                "pruned_count", 1
+        ));
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+        var messages = ctx.get("messages");
+        int masked = 0;
+        int survived = 0;
+        for (var msg : messages) {
+            if (!"tool".equals(msg.path("role").asText())) {
+                continue;
+            }
+            if (msg.path("pruned").asBoolean(false)) {
+                masked++;
+                assertThat(msg.path("content").asText()).isEqualTo("[old tool result cleared]");
+            } else {
+                survived++;
+                assertThat(msg.path("content").asText()).isEqualTo(shared);
+            }
+        }
+        assertThat(masked).isEqualTo(1);
+        assertThat(survived).isEqualTo(1);
+    }
+
+    @Test
+    void precisePruneByToolCallIdTargetsOnlyThatCall() {
+        String sessionId = "aaaaaaac-0000-0000-0000-000000000000";
+        String shared = "same content twice";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.result", Map.of(
+                "result", shared,
+                "call_id", "call-first"
+        ));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.result", Map.of(
+                "result", shared,
+                "call_id", "call-second"
+        ));
+
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "context.prune", Map.of(
+                "tombstones", java.util.List.of(Map.of(
+                        "tool_call_id", "call-first",
+                        "content_hash", sha256HexForTest(shared),
+                        "size", shared.length(),
+                        "head", shared,
+                        "tail", "",
+                        "reason", "duplicate",
+                        "pruned", true
+                )),
+                "pruned_count", 1
+        ));
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+        var messages = ctx.get("messages");
+        for (var msg : messages) {
+            if (!"tool".equals(msg.path("role").asText())) {
+                continue;
+            }
+            if ("call-first".equals(msg.path("tool_call_id").asText())) {
+                assertThat(msg.path("pruned").asBoolean(false)).isTrue();
+            }
+            if ("call-second".equals(msg.path("tool_call_id").asText())) {
+                assertThat(msg.path("pruned").asBoolean(false)).isFalse();
+                assertThat(msg.path("content").asText()).isEqualTo(shared);
+            }
+        }
+    }
+
+    @Test
+    void legacyHashOnlyTombstoneStillReplays() {
+        // Pre-0416 tombstones carry only content_hash; replay compatibility must
+        // keep masking the matching result.
+        String sessionId = "aaaaaaad-0000-0000-0000-000000000000";
+        String content = "legacy prune target";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.result", Map.of(
+                "result", content
+        ));
+
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "context.prune", Map.of(
+                "tombstones", java.util.List.of(Map.of(
+                        "content_hash", sha256HexForTest(content),
+                        "size", content.length(),
+                        "head", content,
+                        "tail", "",
+                        "reason", "oversized",
+                        "pruned", true
+                )),
+                "pruned_count", 1
+        ));
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+        boolean masked = false;
+        for (var msg : ctx.get("messages")) {
+            if ("tool".equals(msg.path("role").asText())
+                    && msg.path("pruned").asBoolean(false)) {
+                masked = true;
+            }
+        }
+        assertThat(masked).isTrue();
+    }
+
+    private static String sha256HexForTest(String value) {
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] h = digest.digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(h);
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     // ------------------------------------------------------------------
     // PLAN-0381 M1 (contract: PLAN-0381/evidence/m1-contract.md): tool
     // history projection — assistant declarations pair by call id, shape-
@@ -558,11 +692,12 @@ class ContextProjectionServiceTest extends AbstractH2Test {
         assertThat(messages.get(1).path("status").asText()).isEqualTo("completed");
 
         // 注入防护：消息顶层键 ⊆ 白名单（operation_id/itemId/requestId/source 等
-        // ledger 字段一旦出现即为跨机制注入）。
+        // ledger 字段一旦出现即为跨机制注入）。PLAN-0416 T2.2 增加投影自有的
+        // sequence（事件来源序号，供精确 prune 定位），非 ledger 字段。
         java.util.Set<String> allowed = java.util.Set.of(
                 "role", "content", "tool_calls", "tool_call_id", "tool_name", "status",
                 "truncated", "artifact_ref", "size_bytes", "error_code", "degraded",
-                "legacy_normalized", "pruned");
+                "legacy_normalized", "pruned", "sequence");
         for (JsonNode message : messages) {
             var fieldNames = message.fieldNames();
             while (fieldNames.hasNext()) {
