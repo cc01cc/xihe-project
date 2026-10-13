@@ -68,8 +68,12 @@ class AgentPrincipalMigrationTest {
                     "SELECT created_by_user_id::text FROM agent_principals WHERE id = '" + principalId + "'::uuid"));
             assertNull(scalarString(connection,
                     "SELECT template_id FROM agent_principals WHERE id = '" + principalId + "'::uuid"));
-            assertNull(scalarString(connection,
-                    "SELECT template_snapshot::text FROM agent_principals WHERE id = '" + principalId + "'::uuid"));
+            // V42 leaves the snapshot NULL; V62 (PLAN-0416 T3.1/D1) then backfills the
+            // CP-owned default baseline, without which the run fails BASELINE_UNAUTHORIZED.
+            assertEquals(1, scalarInt(connection,
+                    "SELECT count(*) FROM agent_principals WHERE id = '" + principalId + "'::uuid "
+                            + "AND btrim(coalesce(template_snapshot ->> 'systemPrompt', '')) <> ''"),
+                    "V62 must give a system-backfilled principal a default baseline");
             assertEquals(1, scalarInt(connection,
                     "SELECT count(*) FROM workspace_agents WHERE principal_id = '" + principalId + "'::uuid "
                             + "AND workspace_id = '" + fixture.workspaceId() + "'::uuid"));

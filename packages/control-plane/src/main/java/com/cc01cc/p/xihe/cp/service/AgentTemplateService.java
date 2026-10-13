@@ -41,6 +41,18 @@ public class AgentTemplateService {
     private static final Logger logger = LoggerFactory.getLogger(AgentTemplateService.class);
     private static final String DOMAIN = "agent-templates";
 
+    /**
+     * PLAN-0416 T3.1/D1: the CP-owned default baseline for a principal created
+     * without a template. The Agent keeps no process-level fallback
+     * ({@code AGENT_INSTRUCTIONS} was removed), and the browser contract strips
+     * {@code systemPrompt} to prove fail-closed, so a default principal with no
+     * baseline would make every chat fail {@code BASELINE_UNAUTHORIZED}.
+     */
+    private static final String DEFAULT_SYSTEM_PROMPT =
+            "You are xihe Agent. Answer in Chinese by default. Use the provided tools whenever "
+                    + "the user asks about workspace files, directories, or commands, then answer "
+                    + "with the tool results.";
+
     private final ConfigService configService;
     private final ConfigDomainSchema schemaValidator;
     private final UserRepository userRepository;
@@ -519,6 +531,7 @@ public class AgentTemplateService {
         snapshot.putNull("templateName");
         snapshot.putNull("roleId");
         snapshot.putNull("roleName");
+        snapshot.put("systemPrompt", DEFAULT_SYSTEM_PROMPT);
         snapshot.set("permissions", toJson(userPermissions));
         return snapshot;
     }
