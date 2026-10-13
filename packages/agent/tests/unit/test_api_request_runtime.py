@@ -341,6 +341,8 @@ def snapshot_request(type_id):
         "connectionRevision": 2,
         "credentialLease": "fixture-only",
         "toolMode": "none",
+        # PLAN-0416 T3.1: instructions are CP-owned; the Agent has no fallback.
+        "instructions": "Use the CP-selected instructions only.",
         "contextTemplateSnapshot": {
             "layer": "instance",
             "templateId": template_id,
@@ -439,6 +441,10 @@ async def test_chat_route_uses_product_model_and_safe_terminal(monkeypatch, type
             "CONTEXT_BUILD_FAILED",
         ),
         (lambda data: data["contextTemplateSnapshot"].update(apiTypeVersion=2), "PROVIDER_API_TYPE_UNSUPPORTED"),
+        # PLAN-0416 T3.1: instructions are CP-owned; no process fallback.
+        (lambda data: data.pop("instructions"), "BASELINE_UNAUTHORIZED"),
+        (lambda data: data.update(instructions="   "), "BASELINE_UNAUTHORIZED"),
+        (lambda data: data.update(instructions=42), "BASELINE_UNAUTHORIZED"),
     ],
 )
 async def test_chat_fail_closed_before_lease(monkeypatch, mutate, code):

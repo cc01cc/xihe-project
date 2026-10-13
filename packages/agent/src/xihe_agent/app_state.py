@@ -51,7 +51,6 @@ __all__ = [
     "PG_DSN",
     "AGENT_HOST",
     "AGENT_PORT",
-    "AGENT_INSTRUCTIONS",
     "AGENT_USER_NAME",
     "USE_REGISTRY",
     "USE_SUPERVISOR",
@@ -224,12 +223,6 @@ _refresh_embedding_config()
 
 _token_counter = TokenCounter()
 
-AGENT_INSTRUCTIONS = (
-    config_client.get("agent-runtime", "instructions")
-    or "You are xihe Agent. Answer in Chinese by default. "
-    "Use the provided tools whenever the user asks about workspace files, directories, "
-    "or commands, then answer with the tool results."
-)
 AGENT_USER_NAME = config_client.get("agent-profile", "userName") or "User"
 USE_SUPERVISOR = config_client.get_bool("agent-runtime", "useSupervisor")
 USE_REGISTRY = config_client.get_bool("agent-runtime", "useRegistry")
@@ -445,12 +438,14 @@ def _classify_llm_exception(error: Exception) -> tuple[str, str, bool]:
 
 
 async def _enrich_with_rag_context(content: str, instructions: str) -> str:
-    """Search RAG knowledge base and append relevant context to instructions.
+    """Chat-time RAG handoff (PLAN-0485/0416 boundary).
 
-    PLAN-0485/0416 boundary: Chat-time RAG query uses the per-Run
-    embeddingProfile + embeddingCredentialLease that CP attaches to the
-    internal chat request; without them there is no profile to partition by
-    and enrichment is skipped rather than falling back to a global adapter.
+    The Agent must not fall back to a global adapter: without a per-Run
+    embeddingProfile + embeddingCredentialLease from the CP internal chat
+    request there is no profile to partition by, so enrichment is skipped.
+    PLAN-0416 T3.1: retrieved context must never fill the authority slot -
+    returned instructions are the CP-owned baseline, passed through unchanged;
+    RAG context belongs in its own ``xh.rag_context`` slot (PLAN-0416 M1).
     """
     if not embedding_enabled:
         return instructions

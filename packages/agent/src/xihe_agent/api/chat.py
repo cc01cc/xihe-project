@@ -19,7 +19,6 @@ from xihe_agent.agent_runner import LangGraphRunner
 from xihe_agent.agent_runner.langgraph_runner import prune_history_tool_results
 from xihe_agent.api.shared import problem_details, verify_api_token
 from xihe_agent.app_state import (
-    AGENT_INSTRUCTIONS,
     AGENT_USER_NAME,
     USE_SUPERVISOR,
     _classify_llm_exception,
@@ -113,8 +112,26 @@ async def chat(request: Request):
     model_override: str | None = data.get("model")
     provider_override: str | None = data.get("provider")
     tool_mode: str = data.get("toolMode", "none")
-    safe_agent_instructions: str = data.get("instructions", "")
-    instructions: str = safe_agent_instructions or AGENT_INSTRUCTIONS
+    # PLAN-0416 T3.1: instructions are CP-owned and arrive only via the chat
+    # request (resolved from the AgentPrincipal). The Agent keeps no
+    # process-level AGENT_INSTRUCTIONS fallback; an absent/blank baseline fails
+    # closed before any provider dispatch. Summary/RAG/tool/file data must never
+    # fill this authority slot - the check runs before RAG enrichment so
+    # retrieved context cannot stand in for the CP-owned baseline.
+    raw_instructions = data.get("instructions", "")
+    instructions: str = raw_instructions if isinstance(raw_instructions, str) else ""
+    if not instructions.strip():
+        logger.warning(
+            "Chat rejected requestId={} runId={} code=BASELINE_UNAUTHORIZED",
+            request_id,
+            run_id,
+        )
+        return problem_details(
+            request_id,
+            400,
+            "BASELINE_UNAUTHORIZED",
+            "Agent instructions baseline is missing or empty",
+        )
     credential_lease: str | None = data.get("credentialLease") or None
     provider_connection_id: str | None = data.get("providerConnectionId") or None
     connection_revision = data.get("connectionRevision")

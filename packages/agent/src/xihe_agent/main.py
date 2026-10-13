@@ -201,8 +201,6 @@ async def reload_runtime_config(reason: str) -> SyncReport:
         state._runtime_config_revision = config_client.config_revision
         state._refresh_embedding_config()
 
-        if cc_instructions := config_client.get("agent-runtime", "instructions"):
-            state.AGENT_INSTRUCTIONS = cc_instructions
         if cc_user_name := config_client.get("agent-profile", "userName"):
             state.AGENT_USER_NAME = cc_user_name
         state.USE_SUPERVISOR = config_client.get_bool("agent-runtime", "useSupervisor")
