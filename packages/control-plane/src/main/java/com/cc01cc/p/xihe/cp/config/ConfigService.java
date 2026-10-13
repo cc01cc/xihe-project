@@ -78,7 +78,12 @@ public class ConfigService {
         "agent-runtime", Set.of("instructions",
             // PLAN-0492 决策 #19/#20: run budget hard ceilings are instance-level
             // only (0 = no ceiling); non-instance writes throw ConfigAccessException.
-            "runMaxTurnsCeiling", "runMaxElapsedSecondsCeiling", "runMaxTokensCeiling"));
+            "runMaxTurnsCeiling", "runMaxElapsedSecondsCeiling", "runMaxTokensCeiling",
+            // PLAN-0493 决策 #12/#19: loop escalate/window ceilings are also
+            // instance-only (tier-1 thresholds stay user/workspace tunable —
+            // raising them only delays a gentle hint).
+            "loopRepeatEscalateCeiling", "loopErrorRunEscalateCeiling",
+            "loopStaleResultEscalateCeiling", "loopWindowSizeCeiling"));
 
     /**
      * PLAN-0343 decision #11: pricing is the single cost authority and is an
@@ -113,13 +118,29 @@ public class ConfigService {
         // PLAN-0492 evidence/m0-token-calibration.md): 38303 = p95×1.5,
         // 51070 = 2×p95. Ceilings 100/3600 clamp turns/elapsed; token ceiling
         // clamps the calibrated default upward only.
-        "agent-runtime", Map.of(
-            "runMaxTurns", "25",
-            "runMaxElapsedSeconds", "600",
-            "runMaxTokens", "38303",
-            "runMaxTurnsCeiling", "100",
-            "runMaxElapsedSecondsCeiling", "3600",
-            "runMaxTokensCeiling", "51070"));
+        "agent-runtime", Map.ofEntries(
+            Map.entry("runMaxTurns", "25"),
+            Map.entry("runMaxElapsedSeconds", "600"),
+            Map.entry("runMaxTokens", "38303"),
+            Map.entry("runMaxTurnsCeiling", "100"),
+            Map.entry("runMaxElapsedSecondsCeiling", "3600"),
+            Map.entry("runMaxTokensCeiling", "51070"),
+            // PLAN-0493 decision #11/#19: loop/no-progress defaults (M0
+            // calibrated 2026-10-13, all kept — evidence/m0-observed-repeats.md);
+            // escalate/window ceilings (10/10/10/50) are instance-only and
+            // 0 = no ceiling.
+            Map.entry("loopRepeatWarn", "2"),
+            Map.entry("loopRepeatRefuse", "3"),
+            Map.entry("loopRepeatEscalate", "5"),
+            Map.entry("loopErrorRunWarn", "3"),
+            Map.entry("loopErrorRunEscalate", "5"),
+            Map.entry("loopStaleResultWarn", "2"),
+            Map.entry("loopStaleResultEscalate", "5"),
+            Map.entry("loopWindowSize", "20"),
+            Map.entry("loopRepeatEscalateCeiling", "10"),
+            Map.entry("loopErrorRunEscalateCeiling", "10"),
+            Map.entry("loopStaleResultEscalateCeiling", "10"),
+            Map.entry("loopWindowSizeCeiling", "50")));
 
     @Autowired
     private ConfigJpaRepository repo;

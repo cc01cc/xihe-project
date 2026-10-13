@@ -274,6 +274,46 @@ describe("ConfigSettings agent-runtime run budget (PLAN-0492)", () => {
         }
     });
 
+    it("renders the loop guard fields on the instance tab and hides ceilings elsewhere", async () => {
+        const wrapper = await mountView();
+
+        const panel = wrapper.find('[data-testid="config-domain-agent-runtime"]');
+        expect(panel.exists()).toBe(true);
+        await panel.find("button").trigger("click");
+
+        for (const key of [
+            "loopRepeatWarn",
+            "loopRepeatRefuse",
+            "loopRepeatEscalate",
+            "loopErrorRunWarn",
+            "loopErrorRunEscalate",
+            "loopStaleResultWarn",
+            "loopStaleResultEscalate",
+            "loopWindowSize",
+            "loopRepeatEscalateCeiling",
+            "loopErrorRunEscalateCeiling",
+            "loopStaleResultEscalateCeiling",
+            "loopWindowSizeCeiling",
+        ]) {
+            const field = wrapper.find(`[data-testid="config-field-agent-runtime-${key}"]`);
+            expect(field.exists(), `${key} must render on the instance tab`).toBe(true);
+            expect(field.find("input").exists(), `${key} must be editable`).toBe(true);
+        }
+
+        await wrapper.find('[data-testid="config-tab-user"]').trigger("click");
+        await flushPromises();
+        const userPanel = wrapper.find('[data-testid="config-domain-agent-runtime"]');
+        await userPanel.find("button").trigger("click");
+        expect(
+            wrapper.find('[data-testid="config-field-agent-runtime-loopRepeatWarn"]').exists(),
+        ).toBe(true);
+        expect(
+            wrapper
+                .find('[data-testid="config-field-agent-runtime-loopRepeatEscalateCeiling"]')
+                .exists(),
+        ).toBe(false);
+    });
+
     it("hides the ceiling keys from the user and workspace tabs", async () => {
         const wrapper = await mountView();
 

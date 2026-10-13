@@ -683,6 +683,89 @@ class ConfigServiceTest {
         assertEquals("51070", effective.entries().get("runMaxTokensCeiling"));
     }
 
+    // ------------------------------------------------------------------
+    // PLAN-0493: agent-runtime loop guard — 值键写层 / ceiling 键级 instance 锁 /
+    // schema（值键 0 拒绝 + 通配符拒绝）/ 代码默认
+    // ------------------------------------------------------------------
+
+    @Test
+    void putLayer_loopGuardValuesAreUserAndWorkspaceWritable() {
+        configService.putLayer("instance", "agent-runtime",
+            Map.of("loopRepeatWarn", "2", "loopWindowSize", "20"),
+            "admin", null, null);
+        configService.putLayer("user", "agent-runtime",
+            Map.of("loopRepeatWarn", "3"), "user", userA, null);
+        configService.putLayer("workspace", "agent-runtime",
+            Map.of("loopRepeatWarn", "4"), "user", null, wsA);
+
+        assertEquals("2", configService.resolve("agent-runtime", "loopRepeatWarn", null, null));
+        assertEquals("3", configService.resolve("agent-runtime", "loopRepeatWarn", userA, null));
+        assertEquals("4", configService.resolve("agent-runtime", "loopRepeatWarn", userA, wsA));
+    }
+
+    @Test
+    void putLayer_loopGuardCeilingsAreInstanceOnly() {
+        configService.putLayer("instance", "agent-runtime",
+            Map.of("loopRepeatEscalateCeiling", "10", "loopWindowSizeCeiling", "50"),
+            "admin", null, null);
+        assertEquals("10",
+            configService.layerEntries("instance", "agent-runtime", null, null)
+                .get("loopRepeatEscalateCeiling"));
+
+        for (String key : List.of("loopRepeatEscalateCeiling", "loopErrorRunEscalateCeiling",
+                "loopStaleResultEscalateCeiling", "loopWindowSizeCeiling")) {
+            assertThrows(ConfigService.ConfigAccessException.class, () ->
+                configService.putLayer("user", "agent-runtime",
+                    Map.of(key, "5"), "user", userA, null),
+                "user layer must not write " + key);
+            assertThrows(ConfigService.ConfigAccessException.class, () ->
+                configService.putLayer("workspace", "agent-runtime",
+                    Map.of(key, "5"), "user", null, wsA),
+                "workspace layer must not write " + key);
+        }
+    }
+
+    @Test
+    void effective_loopGuard_includesCodeDefaultsWhenUnset() {
+        ConfigService.EffectiveConfig effective =
+            configService.effective("agent-runtime", null, null);
+
+        assertEquals("default", effective.source());
+        assertEquals("2", effective.entries().get("loopRepeatWarn"));
+        assertEquals("3", effective.entries().get("loopRepeatRefuse"));
+        assertEquals("5", effective.entries().get("loopRepeatEscalate"));
+        assertEquals("3", effective.entries().get("loopErrorRunWarn"));
+        assertEquals("5", effective.entries().get("loopErrorRunEscalate"));
+        assertEquals("2", effective.entries().get("loopStaleResultWarn"));
+        assertEquals("5", effective.entries().get("loopStaleResultEscalate"));
+        assertEquals("20", effective.entries().get("loopWindowSize"));
+        assertEquals("10", effective.entries().get("loopRepeatEscalateCeiling"));
+        assertEquals("10", effective.entries().get("loopErrorRunEscalateCeiling"));
+        assertEquals("10", effective.entries().get("loopStaleResultEscalateCeiling"));
+        assertEquals("50", effective.entries().get("loopWindowSizeCeiling"));
+    }
+
+    @Test
+    void putLayer_loopGuardSchemaRejectsZeroAndWildcardEntries() {
+        // 值键 0 无定义语义 → schema 拒绝（ceiling 键仍允许 0 = 不钳制）。
+        assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "agent-runtime",
+                Map.of("loopRepeatWarn", "0"), "admin", null, null));
+        assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "agent-runtime",
+                Map.of("loopWindowSize", "-3"), "admin", null, null));
+        // 通配符条目被 pattern 拒绝。
+        assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "agent-runtime",
+                Map.of("loopExemptTools", "[\"*\"]"), "admin", null, null));
+        // 合法追加项通过并原样往返。
+        configService.putLayer("instance", "agent-runtime",
+            Map.of("loopExemptTools", "[\"my_poll_tool\"]"), "admin", null, null);
+        assertEquals("[\"my_poll_tool\"]",
+            configService.layerEntries("instance", "agent-runtime", null, null)
+                .get("loopExemptTools"));
+    }
+
     @Test
     void putLayer_runBudgetSchemaRejectsInvalidValues() {
         // 六键均 >=0（0 = 该维度不启用 / ceiling 不钳制）；负数与未知键被拒。
