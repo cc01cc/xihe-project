@@ -278,6 +278,47 @@ def _derive_l1_status(payload: dict[str, Any], legacy_status: str) -> str:
     return ""
 
 
+_EPOCH_TEXT_KEYS = (
+    "epoch_id",
+    "baseline_hash",
+    "source_hash",
+    "summary_hash",
+    "l1_rendered",
+    "l1_status",
+    "env_status",
+    "env_branch",
+    "env_head",
+    "env_observed_at",
+    "env_cwd",
+    "env_platform",
+    "env_shell",
+)
+_EPOCH_LIST_KEYS = ("system_messages", "sources", "l1_sources")
+
+
+def _epoch_has_content(raw: Any) -> bool:
+    """True when a serialized epoch carries an actual baseline (PLAN-0416 D2).
+
+    CP's projection seeds an epoch object unconditionally, so a branch that
+    never established one still arrives as `{"epoch_id": "", ...}`. Restoring
+    that placeholder as a ContextEpoch would make the snapshot path disagree
+    with event replay, which leaves `epoch` as None for the same state — so
+    only an epoch with content is reconstructed; an empty one stays "no epoch".
+    A non-object value is treated the same way.
+    """
+    if not isinstance(raw, dict):
+        return False
+    for key in _EPOCH_TEXT_KEYS:
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+    for key in _EPOCH_LIST_KEYS:
+        value = raw.get(key)
+        if isinstance(value, list) and len(value) > 0:
+            return True
+    return bool(raw.get("env_is_repository"))
+
+
 @dataclass(frozen=True)
 class ContextEpoch:
     """Versioned system-context baseline with L1/SUM slot separation (PLAN-0340)."""
@@ -889,7 +930,9 @@ class AgentContext:
         for raw in snapshot.get("messages", []):
             ctx.messages.append(message_from_dict(raw))
         epoch_raw = snapshot.get("epoch")
-        if epoch_raw:
+        # PLAN-0416 D2: see _epoch_has_content — an all-empty epoch object is
+        # CP's placeholder, not a baseline, and must not become a ContextEpoch.
+        if epoch_raw and _epoch_has_content(epoch_raw):
             ctx.epoch = ContextEpoch(
                 epoch_id=epoch_raw.get("epoch_id", ""),
                 baseline_hash=epoch_raw.get("baseline_hash", epoch_raw.get("source_hash", "")),
