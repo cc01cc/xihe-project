@@ -91,6 +91,11 @@
       "llmMode": "success",
       "specs": ["e2e/real/loop-observation.spec.ts"]
     },
+    "loop-guard": {
+      "description": "PLAN-0493 T3.2/T4.1 loop-guard stop over the scripted repeat fixture (fake LLM emits one identical glob call per turn)",
+      "llmMode": "repeat",
+      "specs": ["e2e/real/loop-guard.spec.ts"]
+    },
     "evidence": {
       "description": "visual/manual evidence artifacts — run last, not a regular gate",
       "llmMode": "mock",
