@@ -107,6 +107,9 @@ class SessionForkIntegrationTest extends AbstractIntegrationTest {
     @Autowired private AuthorizationGrantRepository authorizationGrantRepository;
     @Autowired private WorkspaceAgentRepository workspaceAgentRepository;
     @Autowired private SessionRepository sessionRepository;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository providerConnectionRepository;
     @Autowired private SessionService sessionService;
     @Autowired private ChatRunRepository chatRunRepository;
     @Autowired private MessageRepository messageRepository;
@@ -628,8 +631,10 @@ class SessionForkIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void forkWithoutAgentPrincipalIsRejected() throws Exception {
+        com.cc01cc.p.xihe.cp.entity.ProviderConnection openaiConnection = ChatBindingTestSupport.ensureChatConnection(
+                providerConnectionRepository, "USER", userId, "fork-no-principal-" + UUID.randomUUID().toString().substring(0, 8), "openai");
         Session principalless = sessionService.createWithId(UUID.randomUUID().toString(), userId, workspaceId,
-                "Principal-less fork source", "openai", "gpt-test");
+                "Principal-less fork source", "openai", "gpt-test", openaiConnection.getId().toString());
         assertNull(principalless.getAgentPrincipalId());
         String sessionId = principalless.getId().toString();
         String branchId = branchPathService.ensureRootBranchId(sessionId);
@@ -854,8 +859,10 @@ class SessionForkIntegrationTest extends AbstractIntegrationTest {
     }
 
     private Source createSource(byte[] bytes, boolean corruptFileSize) throws Exception {
+        com.cc01cc.p.xihe.cp.entity.ProviderConnection chatConnection = ChatBindingTestSupport.ensureChatConnection(
+                providerConnectionRepository, "USER", userId, "fork-" + UUID.randomUUID().toString().substring(0, 8), "openai");
         Session source = sessionService.createAgentSession(
-                userId, workspaceId, "Fork source", "openai", "gpt-test", null, principalId.toString());
+                userId, workspaceId, "Fork source", "openai", "gpt-test", chatConnection.getId().toString(), principalId.toString());
         String branchId = branchPathService.ensureRootBranchId(source.getId().toString());
         String runId = UUID.randomUUID().toString();
         ChatRun run = new ChatRun(runId, source.getId().toString(), userId, workspaceId,

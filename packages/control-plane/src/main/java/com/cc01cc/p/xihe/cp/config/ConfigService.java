@@ -47,6 +47,9 @@ import java.util.UUID;
 @Service
 public class ConfigService {
 
+    @Autowired
+    private org.springframework.beans.factory.ObjectProvider<com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService> apiRequestTemplates;
+
     private static final Logger log = LoggerFactory.getLogger(ConfigService.class);
 
     /**
@@ -60,7 +63,7 @@ public class ConfigService {
     public static final Set<String> DOMAINS = Set.of(
         "llm-provider", "context-policy", "embedding", "rag",
         "agent-runtime", "agent-profile", "user-preference", "logging",
-          "approval-policy", "agent-templates", "context-templates", "pricing", "job-policy");
+          "approval-policy", "agent-templates", "context-templates", "api-request-templates", "pricing", "job-policy");
 
     private static final Set<String> USER_WRITABLE_DOMAINS = Set.of(
         "llm-provider", "context-policy", "embedding", "rag",
@@ -93,9 +96,6 @@ public class ConfigService {
             "chunkOverlap", "200",
             "topK", "5",
             "minScore", "0.0"),
-        "embedding", Map.of(
-            "model", "text-embedding-3-small",
-            "dimensions", "1536"),
         "logging", Map.of(
             "logLevel", "INFO",
             "levelCp", "INFO",
@@ -141,6 +141,9 @@ public class ConfigService {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private EmbeddingProfileService embeddingProfiles;
 
     public record EffectiveConfig(String domain, String revision, String source,
                                   Map<String, String> entries) {}
@@ -286,7 +289,7 @@ public class ConfigService {
     }
 
     private static void rejectEffectiveContextTemplates(String domain) {
-        if ("context-templates".equals(domain)) {
+        if ("context-templates".equals(domain) || "api-request-templates".equals(domain)) {
             throw new ConfigAccessException("Context templates must be read from one explicit config layer");
         }
     }
@@ -331,6 +334,10 @@ public class ConfigService {
     @Transactional
     public void putLayer(String layer, String domain, Map<String, String> entries,
                          String changedBy, UUID userId, UUID workspaceId) {
+        if ("api-request-templates".equals(domain)) {
+            apiRequestTemplates.getObject().putLayer(layer, entries, changedBy, userId, workspaceId);
+            return;
+        }
         validateLayerScope(layer, domain, entries, userId, workspaceId);
         rejectProviderSecrets(domain, entries);
         validateInstructionsScope(layer, domain, entries);
@@ -350,8 +357,39 @@ public class ConfigService {
                     "Provider validation failed: " + String.join("; ", providerErrors));
             }
         }
+        if ("embedding".equals(domain)) {
+            if (entries.isEmpty()) {
+                // An empty PUT replaces the layer profile with nothing: delete
+                // the whole-unit row so the layer inherits again (round-4 item 1).
+                deleteKey(layer, "embedding", "profile", changedBy, userId, workspaceId);
+                return;
+            }
+            validateEmbeddingLayer(layer, entries);
+        }
         putLayerInternal(layer, domain, entries, changedBy, userId, workspaceId);
         publishLoggingChanged(domain, layer);
+    }
+
+    /**
+     * PLAN-0485 round-4 item 1: the embedding domain only carries the whole
+     * profile unit. A PUT must replace that layer's profile atomically — an
+     * empty map clears it to inherit, anything else must be exactly the
+     * complete three-field profile (no partial key writes/merges).
+     */
+    private void validateEmbeddingLayer(String layer, Map<String, String> entries) {
+        if (entries.isEmpty()) {
+            return;
+        }
+        Set<String> keys = entries.keySet();
+        if (keys.size() != 1 || !keys.contains("profile")) {
+            throw new CpApiException(org.springframework.http.HttpStatus.BAD_REQUEST,
+                "INVALID_REQUEST", "Embedding config accepts only the whole profile unit");
+        }
+        String value = entries.get("profile");
+        if (value == null || value.isBlank()) {
+            return;
+        }
+        embeddingProfiles.parseProfile(value);
     }
 
     private void validateContextTemplateUpdate(String layer, Map<String, String> proposedEntries,
@@ -618,6 +656,10 @@ public class ConfigService {
 
     private void putLayerInternal(String layer, String domain, Map<String, String> entries,
                                   String changedBy, UUID userId, UUID workspaceId) {
+        if ("api-request-templates".equals(domain)) {
+            apiRequestTemplates.getObject().putLayer(layer, entries, changedBy, userId, workspaceId);
+            return;
+        }
         for (Map.Entry<String, String> entry : entries.entrySet()) {
             String key = entry.getKey();
             String value = entry.getValue();
@@ -658,6 +700,14 @@ public class ConfigService {
     @Transactional
     public void deleteKey(String layer, String domain, String configKey, String changedBy,
                           UUID userId, UUID workspaceId) {
+        if ("api-request-templates".equals(domain)) {
+            throw new CpApiException(org.springframework.http.HttpStatus.CONFLICT,
+                    "API_REQUEST_TEMPLATE_REVISION_IMMUTABLE", "Use the dedicated template/binding writer");
+        }
+        if ("embedding".equals(domain) && !"profile".equals(configKey)) {
+            throw new CpApiException(org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "INVALID_REQUEST", "Embedding config only has the whole profile unit");
+        }
         Optional<ConfigEntity> existing = findExisting(layer, domain, configKey, userId, workspaceId);
         if (existing.isPresent()) {
             ConfigEntity entity = existing.get();
@@ -862,7 +912,8 @@ public class ConfigService {
     }
 
     private String auditValue(ConfigEntity entity, String value) {
-        if ("agent-templates".equals(entity.getDomain()) || "context-templates".equals(entity.getDomain())) {
+        if ("agent-templates".equals(entity.getDomain()) || "context-templates".equals(entity.getDomain())
+                || "api-request-templates".equals(entity.getDomain())) {
             if (value == null || value.isBlank()) {
                 return "missing";
             }

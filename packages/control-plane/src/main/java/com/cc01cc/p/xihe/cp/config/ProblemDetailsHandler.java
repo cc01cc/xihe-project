@@ -31,7 +31,8 @@ public class ProblemDetailsHandler {
     }
 
     public static ResponseEntity<Map<String, Object>> problemResponse(HttpStatus status, String code, String detail) {
-        return problemResponse(status, code, detail, UUID.randomUUID().toString());
+        return problemResponse(status, code, detail,
+                org.slf4j.MDC.get(com.cc01cc.p.xihe.cp.logging.RequestIdFilter.MDC_KEY));
     }
 
     public static ResponseEntity<Map<String, Object>> problemResponse(

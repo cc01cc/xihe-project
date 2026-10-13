@@ -32,12 +32,10 @@ from xihe_agent.llm.base import (
     LLMConfig,
     LLMRouteConfigError,
     create_llm,
-    env_api_key,
-    resolve_provider_base_url,
 )
 from xihe_agent.llm.models import _models_router
 from xihe_agent.llm.token_counter import TokenCounter
-from xihe_agent.rag import EmbeddingService, LiteLLMEmbeddings, VectorStore
+from xihe_agent.rag import VectorStore  # noqa: F401  (test seam; request-scoped since PLAN-0485)
 from xihe_agent.registry.registry import WorkerRegistry
 from xihe_agent.tools import GenerateImageAgentTool, GenerateImageTool, ProviderManager
 
@@ -82,12 +80,8 @@ __all__ = [
     "_runtime_refresh_lock",
     "_instance_id",
     "embedding_model",
-    "_embedding_api_key",
-    "_embedding_api_base",
     "embedding_enabled",
-    "embedding_service",
-    "embedding_adapter",
-    "vector_store",
+    "shared_pg_engine",
     "_token_counter",
     "get_env",
     "get_int_env",
@@ -181,61 +175,48 @@ run_cancel_registry = RunCancelRegistry()
 # RAG
 PG_DSN = get_env("XIHE_PG_DSN") or "postgresql+psycopg://xihe:@localhost:12634/xihe"
 embedding_model: str | None = None
-_embedding_api_key: str | None = None
-_embedding_api_base: str | None = None
 embedding_enabled = False
-# Created and swapped inside _refresh_embedding_config (module `global`
-# assignments). The bare annotations declare their types for readers without
-# changing the current "NameError until first refresh" runtime behaviour.
-embedding_service: EmbeddingService
-embedding_adapter: LiteLLMEmbeddings
-vector_store: VectorStore
+# PLAN-0485: the process shares only the DB engine/pool. Embedding adapters,
+# credential grants and per-profile stores are request-scoped; the legacy
+# global credential-bound singleton is retired from RAG routes (T3.1).
+_shared_engine: Any = None
+
+
+def _async_pg_dsn(dsn: str) -> str:
+    """Force an asyncpg driver for the async RAG engine.
+
+    The process DSN may use psycopg (sync runtime paths); psycopg async cannot
+    run on the Windows ProactorEventLoop, so the async RAG engine always uses
+    asyncpg regardless of the incoming driver.
+    """
+    for prefix in ("postgresql+psycopg://", "postgresql+psycopg2://"):
+        if dsn.startswith(prefix):
+            return "postgresql+asyncpg://" + dsn[len(prefix):]
+    if dsn.startswith("postgresql://"):
+        return "postgresql+asyncpg://" + dsn[len("postgresql://"):]
+    return dsn
+
+
+def shared_pg_engine() -> Any:
+    """Process-shared SQLAlchemy async engine/pool for RAG stores."""
+    global _shared_engine
+    if _shared_engine is None:
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        _shared_engine = create_async_engine(_async_pg_dsn(PG_DSN))
+    return _shared_engine
 
 
 def _refresh_embedding_config() -> None:
-    global embedding_model, _embedding_api_key, _embedding_api_base
-    global embedding_enabled, embedding_service, embedding_adapter, vector_store
+    global embedding_model
+    global embedding_enabled
 
-    embedding_model = config_client.get("embedding", "model")
-    _embedding_api_key = None
-    _embedding_api_base = None
-
-    if embedding_model:
-        from litellm import get_llm_provider
-
-        try:
-            _, provider, _, resolved_api_base = get_llm_provider(embedding_model)
-            # PLAN-0307 decision #21: config holds no credentials; the env
-            # fallback is the only instance-level source for embedding keys.
-            _embedding_api_key = env_api_key(provider) or None
-            _embedding_api_base = resolve_provider_base_url(
-                config_client.get_domain("llm-provider"),
-                provider,
-                resolved_api_base,
-            )
-        except Exception as e:
-            logger.warning("Failed to resolve embedding provider: {}", e)
-
-    # The default OpenAI embedding model must not create a request without credentials.
-    embedding_enabled = bool(embedding_model and _embedding_api_key)
-    if embedding_model and not embedding_enabled:
-        logger.warning(
-            "[LIFECYCLE] service=agent event=rag_embedding_disabled model={} reason=missing_api_key",
-            embedding_model,
-        )
-
-    embedding_service = EmbeddingService(
-        model=embedding_model or "mock",
-        api_key=_embedding_api_key,
-        api_base=_embedding_api_base,
-    )
-    embedding_adapter = LiteLLMEmbeddings(service=embedding_service)
-    dimensions = config_client.get("embedding", "dimensions")
-    vector_store = VectorStore(
-        dsn=PG_DSN,
-        embedding_service=embedding_adapter,
-        vector_size=int(dimensions) if dimensions else None,
-    )
+    embedding_model = config_client.get("embedding", "profile")
+    # The embedding domain now carries only the whole-profile unit; the legacy
+    # free-text model/dimensions keys no longer exist. The process-global
+    # adapter no longer performs provider I/O for RAG routes; a scoped probe
+    # remains for lifecycle gating only (no credential held).
+    embedding_enabled = bool(embedding_model)
 
 
 _refresh_embedding_config()
@@ -463,21 +444,16 @@ def _classify_llm_exception(error: Exception) -> tuple[str, str, bool]:
 
 
 async def _enrich_with_rag_context(content: str, instructions: str) -> str:
-    """Search RAG knowledge base and append relevant context to instructions."""
+    """Search RAG knowledge base and append relevant context to instructions.
+
+    PLAN-0485/0416 boundary: Chat-time RAG query uses the per-Run
+    embeddingProfile + embeddingCredentialLease that CP attaches to the
+    internal chat request; without them there is no profile to partition by
+    and enrichment is skipped rather than falling back to a global adapter.
+    """
     if not embedding_enabled:
         return instructions
-
-    try:
-        query_emb = await embedding_service.embed(content)
-        results = await vector_store.search(query_emb, top_k=3, min_score=0.3)
-        if results:
-            context_parts = []
-            for r in results:
-                context_parts.append(f"[Knowledge: {r['text']}]")
-            rag_context = "\n".join(context_parts)
-            return f"{instructions}\n\n## RAG Context\n{rag_context}"
-    except Exception:
-        logger.warning("RAG enrichment failed", exc_info=True)
+    logger.debug("RAG enrichment skipped: chat-time query handoff is owned by PLAN-0416")
     return instructions
 
 

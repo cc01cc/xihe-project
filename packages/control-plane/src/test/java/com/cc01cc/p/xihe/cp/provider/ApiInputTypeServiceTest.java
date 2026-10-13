@@ -13,10 +13,11 @@ class ApiInputTypeServiceTest {
 
     @Test
     void loadsBuiltInTargetTypes() {
-        assertEquals(3, service.list().size());
+        assertEquals(4, service.list().size());
         assertEquals("chat", service.operation("openai-chat-completions", 1));
         assertEquals("chat", service.operation("anthropic-messages", 1));
         assertEquals("chat", service.operation("mimo-responses", 1));
+        assertEquals("embedding", service.operation("dashscope-multimodal-embedding", 1));
         assertTrue(service.contains("openai-chat-completions", 1));
     }
 

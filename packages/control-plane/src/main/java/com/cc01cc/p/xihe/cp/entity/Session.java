@@ -20,9 +20,6 @@ public class Session {
 
     public static final String KIND_SPAWN = "spawn";
     public static final String KIND_FORK = "fork";
-    public static final String DEFAULT_CONTEXT_TEMPLATE_LAYER = "instance";
-    public static final UUID DEFAULT_CONTEXT_TEMPLATE_ID =
-            UUID.fromString("00000000-0000-4000-8000-000000000001");
 
     @Id
     @Column(name = "id", columnDefinition = "uuid")
@@ -44,13 +41,13 @@ public class Session {
     @Column(name = "agent_permissions_snapshot", columnDefinition = "jsonb")
     private JsonNode agentPermissionsSnapshot;
 
-    @Column(name = "context_template_layer", nullable = false, length = 16)
+    @Column(name = "context_template_layer", length = 16)
     private String contextTemplateLayer;
 
-    @Column(name = "context_template_id", nullable = false, columnDefinition = "uuid")
+    @Column(name = "context_template_id", columnDefinition = "uuid")
     private UUID contextTemplateId;
 
-    @Column(name = "context_template_version", nullable = false)
+    @Column(name = "context_template_version")
     private Integer contextTemplateVersion;
 
     @Column(length = 255)
@@ -116,7 +113,6 @@ public class Session {
 
     @PrePersist
     protected void onCreate() {
-        ensureContextTemplateBinding();
         createdAt = Instant.now();
         updatedAt = Instant.now();
     }
@@ -136,10 +132,6 @@ public class Session {
 
     @PreUpdate
     protected void onUpdate() {
-        // Defensive: a detached-entity merge must never null out the pinned
-        // binding (DB columns are NOT NULL; merge copies detached nulls over
-        // the managed copy before UPDATE).
-        ensureContextTemplateBinding();
         updatedAt = Instant.now();
     }
 
@@ -209,11 +201,5 @@ public class Session {
     public Instant getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
 
-    private void ensureContextTemplateBinding() {
-        if (contextTemplateLayer == null || contextTemplateId == null || contextTemplateVersion == null) {
-            contextTemplateLayer = DEFAULT_CONTEXT_TEMPLATE_LAYER;
-            contextTemplateId = DEFAULT_CONTEXT_TEMPLATE_ID;
-            contextTemplateVersion = 1;
-        }
-    }
 }
+

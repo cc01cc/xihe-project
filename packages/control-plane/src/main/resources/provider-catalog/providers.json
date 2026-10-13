@@ -106,7 +106,15 @@
     "litellmProvider": "dashscope",
     "defaultBaseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "modelDiscovery": "remote-models",
-    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1 }],
+    "supportedApiTypes": [
+      { "apiTypeId": "openai-chat-completions", "version": 1 },
+      {
+        "apiTypeId": "dashscope-multimodal-embedding",
+        "version": 1,
+        "defaultBaseUrl": "https://dashscope.aliyuncs.com/api/v1",
+        "modelDiscovery": "manual"
+      }
+    ],
     "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
     "credential": { "type": "api-key", "required": true, "placeholder": "sk-..." },
     "supports": { "customBaseUrl": true, "streaming": true, "tools": true, "vision": true }

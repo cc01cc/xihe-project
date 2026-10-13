@@ -54,6 +54,9 @@ class TextMessage:
     legacy_normalized: bool = False
     # PLAN-0381 T1.1 — assistant tool-call side (role == "ai")
     tool_calls: tuple["ToolCallRef", ...] = ()
+    api_type_id: str = ""
+    api_type_version: int | None = None
+    native_records: tuple[dict[str, Any], ...] | None = None
 
 
 @dataclass(frozen=True)

@@ -178,7 +178,7 @@ async function pruneStaleRunDirs() {
 }
 // PLAN-0465: reuse 模式下必须恢复为栈的 pg project（见 reuse block）。
 let pgProjectName = `xihe-e2e-host-${e2eRunId.replace(/[^a-z0-9]/gi, '')}`
-const serviceToken = randomPassword(24)
+let serviceToken = randomPassword(24)
 const nativeNoProxy = [
   process.env.NO_PROXY,
   process.env.no_proxy,
@@ -684,11 +684,15 @@ async function startFixtures() {
       XIHE_FAKE_MCP_ACCESS_TOKEN: fakeMcpAccessToken,
     } },
   ]
-  if (llmMode !== 'mock' && !realXiaomiKey) {
-    fixtures.push({ name: 'Fake LLM', script: 'fake-llm-server.mjs', port: fakeLlmPort, env: {
-      XIHE_FAKE_LLM_PORT: fakeLlmPort,
-      XIHE_FAKE_LLM_MODE: llmMode,
-    } })
+        if (!realXiaomiKey) {
+            // The fake LLM also serves the mock lane: PLAN-0439 chat always
+            // goes through a ProviderConnection, so the mock lane needs a
+            // reachable OpenAI-compatible endpoint for bound sessions even
+            // though the legacy path still resolves provider=mock.
+            fixtures.push({ name: 'Fake LLM', script: 'fake-llm-server.mjs', port: fakeLlmPort, env: {
+                XIHE_FAKE_LLM_PORT: fakeLlmPort,
+                XIHE_FAKE_LLM_MODE: llmMode,
+            } })
   }
   for (const { name, script, port, env } of fixtures) {
     const child = spawnCommand(nodeCommand, [join(uiDir, 'e2e', 'fixtures', script)], {
@@ -1189,10 +1193,14 @@ async function main() {
     // PLAN-0365 (root cause A): restore fixture ports the same way — without
     // this the reserved random values point at nothing and fixture-backed
     // specs (fake OAuth/MCP/LLM) fail with ERR_CONNECTION_REFUSED.
-    if (state.ports.fakeOAuth) fakeOAuthPort = state.ports.fakeOAuth
-    if (state.ports.fakeMcp) fakeMcpPort = state.ports.fakeMcp
-    if (state.ports.fakeLlm) fakeLlmPort = state.ports.fakeLlm
-    runIdForTests = state.runId
+        if (state.ports.fakeOAuth) fakeOAuthPort = state.ports.fakeOAuth
+        if (state.ports.fakeMcp) fakeMcpPort = state.ports.fakeMcp
+        if (state.ports.fakeLlm) fakeLlmPort = state.ports.fakeLlm
+        // Reuse specs authenticate against the running stack, so the service
+        // Bearer must stay the recorded one; without this the external run
+        // signs with a fresh token and every service-authed call is a 401.
+        if (state.serviceToken) serviceToken = state.serviceToken
+        runIdForTests = state.runId
     // PLAN-0465: PG fixture 元数据同样由栈 runId 派生——端口/fixture 已恢复
     // （PLAN-0365 root cause A）但 pg project/DB 名仍取本进程 runId，导致
     // reuse 模式下 docker exec 指向不存在的容器（session-branch 授权种子、

@@ -85,4 +85,9 @@ export interface ProviderConnectionInput {
     modelDiscovery?: ProviderDefinition["modelDiscovery"];
     manualModels?: string[];
     enabled?: boolean;
+    apiTypeId?: string;
+    apiTypeVersion?: number;
+    expectedRevision?: number;
+    connectionDefaultTemplateRef?: import("../services/apiRequestTemplates").TemplateRef;
+    confirmedTypeChange?: boolean;
 }

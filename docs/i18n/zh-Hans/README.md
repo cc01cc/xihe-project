@@ -6,7 +6,7 @@ sidebar_order: 0
 lang: zh-Hans
 status: active
 created: 2026-05-28
-updated: 2026-09-27
+updated: 2026-10-12
 ---
 
 [English](https://github.com/cc01cc/xihe-project#readme)
@@ -112,9 +112,10 @@ flowchart LR
 | PDF 处理 | ⚠️ 部分 | pdfjs-dist 预览与文本提取；当前提取路径不含 OCR |
 | 主题系统 | ✅ | dark、light、system |
 | 国际化 | ⚠️ 部分 | locale 为 zh-CN / en-US；用户切换 UI 未实现 |
-| 知识库（RAG） | ✅ | 文档分块、Embedding 与 pgvector；需配置 embedding provider/API key |
+| 知识库（RAG） | ✅ | 文档分块、Embedding 与 pgvector；嵌入 profile 按 Workspace/User 整组配置（固定百炼 Multimodal-Embedding 模型、768 维），向量行按连接与 profile 分区 |
+| API 请求模板 | ✅ | 按 ProviderConnection 的 API Type 编辑原生请求体；解析顺序 Model override → Connection default → 类型内置默认；发布修订不可变（PLAN-0439） |
 
-无 embedding 凭据时，聊天会跳过 RAG；ingest/search 会返回 503。详见 [DEV-018](DEV-018-known-issues.md)。
+未配置 embedding profile 时，`/api/v1/rag/*` 返回 `409 EMBEDDING_PROFILE_REQUIRED`；配置与运行态边界见 [DEV-018](DEV-018-known-issues.md)。
 
 ## 5. 测试
 

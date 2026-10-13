@@ -31,5 +31,16 @@
     "requestShape": "input, model, stream, tools",
     "responseShape": "output, usage",
     "streamShape": "response.output_text.delta"
+  },
+  {
+    "apiTypeId": "dashscope-multimodal-embedding",
+    "version": 1,
+    "operation": "embedding",
+    "method": "POST",
+    "path": "/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding",
+    "requiredBaseSuffix": "/api/v1",
+    "requestShape": "model, input.contents, parameters.dimension",
+    "responseShape": "output.embeddings, usage, requestId",
+    "streamShape": "none"
   }
 ]

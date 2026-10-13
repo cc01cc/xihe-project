@@ -89,40 +89,6 @@ public class ContextTemplateService {
         configService.putLayer(layer, DOMAIN, serialized, changedBy, userId, workspaceId);
     }
 
-    public TemplateBinding resolveForSession(String userId, String workspaceId, String provider,
-                                             String model, TemplateSelection explicit) {
-        UUID user = uuid(userId, "userId");
-        UUID workspace = uuid(workspaceId, "workspaceId");
-        if (explicit != null) {
-            return binding(explicit.layer(), explicit.templateId(), explicit.version(), "explicit", user, workspace);
-        }
-
-        ObjectNode userConfig = parseEntries(configService.layerEntries("user", DOMAIN, user, workspace));
-        JsonNode providerDefaults = userConfig.path("providerModelDefaults");
-        if (providerDefaults.isArray()) {
-            for (JsonNode candidate : providerDefaults) {
-                if (same(candidate.path("provider").asText(), provider)
-                        && same(candidate.path("model").asText(), model)) {
-                    return binding("user", candidate.path("templateId").asText(),
-                            candidate.path("version").asInt(), "provider-model", user, workspace);
-                }
-            }
-        }
-        JsonNode userDefault = userConfig.get("userDefault");
-        if (userDefault != null && userDefault.isObject()) {
-            return binding(userDefault.path("layer").asText(), userDefault.path("templateId").asText(),
-                    userDefault.path("version").asInt(), "user-default", user, workspace);
-        }
-
-        ObjectNode instanceConfig = parseEntries(configService.layerEntries("instance", DOMAIN, null, null));
-        JsonNode instanceDefault = instanceConfig.get("defaultTemplate");
-        if (instanceDefault != null && instanceDefault.isObject()) {
-            return binding("instance", instanceDefault.path("templateId").asText(),
-                    instanceDefault.path("version").asInt(), "instance-default", user, workspace);
-        }
-        return binding("instance", BUILTIN_TEMPLATE_ID.toString(), 1, "builtin-default", user, workspace);
-    }
-
     public TemplateBinding binding(String layer, String templateId, int version, String source,
                                    UUID userId, UUID workspaceId) {
         requireLayer(layer);
@@ -148,12 +114,6 @@ public class ContextTemplateService {
         snapshot.put("source", source);
         snapshot.set("template", template);
         return new TemplateBinding(layer, templateUuid.toString(), version, snapshot);
-    }
-
-    public ObjectNode resolveSnapshot(String layer, String templateId, int version,
-                                      String userId, String workspaceId) {
-        return binding(layer, templateId, version, "session-binding",
-                uuid(userId, "userId"), uuid(workspaceId, "workspaceId")).snapshot();
     }
 
     private ObjectNode findTemplateOrNull(String layer, String templateId, int version,

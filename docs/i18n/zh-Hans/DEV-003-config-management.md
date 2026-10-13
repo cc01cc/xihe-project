@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 3
 status: active
 created: 2026-09-03
-updated: 2026-09-27
+updated: 2026-10-12
 ---
 
 # DEV-003: 配置管理
@@ -19,13 +19,13 @@ updated: 2026-09-27
 
 ## 1. 三层所有权与十一域
 
-ConfigService 按三层作用域 × 领域（Domain）组织配置；域集合为 `instance(11)`、`user(7)`、`workspace(7)`。`approval-policy`（PLAN-0364 决策 #9）与 `job-policy`（PLAN-0373 决策 #1）为**双显式例外**：instance 层可写默认、workspace 可覆盖、user 层不可写；由此 **`instance ⊇ user` 与 `instance ⊇ workspace` 恢复成立**，而 `workspace ⊄ user`、`user ⊄ workspace` 仍成立：
+ConfigService 按三层作用域 × 领域（Domain）组织配置；域集合为 `instance(14)`、`user(10)`、`workspace(10)`。`approval-policy`（PLAN-0364 决策 #9）与 `job-policy`（PLAN-0373 决策 #1）为**双显式例外**：instance 层可写默认、workspace 可覆盖、user 层不可写；由此 **`instance ⊇ user` 与 `instance ⊇ workspace` 恢复成立**，而 `workspace ⊄ user`、`user ⊄ workspace` 仍成立：
 
 | Domain | instance | user | workspace | 备注 |
 |--------|----------|------|-----------|------|
 | `llm-provider` | ✅ | ✅ | ✅ | provider/模型/base URL/采样参数；**无任何 `*ApiKey` 键** |
 | `context-policy` | ✅ | ✅ | ✅ | 压缩策略；结构化值为 JSON 文本 |
-| `embedding` | ✅ | ✅ | ✅ | `model` / `dimensions` |
+| `embedding` | ✅ | ✅ | ✅ | 整组 profile 对象 `{providerId, connectionKey, model}`（PLAN-0485，细则见 §3b）；固定模型/768 |
 | `rag` | ✅ | ✅ | ✅ | `chunkSize` / `chunkOverlap` / `topK` / `minScore` |
 | `pricing` | ✅ | ❌ | ❌ | `models`（provider/model → per-MTok 计价条目；instance-only 计价权威，PLAN-0343） |
 | `agent-runtime` | ✅ | ✅ | ✅ | `useRegistry` / `useSupervisor` / `workersDir`；`instructions` **仅 instance**（决策 #17） |
@@ -34,6 +34,9 @@ ConfigService 按三层作用域 × 领域（Domain）组织配置；域集合�
 | `logging` | ✅ | ❌ | ❌ | instance 层唯一权威，可热更（决策 #23） |
 | `approval-policy` | ✅（平台 ADMIN） | ❌ | ✅ | 审批模式 `mode`（`manual` / `auto`）与要问清单 `askActionClasses[]`（actionClass 数组，PLAN-0407 T2.8：缺省 = 代码默认 8 项 `write`/`exec`/`delete`/`credential`/`CREATE_ACCOUNT`/`CREATE_TEMPLATE`/`MANAGE_WORKSPACE_AGENTS`/`SPAWN_AGENT`；在册 + `manual` → 弹审批、在册 + `auto` → 放行记 `allowed_by`、不在册 → 授权过后直过；缺配置回退默认清单，显式空数组 = 什么都不问）；**instance 层可写默认、workspace 可覆盖**，user 层不可写（显式例外）；审计来源层由 `DbPolicyContextProvider` 按 `ConfigService.effective(...).source` 回填（PLAN-0364 决策 #9，supersede PLAN-0337 选项①；env 命中视为 instance 钉死） |
 | `job-policy` | ✅（平台 ADMIN） | ❌ | ✅ | `defaultTimeoutSecs` / `maxTimeoutSecs`（job 运行时限默认与硬上限，PLAN-0373 BL-22）；**instance 默认+上限权威、workspace 上限内下调、user 不可写**（与 approval-policy 同构的第二显式例外，决策 #1）；`maxTimeoutSecs=0`=上限未设不钳制（决策 #8），执行点在 CP `tools/call` 路由分叉前无条件覆写工具 `timeout`（决策 #5） |
+| `agent-templates` | ✅ | ✅ | ✅ | Agent 角色模板域（PLAN-0374，细则见 §3a） |
+| `context-templates` | ✅ | ✅ | ✅ | 上下文模板修订（PLAN-0414）；`id+version` 修订追加式不可变，只能按显式层读取 |
+| `api-request-templates` | ✅ | ✅ | ✅ | API Request 模板域（PLAN-0439，细则见 §3b）：`templates` / `connectionDefaultTemplates` / `providerModelBindings`；发布版本不可变，模型 override 仅 user 层 |
 
 已裁撤域：`infrastructure`（→ env）、`workspace-config`（→ env / 工作区 API）、`mcp`（→ `mcp_stdio_servers` / `mcp_remote_servers` 表，决策 #27）；键迁移：`llm-provider.contextPolicy` → `context-policy`、`user-preference.{defaultModel,maxTokens,temperature}` → `llm-provider`（决策 #13/#16/#39）。
 
@@ -197,6 +200,22 @@ Provider verify 的 ready 只表示 CP 当前 remote `/models` 响应结构有�
 - schema：`packages/control-plane/src/main/resources/config-schemas/agent-templates.json`；`templates[].roleId` 只引用同层 `roles[]`，模板不存 provider secret。
 - 层读取边界（`AgentTemplateService.resolveForCreation` fail-closed）：instance 模板仅 ADMIN、user 模板仅本人、workspace 模板仅该成员；禁止跨层列举与 merged-effective 静默覆盖；重复 template/role UUID 或坏引用直接拒绝。UI 读取必须指定 `layer`；该域没有 legacy merged-config 视图，不纳入 `CONFIG_DOMAINS` 通用拉取。
 - 写路径必须独立 `CREATE_TEMPLATE` 并审计 actor/scope/key diff，与 `CREATE_ACCOUNT`（principal 创建）分离；创建/修改模板不创建 principal。读路由 `GET /api/v1/agent-templates` 已开放（层可见性 fail-closed）；写 CRUD 与 `approval-policy.askActionClasses[]` UI 仍由 T3.1b 等 PLAN-0407 V44 canonical action，当前缺 action 一律 fail-closed。契约见 [`spec/agent/principal-workspace-binding.md`](../../../spec/agent/principal-workspace-binding.md)。
+
+## 3b. API Request 模板域与 Embedding profile 域（PLAN-0439/0485）
+
+**api-request-templates（PLAN-0439）**：
+
+- 键为三个 JSON 字符串：`templates`（模板定义数组，含 `apiTypeId/apiTypeVersion/bodySource/status`）、`connectionDefaultTemplates`（`connectionId → {layer,templateId,version}`）、`providerModelBindings`（`connectionId → {model → ref}`，仅 user 层可写）。
+- 写路径经 `ApiRequestTemplateService.putLayer`（ConfigService 对该域委托）：instance 写仅 ADMIN、user 写仅本人、workspace 写需 workspace OWNER/ADMIN；`connectionId` 必须在同层可见且类型兼容。
+- 发布版本不可变（修改/删除已发布修订 → `409 API_REQUEST_TEMPLATE_REVISION_IMMUTABLE`）；draft 保留非法原文，发布诊断由独立 validator 负责，不自动修复。
+- `templates`/`connectionDefaultTemplates`/`providerModelBindings` 只能按显式层读取（effective 合并被拒，见 `rejectEffectiveContextTemplates`）。
+
+**embedding（PLAN-0485）**：
+
+- 本层值为单键 `profile`：整组对象 `{providerId, connectionKey, model}` 的 JSON 字符串；层间不合并字段，部分 profile 直接 400；缺省或空 PUT 清除本层以继承（解析顺序 workspace → user → instance）。
+- 目标模型固定 `tongyi-embedding-vision-flash-2026-03-06`、维度固定 768；API Type `dashscope-multimodal-embedding/v1` 由 type contract 钉住 host（`dashscope.aliyuncs.com`）与路径，CP 拒绝自定义 host。
+- env 重合键 `embedding.model ← XIHE_EMBEDDING_MODEL` 仍按决策 #22 显式呈现（命中即 instance 钉死）。
+- `GET /api/v1/config/embedding/effective` 为只读解析（含 CP 下发的 `contract{modelId,dimension}`），缺失/冲突不报 5xx 而是返回 `code`；`POST /api/v1/config/embedding/test` 经 Agent 一次性租约探测，响应脱敏（无凭据/向量）。
 
 ## 4. Agent readiness 与模型目录
 

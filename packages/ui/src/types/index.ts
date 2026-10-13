@@ -33,6 +33,9 @@ export interface Session {
     modelName?: string;
     providerConnectionId?: string;
     connectionRevision?: number;
+    contextTemplateLayer?: "instance" | "user" | "workspace" | null;
+    contextTemplateId?: string | null;
+    contextTemplateVersion?: number | null;
     context?: SessionContext;
 }
 

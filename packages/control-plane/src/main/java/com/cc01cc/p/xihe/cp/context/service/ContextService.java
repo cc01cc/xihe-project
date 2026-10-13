@@ -401,7 +401,7 @@ public class ContextService {
             int size = messages.size();
             int recentStart = Math.max(0, size - KEEP_RECENT_MESSAGES);
             for (int i = recentStart; i < size; i++) {
-                chars += messages.get(i).path("content").asText("").length();
+                chars += historyChars(messages.get(i));
             }
         }
         com.fasterxml.jackson.databind.JsonNode epoch = context.get("epoch");
@@ -428,7 +428,7 @@ public class ContextService {
         int size = messages.size();
         int recentStart = Math.max(0, size - KEEP_RECENT_MESSAGES);
         for (int i = 0; i < recentStart; i++) {
-            sourceChars += messages.get(i).path("content").asText("").length();
+            sourceChars += historyChars(messages.get(i));
         }
         // Allow a small slack so near-parity (noise) is not treated as failure.
         return summary.length() < sourceChars || summary.length() <= previousSummary.length();
@@ -534,12 +534,17 @@ public class ContextService {
     }
 
     /** Rough chars/4 estimate over messages + SUM + L1. Refined by T1.6 tokenizer path. */
+    private static int historyChars(JsonNode message) {
+        return message.has("nativeRecords") ? message.path("nativeRecords").toString().length()
+                : message.path("content").asText("").length();
+    }
+
     private long estimateInputTokens(ObjectNode context) {
         int chars = 0;
         com.fasterxml.jackson.databind.JsonNode messages = context.get("messages");
         if (messages != null && messages.isArray()) {
             for (com.fasterxml.jackson.databind.JsonNode msg : messages) {
-                chars += msg.path("content").asText("").length();
+                chars += historyChars(msg);
             }
         }
         com.fasterxml.jackson.databind.JsonNode epoch = context.get("epoch");

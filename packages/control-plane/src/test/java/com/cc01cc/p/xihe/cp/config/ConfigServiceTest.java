@@ -213,6 +213,18 @@ class ConfigServiceTest {
     }
 
     @Test
+    void putLayer_embeddingEmptyMap_clearsTheWholeUnitToInherit() {
+        String unit = "{\"providerId\":\"dashscope-qwen\",\"connectionKey\":\"emb\",\"model\":\"tongyi-embedding-vision-flash-2026-03-06\"}";
+        configService.putLayer("user", "embedding", Map.of("profile", unit), "tester", userA, null);
+        assertEquals(unit, configService.layerEntries("user", "embedding", userA, null).get("profile"));
+
+        configService.putLayer("user", "embedding", Map.of(), "tester", userA, null);
+
+        assertTrue(configService.layerEntries("user", "embedding", userA, null).isEmpty(),
+                "an empty embedding PUT must remove the whole-unit row so the layer inherits again");
+    }
+
+    @Test
     void deleteKey_removesEntryAndCreatesAudit() {
         configService.putLayer("instance", "logging", Map.of("logLevel", "DEBUG"), "admin", null, null);
         configService.deleteKey("instance", "logging", "logLevel", "tester", null, null);

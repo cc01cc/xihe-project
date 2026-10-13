@@ -26,6 +26,12 @@ import { logger } from "../../../../lib/logger";
 import { toast } from "vue-sonner";
 import { getProviderInfo } from "../../../../types/provider";
 import { listProviderConnections } from "../../../../services/providerConnectionService";
+import type { ProviderConnection } from "../../../../types/providerConnection";
+import {
+    listVisibleTemplates,
+    templateKey,
+    type TemplateOption,
+} from "../../../../services/apiRequestTemplates";
 
 const { t } = useI18n();
 const router = useRouter(),
@@ -82,6 +88,26 @@ const hasProviders = computed(() => {
 // PLAN-0307 T2.22/T2.17: readiness hint is grounded in provider_connections,
 // not the removed config-table `*ApiKey` keys (decision #21).
 const configuredConnectionCount = ref(0);
+const connections = ref<ProviderConnection[]>([]);
+const pendingSwitch = ref<{
+    provider: string;
+    model: string;
+    connection: ProviderConnection;
+    sessionId: string;
+} | null>(null);
+const switchTemplates = ref<TemplateOption[]>([]);
+const selectedTemplate = ref("");
+const switching = ref(false);
+const effectiveConnections = computed(() => {
+    const slots = new Map<string, ProviderConnection>();
+    for (const item of connections.value.filter(
+        (item) => item.enabled && item.status === "READY" && item.operation === "chat",
+    )) {
+        const key = item.providerId + ":" + item.connectionKey;
+        if (!slots.has(key) || item.scope === "WORKSPACE") slots.set(key, item);
+    }
+    return new Set([...slots.values()].map((item) => item.id));
+});
 
 const hasConfiguredProvider = computed(() => configuredConnectionCount.value > 0);
 
@@ -90,6 +116,7 @@ const searchQuery = computed(() => searchTerm.value.toLowerCase().trim());
 const providerGroups = computed(() => {
     const q = searchQuery.value;
     return Object.entries(configStore.modelCache.providers ?? {})
+        .filter(([key]) => effectiveConnections.value.has(key))
         .map(([catalogKey, catalog]) => {
             const provider = catalog.providerId ?? catalogKey,
                 info = getProviderInfo(provider),
@@ -100,7 +127,11 @@ const providerGroups = computed(() => {
             return {
                 provider,
                 catalogKey,
-                name: catalog.displayName ?? info?.name ?? provider,
+                name:
+                    (catalog.displayName ?? info?.name ?? provider) +
+                    " · " +
+                    (connections.value.find((item) => item.id === catalogKey)?.connectionKey ??
+                        catalogKey),
                 connectionId: catalogKey,
                 connectionRevision: catalog.connectionRevision,
                 models: filtered,
@@ -170,16 +201,45 @@ async function selectModel(value: string) {
         // Legacy catalogs have no concrete ProviderConnection to bind; omit the
         // field entirely so PATCH keeps provider/model only (pre-0438 behavior).
         connectionId = catalog.connectionId;
+    const target = connections.value.find((item) => item.id === connectionId);
+    if (!target || !effectiveConnections.value.has(target.id)) return;
     if (!configStore.isChatModelAvailable(provider, model, connectionId)) {
         toast.error("Selected model is not currently available for chat");
         return;
     }
     if (sessionId) {
+        const session = sessionStore.sessions.find((item) => item.id === sessionId);
+        const previous = connections.value.find(
+            (item) => item.id === session?.providerConnectionId,
+        );
+        if (
+            previous &&
+            (previous.apiTypeId !== target.apiTypeId ||
+                previous.apiTypeVersion !== target.apiTypeVersion)
+        ) {
+            try {
+                const choices = await listVisibleTemplates(session?.workspaceId);
+                if (sessionStore.currentSessionId !== sessionId) return;
+                switchTemplates.value = choices.filter(
+                    (item) =>
+                        item.apiTypeId === target.apiTypeId &&
+                        item.apiTypeVersion === target.apiTypeVersion,
+                );
+                selectedTemplate.value = "";
+                pendingSwitch.value = { provider, model, connection: target, sessionId };
+                open.value = false;
+            } catch (cause) {
+                logger.warn("Compatible template load failed", cause);
+                toast.error(t("settings.apiRequest.loadFailed"));
+            }
+            return;
+        }
         try {
             const updated = await sessionStore.updateSession(sessionId, {
                 modelProvider: provider,
                 modelName: model,
                 providerConnectionId: connectionId,
+                connectionRevision: target.revision,
             });
             configStore.setSessionModel(
                 sessionId,
@@ -198,6 +258,42 @@ async function selectModel(value: string) {
     }
     open.value = false;
     searchTerm.value = "";
+}
+
+async function confirmSwitch() {
+    const pending = pendingSwitch.value;
+    const template = switchTemplates.value.find(
+        (item) => templateKey(item) === selectedTemplate.value,
+    );
+    if (!pending || !template || switching.value) return;
+    switching.value = true;
+    try {
+        const updated = await sessionStore.updateSession(pending.sessionId, {
+            modelProvider: pending.provider,
+            modelName: pending.model,
+            providerConnectionId: pending.connection.id,
+            connectionRevision: pending.connection.revision,
+            contextTemplateLayer: template.layer,
+            contextTemplateId: template.templateId,
+            contextTemplateVersion: template.version,
+            confirmedTypeChange: true,
+        });
+        configStore.setSessionModel(
+            pending.sessionId,
+            updated.modelProvider ?? pending.provider,
+            updated.modelName ?? pending.model,
+            updated.providerConnectionId ?? pending.connection.id,
+            updated.connectionRevision ?? pending.connection.revision,
+        );
+        if (pendingSwitch.value === pending) pendingSwitch.value = null;
+    } catch (cause) {
+        logger.warn("Session protocol switch failed", cause);
+        toast.error(
+            cause instanceof Error ? cause.message : t("settings.apiRequest.validationFailed"),
+        );
+    } finally {
+        switching.value = false;
+    }
 }
 
 function toggleFav(provider: string, model: string) {
@@ -219,6 +315,7 @@ onMounted(() => {
     listProviderConnections()
         .then((response) => {
             configuredConnectionCount.value = response.connections?.length ?? 0;
+            connections.value = response.connections ?? [];
         })
         .catch((e) => {
             logger.warn("Failed to load provider connections for readiness hint", e);
@@ -227,6 +324,55 @@ onMounted(() => {
 </script>
 
 <template>
+    <div
+        v-if="pendingSwitch"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="t('settings.apiRequest.chooseTemplate')"
+    >
+        <div class="w-full max-w-md space-y-4 rounded-lg border bg-background p-5 shadow-xl">
+            <p class="text-sm">{{ t("settings.apiRequest.switchConfirm") }}</p>
+            <p class="text-xs text-muted-foreground">
+                {{ pendingSwitch.connection.connectionKey }} · {{ pendingSwitch.model }} ·
+                {{ pendingSwitch.connection.apiTypeId }}@{{
+                    pendingSwitch.connection.apiTypeVersion
+                }}
+            </p>
+            <select
+                v-model="selectedTemplate"
+                class="w-full rounded border bg-background p-2 text-sm"
+                :aria-label="t('settings.apiRequest.chooseTemplate')"
+            >
+                <option value="" disabled>{{ t("settings.apiRequest.chooseTemplate") }}</option>
+                <option
+                    v-for="item in switchTemplates"
+                    :key="templateKey(item)"
+                    :value="templateKey(item)"
+                >
+                    {{ item.name }} v{{ item.version }}
+                </option>
+            </select>
+            <div class="flex justify-end gap-2">
+                <button
+                    type="button"
+                    class="rounded border px-3 py-2 text-sm"
+                    :disabled="switching"
+                    @click="pendingSwitch = null"
+                >
+                    {{ t("common.cancel") }}
+                </button>
+                <button
+                    type="button"
+                    class="rounded bg-primary px-3 py-2 text-sm text-primary-foreground"
+                    :disabled="switching || !selectedTemplate"
+                    @click="confirmSwitch"
+                >
+                    {{ t("common.confirm") }}
+                </button>
+            </div>
+        </div>
+    </div>
     <ComboboxRoot
         :model-value="currentValue"
         v-model:open="open"

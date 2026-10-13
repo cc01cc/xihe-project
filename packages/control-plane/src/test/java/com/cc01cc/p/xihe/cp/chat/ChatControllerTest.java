@@ -108,6 +108,22 @@ class ChatControllerTest extends AbstractH2Test {
     private SessionRepository sessionRepository;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository providerConnectionRepository;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService apiRequestTemplates;
+
+    private com.cc01cc.p.xihe.cp.entity.ProviderConnection chatConnection;
+
+    private com.cc01cc.p.xihe.cp.entity.ProviderConnection chatConnection() {
+        if (chatConnection == null) {
+            chatConnection = ChatBindingTestSupport.ensureChatConnection(
+                    providerConnectionRepository, "USER", userId, "chat-controller");
+        }
+        return chatConnection;
+    }
+
+    @Autowired
     private MessageRepository messageRepository;
 
     @Autowired
@@ -252,6 +268,7 @@ class ChatControllerTest extends AbstractH2Test {
         session.setId(UUID.fromString(sessionId));
         session.setAgentPrincipalId(principal.getId().toString());
         session.setAgentPermissionsSnapshot(permissions.deepCopy());
+        ChatBindingTestSupport.bind(session, chatConnection(), apiRequestTemplates);
         sessionRepository.save(session);
         branchId = branchPathService.ensureRootBranchId(sessionId);
     }
@@ -395,7 +412,9 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(1, ((Number) replay.getBody().get("outstandingCount")).intValue());
 
         Map<String, Object> changedModel = new LinkedHashMap<>(request);
-        changedModel.put("model", "other-model");
+        // PLAN-0439: a bound Session takes its provider/model from the binding,
+        // so reuse detection keys on the always-hashed request fields.
+        changedModel.put("content", "Different follow-up content");
         ResponseEntity<Map> reusedKey = restTemplate.exchange(
                 queueUrl, HttpMethod.POST, new HttpEntity<>(changedModel, headers), Map.class);
         assertEquals(HttpStatus.CONFLICT, reusedKey.getStatusCode());

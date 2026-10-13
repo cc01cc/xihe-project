@@ -7,7 +7,7 @@ sidebar_group: "开发指南"
 sidebar_order: 13
 status: active
 created: 2026-07-07
-updated: 2026-10-08
+updated: 2026-10-12
 ---
 
 # DEV-013: Agent 架构与接口抽象
@@ -194,6 +194,11 @@ CP `ContextSourceRefreshService`（**每 run** 在 `ChatController.execAsync` �
 - **组装（`llm/summarize.py`）**：`SUMMARIZE_SECTIONS` 固定六节 `[Goal]/[Work State]/[Next Move]/[Files&Artifacts]/[Errors]/[Recent]`；系统提示为固定常量，明确禁止输出 `[Constraints]`（SC/审批原文永不进 LLM，I3）；输入 = `priorSummary`（CP 已剥 `[Constraints]`）+ `text`（CP 已按单条上限 4000 chars 与 `pruneWindowChars` 预算截断）；`LLMConfig` 的 provider/model/apiKey/apiBase 来自兑换 grant，timeout/maxTokens/temperature 取进程 effective `llm-provider`，`max_tokens = min(config.maxTokens, 2048)`。
 - **usage 三档**：`usage_metadata` 命中 → `source=real`；未命中 → 本地 `TokenCounter` 估算 → `estimated`；两者皆无 → `fallback` + 计数 0；`main.py` 追加 `model=provider/model`（CP pricing 查表键）。
 - **边界**：端点不写事件、不碰 SC/审批、无持久化；请求/响应日志不含摘要正文与凭据。
+
+### 3.7 type-specific Chat sender 与请求级 RAG 适配（PLAN-0439/0485）
+
+- **Chat sender（PLAN-0439）**：Chat 请求不再由 provider-neutral `messages` 序列化器重建；Agent 按连接的 `apiTypeId/version` 选择 type-specific sender/stream parser（内置 `openai-chat-completions`、`anthropic-messages`、`mimo-responses`），直接发送 CP 快照中的用户请求体：`${xh.*}` 单遍替换（`$${...}` 输出字面量）、结构化历史 splice 只出现在约定槽位；model 槽、凭据与 baseUrl 一律取租约 grant，模板声明这些字段会被 CP validator 拒绝。非 chat 类型在 dispatch 前 fail-closed。
+- **RAG 请求级适配（PLAN-0485）**：`/internal/v1/agent/rag/{ingest,search,stats,embedding/test}` 按请求携带非密 `embeddingProfile` 与一次性 `embeddingCredentialLease`；Agent 逐请求兑换 grant 构造 request-scoped embedding adapter（不再持有全局凭据单例），并按 profile 的完整身份 tuple 建立/检索分区（langchain_postgres 过滤下推，WHERE 先于 ORDER BY/LIMIT）；维度来自 profile（fresh store 固定 768），profile/租约缺失或不匹配 → stable `409 EMBEDDING_PROFILE_*`，provider 故障按类别返回可区分错误码，响应不泄漏凭据或向量。
 
 ## 4. 崩溃恢复
 

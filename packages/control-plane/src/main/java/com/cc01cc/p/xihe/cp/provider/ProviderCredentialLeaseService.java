@@ -23,7 +23,17 @@ import java.util.UUID;
 @Service
 public class ProviderCredentialLeaseService {
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService requestTemplates;
+
     private static final Duration DEFAULT_TTL = Duration.ofMinutes(5);
+    /**
+     * Catalog discovery leases carry the wildcard instead of a concrete model:
+     * the models proxy enumerates a connection's catalog (manual models are
+     * returned by the Agent from the redeemed grant), so the dispatch-time
+     * model registration check does not apply.
+     */
+    private static final String CATALOG_WILDCARD = "*";
 
     private final ProviderCredentialLeaseRepository repository;
     private final ProviderConnectionRepository connectionRepository;
@@ -94,13 +104,28 @@ public class ProviderCredentialLeaseService {
             String model,
             Long expectedRevision,
             Duration ttl) {
-        ProviderConnection connection = connectionService.requireUsableForOwner(
-                providerConnectionId, userId, workspaceId);
+        ProviderConnection connection = requestTemplates.lockConnection(providerConnectionId);
+        if (expectedRevision != null && connection.getRevision() != expectedRevision) {
+            throw com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService.conflict(
+                    "STALE_PROVIDER_CONNECTION", "Provider connection revision is stale");
+        }
+        connectionService.requireUsableForOwner(providerConnectionId, userId, workspaceId);
+        // PLAN-0485 round-4 item 4: the connection's API Type operation governs
+        // lease validation instead of the presence of a runId. Chat admission
+        // keeps its explicit chat gate; a Run-bound embedding lease (0416) and
+        // an operation-scoped lease without a run (embedding test/RAG) both
+        // validate against the connection's actual operation without a new
+        // purpose column. Model applicability stays operation-aware.
+        String operation = apiTypes.operation(connection.getApiTypeId(), connection.getApiTypeVersion());
+        if ("chat".equals(operation) && !CATALOG_WILDCARD.equals(model)) {
+            requestTemplates.requireModel(connection, model);
+        }
         if (!connection.getProviderId().equals(providerId)) {
             throw new IllegalArgumentException("Provider connection does not match provider");
         }
         if (expectedRevision != null && connection.getRevision() != expectedRevision) {
-            throw new IllegalArgumentException("Provider connection revision is stale");
+            throw com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService.conflict(
+                    "STALE_PROVIDER_CONNECTION", "Provider connection revision is stale");
         }
         String token = "pl_" + randomToken();
         ProviderCredentialLease lease = new ProviderCredentialLease();
@@ -120,6 +145,7 @@ public class ProviderCredentialLeaseService {
 
     @Transactional
     public CredentialGrant redeem(RedeemRequest request) {
+        ProviderConnection connection = requestTemplates.lockConnection(request.providerConnectionId());
         ProviderCredentialLease lease = repository.findByLeaseHash(hash(request.lease()))
                 .orElseThrow(() -> new IllegalArgumentException("Provider credential lease not found"));
         Instant now = Instant.now();
@@ -134,13 +160,20 @@ public class ProviderCredentialLeaseService {
                 || !lease.getModel().equals(request.model())) {
             throw new IllegalArgumentException("Provider credential lease binding mismatch");
         }
-        ProviderConnection connection = connectionRepository.findById(UUID.fromString(lease.getProviderConnectionId()))
-                .orElseThrow(() -> new IllegalArgumentException("Provider connection not found"));
-        if (!connection.isEnabled() || !ProviderConnection.STATUS_READY.equals(connection.getStatus())) {
-            throw new IllegalArgumentException("Provider connection is not ready");
+        requestTemplates.requireVisible(connection, lease.getUserId(), lease.getWorkspaceId());
+        if (connection.getRevision() != request.connectionRevision()) {
+            throw com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService.conflict(
+                    "STALE_PROVIDER_CONNECTION", "Provider credential lease revision mismatch");
+        }
+        if (lease.getRunId() != null) {
+            requestTemplates.requireModel(connection, request.model());
         }
         if (connection.getRevision() != request.connectionRevision()) {
-            throw new IllegalArgumentException("Provider credential lease revision mismatch");
+            throw com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService.conflict(
+                    "STALE_PROVIDER_CONNECTION", "Provider credential lease revision mismatch");
+        }
+        if (!connection.isEnabled() || !ProviderConnection.STATUS_READY.equals(connection.getStatus())) {
+            throw new IllegalArgumentException("Provider connection is not ready");
         }
         lease.setRedeemedAt(now);
         repository.save(lease);

@@ -927,6 +927,8 @@ public class ChatController {
                 // On CONTEXT_OVERFLOW: force-compact (bypass cooldown) → preflight →
                 // re-dispatch the same runId before any terminal transition.
                 boolean overflowRetried = false;
+                boolean directApiRequest = persistedRun.context().contextTemplateSnapshot() != null
+                        && persistedRun.context().contextTemplateSnapshot().path("template").path("bodySource").isTextual();
                 StreamRelayResult relayResult;
 
                 while (true) {
@@ -961,7 +963,7 @@ public class ChatController {
                         }
                         Map<?, ?> upstreamProblem = asMap(parsePayload("error", upstreamBody));
                         String upstreamCode = safeErrorCode(stringValue(upstreamProblem, "code"));
-                        if ("CONTEXT_OVERFLOW".equals(upstreamCode) && !overflowRetried
+                        if (!directApiRequest && "CONTEXT_OVERFLOW".equals(upstreamCode) && !overflowRetried
                                 && tryOverflowRecovery(sessionId, workspaceId, userId, requestId, runId,
                                         effectiveModel, terminalSent)) {
                             overflowRetried = true;
@@ -981,10 +983,10 @@ public class ChatController {
                     try (InputStream agentStream = response.body()) {
                         relayResult = relayAgentStream(
                                 sessionId, agentStream, requestId, runId, userId, workspaceId,
-                                approvalInFlight, !overflowRetried);
+                                approvalInFlight, !directApiRequest && !overflowRetried);
                     }
 
-                    if ("CONTEXT_OVERFLOW".equals(relayResult.errorCode()) && !overflowRetried) {
+                    if (!directApiRequest && "CONTEXT_OVERFLOW".equals(relayResult.errorCode()) && !overflowRetried) {
                         terminalSent.set(false);
                         if (tryOverflowRecovery(sessionId, workspaceId, userId, requestId, runId,
                                 effectiveModel, terminalSent)) {

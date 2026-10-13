@@ -45,6 +45,7 @@ public class ProviderConnectionService {
     private final ApiInputTypeService apiTypes;
     private final EnvelopeEncryptionService encryption;
     private final ObjectMapper objectMapper;
+    private final com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService requestTemplates;
     private final HttpClient httpClient;
 
     public ProviderConnectionService(
@@ -54,7 +55,8 @@ public class ProviderConnectionService {
             ProviderCatalogService catalog,
             ApiInputTypeService apiTypes,
             @Qualifier("providerCredentialEncryption") EnvelopeEncryptionService encryption,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService requestTemplates) {
         this.repository = repository;
         this.auditRepository = auditRepository;
         this.leaseRepository = leaseRepository;
@@ -62,6 +64,7 @@ public class ProviderConnectionService {
         this.apiTypes = apiTypes;
         this.encryption = encryption;
         this.objectMapper = objectMapper;
+        this.requestTemplates = requestTemplates;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
                 .followRedirects(HttpClient.Redirect.NEVER)
@@ -127,11 +130,20 @@ public class ProviderConnectionService {
 
     @Transactional
     public ProviderConnection create(ConnectionInput input) {
+        return create(input, null, null);
+    }
+
+    @Transactional
+    public ProviderConnection create(ConnectionInput input, String apiTypeId, Integer apiTypeVersion) {
         String userId = requireUserId();
         String scope = normalizeScope(input.scope());
         String ownerId = resolveOwnerId(scope, userId);
         String connectionKey = requireConnectionKey(input.connectionKey());
         ProviderCatalogService.ApiTypeRef defaultType = catalog.defaultApiType(input.providerId());
+        if (apiTypeId != null && apiTypeVersion != null) {
+            catalog.supportedPair(input.providerId(), apiTypeId, apiTypeVersion);
+            defaultType = new ProviderCatalogService.ApiTypeRef(apiTypeId, apiTypeVersion, apiTypes.operation(apiTypeId, apiTypeVersion));
+        }
         JsonNode pair = catalog.supportedPair(input.providerId(), defaultType.apiTypeId(), defaultType.version());
         String baseUrl = normalizeBaseUrl(input.baseUrl(), pair);
         validateBaseUrl(baseUrl, defaultType.apiTypeId(), defaultType.version());
@@ -170,7 +182,8 @@ public class ProviderConnectionService {
 
     @Transactional
     public ProviderConnection update(String id, ConnectionInput input) {
-        ProviderConnection connection = requireVisible(id);
+        ProviderConnection connection = requestTemplates.lockConnection(id);
+        requireVisible(id);
         ensureCanManage(connection);
         if (input.connectionKey() != null
                 && !input.connectionKey().equals(connection.getConnectionKey())) {
@@ -267,7 +280,8 @@ public class ProviderConnectionService {
 
     @Transactional
     public void delete(String id) {
-        ProviderConnection connection = requireVisible(id);
+        ProviderConnection connection = requestTemplates.lockConnection(id);
+        requireVisible(id);
         ensureCanManage(connection);
         revokeLeases(connection.getId().toString());
         audit(connection, "DELETED", connection.getStatus(), "DELETED");
@@ -345,6 +359,45 @@ public class ProviderConnectionService {
         throw new IllegalArgumentException("Provider connection owner type is not writable");
     }
 
+    @Transactional(readOnly = true)
+    public java.util.Map<String, Object> typeImpact(String id, String type, int version) {
+        ProviderConnection connection = requireVisible(id);
+        ensureCanManage(connection);
+        catalog.supportedPair(connection.getProviderId(), type, version);
+        return requestTemplates.impact(connection, type, version);
+    }
+
+    @Transactional
+    public ProviderConnection updateType(String id, ConnectionInput input, String type, Integer version,
+                                          Long expectedRevision, JsonNode defaultRef, boolean confirmed) {
+        ProviderConnection connection = requestTemplates.lockConnection(id);
+        requireVisible(id);
+        ensureCanManage(connection);
+        if (expectedRevision != null && connection.getRevision() != expectedRevision) {
+            throw com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService.conflict("CONNECTION_REVISION_CHANGED", "Refresh the impact preview");
+        }
+        boolean changed = type != null && (!connection.getApiTypeId().equals(type) || connection.getApiTypeVersion() != version);
+        if (changed && (expectedRevision == null || !confirmed || ("chat".equals(apiTypes.operation(type, version)) && defaultRef == null))) {
+            throw com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService.invalid("Type change requires revision, confirmation and compatible default");
+        }
+        long previous = connection.getRevision();
+        if (type != null) {
+            catalog.supportedPair(connection.getProviderId(), type, version);
+            connection.setApiTypeId(type);
+            connection.setApiTypeVersion(version);
+            validateBaseUrl(connection.getBaseUrl(), type, version);
+        }
+        repository.saveAndFlush(connection);
+        if (defaultRef != null || changed) {
+            requestTemplates.changeConnectionDefault(connection, defaultRef);
+        }
+        ProviderConnection updated = update(id, input);
+        if (changed && updated.getRevision() == previous) {
+            updated.setRevision(previous + 1);
+        }
+        return repository.saveAndFlush(updated);
+    }
+
     private String resolveOwnerId(String scope, String userId) {
         if (ProviderConnection.OWNER_USER.equals(scope)) {
             return userId;
@@ -413,6 +466,17 @@ public class ProviderConnectionService {
             if (!requiredSuffix.isEmpty() && !value.endsWith(requiredSuffix)) {
                 throw new IllegalArgumentException(
                         "Base URL must end with the API Type path prefix " + requiredSuffix);
+            }
+            // PLAN-0485 spec §API Type: the embedding type contract pins this
+            // host (probe evidence: the workspace endpoint rejected the key).
+            // This is a type-contract pin, not a generic policy — other types
+            // keep legitimate custom endpoints.
+            if ("dashscope-multimodal-embedding".equals(apiTypeId)) {
+                String host = uri.getHost();
+                if (host == null || !host.equalsIgnoreCase("dashscope.aliyuncs.com")) {
+                    throw new IllegalArgumentException(
+                            "This embedding API Type only supports the pinned dashscope.aliyuncs.com host");
+                }
             }
         } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException("Invalid provider Base URL", e);
