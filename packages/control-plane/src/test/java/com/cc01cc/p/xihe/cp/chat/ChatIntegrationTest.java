@@ -73,6 +73,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -176,6 +177,13 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
     private static final java.util.concurrent.atomic.AtomicBoolean BUDGET_EXHAUSTED =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
+    /**
+     * PLAN-0493: 假 Agent 可切到“无进展停止”模式（tier-2 上报 RUN_NO_PROGRESS + signal，
+     * 走 0492 {stop, interrupt} 同一错误事件管道，不新增 wire 状态）。
+     */
+    private static final java.util.concurrent.atomic.AtomicBoolean NO_PROGRESS =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
     @DynamicPropertySource
     static void configureAgent(DynamicPropertyRegistry registry) {
         try {
@@ -187,6 +195,19 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
                             + "data: {\"code\":\"RUN_BUDGET_EXHAUSTED\",\"detail\":\"Run budget exhausted (turns)\",\"dimension\":\"turns\",\"retryable\":false,\"outcome\":\"error\",\"type\":\"error\"}\n\n"
                             + "event: done\n"
                             + "data: {\"type\":\"done\",\"outcome\":\"error\",\"errorCode\":\"RUN_BUDGET_EXHAUSTED\"}\n\n")
+                            .getBytes(StandardCharsets.UTF_8);
+                    exchange.getResponseHeaders().set("Content-Type", MediaType.TEXT_EVENT_STREAM_VALUE);
+                    exchange.sendResponseHeaders(200, response.length);
+                    try (OutputStream output = exchange.getResponseBody()) {
+                        output.write(response);
+                    }
+                    return;
+                }
+                if (NO_PROGRESS.get()) {
+                    byte[] response = ("event: error\n"
+                            + "data: {\"code\":\"RUN_NO_PROGRESS\",\"detail\":\"No progress detected (repeat)\",\"signal\":\"repeat\",\"retryable\":false,\"outcome\":\"error\",\"type\":\"error\"}\n\n"
+                            + "event: done\n"
+                            + "data: {\"type\":\"done\",\"outcome\":\"error\",\"errorCode\":\"RUN_NO_PROGRESS\"}\n\n")
                             .getBytes(StandardCharsets.UTF_8);
                     exchange.getResponseHeaders().set("Content-Type", MediaType.TEXT_EVENT_STREAM_VALUE);
                     exchange.sendResponseHeaders(200, response.length);
@@ -520,6 +541,45 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
 
         // 接管：耗尽后同一 Session 仍可继续运行（队列/新 Run 不被旧的 failed 终态阻塞）。
         ResponseEntity<Map> second = postChat(sessionId, "resume after budget exhaustion");
+        assertEquals(HttpStatus.ACCEPTED, second.getStatusCode());
+        awaitDoneEvents(2);
+        ChatRun resumed = chatRunRepository.findById(
+                UUID.fromString((String) second.getBody().get("runId"))).orElseThrow();
+        assertEquals("succeeded", resumed.getStatus());
+    }
+
+    @Test
+    void noProgressConvergesToFailedAndAllowsResume() {
+        String sessionId = UUID.randomUUID().toString();
+        createSession(sessionId);
+        openSse(sessionId);
+        NO_PROGRESS.set(true);
+        try {
+            ResponseEntity<Map> response = postChat(sessionId, "repeat the same call until stopped");
+            assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+            String runId = (String) response.getBody().get("runId");
+            awaitDoneEvents(1);
+
+            ChatRun run = chatRunRepository.findById(UUID.fromString(runId)).orElseThrow();
+            assertEquals("failed", run.getStatus());
+            assertEquals("error", run.getTerminalOutcome());
+            assertEquals("RUN_NO_PROGRESS", run.getErrorCode());
+            // 触发事实只走 errorCode；errorDetail 归 0492 预算维度专用（本终态为 null）。
+            assertNull(run.getErrorDetail());
+            assertNotNull(run.getTerminalAt());
+
+            List<ChatRunHistory> history = historyRepository
+                    .findByRunIdOrderBySequenceAsc(UUID.fromString(runId));
+            assertEquals(1, history.size());
+            assertEquals("terminal", history.get(0).getEventType());
+            assertEquals("failed", history.get(0).getToStatus());
+            assertEquals("RUN_NO_PROGRESS", history.get(0).getErrorCode());
+        } finally {
+            NO_PROGRESS.set(false);
+        }
+
+        // 接管：无进展终态不阻塞同一 Session 的新 Run（与 0492 预算终态同构）。
+        ResponseEntity<Map> second = postChat(sessionId, "resume after the loop guard stopped it");
         assertEquals(HttpStatus.ACCEPTED, second.getStatusCode());
         awaitDoneEvents(2);
         ChatRun resumed = chatRunRepository.findById(
