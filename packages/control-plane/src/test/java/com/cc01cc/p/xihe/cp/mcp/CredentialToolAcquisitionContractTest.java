@@ -222,7 +222,7 @@ class CredentialToolAcquisitionContractTest extends AbstractIntegrationTest {
                 .filter(approval -> sessionId.equals(approval.getSessionId()))
                 .forEach(chatApprovalRepository::delete);
         // mcp_invocations are kept: each fixture seeds its own run/toolCall pair,
-        // and their dispatch history rows would block the delete anyway (V64-era
+        // and their dispatch history rows would block the delete anyway (V65-era
         // fixture isolation relies on run scoping instead).
         if (runId != null) {
             chatRunRepository.deleteById(UUID.fromString(runId));

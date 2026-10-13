@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * PLAN-0495 T1.1（contract: PLAN-0494 design #4/#5/#6/#8 + PLAN-0495 §方案 1/5）：
- * V62 {@code credentials} / {@code credential_events} 在隔离 PG 全量迁移成功；
+ * V63 {@code credentials} / {@code credential_events} 在隔离 PG 全量迁移成功；
  * 关键 CHECK 正反例（owner_type / kind / delivery_tier / status / revision /
  * event_type）、三条索引与 events→credentials FK（ON DELETE CASCADE）断言。
  */
@@ -47,10 +47,10 @@ class CredentialMigrationIntegrationTest {
     }
 
     @Test
-    void v62_credentials_table_columns_constraints_and_indexes_applied() throws SQLException {
+    void v63_credentials_table_columns_constraints_and_indexes_applied() throws SQLException {
         assertEquals(1, scalarInt(
-                "SELECT count(*) FROM flyway_schema_history WHERE version = '62' AND success = true"),
-                "V62 must be recorded as applied");
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '63' AND success = true"),
+                "V63 must be recorded as applied");
         assertEquals("uuid", scalarString(
                 "SELECT data_type FROM information_schema.columns WHERE table_schema = 'public' "
                         + "AND table_name = 'credentials' AND column_name = 'owner_id'"));
@@ -74,7 +74,7 @@ class CredentialMigrationIntegrationTest {
     }
 
     @Test
-    void v62_credential_events_table_and_cascade_fk_applied() throws SQLException {
+    void v63_credential_events_table_and_cascade_fk_applied() throws SQLException {
         assertEquals(1, scalarInt(
                 "SELECT count(*) FROM pg_constraint WHERE conname = 'ck_credential_events_type' "
                         + "AND contype = 'c'"));
@@ -94,20 +94,20 @@ class CredentialMigrationIntegrationTest {
     }
 
     @Test
-    void v64_directGrantPartialUniqueIndexApplied() throws SQLException {
+    void v65_directGrantPartialUniqueIndexApplied() throws SQLException {
         assertEquals(1, scalarInt(
                 "SELECT count(*) FROM pg_indexes WHERE schemaname = 'public' "
                         + "AND indexname = 'uq_grants_direct_subject' "
                         + "AND indexdef LIKE '%(subject_type, subject_id)%' "
                         + "AND indexdef LIKE '%source%'"),
-                "PLAN-0496 round-4: one direct grant row per subject (V64)");
+                "PLAN-0496 round-4: one direct grant row per subject (V65)");
     }
 
     @Test
-    void v65CredentialLeasesTableApplied() throws SQLException {
+    void v66CredentialLeasesTableApplied() throws SQLException {
         assertEquals(1, scalarInt(
-                "SELECT count(*) FROM flyway_schema_history WHERE version = '65' AND success = true"),
-                "V65 must be recorded as applied");
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '66' AND success = true"),
+                "V66 must be recorded as applied");
         for (String column : new String[] {"lease_hash", "credential_id", "principal_id",
                 "session_id", "run_id", "workspace_id", "expected_revision", "expires_at"}) {
             assertEquals("NO", scalarString(

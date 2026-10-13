@@ -257,7 +257,7 @@ class CredentialBindingServiceIntegrationTest extends AbstractIntegrationTest {
 
         assertThrows(org.springframework.dao.DataIntegrityViolationException.class,
                 () -> grantRepository.saveAndFlush(duplicate),
-                "V64: a second direct row per subject must be rejected instead of racing");
+                "V65: a second direct row per subject must be rejected instead of racing");
     }
 
     @Test
@@ -338,7 +338,7 @@ class CredentialBindingServiceIntegrationTest extends AbstractIntegrationTest {
         workspaceId = registered.getWorkspaceId();
     }
 
-    /** V64: a subject owns a single direct grant row — successive grants merge into it. */
+    /** V65: a subject owns a single direct grant row — successive grants merge into it. */
     private void grantCreator(String permissionsJson) {
         AuthorizationGrant direct = grantRepository.findBySubjectTypeAndSubjectId(
                         GrantPrincipalPathResolver.USER, creatorId).stream()

@@ -190,7 +190,7 @@ class DomainSchemaMigrationTest {
 
         insertGrant("direct", subjectId);
         assertThrows(SQLException.class, () -> insertGrant("direct", subjectId),
-                "V64 (PLAN-0496 round-4): a subject can have only one direct grant row");
+                "V65 (PLAN-0496 round-4): a subject can have only one direct grant row");
     }
 
     @Test
@@ -972,7 +972,7 @@ class DomainSchemaMigrationTest {
             assertEquals(1, scalarInt(c, "SELECT count(*) FROM grants WHERE source = 'default' "
                     + "AND subject_type = 'user' AND subject_id = '" + adminId + "'::uuid "
                     + "AND permissions @> '[{\"actionClass\":\"credential\"}]'::jsonb"),
-                    "the ADMIN default matrix includes credential permission (target 54: V63 rewrite not yet run)");
+                    "the ADMIN default matrix includes credential permission (target 54: V64 rewrite not yet run)");
             assertEquals(0, scalarInt(c, "SELECT count(*) FROM grants WHERE source = 'default' "
                     + "AND subject_type IN ('user', 'agent_principal') "
                     + "AND subject_id IN ('" + userId + "'::uuid, '" + principalId + "'::uuid) "
@@ -1220,11 +1220,11 @@ class DomainSchemaMigrationTest {
 
     /**
      * PLAN-0496 round-4（0494 #9「dev 期直接切换并清理」授权）：V41 仍在 bootstrap 中写入
-     * 退役单字 {@code credential}；V63 在升级链上把该行改写为三原子 + {@code credential:*}，
+     * 退役单字 {@code credential}；V64 在升级链上把该行改写为三原子 + {@code credential:*}，
      * 使升级终态与当前词表一致（否则 PermissionAtom 读路径对含旧词行 fail-closed）。
      */
     @Test
-    void v63RewritesTheRetiredCredentialWordOnUpgrade() throws SQLException {
+    void v64RewritesTheRetiredCredentialWordOnUpgrade() throws SQLException {
         String upgradeDb = "xihe_cp_upgrade_v63";
         String adminUrl = postgres.getJdbcUrl();
         try (Connection admin = DriverManager.getConnection(
@@ -1278,16 +1278,16 @@ class DomainSchemaMigrationTest {
         try (Connection c = DriverManager.getConnection(
                 upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
             assertEquals(1, scalarInt(c, "SELECT count(*) FROM flyway_schema_history "
-                    + "WHERE version = '63' AND success = true"), "V63 must run on the upgrade chain");
+                    + "WHERE version = '64' AND success = true"), "V64 must run on the upgrade chain");
             assertEquals(0, scalarInt(c, "SELECT count(*) FROM grants "
                     + "WHERE permissions @> '[{\"actionClass\":\"credential\"}]'::jsonb"),
-                    "V63 must rewrite the retired word (0494 #9)");
+                    "V64 must rewrite the retired word (0494 #9)");
             for (String atom : new String[] {"credential_use", "credential_reveal", "credential_manage"}) {
                 assertEquals(1, scalarInt(c, "SELECT count(*) FROM grants WHERE source = 'default' "
                         + "AND subject_type = 'user' AND subject_id = '" + adminId + "'::uuid "
                         + "AND permissions @> '[{\"actionClass\":\"" + atom
                         + "\",\"resource\":\"credential:*\"}]'::jsonb"),
-                        "the ADMIN default must carry " + atom + " after the V63 rewrite");
+                        "the ADMIN default must carry " + atom + " after the V64 rewrite");
             }
         }
     }
