@@ -302,17 +302,6 @@ public class EventStoreService {
                 .toList();
     }
 
-    /**
-     * Cheap existence probe for a native carrier event. A carrier replaces the
-     * earlier events of its Run, so projection must widen to the full history
-     * only when one exists; otherwise the incremental cursor read stays valid.
-     */
-    @Transactional(readOnly = true)
-    public boolean hasNativeCarrier(String sessionId) {
-        return eventStoreRepository.existsNativeCarrier(
-                sessionId, "assistant.responded", "nativeRecords");
-    }
-
     @Transactional(readOnly = true)
     public Long getLatestSequence(String sessionId) {
         Optional<ContextEvent> latest = eventStoreRepository.findTopBySessionIdOrderBySequenceDesc(sessionId);

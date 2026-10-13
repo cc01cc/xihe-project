@@ -81,23 +81,29 @@ public class ContextProjectionService {
         return project(sessionId, afterSequence, branchPathService.rootVisibility(sessionId));
     }
 
-    /** PLAN-0410 T2.1: branch-path filtered projection of the visible events. */
+    /**
+     * PLAN-0410 T2.1 / PLAN-0416 T2.4: branch-path filtered projection of the
+     * visible events.
+     *
+     * <p>The projection always replays the full visible history. {@code
+     * afterSequence} is a caller cursor/cache hint only and never a read
+     * filter: a suffix rebuild cannot resolve the facts later events depend on
+     * (a native carrier replaces its Run's earlier events, a prune tombstone
+     * names an earlier sequence, a compaction truncates earlier messages), so a
+     * truncated read yields an empty or orphaned-suffix projection that no
+     * longer equals the state a live run sees.</p>
+     */
     @Transactional(readOnly = true)
     public ObjectNode project(String sessionId, Long afterSequence,
                               com.cc01cc.p.xihe.cp.service.BranchPathService.BranchVisibility visibility) {
+        if (afterSequence != null && afterSequence > 0) {
+            logger.debug("afterSequence={} is a cursor hint; replaying full visible history for session {}",
+                    afterSequence, sessionId);
+        }
         ObjectNode context = emptyContext(sessionId);
-        // A carrier replaces earlier events in its Run; a cursor cannot replay
-        // that suffix in isolation, so the read widens to the full history only
-        // when a carrier actually exists. Without one the incremental cursor
-        // read stays valid and bounded.
         ReplayState replay = new ReplayState();
-        boolean hasCarrier = eventStoreService.hasNativeCarrier(sessionId);
-        List<ContextEvent> events = eventStoreService.read(
-                sessionId, hasCarrier ? 0L : afterSequence, visibility);
+        List<ContextEvent> events = eventStoreService.read(sessionId, 0L, visibility);
         for (ContextEvent event : events) {
-            if (!hasCarrier && afterSequence != null && event.getSequence() <= afterSequence) {
-                continue;
-            }
             context = apply(context, event, replay);
         }
         return context;

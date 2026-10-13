@@ -61,28 +61,76 @@ class ContextProjectionServiceTest extends AbstractH2Test {
     }
 
     @Test
-    void projectAfterSequenceExcludesEarlierEvents() {
+    void projectAfterSequenceIsCursorHintNotReadFilter() {
         String sessionId = "aaaaaaa5-0000-0000-0000-000000000000";
         contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "session.created", Map.of(
-            "workspace_id", TEST_WS,
-            "user_id", TEST_USER,
-            "epoch_id", "epoch-1",
-            "baseline_hash", "hash-1",
-            "system_messages", java.util.List.of("You are xihe")
+                "workspace_id", TEST_WS,
+                "user_id", TEST_USER,
+                "epoch_id", "epoch-1",
+                "baseline_hash", "hash-1",
+                "system_messages", java.util.List.of("You are xihe")
         ));
         contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
-            "message", Map.of("role", "human", "content", "first")
+                "message", Map.of("role", "human", "content", "first")
         ));
         contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
-            "message", Map.of("role", "human", "content", "second")
+                "message", Map.of("role", "human", "content", "second")
         ));
 
-        ObjectNode ctx = projectionService.project(sessionId, 2L);
+        ObjectNode live = projectionService.project(sessionId, 0L);
 
-        assertThat(ctx.get("latest_sequence").asLong()).isEqualTo(3L);
-        var messages = ctx.get("messages");
-        assertThat(messages).hasSize(1);
-        assertThat(messages.get(0).get("content").asText()).isEqualTo("second");
+        assertThat(live.get("latest_sequence").asLong()).isEqualTo(3L);
+        assertThat(live.get("messages")).hasSize(2);
+        // PLAN-0416 T2.4: the cursor is a hint, never a read filter — a resumed
+        // read must return the whole visible state, not an orphaned suffix.
+        assertThat(projectionService.project(sessionId, 1L)).isEqualTo(live);
+        assertThat(projectionService.project(sessionId, 2L)).isEqualTo(live);
+        assertThat(projectionService.project(sessionId, 3L)).isEqualTo(live);
+    }
+
+    @Test
+    void restartProjectionEqualsLiveProjectionAcrossEveryRecoveryPath() {
+        String sessionId = "aaaaaaa8-0000-0000-0000-000000000000";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                "message", Map.of("role", "human", "content", "first question")
+        ));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.called", Map.of(
+                "toolCallId", "call-1", "toolName", "read", "arguments", Map.of("path", "a.txt")
+        ));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.result", Map.of(
+                "toolCallId", "call-1", "toolName", "read", "result", "bounded tool output"
+        ));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "assistant.responded", Map.of(
+                "message", Map.of("role", "ai", "content", "answer")
+        ));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "context.prune", Map.of(
+                "tombstones", List.of(Map.of("sequence", 3L, "tool_call_id", "call-1"))
+        ));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                "message", Map.of("role", "human", "content", "second question")
+        ));
+
+        ObjectNode live = projectionService.project(sessionId, 0L);
+
+        // PLAN-0416 T2.4 battery: every recovery path — plain projection, a
+        // projection resumed from a mid-history cursor, and the snapshot read
+        // that upserts the durable cache — must return the identical state.
+        assertThat(projectionService.project(sessionId, 2L)).isEqualTo(live);
+        assertThat(projectionService.project(sessionId, 4L)).isEqualTo(live);
+        ObjectNode snapshot = contextService.getSnapshot(sessionId, TEST_WS, TEST_USER, 2L);
+        assertThat(snapshot.get("messages")).isEqualTo(live.get("messages"));
+        assertThat(snapshot.get("latest_sequence")).isEqualTo(live.get("latest_sequence"));
+
+        // No empty state and no orphaned suffix: the earlier prompt, its tool
+        // pair (now tombstoned), the answer and the later prompt all survive.
+        assertThat(snapshot.get("messages")).hasSize(5);
+        String rendered = snapshot.get("messages").toString();
+        assertThat(rendered).contains("first question");
+        assertThat(rendered).contains("[old tool result cleared]");
+        assertThat(rendered).doesNotContain("bounded tool output");
+        assertThat(rendered).contains("answer");
+        assertThat(rendered).contains("second question");
+        assertThat(snapshot.get("latest_sequence").asLong()).isEqualTo(6L);
     }
 
     @Test

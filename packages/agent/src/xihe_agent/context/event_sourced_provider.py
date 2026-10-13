@@ -19,7 +19,8 @@ class EventSourcedContextProvider(ContextProvider):
         """PLAN-0410 T2.3: `run_id` scopes the snapshot to the Run's branch.
 
         CP resolves and validates the branch; the Agent never submits an
-        authoritative branch it chose itself.
+        authoritative branch it chose itself. `after_sequence` is a cursor hint
+        only (PLAN-0416 T2.4) — CP returns the complete visible branch state.
         """
         snapshot = await self._cp_client.get_context_snapshot(
             aggregate_id, after_sequence=after_sequence, run_id=run_id

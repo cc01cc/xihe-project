@@ -43,7 +43,6 @@ class NativeCarrierProjectionTest {
         var input = new ArrayList<ContextEvent>();
         input.add(event("epoch.started", null, Map.of("epoch_id", "stable", "system_messages", List.of("base"))));
         input.addAll(runEvents());
-        when(events.hasNativeCarrier("session")).thenReturn(true);
         when(events.read("session", 0L, null)).thenReturn(input);
         ObjectNode full = projector.project("session", 0L, null);
         assertEquals(full, projector.project("session", 3L, null));
@@ -61,7 +60,6 @@ class NativeCarrierProjectionTest {
     void lateOldToolTombstoneRemovesItsWholeCarrier() throws Exception {
         var input = runEvents();
         input.add(event("context.prune", null, Map.of("tombstones", List.of(Map.of("content_hash", hash("bounded tool output"))))));
-        when(events.hasNativeCarrier("session")).thenReturn(true);
         when(events.read("session", 0L, null)).thenReturn(input);
         JsonNode messages = projector.project("session", 0L, null).path("messages");
         assertEquals(3, messages.size());
@@ -78,7 +76,6 @@ class NativeCarrierProjectionTest {
         input.add(finalCarrier);
         input.add(finalCarrier); // repeated final publication must remain blocked after prune
         input.add(event("tool.result", "current", Map.of("toolCallId", "call", "result", "bounded tool output")));
-        when(events.hasNativeCarrier("session")).thenReturn(true);
         when(events.read("session", 0L, null)).thenReturn(input);
         JsonNode messages = projector.project("session", 0L, null).path("messages");
         assertEquals(3, messages.size());
@@ -87,13 +84,11 @@ class NativeCarrierProjectionTest {
 
     @Test
     void forkPreservesCarrierAndCarrierHashPruneRemovesItAtomically() throws Exception {
-        when(events.hasNativeCarrier("session")).thenReturn(true);
         when(events.read("session", 0L, null)).thenReturn(runEvents());
         JsonNode original = projector.project("session", 0L, null).path("messages");
         var fork = new ArrayList<ContextEvent>();
         fork.add(event("session.forked", null, Map.of("source_session_id", "source", "anchor_message_id", "anchor",
                 "summary_seed", Map.of("messages", original, "contextEpoch", "child-epoch"))));
-        when(events.hasNativeCarrier("child")).thenReturn(true);
         when(events.read("child", 0L, null)).thenReturn(fork);
         assertEquals(original, projector.project("child", 0L, null).path("messages"));
         fork.add(event("context.prune", null, Map.of("tombstones", List.of(Map.of("content_hash", hash("final answer"))))));
@@ -107,7 +102,6 @@ class NativeCarrierProjectionTest {
             input.add(event("prompt.admitted", "later-" + i, Map.of("content", "human " + i)));
         }
         input.add(event("compaction.applied", null, Map.of("summary", "summary", "summaryHash", "sum")));
-        when(events.hasNativeCarrier("session")).thenReturn(true);
         when(events.read("session", 0L, null)).thenReturn(input);
         ObjectNode result = projector.project("session", 0L, null);
         assertEquals(10, result.path("messages").size());

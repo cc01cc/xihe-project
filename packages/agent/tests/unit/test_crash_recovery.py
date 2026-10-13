@@ -68,13 +68,60 @@ async def test_crash_recovery_recovers_session(event_store):
     assert len(ctx.messages) == 2
 
 
-async def test_crash_recovery_after_sequence_skips_old_events(event_store):
+async def test_crash_recovery_after_sequence_is_cursor_hint_only(event_store):
     recovery = CrashRecovery(event_store)
-    ctx = await recovery.recover("session-1", after_sequence=1)
+    live = await recovery.recover("session-1", after_sequence=0)
+    resumed = await recovery.recover("session-1", after_sequence=1)
 
-    assert ctx.latest_sequence == 2
-    assert len(ctx.messages) == 1
-    assert ctx.messages[0].content == "hi"
+    # PLAN-0416 T2.4: the caller cursor never truncates the rebuild.
+    assert resumed.latest_sequence == live.latest_sequence
+    assert [(message.role, message.content) for message in resumed.messages] == [
+        (message.role, message.content) for message in live.messages
+    ]
+    assert len(resumed.messages) == 2
+
+
+async def test_crash_recovery_cursor_never_yields_orphan_tool_suffix():
+    events = [
+        Event(
+            aggregate_id="session-2",
+            sequence=1,
+            type="prompt.admitted",
+            payload={"message": {"role": "human", "content": "question"}},
+            created_at=datetime.now(UTC),
+        ),
+        Event(
+            aggregate_id="session-2",
+            sequence=2,
+            type="tool.called",
+            payload={"toolCallId": "call-1", "toolName": "read", "arguments": {"path": "a.txt"}},
+            created_at=datetime.now(UTC),
+        ),
+        Event(
+            aggregate_id="session-2",
+            sequence=3,
+            type="tool.result",
+            payload={"toolCallId": "call-1", "toolName": "read", "result": "bounded tool output"},
+            created_at=datetime.now(UTC),
+        ),
+        Event(
+            aggregate_id="session-2",
+            sequence=4,
+            type="assistant.responded",
+            payload={"message": {"role": "ai", "content": "answer"}},
+            created_at=datetime.now(UTC),
+        ),
+    ]
+    recovery = CrashRecovery(InMemoryEventStore({"session-2": events}))
+
+    # A cursor past the tool pair must not hand back an unpaired result.
+    ctx = await recovery.recover("session-2", after_sequence=2)
+
+    assert ctx.latest_sequence == 4
+    assert [message.role for message in ctx.messages] == ["human", "ai", "tool", "ai"]
+    assert ctx.messages[0].content == "question"
+    assert ctx.messages[2].content == "bounded tool output"
+    assert ctx.messages[3].content == "answer"
 
 
 async def test_crash_recovery_recover_many(event_store):
