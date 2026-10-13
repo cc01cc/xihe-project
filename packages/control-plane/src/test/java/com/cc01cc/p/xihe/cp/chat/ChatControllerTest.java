@@ -61,6 +61,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -572,6 +573,146 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(1, jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM chat_run_history WHERE run_id = CAST(? AS UUID)",
                 Integer.class, run.getId().toString()), "the terminal must write exactly one chat_run_history row");
+    }
+
+    // ── PLAN-0507: session monitor aggregate ──────────────────────────────
+
+    @Test
+    void sessionMonitor_returnsAggregateWithHistoryAndReadiness() throws IOException {
+        String sseBody = "event: token\ndata: {\"content\":\"hi\"}\n\n"
+                + "event: done\ndata: {\"type\":\"done\",\"outcome\":\"success\"}\n\n";
+        agentServer.createContext("/internal/v1/agent/chat", exchange -> {
+            try {
+                exchange.getResponseHeaders().set("Content-Type", MediaType.TEXT_EVENT_STREAM_VALUE);
+                exchange.sendResponseHeaders(200, 0);
+                try (OutputStream out = exchange.getResponseBody()) {
+                    out.write(sseBody.getBytes());
+                }
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        Map<String, Object> request = Map.of(
+                "sessionId", sessionId,
+                "content", "Monitor aggregate",
+                "workspaceId", workspaceId,
+                "userId", userId
+        );
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<Map> submitted = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST, chatEntity(request, headers), Map.class);
+        assertEquals(HttpStatus.ACCEPTED, submitted.getStatusCode());
+        String runId = (String) submitted.getBody().get("runId");
+        await().atMost(10, TimeUnit.SECONDS).until(() ->
+                "succeeded".equals(chatRunRepository.findById(UUID.fromString(runId)).orElseThrow().getStatus()));
+
+        ResponseEntity<Map> monitor = restTemplate.exchange(
+                baseUrl + "/api/v1/chat/sessions/" + sessionId + "/monitor",
+                HttpMethod.GET, new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.OK, monitor.getStatusCode());
+        Map<String, Object> body = monitor.getBody();
+        assertNotNull(body.get("generatedAt"));
+
+        Map<String, Object> sessionView = (Map<String, Object>) body.get("session");
+        assertEquals(sessionId, sessionView.get("id"));
+        assertEquals(chatConnection().getId().toString(), sessionView.get("providerConnectionId"));
+
+        List<Map<String, Object>> activity = (List<Map<String, Object>>) body.get("activity");
+        assertTrue(activity.isEmpty(), "terminal run must not stay in the activity block");
+
+        Map<String, Object> history = (Map<String, Object>) body.get("history");
+        assertEquals(20, history.get("windowSize"));
+        assertEquals(Map.of("success", 1), history.get("counts"));
+        List<Map<String, Object>> recent = (List<Map<String, Object>>) history.get("recent");
+        assertEquals(1, recent.size());
+        assertEquals(runId, recent.getFirst().get("runId"));
+        assertEquals("success", recent.getFirst().get("terminalOutcome"));
+
+        Map<String, Object> readiness = (Map<String, Object>) body.get("readiness");
+        Map<String, Object> connection = (Map<String, Object>) readiness.get("connection");
+        assertNotNull(connection, "bound session must expose its connection fact");
+        assertEquals("READY", connection.get("status"));
+        Map<String, Object> agent = (Map<String, Object>) readiness.get("agent");
+        assertEquals("ready", agent.get("llmReady"));
+        Map<String, Object> lastObserved = (Map<String, Object>) readiness.get("lastObservedRun");
+        assertEquals(runId, lastObserved.get("runId"));
+    }
+
+    @Test
+    void sessionMonitor_activityShowsNonTerminalRunWithLeaseExpiry() {
+        Instant now = Instant.now();
+        ChatRun running = new ChatRun(UUID.randomUUID().toString(), sessionId, userId, workspaceId,
+                "monitor-running-" + UUID.randomUUID(), "hash-running", "custom-openai-compatible",
+                "wire-model", "none", "running");
+        running.setOrigin(ChatRun.ORIGIN_USER_SUBMISSION);
+        running.setLeaseOwner("test-lease");
+        running.setLeaseExpiresAt(now.minusSeconds(60));
+        chatRunRepository.saveAndFlush(running);
+
+        ChatRun terminal = new ChatRun(UUID.randomUUID().toString(), sessionId, userId, workspaceId,
+                "monitor-terminal-" + UUID.randomUUID(), "hash-terminal", "custom-openai-compatible",
+                "wire-model", "none", "succeeded");
+        terminal.setOrigin(ChatRun.ORIGIN_USER_SUBMISSION);
+        terminal.setTerminalOutcome("success");
+        terminal.setTerminalAt(now);
+        chatRunRepository.saveAndFlush(terminal);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        ResponseEntity<Map> monitor = restTemplate.exchange(
+                baseUrl + "/api/v1/chat/sessions/" + sessionId + "/monitor",
+                HttpMethod.GET, new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.OK, monitor.getStatusCode());
+        List<Map<String, Object>> activity = (List<Map<String, Object>>) monitor.getBody().get("activity");
+        assertEquals(1, activity.size(), "only the non-terminal run belongs to activity");
+        assertEquals(running.getId().toString(), activity.getFirst().get("runId"));
+        assertEquals("running", activity.getFirst().get("status"));
+        assertEquals(true, activity.getFirst().get("leaseExpired"));
+        Map<String, Object> history = (Map<String, Object>) monitor.getBody().get("history");
+        assertEquals(Map.of("success", 1), history.get("counts"));
+        List<Map<String, Object>> recent = (List<Map<String, Object>>) history.get("recent");
+        assertEquals(terminal.getId().toString(), recent.getFirst().get("runId"));
+    }
+
+    @Test
+    void sessionMonitor_rejectsMalformedAndUnknownSessions() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+
+        ResponseEntity<Map> malformed = restTemplate.exchange(
+                baseUrl + "/api/v1/chat/sessions/not-a-uuid/monitor",
+                HttpMethod.GET, new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.BAD_REQUEST, malformed.getStatusCode());
+        assertEquals("INVALID_REQUEST", malformed.getBody().get("code"));
+
+        ResponseEntity<Map> unknown = restTemplate.exchange(
+                baseUrl + "/api/v1/chat/sessions/" + UUID.randomUUID() + "/monitor",
+                HttpMethod.GET, new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.NOT_FOUND, unknown.getStatusCode());
+        assertEquals("SESSION_NOT_FOUND", unknown.getBody().get("code"));
+    }
+
+    @Test
+    void sessionMonitor_hidesSessionFromOtherUsers() {
+        String email2 = "chat-ctrl-other-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
+        restTemplate.postForEntity(baseUrl + "/api/v1/auth/register",
+                new RegisterRequest(email2, TestDataFactory.PASSWORD, "Other"), AuthResponse.class);
+        User user2 = userRepository.findByEmail(email2).orElseThrow();
+        Workspace ws2 = workspaceRepository.save(new Workspace("chat-test-other", user2.getId().toString()));
+        workspaceUserRepository.save(new WorkspaceUser(ws2.getId().toString(), user2.getId().toString(), WorkspaceRole.OWNER));
+        String token2 = jwtTokenProvider.createAccessToken(
+                user2.getId().toString(), email2, "USER", ws2.getId().toString());
+
+        HttpHeaders headers2 = new HttpHeaders();
+        headers2.setBearerAuth(token2);
+        ResponseEntity<Map> foreign = restTemplate.exchange(
+                baseUrl + "/api/v1/chat/sessions/" + sessionId + "/monitor",
+                HttpMethod.GET, new HttpEntity<>(headers2), Map.class);
+        assertEquals(HttpStatus.NOT_FOUND, foreign.getStatusCode());
+        assertEquals("SESSION_NOT_FOUND", foreign.getBody().get("code"));
     }
 
     @Test

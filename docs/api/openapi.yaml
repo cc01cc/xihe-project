@@ -504,6 +504,33 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/chat/sessions/{sessionId}/monitor:
+    get:
+      operationId: getSessionMonitor
+      summary: Read-only Session monitor aggregate (activity, history window, readiness)
+      description: |
+        PLAN-0507: derived read-only aggregate over existing durable facts — non-terminal
+        runs (activity; effective status including the Control-Plane-synthesized
+        `awaiting_approval`), the newest 20 terminal runs (history window, `terminalAt`
+        desc, outcome counts) and readiness facts (explicit connection verify result,
+        agent-scoped readiness snapshot, last observed terminal run). No new durable
+        state; unavailable components are explicit null and are never fabricated.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Session monitor aggregate
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionMonitorResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /api/v1/chat/approvals/{requestId}/decision:
     post:
       operationId: decideChatApproval
@@ -2279,6 +2306,103 @@ components:
         page: { type: integer, minimum: 0 }
         size: { type: integer, minimum: 1 }
         runs: { type: array, items: { $ref: '#/components/schemas/SessionRunSummary' } }
+    SessionMonitorResponse:
+      type: object
+      additionalProperties: false
+      required: [generatedAt, session, activity, history, readiness]
+      properties:
+        generatedAt: { type: string, format: date-time }
+        session: { $ref: '#/components/schemas/SessionMonitorSession' }
+        activity: { type: array, items: { $ref: '#/components/schemas/SessionMonitorActivityItem' } }
+        history: { $ref: '#/components/schemas/SessionMonitorHistory' }
+        readiness: { $ref: '#/components/schemas/SessionMonitorReadiness' }
+    SessionMonitorSession:
+      type: object
+      additionalProperties: false
+      required: [id]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string, nullable: true }
+        agentPrincipalId: { type: string, format: uuid, nullable: true }
+        modelProvider: { type: string, nullable: true }
+        modelName: { type: string, nullable: true }
+        providerConnectionId: { type: string, format: uuid, nullable: true }
+        connectionRevision: { type: integer, nullable: true }
+        createdAt: { type: string, format: date-time, nullable: true }
+        updatedAt: { type: string, format: date-time, nullable: true }
+    SessionMonitorActivityItem:
+      type: object
+      additionalProperties: false
+      required: [runId, origin, status, leaseExpired]
+      properties:
+        runId: { type: string, format: uuid }
+        origin: { type: string }
+        status: { type: string, description: Effective status; `awaiting_approval` is synthesized by Control Plane from pending approvals }
+        createdAt: { type: string, format: date-time, nullable: true }
+        waitingOnRunId: { type: string, format: uuid, nullable: true }
+        waitingToolCallId: { type: string, format: uuid, nullable: true }
+        leaseExpired: { type: boolean }
+    SessionMonitorHistory:
+      type: object
+      additionalProperties: false
+      required: [windowSize, counts, recent]
+      properties:
+        windowSize: { type: integer, minimum: 1 }
+        counts: { type: object, additionalProperties: { type: integer }, description: Window counts keyed by terminal outcome (`unknown` for missing outcome) }
+        recent: { type: array, items: { $ref: '#/components/schemas/SessionMonitorHistoryItem' } }
+    SessionMonitorHistoryItem:
+      type: object
+      additionalProperties: false
+      required: [runId, origin]
+      properties:
+        runId: { type: string, format: uuid }
+        origin: { type: string }
+        terminalOutcome: { type: string, nullable: true }
+        errorCode: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time, nullable: true }
+        terminalAt: { type: string, format: date-time, nullable: true }
+    SessionMonitorReadiness:
+      type: object
+      additionalProperties: false
+      required: [connection, agent, lastObservedRun]
+      properties:
+        connection:
+          oneOf:
+            - $ref: '#/components/schemas/SessionMonitorConnectionFact'
+            - type: 'null'
+          description: Explicit verify fact; null when unbound, missing or not visible (never fabricated)
+        agent: { $ref: '#/components/schemas/SessionMonitorAgentFact' }
+        lastObservedRun:
+          oneOf:
+            - $ref: '#/components/schemas/SessionMonitorLastObservedRun'
+            - type: 'null'
+    SessionMonitorConnectionFact:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [UNVERIFIED, VERIFYING, READY, INVALID_CREDENTIALS, UNREACHABLE, DISABLED] }
+        lastErrorCode: { type: string, nullable: true }
+        lastVerifiedAt: { type: string, format: date-time, nullable: true }
+    SessionMonitorAgentFact:
+      type: object
+      additionalProperties: false
+      required: [status, llmReady, configRevision]
+      description: Agent-scoped readiness snapshot shared with `GET /api/v1/status`; may be stale while down — not a per-Session live probe
+      properties:
+        status: { type: string, enum: [up, down, unknown] }
+        llmReady: { type: string }
+        verifiedAt: { type: string, format: date-time, nullable: true }
+        configRevision: { type: string }
+    SessionMonitorLastObservedRun:
+      type: object
+      additionalProperties: false
+      required: [runId]
+      properties:
+        runId: { type: string, format: uuid }
+        terminalOutcome: { type: string, nullable: true }
+        errorCode: { type: string, nullable: true }
+        terminalAt: { type: string, format: date-time, nullable: true }
     ChatApprovalDecisionRequest:
       type: object
       additionalProperties: false

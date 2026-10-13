@@ -55,6 +55,42 @@ class OpenApiYamlContractTest {
         }
     }
 
+    /** PLAN-0507: Session monitor aggregate route and schema blocks are contracted. */
+    @Test
+    void openApiContainsSessionMonitorRouteAndSchemaBlocks() throws Exception {
+        Path contract = Path.of("..", "..", "docs", "api", "openapi.yaml");
+        try (InputStream input = Files.newInputStream(contract)) {
+            Map<?, ?> document = new Yaml().load(input);
+            Map<?, ?> paths = (Map<?, ?>) document.get("paths");
+            assertTrue(paths.containsKey("/api/v1/chat/sessions/{sessionId}/monitor"),
+                    "session monitor route is contracted");
+
+            Map<?, ?> schemas = (Map<?, ?>) ((Map<?, ?>) document.get("components")).get("schemas");
+            Map<?, ?> monitor = (Map<?, ?>) schemas.get("SessionMonitorResponse");
+            assertInstanceOf(Map.class, monitor, "SessionMonitorResponse schema is contracted");
+            Map<?, ?> properties = (Map<?, ?>) monitor.get("properties");
+            assertTrue(properties.containsKey("generatedAt"));
+            assertTrue(properties.containsKey("session"));
+            assertTrue(properties.containsKey("activity"));
+            assertTrue(properties.containsKey("history"));
+            assertTrue(properties.containsKey("readiness"));
+
+            Map<?, ?> history = (Map<?, ?>) schemas.get("SessionMonitorHistory");
+            assertInstanceOf(Map.class, history, "SessionMonitorHistory schema is contracted");
+            Map<?, ?> historyProperties = (Map<?, ?>) history.get("properties");
+            assertTrue(historyProperties.containsKey("windowSize"));
+            assertTrue(historyProperties.containsKey("counts"));
+            assertTrue(historyProperties.containsKey("recent"));
+
+            Map<?, ?> readiness = (Map<?, ?>) schemas.get("SessionMonitorReadiness");
+            assertInstanceOf(Map.class, readiness, "SessionMonitorReadiness schema is contracted");
+            Map<?, ?> readinessProperties = (Map<?, ?>) readiness.get("properties");
+            assertTrue(readinessProperties.containsKey("connection"));
+            assertTrue(readinessProperties.containsKey("agent"));
+            assertTrue(readinessProperties.containsKey("lastObservedRun"));
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static void assertSourceEnumContains(Map<?, ?> schemas, String schemaName) {
         Map<?, ?> schema = (Map<?, ?>) schemas.get(schemaName);
