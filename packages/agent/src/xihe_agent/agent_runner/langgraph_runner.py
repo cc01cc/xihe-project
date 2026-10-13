@@ -32,6 +32,7 @@ from xihe_agent.agent_runner.tool_adapter import (
     _run_correlation,
     bound_tool_preview,
 )
+from xihe_agent.context.loop_detection import LOOP_WINDOW_KEY, NO_PROGRESS_SIGNAL_KEY, LoopObservationWindow
 from xihe_agent.interfaces.agent_runner import AgentEvent, AgentRunner, RunBudget, RunnerConfig
 from xihe_agent.interfaces.context import AgentContext, bound_tool_arguments
 from xihe_agent.interfaces.event import Event
@@ -227,6 +228,12 @@ class LangGraphRunner(AgentRunner):
             await approval_events.put(AgentEvent(type="approval_request", data=payload))
 
         context.metadata[APPROVAL_EVENT_SINK_KEY] = publish_approval
+        # PLAN-0493 T2.1/T2.2: per-Run observation window (CP-resolved thresholds
+        # and exempt set; tier-1 admission in the tool adapter, tier-2 returns
+        # through NO_PROGRESS_SIGNAL_KEY).
+        context.metadata[LOOP_WINDOW_KEY] = LoopObservationWindow(
+            config.loop, config.loop_exempt_tools
+        )
 
         model = self._model_factory(config.model)
         tools = [self._adapt_tool(t, context) for t in config.tools]
@@ -311,6 +318,13 @@ class LangGraphRunner(AgentRunner):
                         # for a human (approval requests arrive through this
                         # queue, not the raw event stream).
                         pause_started_at = datetime.now(UTC)
+                        # PLAN-0493 T2.1: a human approval pause is an
+                        # intervention boundary — consecutive counters reset
+                        # (window history is kept), so an authorized/approved
+                        # silent retry never counts as a repeat (verify V3).
+                        window = context.metadata.get(LOOP_WINDOW_KEY)
+                        if isinstance(window, LoopObservationWindow):
+                            window.mark_boundary("approval")
                         yield approval_task.result()
                         approval_task = asyncio.create_task(approval_events.get())
                     if raw_task in completed:
@@ -362,6 +376,12 @@ class LangGraphRunner(AgentRunner):
                                 usage.total_tokens,
                             )
                             break
+                        if context.metadata.get(NO_PROGRESS_SIGNAL_KEY):
+                            # PLAN-0493 T2.1: tier-2 escalation from the
+                            # observation window — stop the stream; the finally
+                            # below converges RUN_NO_PROGRESS via the 0492
+                            # {stop, interrupt} error-event pipe (no new state).
+                            break
                         raw_task = asyncio.ensure_future(raw_stream.__anext__())
             finally:
                 for task in (raw_task, approval_task, cancel_wait_task):
@@ -382,7 +402,11 @@ class LangGraphRunner(AgentRunner):
             yield AgentEvent(type="error", data={"error": str(e), "code": e.code})
         except ApiRequestError as e:
             failed = True
-            logger.warning("API request failed code={}", e.code)
+            # opt(exception=True) attaches the `raise ... from` cause chain
+            # (classified ApiRequestError never includes provider body or
+            # credentials); the code alone cannot distinguish stream truncation
+            # from a pre-send failure (PLAN-0493 T0.2 diagnosis).
+            logger.opt(exception=True).warning("API request failed code={}", e.code)
             context.metadata.pop(EVENT_STORE_FAILURES_KEY, None)
             yield AgentEvent(type="error", data={"error": e.code, "code": e.terminal_code, "retryable": False})
         except litellm.exceptions.ContextWindowExceededError as e:
@@ -406,17 +430,21 @@ class LangGraphRunner(AgentRunner):
             yield AgentEvent(type="error", data={"error": str(e)})
         finally:
             context.metadata.pop(APPROVAL_EVENT_SINK_KEY, None)
+            context.metadata.pop(LOOP_WINDOW_KEY, None)
             usage.finish()
             # PLAN-294 M1 (decisions #2/#6): persist the assistant reply into
             # the context event store — the UI-facing messages table (CP side)
             # and the event-sourced projection must share the same history.
             # Only successful, non-cancelled runs carry a durable reply; a
-            # budget-exhausted run (PLAN-0492) is a failure and must not leave
-            # a durable reply that makes it look successful.
+            # budget-exhausted run (PLAN-0492) or a no-progress run (PLAN-0493)
+            # is a failure and must not leave a durable reply that makes it
+            # look successful.
+            no_progress_signal = str(context.metadata.pop(NO_PROGRESS_SIGNAL_KEY, "") or "")
             if (
                 not cancelled
                 and not failed
                 and not budget_dimension
+                and not no_progress_signal
                 and (assistant_parts or getattr(model, "native_records", None))
                 and self._event_store is not None
             ):
@@ -460,6 +488,19 @@ class LangGraphRunner(AgentRunner):
                         "error": f"Run budget exhausted ({budget_dimension})",
                         "code": "RUN_BUDGET_EXHAUSTED",
                         "dimension": budget_dimension,
+                        "retryable": False,
+                    },
+                )
+            elif no_progress_signal:
+                # PLAN-0493 I1: tier-2 converges through the same 0492 pipe —
+                # a CP `failed` terminal carrying the trigger fact only (the
+                # window internals and signatures never cross the wire).
+                yield AgentEvent(
+                    type="error",
+                    data={
+                        "error": f"No progress detected ({no_progress_signal})",
+                        "code": "RUN_NO_PROGRESS",
+                        "signal": no_progress_signal,
                         "retryable": False,
                     },
                 )
