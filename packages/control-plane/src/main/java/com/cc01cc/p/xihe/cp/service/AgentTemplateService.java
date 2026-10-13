@@ -4,6 +4,7 @@ import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.ConfigDomainSchema;
 import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.credentials.CredentialService;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator;
@@ -40,6 +41,8 @@ public class AgentTemplateService {
 
     private static final Logger logger = LoggerFactory.getLogger(AgentTemplateService.class);
     private static final String DOMAIN = "agent-templates";
+    /** PLAN-0496 T3.2: per-role credential atom cap (beyond this, use credential:*). */
+    private static final int MAX_CREDENTIAL_ATOMS_PER_ROLE = 64;
 
     private final ConfigService configService;
     private final ConfigDomainSchema schemaValidator;
@@ -50,6 +53,7 @@ public class AgentTemplateService {
     private final GrantIntersectionEvaluator evaluator;
     private final ObjectMapper objectMapper;
     private final AuditLogger auditLogger;
+    private final CredentialService credentialService;
 
     public AgentTemplateService(ConfigService configService,
                                 ConfigDomainSchema schemaValidator,
@@ -59,7 +63,8 @@ public class AgentTemplateService {
                                 AuthorizationGrantRepository grantRepository,
                                 GrantIntersectionEvaluator evaluator,
                                 ObjectMapper objectMapper,
-                                AuditLogger auditLogger) {
+                                AuditLogger auditLogger,
+                                CredentialService credentialService) {
         this.configService = configService;
         this.schemaValidator = schemaValidator;
         this.userRepository = userRepository;
@@ -69,6 +74,7 @@ public class AgentTemplateService {
         this.evaluator = evaluator;
         this.objectMapper = objectMapper;
         this.auditLogger = auditLogger;
+        this.credentialService = credentialService;
     }
 
     @Transactional(readOnly = true)
@@ -284,7 +290,19 @@ public class AgentTemplateService {
                 }
             }
             Set<GrantIntersectionEvaluator.PermissionAtom> requested = evaluator.parse(rolePermissions);
+            requireCredentialAtomsValid(actorId, workspaceId, requested);
             for (GrantIntersectionEvaluator.PermissionAtom permission : requested) {
+                if (ToolFaceRegistry.isCredentialActionClass(permission.actionClass())) {
+                    // PLAN-0496 T3.2: credential atoms use the naming-rule ceiling (the
+                    // evaluation-request path requires a concrete id and cannot carry '*').
+                    if (!coveredBy(permission, actorPermissions)) {
+                        logger.warn("Denied Agent role credential atom beyond writer grants: actor={}, roleId={}",
+                                actorId, text(role, "id"));
+                        throw new ConfigService.ConfigAccessException(
+                                "Role permissions must be within the template writer's current grants");
+                    }
+                    continue;
+                }
                 PolicyRequest request = new PolicyRequest("config.agent-templates.role", List.of(permission.actionClass()),
                         List.of(permission.resource()), ToolShape.STRUCTURED, actorId.toString(),
                         workspaceId == null ? null : workspaceId.toString(), null);
@@ -296,6 +314,45 @@ public class AgentTemplateService {
                 }
             }
         }
+    }
+
+    /**
+     * PLAN-0496 T3.2: credential atoms — canonical resource format, reference existence
+     * (0495 {@code existsForOwner}, dangling rejected) and the per-role atom cap.
+     */
+    private void requireCredentialAtomsValid(UUID actorId, UUID workspaceId,
+            Set<GrantIntersectionEvaluator.PermissionAtom> requested) {
+        List<GrantIntersectionEvaluator.PermissionAtom> credentialAtoms = requested.stream()
+                .filter(permission -> ToolFaceRegistry.isCredentialActionClass(permission.actionClass()))
+                .toList();
+        if (credentialAtoms.size() > MAX_CREDENTIAL_ATOMS_PER_ROLE) {
+            throw new IllegalArgumentException("A role may carry at most " + MAX_CREDENTIAL_ATOMS_PER_ROLE
+                    + " credential atoms; use credential:* for wide access");
+        }
+        for (GrantIntersectionEvaluator.PermissionAtom permission : credentialAtoms) {
+            if (!ToolFaceRegistry.isCanonicalCredentialResource(permission.resource())) {
+                throw new IllegalArgumentException(
+                        "credential resource must be credential:* or credential:<uuid>: " + permission.resource());
+            }
+            if (ToolFaceRegistry.isConcreteCredentialResource(permission.resource())) {
+                String credentialId = permission.resource()
+                        .substring(ToolFaceRegistry.CREDENTIAL_RESOURCE_PREFIX.length());
+                boolean exists = credentialService.existsForOwner("USER", actorId.toString(), credentialId)
+                        || (workspaceId != null && credentialService.existsForOwner(
+                                "WORKSPACE", workspaceId.toString(), credentialId));
+                if (!exists) {
+                    throw new ConfigService.ConfigAccessException(
+                            "Credential reference does not exist for the writer: " + permission.resource());
+                }
+            }
+        }
+    }
+
+    private static boolean coveredBy(GrantIntersectionEvaluator.PermissionAtom candidate,
+            Set<GrantIntersectionEvaluator.PermissionAtom> ceiling) {
+        return ceiling.stream().anyMatch(atom -> atom.actionClass().equals(candidate.actionClass())
+                && ToolFaceRegistry.resourceCovers(candidate.actionClass(), atom.resource(),
+                        candidate.resource()));
     }
 
     private void validateRoleIds(ObjectNode config, String layer) {
@@ -549,8 +606,10 @@ public class AgentTemplateService {
         if (!errors.isEmpty()) {
             logger.error("Stored Agent template config failed schema validation: layer={}, errorCount={}",
                     scope.layer(), errors.size());
+            // PLAN-0496 T3.2: surface the first schema errors so format rejections are explicit.
             throw new CpApiException(HttpStatus.CONFLICT, "AGENT_TEMPLATE_CONFIG_INVALID",
-                    "Stored Agent template configuration is invalid");
+                    "Stored Agent template configuration is invalid: "
+                            + String.join("; ", errors.subList(0, Math.min(3, errors.size()))));
         }
         return config;
     }

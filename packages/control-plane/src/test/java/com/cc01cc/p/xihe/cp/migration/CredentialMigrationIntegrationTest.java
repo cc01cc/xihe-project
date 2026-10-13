@@ -94,6 +94,16 @@ class CredentialMigrationIntegrationTest {
     }
 
     @Test
+    void v64_directGrantPartialUniqueIndexApplied() throws SQLException {
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM pg_indexes WHERE schemaname = 'public' "
+                        + "AND indexname = 'uq_grants_direct_subject' "
+                        + "AND indexdef LIKE '%(subject_type, subject_id)%' "
+                        + "AND indexdef LIKE '%source%'"),
+                "PLAN-0496 round-4: one direct grant row per subject (V64)");
+    }
+
+    @Test
     void valid_rows_insert_and_events_cascade_on_credential_delete() throws SQLException {
         UUID credentialId = UUID.randomUUID();
         UUID ownerId = UUID.randomUUID();

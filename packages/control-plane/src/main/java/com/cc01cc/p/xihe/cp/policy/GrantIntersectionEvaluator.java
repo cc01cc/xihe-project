@@ -23,6 +23,13 @@ public class GrantIntersectionEvaluator {
             if (resource == null || resource.isBlank()) {
                 resource = "*";
             }
+            // PLAN-0496 #2 (I1): credential atoms carry only the canonical resource forms —
+            // credential:<uuid> or credential:*; the bare '*' / partial globs are not allowed.
+            if (ToolFaceRegistry.isCredentialActionClass(actionClass)
+                    && !ToolFaceRegistry.isCanonicalCredentialResource(resource)) {
+                throw new IllegalArgumentException(
+                        "credential resource must be credential:* or credential:<uuid>: " + resource);
+            }
         }
     }
 

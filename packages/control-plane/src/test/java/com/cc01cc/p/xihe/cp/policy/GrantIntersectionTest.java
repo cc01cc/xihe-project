@@ -61,13 +61,14 @@ class GrantIntersectionTest {
                   {"actionClass":"delete"},
                   {"actionClass":"exec"},
                   {"actionClass":"network"},
-                  {"actionClass":"credential"}
+                  {"actionClass":"credential_use","resource":"credential:*"}
                 ]
                 """);
 
-        assertFalse(evaluator.allows(request("credential", "provider_connections/*"),
+        String credentialId = "credential:" + UUID.randomUUID();
+        assertFalse(evaluator.allows(request("credential_use", credentialId),
                 List.of(userDefault, adminDefault)));
-        assertTrue(evaluator.allows(request("credential", "provider_connections/*"), List.of(adminDefault)));
+        assertTrue(evaluator.allows(request("credential_use", credentialId), List.of(adminDefault)));
     }
 
     @Test

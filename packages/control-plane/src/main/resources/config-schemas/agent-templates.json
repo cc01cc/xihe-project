@@ -25,7 +25,23 @@
         "actionClass": { "type": "string", "minLength": 1 },
         "resource": { "type": "string", "minLength": 1 }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": { "actionClass": { "pattern": "^credential_" } },
+            "required": ["actionClass"]
+          },
+          "then": {
+            "required": ["resource"],
+            "properties": {
+              "resource": {
+                "pattern": "^credential:(\\*|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+              }
+            }
+          }
+        }
+      ]
     },
     "role": {
       "type": "object",

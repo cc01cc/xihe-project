@@ -140,6 +140,143 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { description: 'FORBIDDEN — non-ADMIN instance read or non-member workspace read (no template content in the body)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { description: 'WORKSPACE_NOT_FOUND — the requested workspace does not exist', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/credentials:
+    get:
+      operationId: listCredentials
+      summary: List credential metadata for one owner
+      description: 'PLAN-0496 T3.1: USER owner defaults to the caller; WORKSPACE owner requires membership. Returns sanitized metadata with reference counts — never ciphertext, suffixes or secret values.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: ownerType, required: false, schema: { type: string, enum: [USER, WORKSPACE] } }
+        - { in: query, name: ownerId, required: false, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Owner-scoped credential summaries
+          content: { application/json: { schema: { $ref: '#/components/schemas/CredentialList' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+    post:
+      operationId: createCredential
+      summary: Register a credential (requires credential_manage@credential:*)
+      description: 'PLAN-0496 T3.1: the secret payload is encrypted at rest as one envelope; the response never carries plaintext or a suffix.'
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        description: 'Conditional secret: kind=token requires token; kind=key_pair requires accessKey and secretKey. The payload is encrypted at rest as one envelope and is never echoed.'
+        content: { application/json: { schema: { $ref: '#/components/schemas/CredentialCreateRequest' } } }
+      responses:
+        '201':
+          description: Created credential (sanitized)
+          content: { application/json: { schema: { $ref: '#/components/schemas/CredentialView' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+  /api/v1/credentials/precheck:
+    post:
+      operationId: precheckCredentialAtoms
+      summary: Read-only pre-check of candidate atoms against the caller's grants
+      description: 'PLAN-0496 T3.1 (0498 role editor): returns the candidate atoms not covered by the caller — credential atoms use the naming rule, other atoms the standard evaluation.'
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CredentialPrecheckRequest' } } }
+      responses:
+        '200':
+          description: Uncovered atoms
+          content: { application/json: { schema: { $ref: '#/components/schemas/CredentialPrecheckResult' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+  /api/v1/credentials/{id}/replace:
+    post:
+      operationId: replaceCredentialSecret
+      summary: 'Replace the secret value in place (credential_manage@credential:<id>)'
+      description: 'PLAN-0496 T3.1: keeps the credential id; revision +1; the response never carries plaintext or a suffix.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        description: 'Conditional secret matching the stored kind: kind=token requires token; kind=key_pair requires accessKey and secretKey. Replaces the envelope in place (revision +1, id preserved).'
+        content: { application/json: { schema: { $ref: '#/components/schemas/CredentialReplaceRequest' } } }
+      responses:
+        '200':
+          description: Replaced credential (sanitized)
+          content: { application/json: { schema: { $ref: '#/components/schemas/CredentialView' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { description: 'CREDENTIAL_CONFLICT — the credential changed concurrently (revision fence); retry', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/credentials/{id}:
+    delete:
+      operationId: deleteCredential
+      summary: Soft-delete a credential and return the reference report
+      description: 'PLAN-0496 T3.1 (0494 #18): requires credential_manage@credential:<id>; the response lists referencing grants and workspace caps so callers can warn before the row is removed.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Delete report
+          content: { application/json: { schema: { $ref: '#/components/schemas/CredentialDeleteReport' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/credentials/{id}/references:
+    get:
+      operationId: getCredentialReferences
+      summary: Reference report for one credential
+      description: 'PLAN-0496 T3.1: grants and workspace caps carrying an exact credential:<id> atom (wide credential:* grants are not listed); requires credential_manage@credential:<id>.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: References
+          content: { application/json: { schema: { $ref: '#/components/schemas/CredentialReferencesView' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+  /api/v1/credentials/{id}/bindings:
+    post:
+      operationId: bindCredentialToAgents
+      summary: Bind the credential to Agent principals (all-or-nothing)
+      description: 'PLAN-0496 T3.1 (0494 #12): adds credential_use@credential:<id> to each principal grant and workspace cap in one transaction under the operator ceiling; applies to new sessions only.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CredentialBindRequest' } } }
+      responses:
+        '200':
+          description: Binding applied
+          content: { application/json: { schema: { $ref: '#/components/schemas/CredentialBindResult' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '422': { description: 'CREDENTIAL_NOT_FOUND — a referenced credential does not exist for the operator or workspace (batch is not applied)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+    delete:
+      operationId: unbindCredentialFromAgents
+      summary: Unbind the credential from Agent principals (all-or-nothing)
+      description: 'PLAN-0496 T3.1: removes the credential_use@credential:<id> atoms added by the binding; applies to new sessions only.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CredentialBindRequest' } } }
+      responses:
+        '200':
+          description: Binding removed
+          content: { application/json: { schema: { $ref: '#/components/schemas/CredentialBindResult' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /api/v1/sessions:
     get: { operationId: listSessions, security: [{ bearerAuth: [] }], responses: { '200': { description: Sessions } } }
     post: { operationId: createSession, security: [{ bearerAuth: [] }], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SessionCreateRequest' } } } }, responses: { '201': { description: Created Agent Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
@@ -2770,6 +2907,91 @@ components:
          failures: { type: integer }
          remaining: { type: integer, format: int64 }
          targetVersion: { type: string }
+    CredentialView:
+       type: object
+       required: [id, label, kind, deliveryTier, ownerType, ownerId, status, fingerprint, revision]
+       properties:
+         id: { type: string }
+         label: { type: string }
+         kind: { type: string, enum: [token, key_pair] }
+         deliveryTier: { type: string, enum: [lease, reveal] }
+         ownerType: { type: string, enum: [USER, WORKSPACE] }
+         ownerId: { type: string }
+         status: { type: string, enum: [active, disabled] }
+         fingerprint: { type: string }
+         revision: { type: integer }
+         createdAt: { type: string, nullable: true }
+         replacedAt: { type: string, nullable: true }
+    CredentialSummary:
+       allOf:
+         - $ref: '#/components/schemas/CredentialView'
+         - type: object
+           required: [referenceCount]
+           properties:
+             referenceCount: { type: integer }
+    CredentialList:
+       type: object
+       required: [credentials, count]
+       properties:
+         credentials: { type: array, items: { $ref: '#/components/schemas/CredentialSummary' } }
+         count: { type: integer }
+    CredentialCreateRequest:
+       type: object
+       required: [label, kind, deliveryTier]
+       properties:
+         ownerType: { type: string, enum: [USER, WORKSPACE] }
+         ownerId: { type: string, format: uuid }
+         label: { type: string, maxLength: 128 }
+         kind: { type: string, enum: [token, key_pair] }
+         deliveryTier: { type: string, enum: [lease, reveal] }
+         token: { type: string }
+         accessKey: { type: string }
+         secretKey: { type: string }
+    CredentialReplaceRequest:
+       type: object
+       properties:
+         token: { type: string }
+         accessKey: { type: string }
+         secretKey: { type: string }
+    CredentialBindRequest:
+       type: object
+       required: [workspaceId, agentPrincipalIds]
+       properties:
+         workspaceId: { type: string, format: uuid }
+         agentPrincipalIds: { type: array, items: { type: string, format: uuid }, minItems: 1 }
+    CredentialBindResult:
+       type: object
+       properties:
+         credentialId: { type: string }
+         agentPrincipalIds: { type: array, items: { type: string } }
+         bound: { type: boolean }
+    CredentialReference:
+       type: object
+       properties:
+         source: { type: string, enum: [grant, workspace_cap] }
+         subjectType: { type: string }
+         subjectId: { type: string }
+         actionClass: { type: string }
+         resource: { type: string }
+    CredentialReferencesView:
+       type: object
+       properties:
+         references: { type: array, items: { $ref: '#/components/schemas/CredentialReference' } }
+    CredentialDeleteReport:
+       type: object
+       properties:
+         id: { type: string }
+         deleted: { type: boolean }
+         references: { type: array, items: { $ref: '#/components/schemas/CredentialReference' } }
+    CredentialPrecheckRequest:
+       type: object
+       required: [permissions]
+       properties:
+         permissions: { type: array, items: { type: object, additionalProperties: true } }
+    CredentialPrecheckResult:
+       type: object
+       properties:
+         uncovered: { type: array, items: { type: string } }
     ScopedModelCatalogRequest:
        type: object
        required: [connections]

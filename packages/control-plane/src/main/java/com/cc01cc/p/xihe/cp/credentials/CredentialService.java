@@ -18,6 +18,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -149,6 +150,15 @@ public class CredentialService {
 
         recordEvent(credential, CredentialEvent.TYPE_DELETED, actorUserId);
         return credential;
+    }
+
+    /**
+     * PLAN-0496 T3.1: active rows for one owner (management-API list); newest first.
+     */
+    @Transactional(readOnly = true)
+    public List<Credential> listForOwner(String ownerType, String ownerId) {
+        return credentialRepository.findByOwnerTypeAndOwnerIdAndDeletedAtIsNullOrderByCreatedAtDesc(
+                ownerType, ownerId);
     }
 
     /**

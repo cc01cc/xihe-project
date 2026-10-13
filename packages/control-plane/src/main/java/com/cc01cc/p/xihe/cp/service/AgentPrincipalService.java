@@ -127,6 +127,15 @@ public class AgentPrincipalService {
                 parsePermissions(templateSnapshot.get("permissions"));
         Set<GrantIntersectionEvaluator.PermissionAtom> creatorPermissions = evaluator.union(
                 grantRepository.findBySubjectTypeAndSubjectId(GrantPrincipalPathResolver.USER, actorId));
+        // PLAN-0496 #2: credential atoms are reported explicitly instead of being
+        // silently narrowed (422 lists the uncovered ids); other atoms keep narrowing.
+        List<String> uncoveredCredentialAtoms =
+                uncoveredCredentialAtoms(templatePermissions, creatorPermissions);
+        if (!uncoveredCredentialAtoms.isEmpty()) {
+            throw new CpApiException(HttpStatus.UNPROCESSABLE_ENTITY, "CREDENTIAL_ATOMS_NOT_COVERED",
+                    "Credential atoms are not covered by the creator's permissions: "
+                            + String.join(", ", uncoveredCredentialAtoms));
+        }
         Set<GrantIntersectionEvaluator.PermissionAtom> effectivePermissions =
                 retainCovered(templatePermissions, creatorPermissions);
         ArrayNode grantPermissions = toJson(effectivePermissions);
@@ -387,7 +396,21 @@ public class AgentPrincipalService {
     private boolean isCoveredBy(GrantIntersectionEvaluator.PermissionAtom candidate,
                                 Set<GrantIntersectionEvaluator.PermissionAtom> ceiling) {
         return ceiling.stream().anyMatch(atom -> atom.actionClass().equals(candidate.actionClass())
-                && ("*".equals(atom.resource()) || atom.resource().equals(candidate.resource())));
+                && ToolFaceRegistry.resourceCovers(candidate.actionClass(), atom.resource(),
+                        candidate.resource()));
+    }
+
+    /** PLAN-0496 #2: credential atoms in the candidate that the ceiling does not cover. */
+    private List<String> uncoveredCredentialAtoms(
+            Set<GrantIntersectionEvaluator.PermissionAtom> candidate,
+            Set<GrantIntersectionEvaluator.PermissionAtom> ceiling) {
+        return candidate.stream()
+                .filter(atom -> ToolFaceRegistry.isCredentialActionClass(atom.actionClass()))
+                .filter(atom -> !isCoveredBy(atom, ceiling))
+                .map(GrantIntersectionEvaluator.PermissionAtom::resource)
+                .distinct()
+                .sorted()
+                .toList();
     }
 
     private ArrayNode toJson(Set<GrantIntersectionEvaluator.PermissionAtom> permissions) {

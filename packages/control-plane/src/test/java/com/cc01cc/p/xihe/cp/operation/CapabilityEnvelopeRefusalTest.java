@@ -139,14 +139,15 @@ class CapabilityEnvelopeRefusalTest extends AbstractIntegrationTest {
                 message + " (V10: 包络拒绝不触发审批)");
     }
 
-    /** design #16: a maximal permission set — every vocabulary action class incl. credential. */
+    /** design #16: a maximal permission set — every vocabulary action class incl. the PLAN-0496 credential atoms. */
     private void grantMaximalRole() {
         AuthorizationGrant direct = new AuthorizationGrant();
         direct.setId(UUID.randomUUID());
         direct.setSubjectType("user");
         direct.setSubjectId(UUID.fromString(userId));
         direct.setSource("direct");
-        direct.setPermissions(atoms("read", "write", "delete", "exec", "network", "credential"));
+        direct.setPermissions(atoms("read", "write", "delete", "exec", "network",
+                "credential_use", "credential_reveal", "credential_manage"));
         grantRepository.save(direct);
     }
 
@@ -188,6 +189,9 @@ class CapabilityEnvelopeRefusalTest extends AbstractIntegrationTest {
         for (String actionClass : actionClasses) {
             ObjectNode atom = objectMapper.createObjectNode();
             atom.put("actionClass", actionClass);
+            if (actionClass.startsWith("credential_")) {
+                atom.put("resource", "credential:*");
+            }
             permissions.add(atom);
         }
         return permissions;
