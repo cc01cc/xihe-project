@@ -15,7 +15,9 @@ import SettingsNav from "../../components/settings/SettingsNav.vue";
 import BackToChatButton from "../../components/settings/BackToChatButton.vue";
 import { api } from "../../composables/api";
 import { logger } from "../../lib/logger";
-import { getProviderInfo } from "../../types/provider";
+import { getProviderInfo, BUILTIN_PROVIDERS } from "../../types/provider";
+import type { ProviderDefinition } from "../../types/providerConnection";
+import { listProviderCatalog } from "../../services/providerConnectionService";
 import { useAuthStore } from "../../stores/auth";
 
 const { t } = useI18n(),
@@ -48,14 +50,24 @@ const domainLabels: Record<string, string> = {
     "job-policy": t("settings.domainJobPolicy"),
 };
 
-const providerOptions = [
-        { label: "DeepSeek", value: "deepseek" },
-        { label: "OpenAI", value: "openai" },
-        { label: "Anthropic", value: "anthropic" },
-        { label: "Xiaomi", value: "xiaomi" },
-        { label: "DashScope", value: "dashscope" },
-    ],
-    levelOptions = ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"].map((level) => ({
+/**
+ * PLAN-0503 T2.1: the provider list comes from the CP catalog; the builtin
+ * list is only the offline fallback (its own comment declares the catalog as
+ * the authoritative source).
+ */
+const catalogProviders = ref<ProviderDefinition[]>([]);
+
+const providerOptions = computed(() => {
+    if (catalogProviders.value.length) {
+        return catalogProviders.value.map((provider) => ({
+            label: provider.displayName,
+            value: provider.id,
+        }));
+    }
+    return BUILTIN_PROVIDERS.map((provider) => ({ label: provider.name, value: provider.id }));
+});
+
+const levelOptions = ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"].map((level) => ({
         label: level,
         value: level,
     })),
@@ -64,15 +76,54 @@ const providerOptions = [
         { label: "false", value: "false" },
     ];
 
-const domainSchemas: Record<string, DomainField[]> = {
+function providerDisplayName(providerId: string): string {
+    return (
+        catalogProviders.value.find((provider) => provider.id === providerId)?.displayName ??
+        getProviderInfo(providerId)?.name ??
+        providerId
+    );
+}
+
+/** PLAN-0503 T2.2: candidate models from the live directory (ready + chat). */
+function chatModelOptions(providerId: string): { label: string; value: string }[] {
+    return configStore.getChatModels(providerId).map((model) => ({ label: model, value: model }));
+}
+
+/** PLAN-0503 T2.4: directory freshness from the /models response (no new API). */
+const llmProviderNote = computed(() => {
+    const cache = configStore.modelCache;
+    const verified = Object.values(cache.providers ?? {})
+        .map((catalog) => catalog?.verifiedAt)
+        .filter((value): value is string => !!value)
+        .map((value) => new Date(value).getTime())
+        .filter((value) => !Number.isNaN(value));
+    const revision = cache.configRevision ?? "";
+    if (!revision && verified.length === 0) return "";
+    const verifiedLabel = verified.length
+        ? new Date(Math.max(...verified)).toLocaleString()
+        : t("settings.catalogVerifiedNever");
+    return t("settings.catalogFreshness", {
+        revision: revision || t("settings.notSet"),
+        verified: verifiedLabel,
+    });
+});
+
+const domainSchemas = computed<Record<string, DomainField[]>>(() => ({
     "llm-provider": [
         {
             key: "defaultProvider",
             label: t("settings.fieldDefaultProvider"),
             type: "select",
-            options: providerOptions,
+            options: providerOptions.value,
         },
-        { key: "defaultModel", label: t("settings.fieldDefaultModel"), type: "text" },
+        {
+            key: "defaultModel",
+            label: t("settings.fieldDefaultModel"),
+            type: "select",
+            allowCustom: true,
+            optionsDependsOn: "defaultProvider",
+            optionsFor: chatModelOptions,
+        },
         { key: "deepseekModel", label: t("settings.fieldDeepseekModel"), type: "text" },
         { key: "deepseekApiBase", label: t("settings.fieldDeepseekApiBase"), type: "text" },
         { key: "openaiModel", label: t("settings.fieldOpenaiModel"), type: "text" },
@@ -88,7 +139,7 @@ const domainSchemas: Record<string, DomainField[]> = {
             key: "imageProvider",
             label: t("settings.fieldImageProvider"),
             type: "select",
-            options: [...providerOptions, { label: t("settings.notSet"), value: "" }],
+            options: [...providerOptions.value, { label: t("settings.notSet"), value: "" }],
         },
         { key: "maxTokens", label: t("settings.fieldMaxTokens"), type: "number" },
         { key: "temperature", label: t("settings.fieldTemperature"), type: "number" },
@@ -279,7 +330,7 @@ const domainSchemas: Record<string, DomainField[]> = {
             options: levelOptions,
         },
     ],
-};
+}));
 
 const fetchError = ref(false),
     savingDomains = ref<Record<string, boolean>>({});
@@ -325,7 +376,7 @@ const showWorkspaceHint = computed(() => activeTab.value === "workspace" && !cur
     showImportExport = computed(() => activeTab.value === "instance");
 
 function schemaFor(domain: string): DomainField[] {
-    const fields = domainSchemas[domain] ?? [];
+    const fields = domainSchemas.value[domain] ?? [];
     if (activeTab.value === "instance") return fields;
     return fields.filter((field) => !field.instanceOnly);
 }
@@ -359,8 +410,20 @@ const builtInTools = [
     "read_command_output",
 ];
 
+async function loadProviderCatalog() {
+    try {
+        const response = await listProviderCatalog();
+        catalogProviders.value = response.providers ?? [];
+    } catch (e) {
+        logger.warn("Provider catalog load failed, using builtin fallback", e);
+        catalogProviders.value = [];
+    }
+}
+
 onMounted(async () => {
     await handleOAuthCallback();
+    void loadProviderCatalog();
+    void configStore.fetchModels();
     fetchError.value = false;
     try {
         if (activeTab.value !== "workspace" || currentWorkspaceId()) {
@@ -548,7 +611,7 @@ function generateSummary(domain: string): string {
     if (Object.keys(entries).length === 0) return "";
     if (domain === "llm-provider") {
         const providerId = entries["defaultProvider"],
-            provider = providerId ? (getProviderInfo(providerId)?.name ?? providerId) : "";
+            provider = providerId ? providerDisplayName(providerId) : "";
         return provider ? `${provider} (已配置)` : "";
     }
     if (domain === "rag") {
@@ -572,7 +635,7 @@ function generateSummary(domain: string): string {
 }
 
 function validateJsonFields(domain: string, body: Record<string, string>): string | null {
-    for (const field of domainSchemas[domain] ?? []) {
+    for (const field of domainSchemas.value[domain] ?? []) {
         if (field.type !== "json") continue;
         const value = body[field.key];
         if (!value) continue;
@@ -800,6 +863,7 @@ async function handleImportFile(event: Event) {
                             :summary="generateSummary(domain)"
                             :schema="schemaFor(domain)"
                             :env-locked="envLockedFor(domain)"
+                            :note="domain === 'llm-provider' ? llmProviderNote : ''"
                             @save="handleSave(domain, $event)"
                             @reset="handleReset(domain, $event)"
                         />

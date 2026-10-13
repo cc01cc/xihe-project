@@ -16,6 +16,7 @@ import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.repository.ConfigAuditRepository;
 import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
+import com.cc01cc.p.xihe.cp.provider.ProviderCatalogService;
 import com.cc01cc.p.xihe.cp.provider.ProviderConnectionService;
 
 import java.io.IOException;
@@ -150,6 +151,9 @@ public class ConfigService {
 
     @Autowired
     private ProviderConnectionService providerConnectionService;
+
+    @Autowired
+    private ProviderCatalogService providerCatalog;
 
     @Autowired
     private org.springframework.context.ApplicationEventPublisher events;
@@ -615,7 +619,9 @@ public class ConfigService {
         List<String> errors = new ArrayList<>();
         String defaultProvider = entries.getOrDefault("defaultProvider", "").trim();
         if (!defaultProvider.isEmpty()) {
-            Set<String> supported = Set.of("openai", "deepseek", "xiaomi", "anthropic", "dashscope");
+            // PLAN-0503 T1.1: accept set derives from the CP provider catalog
+            // (single source; legacy inline 5-provider whitelist removed).
+            Set<String> supported = providerCatalog.providerIds();
             if (!supported.contains(defaultProvider)) {
                 errors.add("defaultProvider is unsupported: " + defaultProvider);
             } else if (requiresReadyConnection(layer)

@@ -192,6 +192,29 @@ const activeModels = computed(() => {
     if (catalog?.connectionId === connection.id) return catalog.models.map((model) => model.name);
     return connection.modelDiscovery === "manual" ? connection.manualModels : [];
 });
+/**
+ * PLAN-0503 T2.6 (I4): models with a stored template binding that are not in
+ * the current catalog must stay visible (never rendered as an absent row);
+ * the binding is kept and can be cleared by the user, never auto-deleted.
+ */
+const orphanModels = computed(() => {
+    const connection = activeConnection.value;
+    if (!connection) return [];
+    const bound = Object.keys(modelBindings.value[connection.id] ?? {});
+    const active = new Set(activeModels.value);
+    return bound.filter((model) => !active.has(model));
+});
+/**
+ * PLAN-0503 review P2: a directory fetch failure means availability is
+ * unknown, not "gone" — never nudge clearing in that state, and only mention
+ * clearing when the row actually has the control (chat connections).
+ */
+const orphanNotice = computed(() => {
+    if (modelsError.value) return "目录加载失败 · 无法判定，绑定保留";
+    return activeConnection.value?.operation === "chat"
+        ? "不在当前目录 · 绑定保留，可清除"
+        : "不在当前目录 · 绑定保留";
+});
 
 watch(
     () => [activeConnection.value?.id, props.workspaceId] as const,
@@ -823,9 +846,60 @@ onMounted(() => {
                                 >
                             </li>
                         </ul>
-                        <p v-else class="mt-2 text-sm text-muted-foreground">
+                        <p
+                            v-else-if="!orphanModels.length"
+                            class="mt-2 text-sm text-muted-foreground"
+                        >
                             此连接暂无可显示的模型。请验证连接或管理手动模型。
                         </p>
+                        <section
+                            v-if="orphanModels.length"
+                            data-testid="provider-orphan-bindings"
+                            class="mt-3"
+                        >
+                            <h6 class="text-xs font-semibold text-amber-600">
+                                {{
+                                    modelsError
+                                        ? "已绑定（目录不可达，无法判定）"
+                                        : "已绑定但当前不可用"
+                                }}
+                            </h6>
+                            <ul class="mt-1 divide-y">
+                                <li
+                                    v-for="model in orphanModels"
+                                    :key="`orphan-${model}`"
+                                    :data-testid="`provider-orphan-model-${model}`"
+                                    class="flex flex-wrap justify-between gap-2 py-2 text-xs"
+                                >
+                                    <span class="break-all">{{ model }}</span>
+                                    <select
+                                        v-if="activeConnection.operation === 'chat'"
+                                        :value="currentModelKey(model)"
+                                        :disabled="readonly || bindingBusy"
+                                        class="max-w-full rounded border bg-background p-1"
+                                        :aria-label="model + ' 请求模板'"
+                                        @change="
+                                            saveBinding(
+                                                model,
+                                                ($event.target as HTMLSelectElement).value,
+                                            )
+                                        "
+                                    >
+                                        <option value="">继承连接默认模板</option>
+                                        <option
+                                            v-for="item in activeTemplates"
+                                            :key="templateKey(item)"
+                                            :value="templateKey(item)"
+                                        >
+                                            {{ item.name }} v{{ item.version }}
+                                        </option>
+                                    </select>
+                                    <span class="break-all text-amber-600">
+                                        {{ orphanNotice }}
+                                    </span>
+                                </li>
+                            </ul>
+                        </section>
                     </section>
                 </section>
                 <p v-else class="py-7 text-sm text-muted-foreground">
