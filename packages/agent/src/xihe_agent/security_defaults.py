@@ -51,10 +51,21 @@ def collect_violations(environ: Mapping[str, str] | None = None) -> list[str]:
             "XIHE_CP_PROVIDER_CREDENTIALS_ALLOW_DEV_KEY: must be `false` in prod "
             "(dev fallback encryption key would be accepted)"
         )
+    if (env.get("XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY") or "").lower() == "true":
+        violations.append(
+            "XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY: must be `false` in prod "
+            "(dev fallback encryption key would be accepted)"
+        )
     if not (env.get("XIHE_CP_OAUTH_ENCRYPTION_KEY") or "").strip():
         violations.append("XIHE_CP_OAUTH_ENCRYPTION_KEY: required in prod (provide a base64 key)")
     if not (env.get("XIHE_CP_PROVIDER_CREDENTIALS_KEY") or "").strip():
         violations.append("XIHE_CP_PROVIDER_CREDENTIALS_KEY: required in prod (provide a base64 key)")
+    if not (env.get("XIHE_CP_CREDENTIALS_KEY") or "").strip() and not (
+        env.get("XIHE_CP_CREDENTIALS_KEY_RING") or ""
+    ).strip():
+        violations.append(
+            "XIHE_CP_CREDENTIALS_KEY: required in prod (provide a base64 key or a key ring)"
+        )
     return violations
 
 

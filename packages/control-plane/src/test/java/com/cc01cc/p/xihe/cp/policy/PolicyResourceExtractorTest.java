@@ -18,6 +18,20 @@ class PolicyResourceExtractorTest {
     }
 
     @Test
+    void extractsCredentialIdIntoTheCredentialNamespace() {
+        String id = "d9a22f34-7a60-4f0e-a036-60e7a9c6cf9b";
+        String body = "{\"params\":{\"name\":\"acquire_credential\","
+                + "\"arguments\":{\"credentialId\":\"" + id + "\"}}}";
+        assertEquals(List.of("credential:" + id), PolicyResourceExtractor.extract(body),
+                "PLAN-0497 T2.1: the bare id is normalized into credential:<uuid> "
+                        + "so the PolicyRequest concrete-id rule sees the canonical form");
+
+        String prefixed = "{\"params\":{\"arguments\":{\"credentialId\":\"credential:" + id + "\"}}}";
+        assertEquals(List.of("credential:" + id), PolicyResourceExtractor.extract(prefixed),
+                "an already canonical resource is kept as-is");
+    }
+
+    @Test
     void extractsCommandKey() {
         String body = "{\"params\":{\"arguments\":{\"command\":\"git status\",\"timeout\":30}}}";
 

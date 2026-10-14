@@ -22,6 +22,17 @@ class ToolSpec:
     input_schema: dict[str, Any]
 
 
+# PLAN-0497 T2.1 (context-tool rule 5 / 0497 I5): the CP-owned credential
+# delivery tool returns its value into the run's memory only — durable previews
+# and streamed projections carry this fixed placeholder instead of the value.
+# Lives in the neutral interfaces layer so both the tool adapter and the SSE
+# adapter share one source without an agent_runner/adapters import cycle.
+ACQUIRE_CREDENTIAL_TOOL_NAME = "acquire_credential"
+CREDENTIAL_DELIVERED_PLACEHOLDER = (
+    "<credential value delivered in-memory; single-use lease, five minute TTL>"
+)
+
+
 class BaseAgentTool(ABC):
     """Agent tool that does not depend on LangChain `BaseTool`."""
 

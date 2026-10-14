@@ -5,8 +5,8 @@
 > Profile：`security`  
 > Owner：Security（通用授权）+ Agent（绑定传播）  
 > 消费者：CP、Agent、Runtime、UI 审计  
-> 来源：PLAN-0386、PLAN-0387、DEV-032  
-> 更新日期：2026-09-27
+> 来源：PLAN-0386、PLAN-0387、DEV-032、PLAN-0497  
+> 更新日期：2026-10-13
 
 ## 范围与非目标
 
@@ -65,6 +65,7 @@ flowchart LR
 
 - 当前 Agent metadata 只有 request/run/session/workspace/operation 关联信息，没有独立 principal/role/scope schema；按 design #6 这是边界选择，不是待补字段的缺口。
 - CP→Agent 使用 service Bearer 与必要关联键；`userId` 是 owner/visibility 上下文，不是 Agent 授权来源。principal 与 grants 保留在 CP durable state。
+- 凭据交付消费注记（PLAN-0497）：Agent 仅经 CP-owned 工具 `acquire_credential` 消费凭据——tool-call 边界由 CP 完成 `credential_use` 求交与既有 ask 审批，明文只进 Agent 进程内存、不落 durable/投影/审计（占位替换），reveal 为非 Agent 通道；契约正文归 `spec/security/credential-management.md` §7。
 - 本 SPEC 仍为 proposed/partial；PLAN-0387 T3.2/V7 负责复核当前调用链、拒绝路径与失败恢复，不新增授权 payload schema。
 
 ## 验证映射

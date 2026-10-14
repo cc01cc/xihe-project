@@ -39,6 +39,8 @@ import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.cc01cc.p.xihe.cp.policy.SafePolicySummary;
 import com.cc01cc.p.xihe.cp.operation.JobStateService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.credentials.CredentialLeaseService;
+import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.logging.RequestIdFilter;
 
 import java.net.URI;
@@ -78,6 +80,8 @@ public class McpProxyController {
     private static final String HMAC_ALGORITHM = "HmacSHA256";
     private static final String CP_MCP_SERVER_ID = "__cp__";
     private static final String SPAWN_AGENT_TOOL = ChatSubmissionService.SPAWN_TOOL_NAME;
+    /** PLAN-0497 M0 冻结：CP-owned credential delivery tool（face=credential_use）。 */
+    private static final String ACQUIRE_CREDENTIAL_TOOL = "acquire_credential";
     private static final Set<String> USER_WORKSPACE_FILE_TOOLS = Set.of(
             "list_directory", "read_file", "read_file_range", "write_file", "delete_file",
             "move_file", "copy_file", "mkdir");
@@ -167,6 +171,7 @@ public class McpProxyController {
     private final JobStateService jobStateService;
     private final AgentSpawnExecutionService agentSpawnExecutionService;
     private final McpInvocationService mcpInvocationService;
+    private final CredentialLeaseService credentialLeaseService;
 
     public McpProxyController(
             RequestRewriter rewriter,
@@ -184,7 +189,8 @@ public class McpProxyController {
             org.springframework.core.env.Environment environment,
             AgentSpawnExecutionService agentSpawnExecutionService,
             McpInvocationService mcpInvocationService,
-            McpToolTimeoutService toolTimeoutService) {
+            McpToolTimeoutService toolTimeoutService,
+            CredentialLeaseService credentialLeaseService) {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
@@ -204,6 +210,7 @@ public class McpProxyController {
         this.agentSpawnExecutionService = agentSpawnExecutionService;
         this.mcpInvocationService = mcpInvocationService;
         this.toolTimeoutService = toolTimeoutService;
+        this.credentialLeaseService = credentialLeaseService;
     }
 
     @PostMapping("/api/v1/mcp")
@@ -439,6 +446,9 @@ public class McpProxyController {
         if (access != null && access.internalService()) {
             mapping.put(SPAWN_AGENT_TOOL, CP_MCP_SERVER_ID);
             result.add(spawnAgentToolDefinition());
+            // PLAN-0497 T2.1: the credential delivery tool shares the CP-owned surface.
+            mapping.put(ACQUIRE_CREDENTIAL_TOOL, CP_MCP_SERVER_ID);
+            result.add(acquireCredentialToolDefinition());
         }
         String listBody = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1,\"params\":{}}";
         ResponseEntity<String> sysResp = forwardToRuntime(
@@ -457,7 +467,7 @@ public class McpProxyController {
         }
         for (Map<String, Object> tool : sysTools) {
             String name = (String) tool.get("name");
-            if (SPAWN_AGENT_TOOL.equals(name)) {
+            if (SPAWN_AGENT_TOOL.equals(name) || ACQUIRE_CREDENTIAL_TOOL.equals(name)) {
                 logger.warn("Runtime tool name '{}' is reserved by the CP-owned tool surface", name);
             } else if (name != null) {
                 mapping.put(name, "__system__");
@@ -478,6 +488,20 @@ public class McpProxyController {
                                 "minLength", 1,
                                 "description", "The task for the child Agent")),
                         "required", List.of("prompt"),
+                        "additionalProperties", false));
+    }
+
+    /** PLAN-0497 T2.1: one-shot credential delivery into Agent memory (I1/I5). */
+    private static Map<String, Object> acquireCredentialToolDefinition() {
+        return Map.of(
+                "name", ACQUIRE_CREDENTIAL_TOOL,
+                "description", "Fetch a lease-tier credential into this run's memory. The value is returned exactly once (single-use, five minute TTL) and must never be logged, persisted or echoed.",
+                "inputSchema", Map.of(
+                        "type", "object",
+                        "properties", Map.of("credentialId", Map.of(
+                                "type", "string",
+                                "description", "The id of the credential to acquire")),
+                        "required", List.of("credentialId"),
                         "additionalProperties", false));
     }
 
@@ -518,6 +542,13 @@ public class McpProxyController {
             serverId = CP_MCP_SERVER_ID;
         }
 
+        if (ACQUIRE_CREDENTIAL_TOOL.equals(toolName)) {
+            if (!access.internalService()) {
+                return problem(HttpStatus.FORBIDDEN, "FORBIDDEN", "This MCP tool is available only to Agent services");
+            }
+            serverId = CP_MCP_SERVER_ID;
+        }
+
         if (serverId == null) {
             return problem(HttpStatus.BAD_REQUEST, "UNKNOWN_TOOL", "Requested tool is unavailable");
         }
@@ -546,6 +577,7 @@ public class McpProxyController {
             return problem(HttpStatus.FORBIDDEN, "FORBIDDEN", "Tool execution is not permitted");
         }
         boolean cpOwnedSpawn = CP_MCP_SERVER_ID.equals(serverId) && SPAWN_AGENT_TOOL.equals(toolName);
+        boolean cpOwnedAcquire = CP_MCP_SERVER_ID.equals(serverId) && ACQUIRE_CREDENTIAL_TOOL.equals(toolName);
         ChatSubmissionService.SpawnInvocation spawnInvocation = null;
         if (cpOwnedSpawn) {
             try {
@@ -615,6 +647,13 @@ public class McpProxyController {
         String policySummary = SafePolicySummary.buildSnapshot(
                 verdict, face, policyContext,
                 reusedSessionGrant ? Boolean.TRUE : null).orElse(null);
+
+        if (cpOwnedAcquire) {
+            // PLAN-0497 T2.1: gates above already ran the credential_use evaluation
+            // (allow/ask on the extracted credential:<id> resource) and opened the
+            // durable invocation — the handler now issues and delivers the lease.
+            return dispatchCpOwnedAcquire(body, headers, sessionId, access, policySummary);
+        }
 
         if (cpOwnedSpawn) {
             return dispatchCpOwnedSpawn(body, headers, sessionId, access, spawnInvocation,
@@ -734,6 +773,80 @@ public class McpProxyController {
 
     private ResponseEntity<String> cpToolErrorResponse(String body, String code) {
         return mcpJsonResponse(cpToolResult(body, null, code));
+    }
+
+    /**
+     * PLAN-0497 T2.1 (contract: 0497 design §方案 2, I1/I2/I5/I6): CP-owned dispatch
+     * for {@code acquire_credential} — the gates above already performed the
+     * credential_use evaluation, the optional ask branch and the durable invocation
+     * open; this handler binds the run/session context, issues the single-use lease
+     * (tier/status/revision fences inside {@link CredentialLeaseService#acquire})
+     * and returns the plaintext exactly once in the MCP content. The value never
+     * enters the audit stream, the dispatch ledger (verdict only) or any durable
+     * projection — the Agent keeps it out of model history per
+     * {@code spec/agent/context-tool.md} rule 5.
+     */
+    private ResponseEntity<String> dispatchCpOwnedAcquire(
+            String body, HttpHeaders headers, String sessionId, AccessContext access, String policySummary) {
+        McpDispatch dispatch = startMcpDispatch(body, headers, sessionId, access);
+        attachPolicySummary(dispatch, policySummary);
+        String runId = headers.getFirst("X-Chat-Run-Id");
+        String responseBody;
+        try {
+            if (runId == null || runId.isBlank()) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "RUN_CONTEXT_REQUIRED",
+                        "acquire_credential requires a chat run context");
+            }
+            String credentialId = extractCredentialIdArgument(body);
+            Session session = sessionService.requireCurrent(
+                    access.applicationSessionId(), access.userId(), access.workspaceId());
+            String principalId = session.getAgentPrincipalId();
+            if (principalId == null || principalId.isBlank()) {
+                throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                        "Session has no Agent principal bound");
+            }
+            CredentialLeaseService.AcquiredCredential acquired = credentialLeaseService.acquire(
+                    credentialId, principalId, access.applicationSessionId(), runId, access.workspaceId());
+            responseBody = cpToolResult(body, Map.of(
+                    "value", acquired.plaintext(),
+                    "expiresAt", acquired.expiresAt().toString(),
+                    "leaseId", acquired.leaseId()), null);
+            // Identifiers only — never the value (0497 I5).
+            audit.record(sessionId, ACQUIRE_CREDENTIAL_TOOL, "allow",
+                    "credentialId=" + credentialId + " leaseId=" + acquired.leaseId());
+        } catch (CpApiException e) {
+            responseBody = cpToolResult(body, null, e.getCode());
+            audit.record(sessionId, ACQUIRE_CREDENTIAL_TOOL, "tool_error", e.getCode());
+        } catch (RuntimeException e) {
+            logger.error("[LIFECYCLE] service=cp event=credential_acquire_failed sessionId={} failureType={}",
+                    sessionId, e.getClass().getSimpleName(), e);
+            responseBody = cpToolResult(body, null, "ACQUIRE_EXECUTION_FAILED");
+            audit.record(sessionId, ACQUIRE_CREDENTIAL_TOOL, "tool_error", "ACQUIRE_EXECUTION_FAILED");
+        }
+        finishMcpDispatchAttempt(dispatch, 200, null, responseBody);
+        return mcpJsonResponse(responseBody);
+    }
+
+    /** PLAN-0497 T2.1: {@code params.arguments.credentialId} must be a non-blank id. */
+    private String extractCredentialIdArgument(String body) {
+        try {
+            JsonNode root = objectMapper.readTree(body);
+            JsonNode credentialId = root.path("params").path("arguments").path("credentialId");
+            if (!credentialId.isTextual() || credentialId.textValue().isBlank()) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_ARGUMENTS",
+                        "acquire_credential requires a credentialId argument");
+            }
+            String raw = credentialId.textValue().trim();
+            // Wave review: the policy extractor accepts the canonical credential:<uuid>
+            // form as-is — strip the prefix here so both spellings deliver identically.
+            if (raw.startsWith(ToolFaceRegistry.CREDENTIAL_RESOURCE_PREFIX)) {
+                raw = raw.substring(ToolFaceRegistry.CREDENTIAL_RESOURCE_PREFIX.length());
+            }
+            return raw;
+        } catch (JsonProcessingException e) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_ARGUMENTS",
+                    "Tool arguments must be valid JSON", e);
+        }
     }
 
     private String cpToolResult(String requestBody, Map<String, Object> output, String errorCode) {

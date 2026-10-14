@@ -142,20 +142,54 @@ def native_history(messages: Sequence[Message], api_type: ChatApiType) -> list[d
     return result
 
 
+def _acquire_tool_call_ids(api_type_id: str, records: list[dict[str, Any]]) -> set[str]:
+    """PLAN-0497 I5 (wave review): ids of acquire_credential calls whose durable
+    tool outputs must be masked before the records leave the process."""
+    from xihe_agent.interfaces.tool import ACQUIRE_CREDENTIAL_TOOL_NAME
+
+    ids: set[str] = set()
+    for record in records:
+        if api_type_id == "openai-chat-completions":
+            for call in record.get("tool_calls", []):
+                if call.get("function", {}).get("name") == ACQUIRE_CREDENTIAL_TOOL_NAME:
+                    ids.add(str(call.get("id", "")))
+        elif api_type_id == "anthropic-messages":
+            for block in record.get("content", []):
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "tool_use" and block.get("name") == ACQUIRE_CREDENTIAL_TOOL_NAME:
+                    ids.add(str(block.get("id", "")))
+        else:
+            if record.get("type") == "function_call" and record.get("name") == ACQUIRE_CREDENTIAL_TOOL_NAME:
+                ids.add(str(record.get("call_id", "")))
+    return ids
+
+
 def durable_native_carrier(model: ApiChatModel, limit: int) -> dict[str, Any]:
-    """Bound only tool payloads; signatures and reasoning remain exact."""
+    """Bound only tool payloads; signatures and reasoning remain exact.
+
+    PLAN-0497 I5 (wave review): the delivered credential value never enters the
+    durable replay records — acquire_credential tool outputs are swapped for the
+    fixed placeholder in every API-type family, while the in-memory ToolMessage
+    keeps the value for the current run only.
+    """
     from xihe_agent.agent_runner.tool_adapter import bound_tool_preview
     from xihe_agent.interfaces.context import bound_tool_arguments, compact_json
+    from xihe_agent.interfaces.tool import CREDENTIAL_DELIVERED_PLACEHOLDER
     from xihe_agent.llm.api_request import strict_json
 
     records = model.native_records
+    acquire_call_ids = _acquire_tool_call_ids(model.api_type.id, records)
     for record in records:
         if model.api_type.id == "openai-chat-completions":
             for call in record.get("tool_calls", []):
                 function = call["function"]
                 function["arguments"] = compact_json(bound_tool_arguments(strict_json(function["arguments"])))
             if record.get("role") == "tool":
-                record["content"], _ = bound_tool_preview(str(record.get("content", "")), None)
+                if str(record.get("tool_call_id", "")) in acquire_call_ids:
+                    record["content"] = CREDENTIAL_DELIVERED_PLACEHOLDER
+                else:
+                    record["content"], _ = bound_tool_preview(str(record.get("content", "")), None)
         elif model.api_type.id == "anthropic-messages":
             for block in record.get("content", []):
                 if not isinstance(block, dict):
@@ -163,12 +197,18 @@ def durable_native_carrier(model: ApiChatModel, limit: int) -> dict[str, Any]:
                 if block.get("type") == "tool_use":
                     block["input"] = bound_tool_arguments(block.get("input"))
                 elif block.get("type") == "tool_result":
-                    block["content"], _ = bound_tool_preview(str(block.get("content", "")), None)
+                    if str(block.get("tool_use_id", "")) in acquire_call_ids:
+                        block["content"] = CREDENTIAL_DELIVERED_PLACEHOLDER
+                    else:
+                        block["content"], _ = bound_tool_preview(str(block.get("content", "")), None)
         else:
             if record.get("type") == "function_call":
                 record["arguments"] = compact_json(bound_tool_arguments(strict_json(record["arguments"])))
             elif record.get("type") == "function_call_output":
-                record["output"], _ = bound_tool_preview(str(record.get("output", "")), None)
+                if str(record.get("call_id", "")) in acquire_call_ids:
+                    record["output"] = CREDENTIAL_DELIVERED_PLACEHOLDER
+                else:
+                    record["output"], _ = bound_tool_preview(str(record.get("output", "")), None)
     carrier = {"apiTypeId": model.api_type.id, "apiTypeVersion": model.api_type.version, "nativeRecords": records}
     if len(compact_json(carrier)) > limit:
         raise ApiRequestError("CONTEXT_BUILD_FAILED")

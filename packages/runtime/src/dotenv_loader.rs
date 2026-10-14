@@ -20,12 +20,14 @@ const ENV_FILE_KEY: &str = "XIHE_ENV_FILE";
 const ROOT_MARKERS: [&str; 5] = [".env", ".env.dev", ".env.test", ".env.prod", ".env.example"];
 
 /// §1.5: undefined interpolation escalates from WARN to ERROR for fail-fast keys.
-const CRITICAL_KEYS: [&str; 5] = [
+const CRITICAL_KEYS: [&str; 7] = [
     "XIHE_CP_JWT_SECRET",
     "XIHE_CP_API_TOKEN",
     "XIHE_AGENT_API_TOKEN",
     "XIHE_CP_OAUTH_ENCRYPTION_KEY",
     "XIHE_CP_PROVIDER_CREDENTIALS_KEY",
+    "XIHE_CP_CREDENTIALS_KEY",
+    "XIHE_CP_CREDENTIALS_KEY_RING",
 ];
 
 static INTERPOLATION: LazyLock<Regex> = LazyLock::new(|| {

@@ -28,6 +28,19 @@ class LogRedactorTest {
     }
 
     @Test
+    void redactsCredentialCreateSecretFields() {
+        String line = "{\"label\":\"x\",\"accessKey\":\"AKIA-old-value\","
+                + "\"secretKey\":\"wJalr-secret-value\"}";
+        String out = LogRedactor.redact(line);
+
+        assertFalse(out.contains("AKIA-old-value"));
+        assertFalse(out.contains("wJalr-secret-value"));
+        assertTrue(out.contains("\"accessKey\":\"" + LogRedactor.REDACTED + "\""));
+        assertTrue(out.contains("\"secretKey\":\"" + LogRedactor.REDACTED + "\""));
+        assertTrue(out.contains("\"label\":\"x\""));
+    }
+
+    @Test
     void handlesNullAndEmpty() {
         assertEquals(null, LogRedactor.redact(null));
         assertEquals("", LogRedactor.redact(""));

@@ -6,7 +6,7 @@ lang: zh-Hans
 sidebar_group: "开发指南"
 status: active
 created: 2026-09-16
-updated: 2026-10-08
+updated: 2026-10-13
 ---
 
 # DEV-032: 术语规范（一词多义与多词一义）
@@ -57,6 +57,10 @@ updated: 2026-10-08
 | | E. 状态/字段转换 | **`状态映射`／`字段映射`** | 投影折回、能力投影、路由投影、投影状态 | 0426 |
 | | F1. 长度/时间截断呈现 | **`有界预览`** | 有界原文投影 | 0426 |
 | | F2. 权限/字段裁剪呈现 | **`安全摘要`** | 安全投影、redacted projection | 0426；F1 与 F2 可叠加，非互斥 |
+| **凭据 / credential** | A. provider 连接或 MCP OAuth 自带的密文材料 | `provider 凭据` / `OAuth 凭据` | 裸「凭据」指 B | 随连接 CRUD；`provider-api-types.md` §Credential Boundary |
+| | B. 凭据管理器登记的独立对象（`credentials` 表） | **`credential 对象`（凭据对象）** | 与 A 混用；笼统写「用户的凭据」 | 0495；owner 两级（USER/WORKSPACE）、lease/reveal 单通道交付；`spec/security/credential-management.md` |
+| **轮换 / rotation** | A. MCP session-id 签名密钥更替 | `签名密钥轮换`（MCP session-id） | 裸「轮换」指 B | DEV-016 |
+| | B. credential 域主密钥更替（key ring） | **`credential 主密钥轮换`（key ring rotation）** | 与 A 混用 | 0495；两阶段 + CAS + 按 key_version 列计数（退役校验） |
 
 ### 1.1 主体与角色（2026-09-17 增补）
 

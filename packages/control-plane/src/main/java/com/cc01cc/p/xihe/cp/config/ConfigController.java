@@ -307,13 +307,16 @@ public class ConfigController {
                     "CONFIG_OWNERSHIP_VIOLATION",
                     "Provider credentials belong to provider_connections");
         } catch (ConfigService.ConfigAccessException e) {
+            // Round-4: keep the concrete reason visible on the wire (T3.2 explicit errors).
             return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.FORBIDDEN, "FORBIDDEN", "Configuration write is not allowed");
+                    HttpStatus.FORBIDDEN, "FORBIDDEN",
+                    "Configuration write is not allowed: " + e.getMessage());
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         } catch (IllegalArgumentException e) {
             return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Configuration update is invalid");
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "Configuration update is invalid: " + e.getMessage());
         }
     }
 

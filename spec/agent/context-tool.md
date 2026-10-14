@@ -5,8 +5,8 @@
 > Profile：`protocol`  
 > Owner：CP Context/Projection + Agent Context consumer  
 > 消费者：Agent、CP、Runtime、UI  
-> 来源：PLAN-0387、PLAN-0381、PLAN-0382、DEV-013  
-> 更新日期：2026-10-08
+> 来源：PLAN-0387、PLAN-0381、PLAN-0382、DEV-013、PLAN-0497  
+> 更新日期：2026-10-13
 
 ## 范围
 
@@ -28,7 +28,7 @@
 2. Tool call/result MUST 以同一 `toolCallId` 配对；未匹配结果不得被合成为成功调用。
 3. 大输出进入模型上下文前 MUST 有界，并显式区分完整、`truncated`、`expired`、`unavailable` 或错误状态；完整内容通过既有 artifact/output ref 按需读取。
 4. source/env 失败 MUST 保留失败状态和来源，不得静默用未知旧值覆盖。
-5. tool result 中的原始 secret、Bearer、凭据和未脱敏 arguments MUST 不进入模型历史、UI projection 或 audit log。
+5. tool result 中的原始 secret、Bearer、凭据和未脱敏 arguments MUST 不进入模型历史（= durable 可回放面）、UI projection 或 audit log；凭据交付类工具按其 SPEC 显式约定处理 durable 占位（如 `acquire_credential` 明文仅存活于本轮进程内存，交付后各 durable 面以占位替换）。本规则不构成 XH 对明文持久化的全局禁令——需要明文驻留的场景（使用、泄漏排查、轮换等）须在对应 SPEC 中显式约定。（2026-10-13，PLAN-0497 wave review B1 裁定）
 6. Context、diagnostic、checkpoint 和 approval 是不同域；工具结果可引用它们，但不得把它们合并为一个通用 payload。
 
 ## PLAN-0416 已冻结的检索与指令边界

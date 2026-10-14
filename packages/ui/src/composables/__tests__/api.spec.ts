@@ -116,6 +116,33 @@ describe("api.login", () => {
         expect(window.location.href).toBe("/login");
         expect(localStorage.getItem("xihe-token")).toBeNull();
     });
+
+    it("keeps the session on a reveal step-up 401 (domain outcome, not expiry)", async () => {
+        localStorage.setItem("xihe-token", "existing-token");
+        localStorage.setItem("xihe-user", "{}");
+        // @ts-expect-error jsdom allows location.href assignment
+        delete window.location;
+        // @ts-expect-error redefine for test
+        window.location = { href: "/settings/credentials", pathname: "/settings/credentials" };
+
+        fetchSpy.mockResolvedValueOnce({
+            ok: false,
+            status: 401,
+            json: () =>
+                Promise.resolve({
+                    status: 401,
+                    code: "CREDENTIAL_REVEAL_STEP_UP_FAILED",
+                    detail: "wrong password",
+                }),
+        } as Response);
+
+        await expect(
+            api.revealCredential("11111111-2222-3333-4444-555555555555", TEST_PASSWORD),
+        ).rejects.toThrow("wrong password");
+        expect(localStorage.getItem("xihe-token")).toBe("existing-token");
+        expect(localStorage.getItem("xihe-user")).toBe("{}");
+        expect(window.location.href).toBe("/settings/credentials");
+    });
 });
 
 describe("api.register", () => {

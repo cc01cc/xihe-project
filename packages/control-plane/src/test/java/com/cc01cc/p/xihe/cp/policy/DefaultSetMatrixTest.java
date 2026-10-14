@@ -55,9 +55,13 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
     private static final Set<String> USER_MATRIX = Set.of(
             "read", "write", "delete", "exec", "network");
 
-    /** spec §4.1 ADMIN row / evidence matrix full-allow column: six allow rows incl. credential. */
+    /**
+     * spec §4.1 ADMIN row / evidence matrix full-allow column: five rows plus the
+     * PLAN-0496 three credential atoms (the legacy single `credential` word retired).
+     */
     private static final Set<String> ADMIN_MATRIX = Set.of(
-            "read", "write", "delete", "exec", "network", "credential");
+            "read", "write", "delete", "exec", "network",
+            "credential_use", "credential_reveal", "credential_manage");
 
     /** spec §2.1: vocabulary members that never enter a built-in default set. */
     private static final List<String> OUT_OF_DEFAULT_VOCABULARY = List.of(
@@ -121,8 +125,9 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
         assertEquals(USER_MATRIX, actionClassesOf(userDefault),
                 "spec §4.1 USER row (注册最小集) and the evidence matrix USER column agree: "
                         + "read/write/delete/exec/network allow, credential absent");
-        assertFalse(actionClassesOf(userDefault).contains("credential"),
-                "evidence matrix: credential = deny for USER, so the atom must not exist "
+        assertTrue(actionClassesOf(userDefault).stream()
+                        .noneMatch(actionClass -> actionClass.startsWith("credential_")),
+                "evidence matrix: credential = deny for USER, so no credential atom may exist "
                         + "(未列即 deny, spec §2.1)");
         assertCanonicalAtoms(userDefault);
 
@@ -135,9 +140,9 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
                 "spec §3.1: a missing resource field means '*', so a nested own-workspace "
                         + "path still evaluates allow");
         assertFalse(grantAuthorizationService.allowsUserOnly(
-                        request("credential", "provider_connections/*")),
+                        request("credential_use", "credential:" + UUID.randomUUID())),
                 "evidence matrix V12 zero-over-privilege sample: credential stays denied "
-                        + "for the default USER grant");
+                        + "for the default USER grant (PLAN-0496 atoms)");
     }
 
     /** spec §4.1 ADMIN row + evidence matrix full-allow column, incl. the credential behavior. */
@@ -148,8 +153,8 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
 
         AuthorizationGrant adminDefault = defaultGrant("user", admin.getId());
         assertEquals(ADMIN_MATRIX, actionClassesOf(adminDefault),
-                "spec §4.1 ADMIN row = 全 allow 的一个集: exactly the six matrix action classes, "
-                        + "credential included");
+                "spec §4.1 ADMIN row = 全 allow 的一个集: five rows plus the PLAN-0496 "
+                        + "credential atoms (credential_use/reveal/manage)");
         assertCanonicalAtoms(adminDefault);
         assertFalse(actionClassesOf(adminDefault).contains("SPAWN_AGENT"),
                 "spec §2.1: SPAWN_AGENT stays out of the USER/ADMIN default sets even for ADMIN");
@@ -157,10 +162,10 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
         String adminUserId = admin.getId().toString();
         workspaceUserRepository.save(new WorkspaceUser(workspaceId, adminUserId, WorkspaceRole.MEMBER));
         assertTrue(grantAuthorizationService.allowsUserOnly(new PolicyRequest(
-                        "probe_tool", List.of("credential"), List.of("provider_connections/*"),
+                        "probe_tool", List.of("credential_use"), List.of("credential:" + UUID.randomUUID()),
                         ToolShape.STRUCTURED, adminUserId, workspaceId, null)),
-                "behavioral: the seeded ADMIN default evaluates allow for credential "
-                        + "(evidence matrix ADMIN column)");
+                "behavioral: the seeded ADMIN default (credential_use@credential:*) covers a "
+                        + "concrete credential id (evidence matrix ADMIN column, PLAN-0496 #2)");
         assertFalse(grantAuthorizationService.allowsUserOnly(new PolicyRequest(
                         "probe_tool", List.of("SPAWN_AGENT"), List.of("*"),
                         ToolShape.STRUCTURED, adminUserId, workspaceId, null)),
@@ -193,7 +198,8 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
                         "user", userUuid, "default"),
                 "spec §3.1: registration materializes exactly one default row per subject "
                         + "(uq_grants_default_subject)");
-        assertFalse(grantAuthorizationService.allowsUserOnly(request("credential", "provider_connections/*")),
+        String credentialId = "credential:" + UUID.randomUUID();
+        assertFalse(grantAuthorizationService.allowsUserOnly(request("credential_use", credentialId)),
                 "control: the default matrix alone carries no credential");
 
         User admin = userRepository.findByEmail("admin@xihe.local").orElseThrow();
@@ -206,7 +212,8 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
         direct.setSource("direct");
         ArrayNode permissions = objectMapper.createArrayNode();
         ObjectNode credentialAtom = objectMapper.createObjectNode();
-        credentialAtom.put("actionClass", "credential");
+        credentialAtom.put("actionClass", "credential_use");
+        credentialAtom.put("resource", credentialId);
         permissions.add(credentialAtom);
         direct.setPermissions(permissions);
         grantRepository.save(direct);
@@ -216,13 +223,13 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
                 "spec §3.1: an extra direct grant must not create a second default row");
         assertEquals(2, grantRepository.findBySubjectTypeAndSubjectId("user", userUuid).size(),
                 "spec §3.1: spawn/direct/template grants may be many for one subject");
-        assertTrue(grantAuthorizationService.allowsUserOnly(request("credential", "provider_connections/*")),
+        assertTrue(grantAuthorizationService.allowsUserOnly(request("credential_use", credentialId)),
                 "G1: the current permission set is the union of all grants; source carries "
                         + "no precedence, so the direct grant widens the union");
         assertTrue(grantAuthorizationService.allowsUserOnly(request("read", "notes/today.md")),
                 "the default row still grants the USER classes after the direct grant is added");
         assertFalse(grantAuthorizationService.allowsUserOnly(request("SPAWN_AGENT", "*")),
-                "the direct grant only widened credential, never SPAWN_AGENT");
+                "the direct grant only widened credential_use, never SPAWN_AGENT");
     }
 
     private void register() {
@@ -261,8 +268,16 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
             assertTrue(allowedFields.containsAll(fields),
                     "permission atoms carry only {actionClass, resource}: " + atom);
             JsonNode resource = atom.get("resource");
-            assertTrue(resource == null || "*".equals(resource.asText()),
-                    "a missing resource means '*' (spec §3.1): " + atom);
+            String actionClass = atom.get("actionClass").asText();
+            boolean canonical;
+            if (actionClass.startsWith("credential_")) {
+                canonical = resource != null
+                        && ToolFaceRegistry.isCanonicalCredentialResource(resource.asText());
+            } else {
+                canonical = resource == null || "*".equals(resource.asText());
+            }
+            assertTrue(canonical,
+                    "atom carries a canonical resource (spec §3.1 / PLAN-0496 #2): " + atom);
         }
     }
 

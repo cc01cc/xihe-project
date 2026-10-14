@@ -23,8 +23,12 @@ import java.util.UUID;
 public class GrantDefaultService {
 
     private static final List<String> USER_ACTIONS = List.of("read", "write", "delete", "exec", "network");
+    // PLAN-0496 #1/#5: ADMIN switches to the three credential atoms with the wide
+    // credential:* resource; the legacy single `credential` word is retired (dev-phase cutover).
     private static final List<String> ADMIN_ACTIONS = List.of(
-            "read", "write", "delete", "exec", "network", "credential");
+            "read", "write", "delete", "exec", "network",
+            ToolFaceRegistry.ACTION_CREDENTIAL_USE, ToolFaceRegistry.ACTION_CREDENTIAL_REVEAL,
+            ToolFaceRegistry.ACTION_CREDENTIAL_MANAGE);
 
     private final AuthorizationGrantRepository grantRepository;
     private final AuthUserLockService userLock;
@@ -134,6 +138,9 @@ public class GrantDefaultService {
         for (String actionClass : actions) {
             ObjectNode atom = objectMapper.createObjectNode();
             atom.put("actionClass", actionClass);
+            if (ToolFaceRegistry.isCredentialActionClass(actionClass)) {
+                atom.put("resource", ToolFaceRegistry.CREDENTIAL_RESOURCE_WILDCARD);
+            }
             permissions.add(atom);
         }
         return permissions;

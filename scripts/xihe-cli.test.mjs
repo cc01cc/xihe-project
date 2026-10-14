@@ -826,3 +826,132 @@ test('invalid real route fails preflight without starting the host runner', asyn
   assert.equal(result.error.code, 'REAL_PROVIDER_ROUTE_REQUIRED');
   assert.equal(spawnCount, 0);
 });
+
+test('credential rotate migrates batches until the retire check reaches zero', async () => {
+  const requests = [];
+  const statuses = [
+    { currentVersion: 'v2', ringVersions: ['v1', 'v2'], countsByVersion: { v1: 3 }, pendingByVersion: { v1: 3 }, pendingTotal: 3 },
+    { currentVersion: 'v2', ringVersions: ['v1', 'v2'], countsByVersion: { v2: 3 }, pendingByVersion: {}, pendingTotal: 0 },
+  ];
+  const runs = [{ scanned: 3, migrated: 3, conflicts: 0, failures: 0, remaining: 0, targetVersion: 'v2' }];
+  const fetchImpl = async (url, options) => {
+    const pathname = new URL(url).pathname;
+    requests.push({ pathname, method: options?.method ?? 'GET', body: options?.body, headers: options?.headers });
+    if (pathname.endsWith('/rotation/status')) {
+      return new Response(JSON.stringify(statuses.shift()), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (pathname.endsWith('/rotation/runs')) {
+      return new Response(JSON.stringify(runs.shift()), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({ code: 'NOT_FOUND' }), { status: 404 });
+  };
+  const out = [];
+  const result = await runCommand(['credential', 'rotate'], {
+    env: { XIHE_CP_PORT: '12631', XIHE_CP_API_TOKEN: 'service-token' },
+    fetchImpl,
+    stdout: { write: (chunk) => { out.push(String(chunk)); } },
+  });
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.data.retireReady, true);
+  assert.equal(result.data.totals.migrated, 3);
+  const statusCalls = requests.filter((item) => item.pathname.endsWith('/rotation/status'));
+  const runCalls = requests.filter((item) => item.pathname.endsWith('/rotation/runs'));
+  assert.equal(statusCalls.length, 2);
+  assert.equal(runCalls.length, 1);
+  assert.equal(runCalls[0].headers.Authorization, 'Bearer service-token');
+  assert.deepEqual(JSON.parse(runCalls[0].body), { batchSize: 50 });
+  assert.ok(out.join('').includes('Batch 1'));
+  assert.ok(out.join('').includes('migrated=3'));
+  assert.equal(JSON.stringify(result).includes('service-token'), false);
+});
+
+test('credential rotate refuses to run when the ring misses a pending version', async () => {
+  let runCalls = 0;
+  const fetchImpl = async (url) => {
+    const pathname = new URL(url).pathname;
+    if (pathname.endsWith('/rotation/status')) {
+      return new Response(JSON.stringify({
+        currentVersion: 'v2',
+        ringVersions: ['v2'],
+        countsByVersion: { v1: 2 },
+        pendingByVersion: { v1: 2 },
+        pendingTotal: 2,
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    runCalls += 1;
+    return new Response('{}', { status: 200 });
+  };
+  const result = await runCommand(['credential', 'rotate'], {
+    env: { XIHE_CP_PORT: '12631', XIHE_CP_API_TOKEN: 'service-token' },
+    fetchImpl,
+  });
+  assert.equal(result.error.code, 'KEY_RING_INCOMPLETE');
+  assert.deepEqual(result.error.details.missingVersions, ['v1']);
+  assert.equal(runCalls, 0);
+});
+
+test('credential rotate requires the CP service token before any request', async () => {
+  let called = 0;
+  const fetchImpl = async () => { called += 1; return new Response('{}', { status: 200 }); };
+  const result = await runCommand(['credential', 'rotate'], { env: { XIHE_CP_PORT: '12631' }, fetchImpl });
+  assert.equal(result.error.code, 'MISSING_SERVICE_TOKEN');
+  assert.equal(called, 0);
+});
+
+test('credential rotate --dry-run reports pending rows without running batches', async () => {
+  let runCalls = 0;
+  const fetchImpl = async (url) => {
+    const pathname = new URL(url).pathname;
+    if (pathname.endsWith('/rotation/status')) {
+      return new Response(JSON.stringify({
+        currentVersion: 'v2',
+        ringVersions: ['v1', 'v2'],
+        countsByVersion: { v1: 4 },
+        pendingByVersion: { v1: 4 },
+        pendingTotal: 4,
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    runCalls += 1;
+    return new Response('{}', { status: 200 });
+  };
+  const result = await runCommand(['credential', 'rotate', '--dry-run'], {
+    env: { XIHE_CP_PORT: '12631', XIHE_CP_API_TOKEN: 'service-token' },
+    fetchImpl,
+  });
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.data.dryRun, true);
+  assert.equal(result.data.status.pendingTotal, 4);
+  assert.equal(runCalls, 0);
+});
+
+test('credential rotate aborts when a batch makes no progress', async () => {
+  let runCalls = 0;
+  const fetchImpl = async (url) => {
+    const pathname = new URL(url).pathname;
+    if (pathname.endsWith('/rotation/status')) {
+      return new Response(JSON.stringify({
+        currentVersion: 'v2',
+        ringVersions: ['v1', 'v2'],
+        countsByVersion: { v1: 2 },
+        pendingByVersion: { v1: 2 },
+        pendingTotal: 2,
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    runCalls += 1;
+    return new Response(JSON.stringify({
+      scanned: 2,
+      migrated: 0,
+      conflicts: 0,
+      failures: 2,
+      remaining: 2,
+      targetVersion: 'v2',
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  const result = await runCommand(['credential', 'rotate'], {
+    env: { XIHE_CP_PORT: '12631', XIHE_CP_API_TOKEN: 'service-token' },
+    fetchImpl,
+    stdout: { write: () => {} },
+  });
+  assert.equal(result.error.code, 'ROTATION_STALLED');
+  assert.equal(runCalls, 1, 'a no-progress batch must abort instead of spinning to --max-batches');
+});

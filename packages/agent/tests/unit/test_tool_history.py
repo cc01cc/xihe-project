@@ -4,6 +4,7 @@ Frozen cross-language contract:
 plans/PLAN-0381-XH-context-history-tool-output-bounds/evidence/m1-contract.md
 """
 
+import json
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -22,7 +23,11 @@ from xihe_agent.interfaces.context import (
 )
 from xihe_agent.interfaces.event import Event
 from xihe_agent.interfaces.message import TextMessage, ToolCallRef
-from xihe_agent.interfaces.tool import ToolSpec
+from xihe_agent.interfaces.tool import (
+    ACQUIRE_CREDENTIAL_TOOL_NAME,
+    CREDENTIAL_DELIVERED_PLACEHOLDER,
+    ToolSpec,
+)
 from xihe_agent.llm.base import create_llm
 
 LCToolAdapter = tool_adapter_module.LCToolAdapter
@@ -493,3 +498,56 @@ async def test_restored_tool_history_does_not_reexecute_tools():
 
     assert any(e.type == "token" for e in events)
     assert tool.execute_calls == [], "historical tool pairs must map to messages, never re-run"
+
+
+# --- PLAN-0497 T2.1: acquire_credential stays memory-only -----------------
+
+class _CredentialDeliveryTool:
+    """CP-owned acquire_credential fake that returns a delivered value."""
+
+    def __init__(self) -> None:
+        self._spec = ToolSpec(
+            name=ACQUIRE_CREDENTIAL_TOOL_NAME,
+            description="acquire a lease-tier credential",
+            input_schema={"type": "object", "properties": {"credentialId": {"type": "string"}}},
+        )
+
+    @property
+    def spec(self) -> ToolSpec:
+        return self._spec
+
+    async def execute(self, input: dict, context: dict) -> dict:
+        return {"content": json.dumps({"value": "sk-live-delivery-secret-98765"})}
+
+
+@pytest.mark.asyncio
+async def test_acquire_credential_value_stays_in_memory_only():
+    ctx = AgentContext.empty("session-1")
+    ctx.metadata["runId"] = "run-1"
+    event_store = AsyncMock()
+    adapter = LCToolAdapter(_CredentialDeliveryTool(), ctx, event_store)
+
+    text, _artifact = await adapter._arun(
+        run_manager=None, credentialId="d9a22f34-7a60-4f0e-a036-60e7a9c6cf9b"
+    )
+
+    # The current model call keeps the delivered value (that is the tool's job).
+    assert "sk-live-delivery-secret-98765" in text
+
+    # Durable events (history replay / UI projection / audit source) never carry it.
+    appended = [call.args[0] for call in event_store.append.call_args_list]
+    serialized = json.dumps(
+        [{"type": event.type, "payload": event.payload} for event in appended]
+    )
+    assert "sk-live-delivery-secret-98765" not in serialized, (
+        "I5: the delivered value must not enter any durable tool event"
+    )
+
+    result_events = [event for event in appended if event.type == "tool.result"]
+    assert len(result_events) == 1
+    assert CREDENTIAL_DELIVERED_PLACEHOLDER in json.dumps(result_events[0].payload)
+
+    # tool.called only carries the credential id argument.
+    called_events = [event for event in appended if event.type == "tool.called"]
+    assert called_events
+    assert "d9a22f34-7a60-4f0e-a036-60e7a9c6cf9b" in json.dumps(called_events[0].payload)

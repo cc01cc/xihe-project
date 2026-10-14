@@ -1097,3 +1097,95 @@ export interface ThemeContext {
 }
 
 export const ThemeInjectionKey: InjectionKey<ThemeContext> = Symbol("theme");
+
+// ---- PLAN-0498 credential manager (consumes the PLAN-0496/0497 API surface) ----
+
+export type CredentialKind = "token" | "key_pair";
+export type CredentialDeliveryTier = "lease" | "reveal";
+export type CredentialOwnerType = "USER" | "WORKSPACE";
+export type CredentialStatus = "active" | "disabled";
+
+/** Sanitized credential metadata — never carries ciphertext, suffixes or values. */
+export interface CredentialSummary {
+    id: string;
+    label: string;
+    kind: CredentialKind;
+    deliveryTier: CredentialDeliveryTier;
+    ownerType: CredentialOwnerType;
+    ownerId: string;
+    status: CredentialStatus;
+    fingerprint: string;
+    revision: number;
+    createdAt?: string | null;
+    replacedAt?: string | null;
+    referenceCount: number;
+}
+
+export interface CredentialListResponse {
+    credentials: CredentialSummary[];
+    count: number;
+}
+
+export interface CredentialCreateRequest {
+    ownerType?: CredentialOwnerType;
+    ownerId?: string;
+    label: string;
+    kind: CredentialKind;
+    deliveryTier: CredentialDeliveryTier;
+    token?: string;
+    accessKey?: string;
+    secretKey?: string;
+}
+
+export interface CredentialReplaceRequest {
+    token?: string;
+    accessKey?: string;
+    secretKey?: string;
+}
+
+export interface CredentialReference {
+    source: "grant" | "workspace_cap";
+    subjectType: string;
+    subjectId: string;
+    actionClass: string;
+    resource: string;
+}
+
+export interface CredentialReferencesResponse {
+    references: CredentialReference[];
+}
+
+export interface CredentialDeleteReport {
+    id: string;
+    deleted: boolean;
+    references: CredentialReference[];
+}
+
+export interface CredentialBindPayload {
+    workspaceId: string;
+    agentPrincipalIds: string[];
+}
+
+export interface CredentialBindResult {
+    credentialId: string;
+    agentPrincipalIds: string[];
+    bound: boolean;
+}
+
+export interface CredentialRevealResponse {
+    credentialId: string;
+    revision: number;
+    /** The plaintext for this response only; the UI never persists it. */
+    value: string;
+}
+
+export interface CredentialEventView {
+    id: string;
+    eventType: string;
+    actor: string;
+    createdAt: string;
+}
+
+export interface CredentialEventsResponse {
+    events: CredentialEventView[];
+}

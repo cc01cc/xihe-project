@@ -38,7 +38,12 @@ from xihe_agent.context.loop_detection import LOOP_WINDOW_KEY, NO_PROGRESS_SIGNA
 from xihe_agent.interfaces.context import AgentContext, bound_tool_arguments
 from xihe_agent.interfaces.event import Event
 from xihe_agent.interfaces.event_store import EventStore
-from xihe_agent.interfaces.tool import BaseAgentTool, ToolSpec
+from xihe_agent.interfaces.tool import (
+    ACQUIRE_CREDENTIAL_TOOL_NAME,
+    CREDENTIAL_DELIVERED_PLACEHOLDER,
+    BaseAgentTool,
+    ToolSpec,
+)
 
 __all__ = [
     "EVENT_STORE_FAILURES_KEY",
@@ -533,9 +538,20 @@ class LCToolAdapter(BaseTool):
             # PLAN-0381 T2.3：事件只携带有界 preview（gate 决定字符串/对象
             # 形状）；诊断从原始 content 提取，顺序在加界之前冻结。
             preview, preview_meta = bound_tool_preview(content, parsed)
+            # PLAN-0497 T2.1: acquire_credential's delivered value stays in this
+            # run's memory — the durable tool.result preview (the source for
+            # history replay, UI projection and audit) carries only the fixed
+            # placeholder, while the returned content below keeps the value for
+            # the current model call.
+            if self._tool.spec.name == ACQUIRE_CREDENTIAL_TOOL_NAME:
+                durable_preview: Any = CREDENTIAL_DELIVERED_PLACEHOLDER
+                durable_meta: Any = {}
+            else:
+                durable_preview = preview
+                durable_meta = preview_meta
             await self._append_tool_result(
                 call_id,
-                build_tool_event_result(preview, preview_meta),
+                build_tool_event_result(durable_preview, durable_meta),
                 diagnostics=diagnostics,
             )
             if isinstance(window, LoopObservationWindow):

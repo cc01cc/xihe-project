@@ -19,6 +19,7 @@ public final class LogRedactor {
         ),
         Pattern.compile(
             "(\"(?:access_?token|refresh_?token|api_?key|service_?token|client_?secret"
+                + "|access_?key|secret_?key"
                 + "|token|secret|password|authorization|cookie|pkce|verifier)\"\\s*:\\s*\")[^\"]*\"",
             Pattern.CASE_INSENSITIVE
         )

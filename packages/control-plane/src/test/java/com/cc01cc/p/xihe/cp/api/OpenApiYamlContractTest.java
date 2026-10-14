@@ -123,4 +123,26 @@ class OpenApiYamlContractTest {
                     "workspace event stream example must carry the scheduled_tasks_changed event");
         }
     }
+
+    /** PLAN-0497 T3.1/T3.2（wave review 补齐）：reveal 与 events 读面同批入契约。 */
+    @Test
+    void openApiContainsCredentialDeliveryRoutesAndSchemas() throws Exception {
+        Path contract = Path.of("..", "..", "docs", "api", "openapi.yaml");
+        try (InputStream input = Files.newInputStream(contract)) {
+            Map<?, ?> document = new Yaml().load(input);
+            Map<?, ?> paths = (Map<?, ?>) document.get("paths");
+            assertTrue(paths.containsKey("/api/v1/credentials/{id}/reveal"),
+                    "reveal route is contracted");
+            assertTrue(paths.containsKey("/api/v1/credentials/{id}/events"),
+                    "events read route is contracted");
+
+            Map<?, ?> schemas = (Map<?, ?>) ((Map<?, ?>) document.get("components")).get("schemas");
+            assertTrue(schemas.containsKey("CredentialRevealRequest"),
+                    "CredentialRevealRequest schema is contracted");
+            assertTrue(schemas.containsKey("CredentialRevealView"),
+                    "CredentialRevealView schema is contracted");
+            assertTrue(schemas.containsKey("CredentialEventsView"),
+                    "CredentialEventsView schema is contracted");
+        }
+    }
 }

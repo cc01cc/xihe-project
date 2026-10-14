@@ -25,6 +25,16 @@ public record PolicyRequest(
                 ? List.of(PolicyLayer.UNCLASSIFIED_ACTION)
                 : actionClasses);
         resources = List.copyOf(resources == null ? List.of("*") : resources);
+        // PLAN-0496 #4 (I2): credential evaluation requests must carry a concrete
+        // credential:<uuid> resource; `credential:*` and bare `*` fail fast (fail-closed).
+        if (actionClasses.stream().anyMatch(ToolFaceRegistry::isCredentialActionClass)) {
+            for (String resource : resources) {
+                if (!ToolFaceRegistry.isConcreteCredentialResource(resource)) {
+                    throw new IllegalArgumentException(
+                            "credential requests must carry a concrete credential:<uuid> resource: " + resource);
+                }
+            }
+        }
         shape = shape == null ? ToolShape.OPAQUE : shape;
     }
 }
