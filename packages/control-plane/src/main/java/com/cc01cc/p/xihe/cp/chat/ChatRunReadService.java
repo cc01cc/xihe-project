@@ -2,7 +2,9 @@ package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
+import com.cc01cc.p.xihe.cp.entity.ChatRunTransportAttempt;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.ChatRunTransportAttemptRepository;
 import com.cc01cc.p.xihe.cp.service.ContextTemplateSourceService;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
@@ -21,10 +23,14 @@ import java.util.UUID;
 public class ChatRunReadService {
 
     private final ChatRunRepository chatRunRepository;
+    private final ChatRunTransportAttemptRepository transportAttempts;
     private final ApprovalService approvalService;
 
-    public ChatRunReadService(ChatRunRepository chatRunRepository, ApprovalService approvalService) {
+    public ChatRunReadService(ChatRunRepository chatRunRepository,
+                              ChatRunTransportAttemptRepository transportAttempts,
+                              ApprovalService approvalService) {
         this.chatRunRepository = chatRunRepository;
+        this.transportAttempts = transportAttempts;
         this.approvalService = approvalService;
     }
 
@@ -55,6 +61,69 @@ public class ChatRunReadService {
         body.put("errorCode", run.getErrorCode());
         body.put("leaseExpired", leaseExpired);
         body.put("pendingApprovals", pendingApprovals);
+        return body;
+    }
+
+    /**
+     * PLAN-0508 T2.2: durable provider HTTP transport attempts of one Run in
+     * {@code seq} order, plus the same-count aggregate as the session monitor.
+     * Authorization follows {@link #getStatus}; provider/model/connection
+     * identity is projected from the immutable ChatRun snapshot. Wire bytes are
+     * fixed {@code null} (v1 unknown) and the single {@code errorCode} slot
+     * carries the safe string code or the provider HTTP status, whichever the
+     * terminal summary reported.
+     */
+    public Map<String, Object> getRunAttempts(UUID runUuid, String runId, String userId, String workspaceId) {
+        ChatRun run = chatRunRepository.findById(runUuid).orElse(null);
+        if (run == null) {
+            throw new CpApiException(HttpStatus.NOT_FOUND, "RUN_NOT_FOUND", "Chat run not found");
+        }
+        if (!userId.equals(run.getUserId()) || !workspaceId.equals(run.getWorkspaceId())) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                    "Chat run does not belong to current user/workspace");
+        }
+        List<ChatRunTransportAttempt> rows = transportAttempts.findByRunIdOrderBySequenceAsc(runId);
+        List<Map<String, Object>> attempts = new ArrayList<>(rows.size());
+        long failedCount = 0;
+        long partialCount = 0;
+        for (ChatRunTransportAttempt row : rows) {
+            String outcome = row.getOutcome();
+            if (ChatRunTransportAttempt.OUTCOME_ERROR.equals(outcome)
+                    || ChatRunTransportAttempt.OUTCOME_TIMEOUT.equals(outcome)) {
+                failedCount++;
+            } else if (ChatRunTransportAttempt.OUTCOME_ABORTED.equals(outcome)
+                    || ChatRunTransportAttempt.OUTCOME_PARTIAL.equals(outcome)) {
+                partialCount++;
+            }
+            Map<String, Object> view = new LinkedHashMap<>();
+            view.put("attemptId", row.getAttemptId().toString());
+            view.put("seq", row.getSequence());
+            view.put("status", row.getStatus());
+            view.put("outcome", outcome);
+            view.put("provider", run.getProvider());
+            view.put("model", run.getModel());
+            view.put("connectionId", run.getProviderConnectionId());
+            view.put("connectionRevision", run.getConnectionRevision());
+            view.put("startedAt", row.getStartedAt() == null ? null : row.getStartedAt().toString());
+            view.put("endedAt", row.getEndedAt() == null ? null : row.getEndedAt().toString());
+            view.put("durationMs", row.getDurationMs());
+            view.put("errorCode", row.getErrorCode() != null ? row.getErrorCode() : row.getProviderHttpStatus());
+            view.put("firstChunkMs", row.getFirstChunkMs());
+            view.put("chunkCount", row.getChunkCount());
+            view.put("uploadBytes", null);
+            view.put("downloadBytes", null);
+            view.put("lastProgressStage", row.getLastProgressStage());
+            view.put("lastProgressElapsedMs", row.getLastProgressElapsedMs());
+            attempts.add(view);
+        }
+        Map<String, Object> aggregate = new LinkedHashMap<>();
+        aggregate.put("attemptCount", (long) rows.size());
+        aggregate.put("failedCount", failedCount);
+        aggregate.put("partialCount", partialCount);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("runId", runId);
+        body.put("attempts", attempts);
+        body.put("aggregate", aggregate);
         return body;
     }
 

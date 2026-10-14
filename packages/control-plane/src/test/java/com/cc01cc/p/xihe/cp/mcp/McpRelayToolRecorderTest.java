@@ -186,6 +186,10 @@ class McpRelayToolRecorderTest {
         McpRelayToolRecorder.RunState state = newState();
         recorder.record("llm_usage", Map.of("inputTokens", 1), TEST_RUN_ID, null, state);
         recorder.record("token", Map.of("content", "hi"), TEST_RUN_ID, null, state);
+        // PLAN-0508: provider transport telemetry is relayed by the chat stream,
+        // never recorded as MCP execution-domain facts.
+        recorder.record("transport_progress", Map.of("stage", "first_chunk"), TEST_RUN_ID, null, state);
+        recorder.record("transport_attempt", Map.of("outcome", "success"), TEST_RUN_ID, null, state);
 
         verify(mcpInvocationService, never()).openAgentInvocation(any(), any(), any(), any(), any());
         verify(mcpInvocationService, never()).finishAgentToolAttempt(any(), any(), eq(false));

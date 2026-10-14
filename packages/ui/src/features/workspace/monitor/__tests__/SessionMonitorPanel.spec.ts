@@ -1,21 +1,30 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { i18n } from "../../../../i18n";
 import { api } from "../../../../composables/api";
+import {
+    applyTransportAttempt,
+    applyTransportProgress,
+    clearTransportLive,
+} from "../../chat/transportLive";
 import { notifySessionConnection, notifySessionEvent } from "../../chat/sessionEvents";
 import SessionMonitorPanel from "../SessionMonitorPanel.vue";
-import type { SessionMonitorResponse } from "../../../../types";
+import type { RunTransportAttemptsResponse, SessionMonitorResponse } from "../../../../types";
 
 vi.mock("../../../../composables/api", () => ({
     api: {
         getSessionMonitor: vi.fn<(sessionId: string) => Promise<SessionMonitorResponse>>(),
+        getRunAttempts: vi.fn<(runId: string) => Promise<RunTransportAttemptsResponse>>(),
     },
 }));
 
 const getSessionMonitor = vi.mocked(api.getSessionMonitor);
+const getRunAttempts = vi.mocked(api.getRunAttempts);
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const RUN_ID = "33333333-3333-4333-8333-333333333333";
 const CONNECTION_ID = "22222222-2222-4222-8222-222222222222";
+const ATTEMPT_1 = "44444444-4444-4444-8444-444444444444";
+const ATTEMPT_2 = "55555555-5555-4555-8555-555555555555";
 
 let wrapper: VueWrapper | null = null;
 
@@ -71,9 +80,79 @@ function monitorResponse(overrides: Partial<SessionMonitorResponse> = {}): Sessi
                 terminalAt: "2026-10-14T01:50:00Z",
             },
         },
+        transport: { attemptCount: 3, failedCount: 1, partialCount: 1 },
         ...overrides,
     };
 }
+
+function attemptsResponse(
+    overrides: Partial<RunTransportAttemptsResponse> = {},
+): RunTransportAttemptsResponse {
+    return {
+        runId: RUN_ID,
+        attempts: [
+            {
+                attemptId: ATTEMPT_1,
+                seq: 1,
+                status: "terminal",
+                outcome: "success",
+                provider: "custom-openai-compatible",
+                model: "wire-model",
+                connectionId: CONNECTION_ID,
+                connectionRevision: 1,
+                startedAt: "2026-10-14T01:59:00Z",
+                endedAt: "2026-10-14T01:59:01Z",
+                durationMs: 1000,
+                errorCode: null,
+                firstChunkMs: 83,
+                chunkCount: 4,
+                uploadBytes: null,
+                downloadBytes: null,
+                lastProgressStage: null,
+                lastProgressElapsedMs: null,
+            },
+            {
+                attemptId: ATTEMPT_2,
+                seq: 2,
+                status: "running",
+                outcome: null,
+                provider: "custom-openai-compatible",
+                model: "wire-model",
+                connectionId: CONNECTION_ID,
+                connectionRevision: 1,
+                startedAt: "2026-10-14T01:59:02Z",
+                endedAt: null,
+                durationMs: null,
+                errorCode: null,
+                firstChunkMs: null,
+                chunkCount: null,
+                uploadBytes: null,
+                downloadBytes: null,
+                lastProgressStage: "first_chunk",
+                lastProgressElapsedMs: 140,
+            },
+        ],
+        aggregate: { attemptCount: 2, failedCount: 0, partialCount: 0 },
+        ...overrides,
+    };
+}
+
+function runningActivity() {
+    return {
+        runId: RUN_ID,
+        origin: "user_submission",
+        status: "running",
+        createdAt: "2026-10-14T01:59:00Z",
+        waitingOnRunId: null,
+        waitingToolCallId: null,
+        leaseExpired: false,
+    };
+}
+
+beforeEach(() => {
+    clearTransportLive();
+    getRunAttempts.mockResolvedValue(attemptsResponse());
+});
 
 function mountPanel(): VueWrapper {
     wrapper = mount(SessionMonitorPanel, {
@@ -232,5 +311,138 @@ describe("SessionMonitorPanel", () => {
         );
         expect(panel.find('[data-testid="monitor-stale-banner"]').exists()).toBe(true);
         expect(panel.findAll('[data-testid="monitor-history-item"]')).toHaveLength(1);
+    });
+
+    it("renders the session transport aggregate and the latest run's attempt rows", async () => {
+        getSessionMonitor.mockResolvedValue(monitorResponse({ activity: [runningActivity()] }));
+        const panel = mountPanel();
+        await flushPromises();
+
+        const aggregate = panel.get('[data-testid="monitor-transport-aggregate"]').text();
+        expect(aggregate).toBe(
+            i18n.global.t("monitor.transport.aggregate", {
+                attempts: 3,
+                failed: 1,
+                partial: 1,
+            }),
+        );
+        expect(aggregate).not.toContain("{");
+
+        expect(getRunAttempts).toHaveBeenCalledWith(RUN_ID);
+        expect(panel.get('[data-testid="monitor-transport-run"]').text()).toContain("33333333");
+        expect(panel.findAll('[data-testid="monitor-transport-stage"]')).toHaveLength(4);
+
+        const rows = panel.findAll('[data-testid="monitor-transport-attempt"]');
+        expect(rows).toHaveLength(2);
+        // The newest attempt is still running and keeps the durable stage sample.
+        expect(rows[1].text()).toContain(i18n.global.t("monitor.transport.running"));
+        // The refresh sample is displayed statically (no extrapolation).
+        expect(panel.get('[data-testid="monitor-transport-stages"]').text()).toContain("140 ms");
+
+        // v1 wire bytes are unknown, never fabricated.
+        const metrics = panel.get('[data-testid="monitor-transport-metrics"]').text();
+        expect(metrics).toContain(i18n.global.t("monitor.transport.unknown"));
+    });
+
+    it("merges live transport progress without regressing stages and freezes on terminal", async () => {
+        getSessionMonitor.mockResolvedValue(monitorResponse({ activity: [runningActivity()] }));
+        const panel = mountPanel();
+        await flushPromises();
+
+        const liveBase = {
+            runId: RUN_ID,
+            attemptId: ATTEMPT_2,
+            seq: 2,
+            startedAt: "2026-10-14T01:59:02Z",
+        };
+        expect(
+            applyTransportProgress(SESSION_ID, {
+                ...liveBase,
+                stage: "first_chunk",
+                elapsedMs: 83,
+            }),
+        ).toBe(true);
+        // Out-of-order stale stages never regress the mirror.
+        expect(
+            applyTransportProgress(SESSION_ID, {
+                ...liveBase,
+                stage: "attempt_started",
+                elapsedMs: 10,
+            }),
+        ).toBe(false);
+        await flushPromises();
+
+        // The live mirror overrides the fetched running row (83 ms beats 140 ms).
+        expect(panel.get('[data-testid="monitor-transport-stages"]').text()).toContain("83 ms");
+
+        expect(
+            applyTransportAttempt(SESSION_ID, {
+                ...liveBase,
+                endedAt: "2026-10-14T01:59:05Z",
+                durationMs: 3000,
+                outcome: "partial",
+                errorCode: "AGENT_STREAM_FAILED",
+                firstChunkMs: 83,
+                chunkCount: 2,
+                uploadBytes: null,
+                downloadBytes: null,
+            }),
+        ).toBe(true);
+        await flushPromises();
+
+        const rows = panel.findAll('[data-testid="monitor-transport-attempt"]');
+        expect(rows[1].text()).toContain("partial");
+        expect(rows[1].text()).toContain("AGENT_STREAM_FAILED");
+        // A terminal mirror refuses any further progress for the attempt.
+        expect(
+            applyTransportProgress(SESSION_ID, { ...liveBase, stage: "streaming", elapsedMs: 90 }),
+        ).toBe(false);
+    });
+
+    it("refetches attempts together with the monitor aggregate on session events", async () => {
+        getSessionMonitor.mockResolvedValue(monitorResponse());
+        mountPanel();
+        await flushPromises();
+        expect(getRunAttempts).toHaveBeenCalledTimes(1);
+
+        notifySessionEvent(SESSION_ID);
+        await sleep(650);
+        await flushPromises();
+
+        expect(getRunAttempts).toHaveBeenCalledTimes(2);
+    });
+
+    it("keeps live attempts visible when the durable history fetch fails", async () => {
+        getSessionMonitor.mockResolvedValue(monitorResponse());
+        getRunAttempts.mockRejectedValueOnce(new Error("route unavailable"));
+        const panel = mountPanel();
+        await flushPromises();
+
+        expect(panel.find('[data-testid="monitor-transport-history-unavailable"]').exists()).toBe(
+            true,
+        );
+        expect(panel.find('[data-testid="monitor-transport-empty"]').exists()).toBe(true);
+
+        expect(
+            applyTransportAttempt(SESSION_ID, {
+                runId: RUN_ID,
+                attemptId: ATTEMPT_2,
+                seq: 2,
+                startedAt: "2026-10-14T01:59:02Z",
+                endedAt: "2026-10-14T01:59:03Z",
+                durationMs: 900,
+                outcome: "success",
+                errorCode: null,
+                firstChunkMs: 50,
+                chunkCount: 1,
+                uploadBytes: null,
+                downloadBytes: null,
+            }),
+        ).toBe(true);
+        await flushPromises();
+
+        const rows = panel.findAll('[data-testid="monitor-transport-attempt"]');
+        expect(rows).toHaveLength(1);
+        expect(rows[0].text()).toContain("success");
     });
 });

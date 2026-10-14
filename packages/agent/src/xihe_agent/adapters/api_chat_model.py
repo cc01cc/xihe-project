@@ -18,6 +18,7 @@ from xihe_agent.interfaces.message import Message
 from xihe_agent.interfaces.tool import BaseAgentTool
 from xihe_agent.llm.api_request import ApiRequestError, ChatApiType, render_request
 from xihe_agent.llm.api_sender import NATIVE_USAGE_COUNTERS, ApiSender, NativeResponse
+from xihe_agent.llm.transport_metrics import TransportEventSink, TransportMetricsCollector
 
 
 def native_tools(tools: Sequence[BaseAgentTool], api_type: ChatApiType) -> list[dict[str, Any]]:
@@ -245,10 +246,14 @@ class ApiChatModel(BaseChatModel):
         request_id: str,
         timeout: float,
         token_estimator: Callable[[dict[str, Any]], int] | None = None,
+        transport_sink: TransportEventSink | None = None,
     ):
         super().__init__(cache=False)
         self._api_type = api_type
-        self._sender = ApiSender(api_type, grant, request_id, timeout)
+        # PLAN-0508: the per-Run collector sequences transport attempts; the
+        # sink is the runner-provided relay into the existing event stream.
+        collector = TransportMetricsCollector(transport_sink) if transport_sink is not None else None
+        self._sender = ApiSender(api_type, grant, request_id, timeout, collector=collector)
         self._base = render_request(body_source, api_type, values)
         self._body_source = body_source
         self._values = copy.deepcopy(values)

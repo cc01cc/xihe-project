@@ -8,6 +8,7 @@ import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
+import com.cc01cc.p.xihe.cp.entity.ChatRunTransportAttempt;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.service.SessionService;
@@ -87,6 +88,7 @@ public class ChatController {
     private final ChatRunCancellationService chatRunCancellationService;
     private final ChatRunTerminalService chatRunTerminalService;
     private final ChatRunReadService chatRunReadService;
+    private final ChatRunTransportService chatRunTransportService;
     private final SessionMonitorService sessionMonitorService;
     private final ChatRunLifecycleService chatRunLifecycleService;
     private final MessageReadService messageReadService;
@@ -141,6 +143,7 @@ public class ChatController {
             ChatRunCancellationService chatRunCancellationService,
             ChatRunTerminalService chatRunTerminalService,
             ChatRunReadService chatRunReadService,
+            ChatRunTransportService chatRunTransportService,
             SessionMonitorService sessionMonitorService,
             ChatRunLifecycleService chatRunLifecycleService,
             MessageReadService messageReadService,
@@ -173,6 +176,7 @@ public class ChatController {
         this.chatRunCancellationService = chatRunCancellationService;
         this.chatRunTerminalService = chatRunTerminalService;
         this.chatRunReadService = chatRunReadService;
+        this.chatRunTransportService = chatRunTransportService;
         this.sessionMonitorService = sessionMonitorService;
         this.chatRunLifecycleService = chatRunLifecycleService;
         this.messageReadService = messageReadService;
@@ -616,6 +620,29 @@ public class ChatController {
         }
         try {
             return ResponseEntity.ok(chatRunReadService.getStatus(runUuid, runId, userId, workspaceId));
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
+    // ── PLAN-0508 T2.2: per-run transport attempt read surface ─────────────
+
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @GetMapping("/api/v1/chat/runs/{runId}/attempts")
+    public ResponseEntity<Map<String, Object>> getRunAttempts(@PathVariable String runId) {
+        String userId = TenantContext.getUserId();
+        String workspaceId = TenantContext.getWorkspaceId();
+        if (userId == null || workspaceId == null) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+        }
+        UUID runUuid;
+        try {
+            runUuid = UUID.fromString(runId);
+        } catch (IllegalArgumentException e) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.NOT_FOUND, "RUN_NOT_FOUND", "Chat run not found");
+        }
+        try {
+            return ResponseEntity.ok(chatRunReadService.getRunAttempts(runUuid, runId, userId, workspaceId));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -1777,6 +1804,66 @@ public class ChatController {
         }
     }
 
+    /**
+     * PLAN-0508 T3.2: persist bounded provider-attempt telemetry before the CP
+     * relays it (durable-before-dispatch). Best-effort by contract: a malformed
+     * payload or failed write is logged and the relay proceeds untouched — the
+     * telemetry side channel must never fail the provider Run. The {@code runId}
+     * comes from the relay's authorized context, never from the Agent payload.
+     */
+    private void persistTransportTelemetry(String eventName, Map<?, ?> payload, String runId) {
+        try {
+            UUID attemptId = UUID.fromString(requiredString(payload, "attemptId"));
+            long sequence = requiredLong(payload, "seq");
+            Instant startedAt = Instant.parse(requiredString(payload, "startedAt"));
+            if ("transport_progress".equals(eventName)) {
+                String stage = requiredString(payload, "stage");
+                long elapsedMs = requiredLong(payload, "elapsedMs");
+                if (ChatRunTransportAttempt.STAGE_ATTEMPT_STARTED.equals(stage)) {
+                    chatRunTransportService.startAttempt(runId, attemptId, sequence, startedAt);
+                }
+                chatRunTransportService.recordProgress(runId, attemptId, sequence, stage, elapsedMs);
+                return;
+            }
+            String outcome = requiredString(payload, "outcome");
+            Instant endedAt = Instant.parse(requiredString(payload, "endedAt"));
+            long durationMs = requiredLong(payload, "durationMs");
+            Long firstChunkMs = nullableLong(payload, "firstChunkMs");
+            Long chunkCount = nullableLong(payload, "chunkCount");
+            Object errorSlot = payload.get("errorCode");
+            String errorCode = errorSlot instanceof String string ? string : null;
+            Integer providerHttpStatus = errorSlot instanceof Number number ? number.intValue() : null;
+            chatRunTransportService.completeAttempt(runId, attemptId, sequence,
+                    new ChatRunTransportService.AttemptCompletion(
+                            outcome, startedAt, endedAt, durationMs,
+                            errorCode, providerHttpStatus, firstChunkMs, chunkCount));
+        } catch (RuntimeException e) {
+            logger.warn("[LIFECYCLE] service=cp event=transport_telemetry_dropped eventName={} runId={} reason={}",
+                    eventName, runId, e.getMessage());
+        }
+    }
+
+    private static String requiredString(Map<?, ?> payload, String key) {
+        Object value = payload.get(key);
+        if (!(value instanceof String string) || string.isBlank()) {
+            throw new IllegalArgumentException("Missing transport telemetry field " + key);
+        }
+        return string;
+    }
+
+    private static long requiredLong(Map<?, ?> payload, String key) {
+        Object value = payload.get(key);
+        if (!(value instanceof Number number)) {
+            throw new IllegalArgumentException("Missing transport telemetry field " + key);
+        }
+        return number.longValue();
+    }
+
+    private static Long nullableLong(Map<?, ?> payload, String key) {
+        Object value = payload.get(key);
+        return value instanceof Number number ? number.longValue() : null;
+    }
+
     private Map<?, ?> asMap(Object value) {
         return value instanceof Map<?, ?> map ? map : Map.of();
     }
@@ -1881,6 +1968,12 @@ public class ChatController {
                                       String runId, String requestId, String userId, String workspaceId,
                                       com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder.RunState runState) {
         Object parsedPayload = parsePayload(eventName, payload);
+        // PLAN-0508 T3.2: durable-before-forward transport persistence. Best-
+        // effort by contract — malformed payloads and write failures are logged
+        // and the SSE dispatch continues unchanged.
+        if ("transport_progress".equals(eventName) || "transport_attempt".equals(eventName)) {
+            persistTransportTelemetry(eventName, asMap(parsedPayload), runId);
+        }
         // PLAN-0464 T2.2：Agent 侧工具事实记账只剩执行域（invocation + agent_tool
         // attempt）；LedgerToolRecorder 及其 operation_* 写入已随本计划删除。
         mcpRelayToolRecorder.record(eventName, asMap(parsedPayload), runId, requestId, runState);

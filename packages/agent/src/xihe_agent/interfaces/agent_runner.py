@@ -27,7 +27,9 @@ class AgentEvent:
     events defined in `interfaces.event`.
     """
 
-    type: str  # "token" | "tool_call" | "tool_result" | "approval_request" | "status" | "error" | "done"
+    # "token" | "tool_call" | "tool_result" | "approval_request" | "status" | "error" | "done"
+    # | "transport_progress" | "transport_attempt" (PLAN-0508 bounded transport telemetry)
+    type: str
     data: dict[str, Any]
 
 
@@ -82,6 +84,10 @@ class RunnerConfig:
     # Current user prompt only; template-context messages may also contain prior
     # history, which must not be re-appended as fresh prompt.admitted events.
     admitted_prompt: str | None = None
+    # PLAN-0508: queue carrying the model's provider transport telemetry events
+    # (populated by the transport_sink bound at model construction). The runner
+    # fans these into the same SSE event stream; None keeps the run untouched.
+    transport_events: asyncio.Queue[AgentEvent] | None = None
 
 
 class AgentRunner(ABC):

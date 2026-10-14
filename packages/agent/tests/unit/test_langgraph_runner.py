@@ -623,3 +623,95 @@ def test_command_text_joins_command_and_args():
     assert tool_adapter_module._command_text({"command": "make"}) == "make"
     assert tool_adapter_module._command_text({}) is None
     assert tool_adapter_module._command_text({"command": "   "}) is None
+
+
+# ── PLAN-0508 T3.2：provider transport telemetry 合流（sink queue → SSE 流） ───
+
+
+@pytest.mark.asyncio
+async def test_runner_fans_transport_events_into_stream_before_done(monkeypatch):
+    transport_events: asyncio.Queue[AgentEvent] = asyncio.Queue()
+
+    class FakeAgent:
+        def astream_events(self, _inputs, version, **kwargs):
+            assert version == "v2"
+
+            async def events():
+                # The sender's collector fills the queue mid-run; progress and
+                # the terminal summary arrive as one burst.
+                transport_events.put_nowait(
+                    AgentEvent(type="transport_progress", data={"stage": "attempt_started", "seq": 1})
+                )
+                transport_events.put_nowait(
+                    AgentEvent(type="transport_progress", data={"stage": "attempt_finished", "seq": 1})
+                )
+                transport_events.put_nowait(
+                    AgentEvent(type="transport_attempt", data={"outcome": "success", "seq": 1})
+                )
+                yield {"event": "on_chain_end", "name": "LangGraph", "data": {}, "run_id": "graph-run"}
+
+            return events()
+
+    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, tools: FakeAgent())
+    runner = LangGraphRunner(model_factory=lambda _model: object())
+
+    received: list[AgentEvent] = []
+    async for event in runner.stream(
+        [TextMessage(role="human", content="hi")],
+        RunnerConfig(model="fake", system_prompt="", tools=[], transport_events=transport_events),
+    ):
+        received.append(event)
+
+    types = [event.type for event in received]
+    assert types.count("transport_progress") == 2
+    assert types.count("transport_attempt") == 1
+    assert types.count("done") == 1
+    # The attempt terminal fans in ahead of the run-closing raw events.
+    assert types.index("transport_attempt") < types.index("done")
+    assert types.index("transport_attempt") < types.index("usage")
+    # Ordering inside the burst is preserved end-to-end.
+    assert types.index("transport_progress") < types.index("transport_attempt")
+
+
+@pytest.mark.asyncio
+async def test_runner_flushes_pending_transport_events_on_cancel(monkeypatch):
+    transport_events: asyncio.Queue[AgentEvent] = asyncio.Queue()
+    cancel_event = asyncio.Event()
+
+    class FakeAgent:
+        def astream_events(self, _inputs, version, **kwargs):
+            async def events():
+                # The in-flight attempt aborts; its terminal lands while the raw
+                # stream is still being torn down by the cancellation.
+                transport_events.put_nowait(
+                    AgentEvent(type="transport_attempt", data={"outcome": "aborted", "seq": 1})
+                )
+                cancel_event.set()
+                await asyncio.sleep(5)
+                raise AssertionError("cancel_event must interrupt the run")  # pragma: no cover
+                yield {}  # pragma: no cover  (keeps this an async generator)
+
+            return events()
+
+    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, tools: FakeAgent())
+    runner = LangGraphRunner(model_factory=lambda _model: object())
+
+    received: list[AgentEvent] = []
+    async for event in runner.stream(
+        [TextMessage(role="human", content="hi")],
+        RunnerConfig(
+            model="fake",
+            system_prompt="",
+            tools=[],
+            cancel_event=cancel_event,
+            transport_events=transport_events,
+        ),
+    ):
+        received.append(event)
+
+    types = [event.type for event in received]
+    assert types.count("transport_attempt") == 1
+    assert any(event.type == "error" and event.data.get("code") == "cancelled" for event in received)
+    # The flushed attempt terminal precedes the run-closing error/usage events.
+    assert types.index("transport_attempt") < types.index("error")
+    assert types.index("transport_attempt") < types.index("usage")

@@ -120,6 +120,11 @@
       "description": "PLAN-0507 right-panel session monitor: default-open, API cross-check, SSE-driven refresh, error/retry, stale recovery, mobile sheet",
       "llmMode": "mock",
       "specs": ["e2e/real/plan-0507-session-monitor.spec.ts"]
+    },
+    "transport": {
+      "description": "PLAN-0508 provider-wire transport telemetry: normal / slow-first-response / provider-failure attempts through the CP relay + monitor diagnostics",
+      "llmMode": "success",
+      "specs": ["e2e/real/plan-0508-transport-telemetry.spec.ts"]
     }
   }
 }

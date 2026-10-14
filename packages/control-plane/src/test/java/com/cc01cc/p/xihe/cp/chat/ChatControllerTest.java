@@ -641,6 +641,157 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(runId, lastObserved.get("runId"));
     }
 
+    // ── PLAN-0508 T2.2/T3.2: transport attempt relay persistence + read surface ──
+
+    @Test
+    void runAttempts_relaysTelemetryDurablyAndServesReadSurface() {
+        String attempt1 = UUID.randomUUID().toString();
+        String attempt2 = UUID.randomUUID().toString();
+        String attempt3 = UUID.randomUUID().toString();
+        String sseBody = "event: transport_progress\ndata: {\"requestId\":\"r1\",\"runId\":\"not-trusted\","
+                + "\"attemptId\":\"" + attempt1 + "\",\"seq\":1,\"stage\":\"attempt_started\","
+                + "\"startedAt\":\"2026-10-14T01:00:00Z\",\"elapsedMs\":0}\n\n"
+                + "event: transport_progress\ndata: {\"requestId\":\"r1\",\"attemptId\":\"" + attempt1 + "\","
+                + "\"seq\":1,\"stage\":\"first_chunk\",\"startedAt\":\"2026-10-14T01:00:00Z\",\"elapsedMs\":83}\n\n"
+                + "event: transport_progress\ndata: {\"attemptId\":\"" + attempt1 + "\","
+                + "\"seq\":1,\"stage\":\"attempt_finished\",\"startedAt\":\"2026-10-14T01:00:00Z\",\"elapsedMs\":2000}\n\n"
+                + "event: transport_attempt\ndata: {\"requestId\":\"r1\",\"attemptId\":\"" + attempt1 + "\","
+                + "\"seq\":1,\"startedAt\":\"2026-10-14T01:00:00Z\",\"endedAt\":\"2026-10-14T01:00:02Z\","
+                + "\"durationMs\":2000,\"outcome\":\"success\",\"errorCode\":null,"
+                + "\"firstChunkMs\":83,\"chunkCount\":5,\"uploadBytes\":null,\"downloadBytes\":null}\n\n"
+                + "event: transport_progress\ndata: {\"attemptId\":\"" + attempt2 + "\","
+                + "\"seq\":2,\"stage\":\"attempt_started\",\"startedAt\":\"2026-10-14T01:00:03Z\",\"elapsedMs\":0}\n\n"
+                + "event: transport_attempt\ndata: {\"attemptId\":\"" + attempt2 + "\","
+                + "\"seq\":2,\"startedAt\":\"2026-10-14T01:00:03Z\",\"endedAt\":\"2026-10-14T01:00:04Z\","
+                + "\"durationMs\":900,\"outcome\":\"error\",\"errorCode\":429,"
+                + "\"firstChunkMs\":null,\"chunkCount\":0}\n\n"
+                + "event: transport_progress\ndata: {\"attemptId\":\"" + attempt3 + "\","
+                + "\"seq\":3,\"stage\":\"attempt_started\",\"startedAt\":\"2026-10-14T01:00:05Z\",\"elapsedMs\":0}\n\n"
+                + "event: transport_progress\ndata: {\"attemptId\":\"" + attempt3 + "\","
+                + "\"seq\":3,\"stage\":\"first_chunk\",\"startedAt\":\"2026-10-14T01:00:05Z\",\"elapsedMs\":140}\n\n"
+                + "event: transport_progress\ndata: {\"attemptId\":\"broken\"}\n\n"
+                + "event: token\ndata: {\"content\":\"hi\"}\n\n"
+                + "event: done\ndata: {\"type\":\"done\",\"outcome\":\"success\"}\n\n";
+        agentServer.createContext("/internal/v1/agent/chat", exchange -> {
+            try {
+                exchange.getResponseHeaders().set("Content-Type", MediaType.TEXT_EVENT_STREAM_VALUE);
+                exchange.sendResponseHeaders(200, 0);
+                try (OutputStream out = exchange.getResponseBody()) {
+                    out.write(sseBody.getBytes());
+                }
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        Map<String, Object> request = Map.of(
+                "sessionId", sessionId,
+                "content", "Transport telemetry",
+                "workspaceId", workspaceId,
+                "userId", userId
+        );
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<Map> submitted = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST, chatEntity(request, headers), Map.class);
+        assertEquals(HttpStatus.ACCEPTED, submitted.getStatusCode());
+        String runId = (String) submitted.getBody().get("runId");
+
+        // Run terminal commit reconciles attempt3 (no summary) to partial; the
+        // after-commit hook and the read poll tolerate async ordering. The
+        // malformed progress event is dropped at parse time and never inserts.
+        await().atMost(10, TimeUnit.SECONDS).until(() -> {
+            ResponseEntity<Map> polled = restTemplate.exchange(
+                    baseUrl + "/api/v1/chat/runs/" + runId + "/attempts", HttpMethod.GET,
+                    new HttpEntity<>(headers), Map.class);
+            if (polled.getStatusCode() != HttpStatus.OK) {
+                return false;
+            }
+            List<Map<String, Object>> rows = (List<Map<String, Object>>) polled.getBody().get("attempts");
+            return rows.size() == 3 && "partial".equals(rows.get(2).get("outcome"));
+        });
+
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/chat/runs/" + runId + "/attempts", HttpMethod.GET,
+                new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals(runId, response.getBody().get("runId"));
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) response.getBody().get("attempts");
+        assertEquals(3, rows.size());
+
+        Map<String, Object> first = rows.get(0);
+        assertEquals(attempt1, first.get("attemptId"));
+        assertEquals(1, ((Number) first.get("seq")).intValue());
+        assertEquals("terminal", first.get("status"));
+        assertEquals("success", first.get("outcome"));
+        assertEquals(2000, ((Number) first.get("durationMs")).intValue());
+        assertEquals(83, ((Number) first.get("firstChunkMs")).intValue());
+        assertEquals(5, ((Number) first.get("chunkCount")).intValue());
+        assertNull(first.get("errorCode"));
+        assertNull(first.get("uploadBytes"));
+        assertNull(first.get("downloadBytes"));
+        assertEquals("attempt_finished", first.get("lastProgressStage"));
+
+        Map<String, Object> second = rows.get(1);
+        assertEquals("error", second.get("outcome"));
+        // The int provider HTTP status surfaces through the single error slot.
+        assertEquals(429, ((Number) second.get("errorCode")).intValue());
+
+        Map<String, Object> third = rows.get(2);
+        assertEquals(attempt3, third.get("attemptId"));
+        assertEquals("terminal", third.get("status"));
+        assertEquals("partial", third.get("outcome"));
+        // No summary → duration/chunks stay null (no cross-process clock math).
+        assertNull(third.get("durationMs"));
+        assertNull(third.get("chunkCount"));
+        assertEquals("first_chunk", third.get("lastProgressStage"));
+        assertEquals(140, ((Number) third.get("lastProgressElapsedMs")).intValue());
+
+        // Provider/model/connection identity projects from the ChatRun snapshot.
+        ChatRun persisted = chatRunRepository.findById(UUID.fromString(runId)).orElseThrow();
+        assertEquals(persisted.getProvider(), first.get("provider"));
+        assertEquals(persisted.getModel(), first.get("model"));
+        assertEquals(persisted.getProviderConnectionId(), first.get("connectionId"));
+
+        Map<String, Object> aggregate = (Map<String, Object>) response.getBody().get("aggregate");
+        assertEquals(3, ((Number) aggregate.get("attemptCount")).intValue());
+        assertEquals(1, ((Number) aggregate.get("failedCount")).intValue());
+        assertEquals(1, ((Number) aggregate.get("partialCount")).intValue());
+    }
+
+    @Test
+    void runAttempts_enforcesRunScopedAuthorization() {
+        ResponseEntity<Map> unauthorized = restTemplate.getForEntity(
+                baseUrl + "/api/v1/chat/runs/" + UUID.randomUUID() + "/attempts", Map.class);
+        assertEquals(HttpStatus.UNAUTHORIZED, unauthorized.getStatusCode());
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        ResponseEntity<Map> unknown = restTemplate.exchange(
+                baseUrl + "/api/v1/chat/runs/" + UUID.randomUUID() + "/attempts", HttpMethod.GET,
+                new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.NOT_FOUND, unknown.getStatusCode());
+        assertEquals("RUN_NOT_FOUND", unknown.getBody().get("code"));
+
+        ResponseEntity<Map> malformed = restTemplate.exchange(
+                baseUrl + "/api/v1/chat/runs/not-a-uuid/attempts", HttpMethod.GET,
+                new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.NOT_FOUND, malformed.getStatusCode());
+        assertEquals("RUN_NOT_FOUND", malformed.getBody().get("code"));
+
+        ChatRun foreign = new ChatRun(UUID.randomUUID().toString(), sessionId, UUID.randomUUID().toString(),
+                workspaceId, "foreign-" + UUID.randomUUID(), "hash-foreign", "custom-openai-compatible",
+                "wire-model", "none", "running");
+        foreign.setOrigin(ChatRun.ORIGIN_USER_SUBMISSION);
+        chatRunRepository.saveAndFlush(foreign);
+        ResponseEntity<Map> forbidden = restTemplate.exchange(
+                baseUrl + "/api/v1/chat/runs/" + foreign.getId() + "/attempts", HttpMethod.GET,
+                new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.FORBIDDEN, forbidden.getStatusCode());
+        assertEquals("FORBIDDEN", forbidden.getBody().get("code"));
+    }
+
     @Test
     void sessionMonitor_activityShowsNonTerminalRunWithLeaseExpiry() {
         Instant now = Instant.now();
