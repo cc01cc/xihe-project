@@ -586,11 +586,17 @@ async function remove(connection: ProviderConnection) {
     }
 }
 
-function cancelDelete() {
-    if (deleting.value) return;
+function closeDeleteDialog() {
     deleteTarget.value = null;
     deleteImpact.value = null;
     deleteError.value = "";
+}
+
+function cancelDelete() {
+    // User-initiated close; no-op while a delete is in flight so the dialog
+    // stays mounted and the outcome remains visible.
+    if (deleting.value) return;
+    closeDeleteDialog();
 }
 
 async function confirmDelete() {
@@ -602,7 +608,7 @@ async function confirmDelete() {
         await deleteProviderConnection(target.id);
         await load();
         toast.success("Provider 已删除");
-        cancelDelete();
+        closeDeleteDialog();
     } catch (cause: unknown) {
         logger.warn("Provider Hub delete failed", cause);
         deleteError.value = cause instanceof Error ? cause.message : "Provider 删除失败";

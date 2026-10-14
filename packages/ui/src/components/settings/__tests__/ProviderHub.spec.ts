@@ -250,6 +250,9 @@ describe("ProviderHub master-detail", () => {
         await wrapper.get('[data-testid="provider-delete-confirm"]').trigger("click");
         await flushPromises();
         expect(deleteProviderConnection).toHaveBeenCalledWith(user.id);
+        // Review round-4 regression guard: the dialog must close on success
+        // (the deleting-guard on cancel must not block the success path).
+        expect(wrapper.find('[data-testid="provider-delete-confirm-modal"]').exists()).toBe(false);
         expect(
             wrapper
                 .get('[data-testid="provider-connection-detail"]')
