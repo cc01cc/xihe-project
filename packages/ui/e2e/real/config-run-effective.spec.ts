@@ -2,31 +2,33 @@ import { generateE2EPassword } from "./helpers/password";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
-import { sendChat } from "./helpers/journey";
+import {
+    createSessionWithPrincipal,
+    provisionWorkspaceAgentPrincipal,
+} from "./helpers/agent-principal";
+import { ensureAgentWorkspaceBinding } from "./helpers/journey";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 const FAKE_LLM_BASE = `http://127.0.0.1:${process.env.XIHE_FAKE_LLM_PORT || "12639"}/openai/v1`;
 
 // PLAN-0504：用户层 profile 改动必须真正到达下一轮 chat 的 run payload。
-// 与 PLAN-0307 V17 同链：UI 保存 profile → CP user 层存储 → UI 解析生效模型 →
-// run payload（provider/model）→ 绑定连接完成本轮 run。
+// 链路：UI 保存 profile → CP user 层存储 → 合并配置 → getEffectiveModel 解析 →
+// POST /api/v1/chat 的 provider/model。会话经 API 创建（不携带 model 绑定），
+// 因此 payload 即 UI 默认解析结果；PLAN-0439 后未绑定会话在 Agent 侧按设计拒绝
+// 派发（PROVIDER_CONNECTION_UNAVAILABLE），故以 payload 为断言边界。
 // 跑法：node scripts/e2e-host.mjs --llm-mode=success e2e/real/config-run-effective.spec.ts
-test.describe("@host PLAN-0504 — UI profile reaches the Agent run", () => {
+test.describe("@host PLAN-0504 — UI profile reaches the Agent run payload", () => {
     test.skip(LLM_MODE !== "success", "requires XIHE_E2E_LLM_MODE=success (fake LLM)");
 
-    test("user-layer llm-provider profile is applied by the next chat run", async ({
+    test("user-layer llm-provider profile drives the next chat run payload", async ({
         page,
         request,
     }) => {
-        test.setTimeout(180000);
+        test.setTimeout(240000);
 
         const reg = await request.post(`${CP_URL}/api/v1/auth/register`, {
-            data: {
-                email: `p0504-${Date.now()}@test.com`,
-                password: SHARED_PASSWORD,
-                name: "P0504",
-            },
+            data: { email: `p0504-${Date.now()}@test.com`, password: SHARED_PASSWORD, name: "P0504" },
         });
         expect(reg.ok()).toBe(true);
         const auth = await reg.json();
@@ -104,8 +106,8 @@ test.describe("@host PLAN-0504 — UI profile reaches the Agent run", () => {
             fullPage: true,
         });
 
-        // 2. Start a real run from the chat UI. Wait until the app refreshed the
-        //    resolved config cache, so the UI cannot fall back to the stale store.
+        // 2. The chat UI must have refreshed its resolved config cache before the
+        //    send, so the payload cannot come from the stale store.
         await page.goto("/workspace", { waitUntil: "load" });
         await page.waitForFunction(
             (expected) => {
@@ -122,14 +124,28 @@ test.describe("@host PLAN-0504 — UI profile reaches the Agent run", () => {
             { timeout: 15000 },
         );
 
-        // 3. The next run payload must carry the profile-derived identity — this
-        //    is the UI half of the chain (config → resolved default → run).
+        // 3. A session without a model binding: its first send resolves the
+        //    provider/model through the saved profile (the chain PLAN-0504 owns).
+        await ensureAgentWorkspaceBinding(auth.workspaceId);
+        const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
+            name: "P0504 Profile Agent",
+        });
+        const sessionId = await createSessionWithPrincipal(request, auth, {
+            principalId,
+            title: "P0504 profile default",
+        });
+        await page.goto(`/workspace/${auth.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 15000 });
+
         const marker = `p0504-${Date.now()}`;
         const [sendRequest] = await Promise.all([
             page.waitForRequest(
                 (req) => req.method() === "POST" && req.url().includes("/api/v1/chat"),
             ),
-            sendChat(page, marker),
+            (async () => {
+                await page.locator('[data-testid="chat-input"]').fill(marker);
+                await page.locator('[data-testid="chat-send-button"]').click();
+            })(),
         ]);
         const payload = JSON.parse(sendRequest.postData() ?? "{}") as {
             provider?: string;
@@ -137,10 +153,6 @@ test.describe("@host PLAN-0504 — UI profile reaches the Agent run", () => {
         };
         expect(payload.provider).toBe("openai");
         expect(payload.model).toBe(uniqueModel);
-
-        // 4. The bound fixture run completes against the fake LLM.
-        await expect(page.locator('[data-slot="message"][data-align="end"]').first()).toBeVisible();
-        await expect(page.getByText(/Thinking/)).not.toBeVisible({ timeout: 60000 });
         await page.screenshot({
             path: test.info().outputPath("config-run-effective-applied.png"),
             fullPage: true,

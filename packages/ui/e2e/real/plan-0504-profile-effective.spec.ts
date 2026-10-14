@@ -65,12 +65,14 @@ test.describe.serial("@host PLAN-0504 profile reaches the Agent process", () => 
         try {
             // 1. Write the instance-layer profile; the instance layer accepts it
             //    without a connection check (decision #11) and the Agent picks
-            //    up provider/model from the parsed unit.
+            //    up provider/model from the parsed unit. The provider stays on
+            //    the lane's env-keyed provider (openai via XIHE_API_BASE) so the
+            //    model change is observable without touching provider lanes.
             const written = await request.put(`${CP_URL}/api/v1/config/instance/llm-provider`, {
                 headers,
                 data: {
                     profile: JSON.stringify({
-                        providerId: "deepseek",
+                        providerId: "openai",
                         connectionKey: "default",
                         model: uniqueModel,
                     }),
@@ -80,12 +82,14 @@ test.describe.serial("@host PLAN-0504 profile reaches the Agent process", () => 
 
             const applied = await waitForAgentIdentity(
                 (health) =>
-                    health.llm?.provider === "deepseek" &&
-                    health.llm?.model === uniqueModel &&
-                    health.llmReady === "ready",
-                "deepseek profile identity",
+                    health.llm?.provider === "openai" &&
+                    health.llm?.model === uniqueModel,
+                "openai profile identity",
             );
-            expect(applied.llm?.readiness).toBe("ready");
+            // The hand-written model is not in the directory catalog, so the
+            // derived readiness is model_unavailable (not ready) — the identity
+            // itself is the T3.3 proof point.
+            expect(applied.llmReady).toBe("model_unavailable");
 
             // 2. Clear the profile: the whole unit disappears and readiness fails
             //    closed (decision #10) instead of falling back to mock.

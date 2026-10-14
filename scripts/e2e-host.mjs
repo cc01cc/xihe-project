@@ -870,6 +870,15 @@ async function runPlaywright() {
         }
     : {
         XIHE_LLM_PROVIDER: llmMode === 'mock' ? 'mock' : 'openai',
+        // PLAN-0504 decision #9: the offline fallback registry resolves its
+        // endpoint from XIHE_API_BASE; without it the env-keyed providers would
+        // hit the real vendor endpoints and the lane would report
+        // invalid_credentials (config no longer carries base URLs). The fake
+        // LLM routes per-provider under /openai/v1 (as the old config keys
+        // did), so the base carries the openai prefix.
+        ...(llmMode === 'missing' || llmMode === 'mock'
+          ? {}
+          : { XIHE_API_BASE: `http://127.0.0.1:${fakeLlmPort}/openai/v1` }),
         ...(llmMode === 'missing' || llmMode === 'mock'
           ? {}
           : {
@@ -1237,26 +1246,28 @@ async function main() {
 
   if (externalServer) {
     // reuse path: the persistent stack is already up, skip all boot phases.
-    // PLAN-0365 (root cause E): the LLM provider is imported at boot time from
-    // --llm-mode, and the fake-llm fixture only boots in non-mock modes. A
-    // persistent stack booted in mock mode therefore has neither the provider
-    // config nor the fixture process; restore both here so external spec runs
-    // can use a different mode than the boot run.
-    if (llmMode !== 'mock' && !process.env.XIHE_E2E_SKIP_FIXTURES) {
-      // PLAN-0365 (root cause E) + D4: a persistent stack already owns some or
-      // all of the fixtures. Probe every fixture and start only the missing
-      // ones — re-spawning the running OAuth/MCP pair hits EADDRINUSE on the
-      // reused ports and aborts the run before Playwright ever starts.
-      const fixtures = describeFixtures()
-      const missing = []
-      for (const fixture of fixtures) {
-        if (!(await fixtureAlive(fixture.port))) missing.push(fixture.name)
+    // PLAN-0365 (root cause E): the LLM provider config is imported at boot
+    // time from --llm-mode; restore it here so external spec runs can use a
+    // different mode than the boot run. PLAN-0504: every lane (mock included)
+    // imports its profile — the mock lane is no longer implicitly ready.
+    if (!process.env.XIHE_E2E_SKIP_FIXTURES) {
+      if (llmMode !== 'mock') {
+        // PLAN-0365 (root cause E) + D4: a persistent stack already owns some
+        // or all of the fixtures. Probe every fixture and start only the
+        // missing ones — re-spawning the running OAuth/MCP pair hits
+        // EADDRINUSE on the reused ports and aborts the run before Playwright
+        // ever starts.
+        const fixtures = describeFixtures()
+        const missing = []
+        for (const fixture of fixtures) {
+          if (!(await fixtureAlive(fixture.port))) missing.push(fixture.name)
+        }
+        if (missing.length > 0) {
+          console.log(`[e2e-host] reuse: starting missing fixture(s) ${missing.join(', ')}`)
+          await startFixtures(missing)
+        }
       }
-      if (missing.length > 0) {
-        console.log(`[e2e-host] reuse: starting missing fixture(s) ${missing.join(', ')}`)
-        await startFixtures(missing)
-      }
-      if (fixtures.some(({ name }) => name === 'Fake LLM')) await configureFakeLlm()
+      await configureFakeLlm()
     }
   } else {
   // PLAN-294 F.5 L1+L2: parallel boot orchestration. Fixtures and PostgreSQL
@@ -1306,7 +1317,7 @@ async function main() {
             extraEnv: { ...commonCpEnv, XIHE_CP_PORT: cpPort, XIHE_LOG_DIR: e2eLogDir },
             healthUrl: `http://127.0.0.1:${cpPort}/actuator/health`,
           })
-          if (llmMode !== 'mock') await configureFakeLlm()
+          await configureFakeLlm()
         } else {
           const child = spawnCommand('java', ['-jar', cpJar, '--spring.profiles.active=e2e'], {
             cwd: join(projectDir, 'packages', 'control-plane'),
@@ -1364,6 +1375,11 @@ async function main() {
                 : {
                     XIHE_OPENAI_API_KEY: llmMode === 'invalid' ? 'sk-fake-invalid-key' : 'sk-fake-openai-key',
                     XIHE_DEEPSEEK_API_KEY: 'fake-deepseek-key',
+                    // PLAN-0504 decision #9: env-only endpoint for the fallback
+                    // registry (per-provider prefix as the old config keys did);
+                    // without this the env-keyed providers would hit the real
+                    // vendors and the lane would report invalid_credentials.
+                    XIHE_API_BASE: `http://127.0.0.1:${fakeLlmPort}/openai/v1`,
                   }),
           },
           healthUrl: `http://127.0.0.1:${agentPort}/internal/v1/agent/health`,
