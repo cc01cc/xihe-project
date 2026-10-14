@@ -67,7 +67,10 @@ function subscribe(sessionId: string): void {
             if (status === "live") {
                 connection.value = "live";
                 scheduleRefresh();
-            } else if (data.value) {
+            } else {
+                // Connection state tracks the SSE channel itself: an offline
+                // signal can arrive before the first fetch resolves (the
+                // transport latches errors, so it must not be dropped).
                 connection.value = "stale";
             }
         },

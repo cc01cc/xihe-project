@@ -211,4 +211,26 @@ describe("SessionMonitorPanel", () => {
         expect(panel.find('[data-testid="monitor-fetch-failed-banner"]').exists()).toBe(true);
         expect(panel.findAll('[data-testid="monitor-history-item"]')).toHaveLength(1);
     });
+
+    it("applies an offline signal that arrives before the first fetch resolves", async () => {
+        let release: ((value: SessionMonitorResponse) => void) | undefined;
+        getSessionMonitor.mockReturnValue(
+            new Promise<SessionMonitorResponse>((resolve) => {
+                release = resolve;
+            }),
+        );
+        const panel = mountPanel();
+        await flushPromises();
+
+        notifySessionConnection(SESSION_ID, "offline");
+        await flushPromises();
+        release?.(monitorResponse());
+        await flushPromises();
+
+        expect(panel.get('[data-testid="monitor-connection-chip"]').text()).toBe(
+            i18n.global.t("monitor.connection.stale"),
+        );
+        expect(panel.find('[data-testid="monitor-stale-banner"]').exists()).toBe(true);
+        expect(panel.findAll('[data-testid="monitor-history-item"]')).toHaveLength(1);
+    });
 });
