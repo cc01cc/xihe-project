@@ -5,7 +5,7 @@ import {
     createSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
-import { actionableErrors, collectPageErrors } from "./helpers/console";
+import { actionableErrors } from "./helpers/console";
 import {
     CP_URL,
     awaitLatestChatRunCompleted,
@@ -71,7 +71,15 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
     });
 
     test.beforeEach(async ({ page }) => {
-        pageErrors = collectPageErrors(page);
+        // Enhanced local collector: console text + resource URL, so failure
+        // reports can distinguish dev-server noise from API failures.
+        pageErrors = [];
+        page.on("pageerror", (error) => pageErrors.push(`pageerror: ${error.message}`));
+        page.on("console", (message) => {
+            if (message.type() !== "error") return;
+            const url = message.location()?.url ?? "";
+            pageErrors.push(`console: ${message.text()} (${url})`);
+        });
         intentionalAbort = false;
     });
 
