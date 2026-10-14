@@ -210,7 +210,7 @@ Provider verify 的 ready 只表示 CP 当前 remote `/models` 响应结构有�
 - 层读取边界（`AgentTemplateService.resolveForCreation` fail-closed）：instance 模板仅 ADMIN、user 模板仅本人、workspace 模板仅该成员；禁止跨层列举与 merged-effective 静默覆盖；重复 template/role UUID 或坏引用直接拒绝。UI 读取必须指定 `layer`；该域没有 legacy merged-config 视图，不纳入 `CONFIG_DOMAINS` 通用拉取。
 - 写路径必须独立 `CREATE_TEMPLATE` 并审计 actor/scope/key diff，与 `CREATE_ACCOUNT`（principal 创建）分离；创建/修改模板不创建 principal。读路由 `GET /api/v1/agent-templates` 已开放（层可见性 fail-closed）；写 CRUD 与 `approval-policy.askActionClasses[]` UI 仍由 T3.1b 等 PLAN-0407 V44 canonical action，当前缺 action 一律 fail-closed。契约见 [`spec/agent/principal-workspace-binding.md`](../../../spec/agent/principal-workspace-binding.md)。
 
-## 3b. API Request 模板域、Embedding profile 域与 LLM profile 域（PLAN-0439/0485/0504）
+## 3b. API Request 模板域、Embedding profile 域与 LLM profile 域（PLAN-0439/0485/0504/0505）
 
 **api-request-templates（PLAN-0439）**：
 
@@ -218,12 +218,14 @@ Provider verify 的 ready 只表示 CP 当前 remote `/models` 响应结构有�
 - 写路径经 `ApiRequestTemplateService.putLayer`（ConfigService 对该域委托）：instance 写仅 ADMIN、user 写仅本人、workspace 写需 workspace OWNER/ADMIN；`connectionId` 必须在同层可见且类型兼容。
 - 发布版本不可变（修改/删除已发布修订 → `409 API_REQUEST_TEMPLATE_REVISION_IMMUTABLE`）；draft 保留非法原文，发布诊断由独立 validator 负责，不自动修复。
 - `templates`/`connectionDefaultTemplates`/`providerModelBindings` 只能按显式层读取（effective 合并被拒，见 `rejectEffectiveContextTemplates`）。
+- **连接删除级联清理（PLAN-0505）**：删除 Provider Connection 时，同一事务内移除所有 user 层行的 `providerModelBindings[connectionId]`（含其他用户行，跨用户清理经连接所有权授权、仅计数不暴露内容）、owner 层 `connectionDefaultTemplates[connectionId]` 与指向该连接的 `llm-provider.profile` 行；`templates` 本体不动。删除前经 `GET /api/v1/provider-connections/{id}/delete-impact` 预览计数，UI 二次确认展示数量；清理数量与作用域入审计，预览与实际不一致以事务内实际计数为准。
 
-**llm-provider profile（PLAN-0504）**：
+**llm-provider profile（PLAN-0504/0505）**：
 
 - 默认身份为单键 `profile`：整组对象 `{providerId, connectionKey, model}` 的 JSON 字符串；层间不合并字段（workspace → user → instance 首存在层），部分 profile 400，空值 PUT 清除本层以继承。
 - 写校验：`providerId` 必须在 CP catalog；user/workspace 层要求本层可见且 `connectionKey` 匹配的 READY 连接；instance 层免连接校验（运行期由消费方 scope 解析，决策 #11）。
 - 解析到已删/不可用连接 → `409 LLM_PROFILE_CONFLICT`（不静默降层，决策 #12）；全层无 profile 时 Agent 无隐式默认，readiness fail-closed（决策 #10）。
+- **删除级联（PLAN-0505）**：profile 指向的连接被删除时，指向该连接的 profile 行（instance/user/workspace 三层，providerId+connectionKey 匹配）随删除事务一并清除；畸形 profile 行跳过（不计数、不阻断删除），留给属主修复。
 - 配置页以「连接选择 + 模型候选（scoped 目录）」编辑该单元（复用 0503 目录候选与漂移标注：存储连接/模型不可用时标注保留、不自动改写，候选为空可手填）。
 
 **embedding（PLAN-0485）**：

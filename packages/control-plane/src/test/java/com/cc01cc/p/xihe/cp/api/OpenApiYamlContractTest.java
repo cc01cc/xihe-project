@@ -145,4 +145,36 @@ class OpenApiYamlContractTest {
                     "CredentialEventsView schema is contracted");
         }
     }
+
+    /** PLAN-0505 T1.1：delete-impact 读面与 CONNECTION_IN_USE 409 契约入 OpenAPI。 */
+    @Test
+    void openApiContainsDeleteImpactRouteAndBlockedDeleteContract() throws Exception {
+        Path contract = Path.of("..", "..", "docs", "api", "openapi.yaml");
+        try (InputStream input = Files.newInputStream(contract)) {
+            Map<?, ?> document = new Yaml().load(input);
+            Map<?, ?> paths = (Map<?, ?>) document.get("paths");
+            assertTrue(paths.containsKey("/api/v1/provider-connections/{connectionId}/delete-impact"),
+                    "delete-impact route is contracted");
+
+            Map<?, ?> delete = (Map<?, ?>) paths.get("/api/v1/provider-connections/{connectionId}");
+            assertInstanceOf(Map.class, delete, "provider connection item route is contracted");
+            Map<?, ?> deleteMethod = (Map<?, ?>) delete.get("delete");
+            assertInstanceOf(Map.class, deleteMethod, "DELETE method is contracted");
+            Map<?, ?> responses = (Map<?, ?>) deleteMethod.get("responses");
+            assertTrue(responses.containsKey("409"),
+                    "DELETE must contract the CONNECTION_IN_USE 409 response");
+
+            Map<?, ?> schemas = (Map<?, ?>) ((Map<?, ?>) document.get("components")).get("schemas");
+            Map<?, ?> impact = (Map<?, ?>) schemas.get("DeleteImpactView");
+            assertInstanceOf(Map.class, impact, "DeleteImpactView schema is contracted");
+            Map<?, ?> properties = (Map<?, ?>) impact.get("properties");
+            for (String field : List.of("bindingCount", "bindingUserScopes", "defaultTemplateRef",
+                    "profileCount", "profileScopes", "sessionCount", "blocked")) {
+                assertTrue(properties.containsKey(field),
+                        "DeleteImpactView must carry " + field);
+            }
+            assertTrue(schemas.containsKey("ConnectionInUseProblem"),
+                    "ConnectionInUseProblem schema is contracted");
+        }
+    }
 }

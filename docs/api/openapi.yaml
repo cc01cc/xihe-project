@@ -1053,6 +1053,19 @@ paths:
         '200': { description: Owner-visible compatible refs and aggregate incompatible override/session counts; no cross-user identities or bodies, content: { application/json: { schema: { $ref: '#/components/schemas/ApiTypeChangeImpact' } } } }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/provider-connections/{connectionId}/delete-impact:
+    get:
+      operationId: getProviderDeleteImpact
+      summary: Preview the config references a connection delete would cascade away
+      description: 'PLAN-0505: counts only — other users'' binding contents are never exposed. blocked is true while any session row references the connection; blocked connections are rejected by DELETE with 409 CONNECTION_IN_USE.'
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: connectionId, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200':
+          description: Delete impact counts and blocked flag
+          content: { application/json: { schema: { $ref: '#/components/schemas/DeleteImpactView' } } }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /api/v1/provider-catalog:
     get:
       operationId: listProviderCatalog
@@ -1109,11 +1122,15 @@ paths:
     delete:
       operationId: deleteProviderConnection
       summary: Disable and remove a provider connection
+      description: 'PLAN-0505: single-transaction cascade — clears providerModelBindings[connectionId] (cross-user user-layer rows), connectionDefaultTemplates[connectionId] and llm-provider.profile rows pointing at the connection; templates bodies are untouched; counts go to the audit log. Rejected while sessions reference the connection.'
       security: [{ bearerAuth: [] }]
       responses:
         '204': { description: Deleted }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+        '409':
+          description: CONNECTION_IN_USE — sessionCount reports the referencing session rows (including delete-requested ones)
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/ConnectionInUseProblem' } } }
   /api/v1/provider-connections/{connectionId}/verify:
     post:
       operationId: verifyProviderConnection
@@ -2956,6 +2973,8 @@ components:
     ApiRequestTemplate: { type: object, required: [id, version, name, apiTypeId, apiTypeVersion, bodySource, status], properties: { id: { type: string, format: uuid }, version: { type: integer, minimum: 1 }, name: { type: string }, description: { type: string }, apiTypeId: { type: string }, apiTypeVersion: { type: integer, minimum: 1 }, bodySource: { type: string }, status: { type: string, enum: [draft, published] } } }
     ApiRequestTemplateValidation: { type: object, required: [valid, diagnostics], properties: { valid: { type: boolean }, diagnostics: { type: array, items: { type: object, required: [code, path, message], properties: { code: { type: string }, path: { type: string }, message: { type: string } } } } } }
     ApiTypeChangeImpact: { type: object, required: [connectionRevision, currentType, targetType, compatibleTemplates, incompatibleOverrides, sessionRebindCount], properties: { connectionRevision: { type: integer }, currentType: { $ref: '#/components/schemas/ApiTypePair' }, targetType: { $ref: '#/components/schemas/ApiTypePair' }, compatibleTemplates: { type: array, items: { $ref: '#/components/schemas/ApiRequestTemplateRef' } }, incompatibleOverrides: { type: array, items: { type: object, required: [scope, count], properties: { scope: { type: string }, count: { type: integer } } } }, sessionRebindCount: { type: integer } } }
+    DeleteImpactView: { type: object, required: [connectionId, providerId, connectionKey, bindingCount, bindingUserScopes, defaultTemplateRef, profileCount, profileScopes, sessionCount, blocked], properties: { connectionId: { type: string, format: uuid }, providerId: { type: string }, connectionKey: { type: string }, bindingCount: { type: integer, description: 'Total model entries under providerModelBindings[connectionId] across all user-layer rows' }, bindingUserScopes: { type: integer, description: Distinct user-layer rows holding bindings for this connection }, defaultTemplateRef: { type: boolean, description: Whether the owner-layer connectionDefaultTemplates entry exists }, profileCount: { type: integer, description: 'llm-provider.profile rows resolving to this connection (providerId+connectionKey); malformed rows are skipped' }, profileScopes: { type: array, items: { type: string, enum: [instance, user, workspace] } }, sessionCount: { type: integer, description: 'Session rows referencing the connection (all rows, including delete-requested)' }, blocked: { type: boolean } } }
+    ConnectionInUseProblem: { type: object, allOf: [{ $ref: '#/components/schemas/ProblemDetails' }, { type: object, required: [code, sessionCount, connectionId], properties: { code: { type: string, enum: [CONNECTION_IN_USE] }, sessionCount: { type: integer }, connectionId: { type: string, format: uuid } } }] }
     ProviderConnectionUpdateRequest:
        type: object
        required: [expectedRevision]
