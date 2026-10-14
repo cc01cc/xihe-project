@@ -814,12 +814,33 @@ public class ConfigService {
     }
 
     /**
+     * PLAN-0505 review fix (decision #1 supersede): {@code connectionKey} is
+     * only unique per {@code (owner_type, owner_id, provider_id)} and a
+     * user/workspace profile resolves against its OWNER's own connection
+     * ({@code findReadyByKey} in the row owner's scope), so a same-key row of
+     * another user points at a different, surviving connection. Only the
+     * instance layer is global; user/workspace rows count as hits only when
+     * their owner scope matches the deleted connection's owner.
+     */
+    private boolean profileOwnedByDeletedConnection(ProfileHit hit, String ownerType, UUID ownerId) {
+        if ("instance".equals(hit.layer())) {
+            return true;
+        }
+        if ("user".equals(hit.layer())) {
+            return "USER".equalsIgnoreCase(ownerType) && ownerId.equals(hit.userId());
+        }
+        return "WORKSPACE".equalsIgnoreCase(ownerType) && ownerId.equals(hit.workspaceId());
+    }
+
+    /**
      * PLAN-0505 delete-impact profile scan (T2.1): rows in the instance, user
      * and workspace layers whose {@code profile} unit points at this
-     * connection (providerId + connectionKey match). Malformed rows are
-     * skipped. Read-only.
+     * connection (providerId + connectionKey match, owner-correlated for the
+     * user/workspace layers — see {@link #profileOwnedByDeletedConnection}).
+     * Malformed rows are skipped. Read-only.
      */
-    public List<ProfileHit> profileImpact(String providerId, String connectionKey) {
+    public List<ProfileHit> profileImpact(String providerId, String connectionKey,
+            String ownerType, UUID ownerId) {
         List<ProfileHit> hits = new ArrayList<>();
         for (ConfigEntity row : repo.findByLayerAndDomain("instance", "llm-provider")) {
             if ("profile".equals(row.getConfigKey())
@@ -830,13 +851,19 @@ public class ConfigService {
         for (ConfigEntity row : repo.findByLayerAndDomain("user", "llm-provider")) {
             if ("profile".equals(row.getConfigKey())
                     && profileTargetsConnection(row.getConfigValue(), providerId, connectionKey)) {
-                hits.add(new ProfileHit("user", row.getUserId(), null));
+                var hit = new ProfileHit("user", row.getUserId(), null);
+                if (profileOwnedByDeletedConnection(hit, ownerType, ownerId)) {
+                    hits.add(hit);
+                }
             }
         }
         for (ConfigEntity row : repo.findByLayerAndDomain("workspace", "llm-provider")) {
             if ("profile".equals(row.getConfigKey())
                     && profileTargetsConnection(row.getConfigValue(), providerId, connectionKey)) {
-                hits.add(new ProfileHit("workspace", null, row.getWorkspaceId()));
+                var hit = new ProfileHit("workspace", null, row.getWorkspaceId());
+                if (profileOwnedByDeletedConnection(hit, ownerType, ownerId)) {
+                    hits.add(hit);
+                }
             }
         }
         return hits;
@@ -849,9 +876,10 @@ public class ConfigService {
      * Runs inside the caller's delete transaction; config audit rows are
      * written by the shared deleteKey path.
      */
-    public int cleanupProfiles(String providerId, String connectionKey, String changedBy) {
+    public int cleanupProfiles(String providerId, String connectionKey,
+            String ownerType, UUID ownerId, String changedBy) {
         int removed = 0;
-        for (ProfileHit hit : profileImpact(providerId, connectionKey)) {
+        for (ProfileHit hit : profileImpact(providerId, connectionKey, ownerType, ownerId)) {
             Optional<ConfigEntity> existing = findExisting(hit.layer(), "llm-provider", "profile",
                     hit.userId(), hit.workspaceId());
             if (existing.isPresent()

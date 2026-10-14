@@ -233,6 +233,59 @@ class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void sameKeyProfileRowsOfOtherUsersSurviveTheDelete() throws Exception {
+        // PLAN-0505 review fix #1 (decision #1 supersede): connectionKey is
+        // unique per owner, so another user's same-key profile resolves to
+        // THEIR own connection and must survive this connection's delete.
+        JsonNode connection = createConnection("custom-openai-compatible", "USER", "shared-key", "manual",
+                java.util.List.of("m1"), null, null, "https://provider.invalid/v1", "isolated-test-only");
+        String id = connection.path("id").asText();
+
+        // A second user with their own same-key connection + profile row.
+        var second = restTemplate.postForEntity(url("/api/v1/auth/register"),
+                new RegisterRequest("plan0505-c-" + UUID.randomUUID() + "@test.com", TestDataFactory.PASSWORD, "Plan 0505 C"),
+                AuthResponse.class);
+        assertEquals(201, second.getStatusCode().value());
+        String userB = second.getBody().getUser().getId();
+        var connectionB = createConnectionAs(second.getBody().getAccessToken(), second.getBody().getWorkspaceId(),
+                "custom-openai-compatible", "USER", "shared-key", "manual",
+                java.util.List.of("m1"), null, null, "https://provider.invalid/v1", "isolated-test-only");
+        assertNotNull(connectionB.path("id").asText());
+        var profileB = json.createObjectNode().put("providerId", "custom-openai-compatible")
+                .put("connectionKey", "shared-key").put("model", "m1");
+        jdbc.update("INSERT INTO config (id, layer, domain, config_key, config_value, user_id, updated_at, created_at) "
+                        + "VALUES (?, 'user', 'llm-provider', 'profile', ?, ?, now(), now())",
+                UUID.randomUUID(), profileB.toString(), UUID.fromString(userB));
+
+        // The deleting user's own profile row (must be cascaded away).
+        var profileA = json.createObjectNode().put("providerId", "custom-openai-compatible")
+                .put("connectionKey", "shared-key").put("model", "m1");
+        jdbc.update("INSERT INTO config (id, layer, domain, config_key, config_value, user_id, updated_at, created_at) "
+                        + "VALUES (?, 'user', 'llm-provider', 'profile', ?, ?, now(), now())",
+                UUID.randomUUID(), profileA.toString(), UUID.fromString(userId));
+
+        // Preview must count only the owner's own profile row.
+        var preview = send("GET", "/api/v1/provider-connections/" + id + "/delete-impact", null);
+        assertEquals(200, preview.statusCode(), preview.body());
+        assertEquals(1, json.readTree(preview.body()).path("profileCount").asInt(), preview.body());
+
+        assertEquals(204, send("DELETE", "/api/v1/provider-connections/" + id, null).statusCode());
+
+        // User B's same-key profile row must survive; user A's row is gone.
+        assertEquals(1, countUserProfiles(userB), "other user's same-key profile must survive");
+        assertEquals(0, countUserProfiles(userId), "the owner's profile row is cascaded away");
+        // The preview must have never exposed user B's row either.
+        assertTrue(connections.findById(UUID.fromString(id)).isEmpty());
+    }
+
+    private int countUserProfiles(String ownerUserId) {
+        return jdbc.queryForObject(
+                "SELECT count(*) FROM config WHERE layer = 'user' AND domain = 'llm-provider' "
+                        + "AND config_key = 'profile' AND user_id = ?::uuid",
+                Integer.class, ownerUserId);
+    }
+
+    @Test
     void deleteIsBlockedWithSessionCountAndPreviewReportsBlocked() throws Exception {
         JsonNode connection = createConnection("custom-openai-compatible", "USER", "blocked", "manual",
                 java.util.List.of("m1"), null, null, "https://provider.invalid/v1", "isolated-test-only");
@@ -509,6 +562,23 @@ class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
         var verified = send("POST", "/api/v1/provider-connections/" + connection.path("id").asText() + "/verify", null);
         assertEquals(200, verified.statusCode(), verified.body());
         return json.readTree(verified.body()).path("connection");
+    }
+
+    private JsonNode createConnectionAs(String bearer, String workspace, String provider, String scope, String key,
+                                        String discovery, java.util.List<String> models, String apiTypeId,
+                                        Integer apiTypeVersion, String baseUrl, String apiKey) throws Exception {
+        var node = json.createObjectNode().put("providerId", provider).put("label", "T3.2 " + key).put("scope", scope)
+                .put("apiKey", apiKey).put("modelDiscovery", discovery).put("connectionKey", key);
+        node.set("manualModels", json.valueToTree(models));
+        if (baseUrl != null) {
+            node.put("baseUrl", baseUrl);
+        }
+        if (apiTypeId != null) {
+            node.put("apiTypeId", apiTypeId).put("apiTypeVersion", apiTypeVersion);
+        }
+        var created = sendAs(bearer, workspace, "POST", "/api/v1/provider-connections", node.toString());
+        assertEquals(201, created.statusCode(), created.body());
+        return json.readTree(created.body());
     }
 
     private int bindingCount(String bearer, String connectionId) throws Exception {

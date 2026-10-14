@@ -587,6 +587,7 @@ async function remove(connection: ProviderConnection) {
 }
 
 function cancelDelete() {
+    if (deleting.value) return;
     deleteTarget.value = null;
     deleteImpact.value = null;
     deleteError.value = "";
@@ -977,6 +978,7 @@ onMounted(() => {
             data-testid="provider-delete-confirm-modal"
             @click.self="cancelDelete"
         >
+            <!-- cancelDelete no-ops while deleting -->
             <div
                 class="flex w-full max-w-md flex-col rounded-xl border bg-card shadow-2xl"
                 role="alertdialog"
@@ -1034,7 +1036,8 @@ onMounted(() => {
                 <footer class="flex justify-end gap-2 border-t bg-muted/30 px-5 py-3.5">
                     <button
                         type="button"
-                        class="rounded-md border px-3.5 py-2 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
+                        class="rounded-md border px-3.5 py-2 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
+                        :disabled="deleting"
                         data-testid="provider-delete-cancel"
                         @click="cancelDelete"
                     >
@@ -1043,7 +1046,12 @@ onMounted(() => {
                     <button
                         type="button"
                         class="rounded-md bg-destructive px-3.5 py-2 text-xs font-semibold text-destructive-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-                        :disabled="deleteImpactLoading || deleting || !!deleteImpact?.blocked"
+                        :disabled="
+                            deleteImpactLoading ||
+                            deleting ||
+                            !deleteImpact ||
+                            !!deleteImpact.blocked
+                        "
                         data-testid="provider-delete-confirm"
                         @click="confirmDelete"
                     >

@@ -308,7 +308,9 @@ public class ProviderConnectionService {
         }
         var counts = requestTemplates.cleanupReferences(connection);
         int removedProfiles = configService.getObject().cleanupProfiles(
-                connection.getProviderId(), connection.getConnectionKey(), TenantContext.getUserId());
+                connection.getProviderId(), connection.getConnectionKey(),
+                connection.getOwnerType(), UUID.fromString(connection.getOwnerId()),
+                TenantContext.getUserId());
         revokeLeases(connection.getId().toString());
         audit(connection, "DELETED", connection.getStatus(), "DELETED");
         logger.info("Provider connection deleted connectionId={} removedBindings={} removedDefaultTemplate={} "
@@ -346,7 +348,8 @@ public class ProviderConnectionService {
         java.util.Map<String, Object> impact =
                 new java.util.LinkedHashMap<>(requestTemplates.deleteImpact(connection));
         var profileHits = configService.getObject().profileImpact(
-                connection.getProviderId(), connection.getConnectionKey());
+                connection.getProviderId(), connection.getConnectionKey(),
+                connection.getOwnerType(), UUID.fromString(connection.getOwnerId()));
         impact.put("profileCount", profileHits.size());
         impact.put("profileScopes", profileHits.stream()
                 .map(com.cc01cc.p.xihe.cp.config.ConfigService.ProfileHit::layer).distinct().toList());
