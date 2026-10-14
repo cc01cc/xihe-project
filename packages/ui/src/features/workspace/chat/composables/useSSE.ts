@@ -5,6 +5,7 @@ import { useCheckpointStore } from "../../../../stores/checkpoint";
 import { useChatStore } from "../stores/chat.ts";
 import { logger } from "../../../../lib/logger";
 import { chatTransport } from "../../../../services/chatTransport";
+import { notifySessionConnection, notifySessionEvent } from "../sessionEvents";
 import {
     ApiError,
     apiAuthHeaders,
@@ -263,6 +264,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
             case "derived_state_changed":
                 // PLAN-0408: the Inbox/API is durable; this event only asks the view to refresh.
                 currentCallbacks.onDerivedStateChanged?.();
+                notifySessionEvent(activeSessionId ?? toValue(sessionId));
                 break;
 
             case "tool_call":
@@ -372,6 +374,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                 } catch {
                     logger.warn("Failed to parse SSE status event");
                 }
+                notifySessionEvent(activeSessionId ?? toValue(sessionId));
                 break;
 
             // The workspace checkpoint list is durable; this event only refreshes the local slice marker.
@@ -425,6 +428,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                     error.value = errorText(payload);
                     currentCallbacks.onError?.(payload);
                 }
+                notifySessionEvent(activeSessionId ?? toValue(sessionId));
                 break;
 
             case "done":
@@ -437,6 +441,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                     logger.warn("Failed to parse SSE done event payload");
                     currentCallbacks.onDone?.();
                 }
+                notifySessionEvent(activeSessionId ?? toValue(sessionId));
                 break;
 
             case "context_sources_changed":
@@ -462,6 +467,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                 } catch {
                     logger.warn("Failed to parse usage event payload");
                 }
+                notifySessionEvent(activeSessionId ?? toValue(sessionId));
                 break;
 
             case "context_overflow_retry":
@@ -518,6 +524,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                     error.value = null;
                     connectionErrorReported = false;
                     currentCallbacks.onOpen?.();
+                    notifySessionConnection(currentSessionId, "live");
                 },
                 onmessage: (message) => {
                     if (generation === connectionGeneration) handleMessage(message);
@@ -527,6 +534,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                     const msg = err.message || "SSE connection error";
                     logger.warn("useSSE connection error", err);
                     error.value = msg;
+                    notifySessionConnection(currentSessionId, "offline");
                 },
                 onclose: () => {
                     if (generation !== connectionGeneration) return;
@@ -539,6 +547,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                 logger.warn("useSSE connect failed", err);
                 const payload = asErrorPayload(err, "SSE_CONNECTION_FAILED");
                 error.value = errorText(payload);
+                notifySessionConnection(currentSessionId, "offline");
                 if (!connectionErrorReported) {
                     connectionErrorReported = true;
                     currentCallbacks.onError?.(payload);

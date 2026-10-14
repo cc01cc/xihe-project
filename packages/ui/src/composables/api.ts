@@ -45,6 +45,7 @@ import type {
     PendingApprovalSummary,
     SessionDerivedStateResponse,
     SessionRunsResponse,
+    SessionMonitorResponse,
     SessionPolicyMode,
     SessionPolicyModeState,
     WorkspaceGitStatus,
@@ -1464,6 +1465,12 @@ export const api = {
         params.set("size", String(options.size ?? 100));
         return request<SessionRunsResponse>(
             `/chat/sessions/${encodeURIComponent(sessionId)}/runs?${params.toString()}`,
+        );
+    },
+    /** PLAN-0507: read-only Session monitor aggregate (activity/history/readiness). */
+    getSessionMonitor(sessionId: string): Promise<SessionMonitorResponse> {
+        return request<SessionMonitorResponse>(
+            `/chat/sessions/${encodeURIComponent(sessionId)}/monitor`,
         );
     },
     /** PLAN-0340 U1: source summary metadata only (no body). */

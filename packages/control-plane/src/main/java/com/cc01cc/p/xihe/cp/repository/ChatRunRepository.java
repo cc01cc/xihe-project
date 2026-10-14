@@ -53,6 +53,14 @@ public interface ChatRunRepository extends JpaRepository<ChatRun, UUID> {
     /** PLAN-0407 T3.1 Tier-1 status query：会话最新 run（createdAt 降序，id 兜底定序）。 */
     Optional<ChatRun> findFirstBySessionIdOrderByCreatedAtDescIdDesc(String sessionId);
 
+    /** PLAN-0507: monitor activity block — non-terminal runs (terminal complement), newest first. */
+    List<ChatRun> findBySessionIdAndStatusNotInOrderByCreatedAtDescIdDesc(
+            String sessionId, Collection<String> statuses);
+
+    /** PLAN-0507: monitor history window — newest terminal runs (terminalAt desc, id tiebreak). */
+    List<ChatRun> findBySessionIdAndStatusInOrderByTerminalAtDescIdDesc(
+            String sessionId, Collection<String> statuses, Pageable pageable);
+
     @Modifying
     @Transactional
     @Query("update ChatRun r set r.status = :status, r.terminalOutcome = :outcome, "

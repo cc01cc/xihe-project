@@ -115,6 +115,11 @@
       "description": "visual/manual evidence artifacts — run last, not a regular gate",
       "llmMode": "mock",
       "specs": ["e2e/real/screenshots.spec.ts", "e2e/real/settings-visual.spec.ts"]
+    },
+    "session-monitor": {
+      "description": "PLAN-0507 right-panel session monitor: default-open, API cross-check, SSE-driven refresh, error/retry, stale recovery, mobile sheet",
+      "llmMode": "mock",
+      "specs": ["e2e/real/plan-0507-session-monitor.spec.ts"]
     }
   }
 }

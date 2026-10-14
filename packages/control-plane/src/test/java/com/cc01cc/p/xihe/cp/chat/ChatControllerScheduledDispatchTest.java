@@ -78,6 +78,7 @@ class ChatControllerScheduledDispatchTest {
                 cancellationService,
                 Mockito.mock(ChatRunTerminalService.class),
                 chatRunReadService,
+                Mockito.mock(SessionMonitorService.class),
                 chatRunLifecycleService,
                 messageReadService,
                 Mockito.mock(com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService.class),

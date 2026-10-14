@@ -87,6 +87,7 @@ public class ChatController {
     private final ChatRunCancellationService chatRunCancellationService;
     private final ChatRunTerminalService chatRunTerminalService;
     private final ChatRunReadService chatRunReadService;
+    private final SessionMonitorService sessionMonitorService;
     private final ChatRunLifecycleService chatRunLifecycleService;
     private final MessageReadService messageReadService;
     private final com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService;
@@ -140,6 +141,7 @@ public class ChatController {
             ChatRunCancellationService chatRunCancellationService,
             ChatRunTerminalService chatRunTerminalService,
             ChatRunReadService chatRunReadService,
+            SessionMonitorService sessionMonitorService,
             ChatRunLifecycleService chatRunLifecycleService,
             MessageReadService messageReadService,
              com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService,
@@ -171,6 +173,7 @@ public class ChatController {
         this.chatRunCancellationService = chatRunCancellationService;
         this.chatRunTerminalService = chatRunTerminalService;
         this.chatRunReadService = chatRunReadService;
+        this.sessionMonitorService = sessionMonitorService;
         this.chatRunLifecycleService = chatRunLifecycleService;
         this.messageReadService = messageReadService;
         this.contextSourceRefreshService = contextSourceRefreshService;
@@ -643,6 +646,25 @@ public class ChatController {
         int safeSize = Math.min(Math.max(size, 1), 200);
         return ResponseEntity.ok(chatRunReadService.listSessionRuns(
                 session.getId().toString(), safePage, safeSize));
+    }
+
+    // ── PLAN-0507: session monitor aggregate (read-only) ───────────────────
+
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @GetMapping("/api/v1/chat/sessions/{sessionId}/monitor")
+    public ResponseEntity<Map<String, Object>> getSessionMonitor(@PathVariable String sessionId) {
+        String userId = TenantContext.getUserId();
+        String workspaceId = TenantContext.getWorkspaceId();
+        if (userId == null || workspaceId == null) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED,
+                    "AUTHORIZATION_REQUIRED", "Workspace context is required");
+        }
+        try {
+            Session session = sessionService.requireCurrent(sessionId, userId, workspaceId);
+            return ResponseEntity.ok(sessionMonitorService.getMonitor(session, userId, workspaceId));
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
     }
 
     // ── PLAN-275 M1 Task 1.3: Cancel contract ──────────────────────────────

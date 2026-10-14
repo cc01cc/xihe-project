@@ -322,6 +322,10 @@ export async function ensureChatBinding(page: Page, sessionId: string): Promise<
                         providerId: "custom-openai-compatible",
                         apiTypeId: "openai-chat-completions",
                         apiTypeVersion: 1,
+                        // PLAN-0497 (2026-10-13): the fake LLM enforces its provider
+                        // key (`sk-fake-openai-key`, same source as the Agent env);
+                        // any other value makes bound dispatch fail with
+                        // LLM_CREDENTIALS_INVALID before the model call.
                         apiKey: "sk-fake-openai-key",
                         connectionKey: "e2e-chat",
                         label: "E2E chat binding",

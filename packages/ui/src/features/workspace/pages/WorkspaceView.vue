@@ -24,6 +24,7 @@ import FileEditor from "../components/FileEditor.vue";
 import FileImportDialog from "../components/FileImportDialog.vue";
 import WorkspaceSourceImportDialog from "../components/WorkspaceSourceImportDialog.vue";
 import WorkspaceChangesPanel from "../components/WorkspaceChangesPanel.vue";
+import SessionMonitorPanel from "../monitor/SessionMonitorPanel.vue";
 import ChatPanel from "../chat/components/ChatPanel.vue";
 import { workspaceChatPath } from "../../../lib/routes";
 import BaseModal from "../../../components/shared/BaseModal.vue";
@@ -69,7 +70,8 @@ const showCreateDialog = ref(false),
     showAgentManagementDialog = ref(false);
 const showSourceImportDialog = ref(false),
     showMobileFiles = ref(false),
-    showMobileChanges = ref(false);
+    showMobileChanges = ref(false),
+    mobileAuxTab = ref<"monitor" | "changes">("monitor");
 const showAgentSelection = ref(false),
     workspaceAgents = ref<WorkspaceAgentBinding[]>([]);
 const selectedAgentPrincipalId = ref(""),
@@ -79,7 +81,7 @@ const selectedAgentPrincipalId = ref(""),
 // The chat timeline is the main column; the file tree collapses into a narrow rail and the
 // editor / dual-diff live in one collapsible auxiliary panel (default collapsed). Panel state
 // is remembered per session in-component only (never persisted).
-type AuxPanel = "closed" | "code" | "changes";
+type AuxPanel = "closed" | "code" | "changes" | "monitor";
 const treeCollapsed = ref(false),
     auxPanel = ref<AuxPanel>("closed");
 const layoutBySession = new Map<string, { treeCollapsed: boolean; auxPanel: AuxPanel }>();
@@ -98,10 +100,29 @@ function toggleAux(panel: Exclude<AuxPanel, "closed">) {
 
 function handleToggleChanges() {
     if (isMobileViewport.value) {
-        showMobileChanges.value = !showMobileChanges.value;
+        if (showMobileChanges.value && mobileAuxTab.value === "changes") {
+            showMobileChanges.value = false;
+            return;
+        }
+        mobileAuxTab.value = "changes";
+        showMobileChanges.value = true;
         return;
     }
     toggleAux("changes");
+}
+
+// PLAN-0507: the right-panel Monitor is the Chat default view (decision #4/#13).
+function handleToggleMonitor() {
+    if (isMobileViewport.value) {
+        if (showMobileChanges.value && mobileAuxTab.value === "monitor") {
+            showMobileChanges.value = false;
+            return;
+        }
+        mobileAuxTab.value = "monitor";
+        showMobileChanges.value = true;
+        return;
+    }
+    toggleAux("monitor");
 }
 
 function handleWorkspaceCreated(id: string) {
@@ -236,7 +257,7 @@ watch(
         });
         const restored = layoutBySession.get(layoutKey(id ?? null));
         treeCollapsed.value = restored?.treeCollapsed ?? false;
-        auxPanel.value = restored?.auxPanel ?? "closed";
+        auxPanel.value = restored?.auxPanel ?? (id ? "monitor" : "closed");
     },
 );
 
@@ -325,7 +346,16 @@ watch([workspaceId, routeSessionId], () => {
                 :agent-principal-id="activeAgentPrincipalId"
                 :tree-collapsed="treeCollapsed"
                 :code-open="!isMobileViewport && auxPanel === 'code'"
-                :changes-open="isMobileViewport ? showMobileChanges : auxPanel === 'changes'"
+                :changes-open="
+                    isMobileViewport
+                        ? showMobileChanges && mobileAuxTab === 'changes'
+                        : auxPanel === 'changes'
+                "
+                :monitor-open="
+                    isMobileViewport
+                        ? showMobileChanges && mobileAuxTab === 'monitor'
+                        : auxPanel === 'monitor'
+                "
                 @upload="handleUpload"
                 @import-source="showSourceImportDialog = true"
                 @settings="showSettingsDialog = true"
@@ -335,6 +365,7 @@ watch([workspaceId, routeSessionId], () => {
                 @toggle-tree="toggleTree"
                 @toggle-code="toggleAux('code')"
                 @toggle-changes="handleToggleChanges"
+                @toggle-monitor="handleToggleMonitor"
             />
 
             <div class="flex min-h-0 min-w-0 flex-1">
@@ -429,7 +460,9 @@ watch([workspaceId, routeSessionId], () => {
                             {{
                                 auxPanel === "code"
                                     ? t("workspace.panelCode")
-                                    : t("workspace.panelChanges")
+                                    : auxPanel === "monitor"
+                                      ? t("workspace.panelMonitor")
+                                      : t("workspace.panelChanges")
                             }}
                         </span>
                         <button
@@ -445,6 +478,16 @@ watch([workspaceId, routeSessionId], () => {
                     </div>
                     <div class="flex min-h-0 flex-1 flex-col">
                         <FileEditor v-if="auxPanel === 'code'" />
+                        <SessionMonitorPanel
+                            v-else-if="auxPanel === 'monitor' && sessionId"
+                            :session-id="sessionId"
+                        />
+                        <div
+                            v-else-if="auxPanel === 'monitor'"
+                            class="p-4 text-xs text-muted-foreground"
+                        >
+                            {{ t("workspace.noSession") }}
+                        </div>
                         <WorkspaceChangesPanel
                             v-else
                             :session-id="sessionId"
@@ -488,6 +531,8 @@ watch([workspaceId, routeSessionId], () => {
             :open="showMobileChanges"
             :session-id="sessionId"
             :workspace-id="workspaceId"
+            :tab="mobileAuxTab"
+            @update:tab="mobileAuxTab = $event"
             @close="showMobileChanges = false"
         />
 
