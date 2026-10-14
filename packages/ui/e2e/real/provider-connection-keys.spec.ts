@@ -79,12 +79,24 @@ async function cleanup(request: APIRequestContext, auth: Auth) {
     const body = await list.json();
     for (const connection of body.connections ?? []) {
         if (connection.providerId !== PROVIDER_ID) continue;
-        await request.delete(`${CP_URL}/api/v1/provider-connections/${connection.id}`, {
-            headers: {
-                Authorization: `Bearer ${auth.accessToken}`,
-                "X-Workspace-Id": auth.workspaceId,
+        // PLAN-0505: DELETE now blocks (409 CONNECTION_IN_USE) while sessions
+        // reference the connection. Each test registers a fresh user on an
+        // isolated DB, so no session can reference these connections; keep the
+        // direct API cleanup and fail loudly if the precondition ever breaks.
+        const response = await request.delete(
+            `${CP_URL}/api/v1/provider-connections/${connection.id}`,
+            {
+                headers: {
+                    Authorization: `Bearer ${auth.accessToken}`,
+                    "X-Workspace-Id": auth.workspaceId,
+                },
             },
-        });
+        );
+        expect(
+            response.status(),
+            `cleanup DELETE for ${connection.connectionKey} must succeed ` +
+                "(isolated per-test registration must not leave session references)",
+        ).toBe(204);
     }
 }
 
