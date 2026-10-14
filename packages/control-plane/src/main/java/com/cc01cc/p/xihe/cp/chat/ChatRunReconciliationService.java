@@ -32,22 +32,39 @@ public class ChatRunReconciliationService {
     private final ChatRunRepository chatRunRepository;
     private final ChatActiveRunRegistry activeRunRegistry;
     private final ChatRunTerminalService terminalService;
+    private final ChatRunTransportService transportAttempts;
     private final Duration grace;
 
     public ChatRunReconciliationService(
             ChatRunRepository chatRunRepository,
             ChatActiveRunRegistry activeRunRegistry,
             ChatRunTerminalService terminalService,
+            ChatRunTransportService transportAttempts,
             @Value("${cp.chat.reconcile-grace-seconds:600}") long graceSeconds) {
         this.chatRunRepository = chatRunRepository;
         this.activeRunRegistry = activeRunRegistry;
         this.terminalService = terminalService;
+        this.transportAttempts = transportAttempts;
         this.grace = Duration.ofSeconds(graceSeconds);
     }
 
     @Scheduled(fixedDelayString = "${cp.chat.reconcile-interval-ms:300000}",
             initialDelayString = "${cp.chat.reconcile-initial-delay-ms:120000}")
     public void reconcileStaleRuns() {
+        // Repair the terminal-commit / after-commit-callback crash window before
+        // the stale active-run candidate query can early-return on an empty list.
+        try {
+            int reconciledAttempts = transportAttempts.reconcileOrphanedTerminalAttempts();
+            if (reconciledAttempts > 0) {
+                logger.info("[LIFECYCLE] service=cp event=terminal_transport_attempts_reconciled count={}",
+                        reconciledAttempts);
+            }
+        } catch (RuntimeException error) {
+            // Telemetry repair is best-effort and must not suppress Run reconciliation.
+            logger.warn("[LIFECYCLE] service=cp event=terminal_transport_attempt_reconcile_failed failureType={}",
+                    error.getClass().getName());
+        }
+
         Instant now = Instant.now();
         Instant cutoff = now.minus(grace);
         List<ChatRun> stale = chatRunRepository.findStaleActiveRuns(RECONCILE_STATUSES, cutoff, cutoff);

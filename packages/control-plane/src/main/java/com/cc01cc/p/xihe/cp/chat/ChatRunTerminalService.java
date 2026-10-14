@@ -143,6 +143,7 @@ public class ChatRunTerminalService {
     private final InboxRepository inboxes;
     private final SseEmitterManager sseEmitters;
     private final FollowUpQueueService followUpQueueService;
+    private final ChatRunTransportService transportAttempts;
 
     public ChatRunTerminalService(
             DbLockTimeout dbLockTimeout,
@@ -158,7 +159,8 @@ public class ChatRunTerminalService {
             RunCheckpointService checkpoints,
             InboxRepository inboxes,
             SseEmitterManager sseEmitters,
-            FollowUpQueueService followUpQueueService) {
+            FollowUpQueueService followUpQueueService,
+            ChatRunTransportService transportAttempts) {
         this.dbLockTimeout = dbLockTimeout;
         this.datasourceUrl = datasourceUrl;
         this.entityManager = entityManager;
@@ -173,6 +175,7 @@ public class ChatRunTerminalService {
         this.inboxes = inboxes;
         this.sseEmitters = sseEmitters;
         this.followUpQueueService = followUpQueueService;
+        this.transportAttempts = transportAttempts;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -260,6 +263,7 @@ public class ChatRunTerminalService {
         // now owned by the Chat terminal path. Both are best-effort after commit (Runtime is remote).
         requestRunScopeClosureAfterCommit(runId.toString());
         settleStrandedInvocationsAfterCommit(runId.toString(), request);
+        reconcileTransportAttemptsAfterCommit(runId.toString(), terminalAt);
         return new TerminalResult(Outcome.COMMITTED, request.status());
     }
 
@@ -471,6 +475,26 @@ public class ChatRunTerminalService {
                 } catch (RuntimeException error) {
                     logger.warn("[LIFECYCLE] service=cp event=job_scope_run_close_failed runId={} error={}",
                             runId, error.getMessage(), error);
+                }
+            }
+        });
+    }
+
+    private void reconcileTransportAttemptsAfterCommit(String runId, Instant terminalAt) {
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                try {
+                    int reconciled = transportAttempts.reconcileRunAfterTerminal(runId, terminalAt);
+                    if (reconciled > 0) {
+                        logger.info("[LIFECYCLE] service=cp event=transport_attempts_partial_after_terminal "
+                                        + "runId={} count={}",
+                                runId, reconciled);
+                    }
+                } catch (RuntimeException error) {
+                    logger.warn("[LIFECYCLE] service=cp event=transport_attempts_after_commit_reconcile_failed "
+                                    + "runId={} failureType={}",
+                            runId, error.getClass().getName());
                 }
             }
         });
