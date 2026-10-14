@@ -233,6 +233,12 @@ class LangGraphRunner(AgentRunner):
             await approval_events.put(AgentEvent(type="approval_request", data=payload))
 
         context.metadata[APPROVAL_EVENT_SINK_KEY] = publish_approval
+        # PLAN-0508: provider transport telemetry arrives on the caller-owned
+        # queue (the model's collector sink is bound at construction); the loop
+        # below fans it into the same ordered event stream. ``transport_task`` is
+        # pre-bound so the terminal flush never trips over an early failure.
+        transport_events = config.transport_events
+        transport_task: asyncio.Task[AgentEvent] | None = None
         # PLAN-0493 T2.1/T2.2: per-Run observation window (CP-resolved thresholds
         # and exempt set; tier-1 admission in the tool adapter, tier-2 returns
         # through NO_PROGRESS_SIGNAL_KEY).
@@ -300,12 +306,17 @@ class LangGraphRunner(AgentRunner):
             # types it as Awaitable, not Coroutine; asyncio still schedules it).
             raw_task: asyncio.Future[Any] = asyncio.ensure_future(raw_stream.__anext__())
             approval_task = asyncio.create_task(approval_events.get())
+            transport_task = (
+                asyncio.create_task(transport_events.get()) if transport_events is not None else None
+            )
             cancel_wait_task: asyncio.Task[bool] | None = (
                 asyncio.create_task(cancel_event.wait()) if cancel_event is not None else None
             )
             try:
                 while True:
                     wait_set: set[asyncio.Future[Any]] = {raw_task, approval_task}
+                    if transport_task is not None:
+                        wait_set.add(transport_task)
                     if cancel_wait_task is not None:
                         wait_set.add(cancel_wait_task)
                     completed, _ = await asyncio.wait(
@@ -332,6 +343,16 @@ class LangGraphRunner(AgentRunner):
                             window.mark_boundary("approval")
                         yield approval_task.result()
                         approval_task = asyncio.create_task(approval_events.get())
+                    if transport_task is not None and transport_task in completed:
+                        # PLAN-0508: fan the telemetry in as it happens; drain the
+                        # burst (progress + terminal summary arrive back-to-back)
+                        # so the attempt terminal stays ahead of the raw events
+                        # that follow the model step (usage/done).
+                        yield transport_task.result()
+                        if transport_events is not None:
+                            while not transport_events.empty():
+                                yield transport_events.get_nowait()
+                            transport_task = asyncio.create_task(transport_events.get())
                     if raw_task in completed:
                         try:
                             raw_event = raw_task.result()
@@ -389,10 +410,11 @@ class LangGraphRunner(AgentRunner):
                             break
                         raw_task = asyncio.ensure_future(raw_stream.__anext__())
             finally:
-                for task in (raw_task, approval_task, cancel_wait_task):
+                for task in (raw_task, approval_task, cancel_wait_task, transport_task):
                     if task is not None and not task.done():
                         task.cancel()
-                await asyncio.gather(raw_task, approval_task, return_exceptions=True)
+                join_tasks = [task for task in (raw_task, approval_task, transport_task) if task is not None]
+                await asyncio.gather(*join_tasks, return_exceptions=True)
                 if cancel_wait_task is not None:
                     await asyncio.gather(cancel_wait_task, return_exceptions=True)
                 aclose = getattr(raw_stream, "aclose", None)
@@ -434,6 +456,16 @@ class LangGraphRunner(AgentRunner):
             context.metadata.pop(EVENT_STORE_FAILURES_KEY, None)
             yield AgentEvent(type="error", data={"error": str(e)})
         finally:
+            # PLAN-0508: flush telemetry left over by teardown (e.g. the sender's
+            # aborted terminal on cancel) so the CP durable relay always reads the
+            # attempt terminal before usage/done close the stream. An event the
+            # pending fan-in task already pulled is recovered from its result
+            # first; it is older than anything still queued.
+            if transport_events is not None:
+                if transport_task is not None and transport_task.done() and not transport_task.cancelled():
+                    yield transport_task.result()
+                while not transport_events.empty():
+                    yield transport_events.get_nowait()
             context.metadata.pop(APPROVAL_EVENT_SINK_KEY, None)
             context.metadata.pop(LOOP_WINDOW_KEY, None)
             usage.finish()

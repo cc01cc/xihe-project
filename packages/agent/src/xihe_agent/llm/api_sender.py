@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from xihe_agent.llm.api_request import ApiRequestError, ChatApiType, strict_json, validate_body
+from xihe_agent.llm.transport_metrics import TransportMetricsCollector
 
 # PLAN-0416 T2.3: provider counters surfaced per API Type. A counter the
 # provider did not return is *unknown* — never a synthesized 0.
@@ -360,10 +361,18 @@ class StreamParser:
 
 
 class ApiSender:
-    def __init__(self, api_type: ChatApiType, grant: dict[str, Any], request_id: str, timeout: float):
+    def __init__(
+        self,
+        api_type: ChatApiType,
+        grant: dict[str, Any],
+        request_id: str,
+        timeout: float,
+        collector: TransportMetricsCollector | None = None,
+    ):
         self.api_type = api_type
         self.request_id = request_id
         self.timeout = timeout
+        self._collector = collector
         base = grant.get("baseUrl")
         key = grant.get("apiKey")
         if (
@@ -398,6 +407,8 @@ class ApiSender:
 
     async def stream(self, body: dict[str, Any]) -> AsyncIterator[tuple[str, str, NativeResponse | None]]:
         validate_body(body, self.api_type)
+        # PLAN-0508: one bounded progress/terminal attempt per HTTP dispatch.
+        probe = self._collector.begin_attempt() if self._collector is not None else None
         # No retry loop, redirect replay or SDK retry. Total deadline covers reading
         # the entire response, independently of HTTPX's per-hop timeout.
         try:
@@ -424,6 +435,9 @@ class ApiSender:
                             raise
                         except (UnicodeError, ValueError, TypeError, KeyError) as exc:
                             raise ApiRequestError("LLM_PROVIDER_INVALID_RESPONSE", 502) from exc
+                        if probe is not None:
+                            probe.observe_content(result.text, "")
+                            probe.succeeded()
                         yield result.text, "", result
                         return
                     if "text/event-stream" not in response.headers.get("content-type", ""):
@@ -436,9 +450,14 @@ class ApiSender:
                             if data:
                                 text, reasoning = parser.feed(event, "\n".join(data))
                                 if text or reasoning:
+                                    if probe is not None:
+                                        probe.observe_content(text, reasoning)
                                     yield text, reasoning, None
                                 if parser.complete:
-                                    yield "", "", parser.result()
+                                    result = parser.result()
+                                    if probe is not None:
+                                        probe.succeeded()
+                                    yield "", "", result
                                     return
                             event, data = "", []
                         elif line.startswith("data:"):
@@ -450,7 +469,30 @@ class ApiSender:
                         else:
                             raise ApiRequestError("LLM_PROVIDER_INVALID_RESPONSE", 502)
                     raise ApiRequestError("LLM_PROVIDER_STREAM_TRUNCATED", 502)
+        except asyncio.CancelledError:
+            if probe is not None:
+                probe.aborted()
+            raise
+        except GeneratorExit:
+            # Early consumer close: terminate the attempt from this path instead
+            # of yielding more telemetry (generators must not yield on close).
+            if probe is not None:
+                probe.aborted()
+            raise
         except (TimeoutError, httpx.TimeoutException) as exc:
-            raise ApiRequestError("LLM_PROVIDER_TIMEOUT", 504) from exc
+            error = ApiRequestError("LLM_PROVIDER_TIMEOUT", 504)
+            if probe is not None:
+                probe.failed(error)
+            raise error from exc
         except httpx.HTTPError as exc:
-            raise ApiRequestError("LLM_PROVIDER_UNREACHABLE", 502) from exc
+            error = ApiRequestError("LLM_PROVIDER_UNREACHABLE", 502)
+            if probe is not None:
+                probe.failed(error)
+            raise error from exc
+        except BaseException as exc:
+            if probe is not None:
+                probe.failed(exc)
+            raise
+        finally:
+            if probe is not None:
+                probe.close()
