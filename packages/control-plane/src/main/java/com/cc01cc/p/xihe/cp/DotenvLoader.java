@@ -42,7 +42,9 @@ public final class DotenvLoader {
             "XIHE_CP_API_TOKEN",
             "XIHE_AGENT_API_TOKEN",
             "XIHE_CP_OAUTH_ENCRYPTION_KEY",
-            "XIHE_CP_PROVIDER_CREDENTIALS_KEY");
+            "XIHE_CP_PROVIDER_CREDENTIALS_KEY",
+            "XIHE_CP_CREDENTIALS_KEY",
+            "XIHE_CP_CREDENTIALS_KEY_RING");
 
     private DotenvLoader() {}
 

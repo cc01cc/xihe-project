@@ -148,13 +148,16 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
                         && seededAdmin.getId().equals(grant.getSubjectId())
                         && "default".equals(grant.getSource()))
                 .findFirst().orElseThrow();
-        assertEquals(6, adminDefault.getPermissions().size(), "DataSeeder materializes the ADMIN default matrix");
+        assertEquals(8, adminDefault.getPermissions().size(),
+                "DataSeeder materializes the ADMIN default matrix (five rows + the PLAN-0496 "
+                        + "credential atoms)");
         User admin = userRepository.findByEmail("admin@xihe.local").orElseThrow();
-        assertEquals(6, grantRepository.findAll().stream()
+        assertEquals(8, grantRepository.findAll().stream()
                 .filter(grant -> "user".equals(grant.getSubjectType())
                         && admin.getId().equals(grant.getSubjectId())
                         && "default".equals(grant.getSource()))
-                .findFirst().orElseThrow().getPermissions().size(), "ADMIN default includes credential");
+                .findFirst().orElseThrow().getPermissions().size(),
+                "ADMIN default includes the three credential atoms (PLAN-0496 #1)");
 
         Session session = sessionService.create(userId, workspaceId, "Grant test Session", null, null);
         sessionId = session.getId().toString();
@@ -220,8 +223,8 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
                     "the minimal set covers " + actionClass + " on the registrant's own workspace");
         }
         assertFalse(grantAuthorizationService.allowsUserOnly(
-                        request("credential", "provider_connections/*")),
-                "credential is outside the minimal set (zero over-privilege)");
+                        request("credential_use", "credential:" + UUID.randomUUID())),
+                "credential is outside the minimal set (zero over-privilege, PLAN-0496 atoms)");
 
         Workspace foreignWorkspace = workspaceRepository.save(new Workspace("Foreign", userId));
         foreignWorkspaceId = foreignWorkspace.getId();

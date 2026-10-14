@@ -60,6 +60,13 @@ pub fn collect_violations(lookup: &dyn Fn(&str) -> Option<String>) -> Vec<String
                 .to_string(),
         );
     }
+    if lookup("XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY").as_deref() == Some("true") {
+        violations.push(
+            "XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY: must be `false` in prod \
+             (dev fallback encryption key would be accepted)"
+                .to_string(),
+        );
+    }
     if is_blank(lookup("XIHE_CP_OAUTH_ENCRYPTION_KEY")) {
         violations.push(
             "XIHE_CP_OAUTH_ENCRYPTION_KEY: required in prod (provide a base64 key)".to_string(),
@@ -68,6 +75,14 @@ pub fn collect_violations(lookup: &dyn Fn(&str) -> Option<String>) -> Vec<String
     if is_blank(lookup("XIHE_CP_PROVIDER_CREDENTIALS_KEY")) {
         violations.push(
             "XIHE_CP_PROVIDER_CREDENTIALS_KEY: required in prod (provide a base64 key)".to_string(),
+        );
+    }
+    if is_blank(lookup("XIHE_CP_CREDENTIALS_KEY"))
+        && is_blank(lookup("XIHE_CP_CREDENTIALS_KEY_RING"))
+    {
+        violations.push(
+            "XIHE_CP_CREDENTIALS_KEY: required in prod (provide a base64 key or a key ring)"
+                .to_string(),
         );
     }
     violations
@@ -127,9 +142,10 @@ mod tests {
             ("XIHE_AGENT_API_TOKEN", "dev-token-not-secure"),
             ("XIHE_CP_OAUTH_ALLOW_DEV_KEY", "true"),
             ("XIHE_CP_PROVIDER_CREDENTIALS_ALLOW_DEV_KEY", "true"),
+            ("XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY", "true"),
         ]);
-        // 5 explicit insecure values + 2 empty-required encryption keys
-        assert_eq!(collect_violations(&lookup).len(), 7);
+        // 6 explicit insecure values + 3 empty-required encryption keys
+        assert_eq!(collect_violations(&lookup).len(), 9);
     }
 
     #[test]
@@ -140,9 +156,34 @@ mod tests {
             ("XIHE_AGENT_API_TOKEN", "strong-service-token"),
             ("XIHE_CP_OAUTH_ALLOW_DEV_KEY", "false"),
             ("XIHE_CP_PROVIDER_CREDENTIALS_ALLOW_DEV_KEY", "false"),
+            ("XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY", "false"),
             ("XIHE_CP_OAUTH_ENCRYPTION_KEY", "base64-key"),
             ("XIHE_CP_PROVIDER_CREDENTIALS_KEY", "base64-key"),
+            ("XIHE_CP_CREDENTIALS_KEY", "base64-key"),
         ]);
         assert!(collect_violations(&lookup).is_empty());
+    }
+
+    #[test]
+    fn credential_key_ring_satisfies_prod_requirement() {
+        let lookup = lookup_of(&[("XIHE_CP_CREDENTIALS_KEY_RING", "{\"v1\":\"base64-key\"}")]);
+        assert!(
+            collect_violations(&lookup)
+                .iter()
+                .all(|item| !item.starts_with("XIHE_CP_CREDENTIALS_KEY"))
+        );
+    }
+
+    #[test]
+    fn credential_dev_key_flag_is_flagged() {
+        let lookup = lookup_of(&[
+            ("XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY", "true"),
+            ("XIHE_CP_CREDENTIALS_KEY", "base64-key"),
+        ]);
+        assert!(
+            collect_violations(&lookup)
+                .iter()
+                .any(|item| item.starts_with("XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY"))
+        );
     }
 }

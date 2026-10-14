@@ -6,6 +6,7 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from xihe_agent.adapters.sse_adapter import LangGraphEventAdapter, translate_events
+from xihe_agent.interfaces.tool import CREDENTIAL_DELIVERED_PLACEHOLDER
 
 
 class FakeChunk:
@@ -477,3 +478,73 @@ async def test_tool_end_ignores_non_dict_or_empty_diagnostics_artifact():
     assert len(results) == 3
     for result in results:
         assert "diagnostics" not in _parse(result)
+
+
+@pytest.mark.asyncio
+async def test_acquire_credential_streams_placeholder_not_the_value():
+    """PLAN-0497 T2.1: the delivered value must never reach the SSE/UI channel."""
+    secret = "sk-live-delivery-secret-98765"
+    events = [
+        {
+            "event": "on_tool_end",
+            "name": "acquire_credential",
+            "data": {
+                "output": ToolMessage(
+                    content=json.dumps({"value": secret}), tool_call_id="c-cred"
+                ),
+            },
+            "run_id": "run-cred",
+        }
+    ]
+    results = []
+    async for sse in translate_events(async_iter(events)):
+        results.append(sse)
+
+    assert len(results) == 1
+    assert secret not in results[0]
+    assert CREDENTIAL_DELIVERED_PLACEHOLDER in results[0]
+    payload = _parse(results[0])
+    assert payload["type"] == "tool_result"
+    assert payload["tool"] == "acquire_credential"
+
+
+@pytest.mark.asyncio
+async def test_acquire_credential_raw_output_streams_placeholder():
+    """PLAN-0497 T2.1: the non-ToolMessage fallback must not fail open either."""
+    secret = "sk-raw-delivery-secret-12345"
+    events = [
+        {
+            "event": "on_tool_end",
+            "name": "acquire_credential",
+            "data": {"output": json.dumps({"value": secret})},
+            "run_id": "run-cred-raw",
+        }
+    ]
+    results = []
+    async for sse in translate_events(async_iter(events)):
+        results.append(sse)
+
+    assert len(results) == 1
+    assert secret not in results[0]
+    assert CREDENTIAL_DELIVERED_PLACEHOLDER in results[0]
+    payload = _parse(results[0])
+    assert payload["type"] == "tool_result"
+    assert payload["tool"] == "acquire_credential"
+
+
+@pytest.mark.asyncio
+async def test_other_tool_results_still_stream_their_content():
+    events = [
+        {
+            "event": "on_tool_end",
+            "name": "read_file",
+            "data": {"output": ToolMessage(content="plain file text", tool_call_id="c-r")},
+            "run_id": "run-r",
+        }
+    ]
+    results = []
+    async for sse in translate_events(async_iter(events)):
+        results.append(sse)
+
+    assert len(results) == 1
+    assert "plain file text" in results[0]

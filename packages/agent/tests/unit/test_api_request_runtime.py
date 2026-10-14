@@ -753,6 +753,64 @@ def test_durable_native_bounds_type_mismatch_and_oversize(type_id):
         durable_native_carrier(model, 1)
 
 
+@pytest.mark.parametrize("type_id", TYPES)
+def test_durable_native_carrier_masks_acquire_credential_output(type_id):
+    """PLAN-0497 I5 (wave review): the durable replay carrier must never carry the
+    delivered credential value — acquire_credential outputs are swapped for the
+    placeholder across all API-type families; other tool outputs stay untouched."""
+    from xihe_agent.adapters.api_chat_model import durable_native_carrier
+    from xihe_agent.interfaces.tool import CREDENTIAL_DELIVERED_PLACEHOLDER
+
+    secret = "e2e-acquire-secret-1791901753580-ab12cd34"
+    acquire_call = {"type": "function", "id": "a1", "function": {"name": "acquire_credential", "arguments": '{"credentialId":"x"}'}}
+    read_call = {"type": "function", "id": "b1", "function": {"name": "read_file", "arguments": "{}"}}
+    if type_id == TYPES[0]:
+        records = [
+            {"role": "assistant", "content": None, "tool_calls": [acquire_call, read_call]},
+            {"role": "tool", "tool_call_id": "a1", "content": secret},
+            {"role": "tool", "tool_call_id": "b1", "content": "plain-tool-output"},
+        ]
+    elif type_id == TYPES[1]:
+        records = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "a1", "name": "acquire_credential", "input": {}},
+                    {"type": "tool_use", "id": "b1", "name": "read_file", "input": {}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "a1", "content": secret},
+                    {"type": "tool_result", "tool_use_id": "b1", "content": "plain-tool-output"},
+                ],
+            },
+        ]
+    else:
+        records = [
+            {"type": "function_call", "call_id": "a1", "name": "acquire_credential", "arguments": "{}"},
+            {"type": "function_call", "call_id": "b1", "name": "read_file", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "a1", "output": secret},
+            {"type": "function_call_output", "call_id": "b1", "output": "plain-tool-output"},
+        ]
+
+    model = ApiChatModel(
+        api_type=chat_type(type_id, 1),
+        grant=grant(type_id, "http://fixture.invalid/v1"),
+        body_source=json.dumps(body(type_id, False)),
+        values=VALUES,
+        request_id="fixture",
+        timeout=3,
+    )
+    model._native_turns = records
+    carrier = durable_native_carrier(model, 80000)
+    serialized = json.dumps(carrier["nativeRecords"])
+    assert secret not in serialized
+    assert CREDENTIAL_DELIVERED_PLACEHOLDER in serialized
+    assert "plain-tool-output" in serialized
+
+
 def test_native_replay_fork_prune_compaction_atomic():
     import hashlib
     from datetime import UTC, datetime

@@ -79,11 +79,20 @@ public final class SecurityDefaultsValidator {
             violations.add("XIHE_CP_PROVIDER_CREDENTIALS_ALLOW_DEV_KEY: must be `false` in prod "
                     + "(dev fallback encryption key would be accepted)");
         }
+        if ("true".equalsIgnoreCase(lookup.apply("XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY"))) {
+            violations.add("XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY: must be `false` in prod "
+                    + "(dev fallback encryption key would be accepted)");
+        }
         if (isBlank(lookup.apply("XIHE_CP_OAUTH_ENCRYPTION_KEY"))) {
             violations.add("XIHE_CP_OAUTH_ENCRYPTION_KEY: required in prod (provide a base64 key)");
         }
         if (isBlank(lookup.apply("XIHE_CP_PROVIDER_CREDENTIALS_KEY"))) {
             violations.add("XIHE_CP_PROVIDER_CREDENTIALS_KEY: required in prod (provide a base64 key)");
+        }
+        if (isBlank(lookup.apply("XIHE_CP_CREDENTIALS_KEY"))
+                && isBlank(lookup.apply("XIHE_CP_CREDENTIALS_KEY_RING"))) {
+            violations.add("XIHE_CP_CREDENTIALS_KEY: required in prod "
+                    + "(provide a base64 key or a key ring)");
         }
         return violations;
     }

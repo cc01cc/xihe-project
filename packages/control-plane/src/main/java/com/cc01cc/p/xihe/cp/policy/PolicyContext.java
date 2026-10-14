@@ -34,7 +34,7 @@ public record PolicyContext(Map<String, ToolFaceRegistry.Face> extraFaces,
      * A missing/unreadable config falls back here, never to an empty list.
      */
     public static final List<String> DEFAULT_ASK_ACTION_CLASSES = List.of(
-            "write", "exec", "delete", "credential",
+            "write", "exec", "delete",
             "CREATE_ACCOUNT", "CREATE_TEMPLATE", "MANAGE_WORKSPACE_AGENTS", "SPAWN_AGENT");
 
     public PolicyContext(Map<String, ToolFaceRegistry.Face> extraFaces,

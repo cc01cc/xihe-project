@@ -322,7 +322,7 @@ export async function ensureChatBinding(page: Page, sessionId: string): Promise<
                         providerId: "custom-openai-compatible",
                         apiTypeId: "openai-chat-completions",
                         apiTypeVersion: 1,
-                        apiKey: "e2e-chat-binding-fixture",
+                        apiKey: "sk-fake-openai-key",
                         connectionKey: "e2e-chat",
                         label: "E2E chat binding",
                         scope: "USER",

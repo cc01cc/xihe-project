@@ -2,6 +2,8 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { logger } from "../../lib/logger";
+import { api } from "../../composables/api";
+import CredentialRoleBlock from "./credentials/CredentialRoleBlock.vue";
 
 type Permission = { actionClass: string; resource?: string };
 type Role = { id: string; name: string; permissions: Permission[] };
@@ -26,7 +28,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const actions = ["read", "write", "delete", "exec", "network", "credential"],
+const actions = ["read", "write", "delete", "exec", "network", "credential", "credential_use"],
     roles = ref<Role[]>([]);
 const templates = ref<Template[]>([]),
     selectedTemplateId = ref(""),
@@ -44,6 +46,8 @@ const roleId = ref(""),
     malformedConfig = ref(false),
     success = ref(""),
     pendingDeleteId = ref("");
+const ceilingUncovered = ref<string[]>([]),
+    ceilingChecking = ref(false);
 const pendingPayload = ref<Record<string, string> | null>(null),
     pendingSuccess = ref("");
 const pendingKind = ref<"template-save" | "template-delete" | "role-save" | "role-delete" | null>(
@@ -69,6 +73,7 @@ watch(
                 editingRoleId.value = "";
                 roleName.value = "";
                 rolePermissions.value = [];
+                ceilingUncovered.value = [];
             }
             pendingKind.value = null;
         }
@@ -205,20 +210,47 @@ function deleteTemplate(template: Template) {
     persist(roles.value, next, t("settings.agentTemplateDeleted"));
 }
 
-function saveRole() {
-    if (props.saving || pendingPayload.value) return;
+async function saveRole() {
+    if (props.saving || pendingPayload.value || ceilingChecking.value) return;
     if (!roleName.value.trim()) {
         error.value = t("settings.agentRoleRequired");
         return;
+    }
+    error.value = "";
+    ceilingUncovered.value = [];
+    const permissions = rolePermissions.value.map((permission) => ({
+        actionClass: permission.actionClass,
+        resource: permission.resource?.trim() || "*",
+    }));
+    const hasCredentialAtoms = permissions.some(
+        (permission) =>
+            permission.actionClass === "credential_use" &&
+            permission.resource.startsWith("credential:"),
+    );
+    if (hasCredentialAtoms) {
+        ceilingChecking.value = true;
+        try {
+            const result = await api.precheckCredentialAtoms(permissions);
+            const uncoveredCredentialAtoms = result.uncovered.filter((atom) =>
+                atom.includes("credential"),
+            );
+            if (uncoveredCredentialAtoms.length > 0) {
+                ceilingUncovered.value = uncoveredCredentialAtoms;
+                return;
+            }
+        } catch (cause) {
+            error.value = t("credentials.roleCeilingCheckFailed");
+            logger.warn("Credential ceiling precheck failed", cause);
+            return;
+        } finally {
+            ceilingChecking.value = false;
+        }
     }
     const id = editingRoleId.value || crypto.randomUUID();
     const role: Role = {
         id,
         name: roleName.value.trim(),
-        permissions: rolePermissions.value.map((permission) => ({
-            actionClass: permission.actionClass,
-            resource: permission.resource?.trim() || "*",
-        })),
+        permissions,
     };
     const next = roles.value.some((item) => item.id === id)
         ? roles.value.map((item) => (item.id === id ? role : item))
@@ -227,10 +259,32 @@ function saveRole() {
     persist(next, templates.value, t("settings.agentRoleSaved"));
 }
 
+function addCredentialAtoms(atoms: Array<{ actionClass: string; resource: string }>) {
+    for (const atom of atoms) {
+        if (
+            !rolePermissions.value.some(
+                (permission) =>
+                    permission.actionClass === atom.actionClass &&
+                    permission.resource === atom.resource,
+            )
+        ) {
+            rolePermissions.value.push({ ...atom });
+        }
+    }
+}
+
+function removeCredentialAtom(resource: string) {
+    rolePermissions.value = rolePermissions.value.filter(
+        (permission) =>
+            !(permission.actionClass === "credential_use" && permission.resource === resource),
+    );
+}
+
 function editRole(role: Role) {
     editingRoleId.value = role.id;
     roleName.value = role.name;
     rolePermissions.value = role.permissions.map((permission) => ({ ...permission }));
+    ceilingUncovered.value = [];
 }
 
 function deleteRole(role: Role) {
@@ -245,6 +299,7 @@ function cancelRoleEdit() {
     editingRoleId.value = "";
     roleName.value = "";
     rolePermissions.value = [];
+    ceilingUncovered.value = [];
 }
 </script>
 
@@ -470,13 +525,28 @@ function cancelRoleEdit() {
                     {{ t("settings.agentRoleAddPermission") }}
                 </button>
             </div>
+            <CredentialRoleBlock
+                :permissions="rolePermissions"
+                @add="addCredentialAtoms"
+                @remove="removeCredentialAtom"
+            />
+            <div
+                v-if="ceilingUncovered.length > 0"
+                data-testid="agent-role-ceiling-warning"
+                class="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive"
+            >
+                <p>{{ t("credentials.roleCeilingBlocked") }}</p>
+                <ul class="mt-1 list-disc pl-4">
+                    <li v-for="atom in ceilingUncovered" :key="atom">{{ atom }}</li>
+                </ul>
+            </div>
             <button
                 type="submit"
                 data-testid="agent-role-save"
-                :disabled="saving || malformedConfig"
+                :disabled="saving || malformedConfig || ceilingChecking"
                 class="rounded-md border px-3 py-2 text-sm disabled:opacity-50"
             >
-                {{ t("common.save") }}
+                {{ ceilingChecking ? t("credentials.roleCeilingChecking") : t("common.save") }}
             </button>
             <button
                 v-if="editingRoleId"

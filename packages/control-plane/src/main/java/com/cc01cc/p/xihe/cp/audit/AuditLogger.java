@@ -119,6 +119,68 @@ public class AuditLogger {
         }
     }
 
+    /**
+     * PLAN-0495 T2.2 (contract: 0494 I1 + 0495 §方案 5): credential manage
+     * actions (credential_created / _replaced / _deleted / _rotated). Detail
+     * carries id, owner, kind, tier and fingerprint only — the plaintext value
+     * and its suffix never enter any audit sink.
+     */
+    public void recordCredentialEvent(String actor, String action, String credentialId,
+            String ownerType, String ownerId, String kind, String deliveryTier, String fingerprint) {
+        auditLog.info(
+            "action={} | actor={} | credential={} | owner={}/{} | kind={} | tier={} | fingerprint={}",
+            action,
+            actor,
+            credentialId,
+            ownerType,
+            ownerId,
+            kind,
+            deliveryTier,
+            fingerprint
+        );
+        if (logToConsole) {
+            logger.info(
+                "[AUDIT] action={} | actor={} | credential={} | owner={}/{} | kind={} | tier={} | fingerprint={}",
+                action,
+                actor,
+                credentialId,
+                ownerType,
+                ownerId,
+                kind,
+                deliveryTier,
+                fingerprint
+            );
+        }
+    }
+
+    /**
+     * PLAN-0495 M3 (0495 §方案 3): credential rotation batch audit — counts and
+     * results only, never a value or ciphertext.
+     */
+    public void recordCredentialRotation(String actor, int migrated, int conflicts, int failures,
+            long remaining, String targetVersion) {
+        auditLog.info(
+            "action=credential_rotated | actor={} | migrated={} | conflicts={} | failures={} | remaining={} | targetVersion={}",
+            actor,
+            migrated,
+            conflicts,
+            failures,
+            remaining,
+            targetVersion
+        );
+        if (logToConsole) {
+            logger.info(
+                "[AUDIT] action=credential_rotated | actor={} | migrated={} | conflicts={} | failures={} | remaining={} | targetVersion={}",
+                actor,
+                migrated,
+                conflicts,
+                failures,
+                remaining,
+                targetVersion
+            );
+        }
+    }
+
     /** Persists sensitive state changes in the existing audit_logs stream. */
     public void recordDurableChange(String actorUserId, String workspaceId, String action,
             String resourceType, String resourceId, String detail) {

@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -19,8 +20,11 @@ class SecurityDefaultsValidatorTest {
         "XIHE_AGENT_API_TOKEN",
         "XIHE_CP_OAUTH_ALLOW_DEV_KEY",
         "XIHE_CP_PROVIDER_CREDENTIALS_ALLOW_DEV_KEY",
+        "XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY",
         "XIHE_CP_OAUTH_ENCRYPTION_KEY",
-        "XIHE_CP_PROVIDER_CREDENTIALS_KEY"
+        "XIHE_CP_PROVIDER_CREDENTIALS_KEY",
+        "XIHE_CP_CREDENTIALS_KEY",
+        "XIHE_CP_CREDENTIALS_KEY_RING"
     };
 
     @AfterEach
@@ -38,11 +42,12 @@ class SecurityDefaultsValidatorTest {
                     "XIHE_CP_API_TOKEN", "dev-token-not-secure",
                     "XIHE_AGENT_API_TOKEN", "dev-token-not-secure",
                     "XIHE_CP_OAUTH_ALLOW_DEV_KEY", "true",
-                    "XIHE_CP_PROVIDER_CREDENTIALS_ALLOW_DEV_KEY", "true");
+                    "XIHE_CP_PROVIDER_CREDENTIALS_ALLOW_DEV_KEY", "true",
+                    "XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY", "true");
             return values.get(key);
         });
-        // 5 explicit insecure values + 2 empty-required encryption keys.
-        assertEquals(7, violations.size());
+        // 6 explicit insecure values + 3 empty-required encryption keys.
+        assertEquals(9, violations.size());
     }
 
     @Test
@@ -51,6 +56,7 @@ class SecurityDefaultsValidatorTest {
         System.setProperty("XIHE_CP_JWT_SECRET", "xihe-cp-jwt-secret-key-change-in-production");
         System.setProperty("XIHE_CP_OAUTH_ENCRYPTION_KEY", "secret-key");
         System.setProperty("XIHE_CP_PROVIDER_CREDENTIALS_KEY", "secret-key");
+        System.setProperty("XIHE_CP_CREDENTIALS_KEY", "secret-key");
 
         assertThrows(IllegalStateException.class, SecurityDefaultsValidator::enforce);
     }
@@ -62,8 +68,10 @@ class SecurityDefaultsValidatorTest {
         System.setProperty("XIHE_CP_API_TOKEN", "strong-service-token");
         System.setProperty("XIHE_CP_OAUTH_ALLOW_DEV_KEY", "false");
         System.setProperty("XIHE_CP_PROVIDER_CREDENTIALS_ALLOW_DEV_KEY", "false");
+        System.setProperty("XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY", "false");
         System.setProperty("XIHE_CP_OAUTH_ENCRYPTION_KEY", "base64-key");
         System.setProperty("XIHE_CP_PROVIDER_CREDENTIALS_KEY", "base64-key");
+        System.setProperty("XIHE_CP_CREDENTIALS_KEY", "base64-key");
 
         SecurityDefaultsValidator.enforce();
     }
@@ -82,6 +90,7 @@ class SecurityDefaultsValidatorTest {
         System.setProperty("XIHE_CP_API_TOKEN", "dev-token-not-secure");
         System.setProperty("XIHE_CP_OAUTH_ENCRYPTION_KEY", "base64-key");
         System.setProperty("XIHE_CP_PROVIDER_CREDENTIALS_KEY", "base64-key");
+        System.setProperty("XIHE_CP_CREDENTIALS_KEY", "base64-key");
 
         SecurityDefaultsValidator.enforce();
     }
@@ -92,5 +101,22 @@ class SecurityDefaultsValidatorTest {
         env.put("XIHE_CP_JWT_SECRET", "dev-jwt-secret-key-do-not-use-in-production-please-change");
         assertTrue(SecurityDefaultsValidator.collectViolations(env::get).stream()
                 .anyMatch(item -> item.startsWith("XIHE_CP_JWT_SECRET")));
+    }
+
+    @Test
+    void credentialKeyRingSatisfiesProdRequirement() {
+        Map<String, String> env = new HashMap<>();
+        env.put("XIHE_CP_CREDENTIALS_KEY_RING", "{\"v1\":\"base64-key\"}");
+        assertFalse(SecurityDefaultsValidator.collectViolations(env::get).stream()
+                .anyMatch(item -> item.startsWith("XIHE_CP_CREDENTIALS_KEY")));
+    }
+
+    @Test
+    void credentialDevKeyFlagIsFlagged() {
+        Map<String, String> env = new HashMap<>();
+        env.put("XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY", "true");
+        env.put("XIHE_CP_CREDENTIALS_KEY", "base64-key");
+        assertTrue(SecurityDefaultsValidator.collectViolations(env::get).stream()
+                .anyMatch(item -> item.startsWith("XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY")));
     }
 }

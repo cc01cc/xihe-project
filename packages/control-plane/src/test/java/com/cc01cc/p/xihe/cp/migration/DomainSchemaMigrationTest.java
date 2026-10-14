@@ -189,9 +189,8 @@ class DomainSchemaMigrationTest {
                 "a subject can have only one default permission set");
 
         insertGrant("direct", subjectId);
-        insertGrant("direct", subjectId);
-        assertEquals(2, scalarInt("SELECT count(*) FROM grants WHERE source = 'direct' AND subject_id = '"
-                + subjectId + "'"), "non-default grants for one subject may coexist");
+        assertThrows(SQLException.class, () -> insertGrant("direct", subjectId),
+                "V65 (PLAN-0496 round-4): a subject can have only one direct grant row");
     }
 
     @Test
@@ -973,7 +972,7 @@ class DomainSchemaMigrationTest {
             assertEquals(1, scalarInt(c, "SELECT count(*) FROM grants WHERE source = 'default' "
                     + "AND subject_type = 'user' AND subject_id = '" + adminId + "'::uuid "
                     + "AND permissions @> '[{\"actionClass\":\"credential\"}]'::jsonb"),
-                    "the ADMIN default matrix includes credential permission");
+                    "the ADMIN default matrix includes credential permission (target 54: V64 rewrite not yet run)");
             assertEquals(0, scalarInt(c, "SELECT count(*) FROM grants WHERE source = 'default' "
                     + "AND subject_type IN ('user', 'agent_principal') "
                     + "AND subject_id IN ('" + userId + "'::uuid, '" + principalId + "'::uuid) "
@@ -1216,6 +1215,80 @@ class DomainSchemaMigrationTest {
             assertEquals(1, scalarInt(c, "SELECT count(*) FROM operation_items WHERE id = '" + itemId
                             + "'::uuid AND waiting_on_run_id = '" + runId + "'::uuid"),
                     "waiting_on_run_id must round-trip on the upgraded database");
+        }
+    }
+
+    /**
+     * PLAN-0496 round-4（0494 #9「dev 期直接切换并清理」授权）：V41 仍在 bootstrap 中写入
+     * 退役单字 {@code credential}；V64 在升级链上把该行改写为三原子 + {@code credential:*}，
+     * 使升级终态与当前词表一致（否则 PermissionAtom 读路径对含旧词行 fail-closed）。
+     */
+    @Test
+    void v64RewritesTheRetiredCredentialWordOnUpgrade() throws SQLException {
+        String upgradeDb = "xihe_cp_upgrade_v63";
+        String adminUrl = postgres.getJdbcUrl();
+        try (Connection admin = DriverManager.getConnection(
+                adminUrl, postgres.getUsername(), postgres.getPassword());
+             Statement statement = admin.createStatement()) {
+            statement.executeUpdate("DROP DATABASE IF EXISTS " + upgradeDb);
+            statement.executeUpdate("CREATE DATABASE " + upgradeDb);
+        }
+        String upgradeUrl = adminUrl.replace("/" + postgres.getDatabaseName(), "/" + upgradeDb);
+
+        Flyway.configure()
+                .dataSource(upgradeUrl, postgres.getUsername(), postgres.getPassword())
+                .locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("33"))
+                .load()
+                .migrate();
+
+        UUID adminId = UUID.randomUUID();
+        UUID workspaceId = UUID.randomUUID();
+        try (Connection c = DriverManager.getConnection(
+                upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
+            executeUpdate(c, "INSERT INTO users (id, email, password_hash, role) VALUES ('" + adminId
+                    + "'::uuid, 'v63-upgrade-admin-" + adminId + "@test.local', 'hash', 'ADMIN')");
+            executeUpdate(c, "INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
+                    + "'::uuid, 'v63-workspace', '" + adminId + "'::uuid)");
+            executeUpdate(c, "INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ('"
+                    + workspaceId + "'::uuid, '" + adminId + "'::uuid, 'OWNER')");
+        }
+
+        Flyway.configure()
+                .dataSource(upgradeUrl, postgres.getUsername(), postgres.getPassword())
+                .locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("41"))
+                .load()
+                .migrate();
+
+        try (Connection c = DriverManager.getConnection(
+                upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM grants WHERE source = 'default' "
+                    + "AND subject_type = 'user' AND subject_id = '" + adminId + "'::uuid "
+                    + "AND permissions @> '[{\"actionClass\":\"credential\"}]'::jsonb"),
+                    "V41 must bootstrap the legacy single credential word first");
+        }
+
+        Flyway.configure()
+                .dataSource(upgradeUrl, postgres.getUsername(), postgres.getPassword())
+                .locations("classpath:db/migration")
+                .load()
+                .migrate();
+
+        try (Connection c = DriverManager.getConnection(
+                upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM flyway_schema_history "
+                    + "WHERE version = '64' AND success = true"), "V64 must run on the upgrade chain");
+            assertEquals(0, scalarInt(c, "SELECT count(*) FROM grants "
+                    + "WHERE permissions @> '[{\"actionClass\":\"credential\"}]'::jsonb"),
+                    "V64 must rewrite the retired word (0494 #9)");
+            for (String atom : new String[] {"credential_use", "credential_reveal", "credential_manage"}) {
+                assertEquals(1, scalarInt(c, "SELECT count(*) FROM grants WHERE source = 'default' "
+                        + "AND subject_type = 'user' AND subject_id = '" + adminId + "'::uuid "
+                        + "AND permissions @> '[{\"actionClass\":\"" + atom
+                        + "\",\"resource\":\"credential:*\"}]'::jsonb"),
+                        "the ADMIN default must carry " + atom + " after the V64 rewrite");
+            }
         }
     }
 }

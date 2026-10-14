@@ -17,6 +17,7 @@ import {
   verifyConnection,
 } from './xihe-cli/provider.mjs';
 import { checkDevelopmentEnvironment, runConfigImport, runRealTest } from './xihe-cli/host.mjs';
+import { rotateCredentials } from './xihe-cli/credential.mjs';
 
 function splitGlobalJsonFlag(args) {
   const rest = [];
@@ -28,8 +29,8 @@ function splitGlobalJsonFlag(args) {
   return { args: rest, json };
 }
 
-function parseCommandOptions(args, valueOptions) {
-  return parseOptions(args, valueOptions);
+function parseCommandOptions(args, valueOptions, booleanOptions = []) {
+  return parseOptions(args, valueOptions, booleanOptions);
 }
 
 function helpText() {
@@ -45,9 +46,11 @@ function helpText() {
     '  node scripts/xihe.mjs provider update <id> [--label <label>] [--base-url <url>] [--models <id,id>] [--api-key-env <name>]',
     '  node scripts/xihe.mjs provider list [--scope <USER|WORKSPACE>]',
     '  node scripts/xihe.mjs provider verify <id>',
+    '  node scripts/xihe.mjs credential rotate [--batch-size <n>] [--max-batches <n>] [--dry-run]',
     '  node scripts/xihe.mjs test real <e2e/real/spec.spec.ts> [--route <native|openai-compat>]',
     '',
     'Secrets are read from environment variables or a no-echo TTY prompt; never pass secret values as arguments.',
+    'credential rotate authenticates with XIHE_CP_API_TOKEN (CP service Bearer) and never prints credential values.',
     'Real E2E uses XIHE_E2E_REAL_XIAOMI_KEY and does not test Provider Connection leases.',
   ].join('\n');
 }
@@ -158,6 +161,20 @@ export async function runCommand(argv, dependencies = {}) {
       return { exitCode: 0, json, data: { connection } };
     }
 
+    if (group === 'credential' && command === 'rotate') {
+      const parsed = parseCommandOptions(rest, ['--batch-size', '--max-batches'], ['--dry-run']);
+      if (parsed.positionals.length !== 0) {
+        throw new CliError('INVALID_ARGUMENT', 'credential rotate takes no positional arguments.');
+      }
+      const data = await rotateCredentials({
+        env,
+        fetchImpl,
+        options: parsed.values,
+        stdout: dependencies.stdout ?? process.stdout,
+      });
+      return { exitCode: 0, json, data };
+    }
+
     if (group === 'test' && command === 'real') {
       const data = await runRealTest({
         args: rest,
@@ -219,6 +236,25 @@ function printResult(result) {
       process.stdout.write(`${connection.id}  ${connection.scope}  ${connection.providerId}  ${connection.status}  key=${connection.hasKey ? 'yes' : 'no'}\n`);
     }
     if (result.data.connections.length === 0) process.stdout.write('No visible provider connections.\n');
+    return;
+  }
+  if (result.data?.status?.pendingByVersion !== undefined) {
+    const status = result.data.status;
+    process.stdout.write(`Rotation target ${status.currentVersion}; ring ${(status.ringVersions ?? []).join(', ') || 'n/a'}\n`);
+    for (const [version, count] of Object.entries(status.countsByVersion ?? {})) {
+      process.stdout.write(`  version ${version}: ${count} row(s)\n`);
+    }
+    if (result.data.dryRun) {
+      process.stdout.write(`Dry run: ${status.pendingTotal} row(s) pending migration.\n`);
+      return;
+    }
+    process.stdout.write(`Migrated ${result.data.totals.migrated} row(s) in ${result.data.rounds} batch(es); `
+      + `conflicts=${result.data.totals.conflicts} failures=${result.data.totals.failures}.\n`);
+    if (status.pendingTotal === 0) {
+      process.stdout.write('Retire check: all rows are on the current key version; the old key can be removed from the ring.\n');
+    } else {
+      process.stdout.write(`Retire check: ${status.pendingTotal} row(s) still pending.\n`);
+    }
     return;
   }
   const connection = result.data?.connection;
