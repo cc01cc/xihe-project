@@ -25,6 +25,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -119,12 +120,19 @@ public class ProviderConnectionService {
         return repository.count();
     }
 
-    /** PLAN-0470: readiness check consumed by the config layering decision. */
+    /**
+     * PLAN-0504: ready connection lookup by logical key, consumed by the
+     * llm-provider profile write validation and profile resolution (the
+     * connection is identified by owner scope + provider + connectionKey; V57
+     * unique constraint). Returns empty unless the connection is enabled and
+     * READY.
+     */
     @Transactional(readOnly = true)
-    public boolean isReadyForOwner(String ownerType, String ownerId, String provider) {
-        return repository.findByOwnerTypeAndOwnerIdAndProviderId(ownerType, ownerId, provider)
-                .stream()
-                .anyMatch(connection -> connection.isEnabled()
+    public Optional<ProviderConnection> findReadyByKey(String ownerType, String ownerId,
+                                                       String provider, String connectionKey) {
+        return repository.findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
+                        ownerType, ownerId, provider, connectionKey)
+                .filter(connection -> connection.isEnabled()
                         && ProviderConnection.STATUS_READY.equals(connection.getStatus()));
     }
 

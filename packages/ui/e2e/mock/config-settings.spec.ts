@@ -2,7 +2,14 @@ import { test, expect } from "@playwright/test";
 import { expectPlatformScreenshot } from "../helpers/visual";
 
 const CONFIG_DOMAINS: Record<string, Record<string, string>> = {
-    "llm-provider": { defaultProvider: "deepseek", defaultModel: "deepseek-chat" },
+    "llm-provider": {
+        profile: JSON.stringify({
+            providerId: "deepseek",
+            connectionKey: "default",
+            model: "deepseek-chat",
+        }),
+        temperature: "0.7",
+    },
     "context-policy": { defaults: '{"softThresholdPct":0.8}' },
     embedding: { model: "text-embedding-3-small", dimensions: "1536" },
     rag: { chunkSize: "1000", topK: "5" },

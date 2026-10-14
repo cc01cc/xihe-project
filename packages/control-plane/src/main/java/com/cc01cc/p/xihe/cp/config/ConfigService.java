@@ -21,7 +21,6 @@ import com.cc01cc.p.xihe.cp.provider.ProviderConnectionService;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -366,32 +365,47 @@ public class ConfigService {
         validateLayerScope(layer, domain, entries, userId, workspaceId);
         rejectProviderSecrets(domain, entries);
         validateInstructionsScope(layer, domain, entries);
-        List<String> errors = validateBySchema(domain, entries);
+        Map<String, String> effectiveEntries = entries;
+        boolean clearLlmProfile = false;
+        if ("llm-provider".equals(domain)) {
+            effectiveEntries = new LinkedHashMap<>(entries);
+            String profileRaw = effectiveEntries.get("profile");
+            if (profileRaw != null && profileRaw.isBlank()) {
+                // PLAN-0504: an empty profile value clears the layer row so the
+                // layer inherits again (embedding round-4 item 1 semantics).
+                effectiveEntries.remove("profile");
+                clearLlmProfile = true;
+            }
+        }
+        List<String> errors = validateBySchema(domain, effectiveEntries);
         if (!errors.isEmpty()) {
             throw new IllegalArgumentException(
                 "Schema validation failed: " + String.join("; ", errors));
         }
         if ("context-templates".equals(domain)) {
-            validateContextTemplateUpdate(layer, entries, userId, workspaceId);
+            validateContextTemplateUpdate(layer, effectiveEntries, userId, workspaceId);
         }
         if ("llm-provider".equals(domain)) {
-            List<String> providerErrors = validateProviderBinding(
-                layer, entries, userId, workspaceId);
+            List<String> providerErrors = validateProviderProfile(
+                layer, effectiveEntries, userId, workspaceId);
             if (!providerErrors.isEmpty()) {
                 throw new IllegalArgumentException(
                     "Provider validation failed: " + String.join("; ", providerErrors));
             }
         }
         if ("embedding".equals(domain)) {
-            if (entries.isEmpty()) {
+            if (effectiveEntries.isEmpty()) {
                 // An empty PUT replaces the layer profile with nothing: delete
                 // the whole-unit row so the layer inherits again (round-4 item 1).
                 deleteKey(layer, "embedding", "profile", changedBy, userId, workspaceId);
                 return;
             }
-            validateEmbeddingLayer(layer, entries);
+            validateEmbeddingLayer(layer, effectiveEntries);
         }
-        putLayerInternal(layer, domain, entries, changedBy, userId, workspaceId);
+        putLayerInternal(layer, domain, effectiveEntries, changedBy, userId, workspaceId);
+        if (clearLlmProfile) {
+            deleteKey(layer, "llm-provider", "profile", changedBy, userId, workspaceId);
+        }
         publishLoggingChanged(domain, layer);
     }
 
@@ -614,39 +628,35 @@ public class ConfigService {
         return normalized.contains("token");
     }
 
-    private List<String> validateProviderBinding(String layer, Map<String, String> entries,
+    /**
+     * PLAN-0504: the llm-provider default identity is one whole profile unit
+     * (decision #2/#4 — legacy provider/base-URL keys are retired, no compat
+     * reads). A present profile must parse completely; its providerId must be
+     * in the CP provider catalog (PLAN-0503 single-source accept set) and
+     * user/workspace layers additionally require a ready connection visible at
+     * that layer (decision #11: instance writes skip the connection check —
+     * the consumer scope resolves the connection at run time).
+     */
+    private List<String> validateProviderProfile(String layer, Map<String, String> entries,
                                                  UUID userId, UUID workspaceId) {
         List<String> errors = new ArrayList<>();
-        String defaultProvider = entries.getOrDefault("defaultProvider", "").trim();
-        if (!defaultProvider.isEmpty()) {
-            // PLAN-0503 T1.1: accept set derives from the CP provider catalog
-            // (single source; legacy inline 5-provider whitelist removed).
-            Set<String> supported = providerCatalog.providerIds();
-            if (!supported.contains(defaultProvider)) {
-                errors.add("defaultProvider is unsupported: " + defaultProvider);
-            } else if (requiresReadyConnection(layer)
-                    && !hasReadyProviderConnection(defaultProvider, userId, workspaceId)) {
-                // PLAN-0307 T2.24 (review P1-5): provider readiness is grounded
-                // in provider_connections, not config keys (decision #21/#37).
-                errors.add("No ready provider connection for: " + defaultProvider);
-            }
+        String raw = entries.get("profile");
+        if (raw == null || raw.isBlank()) {
+            return errors;
         }
-        for (String key : List.of("baseUrl", "openaiApiBase", "deepseekApiBase", "xiaomiApiBase", "anthropicApiBase", "dashscopeApiBase")) {
-            String value = entries.getOrDefault(key, "").trim();
-            if (!value.isEmpty()) {
-                try {
-                    URI uri = URI.create(value);
-                    if (!"http".equalsIgnoreCase(uri.getScheme())
-                            && !"https".equalsIgnoreCase(uri.getScheme())) {
-                        errors.add(key + " must use http or https");
-                    }
-                    if (value.length() > 2048) {
-                        errors.add(key + " exceeds 2048 characters");
-                    }
-                } catch (IllegalArgumentException e) {
-                    errors.add(key + " is not a valid URL");
-                }
-            }
+        LlmProfile profile = parseLlmProfile(raw);
+        if (profile == null) {
+            return errors;
+        }
+        Set<String> supported = providerCatalog.providerIds();
+        if (!supported.contains(profile.providerId())) {
+            errors.add("profile.providerId is unsupported: " + profile.providerId());
+        } else if (requiresReadyConnection(layer)
+                && !hasReadyProfileConnection(profile, userId, workspaceId)) {
+            // PLAN-0307 T2.24 (review P1-5): provider readiness is grounded
+            // in provider_connections, not config keys (decision #21/#37).
+            errors.add("No ready provider connection for profile: "
+                + profile.providerId() + "/" + profile.connectionKey());
         }
         return errors;
     }
@@ -655,17 +665,125 @@ public class ConfigService {
         return "user".equals(layer) || "workspace".equals(layer);
     }
 
-    private boolean hasReadyProviderConnection(String provider, UUID userId, UUID workspaceId) {
-        if (workspaceId != null && isReadyProviderConnection(
-                ProviderConnection.OWNER_WORKSPACE, workspaceId.toString(), provider)) {
+    private boolean hasReadyProfileConnection(LlmProfile profile, UUID userId, UUID workspaceId) {
+        if (workspaceId != null && providerConnectionService.findReadyByKey(
+                ProviderConnection.OWNER_WORKSPACE, workspaceId.toString(),
+                profile.providerId(), profile.connectionKey()).isPresent()) {
             return true;
         }
-        return userId != null && isReadyProviderConnection(
-                ProviderConnection.OWNER_USER, userId.toString(), provider);
+        return userId != null && providerConnectionService.findReadyByKey(
+                ProviderConnection.OWNER_USER, userId.toString(),
+                profile.providerId(), profile.connectionKey()).isPresent();
     }
 
-    private boolean isReadyProviderConnection(String ownerType, String ownerId, String provider) {
-        return providerConnectionService.isReadyForOwner(ownerType, ownerId, provider);
+    // ------------------------------------------------------------------
+    // PLAN-0504: llm-provider default profile (connection-level identity)
+    // ------------------------------------------------------------------
+
+    /** One complete llm-provider default profile unit. */
+    public record LlmProfile(String providerId, String connectionKey, String model) {}
+
+    /** Effective profile with the config layer it resolved from. */
+    public record EffectiveLlmProfile(LlmProfile profile, String profileScope) {}
+
+    /** Effective profile resolved to a concrete ready connection. */
+    public record ResolvedLlmProfile(String providerId, String connectionKey, String model,
+                                     String providerConnectionId, String connectionOwnerType,
+                                     String connectionOwnerId, long connectionRevision,
+                                     String profileScope) {}
+
+    /**
+     * Parse and validate one layer's `profile` value. Empty/absent means the
+     * layer inherits; anything present must be the complete three-field unit
+     * (no partial writes, no field merging — decision #4).
+     */
+    public LlmProfile parseLlmProfile(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        JsonNode node;
+        try {
+            node = objectMapper.readTree(raw);
+        } catch (JsonProcessingException e) {
+            throw new CpApiException(org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "INVALID_REQUEST", "LLM profile is not valid JSON");
+        }
+        if (node == null || !node.isObject()) {
+            throw invalidLlmProfile();
+        }
+        String providerId = node.path("providerId").asText(null);
+        String connectionKey = node.path("connectionKey").asText(null);
+        String model = node.path("model").asText(null);
+        if (providerId == null || providerId.isBlank()
+                || connectionKey == null || connectionKey.isBlank()
+                || model == null || model.isBlank()
+                || node.size() != 3) {
+            throw invalidLlmProfile();
+        }
+        return new LlmProfile(providerId, connectionKey, model);
+    }
+
+    private CpApiException invalidLlmProfile() {
+        return new CpApiException(org.springframework.http.HttpStatus.BAD_REQUEST,
+                "INVALID_REQUEST",
+                "LLM profile must be a complete providerId/connectionKey/model unit");
+    }
+
+    /**
+     * Effective whole-layer profile: workspace wins whole, else user, else
+     * instance; layers never merge fields and a blank row counts as absent.
+     */
+    public EffectiveLlmProfile effectiveLlmProfile(UUID userId, UUID workspaceId) {
+        for (String layer : List.of("workspace", "user", "instance")) {
+            if ("workspace".equals(layer) && workspaceId == null) {
+                continue;
+            }
+            if ("user".equals(layer) && userId == null) {
+                continue;
+            }
+            Optional<ConfigEntity> row = findExisting(
+                    layer, "llm-provider", "profile", userId, workspaceId);
+            if (row.isPresent()) {
+                String raw = row.get().getConfigValue();
+                if (raw != null && !raw.isBlank()) {
+                    return new EffectiveLlmProfile(parseLlmProfile(raw), layer);
+                }
+            }
+        }
+        return new EffectiveLlmProfile(null, null);
+    }
+
+    /**
+     * Resolve the effective profile to a concrete usable connection in the
+     * consumer scope (decision #11/#12): the same-key workspace connection wins
+     * when usable, otherwise the same-key user connection. A profile that
+     * cannot be resolved fails with LLM_PROFILE_CONFLICT instead of silently
+     * falling back to a lower layer.
+     */
+    public ResolvedLlmProfile resolveLlmProfile(UUID userId, UUID workspaceId) {
+        EffectiveLlmProfile effective = effectiveLlmProfile(userId, workspaceId);
+        if (effective.profile() == null) {
+            return null;
+        }
+        LlmProfile profile = effective.profile();
+        ProviderConnection connection = workspaceId == null ? null
+                : providerConnectionService.findReadyByKey(
+                        ProviderConnection.OWNER_WORKSPACE, workspaceId.toString(),
+                        profile.providerId(), profile.connectionKey()).orElse(null);
+        if (connection == null && userId != null) {
+            connection = providerConnectionService.findReadyByKey(
+                    ProviderConnection.OWNER_USER, userId.toString(),
+                    profile.providerId(), profile.connectionKey()).orElse(null);
+        }
+        if (connection == null) {
+            throw new CpApiException(org.springframework.http.HttpStatus.CONFLICT,
+                    "LLM_PROFILE_CONFLICT",
+                    "No usable provider connection matches the profile");
+        }
+        return new ResolvedLlmProfile(
+                profile.providerId(), profile.connectionKey(), profile.model(),
+                connection.getId().toString(), connection.getOwnerType(), connection.getOwnerId(),
+                connection.getRevision(), effective.profileScope());
     }
 
     public static class ConfigOwnershipException extends IllegalArgumentException {

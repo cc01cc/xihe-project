@@ -218,8 +218,13 @@ describe("ModelPopover", () => {
         sessionStore.updateSession(sessionStore.currentSessionId!, { title: "Default model" });
         configStore.$patch({
             mergedConfig: {
-                "llm-provider": { defaultProvider: "openai" },
-                "user-preference": { defaultModel: "gpt-4o" },
+                "llm-provider": {
+                    profile: JSON.stringify({
+                        providerId: "openai",
+                        connectionKey: "default",
+                        model: "gpt-4o",
+                    }),
+                },
             },
         });
         configStore.modelCache = readyModelCache({ openai: ["gpt-4o"] });

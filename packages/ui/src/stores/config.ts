@@ -1,9 +1,10 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import { useLocalStorage } from "@vueuse/core";
-import { getProviderInfo, type ModelCache } from "../types/provider";
+import { type ModelCache } from "../types/provider";
 import type { SessionModelBinding, ModelFavorite } from "../types";
 import { request } from "../composables/api";
+import { parseLlmProfileValue } from "../services/llmProviderProfile";
 
 export type ConfigLayer = "instance" | "workspace" | "user";
 
@@ -286,24 +287,12 @@ export const useConfigStore = defineStore("config", () => {
             return sessionBinding;
         }
 
-        const llmProvider = mergedConfig.value["llm-provider"] ?? {};
-
-        // PLAN-0307 decision #16/#37: model parameters moved to llm-provider.
-        const defaultModel = llmProvider.defaultModel,
-            defaultProvider = llmProvider.defaultProvider;
-
-        if (defaultModel) {
-            const provider = defaultProvider || findProviderForModel(defaultModel);
-            if (provider && isChatModelAvailable(provider, defaultModel)) {
-                return { provider, model: defaultModel };
-            }
-        }
-
-        if (defaultProvider) {
-            const info = getProviderInfo(defaultProvider);
-            if (info && isChatModelAvailable(defaultProvider, info.defaultModel)) {
-                return { provider: defaultProvider, model: info.defaultModel };
-            }
+        // PLAN-0504: the default identity is the whole resolved profile unit.
+        // With no profile there is no implicit fallback model (decision #10) —
+        // callers prompt for an explicit selection instead.
+        const profile = parseLlmProfileValue(mergedConfig.value["llm-provider"]?.profile);
+        if (profile && isChatModelAvailable(profile.providerId, profile.model)) {
+            return { provider: profile.providerId, model: profile.model };
         }
 
         return undefined;

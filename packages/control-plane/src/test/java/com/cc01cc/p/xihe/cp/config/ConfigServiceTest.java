@@ -68,30 +68,32 @@ class ConfigServiceTest {
 
     @Test
     void resolve_workspaceOverridesUserOverridesInstance() {
+        // PLAN-0504: llm-provider identity moved to the profile unit; the
+        // generic per-key resolution chain still applies to the kept keys.
         configService.putLayer("instance", "llm-provider",
-            Map.of("defaultModel", "instance-model"), "admin", null, null);
+            Map.of("temperature", "0.1"), "admin", null, null);
         configService.putLayer("user", "llm-provider",
-            Map.of("defaultModel", "user-model"), "user", userA, null);
+            Map.of("temperature", "0.2"), "user", userA, null);
         configService.putLayer("workspace", "llm-provider",
-            Map.of("defaultModel", "workspace-model"), "user", null, wsA);
+            Map.of("temperature", "0.3"), "user", null, wsA);
 
-        assertEquals("workspace-model",
-            configService.resolveDomain("llm-provider", userA, wsA).get("defaultModel"));
-        assertEquals("user-model",
-            configService.resolveDomain("llm-provider", userA, null).get("defaultModel"));
-        assertEquals("instance-model",
-            configService.resolveDomain("llm-provider", null, null).get("defaultModel"));
+        assertEquals("0.3",
+            configService.resolveDomain("llm-provider", userA, wsA).get("temperature"));
+        assertEquals("0.2",
+            configService.resolveDomain("llm-provider", userA, null).get("temperature"));
+        assertEquals("0.1",
+            configService.resolveDomain("llm-provider", null, null).get("temperature"));
     }
 
     @Test
     void resolve_userLayerIsIsolatedByUserId() {
         configService.putLayer("user", "llm-provider",
-            Map.of("defaultModel", "model-a"), "user", userA, null);
+            Map.of("temperature", "0.1"), "user", userA, null);
         configService.putLayer("user", "llm-provider",
-            Map.of("defaultModel", "model-b"), "user", userB, null);
+            Map.of("temperature", "0.2"), "user", userB, null);
 
-        assertEquals("model-a", configService.resolveDomain("llm-provider", userA, null).get("defaultModel"));
-        assertEquals("model-b", configService.resolveDomain("llm-provider", userB, null).get("defaultModel"));
+        assertEquals("0.1", configService.resolveDomain("llm-provider", userA, null).get("temperature"));
+        assertEquals("0.2", configService.resolveDomain("llm-provider", userB, null).get("temperature"));
     }
 
     @Test
@@ -236,14 +238,14 @@ class ConfigServiceTest {
 
     @Test
     void putLayer_createsAuditEntryWithNewLayerValue() {
-        configService.putLayer("user", "llm-provider",
-            Map.of("defaultModel", "m"), "tester", userA, null);
+        configService.putLayer("instance", "llm-provider",
+            Map.of("maxTokens", "8192"), "tester", null, null);
 
         List<ConfigAuditEntity> audits = auditRepo.findAll();
         assertFalse(audits.isEmpty());
         ConfigAuditEntity audit = audits.get(audits.size() - 1);
-        assertEquals("user", audit.getLayer());
-        assertEquals("m", audit.getNewValue());
+        assertEquals("instance", audit.getLayer());
+        assertEquals("8192", audit.getNewValue());
         assertEquals("tester", audit.getChangedBy());
     }
 
@@ -276,12 +278,12 @@ class ConfigServiceTest {
         // PLAN-0307 T2.12 (decision #20): import semantics = per-domain merge;
         // a second import updates only the keys it carries.
         configService.importJsonc(
-            "{\"llm-provider\":{\"defaultModel\":\"model-one\",\"maxTokens\":3000}}", "instance", null, null);
+            "{\"llm-provider\":{\"temperature\":0.5,\"maxTokens\":3000}}", "instance", null, null);
         configService.importJsonc(
-            "{\"llm-provider\":{\"defaultModel\":\"model-two\"}}", "instance", null, null);
+            "{\"llm-provider\":{\"temperature\":0.7}}", "instance", null, null);
 
         Map<String, String> entries = configService.layerEntries("instance", "llm-provider", null, null);
-        assertEquals("model-two", entries.get("defaultModel"));
+        assertEquals("0.7", entries.get("temperature"));
         assertEquals("3000", entries.get("maxTokens"));
     }
 
@@ -336,9 +338,9 @@ class ConfigServiceTest {
     @Test
     void overrides_returnsExplicitLayerRowsPerDomain() {
         configService.putLayer("instance", "llm-provider",
-            Map.of("defaultModel", "instance-model"), "admin", null, null);
+            Map.of("maxTokens", "8192"), "admin", null, null);
         configService.putLayer("user", "llm-provider",
-            Map.of("defaultModel", "mimo-v2.5"), "user", userA, null);
+            Map.of("temperature", "0.5"), "user", userA, null);
         configService.putLayer("user", "agent-profile",
             Map.of("userName", "Alice"), "user", userA, null);
         configService.putLayer("workspace", "llm-provider",
@@ -346,7 +348,7 @@ class ConfigServiceTest {
 
         Map<String, Map<String, String>> userOverrides = configService.overrides(
             "user", List.of("llm-provider", "agent-profile"), userA, wsA);
-        assertEquals(Map.of("defaultModel", "mimo-v2.5"), userOverrides.get("llm-provider"));
+        assertEquals(Map.of("temperature", "0.5"), userOverrides.get("llm-provider"));
         assertEquals(Map.of("userName", "Alice"), userOverrides.get("agent-profile"));
 
         Map<String, Map<String, String>> workspaceOverrides = configService.overrides(
@@ -358,9 +360,9 @@ class ConfigServiceTest {
     @Test
     void overrides_areScopedByUserAndWorkspace() {
         configService.putLayer("user", "llm-provider",
-            Map.of("defaultModel", "user-a-model"), "user", userA, null);
+            Map.of("temperature", "0.1"), "user", userA, null);
         configService.putLayer("workspace", "llm-provider",
-            Map.of("defaultModel", "ws-a-model"), "user", userA, wsA);
+            Map.of("temperature", "0.2"), "user", userA, wsA);
 
         assertTrue(configService.overrides(
             "user", List.of("llm-provider"), userB, wsA).isEmpty());
@@ -383,17 +385,18 @@ class ConfigServiceTest {
     }
 
     // ------------------------------------------------------------------
-    // PLAN-0307 T2.24 (review P1-5): provider readiness via provider_connections
+    // PLAN-0504: llm-provider profile — shape / visibility / READY / clear /
+    // legacy-key rejection / effective resolution / conflict
     // ------------------------------------------------------------------
 
     private void saveConnection(String ownerType, String ownerId, String providerId,
-                                boolean enabled, String status) {
+                                String connectionKey, boolean enabled, String status) {
         ProviderConnection connection = new ProviderConnection();
         connection.setId(UUID.randomUUID());
         connection.setOwnerType(ownerType);
         connection.setOwnerId(ownerId);
         connection.setProviderId(providerId);
-        connection.setConnectionKey("default");
+        connection.setConnectionKey(connectionKey);
         connection.setApiTypeId("xiaomi".equals(providerId)
                 ? "mimo-responses" : "openai-chat-completions");
         connection.setApiTypeVersion(1);
@@ -404,63 +407,226 @@ class ConfigServiceTest {
         providerConnections.save(connection);
     }
 
-    @Test
-    void putLayer_userDefaultProviderRejectedWithoutReadyConnection() {
-        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
-            configService.putLayer("user", "llm-provider",
-                Map.of("defaultProvider", "deepseek"), "user", userA, null));
+    private void saveConnection(String ownerType, String ownerId, String providerId,
+                                boolean enabled, String status) {
+        saveConnection(ownerType, ownerId, providerId, "default", enabled, status);
+    }
 
-        assertTrue(error.getMessage().contains("No ready provider connection for: deepseek"));
+    private static String profile(String providerId, String connectionKey, String model) {
+        return "{\"providerId\":\"" + providerId + "\",\"connectionKey\":\""
+            + connectionKey + "\",\"model\":\"" + model + "\"}";
     }
 
     @Test
-    void putLayer_userDefaultProviderRejectedWhenConnectionNotReady() {
+    void putLayer_llmProfileRejectsPartialProfile() {
+        // A missing field fails schema validation first (400 INVALID_REQUEST).
+        IllegalArgumentException schemaError = assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "llm-provider",
+                Map.of("profile", "{\"providerId\":\"deepseek\"}"), "admin", null, null));
+        assertTrue(schemaError.getMessage().contains("Schema validation failed"));
+
+        // A blank field passes the schema but is rejected by the profile parser.
+        CpApiException parseError = assertThrows(CpApiException.class, () ->
+            configService.putLayer("instance", "llm-provider",
+                Map.of("profile",
+                    "{\"providerId\":\"\",\"connectionKey\":\"default\",\"model\":\"m\"}"),
+                "admin", null, null));
+
+        assertEquals("INVALID_REQUEST", parseError.getCode());
+        assertTrue(parseError.getMessage().contains("complete providerId/connectionKey/model unit"));
+    }
+
+    @Test
+    void putLayer_llmProfileRejectsExtraFields() {
+        assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "llm-provider",
+                Map.of("profile",
+                    "{\"providerId\":\"deepseek\",\"connectionKey\":\"default\",\"model\":\"m\",\"extra\":\"x\"}"),
+                "admin", null, null));
+    }
+
+    @Test
+    void putLayer_llmProfileUserLayerRejectedWithoutReadyConnection() {
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("user", "llm-provider",
+                Map.of("profile", profile("deepseek", "default", "deepseek-chat")),
+                "user", userA, null));
+
+        assertTrue(error.getMessage().contains(
+            "No ready provider connection for profile: deepseek/default"));
+    }
+
+    @Test
+    void putLayer_llmProfileUserLayerRejectedWhenConnectionNotReady() {
         saveConnection("USER", userA.toString(), "deepseek", true, "VERIFYING");
         saveConnection("USER", userA.toString(), "openai", false, "READY");
 
         assertThrows(IllegalArgumentException.class, () ->
             configService.putLayer("user", "llm-provider",
-                Map.of("defaultProvider", "deepseek"), "user", userA, null));
+                Map.of("profile", profile("deepseek", "default", "deepseek-chat")),
+                "user", userA, null));
         assertThrows(IllegalArgumentException.class, () ->
             configService.putLayer("user", "llm-provider",
-                Map.of("defaultProvider", "openai"), "user", userA, null));
+                Map.of("profile", profile("openai", "default", "gpt-4o")),
+                "user", userA, null));
     }
 
     @Test
-    void putLayer_userDefaultProviderAcceptedWithReadyUserConnection() {
+    void putLayer_llmProfileUserLayerRejectedWhenProviderMismatch() {
+        // The ready connection exists for openai; a deepseek profile must not
+        // borrow it (same connectionKey, different provider).
+        saveConnection("USER", userA.toString(), "openai", "default", true, "READY");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("user", "llm-provider",
+                Map.of("profile", profile("deepseek", "default", "deepseek-chat")),
+                "user", userA, null));
+
+        assertTrue(error.getMessage().contains(
+            "No ready provider connection for profile: deepseek/default"));
+    }
+
+    @Test
+    void putLayer_llmProfileUserLayerAcceptedWithReadyUserConnection() {
         saveConnection("USER", userA.toString(), "deepseek", true, "READY");
 
         configService.putLayer("user", "llm-provider",
-            Map.of("defaultProvider", "deepseek"), "user", userA, null);
+            Map.of("profile", profile("deepseek", "default", "deepseek-chat")),
+            "user", userA, null);
 
-        assertEquals("deepseek",
-            configService.layerEntries("user", "llm-provider", userA, null).get("defaultProvider"));
+        assertEquals(profile("deepseek", "default", "deepseek-chat"),
+            configService.layerEntries("user", "llm-provider", userA, null).get("profile"));
     }
 
     @Test
-    void putLayer_workspaceDefaultProviderAcceptedWithReadyWorkspaceConnection() {
-        saveConnection("WORKSPACE", wsA.toString(), "xiaomi", true, "READY");
+    void putLayer_llmProfileWorkspaceLayerAcceptedWithReadyWorkspaceConnection() {
+        saveConnection("WORKSPACE", wsA.toString(), "xiaomi", "default", true, "READY");
 
         configService.putLayer("workspace", "llm-provider",
-            Map.of("defaultProvider", "xiaomi"), "user", userA, wsA);
+            Map.of("profile", profile("xiaomi", "default", "mimo-v2.5")),
+            "user", userA, wsA);
 
-        assertEquals("xiaomi",
-            configService.layerEntries("workspace", "llm-provider", null, wsA).get("defaultProvider"));
+        assertEquals(profile("xiaomi", "default", "mimo-v2.5"),
+            configService.layerEntries("workspace", "llm-provider", null, wsA).get("profile"));
     }
 
     @Test
-    void putLayer_instanceDefaultProviderStaysContextFree() {
-        // No user/workspace context exists at the instance layer; credentials are
-        // per user/workspace under decision #37, so no readiness gate applies.
+    void putLayer_llmProfileInstanceStaysContextFree() {
+        // Decision #11: the instance layer allows a profile without a
+        // connection check; the consumer scope resolves the connection.
         configService.putLayer("instance", "llm-provider",
-            Map.of("defaultProvider", "deepseek"), "admin", null, null);
+            Map.of("profile", profile("deepseek", "default", "deepseek-chat")),
+            "admin", null, null);
 
-        assertEquals("deepseek",
-            configService.layerEntries("instance", "llm-provider", null, null).get("defaultProvider"));
+        assertEquals(profile("deepseek", "default", "deepseek-chat"),
+            configService.layerEntries("instance", "llm-provider", null, null).get("profile"));
+    }
+
+    @Test
+    void putLayer_llmProfileEmptyValueClearsLayerToInherit() {
+        saveConnection("USER", userA.toString(), "openai", true, "READY");
+        configService.putLayer("instance", "llm-provider",
+            Map.of("profile", profile("deepseek", "default", "deepseek-chat")),
+            "admin", null, null);
+        configService.putLayer("user", "llm-provider",
+            Map.of("profile", profile("openai", "default", "gpt-4o")),
+            "user", userA, null);
+
+        configService.putLayer("user", "llm-provider", Map.of("profile", ""), "user", userA, null);
+
+        assertTrue(configService.layerEntries("user", "llm-provider", userA, null).isEmpty(),
+            "an empty profile PUT must remove the layer row so the layer inherits again");
+        ConfigService.EffectiveLlmProfile effective =
+            configService.effectiveLlmProfile(userA, null);
+        assertEquals("deepseek", effective.profile().providerId());
+        assertEquals("instance", effective.profileScope());
+    }
+
+    @Test
+    void putLayer_llmLegacyKeysRejectedBySchema() {
+        for (String legacy : List.of("defaultProvider", "defaultModel", "openaiModel",
+                "openaiApiBase", "baseUrl", "xiaomiModel", "xiaomiApiBase")) {
+            IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
+                configService.putLayer("instance", "llm-provider",
+                    Map.of(legacy, "value"), "admin", null, null),
+                "legacy key must be rejected: " + legacy);
+            assertTrue(error.getMessage().contains("Schema validation failed"),
+                "legacy key must fail schema validation: " + legacy);
+        }
+    }
+
+    @Test
+    void effectiveLlmProfile_workspaceWinsWholeThenUserThenInstance() {
+        saveConnection("USER", userA.toString(), "openai", true, "READY");
+        saveConnection("WORKSPACE", wsA.toString(), "xiaomi", true, "READY");
+        configService.putLayer("instance", "llm-provider",
+            Map.of("profile", profile("deepseek", "default", "instance-model")),
+            "admin", null, null);
+        configService.putLayer("user", "llm-provider",
+            Map.of("profile", profile("openai", "default", "user-model")),
+            "user", userA, null);
+        configService.putLayer("workspace", "llm-provider",
+            Map.of("profile", profile("xiaomi", "default", "workspace-model")),
+            "user", null, wsA);
+
+        ConfigService.EffectiveLlmProfile effective =
+            configService.effectiveLlmProfile(userA, wsA);
+        assertEquals("xiaomi", effective.profile().providerId());
+        assertEquals("workspace", effective.profileScope());
+
+        effective = configService.effectiveLlmProfile(userA, null);
+        assertEquals("openai", effective.profile().providerId());
+        assertEquals("user", effective.profileScope());
+
+        effective = configService.effectiveLlmProfile(null, null);
+        assertEquals("deepseek", effective.profile().providerId());
+        assertEquals("instance", effective.profileScope());
+
+        effective = configService.effectiveLlmProfile(userB, null);
+        assertEquals("deepseek", effective.profile().providerId());
+    }
+
+    @Test
+    void effectiveLlmProfile_noProfileAnywhereIsExplicitlyEmpty() {
+        ConfigService.EffectiveLlmProfile effective =
+            configService.effectiveLlmProfile(userA, wsA);
+
+        assertNull(effective.profile());
+        assertNull(effective.profileScope());
+    }
+
+    @Test
+    void resolveLlmProfile_workspaceConnectionWinsThenUser() {
+        saveConnection("USER", userA.toString(), "deepseek", "default", true, "READY");
+        saveConnection("WORKSPACE", wsA.toString(), "deepseek", "default", true, "READY");
+        configService.putLayer("user", "llm-provider",
+            Map.of("profile", profile("deepseek", "default", "deepseek-chat")),
+            "user", userA, null);
+
+        ConfigService.ResolvedLlmProfile resolved =
+            configService.resolveLlmProfile(userA, wsA);
+        assertEquals("WORKSPACE", resolved.connectionOwnerType());
+        assertEquals(wsA.toString(), resolved.connectionOwnerId());
+
+        resolved = configService.resolveLlmProfile(userA, null);
+        assertEquals("USER", resolved.connectionOwnerType());
+        assertEquals(userA.toString(), resolved.connectionOwnerId());
+    }
+
+    @Test
+    void resolveLlmProfile_conflictWhenConnectionMissing() {
+        configService.putLayer("instance", "llm-provider",
+            Map.of("profile", profile("deepseek", "default", "deepseek-chat")),
+            "admin", null, null);
+
+        CpApiException error = assertThrows(CpApiException.class, () ->
+            configService.resolveLlmProfile(userA, wsA));
+
+        assertEquals("LLM_PROFILE_CONFLICT", error.getCode());
     }
 
     // ------------------------------------------------------------------
-    // PLAN-0503 T1.1: catalog-derived provider acceptance
+    // PLAN-0503 T1.1: catalog-derived provider acceptance (now on profile.providerId)
     // ------------------------------------------------------------------
 
     @Test
@@ -468,10 +634,11 @@ class ConfigServiceTest {
         // The accept set is the CP provider catalog, so a non-builtin catalog
         // provider (openrouter) passes instance-layer validation.
         configService.putLayer("instance", "llm-provider",
-            Map.of("defaultProvider", "openrouter"), "admin", null, null);
+            Map.of("profile", profile("openrouter", "default", "some-model")),
+            "admin", null, null);
 
-        assertEquals("openrouter",
-            configService.layerEntries("instance", "llm-provider", null, null).get("defaultProvider"));
+        assertEquals(profile("openrouter", "default", "some-model"),
+            configService.layerEntries("instance", "llm-provider", null, null).get("profile"));
     }
 
     @Test
@@ -480,9 +647,10 @@ class ConfigServiceTest {
         // dashscope-qwen) and must be rejected after the single-source switch.
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
             configService.putLayer("instance", "llm-provider",
-                Map.of("defaultProvider", "dashscope"), "admin", null, null));
+                Map.of("profile", profile("dashscope", "default", "some-model")),
+                "admin", null, null));
 
-        assertTrue(error.getMessage().contains("defaultProvider is unsupported: dashscope"));
+        assertTrue(error.getMessage().contains("profile.providerId is unsupported: dashscope"));
     }
 
     @Test
@@ -490,15 +658,18 @@ class ConfigServiceTest {
         // Catalog membership does not bypass the user-layer readiness gate.
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
             configService.putLayer("user", "llm-provider",
-                Map.of("defaultProvider", "openrouter"), "user", userA, null));
-        assertTrue(error.getMessage().contains("No ready provider connection for: openrouter"));
+                Map.of("profile", profile("openrouter", "default", "some-model")),
+                "user", userA, null));
+        assertTrue(error.getMessage().contains(
+            "No ready provider connection for profile: openrouter/default"));
 
         saveConnection("USER", userA.toString(), "openrouter", true, "READY");
         configService.putLayer("user", "llm-provider",
-            Map.of("defaultProvider", "openrouter"), "user", userA, null);
+            Map.of("profile", profile("openrouter", "default", "some-model")),
+            "user", userA, null);
 
-        assertEquals("openrouter",
-            configService.layerEntries("user", "llm-provider", userA, null).get("defaultProvider"));
+        assertEquals(profile("openrouter", "default", "some-model"),
+            configService.layerEntries("user", "llm-provider", userA, null).get("profile"));
     }
 
     // ------------------------------------------------------------------

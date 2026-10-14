@@ -339,7 +339,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
         UUID uid = UUID.fromString(userId);
         UUID wid = UUID.fromString(workspaceId);
         configService.putLayer("user", "llm-provider",
-                Map.of("defaultModel", "mimo-v2.5"), "test", uid, null);
+                Map.of("temperature", "0.5"), "test", uid, null);
         configService.putLayer("user", "agent-profile",
                 Map.of("userName", "Alice"), "test", uid, null);
         configService.putLayer("user", "rag",
@@ -380,7 +380,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
 
         wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/agent/chat"))
                 .withRequestBody(matchingJsonPath(
-                        "$.userOverrides['llm-provider'].defaultModel", equalTo("mimo-v2.5")))
+                        "$.userOverrides['llm-provider'].temperature", equalTo("0.5")))
                 .withRequestBody(matchingJsonPath(
                         "$.userOverrides['agent-profile'].userName", equalTo("Alice")))
                 .withRequestBody(matchingJsonPath(
@@ -390,7 +390,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
                 .withRequestBody(matchingJsonPath(
                         "$.workspaceOverrides['agent-runtime'].useRegistry", equalTo("true"))));
 
-        configService.deleteKey("user", "llm-provider", "defaultModel", "test", uid, null);
+        configService.deleteKey("user", "llm-provider", "temperature", "test", uid, null);
         configService.deleteKey("user", "agent-profile", "userName", "test", uid, null);
         configService.deleteKey("user", "rag", "chunkSize", "test", uid, null);
         configService.deleteKey("workspace", "llm-provider", "temperature", "test", uid, wid);

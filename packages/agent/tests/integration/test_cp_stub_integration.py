@@ -31,8 +31,8 @@ class TestConfigClientStubIntegration:
                     200,
                     json=_effective(
                         {
-                            "defaultProvider": "openai",
-                            "baseUrl": "https://api.openai.com/v1",
+                            "profile": '{"providerId":"openai","connectionKey":"default","model":"gpt-4o"}',
+                            "temperature": "0.5",
                         }
                     ),
                 )
@@ -43,8 +43,10 @@ class TestConfigClientStubIntegration:
         client = ConfigClient(cp_url="http://cp:12631", api_token="test-token")
         await client.sync()
 
-        assert client.get("llm-provider", "defaultProvider") == "openai"
-        assert client.get("llm-provider", "baseUrl") == "https://api.openai.com/v1"
+        assert client.get("llm-provider", "profile") == (
+            '{"providerId":"openai","connectionKey":"default","model":"gpt-4o"}'
+        )
+        assert client.get("llm-provider", "temperature") == "0.5"
 
     async def test_sync_uses_effective_entries_without_layers(self, httpx_mock):
         async def handler(request: httpx.Request) -> httpx.Response:
@@ -52,7 +54,7 @@ class TestConfigClientStubIntegration:
                 return httpx.Response(
                     200,
                     json=_effective(
-                        {"defaultProvider": "openai", "baseUrl": ""},
+                        {"profile": ""},
                         source="workspace",
                     ),
                 )
@@ -63,14 +65,14 @@ class TestConfigClientStubIntegration:
         client = ConfigClient(cp_url="http://cp:12631", api_token="test-token")
         report = await client.sync()
 
-        assert client.get("llm-provider", "defaultProvider") == "openai"
+        assert client.get("llm-provider", "profile") == ""
         assert report["domains"]["llm-provider"]["source"] == "workspace"
         assert report["domains"]["llm-provider"]["revision"] == "rev-1"
 
     async def test_workspace_id_param_forwarded(self, httpx_mock):
         async def handler(request: httpx.Request) -> httpx.Response:
             if re.search(r"/effective/llm-provider", str(request.url)):
-                return httpx.Response(200, json=_effective({"openaiApiKey": "sk-ws"}))
+                return httpx.Response(200, json=_effective({"temperature": "0.5"}))
             return httpx.Response(404)
 
         httpx_mock.add_callback(handler, is_reusable=True)
@@ -111,7 +113,7 @@ class TestConfigClientStubIntegration:
     async def test_auth_header_forwarded(self, httpx_mock):
         async def handler(request: httpx.Request) -> httpx.Response:
             if re.search(r"/effective/llm-provider", str(request.url)):
-                return httpx.Response(200, json=_effective({"openaiApiKey": "sk-test"}))
+                return httpx.Response(200, json=_effective({"temperature": "0.5"}))
             return httpx.Response(404)
 
         httpx_mock.add_callback(handler, is_reusable=True)
@@ -129,7 +131,7 @@ class TestConfigClientStubIntegration:
             if re.search(r"/effective/logging", str(request.url)):
                 return httpx.Response(200, json=_effective({"logLevel": "debug"}))
             if re.search(r"/effective/llm-provider", str(request.url)):
-                return httpx.Response(200, json=_effective({"openaiApiKey": "sk-test"}))
+                return httpx.Response(200, json=_effective({"temperature": "0.5"}))
             return httpx.Response(404)
 
         httpx_mock.add_callback(handler, is_reusable=True)
@@ -138,5 +140,5 @@ class TestConfigClientStubIntegration:
         await client.sync()
 
         assert client._effective_cache.get("logging") == {"logLevel": "debug"}
-        assert client._effective_cache.get("llm-provider") == {"openaiApiKey": "sk-test"}
+        assert client._effective_cache.get("llm-provider") == {"temperature": "0.5"}
         assert client._last_fetch > 0

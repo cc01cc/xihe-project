@@ -1,3 +1,4 @@
+import json
 import os
 from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
@@ -9,6 +10,7 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
 from langchain_litellm import ChatLiteLLM
+from loguru import logger
 from pydantic import BaseModel, PrivateAttr
 
 if TYPE_CHECKING:
@@ -165,32 +167,70 @@ def env_api_key(provider: str) -> str:
     return os.getenv(ENV_PROVIDER_KEY_MAP.get(provider, ""), "") or ""
 
 
-def resolve_provider_base_url(
-    llm_entries: Mapping[str, str],
-    provider: str,
-    fallback: str | None = "",
-) -> str | None:
-    """Shared precedence for a provider endpoint: `{provider}ApiBase` > `baseUrl` > caller fallback."""
-    return llm_entries.get(f"{provider}ApiBase") or llm_entries.get("baseUrl") or fallback
+def parse_llm_profile(raw: str | None) -> dict[str, str] | None:
+    """Parse the whole `llm-provider` profile unit (PLAN-0504).
+
+    Returns the validated ``{providerId, connectionKey, model}`` unit, or
+    ``None`` when absent/blank/malformed. A malformed stored value degrades to
+    "no profile" (readiness is fail-closed and the per-run path never depends
+    on this identity), with a warning that never includes the raw value.
+    """
+    if raw is None or not raw.strip():
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        logger.warning("llm-provider profile is not valid JSON; treating as absent")
+        return None
+    if not isinstance(parsed, dict):
+        logger.warning("llm-provider profile is not an object; treating as absent")
+        return None
+    provider_id = parsed.get("providerId")
+    connection_key = parsed.get("connectionKey")
+    model = parsed.get("model")
+    if not (
+        isinstance(provider_id, str)
+        and provider_id.strip()
+        and isinstance(connection_key, str)
+        and connection_key.strip()
+        and isinstance(model, str)
+        and model.strip()
+    ):
+        logger.warning("llm-provider profile is incomplete; treating as absent")
+        return None
+    return {"providerId": provider_id, "connectionKey": connection_key, "model": model}
 
 
-def fallback_provider_configs(llm_entries: Mapping[str, str]) -> dict[str, dict[str, Any]]:
-    """Offline provider registry: env keys + non-secret `llm-provider` entries.
+def resolve_provider_base_url(provider: str, fallback: str | None = "") -> str | None:
+    """PLAN-0504 decision #9: env-only endpoint precedence.
+
+    The `llm-provider` config domain no longer carries base URLs, so the
+    precedence collapses to ``XIHE_API_BASE`` > caller fallback. Runtime chat
+    requests take their endpoint from the connection grant; this helper only
+    serves the offline/fallback registry (model-directory probing).
+    """
+    return os.getenv("XIHE_API_BASE", "") or fallback
+
+
+def fallback_provider_configs() -> dict[str, dict[str, Any]]:
+    """Offline provider registry: env keys + env-only endpoint (decision #9).
 
     Providers without an env fallback key are absent — under BYOK (decision
     #37) per-run credentials arrive through the provider connection lease.
+    The model stays empty (decision #9): this path only probes the model
+    directory and never picks a default model.
     """
     registry: dict[str, dict[str, Any]] = {}
     for provider, env_name in ENV_PROVIDER_KEY_MAP.items():
         api_key = os.getenv(env_name, "")
         if not api_key:
             continue
-        base_url = resolve_provider_base_url(llm_entries, provider, default_api_base(provider))
+        base_url = resolve_provider_base_url(provider, default_api_base(provider))
         registry[provider] = {
             "provider": provider,
             "apiKey": api_key,
             "baseUrl": base_url,
-            "model": llm_entries.get(f"{provider}Model", ""),
+            "model": "",
         }
     return registry
 
@@ -308,27 +348,29 @@ class LLMConfig(BaseModel):
 
     @classmethod
     def from_entries(cls, entries: Mapping[str, str]) -> "LLMConfig":
-        """Build from `llm-provider` entries (pulled effective or run-merged).
+        """Build from the `llm-provider` effective entries (PLAN-0504).
 
         PLAN-0307 T2.7: per-run overrides are merged into a run-local entry map
         by the caller; this method stays pure and never writes back.
+
+        The only identity source is the whole `profile` unit; the legacy
+        `defaultProvider`/`defaultModel`/`{provider}Model` reads and the
+        config-layer base URLs are retired (no compat). With no profile there
+        is no implicit default — the provider stays empty so readiness is
+        fail-closed (decision #10). The offline env path stays in
+        :meth:`from_env`.
         """
-        provider_str = entries.get("defaultProvider")
-        model = entries.get("defaultModel")
-        if not provider_str:
-            provider_str = _provider_for_model(model) if model else "mock"
+        profile = parse_llm_profile(entries.get("profile"))
+        provider = profile["providerId"] if profile else ""
+        model = profile["model"] if profile else ""
 
-        provider = provider_str
-
-        # PLAN-0307 decision #21: config holds no `*ApiKey`; the env fallback
-        # (offline/dev) is the only instance-level credential source here. The
-        # normal per-run credential path is the provider connection lease.
-        api_key = env_api_key(provider)
-
+        # PLAN-0307 decision #21 / PLAN-0504 decision #9: config holds no
+        # credentials and no base URLs; the env fallback (offline/dev) is the
+        # only non-grant source here. The normal per-run path is the provider
+        # connection lease (grant carries apiKey/baseUrl/model).
+        api_key = env_api_key(provider) if provider else ""
         defaults = PROVIDER_DEFAULTS.get(provider, {})
-        api_base = entries.get(f"{provider}ApiBase") or entries.get("baseUrl") or defaults.get("api_base", "")
-        provider_model = entries.get(f"{provider}Model")
-        model = provider_model or model or defaults.get("model", "")
+        api_base = os.getenv("XIHE_API_BASE", "") or defaults.get("api_base", "")
 
         timeout_str = entries.get("timeout") or "60"
         max_tokens_str = entries.get("maxTokens") or "4096"

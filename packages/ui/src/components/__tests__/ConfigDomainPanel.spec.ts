@@ -16,7 +16,7 @@ const i18n = createI18n({
 
 const schema: DomainField[] = [
     {
-        key: "defaultProvider",
+        key: "mode",
         label: "Provider",
         type: "select",
         options: [
@@ -62,7 +62,7 @@ describe("ConfigDomainPanel", () => {
     it("TC2: fills values from entries", async () => {
         const wrapper = mountPanel({
             entries: {
-                defaultProvider: "deepseek",
+                mode: "deepseek",
                 apiKey: "sk-xxx",
                 model: "gpt-4",
                 maxTokens: "4096",

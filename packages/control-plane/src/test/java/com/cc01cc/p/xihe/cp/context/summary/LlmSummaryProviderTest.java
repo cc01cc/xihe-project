@@ -50,11 +50,32 @@ class LlmSummaryProviderTest {
         when(configService.resolveDomain("context-policy", UUID.fromString(USER_ID), UUID.fromString(WORKSPACE_ID)))
                 .thenReturn(Map.of(
                 "defaults", "{\"summaryProvider\":\"llm\",\"summaryTimeoutMs\":15000,\"pruneWindowChars\":80000}"));
-        when(configService.resolveDomain("llm-provider", UUID.fromString(USER_ID), UUID.fromString(WORKSPACE_ID)))
-                .thenReturn(Map.of(
-                "defaultProvider", "deepseek", "defaultModel", "m1"));
+        // PLAN-0504: the default identity comes from the resolved profile unit
+        // (legacy defaultProvider/defaultModel reads are retired).
+        when(configService.effectiveLlmProfile(UUID.fromString(USER_ID), UUID.fromString(WORKSPACE_ID)))
+                .thenReturn(new ConfigService.EffectiveLlmProfile(
+                        new ConfigService.LlmProfile("deepseek", "default", "m1"), "user"));
         when(constraintExtractor.extract(any(), any(), any())).thenReturn(List.of());
         when(constraintExtractor.renderSection(any(), any(), any())).thenReturn(null);
+    }
+
+    @Test
+    void profileSuppliesProviderAndModelWhenRoutingCarriesNoModel() {
+        // PLAN-0504 V6: the summary path and the UI resolve the same profile;
+        // the session routing only needs to carry the connection.
+        Session session = new Session(WORKSPACE_ID, USER_ID, "t");
+        session.setId(UUID.fromString(SESSION_ID));
+        session.setProviderConnectionId("44444444-4444-4444-4444-444444444444");
+        session.setConnectionRevision(1L);
+        givenSession(session);
+        givenLease();
+        when(agentClient.summarize(any(), anyLong())).thenReturn(new AgentSummarizeClient.Result(
+                "[Goal] profile path", new java.util.HashMap<>(Map.of("source", "real"))));
+
+        SummaryProvider.SummaryResult result = provider.summarize(request());
+
+        assertThat(result.provider()).isEqualTo("llm");
+        assertThat(result.model()).isEqualTo("deepseek/m1");
     }
 
     @Test

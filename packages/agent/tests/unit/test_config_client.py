@@ -74,8 +74,8 @@ class TestConfigClientGet:
         assert client.get("logging", "missingKey") is None
 
     def test_get_empty_string_is_kept(self, client):
-        client._effective_cache["llm-provider"] = {"openaiApiKey": ""}
-        assert client.get("llm-provider", "openaiApiKey") == ""
+        client._effective_cache["llm-provider"] = {"temperature": ""}
+        assert client.get("llm-provider", "temperature") == ""
 
 
 class TestConfigClientGetDomain:
@@ -83,12 +83,12 @@ class TestConfigClientGetDomain:
 
     def test_get_domain_returns_entries(self, client):
         client._effective_cache["llm-provider"] = {
-            "defaultProvider": "xiaomi",
-            "xiaomiModel": "mimo-v2.5",
+            "profile": '{"providerId":"xiaomi","connectionKey":"default","model":"mimo-v2.5"}',
+            "temperature": "0.5",
         }
         assert client.get_domain("llm-provider") == {
-            "defaultProvider": "xiaomi",
-            "xiaomiModel": "mimo-v2.5",
+            "profile": '{"providerId":"xiaomi","connectionKey":"default","model":"mimo-v2.5"}',
+            "temperature": "0.5",
         }
 
     def test_get_domain_missing_returns_empty(self, client):
@@ -262,7 +262,7 @@ class TestConfigClientSync:
 
         async def successful_get(url, **kwargs):
             if url.endswith("/effective/llm-provider"):
-                return _mock_response(200, _effective({"openaiApiKey": "sk-first"}))
+                return _mock_response(200, _effective({"temperature": "0.5"}))
             return _mock_response(404)
 
         mock_client.get = successful_get
@@ -279,7 +279,7 @@ class TestConfigClientSync:
         report = await c.sync()
 
         assert report["ok"] is False
-        assert c.get("llm-provider", "openaiApiKey") == "sk-first"
+        assert c.get("llm-provider", "temperature") == "0.5"
         assert c.config_revision == previous_revision
 
     @patch("httpx.AsyncClient")
@@ -290,7 +290,7 @@ class TestConfigClientSync:
 
         async def first_get(url, **kwargs):
             if url.endswith("/effective/llm-provider"):
-                return _mock_response(200, _effective({"defaultModel": "mimo-v2.5"}))
+                return _mock_response(200, _effective({"temperature": "0.5"}))
             if url.endswith("/effective/rag"):
                 return _mock_response(200, _effective({"chunkSize": "512"}, revision="rag-r1"))
             return _mock_response(404)
@@ -302,7 +302,7 @@ class TestConfigClientSync:
 
         async def transient_rag_failure(url, **kwargs):
             if url.endswith("/effective/llm-provider"):
-                return _mock_response(200, _effective({"defaultModel": "mimo-v2.5"}))
+                return _mock_response(200, _effective({"temperature": "0.5"}))
             if url.endswith("/effective/rag"):
                 return _mock_response(500)
             return _mock_response(404)

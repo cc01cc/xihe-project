@@ -26,14 +26,14 @@ describe("useConfigStore", () => {
             localStorage.setItem(
                 "xihe-config-merged",
                 JSON.stringify({
-                    "llm-provider": { defaultProvider: "deepseek" },
-                    "user-preference": { defaultModel: "deepseek-chat" },
+                    "llm-provider": { temperature: "0.5" },
+                    "user-preference": { theme: "dark" },
                 }),
             );
 
             const store = useConfigStore();
-            expect(store.mergedConfig["llm-provider"]?.defaultProvider).toBe("deepseek");
-            expect(store.mergedConfig["user-preference"]?.defaultModel).toBe("deepseek-chat");
+            expect(store.mergedConfig["llm-provider"]?.temperature).toBe("0.5");
+            expect(store.mergedConfig["user-preference"]?.theme).toBe("dark");
         });
 
         it("writes mergedConfig to localStorage via loadAllDomains", async () => {
@@ -42,7 +42,7 @@ describe("useConfigStore", () => {
                     domain = url.split("/").pop()?.split("?")[0] ?? "";
                 const payload: Record<string, Record<string, string>> = {
                     logging: { logLevel: "DEBUG" },
-                    "llm-provider": { defaultProvider: "openai", defaultModel: "gpt-4o" },
+                    "llm-provider": { temperature: "0.5" },
                     "context-policy": {},
                     embedding: {},
                     "agent-runtime": {},
@@ -61,8 +61,7 @@ describe("useConfigStore", () => {
             const raw = localStorage.getItem("xihe-config-merged");
             expect(raw).not.toBeNull();
             const parsed = JSON.parse(raw!);
-            expect(parsed["llm-provider"].defaultProvider).toBe("openai");
-            expect(parsed["llm-provider"].defaultModel).toBe("gpt-4o");
+            expect(parsed["llm-provider"].temperature).toBe("0.5");
         });
 
         it("loadAllDomains fetches and updates mergedConfig", async () => {
@@ -73,7 +72,7 @@ describe("useConfigStore", () => {
                 requestedDomains.push(domain);
                 const payload: Record<string, Record<string, string>> = {
                     logging: { logLevel: "DEBUG" },
-                    "llm-provider": { defaultProvider: "deepseek", defaultModel: "deepseek-chat" },
+                    "llm-provider": { temperature: "0.5" },
                     "context-policy": {},
                     embedding: {},
                     "agent-runtime": {},
@@ -90,8 +89,7 @@ describe("useConfigStore", () => {
             await store.loadAllDomains();
 
             expect(store.mergedConfig["logging"]?.logLevel).toBe("DEBUG");
-            expect(store.mergedConfig["llm-provider"]?.defaultProvider).toBe("deepseek");
-            expect(store.mergedConfig["llm-provider"]?.defaultModel).toBe("deepseek-chat");
+            expect(store.mergedConfig["llm-provider"]?.temperature).toBe("0.5");
             expect(store.loading).toBe(false);
             expect(store.error).toBeNull();
             expect(CONFIG_DOMAINS).not.toContain("agent-templates");
@@ -153,7 +151,13 @@ describe("useConfigStore", () => {
             expect(store.isChatModelAvailable("openai", "gpt-4.1", "connection-a")).toBe(false);
             expect(store.isChatModelAvailable("openai", "gpt-4.1", "connection-b")).toBe(true);
             store.mergedConfig = {
-                "llm-provider": { defaultProvider: "openai", defaultModel: "gpt-4o" },
+                "llm-provider": {
+                    profile: JSON.stringify({
+                        providerId: "openai",
+                        connectionKey: "default",
+                        model: "gpt-4o",
+                    }),
+                },
             };
             expect(store.getEffectiveModel("s1")).toEqual({ provider: "openai", model: "gpt-4o" });
             store.setSessionModel("s1", "openai", "gpt-4.1");
@@ -171,53 +175,49 @@ describe("useConfigStore", () => {
             });
         });
 
-        it("falls back to defaultModel + defaultProvider", () => {
+        it("resolves the merged profile unit (PLAN-0504)", () => {
             const store = useConfigStore();
             store.mergedConfig = {
-                "llm-provider": { defaultProvider: "openai", defaultModel: "gpt-4o" },
+                "llm-provider": {
+                    profile: JSON.stringify({
+                        providerId: "openai",
+                        connectionKey: "default",
+                        model: "gpt-4o",
+                    }),
+                },
             };
             seedReadyModel(store, "openai", "gpt-4o");
 
             expect(store.getEffectiveModel("s1")).toEqual({ provider: "openai", model: "gpt-4o" });
         });
 
-        it("uses catalog provider when defaultProvider is absent", () => {
+        it("has no implicit fallback when no profile exists (decision #10)", () => {
             const store = useConfigStore();
             seedReadyModel(store, "deepseek", "deepseek-chat");
-            store.mergedConfig = {
-                "llm-provider": { defaultModel: "deepseek-chat" },
-            };
 
-            expect(store.getEffectiveModel("s1")).toEqual({
-                provider: "deepseek",
-                model: "deepseek-chat",
-            });
+            expect(store.getEffectiveModel("s1")).toBeUndefined();
+
+            // Legacy keys have no compat reads.
+            store.mergedConfig = {
+                "llm-provider": { defaultProvider: "deepseek", defaultModel: "deepseek-chat" },
+            };
+            expect(store.getEffectiveModel("s1")).toBeUndefined();
         });
 
-        it("uses modelCache to resolve provider for defaultModel", () => {
+        it("does not substitute a provider default when the profile model is unavailable", () => {
             const store = useConfigStore();
-            seedReadyModel(store, "xiaomi", "mimo-v2.5");
-            store.mergedConfig = {
-                "llm-provider": { defaultModel: "mimo-v2.5" },
-            };
-
-            expect(store.getEffectiveModel("s1")).toEqual({
-                provider: "xiaomi",
-                model: "mimo-v2.5",
-            });
-        });
-
-        it("falls back to provider defaultModel when only defaultProvider is set", () => {
-            const store = useConfigStore();
-            store.mergedConfig = {
-                "llm-provider": { defaultProvider: "anthropic" },
-            };
             seedReadyModel(store, "anthropic", "claude-sonnet-4-20250514");
+            store.mergedConfig = {
+                "llm-provider": {
+                    profile: JSON.stringify({
+                        providerId: "anthropic",
+                        connectionKey: "default",
+                        model: "gone-model",
+                    }),
+                },
+            };
 
-            expect(store.getEffectiveModel("s1")).toEqual({
-                provider: "anthropic",
-                model: "claude-sonnet-4-20250514",
-            });
+            expect(store.getEffectiveModel("s1")).toBeUndefined();
         });
 
         it("returns undefined when no binding or config exists", () => {
@@ -225,12 +225,18 @@ describe("useConfigStore", () => {
             expect(store.getEffectiveModel("s1")).toBeUndefined();
         });
 
-        it("session binding takes precedence over default config", () => {
+        it("session binding takes precedence over the merged profile", () => {
             const store = useConfigStore();
             seedReadyModel(store, "deepseek", "deepseek-reasoner");
             store.setSessionModel("s1", "deepseek", "deepseek-reasoner");
             store.mergedConfig = {
-                "llm-provider": { defaultProvider: "openai", defaultModel: "gpt-4o" },
+                "llm-provider": {
+                    profile: JSON.stringify({
+                        providerId: "openai",
+                        connectionKey: "default",
+                        model: "gpt-4o",
+                    }),
+                },
             };
 
             expect(store.getEffectiveModel("s1")).toEqual({
@@ -267,7 +273,13 @@ describe("useConfigStore", () => {
             const store = useConfigStore();
             seedReadyModel(store, "openai", "gpt-4o");
             store.mergedConfig = {
-                "llm-provider": { defaultProvider: "openai", defaultModel: "gpt-4o" },
+                "llm-provider": {
+                    profile: JSON.stringify({
+                        providerId: "openai",
+                        connectionKey: "default",
+                        model: "gpt-4o",
+                    }),
+                },
             };
             // Migration writes provider "" when a legacy string binding cannot be
             // attributed; availability is unverifiable, so defaults must win.
@@ -320,7 +332,7 @@ describe("useConfigStore", () => {
     describe("user switch isolation", () => {
         it("clears config, model, session and favorite caches", () => {
             const store = useConfigStore();
-            store.mergedConfig = { "llm-provider": { defaultProvider: "openai" } };
+            store.mergedConfig = { "llm-provider": { temperature: "0.5" } };
             store.modelCache = {
                 models: { openai: ["gpt-4o"] },
                 providers: {

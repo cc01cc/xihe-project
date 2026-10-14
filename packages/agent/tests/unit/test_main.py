@@ -79,6 +79,22 @@ def test_derive_llm_ready_is_ready_without_instance_fallback_credentials():
     assert verified_at is None
 
 
+def test_derive_llm_ready_fails_closed_without_profile():
+    """PLAN-0504 decision #10: no profile → no implicit default → not ready.
+
+    `LLMConfig.from_entries` with no profile leaves the provider empty; that
+    must map to `missing_credentials` / LLM_NOT_CONFIGURED, never mock=ready.
+    """
+    config = LLMConfig(provider="", model="")
+    catalog = {"providers": {}}
+
+    readiness, verified_at = _derive_llm_ready(_report("ok"), catalog, config)
+
+    assert readiness == "missing_credentials"
+    assert _llm_readiness_error_code(readiness) == "LLM_NOT_CONFIGURED"
+    assert verified_at is None
+
+
 def test_instance_fallback_credentials_requires_key_or_mock():
     assert _has_instance_fallback_credentials(LLMConfig(provider="mock")) is True
     assert _has_instance_fallback_credentials(LLMConfig(provider="xiaomi", api_key="sk-env")) is True

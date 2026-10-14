@@ -137,7 +137,9 @@ const realXiaomiKey = process.env.XIHE_E2E_REAL_XIAOMI_KEY ?? ''
 // mode is per-invocation; only the two real-lane cases read it and no other
 // spec is affected.
 const realRoute = process.env.XIHE_E2E_REAL_ROUTE ?? 'native'
-const realOpenAiBase = process.env.XIHE_E2E_REAL_OPENAI_BASE ?? 'https://api.xiaomimimo.com/v1'
+// PLAN-0504: base URLs no longer travel through config; the real-lane specs
+// read XIHE_E2E_REAL_OPENAI_BASE from the inherited env directly when they
+// create the connection fixture, so the runner keeps no constant for it.
 const fakeMcpAccessToken = randomPassword(24)
 let e2eAdminPassword = randomPassword(24)
 
@@ -731,18 +733,11 @@ async function configureFakeLlm() {
     // PLAN-0372 decision #A: the default native route (tools rejected by
     // design). PLAN-0372 decision #B: `openai-compat` reuses the same MiMo
     // endpoint/key through the OpenAI-compatible provider (tools work).
+    // PLAN-0504: the default identity is the whole profile unit; base URLs no
+    // longer travel through config (connection grants / env only).
     const llmProvider = realRoute === 'openai-compat'
-      ? {
-          defaultProvider: 'openai',
-          openaiModel: 'mimo-v2.5',
-          openaiApiBase: realOpenAiBase,
-          defaultModel: 'mimo-v2.5',
-        }
-      : {
-          defaultProvider: 'xiaomi',
-          xiaomiModel: 'mimo-v2.5',
-          defaultModel: 'mimo-v2.5',
-        }
+      ? { profile: { providerId: 'openai', connectionKey: 'default', model: 'mimo-v2.5' } }
+      : { profile: { providerId: 'xiaomi', connectionKey: 'default', model: 'mimo-v2.5' } }
     const imported = await fetch(`${cpBaseUrl}/api/v1/config/import`, {
       method: 'POST',
       headers: {
@@ -758,27 +753,28 @@ async function configureFakeLlm() {
     console.log(`[e2e-host] real provider configuration imported route=${realRoute} (key stays in the Agent env only)`)
     return
   }
-  const fakeBase = `http://127.0.0.1:${fakeLlmPort}`
-  // PLAN-0307 decision #21/#37 (BYOK): config layers never hold `*ApiKey` and
-  // `user-preference.defaultModel` moved to `llm-provider`. Instance entries
-  // carry non-secret provider/model/base only; fake credentials reach the Agent
-  // through the env fallback (dev/offline path). `mock`/`missing` intentionally
-  // leave the domain empty so the Agent resolves provider=mock via
-  // `XIHE_LLM_PROVIDER` or fails the per-run credential gate.
-  const config = llmMode === 'missing' || llmMode === 'mock'
+  // PLAN-0504: the default identity is the whole `profile` unit (providerId /
+  // connectionKey / model) at the instance layer (no connection validation).
+  // `mock` writes an explicit mock profile so readiness is genuinely ready
+  // (decision #10 removed the implicit mock default); `missing` keeps the
+  // domain empty and is expected to report not-ready. Fake endpoints are
+  // reached through spec-created connections (`ensureChatBinding`); config
+  // carries no base URLs anymore.
+  const config = llmMode === 'missing'
     ? {}
-    : {
-        'llm-provider': {
-          defaultProvider: 'openai',
-          openaiModel: 'fake-openai',
-          openaiApiBase: `${fakeBase}/openai/v1`,
-          deepseekModel: 'fake-deepseek',
-          deepseekApiBase: `${fakeBase}/deepseek/v1`,
-          defaultModel: 'fake-openai',
-        },
-      }
+    : llmMode === 'mock'
+      ? {
+          'llm-provider': {
+            profile: { providerId: 'openai', connectionKey: 'default', model: 'mock' },
+          },
+        }
+      : {
+          'llm-provider': {
+            profile: { providerId: 'openai', connectionKey: 'default', model: 'fake-openai' },
+          },
+        }
   if (Object.keys(config).length === 0) {
-    console.log(`[e2e-host] llm-provider config skipped mode=${llmMode} (no DB keys; env fallback only)`)
+    console.log(`[e2e-host] llm-provider config skipped mode=${llmMode} (no profile; readiness stays not-ready)`)
     return
   }
   const imported = await fetch(`${cpBaseUrl}/api/v1/config/import`, {
@@ -874,6 +870,15 @@ async function runPlaywright() {
         }
     : {
         XIHE_LLM_PROVIDER: llmMode === 'mock' ? 'mock' : 'openai',
+        // PLAN-0504 decision #9: the offline fallback registry resolves its
+        // endpoint from XIHE_API_BASE; without it the env-keyed providers would
+        // hit the real vendor endpoints and the lane would report
+        // invalid_credentials (config no longer carries base URLs). The fake
+        // LLM routes per-provider under /openai/v1 (as the old config keys
+        // did), so the base carries the openai prefix.
+        ...(llmMode === 'missing' || llmMode === 'mock'
+          ? {}
+          : { XIHE_API_BASE: `http://127.0.0.1:${fakeLlmPort}/openai/v1` }),
         ...(llmMode === 'missing' || llmMode === 'mock'
           ? {}
           : {
@@ -1241,26 +1246,28 @@ async function main() {
 
   if (externalServer) {
     // reuse path: the persistent stack is already up, skip all boot phases.
-    // PLAN-0365 (root cause E): the LLM provider is imported at boot time from
-    // --llm-mode, and the fake-llm fixture only boots in non-mock modes. A
-    // persistent stack booted in mock mode therefore has neither the provider
-    // config nor the fixture process; restore both here so external spec runs
-    // can use a different mode than the boot run.
-    if (llmMode !== 'mock' && !process.env.XIHE_E2E_SKIP_FIXTURES) {
-      // PLAN-0365 (root cause E) + D4: a persistent stack already owns some or
-      // all of the fixtures. Probe every fixture and start only the missing
-      // ones — re-spawning the running OAuth/MCP pair hits EADDRINUSE on the
-      // reused ports and aborts the run before Playwright ever starts.
-      const fixtures = describeFixtures()
-      const missing = []
-      for (const fixture of fixtures) {
-        if (!(await fixtureAlive(fixture.port))) missing.push(fixture.name)
+    // PLAN-0365 (root cause E): the LLM provider config is imported at boot
+    // time from --llm-mode; restore it here so external spec runs can use a
+    // different mode than the boot run. PLAN-0504: every lane (mock included)
+    // imports its profile — the mock lane is no longer implicitly ready.
+    if (!process.env.XIHE_E2E_SKIP_FIXTURES) {
+      if (llmMode !== 'mock') {
+        // PLAN-0365 (root cause E) + D4: a persistent stack already owns some
+        // or all of the fixtures. Probe every fixture and start only the
+        // missing ones — re-spawning the running OAuth/MCP pair hits
+        // EADDRINUSE on the reused ports and aborts the run before Playwright
+        // ever starts.
+        const fixtures = describeFixtures()
+        const missing = []
+        for (const fixture of fixtures) {
+          if (!(await fixtureAlive(fixture.port))) missing.push(fixture.name)
+        }
+        if (missing.length > 0) {
+          console.log(`[e2e-host] reuse: starting missing fixture(s) ${missing.join(', ')}`)
+          await startFixtures(missing)
+        }
       }
-      if (missing.length > 0) {
-        console.log(`[e2e-host] reuse: starting missing fixture(s) ${missing.join(', ')}`)
-        await startFixtures(missing)
-      }
-      if (fixtures.some(({ name }) => name === 'Fake LLM')) await configureFakeLlm()
+      await configureFakeLlm()
     }
   } else {
   // PLAN-294 F.5 L1+L2: parallel boot orchestration. Fixtures and PostgreSQL
@@ -1310,7 +1317,7 @@ async function main() {
             extraEnv: { ...commonCpEnv, XIHE_CP_PORT: cpPort, XIHE_LOG_DIR: e2eLogDir },
             healthUrl: `http://127.0.0.1:${cpPort}/actuator/health`,
           })
-          if (llmMode !== 'mock') await configureFakeLlm()
+          await configureFakeLlm()
         } else {
           const child = spawnCommand('java', ['-jar', cpJar, '--spring.profiles.active=e2e'], {
             cwd: join(projectDir, 'packages', 'control-plane'),
@@ -1336,7 +1343,7 @@ async function main() {
           // PG readiness was already gated by waitPostgresReady in the CP
           // task prologue; just wait for Spring to finish booting.
           await waitForHttp('control-plane', `http://127.0.0.1:${cpPort}/actuator/health`, readinessTimeoutMs, {}, child)
-          if (llmMode !== 'mock') await configureFakeLlm()
+          await configureFakeLlm()
         }
       })(),
       (async () => {
@@ -1368,6 +1375,11 @@ async function main() {
                 : {
                     XIHE_OPENAI_API_KEY: llmMode === 'invalid' ? 'sk-fake-invalid-key' : 'sk-fake-openai-key',
                     XIHE_DEEPSEEK_API_KEY: 'fake-deepseek-key',
+                    // PLAN-0504 decision #9: env-only endpoint for the fallback
+                    // registry (per-provider prefix as the old config keys did);
+                    // without this the env-keyed providers would hit the real
+                    // vendors and the lane would report invalid_credentials.
+                    XIHE_API_BASE: `http://127.0.0.1:${fakeLlmPort}/openai/v1`,
                   }),
           },
           healthUrl: `http://127.0.0.1:${agentPort}/internal/v1/agent/health`,
@@ -1376,7 +1388,11 @@ async function main() {
         // ready; its config sync then 401s and the next re-poll is 30s away.
         // Playwright must not start until the agent actually reports
         // llmReady=ready, or the first chat 503s out of the send window.
-        const agentDeadline = Date.now() + readinessTimeoutMs
+        // PLAN-0504: `missing` intentionally has no profile and stays
+        // not-ready (LLM_NOT_CONFIGURED) — that lane must not burn the full
+        // readiness budget waiting for a state it will never reach.
+        const expectNotReady = llmMode === 'missing'
+        const agentDeadline = Date.now() + (expectNotReady ? 0 : readinessTimeoutMs)
         while (Date.now() < agentDeadline) {
           try {
             const res = await fetch(`http://127.0.0.1:${agentPort}/internal/v1/agent/health`)

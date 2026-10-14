@@ -265,6 +265,11 @@ def _derive_llm_ready(
     required_status: str = llm_domain["status"] if llm_domain else "unknown"
     if required_status in {"unreachable", "unauthorized", "invalid_response"}:
         return "unknown", None
+    if not config.provider:
+        # PLAN-0504 decision #10: no profile (and no explicit env identity) —
+        # no implicit default. Readiness fails closed and maps to
+        # LLM_NOT_CONFIGURED via _llm_readiness_error_code.
+        return "missing_credentials", None
     if config.provider == "mock":
         return "ready", None
 
