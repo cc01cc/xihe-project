@@ -111,12 +111,14 @@ class TestConfigClientWithStub:
     async def test_sync_effective_domains(self, httpx_mock):
         # PLAN-0307：Agent 只消费单份 effective（无 layer 概念）
         httpx_mock.add_callback(lambda request: httpx.Response(200, json={
-            "entries": {"defaultProvider": "openai"}
+            "entries": {"profile": '{"providerId":"openai","connectionKey":"default","model":"gpt-4o"}'}
             if request.url.path.endswith("llm-provider") else {}
         }))
         client = ConfigClient(cp_url="http://localhost:8080", api_token="test")
         await client.sync()
-        assert client.get_domain("llm-provider")["defaultProvider"] == "openai"
+        assert client.get_domain("llm-provider")["profile"] == (
+            '{"providerId":"openai","connectionKey":"default","model":"gpt-4o"}'
+        )
 ```
 
 **Runtime 侧模式**（mockito / wiremock-rs）：

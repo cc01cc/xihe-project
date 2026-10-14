@@ -49,16 +49,7 @@ function readConfigImport() {
   const raw = fs.readFileSync(configImportPath, "utf8");
   const stripped = raw.replace(/^[\s]*\/\/.*$/gm, "");
   try {
-    const parsed = JSON.parse(stripped);
-    const flat = {};
-    for (const [domain, values] of Object.entries(parsed ?? {})) {
-      if (values && typeof values === "object" && !Array.isArray(values)) {
-        for (const [key, value] of Object.entries(values)) {
-          flat[key] = value;
-        }
-      }
-    }
-    return flat;
+    return JSON.parse(stripped);
   } catch {
     return { __parseError: true, raw };
   }
@@ -74,14 +65,39 @@ function resolveMasked(value) {
   return `${value.slice(0, 4)}****${value.slice(-4)}`;
 }
 
+function parseProfileValue(value) {
+  if (!value) {
+    return null;
+  }
+  if (typeof value === "object") {
+    return value;
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
 const env = readEnvChain();
 const configImport = readConfigImport();
-const defaultProvider = configImport?.defaultProvider ?? env.XIHE_LLM_PROVIDER ?? "unknown";
-const deepseekKey = env.XIHE_DEEPSEEK_API_KEY ?? configImport?.deepseekApiKey ?? "";
-const xiaomiKey = env.XIHE_XIAOMI_API_KEY ?? configImport?.xiaomiApiKey ?? "";
+// PLAN-0504: the llm-provider default identity is the whole `profile` unit
+// (providerId/connectionKey/model); legacy defaultProvider/*Model/*ApiBase keys
+// are retired and would be rejected by the CP schema on import.
+const llmProvider = configImport?.["llm-provider"] ?? {};
+const profile = parseProfileValue(llmProvider.profile);
+const profileLabel = profile
+  ? `${profile.providerId ?? "?"}/${profile.connectionKey ?? "?"}/${profile.model ?? "?"}`
+  : "(unset)";
+const deepseekKey = env.XIHE_DEEPSEEK_API_KEY ?? "";
+const xiaomiKey = env.XIHE_XIAOMI_API_KEY ?? "";
 
 console.log("Config source resolution");
-console.log(`  defaultProvider : ${defaultProvider}`);
+console.log(`  defaultProfile  : ${profileLabel}`);
+console.log(`  envProvider     : ${env.XIHE_LLM_PROVIDER ?? "(unset)"}（env 兜底/离线路径）`);
 console.log(`  deepseekKey     : ${resolveMasked(deepseekKey) || "(empty)"}`);
 console.log(`  xiaomiKey       : ${resolveMasked(xiaomiKey) || "(empty)"}`);
 console.log(`  envChain        : ${envChainPaths.filter((p) => fs.existsSync(p)).map((p) => path.basename(p)).join(" + ") || "(none)"}`);

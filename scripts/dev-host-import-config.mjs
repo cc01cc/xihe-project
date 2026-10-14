@@ -164,13 +164,13 @@ async function main() {
     return;
   }
   const llm = body["llm-provider"] ?? {};
+  const profile = llm.profile;
   console.log("[dev-host:import-config] 导入成功：");
   console.log(`  imported         : ${(result.imported ?? []).length}`);
   console.log(`  domains          : ${Object.keys(body).join(", ")}`);
-  console.log(`  defaultProvider  : ${llm.defaultProvider ?? "(unset)"}`);
-  console.log(`  deepseekApiKey   : ${llm.deepseekApiKey ? "present" : "absent"}`);
-  console.log(`  openaiApiKey     : ${llm.openaiApiKey ? "present" : "absent"}`);
-  console.log(`  xiaomiApiKey     : ${llm.xiaomiApiKey ? "present" : "absent"}`);
+  console.log(
+    `  llmProfile       : ${profile ? (typeof profile === "string" ? profile : JSON.stringify(profile)) : "(unset)"}`,
+  );
 }
 
 main().catch((error) => {

@@ -23,7 +23,7 @@ ConfigService 按三层作用域 × 领域（Domain）组织配置；域集合�
 
 | Domain | instance | user | workspace | 备注 |
 |--------|----------|------|-----------|------|
-| `llm-provider` | ✅ | ✅ | ✅ | provider/模型/base URL/采样参数；**无任何 `*ApiKey` 键** |
+| `llm-provider` | ✅ | ✅ | ✅ | `profile`（默认身份整单元）+ 采样参数；**无任何 `*ApiKey` 键、无 base URL 键** |
 | `context-policy` | ✅ | ✅ | ✅ | 压缩策略；结构化值为 JSON 文本 |
 | `embedding` | ✅ | ✅ | ✅ | 整组 profile 对象 `{providerId, connectionKey, model}`（PLAN-0485，细则见 §3b）；固定模型/768 |
 | `rag` | ✅ | ✅ | ✅ | `chunkSize` / `chunkOverlap` / `topK` / `minScore` |
@@ -106,7 +106,7 @@ CLI --set KEY=VALUE（最高，启动日志掩码标注）
 
 **业务域键禁入 env（硬约束）**：业务配置（模型/provider/域参数）以 DB 为唯一权威；env 与 DB 的重合属兜底路径，必须显式暴露（决策 #22）。当前注册表重合键为 `embedding.model ← XIHE_EMBEDDING_MODEL` 与 `job-policy.{defaultTimeoutSecs,maxTimeoutSecs} ← XIHE_JOB_TIMEOUT_{DEFAULT,MAX}_SECS`（后者为装机注入类，PLAN-0373 决策 #8）：命中时 CP resolved/effective 使用 env 值，UI 锁定显示（绕 UI 改 DB 无效），日志记录冲突与胜者。目标态为逐步把业务键移出 `.env*`。
 
-**Agent env 兜底（离线/无租约路径，决策 #40）**：`XIHE_{PROVIDER}_API_KEY`（`openai`/`deepseek`/`xiaomi`/`anthropic`/`dashscope`）与 `llm-provider` 的非密钥 base/model 共同构成无 CP 租约时的兜底；**常规路径是 `provider_connections` 租约**（见 §3）。无租约且无兜底 key 的 run 在 `/chat` fail-closed 返回 503 `LLM_NOT_CONFIGURED`。
+**Agent env 兜底（离线/无租约路径，决策 #40；PLAN-0504 决策 #9 收敛）**：`XIHE_{PROVIDER}_API_KEY`（`openai`/`deepseek`/`xiaomi`/`anthropic`/`dashscope`）与 `XIHE_API_BASE`/`PROVIDER_DEFAULTS.api_base` 构成无 CP 租约时的兜底（fallback registry 不再读 config 层，`model` 留空）；**常规路径是 `provider_connections` 租约**（见 §3）。全层无 `profile` 时 Agent 不再有隐式默认：readiness fail-closed 为 `missing_credentials`（映射 `LLM_NOT_CONFIGURED`，决策 #10）。无租约且无兜底 key 的 run 在 `/chat` fail-closed 返回 503 `LLM_NOT_CONFIGURED`。
 
 **secret 通道归位（决策 #37/T3.7）**：`XIHE_*_API_KEY` 一律标注**离线兜底**语义，常规路径为 CP 加密租约（DB 侧仅存信封密文）；secret 禁止写入入库的 `.env*` 文件（`.env`/`.env.$XIHE_ENV` 仅非敏感占位值），个人本地调试只允许 `.env.local`（gitignore）；**禁止 `.env.prod.local`**——生产配置只来自入库基线或部署注入（IaC/CI secret），本机文件覆盖生产不可复现、不可审计（反模式，加载器不设该层级）。
 
@@ -127,16 +127,21 @@ CLI --set KEY=VALUE（最高，启动日志掩码标注）
 **方式 A：CP API**（运行时修改，立即生效）
 
 ```bash
-# 实例层（ADMIN）：非密钥域配置
+# 实例层（ADMIN）：非密钥域配置（PLAN-0504：默认身份 = 整单元 profile）
 curl -X PUT http://localhost:12631/api/v1/config/instance/llm-provider \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
-  -d '{"defaultProvider": "deepseek", "defaultModel": "deepseek-chat"}'
+  -d '{"profile": {"providerId": "deepseek", "connectionKey": "default", "model": "deepseek-chat"}}'
 
-# 用户层（本人）：个人覆盖
+# 用户层（本人）：个人覆盖（要求本人有同 provider + connectionKey 的 READY 连接）
 curl -X PUT http://localhost:12631/api/v1/config/user/llm-provider \
   -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
-  -d '{"defaultModel": "deepseek-reasoner"}'
+  -d '{"profile": {"providerId": "deepseek", "connectionKey": "default", "model": "deepseek-reasoner"}}'
+
+# 清除本层以继承：空值即删除本层 profile 行
+curl -X PUT http://localhost:12631/api/v1/config/user/llm-provider \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
+  -d '{"profile": ""}'
 
 # 工作区层（owner）：工作区覆盖（workspaceId 查询串或 X-Workspace-Id 头）
 curl -X PUT "http://localhost:12631/api/v1/config/workspace/rag?workspaceId=$WS" \
@@ -144,7 +149,7 @@ curl -X PUT "http://localhost:12631/api/v1/config/workspace/rag?workspaceId=$WS"
   -d '{"topK": "8"}'
 ```
 
-`llm-provider.defaultProvider` 的写时接受集 = CP provider catalog 全量 id（`provider-catalog/providers.json`，经 `ProviderCatalogService.providerIds()` 派生，`GET /api/v1/provider-catalog` 同源）：catalog 增删 provider 无需改代码；catalog 外值以 `defaultProvider is unsupported` 拒绝。instance 层不要求 READY 连接，user/workspace 层要求同 provider 的 READY `provider_connections`。legacy `dashscope` 不在 catalog（catalog id 为 `dashscope-qwen`），写入即被拒（PLAN-0503 决策 #1，无兼容映射）。
+**llm-provider 默认身份（PLAN-0504，决策 #2/#4/#11/#12）**：默认身份是整单元 `profile` = `{providerId, connectionKey, model}`（JSON 字符串或对象），按 workspace > user > instance **首存在层**解析、整单元覆盖、不合并字段；写入必须是完整单元（部分 profile 400 `INVALID_REQUEST`）。`profile.providerId` 的写时接受集 = CP provider catalog 全量 id（`provider-catalog/providers.json`，经 `ProviderCatalogService.providerIds()` 派生，`GET /api/v1/provider-catalog` 同源）：catalog 增删 provider 无需改代码；catalog 外值以 `profile.providerId is unsupported` 拒绝。instance 层不校验连接（运行期由消费方 scope 解析）；user/workspace 层要求**本层可见**、同 provider 且 `connectionKey` 匹配的 READY `provider_connections`。legacy 键（`defaultProvider`/`defaultModel`/`*Model`/`*ApiBase`/`baseUrl`）已退役，写入即被 schema 拒绝（400，无兼容映射）。解析到已删/不可用连接时报 `LLM_PROFILE_CONFLICT`（409），不静默降层。配置页默认模型 = 连接选择 + 模型候选（scoped 目录），见 §3b。
 
 凭证**不写 config 层**（`rejectProviderSecrets` 会以 403 拒绝任何 `*ApiKey`/secret/password/token 类键），统一走 `provider_connections`：
 
@@ -203,7 +208,7 @@ Provider verify 的 ready 只表示 CP 当前 remote `/models` 响应结构有�
 - 层读取边界（`AgentTemplateService.resolveForCreation` fail-closed）：instance 模板仅 ADMIN、user 模板仅本人、workspace 模板仅该成员；禁止跨层列举与 merged-effective 静默覆盖；重复 template/role UUID 或坏引用直接拒绝。UI 读取必须指定 `layer`；该域没有 legacy merged-config 视图，不纳入 `CONFIG_DOMAINS` 通用拉取。
 - 写路径必须独立 `CREATE_TEMPLATE` 并审计 actor/scope/key diff，与 `CREATE_ACCOUNT`（principal 创建）分离；创建/修改模板不创建 principal。读路由 `GET /api/v1/agent-templates` 已开放（层可见性 fail-closed）；写 CRUD 与 `approval-policy.askActionClasses[]` UI 仍由 T3.1b 等 PLAN-0407 V44 canonical action，当前缺 action 一律 fail-closed。契约见 [`spec/agent/principal-workspace-binding.md`](../../../spec/agent/principal-workspace-binding.md)。
 
-## 3b. API Request 模板域与 Embedding profile 域（PLAN-0439/0485）
+## 3b. API Request 模板域、Embedding profile 域与 LLM profile 域（PLAN-0439/0485/0504）
 
 **api-request-templates（PLAN-0439）**：
 
@@ -211,6 +216,13 @@ Provider verify 的 ready 只表示 CP 当前 remote `/models` 响应结构有�
 - 写路径经 `ApiRequestTemplateService.putLayer`（ConfigService 对该域委托）：instance 写仅 ADMIN、user 写仅本人、workspace 写需 workspace OWNER/ADMIN；`connectionId` 必须在同层可见且类型兼容。
 - 发布版本不可变（修改/删除已发布修订 → `409 API_REQUEST_TEMPLATE_REVISION_IMMUTABLE`）；draft 保留非法原文，发布诊断由独立 validator 负责，不自动修复。
 - `templates`/`connectionDefaultTemplates`/`providerModelBindings` 只能按显式层读取（effective 合并被拒，见 `rejectEffectiveContextTemplates`）。
+
+**llm-provider profile（PLAN-0504）**：
+
+- 默认身份为单键 `profile`：整组对象 `{providerId, connectionKey, model}` 的 JSON 字符串；层间不合并字段（workspace → user → instance 首存在层），部分 profile 400，空值 PUT 清除本层以继承。
+- 写校验：`providerId` 必须在 CP catalog；user/workspace 层要求本层可见且 `connectionKey` 匹配的 READY 连接；instance 层免连接校验（运行期由消费方 scope 解析，决策 #11）。
+- 解析到已删/不可用连接 → `409 LLM_PROFILE_CONFLICT`（不静默降层，决策 #12）；全层无 profile 时 Agent 无隐式默认，readiness fail-closed（决策 #10）。
+- 配置页以「连接选择 + 模型候选（scoped 目录）」编辑该单元（复用 0503 目录候选与漂移标注：存储连接/模型不可用时标注保留、不自动改写，候选为空可手填）。
 
 **embedding（PLAN-0485）**：
 
@@ -226,7 +238,7 @@ Provider verify 的 ready 只表示 CP 当前 remote `/models` 响应结构有�
 | `llmReady` | 含义 | 新 Chat 行为 |
 |------------|------|------------|
 | `unknown` | 必需 domain 同步失败、响应无效或状态未知 | fail-closed，返回 503 |
-| `missing_credentials` | 当前 provider 无实例凭证/无目录条目（BYOK）——readiness 不再因此阻断 | 允许进入 run；**无租约且无 env 兜底 key 时在 `/chat` 返回 503 `LLM_NOT_CONFIGURED`**（决策 #40，fail-closed 下移到真实调用路径） |
+| `missing_credentials` | 全层无 `llm-provider.profile`（无身份，决策 #10）——不再有隐式 mock 默认 | **未就绪**（fail-closed）；`/chat` 返回 503 `LLM_NOT_CONFIGURED` |
 | `invalid_credentials` | provider `/models` 或 Chat 返回认证失败 | 返回 `LLM_CREDENTIALS_INVALID` |
 | `unreachable` | provider 超时或网络不可达 | 返回 `LLM_PROVIDER_UNREACHABLE` |
 | `model_unavailable` | 默认/选择的模型不在可用 chat catalog | 返回 `LLM_MODEL_UNAVAILABLE` |

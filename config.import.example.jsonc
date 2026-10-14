@@ -16,16 +16,14 @@
   // 仅 config-schemas/ 中声明的键可导入，未知键会导致整个 import 400。
   // config.import.local.jsonc 被 gitignore，不会提交。
 
-  // llm-provider — 模型/端点/默认选择（凭证见 provider_connections）
+  // llm-provider — 默认身份（连接级 profile 单元）与保留参数；凭证见 provider_connections。
+  // PLAN-0504：默认身份 = 整单元 profile {providerId, connectionKey, model}，按
+  // workspace > user > instance 首存在层解析（整单元覆盖，不合并字段）。写入 user/workspace 层
+  // 要求本层可见且 READY 的同 provider 连接（connectionKey 匹配）；instance 层免连接校验，
+  // 由消费方 scope 在运行期解析连接。legacy 键（defaultProvider/defaultModel/*Model/*ApiBase/
+  // baseUrl）已退役，导入即 400。
   "llm-provider": {
-    "defaultProvider": "deepseek",
-    "defaultModel": "deepseek-v4-flash",
-    "deepseekModel": "deepseek-v4-flash",
-    "deepseekApiBase": "https://api.deepseek.com/v1",
-    "openaiModel": "gpt-4o",
-    "openaiApiBase": "https://api.openai.com/v1",
-    "xiaomiModel": "mimo-v2.5",
-    "xiaomiApiBase": "https://api.xiaomimimo.com/v1",
+    "profile": { "providerId": "deepseek", "connectionKey": "default", "model": "deepseek-v4-flash" },
     "imageProvider": ""
   },
 

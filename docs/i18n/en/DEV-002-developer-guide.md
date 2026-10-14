@@ -229,11 +229,11 @@ CP ConfigService is the unified configuration management entry point, using a tw
 **Method A: CP API** (runtime modification, takes effect immediately)
 
 ```bash
-# Set admin-level configuration
+# Set admin-level configuration (PLAN-0504: the default identity is the whole profile unit)
 curl -X PUT http://localhost:8080/config/admin/llm-provider \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
-  -d '{"defaultProvider": "deepseek"}'
+  -d '{"profile": {"providerId": "deepseek", "connectionKey": "default", "model": "deepseek-chat"}}'
 
 # Read current effective configuration
 curl http://localhost:8080/config/llm-provider \

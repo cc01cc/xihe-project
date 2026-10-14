@@ -3,11 +3,17 @@ import { test, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
 
+// PLAN-0504 supersedes the PLAN-0503 defaultProvider/defaultModel UI: the
+// llm-provider default identity is the whole `profile` unit edited by the
+// dedicated connection+model panel. This host spec keeps the original file
+// name (PLAN-0503 history) but now exercises the profile panel with the same
+// catalog sourcing / drift / hand-fill semantics, plus the 0504 write gate.
 const CP_URL = `http://127.0.0.1:${process.env.XIHE_CP_PORT || "12631"}`;
 const UI_URL = `http://localhost:${process.env.XIHE_UI_PORT || "12630"}`;
 const FAKE_LLM_PORT = process.env.XIHE_FAKE_LLM_PORT || "";
 const ADMIN_EMAIL = "admin@xihe.local";
 const DRIFT_MODEL = "gone-model-0503";
+const DRIFT_CONNECTION_KEY = "gone-0503";
 
 // Java UUID.nameUUIDFromBytes（v3, MD5）复刻：与 CP builtins() 的确定性 id 对齐。
 function nameUuidFromBytes(name: string): string {
@@ -54,11 +60,8 @@ async function injectSession(page: Page, auth: LoginResult) {
     );
 }
 
-async function expandLlmPanel(page: Page) {
-    const panel = page.getByTestId("config-domain-llm-provider");
-    await expect(panel).toBeVisible({ timeout: 15000 });
-    await panel.locator("button").first().click();
-    return panel;
+function profileUnit(providerId: string, connectionKey: string, model: string): string {
+    return JSON.stringify({ providerId, connectionKey, model });
 }
 
 /**
@@ -97,30 +100,31 @@ async function waitForDirectoryCatalog(
     throw new Error(`directory never exposed ${model} for ${connectionId}: ${last.slice(0, 800)}`);
 }
 
-test.describe.serial("@host PLAN-0503 config catalog sourcing", () => {
+test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
     test.beforeAll(async ({ request }) => {
         expect(FAKE_LLM_PORT, "XIHE_FAKE_LLM_PORT must be provided by e2e-host").not.toBe("");
         await loginAsAdmin(request);
         const registration = await request.post(`${CP_URL}/api/v1/auth/register`, {
             data: {
-                email: `plan0503-${randomUUID()}@test.local`,
+                email: `plan0504-${randomUUID()}@test.local`,
                 password: generateE2EPassword(),
-                name: "PLAN-0503",
+                name: "PLAN-0504",
             },
         });
         expect(registration.status()).toBe(201);
         userAuth = (await registration.json()) as LoginResult;
     });
 
-    test("V2/V4: instance dropdown matches the catalog and drift stays visible", async ({
+    test("V4: instance profile with an invisible connection is annotated, kept and never rewritten", async ({
         page,
         request,
     }) => {
         test.setTimeout(120000);
-        // Seed an in-catalog provider plus a catalog-external model at instance layer.
+        // Instance layer skips the connection check (decision #11): a pattern
+        // profile pointing at a connection that does not exist here is legal.
         const seeded = await request.put(`${CP_URL}/api/v1/config/instance/llm-provider`, {
             headers: { Authorization: `Bearer ${adminAuth.accessToken}` },
-            data: { defaultProvider: "openrouter", defaultModel: DRIFT_MODEL },
+            data: { profile: profileUnit("openai", DRIFT_CONNECTION_KEY, DRIFT_MODEL) },
         });
         expect(seeded.status(), await seeded.text()).toBe(200);
 
@@ -144,68 +148,87 @@ test.describe.serial("@host PLAN-0503 config catalog sourcing", () => {
 
         await injectSession(page, adminAuth);
         await page.goto(`${UI_URL}/settings/config`);
-        await expandLlmPanel(page);
 
-        // V2: option-by-option comparison against the catalog after the async
-        // catalog fetch settles.
-        const providerSelect = page.getByTestId("config-select-llm-provider-defaultProvider");
+        // V4: the stored connection is no longer visible — the panel keeps the
+        // value visible, labels it and never silently rewrites it.
+        const panel = page.getByTestId("llm-provider-profile");
+        await expect(panel).toBeVisible({ timeout: 15000 });
+        await expect(page.getByTestId("llm-profile-connection-select")).toHaveValue("__stored__");
+        await expect(page.getByTestId("llm-profile-connection-drift")).toBeVisible();
+        await expect(page.getByTestId("llm-profile-connection-drift-option")).toContainText(
+            `openai/${DRIFT_CONNECTION_KEY}`,
+        );
+        const modelSelect = page.getByTestId("llm-profile-model-select");
+        await expect(modelSelect).toHaveValue(DRIFT_MODEL);
+        await expect(modelSelect.locator("option")).toHaveCount(3);
+
+        // PLAN-0503 catalog sourcing still holds for the kept provider select.
+        const domainPanel = page.getByTestId("config-domain-llm-provider");
+        await domainPanel.locator("button").first().click();
+        const providerSelect = page.getByTestId("config-select-llm-provider-imageProvider");
         await expect(providerSelect).toBeVisible({ timeout: 15000 });
-        await expect(providerSelect.locator("option")).toHaveCount(catalogIds.length, {
-            timeout: 15000,
-        });
         const optionValues = await providerSelect
             .locator("option")
             .evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value));
-        expect(optionValues).toEqual(catalogIds);
-
-        // V4: drifted stored value is kept and labelled, never silently rewritten.
-        const modelSelect = page.getByTestId("config-select-llm-provider-defaultModel");
-        await expect(modelSelect).toHaveValue(DRIFT_MODEL);
-        await expect(page.getByTestId("config-drift-llm-provider-defaultModel")).toBeVisible();
+        expect(optionValues).toEqual([...catalogIds, ""]);
         await expect(page.getByTestId("config-domain-note-llm-provider")).toContainText(
             directoryRevision,
         );
         await page.screenshot({
-            path: test.info().outputPath("plan0503-instance-drift.png"),
+            path: test.info().outputPath("plan0504-instance-drift.png"),
             fullPage: true,
         });
 
-        // Reload + API read-back: the value survived without any write.
-        await page.reload();
-        await expandLlmPanel(page);
-        await expect(page.getByTestId("config-select-llm-provider-defaultModel")).toHaveValue(
-            DRIFT_MODEL,
+        // Re-saving the drifted profile keeps it byte-identical (no rewrite).
+        const [saved] = await Promise.all([
+            page.waitForResponse(
+                (response) =>
+                    response.url().includes("/api/v1/config/instance/llm-provider") &&
+                    response.request().method() === "PUT",
+            ),
+            page.getByTestId("llm-profile-save").click(),
+        ]);
+        expect(saved.status()).toBe(200);
+        expect(JSON.parse(saved.request().postData() ?? "{}").profile).toBe(
+            profileUnit("openai", DRIFT_CONNECTION_KEY, DRIFT_MODEL),
         );
+
+        // Reload + API read-back: the value survived without any other write.
+        await page.reload();
+        await expect(page.getByTestId("llm-profile-model-select")).toHaveValue(DRIFT_MODEL, {
+            timeout: 15000,
+        });
         const readBack = await request.get(
             `${CP_URL}/api/v1/config/llm-provider?layer=instance&includeMeta=true`,
             { headers: { Authorization: `Bearer ${adminAuth.accessToken}` } },
         );
         expect(readBack.ok()).toBe(true);
         const entries = ((await readBack.json()) as { entries: Record<string, string> }).entries;
-        expect(entries.defaultModel).toBe(DRIFT_MODEL);
+        expect(entries.profile).toBe(profileUnit("openai", DRIFT_CONNECTION_KEY, DRIFT_MODEL));
 
         // Mobile viewport keeps the drift label visible.
         await page.setViewportSize({ width: 390, height: 844 });
         await page.reload();
-        await expandLlmPanel(page);
-        await expect(page.getByTestId("config-drift-llm-provider-defaultModel")).toBeVisible();
+        await expect(page.getByTestId("llm-profile-connection-drift")).toBeVisible({
+            timeout: 15000,
+        });
         await page.screenshot({
-            path: test.info().outputPath("plan0503-instance-drift-mobile.png"),
+            path: test.info().outputPath("plan0504-instance-drift-mobile.png"),
             fullPage: true,
         });
     });
 
-    test("V3/V5: user candidates come from the READY directory; handfill saves", async ({
+    test("V4: user candidates come from the READY connection directory; save writes the whole unit", async ({
         page,
         request,
     }) => {
         test.setTimeout(120000);
-        const connectionKey = `catalog-${randomUUID().slice(0, 8)}`;
+        const connectionKey = `profile-${randomUUID().slice(0, 8)}`;
         const created = await request.post(`${CP_URL}/api/v1/provider-connections`, {
             headers: { Authorization: `Bearer ${userAuth.accessToken}` },
             data: {
                 providerId: "openai",
-                label: `PLAN-0503 chat ${connectionKey}`,
+                label: `PLAN-0504 chat ${connectionKey}`,
                 scope: "USER",
                 connectionKey,
                 apiTypeId: "openai-chat-completions",
@@ -234,51 +257,96 @@ test.describe.serial("@host PLAN-0503 config catalog sourcing", () => {
         await injectSession(page, userAuth);
         await page.goto(`${UI_URL}/settings/config`);
         await page.getByTestId("config-tab-user").click();
-        const panel = await expandLlmPanel(page);
-        await page.getByTestId("config-select-llm-provider-defaultProvider").selectOption("openai");
+        const panel = page.getByTestId("llm-provider-profile");
+        await expect(panel).toBeVisible({ timeout: 15000 });
+
+        // V4: the connection selector lists visible chat-ready connections.
+        const connectionSelect = page.getByTestId("llm-profile-connection-select");
+        const connectionOptions = await connectionSelect
+            .locator("option")
+            .evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value));
+        expect(connectionOptions).toContain(userConnectionId);
+        await connectionSelect.selectOption(userConnectionId);
 
         // V3: ready + chat only (the -asr catalog entry is filtered out).
-        const modelSelect = page.getByTestId("config-select-llm-provider-defaultModel");
+        const modelSelect = page.getByTestId("llm-profile-model-select");
         await expect(modelSelect.locator("option")).toHaveCount(3, { timeout: 15000 });
         const optionValues = await modelSelect
             .locator("option")
             .evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value));
         expect(optionValues).toEqual(["", "fake-openai", "__custom__"]);
+        await modelSelect.selectOption("fake-openai");
         await page.screenshot({
-            path: test.info().outputPath("plan0503-user-candidates.png"),
+            path: test.info().outputPath("plan0504-user-candidates.png"),
             fullPage: true,
         });
 
-        // V5: directory-independent manual entry saves through the real PUT.
-        await modelSelect.selectOption("__custom__");
-        await page.getByTestId("config-custom-llm-provider-defaultModel").fill("manual-model-0503");
+        // Saving writes the whole profile unit for the selected connection+model.
         const [saved] = await Promise.all([
             page.waitForResponse(
                 (response) =>
                     response.url().includes("/api/v1/config/user/llm-provider") &&
                     response.request().method() === "PUT",
             ),
-            panel.getByRole("button", { name: "保存", exact: true }).click(),
+            page.getByTestId("llm-profile-save").click(),
         ]);
         expect(saved.status()).toBe(200);
+        expect(JSON.parse(saved.request().postData() ?? "{}").profile).toBe(
+            profileUnit("openai", connectionKey, "fake-openai"),
+        );
         await page.reload();
         await page.getByTestId("config-tab-user").click();
-        await expandLlmPanel(page);
-        await expect(page.getByTestId("config-select-llm-provider-defaultModel")).toHaveValue(
-            "manual-model-0503",
+        await expect(page.getByTestId("llm-profile-connection-select")).toHaveValue(
+            userConnectionId,
+            { timeout: 15000 },
         );
+        await expect(page.getByTestId("llm-profile-model-select")).toHaveValue("fake-openai");
     });
 
-    test("V5: an empty directory still allows manual entry; the provider gate holds", async ({
+    test("V5: a hand-written model saves through the real PUT", async ({ page, request }) => {
+        test.setTimeout(120000);
+        expect(userConnectionId).not.toBe("");
+        const manualModel = `manual-model-0504-${randomUUID().slice(0, 6)}`;
+
+        await injectSession(page, userAuth);
+        await page.goto(`${UI_URL}/settings/config`);
+        await page.getByTestId("config-tab-user").click();
+        const panel = page.getByTestId("llm-provider-profile");
+        await expect(panel).toBeVisible({ timeout: 15000 });
+
+        await page.getByTestId("llm-profile-connection-select").selectOption(userConnectionId);
+        await page.getByTestId("llm-profile-model-select").selectOption("__custom__");
+        await page.getByTestId("llm-profile-model-custom").fill(manualModel);
+        const [saved] = await Promise.all([
+            page.waitForResponse(
+                (response) =>
+                    response.url().includes("/api/v1/config/user/llm-provider") &&
+                    response.request().method() === "PUT",
+            ),
+            page.getByTestId("llm-profile-save").click(),
+        ]);
+        expect(saved.status()).toBe(200);
+
+        const readBack = await request.get(
+            `${CP_URL}/api/v1/config/llm-provider?layer=user&includeMeta=true`,
+            { headers: { Authorization: `Bearer ${userAuth.accessToken}` } },
+        );
+        expect(readBack.ok()).toBe(true);
+        const entries = ((await readBack.json()) as { entries: Record<string, string> }).entries;
+        const profile = JSON.parse(entries.profile ?? "{}") as { model?: string };
+        expect(profile.model).toBe(manualModel);
+    });
+
+    test("V7: no profile shows the explicit-selection hint; the user gate holds", async ({
         page,
         request,
     }) => {
         test.setTimeout(120000);
         const registration = await request.post(`${CP_URL}/api/v1/auth/register`, {
             data: {
-                email: `plan0503-noconn-${randomUUID()}@test.local`,
+                email: `plan0504-noconn-${randomUUID()}@test.local`,
                 password: generateE2EPassword(),
-                name: "PLAN-0503 no-conn",
+                name: "PLAN-0504 no-conn",
             },
         });
         expect(registration.status()).toBe(201);
@@ -287,31 +355,24 @@ test.describe.serial("@host PLAN-0503 config catalog sourcing", () => {
         await injectSession(page, noConnAuth);
         await page.goto(`${UI_URL}/settings/config`);
         await page.getByTestId("config-tab-user").click();
-        const panel = await expandLlmPanel(page);
+        const panel = page.getByTestId("llm-provider-profile");
+        await expect(panel).toBeVisible({ timeout: 15000 });
 
-        // V5: with no READY connection the model field still accepts a manual
-        // value through the escape and saves through the real PUT.
-        await page
-            .getByTestId("config-select-llm-provider-defaultModel")
-            .selectOption("__custom__");
-        await page
-            .getByTestId("config-custom-llm-provider-defaultModel")
-            .fill("manual-no-conn-0503");
-        const [saved] = await Promise.all([
-            page.waitForResponse(
-                (response) =>
-                    response.url().includes("/api/v1/config/user/llm-provider") &&
-                    response.request().method() === "PUT",
-            ),
-            panel.getByRole("button", { name: "保存", exact: true }).click(),
-        ]);
-        expect(saved.status()).toBe(200);
+        // V7: with no profile the panel prompts for an explicit selection and
+        // offers no implicit fallback model.
+        await expect(page.getByTestId("llm-profile-empty-hint")).toBeVisible();
+        await expect(page.getByTestId("llm-profile-save")).toBeDisabled();
+        const connectionOptions = await page
+            .getByTestId("llm-profile-connection-select")
+            .locator("option")
+            .evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value));
+        expect(connectionOptions).toEqual([""]);
 
-        // The user-layer readiness gate is unchanged: writing a provider
-        // without a READY connection is rejected by CP.
+        // The user-layer readiness gate is unchanged: a profile without a READY
+        // connection is rejected by CP (400 INVALID_REQUEST).
         const rejected = await request.put(`${CP_URL}/api/v1/config/user/llm-provider`, {
             headers: { Authorization: `Bearer ${noConnAuth.accessToken}` },
-            data: { defaultProvider: "openai" },
+            data: { profile: profileUnit("openai", "default", "gpt-4o") },
         });
         expect(rejected.status()).toBe(400);
     });
@@ -345,7 +406,7 @@ test.describe.serial("@host PLAN-0503 config catalog sourcing", () => {
             "已绑定但当前不可用",
         );
         await page.screenshot({
-            path: test.info().outputPath("plan0503-orphan-bindings.png"),
+            path: test.info().outputPath("plan0504-orphan-bindings.png"),
             fullPage: true,
         });
 

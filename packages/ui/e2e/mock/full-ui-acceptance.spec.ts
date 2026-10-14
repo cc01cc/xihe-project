@@ -57,8 +57,11 @@ async function mockSettingsApis(page: Page) {
             contentType: "application/json",
             body: JSON.stringify({
                 logLevel: "info",
-                defaultProvider: "openai",
-                defaultModel: "gpt-test",
+                profile: JSON.stringify({
+                    providerId: "openai",
+                    connectionKey: "default",
+                    model: "gpt-test",
+                }),
             }),
         }),
     );

@@ -138,9 +138,9 @@ Provider 可在设置页面的模型配置中管理，选择预设后自动填�
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `XIHE_LLM_PROVIDER` | `deepseek` | LLM 提供商（Agent 默认值；其余 key/模型走 ConfigService，不在 `.env` 设置） |
-| 模型名/API Key（如 DeepSeek/小米） | — | 走 ConfigService（UI 设置页或 `config.import.local.jsonc`），`.env.example` 仅保留 `XIHE_LLM_PROVIDER=mock` 注释行 |
-| 小米模型名（如 `mimo-v2.5`） | — | 走 ConfigService（`config.import.example.jsonc` 的 `xiaomiModel`，`GET /api/v1/models` 为事实来源），非 `.env` 变量 |
+| `XIHE_LLM_PROVIDER` | `deepseek` | LLM 提供商（Agent 离线兜底默认值；其余 key/模型走 ConfigService，不在 `.env` 设置） |
+| 模型名/API Key（如 DeepSeek/小米） | — | 走 ConfigService（UI 设置页「默认 LLM 配置」= 连接 + 模型，或 `config.import.local.jsonc`），`.env.example` 仅保留 `XIHE_LLM_PROVIDER=mock` 注释行 |
+| 默认 LLM 配置（`llm-provider.profile`） | — | 整单元 `{providerId, connectionKey, model}`，三层（实例/工作区/个人）首存在层生效；未设置时新会话需显式选择模型（`config.import.example.jsonc` 同形），非 `.env` 变量 |
 | `XIHE_CP_PORT` | `12631` | CP 端口（宿主机映射，Docker 内为 8080） |
 | `XIHE_AGENT_PORT` | `12632` | Agent 端口（宿主机映射，Docker 内为 8000） |
 | `XIHE_RUNTIME_PORT` | `12633` | Runtime 端口（宿主机映射，Docker 内为 8001） |

@@ -76,6 +76,11 @@
       "llmMode": "success",
       "specs": ["e2e/real/config-run-effective.spec.ts"]
     },
+    "profile-effective": {
+      "description": "PLAN-0504: instance profile flows into the Agent snapshot; clearing fails closed",
+      "llmMode": "success",
+      "specs": ["e2e/real/plan-0504-profile-effective.spec.ts"]
+    },
     "run-budget": {
       "description": "PLAN-0492 run budget exhaustion surface: config -> run failed -> takeover entry",
       "llmMode": "write_file",

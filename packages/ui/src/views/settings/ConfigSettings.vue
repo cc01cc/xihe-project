@@ -9,6 +9,7 @@ import ConfigDomainPanel, {
 import AgentTemplatesPanel from "../../components/settings/AgentTemplatesPanel.vue";
 import ContextTemplatesPanel from "../../components/settings/ContextTemplatesPanel.vue";
 import EmbeddingSettingsPanel from "../../components/settings/EmbeddingSettingsPanel.vue";
+import LlmProviderProfilePanel from "../../components/settings/LlmProviderProfilePanel.vue";
 import McpStdioServerList from "../../components/settings/McpStdioServerList.vue";
 import ProviderHub from "../../components/settings/ProviderHub.vue";
 import SettingsNav from "../../components/settings/SettingsNav.vue";
@@ -18,6 +19,7 @@ import { logger } from "../../lib/logger";
 import { getProviderInfo, BUILTIN_PROVIDERS } from "../../types/provider";
 import type { ProviderDefinition } from "../../types/providerConnection";
 import { listProviderCatalog } from "../../services/providerConnectionService";
+import { parseLlmProfileValue } from "../../services/llmProviderProfile";
 import { useAuthStore } from "../../stores/auth";
 
 const { t } = useI18n(),
@@ -84,11 +86,6 @@ function providerDisplayName(providerId: string): string {
     );
 }
 
-/** PLAN-0503 T2.2: candidate models from the live directory (ready + chat). */
-function chatModelOptions(providerId: string): { label: string; value: string }[] {
-    return configStore.getChatModels(providerId).map((model) => ({ label: model, value: model }));
-}
-
 /** PLAN-0503 T2.4: directory freshness from the /models response (no new API). */
 const llmProviderNote = computed(() => {
     const cache = configStore.modelCache;
@@ -109,32 +106,10 @@ const llmProviderNote = computed(() => {
 });
 
 const domainSchemas = computed<Record<string, DomainField[]>>(() => ({
+    // PLAN-0504: the default identity lives in the whole `profile` unit and is
+    // edited by LlmProviderProfilePanel; the legacy provider/base-URL/model
+    // fields are retired (no compat).
     "llm-provider": [
-        {
-            key: "defaultProvider",
-            label: t("settings.fieldDefaultProvider"),
-            type: "select",
-            options: providerOptions.value,
-        },
-        {
-            key: "defaultModel",
-            label: t("settings.fieldDefaultModel"),
-            type: "select",
-            allowCustom: true,
-            optionsDependsOn: "defaultProvider",
-            optionsFor: chatModelOptions,
-        },
-        { key: "deepseekModel", label: t("settings.fieldDeepseekModel"), type: "text" },
-        { key: "deepseekApiBase", label: t("settings.fieldDeepseekApiBase"), type: "text" },
-        { key: "openaiModel", label: t("settings.fieldOpenaiModel"), type: "text" },
-        { key: "openaiApiBase", label: t("settings.fieldOpenaiApiBase"), type: "text" },
-        { key: "anthropicModel", label: t("settings.fieldAnthropicModel"), type: "text" },
-        { key: "anthropicApiBase", label: t("settings.fieldAnthropicApiBase"), type: "text" },
-        { key: "xiaomiModel", label: t("settings.fieldXiaomiModel"), type: "text" },
-        { key: "xiaomiApiBase", label: t("settings.fieldXiaomiApiBase"), type: "text" },
-        { key: "dashscopeModel", label: t("settings.fieldDashscopeModel"), type: "text" },
-        { key: "dashscopeApiBase", label: t("settings.fieldDashscopeApiBase"), type: "text" },
-        { key: "baseUrl", label: t("settings.fieldBaseUrl"), type: "text" },
         {
             key: "imageProvider",
             label: t("settings.fieldImageProvider"),
@@ -610,9 +585,11 @@ function generateSummary(domain: string): string {
     const entries = configStore.layerConfig[activeTab.value][domain] || {};
     if (Object.keys(entries).length === 0) return "";
     if (domain === "llm-provider") {
-        const providerId = entries["defaultProvider"],
-            provider = providerId ? providerDisplayName(providerId) : "";
-        return provider ? `${provider} (已配置)` : "";
+        // PLAN-0504: summarize the resolved profile unit (legacy fields retired).
+        const profile = parseLlmProfileValue(entries["profile"]);
+        if (!profile) return "";
+        const provider = providerDisplayName(profile.providerId);
+        return `${provider} / ${profile.model}`;
     }
     if (domain === "rag") {
         const cs = entries["chunkSize"],
@@ -833,8 +810,29 @@ async function handleImportFile(event: Event) {
                             v-if="domain === 'llm-provider' && activeTab !== 'instance'"
                             :scope="activeTab === 'user' ? 'USER' : 'WORKSPACE'"
                         />
+                        <template v-if="domain === 'llm-provider'">
+                            <LlmProviderProfilePanel
+                                :layer="activeTab"
+                                :workspace-id="currentWorkspaceId() || undefined"
+                                :entries="configStore.layerConfig[activeTab][domain] || {}"
+                                :saving="savingDomains[domain] || false"
+                                @saved="reloadActiveLayer()"
+                            />
+                            <ConfigDomainPanel
+                                :domain="domain"
+                                :title="domainLabels[domain] || domain"
+                                :entries="configStore.layerConfig[activeTab][domain] || {}"
+                                :admin="activeTab !== 'user'"
+                                :summary="generateSummary(domain)"
+                                :schema="schemaFor(domain)"
+                                :env-locked="envLockedFor(domain)"
+                                :note="llmProviderNote"
+                                @save="handleSave(domain, $event)"
+                                @reset="handleReset(domain, $event)"
+                            />
+                        </template>
                         <AgentTemplatesPanel
-                            v-if="domain === 'agent-templates'"
+                            v-else-if="domain === 'agent-templates'"
                             :entries="configStore.layerConfig[activeTab][domain] || {}"
                             :saving="savingDomains[domain] || false"
                             @save="handleSave(domain, $event)"
@@ -863,7 +861,6 @@ async function handleImportFile(event: Event) {
                             :summary="generateSummary(domain)"
                             :schema="schemaFor(domain)"
                             :env-locked="envLockedFor(domain)"
-                            :note="domain === 'llm-provider' ? llmProviderNote : ''"
                             @save="handleSave(domain, $event)"
                             @reset="handleReset(domain, $event)"
                         />

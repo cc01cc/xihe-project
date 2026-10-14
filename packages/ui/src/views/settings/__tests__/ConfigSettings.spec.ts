@@ -254,12 +254,39 @@ describe("ConfigSettings API request templates (PLAN-0439 rename of PLAN-0414)",
     });
 });
 
-describe("ConfigSettings llm-provider catalog sourcing (PLAN-0503)", () => {
-    function mockFetchWithDirectory(options: {
+describe("ConfigSettings llm-provider profile (PLAN-0504)", () => {
+    const PROFILE_XIAOMI = JSON.stringify({
+        providerId: "xiaomi",
+        connectionKey: "default",
+        model: "mimo-v2.5",
+    });
+
+    function chatConnection(overrides: Record<string, unknown> = {}) {
+        return {
+            id: "conn-x",
+            providerId: "xiaomi",
+            connectionKey: "default",
+            apiTypeId: "mimo-responses",
+            apiTypeVersion: 1,
+            operation: "chat",
+            label: "Xiaomi",
+            scope: "USER",
+            modelDiscovery: "remote-models",
+            manualModels: [],
+            hasKey: true,
+            enabled: true,
+            status: "READY",
+            revision: 1,
+            ...overrides,
+        };
+    }
+
+    function mockFetchWithProfile(options: {
         catalog?: unknown;
         catalogStatus?: number;
         models?: unknown;
         llmEntries?: Record<string, string>;
+        connections?: unknown[];
     }) {
         vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
             const url = typeof input === "string" ? input : input.url;
@@ -275,6 +302,13 @@ describe("ConfigSettings llm-provider catalog sourcing (PLAN-0503)", () => {
                         ),
                         { status: 200 },
                     ),
+                );
+            }
+            if (parsed.pathname.endsWith("/provider-connections")) {
+                return Promise.resolve(
+                    new Response(JSON.stringify({ connections: options.connections ?? [] }), {
+                        status: 200,
+                    }),
                 );
             }
             if (parsed.pathname.endsWith("/models")) {
@@ -326,11 +360,8 @@ describe("ConfigSettings llm-provider catalog sourcing (PLAN-0503)", () => {
             .map((option) => (option.element as HTMLOptionElement).value);
     }
 
-    async function savePanel(panel: VueWrapper) {
-        const saveLabel = i18n.global.t("common.save"),
-            saveButton = panel.findAll("button").find((button) => button.text() === saveLabel);
-        expect(saveButton).toBeTruthy();
-        await saveButton!.trigger("click");
+    async function saveProfile(wrapper: VueWrapper) {
+        await wrapper.find('[data-testid="llm-profile-save"]').trigger("click");
         await flushPromises();
     }
 
@@ -344,182 +375,173 @@ describe("ConfigSettings llm-provider catalog sourcing (PLAN-0503)", () => {
             }));
     }
 
-    it("T2.1: provider options come from the catalog, not an inline list", async () => {
-        mockFetchWithDirectory({
-            catalog: {
-                catalogRevision: "catalog-rev",
-                providers: [
-                    { id: "openrouter", displayName: "OpenRouter" },
-                    { id: "deepseek", displayName: "DeepSeek" },
-                ],
-            },
-        });
+    it("V4: connection options come from visible chat connections; model options from the scoped directory", async () => {
+        mockFetchWithProfile({ models: readyXiaomiModels, connections: [chatConnection()] });
         const wrapper = await mountView();
-        await openLlmPanel(wrapper);
         await flushPromises();
 
-        expect(optionValues(wrapper, "config-select-llm-provider-defaultProvider")).toEqual([
-            "openrouter",
-            "deepseek",
-        ]);
-        wrapper.unmount();
-    });
-
-    it("T2.1: falls back to the builtin list when the catalog request fails", async () => {
-        mockFetchWithDirectory({ catalogStatus: 500 });
-        const wrapper = await mountView();
-        await openLlmPanel(wrapper);
-        await flushPromises();
-
-        expect(optionValues(wrapper, "config-select-llm-provider-defaultProvider")).toEqual([
-            "openai",
-            "deepseek",
-            "xiaomi",
-            "anthropic",
-        ]);
-        wrapper.unmount();
-    });
-
-    it("T2.2/T2.4: model candidates follow the ready chat directory with freshness", async () => {
-        mockFetchWithDirectory({
-            models: readyXiaomiModels,
-            llmEntries: { defaultProvider: "xiaomi", defaultModel: "mimo-v2.5" },
-        });
-        const wrapper = await mountView();
-        await openLlmPanel(wrapper);
-        await flushPromises();
+        expect(optionValues(wrapper, "llm-profile-connection-select")).toEqual(["", "conn-x"]);
+        await wrapper.find('[data-testid="llm-profile-connection-select"]').setValue("conn-x");
 
         // '' placeholder + ready chat models only (asr filtered) + custom escape.
-        expect(optionValues(wrapper, "config-select-llm-provider-defaultModel")).toEqual([
+        expect(optionValues(wrapper, "llm-profile-model-select")).toEqual([
             "",
             "mimo-v2.5",
             "mimo-v2.6-pro",
             "__custom__",
         ]);
+        // The freshness note still renders on the sibling domain panel.
+        await openLlmPanel(wrapper);
+        await flushPromises();
         const note = wrapper.find('[data-testid="config-domain-note-llm-provider"]');
         expect(note.exists()).toBe(true);
         expect(note.text()).toContain("rev-models");
         wrapper.unmount();
     });
 
-    it("T2.3/V4: drifted defaultModel stays visible, marked unavailable, never rewritten", async () => {
-        mockFetchWithDirectory({
+    it("V4: saving writes the whole profile unit for the selected connection and model", async () => {
+        mockFetchWithProfile({
             models: readyXiaomiModels,
-            llmEntries: { defaultProvider: "xiaomi", defaultModel: "gone-model" },
-        });
-        const wrapper = await mountView(),
-            panel = await openLlmPanel(wrapper);
-        await flushPromises();
-
-        expect(
-            wrapper.find('[data-testid="config-drift-llm-provider-defaultModel"]').exists(),
-        ).toBe(true);
-        const select = wrapper.find<HTMLSelectElement>(
-            '[data-testid="config-select-llm-provider-defaultModel"]',
-        );
-        expect(select.element.value).toBe("gone-model");
-        // No background write before an explicit user save (I1/I3).
-        expect(putBodies()).toHaveLength(0);
-
-        await savePanel(panel);
-        const llmPuts = putBodies().filter((call) =>
-            call.url.includes("/config/instance/llm-provider"),
-        );
-        expect(llmPuts).toHaveLength(1);
-        expect(llmPuts[0].body).toEqual({ defaultProvider: "xiaomi", defaultModel: "gone-model" });
-        wrapper.unmount();
-    });
-
-    it("P1-fix: a catalog-external provider is annotated and clear uses the PUT path", async () => {
-        // Design「目录更新处置矩阵」: catalog removal must mark the stored
-        // provider unavailable instead of leaving a blank, unlabelled select.
-        mockFetchWithDirectory({
-            catalog: {
-                catalogRevision: "rev-cat",
-                providers: [{ id: "openai", displayName: "OpenAI" }],
-            },
-            llmEntries: { defaultProvider: "dashscope" },
+            connections: [chatConnection()],
+            llmEntries: { profile: PROFILE_XIAOMI },
         });
         const wrapper = await mountView();
-        await openLlmPanel(wrapper);
         await flushPromises();
 
-        const providerSelect = wrapper.find<HTMLSelectElement>(
-            '[data-testid="config-select-llm-provider-defaultProvider"]',
-        );
-        expect(providerSelect.element.value).toBe("dashscope");
-        expect(
-            wrapper.find('[data-testid="config-drift-llm-provider-defaultProvider"]').exists(),
-        ).toBe(true);
+        await wrapper.find('[data-testid="llm-profile-model-select"]').setValue("mimo-v2.6-pro");
+        await saveProfile(wrapper);
 
-        const clearButton = wrapper.find(
-            '[data-testid="config-drift-clear-llm-provider-defaultProvider"]',
-        );
-        expect(clearButton.exists()).toBe(true);
-        await clearButton.trigger("click");
-        await flushPromises();
-        const llmPuts = putBodies().filter((call) =>
-            call.url.includes("/config/instance/llm-provider"),
-        );
-        expect(llmPuts).toHaveLength(1);
-        expect(llmPuts[0].body).toEqual({ defaultProvider: "" });
-        wrapper.unmount();
-    });
-
-    it("T2.2/V5: an empty directory still allows manual model entry and save", async () => {
-        mockFetchWithDirectory({
-            models: { models: {}, providers: {}, configRevision: "rev-empty" },
-            llmEntries: { defaultProvider: "xiaomi" },
-        });
-        const wrapper = await mountView(),
-            panel = await openLlmPanel(wrapper);
-        await flushPromises();
-
-        await wrapper
-            .find('[data-testid="config-select-llm-provider-defaultModel"]')
-            .setValue("__custom__");
-        const input = wrapper.find('[data-testid="config-custom-llm-provider-defaultModel"]');
-        expect(input.exists()).toBe(true);
-        await input.setValue("hand-written-model");
-
-        // The escape is reversible: exiting returns to the select, re-entering
-        // keeps the typed value.
-        await wrapper
-            .find('[data-testid="config-custom-exit-llm-provider-defaultModel"]')
-            .trigger("click");
-        expect(
-            wrapper.find('[data-testid="config-custom-llm-provider-defaultModel"]').exists(),
-        ).toBe(false);
-        expect(
-            wrapper.find('[data-testid="config-select-llm-provider-defaultModel"]').exists(),
-        ).toBe(true);
-        await wrapper
-            .find('[data-testid="config-select-llm-provider-defaultModel"]')
-            .setValue("__custom__");
-        const resumed = wrapper.find<HTMLInputElement>(
-            '[data-testid="config-custom-llm-provider-defaultModel"]',
-        );
-        expect(resumed.element.value).toBe("hand-written-model");
-
-        await savePanel(panel);
         const llmPuts = putBodies().filter((call) =>
             call.url.includes("/config/instance/llm-provider"),
         );
         expect(llmPuts).toHaveLength(1);
         expect(llmPuts[0].body).toEqual({
-            defaultProvider: "xiaomi",
-            defaultModel: "hand-written-model",
+            profile: JSON.stringify({
+                providerId: "xiaomi",
+                connectionKey: "default",
+                model: "mimo-v2.6-pro",
+            }),
+        });
+        wrapper.unmount();
+    });
+
+    it("V7: no profile shows the empty hint and save stays disabled until a connection is picked", async () => {
+        mockFetchWithProfile({ models: readyXiaomiModels, connections: [chatConnection()] });
+        const wrapper = await mountView();
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="llm-profile-empty-hint"]').exists()).toBe(true);
+        const save = wrapper.find('[data-testid="llm-profile-save"]');
+        expect(save.attributes("disabled")).toBeDefined();
+        expect(
+            wrapper.find('[data-testid="llm-profile-clear"]').attributes("disabled"),
+        ).toBeDefined();
+
+        await wrapper.find('[data-testid="llm-profile-connection-select"]').setValue("conn-x");
+        expect(
+            wrapper.find('[data-testid="llm-profile-save"]').attributes("disabled"),
+        ).toBeDefined();
+        await wrapper.find('[data-testid="llm-profile-model-select"]').setValue("mimo-v2.5");
+        expect(
+            wrapper.find('[data-testid="llm-profile-save"]').attributes("disabled"),
+        ).toBeUndefined();
+
+        await saveProfile(wrapper);
+        const llmPuts = putBodies().filter((call) =>
+            call.url.includes("/config/instance/llm-provider"),
+        );
+        expect(llmPuts).toHaveLength(1);
+        expect(llmPuts[0].body).toEqual({ profile: PROFILE_XIAOMI });
+        wrapper.unmount();
+    });
+
+    it("V4 decision #12: a stored profile whose connection is not visible is annotated and never rewritten", async () => {
+        mockFetchWithProfile({
+            connections: [],
+            llmEntries: { profile: PROFILE_XIAOMI },
+        });
+        const wrapper = await mountView();
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="llm-profile-connection-drift"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="llm-profile-connection-drift-option"]').exists()).toBe(
+            true,
+        );
+        // No background write before an explicit user action.
+        expect(putBodies()).toHaveLength(0);
+
+        await saveProfile(wrapper);
+        const llmPuts = putBodies().filter((call) =>
+            call.url.includes("/config/instance/llm-provider"),
+        );
+        expect(llmPuts).toHaveLength(1);
+        expect(llmPuts[0].body).toEqual({ profile: PROFILE_XIAOMI });
+
+        await wrapper.find('[data-testid="llm-profile-clear"]').trigger("click");
+        await flushPromises();
+        const clears = putBodies().filter((call) =>
+            call.url.includes("/config/instance/llm-provider"),
+        );
+        expect(clears).toHaveLength(2);
+        expect(clears[1].body).toEqual({ profile: "" });
+        wrapper.unmount();
+    });
+
+    it("V5: model drift keeps the stored model annotated; custom entry saves a hand-written model", async () => {
+        mockFetchWithProfile({
+            models: readyXiaomiModels,
+            connections: [chatConnection()],
+            llmEntries: {
+                profile: JSON.stringify({
+                    providerId: "xiaomi",
+                    connectionKey: "default",
+                    model: "gone-model",
+                }),
+            },
+        });
+        const wrapper = await mountView();
+        await flushPromises();
+
+        const select = wrapper.find<HTMLSelectElement>('[data-testid="llm-profile-model-select"]');
+        expect(select.element.value).toBe("gone-model");
+        expect(optionValues(wrapper, "llm-profile-model-select")[1]).toBe("gone-model");
+        expect(putBodies()).toHaveLength(0);
+
+        // The custom escape is reversible and keeps the typed value.
+        await select.setValue("__custom__");
+        const input = wrapper.find('[data-testid="llm-profile-model-custom"]');
+        expect(input.exists()).toBe(true);
+        await input.setValue("hand-written-model");
+        await wrapper.find('[data-testid="llm-profile-model-custom-exit"]').trigger("click");
+        expect(wrapper.find('[data-testid="llm-profile-model-custom"]').exists()).toBe(false);
+        await wrapper.find('[data-testid="llm-profile-model-select"]').setValue("__custom__");
+        expect(
+            wrapper.find<HTMLInputElement>('[data-testid="llm-profile-model-custom"]').element
+                .value,
+        ).toBe("hand-written-model");
+
+        await saveProfile(wrapper);
+        const llmPuts = putBodies().filter((call) =>
+            call.url.includes("/config/instance/llm-provider"),
+        );
+        expect(llmPuts).toHaveLength(1);
+        expect(llmPuts[0].body).toEqual({
+            profile: JSON.stringify({
+                providerId: "xiaomi",
+                connectionKey: "default",
+                model: "hand-written-model",
+            }),
         });
         wrapper.unmount();
     });
 
     it("T2.7: directory add/remove drill keeps configuration write-free", async () => {
-        mockFetchWithDirectory({
+        mockFetchWithProfile({
             models: readyXiaomiModels,
-            llmEntries: { defaultProvider: "xiaomi", defaultModel: "mimo-v2.5" },
+            connections: [chatConnection()],
+            llmEntries: { profile: PROFILE_XIAOMI },
         });
         const wrapper = await mountView();
-        await openLlmPanel(wrapper);
         await flushPromises();
         const store = useConfigStore(),
             base = readyXiaomiModels.providers?.["conn-x"];
@@ -536,9 +558,7 @@ describe("ConfigSettings llm-provider catalog sourcing (PLAN-0503)", () => {
             },
         };
         await nextTick();
-        expect(optionValues(wrapper, "config-select-llm-provider-defaultModel")).toContain(
-            "mimo-v3",
-        );
+        expect(optionValues(wrapper, "llm-profile-model-select")).toContain("mimo-v3");
         expect(putBodies()).toHaveLength(0);
 
         // 2) Removed model: stored value kept, marked unavailable, still no write.
@@ -552,18 +572,53 @@ describe("ConfigSettings llm-provider catalog sourcing (PLAN-0503)", () => {
             },
         };
         await nextTick();
+        expect(optionValues(wrapper, "llm-profile-model-select")).toContain("mimo-v2.5");
         expect(
-            wrapper.find('[data-testid="config-drift-llm-provider-defaultModel"]').exists(),
-        ).toBe(true);
-        expect(
-            wrapper.find<HTMLSelectElement>(
-                '[data-testid="config-select-llm-provider-defaultModel"]',
-            ).element.value,
+            wrapper.find<HTMLSelectElement>('[data-testid="llm-profile-model-select"]').element
+                .value,
         ).toBe("mimo-v2.5");
         expect(putBodies()).toHaveLength(0);
 
         // 3) Configuration read-back is unchanged.
-        expect(store.layerConfig.instance["llm-provider"]?.defaultModel).toBe("mimo-v2.5");
+        expect(store.layerConfig.instance["llm-provider"]?.profile).toBe(PROFILE_XIAOMI);
+        wrapper.unmount();
+    });
+
+    it("0503 catalog sourcing: imageProvider options come from the catalog, not an inline list", async () => {
+        mockFetchWithProfile({
+            catalog: {
+                catalogRevision: "catalog-rev",
+                providers: [
+                    { id: "openrouter", displayName: "OpenRouter" },
+                    { id: "deepseek", displayName: "DeepSeek" },
+                ],
+            },
+        });
+        const wrapper = await mountView();
+        await openLlmPanel(wrapper);
+        await flushPromises();
+
+        expect(optionValues(wrapper, "config-select-llm-provider-imageProvider")).toEqual([
+            "openrouter",
+            "deepseek",
+            "",
+        ]);
+        wrapper.unmount();
+    });
+
+    it("0503 catalog sourcing: falls back to the builtin list when the catalog request fails", async () => {
+        mockFetchWithProfile({ catalogStatus: 500 });
+        const wrapper = await mountView();
+        await openLlmPanel(wrapper);
+        await flushPromises();
+
+        expect(optionValues(wrapper, "config-select-llm-provider-imageProvider")).toEqual([
+            "openai",
+            "deepseek",
+            "xiaomi",
+            "anthropic",
+            "",
+        ]);
         wrapper.unmount();
     });
 });
