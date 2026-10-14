@@ -6,6 +6,7 @@ import { useChatStore } from "../stores/chat.ts";
 import { logger } from "../../../../lib/logger";
 import { chatTransport } from "../../../../services/chatTransport";
 import { notifySessionConnection, notifySessionEvent } from "../sessionEvents";
+import { applyTransportAttempt, applyTransportProgress } from "../transportLive";
 import {
     ApiError,
     apiAuthHeaders,
@@ -386,6 +387,32 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                     if (event) getCheckpointStoreOrNull()?.mergeEvent(event);
                 } catch {
                     logger.warn("Failed to parse SSE run_checkpoint event");
+                }
+                break;
+
+            // PLAN-0508: bounded provider-attempt telemetry. The live mirror is
+            // diagnostic side-channel state; only attempt boundaries invalidate
+            // the Monitor aggregate (no second SSE connection, no stream-timeout
+            // reset — a slow provider must still trip the watchdog).
+            case "transport_progress":
+                try {
+                    const data = JSON.parse(msg.data) as Record<string, unknown>;
+                    applyTransportProgress(activeSessionId ?? toValue(sessionId), data);
+                    if (data.stage === "attempt_started") {
+                        notifySessionEvent(activeSessionId ?? toValue(sessionId));
+                    }
+                } catch {
+                    logger.warn("Failed to parse SSE transport_progress event");
+                }
+                break;
+
+            case "transport_attempt":
+                try {
+                    const data = JSON.parse(msg.data) as Record<string, unknown>;
+                    applyTransportAttempt(activeSessionId ?? toValue(sessionId), data);
+                    notifySessionEvent(activeSessionId ?? toValue(sessionId));
+                } catch {
+                    logger.warn("Failed to parse SSE transport_attempt event");
                 }
                 break;
 

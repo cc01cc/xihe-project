@@ -9,6 +9,8 @@ import { useAgentStore } from "../../../../stores/agent";
 import { useAuthStore } from "../../../../stores/auth";
 import { useChatStore } from "../stores/chat.ts";
 import { useCheckpointStore } from "../../../../stores/checkpoint";
+import { onSessionSignals } from "../sessionEvents";
+import { clearTransportLive, liveRunAttempts } from "../transportLive";
 
 const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     BRANCH_ID = "11111111-1111-4111-8111-111111111111",
@@ -81,6 +83,7 @@ beforeEach(() => {
     vi.mocked(chatTransport.sendMessages).mockClear();
     vi.mocked(chatTransport.stop).mockClear();
     localStorage.clear();
+    clearTransportLive();
 });
 
 afterEach(() => {
@@ -662,5 +665,113 @@ describe("stream liveness timer (S-1)", () => {
         await vi.advanceTimersByTimeAsync(10_000);
 
         expect(onError).not.toHaveBeenCalled();
+    });
+});
+
+describe("useSSE transport telemetry (PLAN-0508)", () => {
+    const ATTEMPT_ID = "abababab-abab-4bab-8bab-abababababab";
+    const ATTEMPT_ID_2 = "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd";
+
+    it("mirrors transport_progress and notifies session events only on attempt_started", async () => {
+        const transport = createTransportController(),
+            { connect } = useSSE(SESSION_ID),
+            seen = vi.fn<() => void>(),
+            unsubscribe = onSessionSignals(SESSION_ID, { onData: seen });
+        connect();
+        await flushPromises();
+
+        await transport.simulateMessage(
+            "transport_progress",
+            JSON.stringify({
+                requestId: REQUEST_ID,
+                runId: RUN_ID,
+                attemptId: ATTEMPT_ID,
+                seq: 1,
+                stage: "first_chunk",
+                startedAt: "2026-10-14T08:00:00Z",
+                elapsedMs: 83,
+            }),
+        );
+        const live = liveRunAttempts(SESSION_ID, RUN_ID);
+        expect(live).toHaveLength(1);
+        expect(live[0].stage).toBe("first_chunk");
+        expect(seen).not.toHaveBeenCalled();
+
+        await transport.simulateMessage(
+            "transport_progress",
+            JSON.stringify({
+                requestId: REQUEST_ID,
+                runId: RUN_ID,
+                attemptId: ATTEMPT_ID_2,
+                seq: 2,
+                stage: "attempt_started",
+                startedAt: "2026-10-14T08:00:01Z",
+                elapsedMs: 0,
+            }),
+        );
+        expect(seen).toHaveBeenCalledTimes(1);
+        unsubscribe();
+    });
+
+    it("mirrors transport_attempt terminal state and signals the monitor", async () => {
+        const transport = createTransportController(),
+            { connect } = useSSE(SESSION_ID),
+            seen = vi.fn<() => void>(),
+            unsubscribe = onSessionSignals(SESSION_ID, { onData: seen });
+        connect();
+        await flushPromises();
+
+        await transport.simulateMessage(
+            "transport_attempt",
+            JSON.stringify({
+                requestId: REQUEST_ID,
+                runId: RUN_ID,
+                attemptId: ATTEMPT_ID,
+                seq: 1,
+                startedAt: "2026-10-14T08:00:00Z",
+                endedAt: "2026-10-14T08:00:30Z",
+                durationMs: 30000,
+                outcome: "timeout",
+                errorCode: "LLM_PROVIDER_UNREACHABLE",
+                firstChunkMs: null,
+                chunkCount: 0,
+                uploadBytes: null,
+                downloadBytes: null,
+            }),
+        );
+
+        const live = liveRunAttempts(SESSION_ID, RUN_ID);
+        expect(live).toHaveLength(1);
+        expect(live[0].status).toBe("terminal");
+        expect(live[0].outcome).toBe("timeout");
+        expect(live[0].errorCode).toBe("LLM_PROVIDER_UNREACHABLE");
+        expect(seen).toHaveBeenCalledTimes(1);
+        unsubscribe();
+    });
+
+    it("ignores malformed transport payloads without corrupting the live mirror", async () => {
+        const transport = createTransportController(),
+            { connect } = useSSE(SESSION_ID),
+            seen = vi.fn<() => void>(),
+            unsubscribe = onSessionSignals(SESSION_ID, { onData: seen });
+        connect();
+        await flushPromises();
+
+        await transport.simulateMessage("transport_progress", "{not json");
+        await transport.simulateMessage(
+            "transport_progress",
+            JSON.stringify({
+                runId: RUN_ID,
+                attemptId: "x",
+                seq: 0,
+                stage: "bogus",
+                startedAt: "2026-10-14T08:00:00Z",
+                elapsedMs: -1,
+            }),
+        );
+
+        expect(liveRunAttempts(SESSION_ID, RUN_ID)).toHaveLength(0);
+        expect(seen).not.toHaveBeenCalled();
+        unsubscribe();
     });
 });

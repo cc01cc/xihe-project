@@ -43,6 +43,7 @@ import type {
     PolicyToolFaceQueryScope,
     PolicyToolFaceView,
     PendingApprovalSummary,
+    RunTransportAttemptsResponse,
     SessionDerivedStateResponse,
     SessionRunsResponse,
     SessionMonitorResponse,
@@ -1471,6 +1472,12 @@ export const api = {
     getSessionMonitor(sessionId: string): Promise<SessionMonitorResponse> {
         return request<SessionMonitorResponse>(
             `/chat/sessions/${encodeURIComponent(sessionId)}/monitor`,
+        );
+    },
+    /** PLAN-0508: per-run durable transport attempts (read projection, seq order). */
+    getRunAttempts(runId: string): Promise<RunTransportAttemptsResponse> {
+        return request<RunTransportAttemptsResponse>(
+            `/chat/runs/${encodeURIComponent(runId)}/attempts`,
         );
     },
     /** PLAN-0340 U1: source summary metadata only (no body). */

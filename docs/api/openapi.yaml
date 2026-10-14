@@ -649,6 +649,34 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/chat/runs/{runId}/attempts:
+    get:
+      operationId: getChatRunAttempts
+      summary: List a ChatRun's durable provider HTTP transport attempts
+      description: |
+        PLAN-0508: per-Run durable transport attempt rows (`chat_run_transport_attempts`, V68)
+        in `seq` order, plus the same-count aggregate as the session monitor. Duration /
+        first-chunk / chunk metrics come from the Agent terminal summary only; a running or
+        reconciled-partial row without summary keeps them null (never derived from cross-process
+        wall-clock subtraction). `lastProgressStage` / `lastProgressElapsedMs` carry the last
+        accepted bounded stage sample (static observation, no extrapolation). `uploadBytes` /
+        `downloadBytes` are fixed null in v1 (unknown, never fabricated) and the single
+        `errorCode` slot carries the safe string code or the provider HTTP status.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: runId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Run transport attempts in seq order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunTransportAttemptsResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /api/v1/chat/sessions/{sessionId}/runs:
     get:
       operationId: listSessionChatRuns
@@ -890,6 +918,7 @@ paths:
         * Connection authorization is bounded by the access-token lifetime; v1 closes the SSE before token expiry and the UI enters a recoverable authenticated state (no silent credential leak).
         * `derived_state_changed` is sent on the parent Session channel after a child terminal commits. Its JSON is exactly `{sessionId,runId,state,at}`: `sessionId` and `runId` identify the child, `at` equals durable `chat_runs.terminal_at`; it is best-effort only and the parent page re-reads its own `GET /api/v1/sessions/{sessionId}/derived-state` for authoritative state.
         * PLAN-0338/0339: the session channel also carries `run_checkpoint` — `{runId, sessionId, sliceRef?, capturedAt?, state, changedCount, unrollableReason?, revert?}` — after a slice capture, a degraded capture, or a completed restore (`revert` = `{state, at, counts, ref, attemptCount}`). The event only annotates lifecycle; the workspace slice list remains the durable source on reload.
+        * PLAN-0508: bounded provider transport telemetry rides this same session channel as `transport_progress` (`{requestId,runId,attemptId,seq,stage,startedAt,elapsedMs}`; at most four stage transitions per attempt: `attempt_started`/`first_chunk`/`streaming`/`attempt_finished`) and `transport_attempt` (`{requestId,runId,attemptId,seq,startedAt,endedAt,durationMs,outcome,errorCode,firstChunkMs,chunkCount,uploadBytes,downloadBytes}`; exactly once per attempt, `outcome` ∈ `success|error|timeout|aborted`). CP persists the durable attempt row before relaying; ordering between telemetry and other events is not guaranteed and `GET /api/v1/chat/runs/{runId}/attempts` is the authoritative source. The events are diagnostic side-channel state and never change run semantics.
           * Event order per run is `connected` (once per SSE open) → `status`/`thinking` (optional) → `approval_request` (optional) → approval decision via the CP public route → `tool_result` (approval gate) → downstream `tool_call`/`tool_result` and `token` (only after approval) → `done` (exactly one, may carry `errorCode`/`synthetic`). Tool events carry `toolCallId` and `origin` (`local` or `mcp`) for canonical tool-call correlation and source attribution; `request_approval` itself is represented by the approval request and approval-history record and does not emit a duplicate tool event. Approval live/replay envelopes are built from the durable row only and include `state`, the durable creation `origin` (`cp_gate` for CP-gate rows, `agent_relay` for model-initiated `request_approval`, null for rows predating V25) plus `replayed=false/true`; at creation, the display-only `policy` summary is persisted when it can be captured: `effect`, `sourceLayer`, `matchedRule`, `reason`, `mode`, `actionClass`, and `shape`. The policy summary never contains raw tool arguments. After the atomic decision claim, `policy.modeAtGrant` records the effective session mode at that decision and is never rewritten by a retry; replay uses the stored snapshot, and descriptor failure omits only policy metadata without blocking delivery. On rejection/expiry, no downstream sensitive tool call is allowed and a terminal `error` + `done` is sent. The session SSE is retained unless the emitter itself is unwritable. A failed, parseable command result may carry an optional `diagnostics` bundle (`{items, total, confidence}`; `items` is the Top-N slice of `total`) on `tool_result` data — structured facts copied from the Agent tool-message artifact channel and relayed unchanged by CP; the model-visible `<diagnostics>` block stays inside the untrusted envelope.
       security: [{ bearerAuth: [] }]
       parameters:
@@ -932,6 +961,12 @@ paths:
 
                 event: run_checkpoint
                 data: {"runId":"run-abc","sessionId":"sess-123","sliceRef":"refs/xihe/slices/1757980000000-ab12cd","state":"captured","changedCount":3,"revert":null}
+
+                event: transport_progress
+                data: {"requestId":"req-123","runId":"run-abc","attemptId":"0b0f1f3e-8a2d-4f3a-9d6c-2f0c1e5a7b41","seq":1,"stage":"first_chunk","startedAt":"2026-10-14T08:00:00Z","elapsedMs":83}
+
+                event: transport_attempt
+                data: {"requestId":"req-123","runId":"run-abc","attemptId":"0b0f1f3e-8a2d-4f3a-9d6c-2f0c1e5a7b41","seq":1,"startedAt":"2026-10-14T08:00:00Z","endedAt":"2026-10-14T08:00:02Z","durationMs":2000,"outcome":"success","errorCode":null,"firstChunkMs":83,"chunkCount":5,"uploadBytes":null,"downloadBytes":null}
 
                 event: heartbeat
                 data: {"type":"heartbeat","connectionGeneration":2}
@@ -2512,13 +2547,14 @@ components:
     SessionMonitorResponse:
       type: object
       additionalProperties: false
-      required: [generatedAt, session, activity, history, readiness]
+      required: [generatedAt, session, activity, history, readiness, transport]
       properties:
         generatedAt: { type: string, format: date-time }
         session: { $ref: '#/components/schemas/SessionMonitorSession' }
         activity: { type: array, items: { $ref: '#/components/schemas/SessionMonitorActivityItem' } }
         history: { $ref: '#/components/schemas/SessionMonitorHistory' }
         readiness: { $ref: '#/components/schemas/SessionMonitorReadiness' }
+        transport: { $ref: '#/components/schemas/ChatTransportAggregate' }
     SessionMonitorSession:
       type: object
       additionalProperties: false
@@ -2606,6 +2642,62 @@ components:
         terminalOutcome: { type: string, nullable: true }
         errorCode: { type: string, nullable: true }
         terminalAt: { type: string, format: date-time, nullable: true }
+    ChatTransportAggregate:
+      type: object
+      additionalProperties: false
+      description: PLAN-0508 attempt counts over retained rows (running included); failed = error/timeout, partial = aborted/partial.
+      required: [attemptCount, failedCount, partialCount]
+      properties:
+        attemptCount: { type: integer, minimum: 0 }
+        failedCount: { type: integer, minimum: 0 }
+        partialCount: { type: integer, minimum: 0 }
+    RunTransportAttemptsResponse:
+      type: object
+      additionalProperties: false
+      description: PLAN-0508 per-Run durable provider HTTP transport attempts in seq order.
+      required: [runId, attempts, aggregate]
+      properties:
+        runId: { type: string, format: uuid }
+        attempts: { type: array, items: { $ref: '#/components/schemas/ChatTransportAttempt' } }
+        aggregate: { $ref: '#/components/schemas/ChatTransportAggregate' }
+    ChatTransportAttempt:
+      type: object
+      additionalProperties: false
+      description: |
+        PLAN-0508 durable transport attempt (V68 row projection); provider/model/connection
+        identity is projected from the immutable ChatRun snapshot. Terminal metrics come from
+        the Agent summary only (null when absent); `lastProgressStage` / `lastProgressElapsedMs`
+        are the last accepted bounded stage sample (static, never extrapolated); wire bytes are
+        fixed null in v1 (unknown); the single `errorCode` slot carries the safe string code or
+        the provider HTTP status.
+      required: [attemptId, seq, status, outcome, provider, model, connectionId, connectionRevision, startedAt, endedAt, durationMs, errorCode, firstChunkMs, chunkCount, uploadBytes, downloadBytes, lastProgressStage, lastProgressElapsedMs]
+      properties:
+        attemptId: { type: string, format: uuid }
+        seq: { type: integer, minimum: 1 }
+        status: { type: string, enum: [running, terminal] }
+        outcome:
+          oneOf:
+            - type: string
+              enum: [success, error, timeout, aborted, partial]
+            - type: 'null'
+        provider: { type: string, nullable: true }
+        model: { type: string, nullable: true }
+        connectionId: { type: string, nullable: true }
+        connectionRevision: { type: integer, nullable: true }
+        startedAt: { type: string, format: date-time }
+        endedAt: { type: string, format: date-time, nullable: true }
+        durationMs: { type: integer, minimum: 0, nullable: true }
+        errorCode:
+          oneOf:
+            - type: string
+            - type: integer
+            - type: 'null'
+        firstChunkMs: { type: integer, minimum: 0, nullable: true }
+        chunkCount: { type: integer, minimum: 0, nullable: true }
+        uploadBytes: { type: integer, nullable: true, description: Fixed null in v1 (unknown, never fabricated) }
+        downloadBytes: { type: integer, nullable: true, description: Fixed null in v1 (unknown, never fabricated) }
+        lastProgressStage: { type: string, nullable: true, enum: [attempt_started, first_chunk, streaming, attempt_finished] }
+        lastProgressElapsedMs: { type: integer, minimum: 0, nullable: true }
     ChatApprovalDecisionRequest:
       type: object
       additionalProperties: false

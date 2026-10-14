@@ -6,7 +6,7 @@ lang: zh-Hans
 sidebar_group: "开发指南"
 status: active
 created: 2026-09-16
-updated: 2026-10-13
+updated: 2026-10-14
 ---
 
 # DEV-032: 术语规范（一词多义与多词一义）
@@ -61,6 +61,8 @@ updated: 2026-10-13
 | | B. 凭据管理器登记的独立对象（`credentials` 表） | **`credential 对象`（凭据对象）** | 与 A 混用；笼统写「用户的凭据」 | 0495；owner 两级（USER/WORKSPACE）、lease/reveal 单通道交付；`spec/security/credential-management.md` |
 | **轮换 / rotation** | A. MCP session-id 签名密钥更替 | `签名密钥轮换`（MCP session-id） | 裸「轮换」指 B | DEV-016 |
 | | B. credential 域主密钥更替（key ring） | **`credential 主密钥轮换`（key ring rotation）** | 与 A 混用 | 0495；两阶段 + CAS + 按 key_version 列计数（退役校验） |
+| **attempt** | A. MCP 执行域的工具尝试 | **`tool attempt`**（`agent_tool_attempts` 域） | 裸 `attempt` 指传输尝试 | 0464 执行域 |
+| | B. provider HTTP 传输尝试（单次 LLM HTTP dispatch） | **`transport attempt`（传输尝试）**；表 `chat_run_transport_attempts`，正名事件 `transport_progress`/`transport_attempt` | 与 tool attempt 混用；称「请求记录/HTTP 调用记录」 | 0508；outcome `success/error/timeout/aborted/partial`；阶段 `attempt_started/first_chunk/streaming/attempt_finished` |
 
 ### 1.1 主体与角色（2026-09-17 增补）
 
@@ -93,6 +95,7 @@ XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账�
 | 使 `paused` 回到可用的代码路径 | **`unpause 激活路径`** | 恢复消费者、resume 消费者、resume consumer | 0345 M-2；「有 unpause 激活路径」替代「有恢复消费者」作验收句 |
 | 绕过 executor 直连磁盘 | **`executor-bypass`** | host FS 直连、裸 bypass | 0329 分类；叙述可用「executor-bypass（REST 直连 host FS）」 |
 | 后台任务断线后续看 | **`durable job 续看`** | 输出持久化续看、job resume | 0344 |
+| transport attempt 的有界阶段观测（`last_progress_stage/last_progress_elapsed_ms`） | **`阶段样本`（stage sample）** | 进度快照、latest progress、前溯 elapsed | 0508；静态 last-observed 展示，禁止任何时钟外推（跨进程墙钟纪律） |
 
 ### 2.2 已完成切换（活动文档只保留正名）
 

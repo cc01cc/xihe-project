@@ -102,6 +102,24 @@ async function sendCompletion(response, provider, requestBody) {
         return;
     }
 
+    // PLAN-0508 T5.1 transport telemetry categories (default/success mode,
+    // marker-gated so one run can cover all three):
+    //  - XIHE-E2E-SLOW <ms>: stall before the first chunk (slow first response);
+    //  - XIHE-E2E-DROP: tear the SSE stream down right after the preamble
+    //    (provider failure with no content, so the attempt ends as an error).
+    const lastUser = [...(requestBody.messages ?? [])].reverse().find((m) => m.role === "user");
+    const lastUserText = typeof lastUser?.content === "string" ? lastUser.content : "";
+    const slowMatch = lastUserText.match(/XIHE-E2E-SLOW\s+(\d+)/);
+    if (slowMatch) {
+        const delayMs = Math.min(Number(slowMatch[1]), 15000);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    if (lastUserText.includes("XIHE-E2E-DROP")) {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        response.destroy();
+        return;
+    }
+
     const lastMessage = requestBody.messages?.at(-1)?.content ?? "empty";
     // PLAN-0307 T2.17 (V17): echo the model so a spec can prove that the
     // UI-saved config actually reached the LLM call.

@@ -176,6 +176,51 @@ export interface SessionMonitorResponse {
     activity: SessionMonitorActivityItem[];
     history: SessionMonitorHistory;
     readiness: SessionMonitorReadiness;
+    /**
+     * PLAN-0508: transport attempt counts over ALL retained rows of this
+     * session (running included); independent of the `history.counts`
+     * 20-terminal-run window.
+     */
+    transport: ChatTransportAggregate;
+}
+
+/**
+ * PLAN-0508: durable provider HTTP transport attempt — read projection of the
+ * V68 lifecycle row. Provider/model/connection identity is projected from the
+ * ChatRun snapshot; `uploadBytes/downloadBytes` are fixed `null` (v1 unknown).
+ */
+export interface ChatTransportAttempt {
+    attemptId: string;
+    seq: number;
+    status: "running" | "terminal";
+    outcome: string | null;
+    provider: string | null;
+    model: string | null;
+    connectionId: string | null;
+    connectionRevision: number | null;
+    startedAt: string;
+    endedAt: string | null;
+    durationMs: number | null;
+    errorCode: string | number | null;
+    firstChunkMs: number | null;
+    chunkCount: number | null;
+    uploadBytes: number | null;
+    downloadBytes: number | null;
+    lastProgressStage: string | null;
+    lastProgressElapsedMs: number | null;
+}
+
+/** PLAN-0508: attempt counts (failed = error/timeout; partial = aborted/partial). */
+export interface ChatTransportAggregate {
+    attemptCount: number;
+    failedCount: number;
+    partialCount: number;
+}
+
+export interface RunTransportAttemptsResponse {
+    runId: string;
+    attempts: ChatTransportAttempt[];
+    aggregate: ChatTransportAggregate;
 }
 
 /** UI join of the PLAN-0464 waiting link and the derived child projection. */
