@@ -792,6 +792,77 @@ public class ConfigService {
         }
     }
 
+    // ------------------------------------------------------------------
+    // PLAN-0505: llm-provider.profile cleanup on connection delete
+    // ------------------------------------------------------------------
+
+    /** A profile row that points at the deleted connection, with its scope. */
+    public record ProfileHit(String layer, UUID userId, UUID workspaceId) {}
+
+    private boolean profileTargetsConnection(String raw, String providerId, String connectionKey) {
+        if (raw == null || raw.isBlank()) {
+            return false;
+        }
+        try {
+            LlmProfile profile = parseLlmProfile(raw);
+            return profile.providerId().equals(providerId) && profile.connectionKey().equals(connectionKey);
+        } catch (CpApiException malformed) {
+            // A malformed profile row is skipped (M1): it neither counts as a
+            // hit nor blocks the delete; the row stays for its owner to fix.
+            return false;
+        }
+    }
+
+    /**
+     * PLAN-0505 delete-impact profile scan (T2.1): rows in the instance, user
+     * and workspace layers whose {@code profile} unit points at this
+     * connection (providerId + connectionKey match). Malformed rows are
+     * skipped. Read-only.
+     */
+    public List<ProfileHit> profileImpact(String providerId, String connectionKey) {
+        List<ProfileHit> hits = new ArrayList<>();
+        for (ConfigEntity row : repo.findByLayerAndDomain("instance", "llm-provider")) {
+            if ("profile".equals(row.getConfigKey())
+                    && profileTargetsConnection(row.getConfigValue(), providerId, connectionKey)) {
+                hits.add(new ProfileHit("instance", null, null));
+            }
+        }
+        for (ConfigEntity row : repo.findByLayerAndDomain("user", "llm-provider")) {
+            if ("profile".equals(row.getConfigKey())
+                    && profileTargetsConnection(row.getConfigValue(), providerId, connectionKey)) {
+                hits.add(new ProfileHit("user", row.getUserId(), null));
+            }
+        }
+        for (ConfigEntity row : repo.findByLayerAndDomain("workspace", "llm-provider")) {
+            if ("profile".equals(row.getConfigKey())
+                    && profileTargetsConnection(row.getConfigValue(), providerId, connectionKey)) {
+                hits.add(new ProfileHit("workspace", null, row.getWorkspaceId()));
+            }
+        }
+        return hits;
+    }
+
+    /**
+     * PLAN-0505 cascade cleanup for one connection (T2.2): deletes every
+     * profile row that {@link #profileImpact} would report. Idempotent on
+     * missing rows; malformed rows are skipped (they neither match nor block).
+     * Runs inside the caller's delete transaction; config audit rows are
+     * written by the shared deleteKey path.
+     */
+    public int cleanupProfiles(String providerId, String connectionKey, String changedBy) {
+        int removed = 0;
+        for (ProfileHit hit : profileImpact(providerId, connectionKey)) {
+            Optional<ConfigEntity> existing = findExisting(hit.layer(), "llm-provider", "profile",
+                    hit.userId(), hit.workspaceId());
+            if (existing.isPresent()
+                    && profileTargetsConnection(existing.get().getConfigValue(), providerId, connectionKey)) {
+                deleteKey(hit.layer(), "llm-provider", "profile", changedBy, hit.userId(), hit.workspaceId());
+                removed++;
+            }
+        }
+        return removed;
+    }
+
     /** Layer/domain/scope violation (mapped to 403 by the controller). */
     public static class ConfigAccessException extends IllegalArgumentException {
         public ConfigAccessException(String message) {

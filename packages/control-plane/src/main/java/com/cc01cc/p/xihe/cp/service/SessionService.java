@@ -374,6 +374,10 @@ public class SessionService {
             providerConnectionId = candidates.getFirst().getId().toString();
         }
         try {
+            // PLAN-0505 I6/V10: take the same connection row lock as the delete
+            // path so a concurrent connection delete cannot slip a dangling
+            // session binding between its check and its delete.
+            apiRequestTemplates.lockConnection(providerConnectionId);
             ProviderConnection connection = providerConnectionService.requireUsableForOwner(
                     providerConnectionId, userId, workspaceId);
             if (requestedProvider != null && !requestedProvider.isBlank()

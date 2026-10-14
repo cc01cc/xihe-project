@@ -47,6 +47,11 @@ public class ProviderConnectionService {
     private final EnvelopeEncryptionService encryption;
     private final ObjectMapper objectMapper;
     private final com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService requestTemplates;
+    // ConfigService field-injects ProviderConnectionService, so a constructor
+    // dependency here would be an unresolvable cycle; ObjectProvider defers the
+    // resolution to first use (same pattern as ApiRequestTemplateService in
+    // ConfigService).
+    private final org.springframework.beans.factory.ObjectProvider<com.cc01cc.p.xihe.cp.config.ConfigService> configService;
     private final HttpClient httpClient;
 
     public ProviderConnectionService(
@@ -57,7 +62,8 @@ public class ProviderConnectionService {
             ApiInputTypeService apiTypes,
             @Qualifier("providerCredentialEncryption") EnvelopeEncryptionService encryption,
             ObjectMapper objectMapper,
-            com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService requestTemplates) {
+            com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService requestTemplates,
+            org.springframework.beans.factory.ObjectProvider<com.cc01cc.p.xihe.cp.config.ConfigService> configService) {
         this.repository = repository;
         this.auditRepository = auditRepository;
         this.leaseRepository = leaseRepository;
@@ -66,6 +72,7 @@ public class ProviderConnectionService {
         this.encryption = encryption;
         this.objectMapper = objectMapper;
         this.requestTemplates = requestTemplates;
+        this.configService = configService;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
                 .followRedirects(HttpClient.Redirect.NEVER)
@@ -291,9 +298,59 @@ public class ProviderConnectionService {
         ProviderConnection connection = requestTemplates.lockConnection(id);
         requireVisible(id);
         ensureCanManage(connection);
+        // PLAN-0505 I6: session references block the delete inside the same
+        // transaction and connection lock as the cleanup below (no
+        // check-then-act window against SessionService.bindProviderConnection,
+        // which takes the same lock since this PLAN).
+        long sessionCount = requestTemplates.sessionReferenceCount(connection.getId().toString());
+        if (sessionCount > 0) {
+            throw new SessionBlockedException(connection.getId().toString(), sessionCount);
+        }
+        var counts = requestTemplates.cleanupReferences(connection);
+        int removedProfiles = configService.getObject().cleanupProfiles(
+                connection.getProviderId(), connection.getConnectionKey(), TenantContext.getUserId());
         revokeLeases(connection.getId().toString());
         audit(connection, "DELETED", connection.getStatus(), "DELETED");
+        logger.info("Provider connection deleted connectionId={} removedBindings={} removedDefaultTemplate={} "
+                        + "bindingScopes={} removedProfiles={} sessionCount={}",
+                connection.getId(), counts.removedBindings(), counts.removedDefaultTemplate(),
+                counts.bindingScopes(), removedProfiles, sessionCount);
         repository.delete(connection);
+    }
+
+    /** PLAN-0505 I6: the delete is rejected while sessions reference the connection. */
+    public static class SessionBlockedException extends RuntimeException {
+        private final String connectionId;
+        private final long sessionCount;
+
+        public SessionBlockedException(String connectionId, long sessionCount) {
+            super("Connection is referenced by " + sessionCount + " session(s); delete or rebind them first");
+            this.connectionId = connectionId;
+            this.sessionCount = sessionCount;
+        }
+
+        public String getConnectionId() {
+            return connectionId;
+        }
+
+        public long getSessionCount() {
+            return sessionCount;
+        }
+    }
+
+    /** PLAN-0505 T2.1: read-only delete impact preview (no locks, no writes). */
+    @Transactional(readOnly = true)
+    public java.util.Map<String, Object> deleteImpact(String id) {
+        ProviderConnection connection = requireVisible(id);
+        ensureCanManage(connection);
+        java.util.Map<String, Object> impact =
+                new java.util.LinkedHashMap<>(requestTemplates.deleteImpact(connection));
+        var profileHits = configService.getObject().profileImpact(
+                connection.getProviderId(), connection.getConnectionKey());
+        impact.put("profileCount", profileHits.size());
+        impact.put("profileScopes", profileHits.stream()
+                .map(com.cc01cc.p.xihe.cp.config.ConfigService.ProfileHit::layer).distinct().toList());
+        return impact;
     }
 
     private void revokeLeases(String connectionId) {

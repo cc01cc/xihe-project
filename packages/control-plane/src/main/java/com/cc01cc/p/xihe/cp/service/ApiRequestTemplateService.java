@@ -560,8 +560,106 @@ public class ApiRequestTemplateService {
                 "targetType", Map.of("apiTypeId", type, "apiTypeVersion", version),
                 "compatibleTemplates", candidates, "incompatibleOverrides", List.of(Map.of("scope", "user", "count", count)),
                 "sessionRebindCount", connection.getApiTypeId().equals(type) && connection.getApiTypeVersion() == version ? 0L
-                        : em.createQuery("select count(s) from Session s where s.providerConnectionId = :id", Long.class)
-                        .setParameter("id", connection.getId().toString()).getSingleResult());
+                        : sessionReferenceCount(connection.getId().toString()));
+    }
+
+    public long sessionReferenceCount(String connectionId) {
+        return em.createQuery("select count(s) from Session s where s.providerConnectionId = :id", Long.class)
+                .setParameter("id", connectionId).getSingleResult();
+    }
+
+    // ------------------------------------------------------------------
+    // PLAN-0505: connection delete reference impact and cascade cleanup
+    // ------------------------------------------------------------------
+
+    /**
+     * PLAN-0505 delete-impact preview (T2.1): counts of the config references
+     * that a connection delete would cascade away. Read-only — no locks, no
+     * writes; other users' binding contents are never exposed, only counts.
+     */
+    public Map<String, Object> deleteImpact(ProviderConnection connection) {
+        int bindingCount = 0;
+        Set<String> bindingScopes = new TreeSet<>();
+        for (ConfigEntity row : configs.findByLayerAndDomain("user", DOMAIN)) {
+            if (!row.getConfigKey().equals("providerModelBindings")) {
+                continue;
+            }
+            JsonNode bound = object(row.getConfigValue()).path(connection.getId().toString());
+            if (!bound.isObject() || bound.isEmpty()) {
+                continue;
+            }
+            bindingCount += bound.size();
+            bindingScopes.add(String.valueOf(row.getUserId()));
+        }
+        String layer = connection.getOwnerType().toLowerCase(java.util.Locale.ROOT);
+        UUID owner = UUID.fromString(connection.getOwnerId());
+        boolean defaultTemplateRef = object(raw(layer, layer.equals("user") ? owner : null,
+                layer.equals("workspace") ? owner : null).getOrDefault("connectionDefaultTemplates", "{}"))
+                .has(connection.getId().toString());
+        long sessionCount = sessionReferenceCount(connection.getId().toString());
+        return Map.of("connectionId", connection.getId().toString(),
+                "providerId", connection.getProviderId(),
+                "connectionKey", connection.getConnectionKey(),
+                "bindingCount", bindingCount,
+                "bindingUserScopes", bindingScopes.size(),
+                "defaultTemplateRef", defaultTemplateRef,
+                "sessionCount", sessionCount,
+                "blocked", sessionCount > 0);
+    }
+
+    /** Counts for the audit record of one delete cleanup run. */
+    public record CleanupCounts(int removedBindings, boolean removedDefaultTemplate, int bindingScopes) {}
+
+    /**
+     * PLAN-0505 cascade cleanup (T2.2): removes this connection's entries from
+     * every user layer {@code providerModelBindings} row (cross-user, I2), the
+     * owner layer {@code connectionDefaultTemplates} entry, and returns the
+     * counts for the audit record. Runs inside the caller's delete transaction;
+     * the caller holds the connection row lock. Scopes are locked in lexical
+     * order (I5, TreeSet precedent of {@code changeConnectionDefault}).
+     * {@code templates} is never touched (I1).
+     */
+    public CleanupCounts cleanupReferences(ProviderConnection connection) {
+        String connectionId = connection.getId().toString();
+        List<ConfigEntity> overrides = configs.findByLayerAndDomain("user", DOMAIN).stream()
+                .filter(r -> r.getConfigKey().equals("providerModelBindings"))
+                .filter(r -> object(r.getConfigValue()).has(connectionId))
+                .sorted(Comparator.comparing(r -> r.getUserId().toString())).toList();
+        Set<String> scopes = new TreeSet<>();
+        String layer = connection.getOwnerType().toLowerCase(java.util.Locale.ROOT);
+        UUID owner = UUID.fromString(connection.getOwnerId());
+        scopes.add(layer + ":" + owner);
+        for (ConfigEntity row : overrides) {
+            scopes.add("user:" + row.getUserId());
+        }
+        for (String scope : scopes) {
+            String[] parts = scope.split(":", 2);
+            UUID scopeOwner = UUID.fromString(parts[1]);
+            lockScope(parts[0], parts[0].equals("user") ? scopeOwner : null,
+                    parts[0].equals("workspace") ? scopeOwner : null);
+        }
+        int removedBindings = 0;
+        for (ConfigEntity row : overrides) {
+            em.refresh(row);
+            ObjectNode bindings = object(row.getConfigValue());
+            JsonNode bound = bindings.path(connectionId);
+            if (!bound.isObject() || bound.isEmpty()) {
+                continue;
+            }
+            removedBindings += bound.size();
+            bindings.remove(connectionId);
+            save("user", row.getUserId(), null, "providerModelBindings", write(bindings), TenantContext.getUserId());
+        }
+        boolean removedDefaultTemplate = false;
+        ObjectNode defaults = object(raw(layer, layer.equals("user") ? owner : null,
+                layer.equals("workspace") ? owner : null).getOrDefault("connectionDefaultTemplates", "{}"));
+        if (defaults.has(connectionId)) {
+            defaults.remove(connectionId);
+            save(layer, layer.equals("user") ? owner : null, layer.equals("workspace") ? owner : null,
+                    "connectionDefaultTemplates", write(defaults), TenantContext.getUserId());
+            removedDefaultTemplate = true;
+        }
+        return new CleanupCounts(removedBindings, removedDefaultTemplate, overrides.size());
     }
 
     private UUID builtinId(String type, int version) {

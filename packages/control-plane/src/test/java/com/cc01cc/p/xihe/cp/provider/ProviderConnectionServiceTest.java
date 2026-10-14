@@ -39,9 +39,12 @@ class ProviderConnectionServiceTest {
     private final EnvelopeEncryptionService encryption = new EnvelopeEncryptionService(new byte[32]);
     private final com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService requestTemplates =
             mock(com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService.class);
+    @SuppressWarnings("unchecked")
+    private final org.springframework.beans.factory.ObjectProvider<com.cc01cc.p.xihe.cp.config.ConfigService> configService =
+            mock(org.springframework.beans.factory.ObjectProvider.class);
     private final ProviderConnectionService service = new ProviderConnectionService(
             repository, auditRepository, leaseRepository, catalog, apiTypes, encryption, new ObjectMapper(),
-            requestTemplates);
+            requestTemplates, configService);
 
     @org.junit.jupiter.api.BeforeEach
     void wireLockedConnectionDelegation() {
@@ -366,8 +369,7 @@ class ProviderConnectionServiceTest {
         pair.put("modelDiscovery", "manual");
         ProviderConnectionService pairService = new ProviderConnectionService(
                 repository, auditRepository, leaseRepository, realCatalog, apiTypes, encryption, mapper,
-                requestTemplates);
-        when(repository.save(any(ProviderConnection.class)))
+                requestTemplates, configService);        when(repository.save(any(ProviderConnection.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         ProviderConnection created = pairService.create(new ProviderConnectionService.ConnectionInput(
