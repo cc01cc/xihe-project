@@ -196,15 +196,36 @@ class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
         assertEquals(0, impact.path("sessionCount").asInt(), preview.body());
         assertFalse(impact.path("blocked").asBoolean(), preview.body());
 
+        // V2 baseline: the templates key must stay byte-identical across the
+        // delete (I1). Builtins are code-derived, so seed a user-layer draft
+        // templates row and snapshot every templates row before the DELETE.
+        var draft = json.createObjectNode().put("id", UUID.randomUUID().toString()).put("version", 1)
+                .put("name", "V2 Byte Identity").put("description", "isolated")
+                .put("apiTypeId", "openai-chat-completions")
+                .put("apiTypeVersion", 1).put("bodySource", "{\"model\":\"${xh.model}\"}").put("status", "draft");
+        assertEquals(200, send("PUT", "/api/v1/config/user/api-request-templates",
+                json.writeValueAsString(Map.of("templates", json.writeValueAsString(json.createArrayNode().add(draft)))))
+                .statusCode());
+        var templatesBefore = jdbc.queryForList(
+                "SELECT id, config_value FROM config WHERE config_key = 'templates'");
+        assertFalse(templatesBefore.isEmpty(), "user templates rows must exist as baseline");
+
         assertEquals(204, send("DELETE", "/api/v1/provider-connections/" + id, null).statusCode(),
                 "a connection without session references deletes cleanly");
 
         // V1: all references are gone after the delete, including the second
         // user's row; the malformed profile row survives (skipped, not owned).
-        assertEquals(0, countConfigRows("api-request-templates", id));
         assertEquals(1, countConfigRows("llm-provider", "not-json"),
                 "malformed profile rows are left for their owner to fix");
         assertTrue(connections.findById(UUID.fromString(id)).isEmpty());
+        // V2: templates are byte-identical after the delete (I1).
+        for (var before : templatesBefore) {
+            var after = jdbc.queryForObject(
+                    "SELECT config_value FROM config WHERE id = ?::uuid",
+                    String.class, before.get("id"));
+            assertEquals(before.get("config_value"), after,
+                    "templates row " + before.get("id") + " must be byte-identical after delete");
+        }
         var auditRows = jdbc.queryForList(
                 "SELECT to_status FROM provider_connection_audit WHERE provider_connection_id = ?::uuid AND action = 'DELETED'",
                 id);
