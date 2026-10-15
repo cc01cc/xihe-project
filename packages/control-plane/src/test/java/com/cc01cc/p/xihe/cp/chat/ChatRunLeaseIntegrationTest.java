@@ -288,7 +288,8 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
     // ── PLAN-0317 T2.7：周期对账（grace=-1 让所有测试 run 立即进入候选） ──────
 
     private ChatRunReconciliationService staleRunReconciler() {
-        return new ChatRunReconciliationService(chatRunRepository, activeRunRegistry, chatRunTerminalService, -1);
+        return new ChatRunReconciliationService(chatRunRepository, activeRunRegistry, chatRunTerminalService,
+                chatRunTransportService, -1);
     }
 
     @Test
@@ -510,6 +511,9 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private ChatRunTerminalService chatRunTerminalService;
+
+    @Autowired
+    private ChatRunTransportService chatRunTransportService;
 
     @MockitoBean
     private ApprovalAgentClient approvalAgentClient;

@@ -124,6 +124,52 @@ class OpenApiYamlContractTest {
         }
     }
 
+    /** PLAN-0508: per-Run transport attempts route/schemas + session channel events. */
+    @Test
+    void openApiContainsTransportAttemptRouteSchemasAndSessionEvents() throws Exception {
+        Path contract = Path.of("..", "..", "docs", "api", "openapi.yaml");
+        try (InputStream input = Files.newInputStream(contract)) {
+            Map<?, ?> document = new Yaml().load(input);
+            Map<?, ?> paths = (Map<?, ?>) document.get("paths");
+            assertTrue(paths.containsKey("/api/v1/chat/runs/{runId}/attempts"),
+                    "per-run transport attempts route is contracted");
+
+            Map<?, ?> schemas = (Map<?, ?>) ((Map<?, ?>) document.get("components")).get("schemas");
+            assertInstanceOf(Map.class, schemas.get("RunTransportAttemptsResponse"),
+                    "RunTransportAttemptsResponse schema is contracted");
+            assertInstanceOf(Map.class, schemas.get("ChatTransportAggregate"),
+                    "ChatTransportAggregate schema is contracted");
+            Map<?, ?> attempt = (Map<?, ?>) schemas.get("ChatTransportAttempt");
+            assertInstanceOf(Map.class, attempt, "ChatTransportAttempt schema is contracted");
+            Map<?, ?> attemptProperties = (Map<?, ?>) attempt.get("properties");
+            assertTrue(attemptProperties.containsKey("lastProgressStage"),
+                    "bounded stage sample is part of the attempt projection");
+            assertTrue(attemptProperties.containsKey("lastProgressElapsedMs"));
+            assertTrue(attemptProperties.containsKey("uploadBytes"));
+            assertTrue(attemptProperties.containsKey("downloadBytes"));
+
+            Map<?, ?> monitor = (Map<?, ?>) schemas.get("SessionMonitorResponse");
+            Map<?, ?> monitorProperties = (Map<?, ?>) monitor.get("properties");
+            assertTrue(monitorProperties.containsKey("transport"),
+                    "session monitor response carries the transport aggregate");
+
+            Map<?, ?> events = (Map<?, ?>) paths.get("/api/v1/events");
+            assertInstanceOf(Map.class, events, "session event stream route is contracted");
+            Map<?, ?> get = (Map<?, ?>) events.get("get");
+            String description = String.valueOf(get.get("description"));
+            assertTrue(description.contains("transport_progress"),
+                    "session channel must document transport_progress");
+            assertTrue(description.contains("transport_attempt"),
+                    "session channel must document transport_attempt");
+            String example = String.valueOf(((Map<?, ?>) ((Map<?, ?>) get.get("responses"))
+                    .get("200")).get("content"));
+            assertTrue(example.contains("transport_progress"),
+                    "session stream example must carry a transport_progress event");
+            assertTrue(example.contains("transport_attempt"),
+                    "session stream example must carry a transport_attempt event");
+        }
+    }
+
     /** PLAN-0497 T3.1/T3.2（wave review 补齐）：reveal 与 events 读面同批入契约。 */
     @Test
     void openApiContainsCredentialDeliveryRoutesAndSchemas() throws Exception {

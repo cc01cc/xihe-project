@@ -4,6 +4,7 @@ Moved verbatim from `main.py` (PLAN-0473 T2.2); request parsing, run-config
 resolution, event translation, and terminal-outcome semantics unchanged.
 """
 
+import asyncio
 from typing import Any
 from uuid import uuid4
 
@@ -42,7 +43,7 @@ from xihe_agent.app_state import (
     run_cancel_registry,
 )
 from xihe_agent.config_client import ProviderLeaseError
-from xihe_agent.interfaces.agent_runner import RunnerConfig
+from xihe_agent.interfaces.agent_runner import AgentEvent, RunnerConfig
 from xihe_agent.interfaces.chat_run_context import ContextBuildError
 from xihe_agent.interfaces.event import Event
 from xihe_agent.interfaces.message import TextMessage
@@ -361,6 +362,15 @@ async def chat(request: Request):
                     )
                 context.messages = pruned.messages
 
+                # PLAN-0508: the model's transport collector publishes bounded
+                # provider-attempt telemetry into this queue; the runner fans it
+                # into the same SSE stream, and correlated_data adds
+                # requestId/runId on the way out.
+                transport_events: asyncio.Queue[AgentEvent] = asyncio.Queue()
+
+                def publish_transport(event_type: str, payload: dict[str, Any]) -> None:
+                    transport_events.put_nowait(AgentEvent(type=event_type, data=payload))
+
                 model = ApiChatModel(
                     api_type=api_type,
                     grant=grant,
@@ -376,6 +386,7 @@ async def chat(request: Request):
                     request_id=request_id,
                     timeout=request_config.timeout,
                     token_estimator=_estimate_native_body_tokens,
+                    transport_sink=publish_transport,
                 )
                 request_runner = LangGraphRunner(model_factory=lambda _model: model, event_store=cp_event_store_client)
                 # The Runner owns approval/durable/tool execution. This prompt is
@@ -403,6 +414,8 @@ async def chat(request: Request):
                     branch_id=context.branch_id,
                     template_context=has_template,
                     admitted_prompt=content,
+                    # PLAN-0508: bounded provider-attempt telemetry fan-in.
+                    transport_events=transport_events,
                 )
 
                 llm_request_started = True

@@ -5,6 +5,7 @@ import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.provider.ProviderConnectionService;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.ChatRunTransportAttemptRepository;
 import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -31,13 +32,17 @@ public class SessionMonitorService {
             List.of("succeeded", "partial", "failed", "cancelled", "ambiguous");
 
     private final ChatRunRepository chatRuns;
+    private final ChatRunTransportAttemptRepository transportAttempts;
     private final ApprovalService approvalService;
     private final ProviderConnectionService providerConnections;
     private final HealthMonitor healthMonitor;
 
-    public SessionMonitorService(ChatRunRepository chatRuns, ApprovalService approvalService,
+    public SessionMonitorService(ChatRunRepository chatRuns,
+                                 ChatRunTransportAttemptRepository transportAttempts,
+                                 ApprovalService approvalService,
                                  ProviderConnectionService providerConnections, HealthMonitor healthMonitor) {
         this.chatRuns = chatRuns;
+        this.transportAttempts = transportAttempts;
         this.approvalService = approvalService;
         this.providerConnections = providerConnections;
         this.healthMonitor = healthMonitor;
@@ -52,8 +57,21 @@ public class SessionMonitorService {
         body.put("session", sessionView(session));
         body.put("activity", activity(sessionId, userId, workspaceId));
         body.put("history", history(window));
+        body.put("transport", transportCounts(sessionId));
         body.put("readiness", readiness(session, window));
         return body;
+    }
+
+    private Map<String, Object> transportCounts(String sessionId) {
+        List<Object[]> aggregates = transportAttempts.aggregateCountsForSession(sessionId);
+        if (aggregates.isEmpty() || aggregates.getFirst().length != 3) {
+            throw new IllegalStateException("Session transport aggregate query returned an invalid row");
+        }
+        Object[] aggregate = aggregates.getFirst();
+        return Map.of(
+                "attemptCount", ((Number) aggregate[0]).longValue(),
+                "failedCount", ((Number) aggregate[1]).longValue(),
+                "partialCount", ((Number) aggregate[2]).longValue());
     }
 
     private static Map<String, Object> sessionView(Session session) {
