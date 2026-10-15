@@ -11,6 +11,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import jakarta.persistence.EntityManager;
 import com.cc01cc.p.xihe.cp.entity.ConfigAuditEntity;
 import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
@@ -168,6 +170,12 @@ public class ConfigService {
 
     @Autowired
     private EmbeddingProfileService embeddingProfiles;
+
+    // PLAN-0505 review D-2: transaction-scope advisory lock serializing config
+    // read-modify-write (putLayerInternal) against cascade cleanup
+    // (cleanupProfiles) for the same layer/domain/scope.
+    @Autowired
+    private EntityManager em;
 
     public record EffectiveConfig(String domain, String revision, String source,
                                   Map<String, String> entries) {}
@@ -874,10 +882,16 @@ public class ConfigService {
      * profile row that {@link #profileImpact} would report. Idempotent on
      * missing rows; malformed rows are skipped (they neither match nor block).
      * Runs inside the caller's delete transaction; config audit rows are
-     * written by the shared deleteKey path.
+     * written by the shared deleteKey path. The owner scope is locked with the
+     * same domain advisory lock that {@code putLayerInternal} takes, so a
+     * concurrent profile write cannot resurrect a row pointing at the deleted
+     * connection (review D-2).
      */
     public int cleanupProfiles(String providerId, String connectionKey,
             String ownerType, UUID ownerId, String changedBy) {
+        for (ProfileHit candidate : profileImpact(providerId, connectionKey, ownerType, ownerId)) {
+            lockDomainScope(candidate.layer(), "llm-provider", candidate.userId(), candidate.workspaceId());
+        }
         int removed = 0;
         for (ProfileHit hit : profileImpact(providerId, connectionKey, ownerType, ownerId)) {
             Optional<ConfigEntity> existing = findExisting(hit.layer(), "llm-provider", "profile",
@@ -889,6 +903,29 @@ public class ConfigService {
             }
         }
         return removed;
+    }
+
+    /**
+     * PLAN-0505 review D-2: transaction advisory lock keyed by
+     * {@code layer:scope:domain}, same derivation shape as
+     * {@code ApiRequestTemplateService.lockScope} (different domain string, so
+     * the two lock families never collide). Serializes config
+     * read-modify-write ({@code putLayerInternal}) against cascade cleanup for
+     * one scope; a writer holds at most its own scope's lock, and the delete
+     * path takes owner scopes only, so no lock cycle is possible.
+     */
+    private void lockDomainScope(String layer, String domain, UUID userId, UUID workspaceId) {
+        // PostgreSQL-only advisory lock, same dialect guard as
+        // ApiRequestTemplateService.lockScope (H2 test databases lack the
+        // function; there the pessimistic-row-lock-only semantics remain).
+        if (em.getEntityManagerFactory().unwrap(org.hibernate.engine.spi.SessionFactoryImplementor.class)
+                .getJdbcServices().getDialect() instanceof org.hibernate.dialect.PostgreSQLDialect) {
+            String owner = layer + ":"
+                    + ("user".equals(layer) ? userId : "workspace".equals(layer) ? workspaceId : "instance")
+                    + ":" + domain;
+            em.createNativeQuery("SELECT pg_advisory_xact_lock(hashtextextended(:owner, 0))")
+                    .setParameter("owner", owner).getSingleResult();
+        }
     }
 
     /** Layer/domain/scope violation (mapped to 403 by the controller). */
@@ -904,6 +941,7 @@ public class ConfigService {
             apiRequestTemplates.getObject().putLayer(layer, entries, changedBy, userId, workspaceId);
             return;
         }
+        lockDomainScope(layer, domain, userId, workspaceId);
         for (Map.Entry<String, String> entry : entries.entrySet()) {
             String key = entry.getKey();
             String value = entry.getValue();
