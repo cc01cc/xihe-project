@@ -52,6 +52,9 @@ final class CpModuleAssignment implements SliceAssignment {
         if (name.startsWith("RunCheckpoint")) {
             return "checkpoint";
         }
+        if (name.startsWith("RunTrace")) {
+            return "chat";
+        }
         if (name.startsWith("Mcp")) {
             return "mcp";
         }
