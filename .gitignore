@@ -56,6 +56,8 @@ Thumbs.db
 tmp/
 *.tmp
 **/out/
+# Agent e2e series-run artifacts (result.json / stdout / stderr), PLAN-0505 P-2
+packages/ui/Temp/
 
 # Playwright E2E artifacts
 .playwright-cli/

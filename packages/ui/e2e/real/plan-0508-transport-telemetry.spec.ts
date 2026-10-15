@@ -195,10 +195,9 @@ test.describe("@host PLAN-0508 transport telemetry relay and diagnostics", () =>
         expect(attempt.errorCode).toBeNull();
         expect(attempt.uploadBytes, "wire bytes stay unknown in v1").toBeNull();
         expect(attempt.downloadBytes).toBeNull();
-        expect(
-            attempt.lastProgressStage,
-            "bounded sample survives the terminal transition",
-        ).toBe("attempt_finished");
+        expect(attempt.lastProgressStage, "bounded sample survives the terminal transition").toBe(
+            "attempt_finished",
+        );
         expect(attempt.provider, "identity projects from the ChatRun snapshot").toBeTruthy();
         expect(attempt.model).toBeTruthy();
         // Durable projection never carries prompt text or credentials.
@@ -302,9 +301,10 @@ test.describe("@host PLAN-0508 transport telemetry relay and diagnostics", () =>
         );
         expect(row.durationMs ?? 0).toBeGreaterThanOrEqual(row.firstChunkMs ?? 0);
         expect(row.chunkCount).toBeGreaterThan(0);
-        expect(attemptsResponses.length, "attempts route served the panel over HTTP").toBeGreaterThan(
-            0,
-        );
+        expect(
+            attemptsResponses.length,
+            "attempts route served the panel over HTTP",
+        ).toBeGreaterThan(0);
         expect(attemptsResponses.every((status) => status === 200)).toBe(true);
         previousRunId = slowRunId;
     });

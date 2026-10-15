@@ -101,6 +101,10 @@ async function cleanup(request: APIRequestContext, auth: Auth) {
 }
 
 test.describe("@host PLAN-0438 Provider Connection keys", () => {
+    // PLAN-0505 follow-up (P-3): cold-stack create+verify roundtrips can take
+    // ~24s on the first attempt; the default 30s test timeout flakes. The
+    // flow itself is bounded by per-step waits, so this only widens the headroom.
+    test.setTimeout(90000);
     test("creates, reads, updates and scopes keyed connections without secret readback", async ({
         page,
         request,

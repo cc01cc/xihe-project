@@ -28,7 +28,11 @@ test.describe("@host PLAN-0504 — UI profile reaches the Agent run payload", ()
         test.setTimeout(240000);
 
         const reg = await request.post(`${CP_URL}/api/v1/auth/register`, {
-            data: { email: `p0504-${Date.now()}@test.com`, password: SHARED_PASSWORD, name: "P0504" },
+            data: {
+                email: `p0504-${Date.now()}@test.com`,
+                password: SHARED_PASSWORD,
+                name: "P0504",
+            },
         });
         expect(reg.ok()).toBe(true);
         const auth = await reg.json();

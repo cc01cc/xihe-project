@@ -81,9 +81,7 @@ test.describe.serial("@host PLAN-0504 profile reaches the Agent process", () => 
             expect(written.status(), await written.text()).toBe(200);
 
             const applied = await waitForAgentIdentity(
-                (health) =>
-                    health.llm?.provider === "openai" &&
-                    health.llm?.model === uniqueModel,
+                (health) => health.llm?.provider === "openai" && health.llm?.model === uniqueModel,
                 "openai profile identity",
             );
             // The hand-written model is not in the directory catalog, so the
