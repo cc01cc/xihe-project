@@ -58,7 +58,12 @@ function mountTimeline(props: InstanceType<typeof RunTraceTimeline>["$props"]) {
 
 describe("RunTraceTimeline", () => {
     it("announces loading accessibly", () => {
-        const wrapper = mountTimeline({ trace: null, loading: true, error: false, retry: vi.fn<() => void>() });
+        const wrapper = mountTimeline({
+            trace: null,
+            loading: true,
+            error: false,
+            retry: vi.fn<() => void>(),
+        });
 
         expect(wrapper.get('[role="status"]').text()).toContain("正在加载");
         expect(wrapper.get('[role="status"]').attributes("aria-live")).toBe("polite");
