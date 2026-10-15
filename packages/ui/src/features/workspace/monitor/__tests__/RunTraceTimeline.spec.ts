@@ -58,14 +58,14 @@ function mountTimeline(props: InstanceType<typeof RunTraceTimeline>["$props"]) {
 
 describe("RunTraceTimeline", () => {
     it("announces loading accessibly", () => {
-        const wrapper = mountTimeline({ trace: null, loading: true, error: false, retry: vi.fn() });
+        const wrapper = mountTimeline({ trace: null, loading: true, error: false, retry: vi.fn<() => void>() });
 
         expect(wrapper.get('[role="status"]').text()).toContain("正在加载");
         expect(wrapper.get('[role="status"]').attributes("aria-live")).toBe("polite");
     });
 
     it("shows a safe error state and calls retry", async () => {
-        const retry = vi.fn();
+        const retry = vi.fn<() => void>();
         const wrapper = mountTimeline({ trace: null, loading: false, error: true, retry });
 
         expect(wrapper.get('[role="alert"]').text()).toContain("暂时不可用");
@@ -74,7 +74,7 @@ describe("RunTraceTimeline", () => {
     });
 
     it("shows the server-declared unknown source coverage and a load-more control", async () => {
-        const loadMore = vi.fn();
+        const loadMore = vi.fn<() => void>();
         const wrapper = mountTimeline({
             trace: traceResponse({
                 sources: [{ source: "runtime_job", status: "unknown" }],
@@ -82,7 +82,7 @@ describe("RunTraceTimeline", () => {
             }),
             loading: false,
             error: false,
-            retry: vi.fn(),
+            retry: vi.fn<() => void>(),
             hasMore: true,
             loadingMore: false,
             moreError: false,
@@ -99,7 +99,7 @@ describe("RunTraceTimeline", () => {
             trace: traceResponse({ events: [], completeness: "partial" }),
             loading: false,
             error: false,
-            retry: vi.fn(),
+            retry: vi.fn<() => void>(),
         });
 
         expect(wrapper.get('[data-testid="run-trace-completeness"]').text()).toContain("部分");
@@ -111,7 +111,7 @@ describe("RunTraceTimeline", () => {
                 trace: traceResponse({ completeness }),
                 loading: false,
                 error: false,
-                retry: vi.fn(),
+                retry: vi.fn<() => void>(),
             });
             const chip = stateWrapper.get('[data-testid="run-trace-completeness"]');
             expect(chip.attributes("data-completeness")).toBe(completeness);
@@ -132,7 +132,7 @@ describe("RunTraceTimeline", () => {
             trace: traceResponse({ events: [admitted] }),
             loading: false,
             error: false,
-            retry: vi.fn(),
+            retry: vi.fn<() => void>(),
         });
 
         const provenance = wrapper.get('[data-testid="run-trace-provenance"]');
@@ -160,7 +160,7 @@ describe("RunTraceTimeline", () => {
             }),
             loading: false,
             error: false,
-            retry: vi.fn(),
+            retry: vi.fn<() => void>(),
         });
 
         const provenance = wrapper.get('[data-testid="run-trace-provenance"]');
@@ -194,7 +194,7 @@ describe("RunTraceTimeline", () => {
             trace: traceResponse({ events: [earlier, later] }),
             loading: false,
             error: false,
-            retry: vi.fn(),
+            retry: vi.fn<() => void>(),
         });
 
         const rows = wrapper.findAll('[data-testid="run-trace-event"]');
@@ -238,7 +238,7 @@ describe("RunTraceTimeline", () => {
             trace: traceResponse({ events: [unsafe] }),
             loading: false,
             error: false,
-            retry: vi.fn(),
+            retry: vi.fn<() => void>(),
         });
 
         const text = wrapper.get('[data-testid="run-trace-event"]').text();
