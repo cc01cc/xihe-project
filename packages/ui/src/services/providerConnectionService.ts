@@ -84,3 +84,21 @@ export function deleteProviderConnection(id: string): Promise<void> {
         method: "DELETE",
     });
 }
+
+/** PLAN-0505: delete impact preview — reference counts the delete would cascade away. */
+export interface DeleteImpact {
+    connectionId: string;
+    providerId: string;
+    connectionKey: string;
+    bindingCount: number;
+    bindingUserScopes: number;
+    defaultTemplateRef: boolean;
+    profileCount: number;
+    profileScopes: string[];
+    sessionCount: number;
+    blocked: boolean;
+}
+
+export function getDeleteImpact(id: string): Promise<DeleteImpact> {
+    return request<DeleteImpact>(`/provider-connections/${encodeURIComponent(id)}/delete-impact`);
+}

@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -125,6 +126,207 @@ class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
         CpApiException failure = assertThrows(CpApiException.class, () -> config.deleteKey("user", ApiRequestTemplateService.DOMAIN,
                 "templates", "test", UUID.fromString(userId), null));
         assertEquals("API_REQUEST_TEMPLATE_REVISION_IMMUTABLE", failure.getCode());
+    }
+
+    // ------------------------------------------------------------------
+    // PLAN-0505: delete-impact preview, session blocking, cascade cleanup
+    // ------------------------------------------------------------------
+
+    @Test
+    void deleteImpactPreviewsAndDeleteCascadesReferencesAcrossScopes() throws Exception {
+        JsonNode connection = createConnection("custom-openai-compatible", "USER", "cascade", "manual",
+                java.util.List.of("m1", "m2"), null, null, "https://provider.invalid/v1", "isolated-test-only");
+        String id = connection.path("id").asText();
+        JsonNode definitions = json.readTree(json.readTree(send("GET",
+                "/api/v1/config/api-request-templates?layer=instance", null).body()).path("templates").asText());
+        JsonNode openai = null;
+        for (JsonNode definition : definitions) {
+            if (definition.path("apiTypeId").asText().equals("openai-chat-completions")) {
+                openai = ref(definition);
+            }
+        }
+        assertNotNull(openai);
+
+        // User-layer bindings for the owner plus a second user's row (seeded
+        // directly: the token workspace claim is JWT-bound).
+        var inner = json.createObjectNode();
+        inner.set("m1", openai);
+        inner.set("m2", openai);
+        var models = json.createObjectNode();
+        models.set(id, inner);
+        assertEquals(200, send("PUT", "/api/v1/config/user/api-request-templates",
+                json.writeValueAsString(Map.of("providerModelBindings", models.toString()))).statusCode());
+        var second = restTemplate.postForEntity(url("/api/v1/auth/register"),
+                new RegisterRequest("plan0505-b-" + UUID.randomUUID() + "@test.com", TestDataFactory.PASSWORD, "Plan 0505 B"),
+                AuthResponse.class);
+        assertEquals(201, second.getStatusCode().value());
+        String userB = second.getBody().getUser().getId();
+        var innerB = json.createObjectNode();
+        innerB.set("m1", openai);
+        var modelsB = json.createObjectNode();
+        modelsB.set(id, innerB);
+        jdbc.update("INSERT INTO config (id, layer, domain, config_key, config_value, user_id, updated_at, created_at) "
+                        + "VALUES (?, 'user', 'api-request-templates', 'providerModelBindings', ?, ?, now(), now())",
+                UUID.randomUUID(), modelsB.toString(), UUID.fromString(userB));
+
+        // Owner-layer connectionDefaultTemplates entry via the dedicated writer
+        // (PATCH connectionDefaultTemplateRef; same API type, so no CAS change).
+        var patch = json.createObjectNode().put("expectedRevision", connection.path("revision").asLong());
+        patch.set("connectionDefaultTemplateRef", openai);
+        assertEquals(200, send("PATCH", "/api/v1/provider-connections/" + id, patch.toString()).statusCode());
+
+        // A profile row pointing at this connection (user layer, 0504 shape).
+        var profile = json.createObjectNode().put("providerId", "custom-openai-compatible")
+                .put("connectionKey", "cascade").put("model", "m1");
+        jdbc.update("INSERT INTO config (id, layer, domain, config_key, config_value, user_id, updated_at, created_at) "
+                        + "VALUES (?, 'user', 'llm-provider', 'profile', ?, ?, now(), now())",
+                UUID.randomUUID(), profile.toString(), UUID.fromString(userId));
+        // A malformed profile row must be skipped, not counted nor blocking.
+        jdbc.update("INSERT INTO config (id, layer, domain, config_key, config_value, user_id, updated_at, created_at) "
+                        + "VALUES (?, 'user', 'llm-provider', 'profile', ?, ?, now(), now())",
+                UUID.randomUUID(), "not-json", UUID.fromString(userB));
+
+        var preview = send("GET", "/api/v1/provider-connections/" + id + "/delete-impact", null);
+        assertEquals(200, preview.statusCode(), preview.body());
+        JsonNode impact = json.readTree(preview.body());
+        assertEquals(3, impact.path("bindingCount").asInt(), preview.body());
+        assertEquals(2, impact.path("bindingUserScopes").asInt(), preview.body());
+        assertTrue(impact.path("defaultTemplateRef").asBoolean(), preview.body());
+        assertEquals(1, impact.path("profileCount").asInt(), preview.body());
+        assertEquals(0, impact.path("sessionCount").asInt(), preview.body());
+        assertFalse(impact.path("blocked").asBoolean(), preview.body());
+
+        // V2 baseline: the templates key must stay byte-identical across the
+        // delete (I1). Builtins are code-derived, so seed a user-layer draft
+        // templates row and snapshot every templates row before the DELETE.
+        var draft = json.createObjectNode().put("id", UUID.randomUUID().toString()).put("version", 1)
+                .put("name", "V2 Byte Identity").put("description", "isolated")
+                .put("apiTypeId", "openai-chat-completions")
+                .put("apiTypeVersion", 1).put("bodySource", "{\"model\":\"${xh.model}\"}").put("status", "draft");
+        assertEquals(200, send("PUT", "/api/v1/config/user/api-request-templates",
+                json.writeValueAsString(Map.of("templates", json.writeValueAsString(json.createArrayNode().add(draft)))))
+                .statusCode());
+        var templatesBefore = jdbc.queryForList(
+                "SELECT id, config_value FROM config WHERE config_key = 'templates'");
+        assertFalse(templatesBefore.isEmpty(), "user templates rows must exist as baseline");
+
+        assertEquals(204, send("DELETE", "/api/v1/provider-connections/" + id, null).statusCode(),
+                "a connection without session references deletes cleanly");
+
+        // V1: all references are gone after the delete, including the second
+        // user's row; the malformed profile row survives (skipped, not owned).
+        assertEquals(1, countConfigRows("llm-provider", "not-json"),
+                "malformed profile rows are left for their owner to fix");
+        assertTrue(connections.findById(UUID.fromString(id)).isEmpty());
+        // V2: templates are byte-identical after the delete (I1).
+        for (var before : templatesBefore) {
+            var after = jdbc.queryForObject(
+                    "SELECT config_value FROM config WHERE id = ?::uuid",
+                    String.class, before.get("id"));
+            assertEquals(before.get("config_value"), after,
+                    "templates row " + before.get("id") + " must be byte-identical after delete");
+        }
+        var auditRows = jdbc.queryForList(
+                "SELECT to_status FROM provider_connection_audit WHERE provider_connection_id = ?::uuid AND action = 'DELETED'",
+                id);
+        assertEquals(1, auditRows.size());
+    }
+
+    @Test
+    void sameKeyProfileRowsOfOtherUsersSurviveTheDelete() throws Exception {
+        // PLAN-0505 review fix #1 (decision #1 supersede): connectionKey is
+        // unique per owner, so another user's same-key profile resolves to
+        // THEIR own connection and must survive this connection's delete.
+        JsonNode connection = createConnection("custom-openai-compatible", "USER", "shared-key", "manual",
+                java.util.List.of("m1"), null, null, "https://provider.invalid/v1", "isolated-test-only");
+        String id = connection.path("id").asText();
+
+        // A second user with their own same-key connection + profile row.
+        var second = restTemplate.postForEntity(url("/api/v1/auth/register"),
+                new RegisterRequest("plan0505-c-" + UUID.randomUUID() + "@test.com", TestDataFactory.PASSWORD, "Plan 0505 C"),
+                AuthResponse.class);
+        assertEquals(201, second.getStatusCode().value());
+        String userB = second.getBody().getUser().getId();
+        var connectionB = createConnectionAs(second.getBody().getAccessToken(), second.getBody().getWorkspaceId(),
+                "custom-openai-compatible", "USER", "shared-key", "manual",
+                java.util.List.of("m1"), null, null, "https://provider.invalid/v1", "isolated-test-only");
+        assertNotNull(connectionB.path("id").asText());
+        var profileB = json.createObjectNode().put("providerId", "custom-openai-compatible")
+                .put("connectionKey", "shared-key").put("model", "m1");
+        jdbc.update("INSERT INTO config (id, layer, domain, config_key, config_value, user_id, updated_at, created_at) "
+                        + "VALUES (?, 'user', 'llm-provider', 'profile', ?, ?, now(), now())",
+                UUID.randomUUID(), profileB.toString(), UUID.fromString(userB));
+
+        // The deleting user's own profile row (must be cascaded away).
+        var profileA = json.createObjectNode().put("providerId", "custom-openai-compatible")
+                .put("connectionKey", "shared-key").put("model", "m1");
+        jdbc.update("INSERT INTO config (id, layer, domain, config_key, config_value, user_id, updated_at, created_at) "
+                        + "VALUES (?, 'user', 'llm-provider', 'profile', ?, ?, now(), now())",
+                UUID.randomUUID(), profileA.toString(), UUID.fromString(userId));
+
+        // Preview must count only the owner's own profile row.
+        var preview = send("GET", "/api/v1/provider-connections/" + id + "/delete-impact", null);
+        assertEquals(200, preview.statusCode(), preview.body());
+        assertEquals(1, json.readTree(preview.body()).path("profileCount").asInt(), preview.body());
+
+        assertEquals(204, send("DELETE", "/api/v1/provider-connections/" + id, null).statusCode());
+
+        // User B's same-key profile row must survive; user A's row is gone.
+        assertEquals(1, countUserProfiles(userB), "other user's same-key profile must survive");
+        assertEquals(0, countUserProfiles(userId), "the owner's profile row is cascaded away");
+        // The preview must have never exposed user B's row either.
+        assertTrue(connections.findById(UUID.fromString(id)).isEmpty());
+    }
+
+    private int countUserProfiles(String ownerUserId) {
+        return jdbc.queryForObject(
+                "SELECT count(*) FROM config WHERE layer = 'user' AND domain = 'llm-provider' "
+                        + "AND config_key = 'profile' AND user_id = ?::uuid",
+                Integer.class, ownerUserId);
+    }
+
+    @Test
+    void deleteIsBlockedWithSessionCountAndPreviewReportsBlocked() throws Exception {
+        JsonNode connection = createConnection("custom-openai-compatible", "USER", "blocked", "manual",
+                java.util.List.of("m1"), null, null, "https://provider.invalid/v1", "isolated-test-only");
+        String id = connection.path("id").asText();
+        Session pinned = new Session(workspaceId, userId, "Blocked delete");
+        pinned.setId(UUID.randomUUID());
+        pinned.setProviderConnectionId(id);
+        sessions.saveAndFlush(pinned);
+        // A delete-requested (awaiting deletion) session still counts: fail-closed.
+        Session pending = new Session(workspaceId, userId, "Pending delete");
+        pending.setId(UUID.randomUUID());
+        pending.setProviderConnectionId(id);
+        pending.setDeleteRequestedAt(java.time.Instant.now());
+        sessions.saveAndFlush(pending);
+
+        var preview = send("GET", "/api/v1/provider-connections/" + id + "/delete-impact", null);
+        assertEquals(200, preview.statusCode(), preview.body());
+        JsonNode impact = json.readTree(preview.body());
+        assertEquals(2, impact.path("sessionCount").asInt(), preview.body());
+        assertTrue(impact.path("blocked").asBoolean(), preview.body());
+
+        var response = send("DELETE", "/api/v1/provider-connections/" + id, null);
+        assertEquals(409, response.statusCode(), response.body());
+        assertTrue(response.headers().firstValue("Content-Type").orElse("").contains("application/problem+json"));
+        JsonNode problem = json.readTree(response.body());
+        assertEquals("CONNECTION_IN_USE", problem.path("code").asText());
+        assertEquals(2, problem.path("sessionCount").asInt(), response.body());
+        assertEquals(id, problem.path("connectionId").asText());
+        assertTrue(connections.findById(UUID.fromString(id)).isPresent(),
+                "a blocked connection must not be deleted");
+
+        // V3: other connections are untouched by the blocked delete attempt.
+        JsonNode other = createConnection("custom-openai-compatible", "USER", "other", "manual",
+                java.util.List.of("m1"), null, null, "https://provider.invalid/v1", "isolated-test-only");
+        assertTrue(connections.findById(UUID.fromString(other.path("id").asText())).isPresent());
+    }
+
+    private int countConfigRows(String domain, String valueFragment) {
+        return jdbc.queryForObject(
+                "SELECT count(*) FROM config WHERE domain = ? AND config_value LIKE ?",
+                Integer.class, domain, "%" + valueFragment + "%");
     }
 
     @Test
@@ -360,6 +562,23 @@ class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
         var verified = send("POST", "/api/v1/provider-connections/" + connection.path("id").asText() + "/verify", null);
         assertEquals(200, verified.statusCode(), verified.body());
         return json.readTree(verified.body()).path("connection");
+    }
+
+    private JsonNode createConnectionAs(String bearer, String workspace, String provider, String scope, String key,
+                                        String discovery, java.util.List<String> models, String apiTypeId,
+                                        Integer apiTypeVersion, String baseUrl, String apiKey) throws Exception {
+        var node = json.createObjectNode().put("providerId", provider).put("label", "T3.2 " + key).put("scope", scope)
+                .put("apiKey", apiKey).put("modelDiscovery", discovery).put("connectionKey", key);
+        node.set("manualModels", json.valueToTree(models));
+        if (baseUrl != null) {
+            node.put("baseUrl", baseUrl);
+        }
+        if (apiTypeId != null) {
+            node.put("apiTypeId", apiTypeId).put("apiTypeVersion", apiTypeVersion);
+        }
+        var created = sendAs(bearer, workspace, "POST", "/api/v1/provider-connections", node.toString());
+        assertEquals(201, created.statusCode(), created.body());
+        return json.readTree(created.body());
     }
 
     private int bindingCount(String bearer, String connectionId) throws Exception {

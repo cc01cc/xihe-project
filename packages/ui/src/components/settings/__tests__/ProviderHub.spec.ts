@@ -4,6 +4,7 @@ import ProviderHub from "../ProviderHub.vue";
 import type { ProviderConnection, ProviderDefinition } from "../../../types/providerConnection";
 import {
     deleteProviderConnection,
+    getDeleteImpact,
     listProviderCatalog,
     listProviderConnections,
     updateProviderConnection,
@@ -41,6 +42,8 @@ vi.mock("../../../services/providerConnectionService", () => ({
         vi.fn<
             typeof import("../../../services/providerConnectionService").deleteProviderConnection
         >(),
+    getDeleteImpact:
+        vi.fn<typeof import("../../../services/providerConnectionService").getDeleteImpact>(),
 }));
 vi.mock("../../../composables/api", () => ({ request: vi.fn<typeof request>() }));
 vi.mock("../../../lib/logger", () => ({ logger: { warn: vi.fn<(...args: unknown[]) => void>() } }));
@@ -221,8 +224,19 @@ describe("ProviderHub master-detail", () => {
     });
 
     it("keeps row-level deletion contract and falls back after deleting the selected connection", async () => {
+        vi.mocked(getDeleteImpact).mockResolvedValue({
+            connectionId: user.id,
+            providerId: user.providerId,
+            connectionKey: user.connectionKey,
+            bindingCount: 0,
+            bindingUserScopes: 0,
+            defaultTemplateRef: false,
+            profileCount: 0,
+            profileScopes: [],
+            sessionCount: 0,
+            blocked: false,
+        });
         const wrapper = await mountHub();
-        vi.spyOn(window, "confirm").mockReturnValue(true);
         vi.mocked(listProviderConnections).mockResolvedValue({ connections: [workspace] });
         const row = wrapper.findAll('[data-testid="provider-connection-example"]')[0]!;
         await row
@@ -230,12 +244,110 @@ describe("ProviderHub master-detail", () => {
             .find((button) => button.text() === "删除")!
             .trigger("click");
         await flushPromises();
+        expect(getDeleteImpact).toHaveBeenCalledWith(user.id);
+        // PLAN-0505: the confirm dialog must show before the DELETE is issued.
+        expect(deleteProviderConnection).not.toHaveBeenCalled();
+        await wrapper.get('[data-testid="provider-delete-confirm"]').trigger("click");
+        await flushPromises();
         expect(deleteProviderConnection).toHaveBeenCalledWith(user.id);
+        // Review round-4 regression guard: the dialog must close on success
+        // (the deleting-guard on cancel must not block the success path).
+        expect(wrapper.find('[data-testid="provider-delete-confirm-modal"]').exists()).toBe(false);
         expect(
             wrapper
                 .get('[data-testid="provider-connection-detail"]')
                 .attributes("data-connection-id"),
         ).toBe(workspace.id);
+        wrapper.unmount();
+    });
+
+    it("PLAN-0505: cancel closes the confirm dialog with zero mutations", async () => {
+        vi.mocked(getDeleteImpact).mockResolvedValue({
+            connectionId: user.id,
+            providerId: user.providerId,
+            connectionKey: user.connectionKey,
+            bindingCount: 2,
+            bindingUserScopes: 1,
+            defaultTemplateRef: true,
+            profileCount: 1,
+            profileScopes: ["user"],
+            sessionCount: 0,
+            blocked: false,
+        });
+        const wrapper = await mountHub();
+        const row = wrapper.findAll('[data-testid="provider-connection-example"]')[0]!;
+        await row
+            .findAll("button")
+            .find((button) => button.text() === "删除")!
+            .trigger("click");
+        await flushPromises();
+        const summary = wrapper.get('[data-testid="provider-delete-impact-summary"]');
+        expect(summary.text()).toContain("模型绑定 2 项（1 个用户）");
+        expect(summary.text()).toContain("连接默认模板指向 1 项");
+        expect(summary.text()).toContain("默认身份 profile 1 项");
+        await wrapper.get('[data-testid="provider-delete-cancel"]').trigger("click");
+        expect(wrapper.find('[data-testid="provider-delete-confirm-modal"]').exists()).toBe(false);
+        expect(deleteProviderConnection).not.toHaveBeenCalled();
+        wrapper.unmount();
+    });
+
+    it("PLAN-0505: blocked connections disable deletion and show the session hint", async () => {
+        vi.mocked(getDeleteImpact).mockResolvedValue({
+            connectionId: user.id,
+            providerId: user.providerId,
+            connectionKey: user.connectionKey,
+            bindingCount: 0,
+            bindingUserScopes: 0,
+            defaultTemplateRef: false,
+            profileCount: 0,
+            profileScopes: [],
+            sessionCount: 2,
+            blocked: true,
+        });
+        const wrapper = await mountHub();
+        const row = wrapper.findAll('[data-testid="provider-connection-example"]')[0]!;
+        await row
+            .findAll("button")
+            .find((button) => button.text() === "删除")!
+            .trigger("click");
+        await flushPromises();
+        expect(wrapper.get('[data-testid="provider-delete-blocked"]').text()).toContain(
+            "仍有 2 个会话引用此连接",
+        );
+        expect(
+            wrapper.get('[data-testid="provider-delete-confirm"]').attributes("disabled"),
+        ).toBeDefined();
+        expect(deleteProviderConnection).not.toHaveBeenCalled();
+        wrapper.unmount();
+    });
+
+    it("PLAN-0505: a failed delete keeps the dialog open and reports the error", async () => {
+        vi.mocked(getDeleteImpact).mockResolvedValue({
+            connectionId: user.id,
+            providerId: user.providerId,
+            connectionKey: user.connectionKey,
+            bindingCount: 0,
+            bindingUserScopes: 0,
+            defaultTemplateRef: false,
+            profileCount: 0,
+            profileScopes: [],
+            sessionCount: 0,
+            blocked: false,
+        });
+        vi.mocked(deleteProviderConnection).mockRejectedValue(new Error("CONNECTION_IN_USE"));
+        const wrapper = await mountHub();
+        const row = wrapper.findAll('[data-testid="provider-connection-example"]')[0]!;
+        await row
+            .findAll("button")
+            .find((button) => button.text() === "删除")!
+            .trigger("click");
+        await flushPromises();
+        await wrapper.get('[data-testid="provider-delete-confirm"]').trigger("click");
+        await flushPromises();
+        expect(wrapper.get('[data-testid="provider-delete-error"]').text()).toBe(
+            "CONNECTION_IN_USE",
+        );
+        expect(wrapper.find('[data-testid="provider-delete-confirm-modal"]').exists()).toBe(true);
         wrapper.unmount();
     });
 

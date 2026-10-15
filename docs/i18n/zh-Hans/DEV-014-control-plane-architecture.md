@@ -176,7 +176,7 @@ flowchart LR
 - **根级 AGENTS.md 刷新范围（PLAN-0415，用户 2026-10-04 裁定）**：active 值为 `per_chat_run`（每个 Run 前刷新）/`per_session`（首次成功读取或明确 found:false 后，在该 Session 的 ContextEvent projection 固定）；`unavailable/failed/unknown` 不算成功，后续 Run 重试；env facts 仍每 Run 刷新。旧值仅留归档 0414 历史，未上线不保留 wire 兼容。
 - **存量处置（用户 2026-10-03 裁定）**：**先清库、迁移纯 schema**——未上线开发库在升级前执行既有 `mise run dev:reset`（V14 dev-state 可弃先例）；V48 只 `ADD COLUMN ... DEFAULT/CHECK`，不携带 DELETE/数据拦截（升级路径测试的历史回填语义必须在完整链上可验证）；漏清库时旧行经 DEFAULT 自动钉内置默认模板，零回填代码。
 
-## 8g. API Request Templates 与 Provider Connection Type（PLAN-0438/0439）
+## 8g. API Request Templates 与 Provider Connection Type（PLAN-0438/0439/0505）
 
 - **连接模型**：每个 ProviderConnection 持一个 API Type（`apiTypeId/apiTypeVersion`，`operation` 只读派生）；模型身份 = `connectionId + modelId`，逻辑槽 = `providerId + connectionKey`；`connectionKey` 在 `(owner_type, owner_id, provider_id)` 内唯一、可跨 User/Workspace 重名；同 key 的 effective 集合里 Workspace 整条覆盖 User（禁用/未 READY/非 chat 时回退 User），不同 key 取并集（`ApiRequestTemplateService.effectiveConnections`）。
 - **模板与绑定**：配置域 `api-request-templates`（细则见 DEV-003 §3b）；解析顺序 Model override → Connection default → Type 内置 default；类型变更（`PATCH /provider-connections/{id}`，需 `expectedRevision` + `confirmedTypeChange` + chat 类型必带 `connectionDefaultTemplateRef`）在 CAS 串行化下原子清除不兼容模型 override，并按 `GET .../api-type-change-impact` 的 `incompatibleOverrides`/`sessionRebindCount` 预览计数（预览值 = 实际移除数）；`connectionKey` 不可改（`409 PROVIDER_CONNECTION_KEY_IMMUTABLE`）。
@@ -184,8 +184,9 @@ flowchart LR
 - **Chat-only 门**：Session 选择器、CP 准入与 Agent 发送只接受 `operation=chat` 类型（embedding 等非 chat 类型伪造绑定 → `400 API_TYPE_OPERATION_MISMATCH`）。
 - **凭据租约按 operation 校验**：`ProviderCredentialLeaseService.issue` 以连接的实际 operation 判据——chat 连接的 dispatch 租约校验 `requireModel`；catalog 枚举租约以通配 `model="*"` 发行（manual 连接的模型清单由 Agent 从兑换 grant 的 `manualModels` 返回，不触发模型注册校验）。
 - **模板校验（独立、不落库）**：`ApiRequestValidator` 拒绝重复 JSON 键、对象键内变量、非法 `${xh.*}` 槽位与 runtime-owned 字段（`apiKey`/`authorization`/`credentials`/`headers`/`endpoint`/`baseUrl` 等）；`${xh.*}` 单遍替换、`$${...}` 输出字面量、结构化历史 splice 只允许出现在约定位置。
+- **连接删除级联与阻断（PLAN-0505）**：`DELETE /api/v1/provider-connections/{id}`（204 保持）在单事务、单 `lockConnection` 行锁内完成——先查 `sessions.provider_connection_id` 引用（全行含 `delete_requested_at`，fail-closed），存在即 `409 CONNECTION_IN_USE` + `sessionCount`（RFC 9457 扩展字段）；随后按 scope 字典序（TreeSet 先例）跨 user 层清 `providerModelBindings[connectionId]`、清 owner 层 `connectionDefaultTemplates[connectionId]`、清三层 `llm-provider.profile` 命中行（畸形行跳过），`templates` 本体不动；清理计数（`removedBindings`/`removedDefaultTemplate`/`bindingScopes`/`removedProfiles`）入 `provider_connection_audit` 与结构化日志。预览面 `GET .../delete-impact`（`DeleteImpactView`，计数不含他人绑定内容）供 UI 二次确认；会话绑定写入 `SessionService.bindProviderConnection` 取同一连接行锁，与删除串行（无 check-then-act 悬空窗口）。
 
-## 8h. Embedding Provider Connection 与 RAG 代理（PLAN-0485）
+## 8h. Embedding Provider Connection 与 RAG 代理（PLAN-0485；profile 删除级联见 8g PLAN-0505）
 
 PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native 模板含真实未转义 `xh.rag_context` 时，从认证 dispatch user/workspace 解析 profile，并签发绑定 Session/Run 的独立 embedding lease。wire 沿用 `embeddingProfile`、`embeddingCredentialLease`，与 Chat `credentialLease` 分离。Run-bound redemption 校验 Run/revision/operation，不按 Chat 模型能力误拒 embedding。profile/签发失败经现有 durable terminal/SSE 返回稳定错误，不向 Agent dispatch。发布校验按真实 JSON 路径和字面量数据角色限制，不能用伪装对象键或动态 role 注入 authority 槽。
 

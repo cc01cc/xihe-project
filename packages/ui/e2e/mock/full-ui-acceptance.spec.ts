@@ -310,6 +310,25 @@ test.describe("PLAN-269 full UI acceptance: settings and provider", () => {
                 body: JSON.stringify({ connection, models: [{ name: "gpt-test" }] }),
             });
         });
+        // PLAN-0505: delete flows through the impact preview before DELETE.
+        await page.route("**/api/v1/provider-connections/*/delete-impact", async (route) => {
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    connectionId: "connection-1",
+                    providerId: "openai",
+                    connectionKey: "default",
+                    bindingCount: 0,
+                    bindingUserScopes: 0,
+                    defaultTemplateRef: false,
+                    profileCount: 0,
+                    profileScopes: [],
+                    sessionCount: 0,
+                    blocked: false,
+                }),
+            });
+        });
 
         await page.goto("/settings/config");
         const hub = page.getByTestId("provider-hub");
@@ -336,8 +355,16 @@ test.describe("PLAN-269 full UI acceptance: settings and provider", () => {
             .getByRole("button", { name: "验证", exact: true })
             .click();
         await expect(hub.getByText("刚刚验证")).toBeVisible({ timeout: 10000 });
-        page.once("dialog", (dialog) => dialog.accept());
+        // PLAN-0505: the delete button opens the impact confirm dialog instead
+        // of the old window.confirm; cancel first (zero mutations), then confirm.
         await hub.getByRole("button", { name: "删除" }).click();
+        const confirmModal = page.getByTestId("provider-delete-confirm-modal");
+        await expect(confirmModal).toBeVisible();
+        await page.getByTestId("provider-delete-cancel").click();
+        await expect(confirmModal).not.toBeVisible();
+        await hub.getByRole("button", { name: "删除" }).click();
+        await expect(confirmModal).toBeVisible();
+        await page.getByTestId("provider-delete-confirm").click();
         await expect(hub.getByText("尚未连接 Provider")).toBeVisible({ timeout: 10000 });
     });
 

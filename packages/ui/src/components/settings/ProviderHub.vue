@@ -13,7 +13,9 @@ import {
     updateProviderConnection,
     verifyProviderConnection,
     getConnectionTypeImpact,
+    getDeleteImpact,
     type ConnectionTypeImpact,
+    type DeleteImpact,
 } from "../../services/providerConnectionService";
 import {
     listVisibleTemplates,
@@ -552,15 +554,66 @@ async function verify(connection: ProviderConnection) {
     }
 }
 
+// PLAN-0505: 删除走「预览 → 二次确认（展示数量）→ 删除 → 回显」流。
+const deleteTarget = ref<ProviderConnection | null>(null),
+    deleteImpact = ref<DeleteImpact | null>(null),
+    deleteImpactLoading = ref(false),
+    deleting = ref(false),
+    deleteError = ref("");
+
+function impactSummary(impact: DeleteImpact): string[] {
+    const parts: string[] = [];
+    if (impact.bindingCount > 0) {
+        parts.push(`模型绑定 ${impact.bindingCount} 项（${impact.bindingUserScopes} 个用户）`);
+    }
+    if (impact.defaultTemplateRef) parts.push("连接默认模板指向 1 项");
+    if (impact.profileCount > 0) parts.push(`默认身份 profile ${impact.profileCount} 项`);
+    return parts;
+}
+
 async function remove(connection: ProviderConnection) {
-    if (!window.confirm(`删除 ${connection.label}？`)) return;
+    deleteError.value = "";
+    deleteImpact.value = null;
+    deleteTarget.value = connection;
+    deleteImpactLoading.value = true;
     try {
-        await deleteProviderConnection(connection.id);
+        deleteImpact.value = await getDeleteImpact(connection.id);
+    } catch (cause: unknown) {
+        logger.warn("Provider Hub delete impact failed", cause);
+        deleteError.value = cause instanceof Error ? cause.message : "删除预览加载失败";
+    } finally {
+        deleteImpactLoading.value = false;
+    }
+}
+
+function closeDeleteDialog() {
+    deleteTarget.value = null;
+    deleteImpact.value = null;
+    deleteError.value = "";
+}
+
+function cancelDelete() {
+    // User-initiated close; no-op while a delete is in flight so the dialog
+    // stays mounted and the outcome remains visible.
+    if (deleting.value) return;
+    closeDeleteDialog();
+}
+
+async function confirmDelete() {
+    const target = deleteTarget.value;
+    if (!target || deleting.value) return;
+    deleting.value = true;
+    deleteError.value = "";
+    try {
+        await deleteProviderConnection(target.id);
         await load();
         toast.success("Provider 已删除");
+        closeDeleteDialog();
     } catch (cause: unknown) {
         logger.warn("Provider Hub delete failed", cause);
-        toast.error(cause instanceof Error ? cause.message : "Provider 删除失败");
+        deleteError.value = cause instanceof Error ? cause.message : "Provider 删除失败";
+    } finally {
+        deleting.value = false;
     }
 }
 
@@ -695,6 +748,7 @@ onMounted(() => {
                                     <button
                                         class="rounded-md border px-2.5 py-1.5 text-xs text-destructive transition-colors hover:border-destructive disabled:opacity-50"
                                         :disabled="props.readonly"
+                                        :data-testid="`provider-connection-delete-${connection.id}`"
                                         @click="remove(connection)"
                                     >
                                         删除
@@ -922,6 +976,96 @@ onMounted(() => {
                 </div>
             </div>
         </template>
+
+        <!-- PLAN-0505 删除二次确认：预览计数 → 确认 → 回显；取消即零变更。 -->
+        <div
+            v-if="deleteTarget"
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 sm:p-6"
+            data-testid="provider-delete-confirm-modal"
+            @click.self="cancelDelete"
+        >
+            <!-- cancelDelete no-ops while deleting -->
+            <div
+                class="flex w-full max-w-md flex-col rounded-xl border bg-card shadow-2xl"
+                role="alertdialog"
+                aria-modal="true"
+            >
+                <header class="border-b px-5 py-4">
+                    <h3 class="text-lg font-semibold text-destructive">删除 Provider 连接</h3>
+                    <p class="mt-1 text-sm text-muted-foreground">
+                        确认删除「{{ deleteTarget.label }}」？此操作不可撤销。
+                    </p>
+                </header>
+                <div class="px-5 py-4 text-sm">
+                    <p v-if="deleteImpactLoading" class="text-muted-foreground">
+                        正在加载删除影响预览...
+                    </p>
+                    <template v-else-if="deleteImpact">
+                        <div
+                            v-if="deleteImpact.blocked"
+                            class="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2.5"
+                            data-testid="provider-delete-blocked"
+                        >
+                            <p class="font-semibold text-destructive">
+                                无法删除：仍有 {{ deleteImpact.sessionCount }} 个会话引用此连接
+                            </p>
+                            <p class="mt-1 text-xs text-muted-foreground">
+                                请先删除或迁移这些会话，再删除连接。
+                            </p>
+                        </div>
+                        <div
+                            v-else-if="impactSummary(deleteImpact).length > 0"
+                            data-testid="provider-delete-impact-summary"
+                        >
+                            <p class="mb-1.5 font-semibold">删除时将级联清理以下引用：</p>
+                            <ul class="list-inside list-disc space-y-0.5 text-muted-foreground">
+                                <li v-for="part in impactSummary(deleteImpact)" :key="part">
+                                    {{ part }}
+                                </li>
+                            </ul>
+                            <p class="mt-2 text-xs text-muted-foreground">
+                                请求模板本体不受影响；其他连接与其引用保持不变。
+                            </p>
+                        </div>
+                        <p v-else class="text-muted-foreground">
+                            该连接没有引用它的模型绑定、默认模板指向或默认身份 profile。
+                        </p>
+                    </template>
+                    <p
+                        v-if="deleteError"
+                        class="mt-2 text-destructive"
+                        data-testid="provider-delete-error"
+                    >
+                        {{ deleteError }}
+                    </p>
+                </div>
+                <footer class="flex justify-end gap-2 border-t bg-muted/30 px-5 py-3.5">
+                    <button
+                        type="button"
+                        class="rounded-md border px-3.5 py-2 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
+                        :disabled="deleting"
+                        data-testid="provider-delete-cancel"
+                        @click="cancelDelete"
+                    >
+                        取消
+                    </button>
+                    <button
+                        type="button"
+                        class="rounded-md bg-destructive px-3.5 py-2 text-xs font-semibold text-destructive-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                        :disabled="
+                            deleteImpactLoading ||
+                            deleting ||
+                            !deleteImpact ||
+                            !!deleteImpact.blocked
+                        "
+                        data-testid="provider-delete-confirm"
+                        @click="confirmDelete"
+                    >
+                        {{ deleting ? "删除中..." : "确认删除" }}
+                    </button>
+                </footer>
+            </div>
+        </div>
 
         <div
             v-if="modalOpen"

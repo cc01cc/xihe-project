@@ -129,11 +129,31 @@ public class ProviderConnectionController {
         return ResponseEntity.ok(connections.typeImpact(connectionId, apiTypeId, version));
     }
 
+    @GetMapping("/{connectionId}/delete-impact")
+    public ResponseEntity<?> deleteImpact(@PathVariable String connectionId) {
+        try {
+            return ResponseEntity.ok(connections.deleteImpact(connectionId));
+        } catch (IllegalArgumentException e) {
+            if (e instanceof com.cc01cc.p.xihe.cp.config.CpApiException domainFailure) {
+                throw domainFailure;
+            }
+            logger.warn("Provider connection delete impact rejected connectionId={} errorCode={}",
+                    connectionId, e.getMessage());
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "PROVIDER_CONNECTION_INVALID", e.getMessage());
+        }
+    }
+
     @DeleteMapping("/{connectionId}")
     public ResponseEntity<?> delete(@PathVariable String connectionId) {
         try {
             connections.delete(connectionId);
             return ResponseEntity.noContent().build();
+        } catch (ProviderConnectionService.SessionBlockedException e) {
+            logger.warn("Provider connection delete blocked connectionId={} sessionCount={}",
+                    e.getConnectionId(), e.getSessionCount());
+            return ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT, "CONNECTION_IN_USE", e.getMessage(),
+                    Map.of("sessionCount", e.getSessionCount(), "connectionId", e.getConnectionId()));
         } catch (IllegalArgumentException e) {
             if (e instanceof com.cc01cc.p.xihe.cp.config.CpApiException domainFailure) {
                 throw domainFailure;
