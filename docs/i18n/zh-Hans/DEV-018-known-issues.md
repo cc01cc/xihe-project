@@ -114,6 +114,22 @@ updated: 2026-10-08
 - **Runtime per-request exec 延迟（PLAN-235）**: Workspace 操作经 Docker exec 单次往返，M0 spike 手工实测均值约 136ms（不可复现锚点，仅供参考）；高频批量操作若不可接受，以纯性能优化另行评估 HTTP 通道，不改变 operation core。
 - **Runtime 后台 job 状态文件（PLAN-235）**: job 状态存于容器 `/tmp/xihe-jobs/<jobId>/`，容器重建即自然孤儿化；查询旧 jobId 返回 not found 属设计内行为，非数据丢失。
 
+## Mock E2E ProviderHub 夹具债务（PLAN-0505 审查发现，2026-10-15 登记；未修，需立项）
+
+- **现象**：`e2e/mock/full-ui-acceptance.spec.ts` 的 ProviderHub-creates 用例在 develop 基线（e42d95c0）即红：点击 provider 卡片后 `provider-connection-modal`（连接表单）不出现，15s 超时。同轮 sidebar、message-search（PLAN-0401 evidence 已登记同族）、workspace-file、PDF、FileEditor 共 6 个红点。0505 的双端对照实证见 `plans/PLAN-0505-*/evidence/reports/plan0505-baseline-mock.log`。
+- **影响**：mock lane 对 ProviderHub 表单类流程（创建/类型变更 UI 流）失去回归能力；0505 删除流的浏览器证据由 real lane `plan-0505-delete-impact.spec.ts` 承载（真实链路一次通过），不受影响。
+- **修复方向**：独立小批次修 mock 夹具（route mock 与组件接线的对齐），修好后补删除流桌面/移动断言。真实链路回归不可因此省略（0505 复跑曾靠 real lane 逮住单测漏掉的对话框回归）。
+
+## PLAN-0505 审查次生回归 — 状态机守卫须双侧验证（已修复，供回溯）
+
+- **教训**：为 `cancelDelete` 加 `deleting` 守卫（防中途取消吞错）时，成功路径调用的同一函数被守卫拦截，删除成功后确认对话框不关闭。单测未断言「成功后对话框关闭」而漏过；真实链路 spec（`plan-0505-delete-impact.spec.ts`）复跑一次逮住。
+- **修复**：拆出无守卫的 `closeDeleteDialog()` 供成功路径（commit `a70d5425`），单测补断言。
+- **规则**：破坏性操作的状态机守卫改动，必须同时验证守卫路径与既有成功路径两侧；UI 门禁类修复的真实浏览器回归不可省。
+
+## PLAN-0505 D-1 判定修正 — 部分唯一索引可命中非前导列（已证伪，供回溯）
+
+- 审查曾判定「`config` 表 `WHERE layer=? AND domain=?` 无法走索引，删除事务锁持有时间随表规模线性增长」。经 600k 行合成基准实测推翻：Postgres 对 partial index 的 `WHERE layer='user'` 谓词匹配后，可按非前导列 `domain` 做 Bitmap Index Scan（8.9ms，含 2KB config_value 堆取），4 次扫描合计 ≈36ms。删除路径无需 `(layer, domain)` 迁移（V69+ 备用）；证据与口径见 `plans/PLAN-0505-*/design.md` 技术债 D-1。
+
 ## PLAN-247 已修复边界
 
 - Chat provider readiness 由 Agent 明确报告，CP 对 `unknown`/non-ready fail-closed；缺凭据不会创建 ChatRun、Message 或空 assistant。
