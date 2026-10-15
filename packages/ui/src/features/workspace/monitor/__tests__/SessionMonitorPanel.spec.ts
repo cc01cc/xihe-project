@@ -9,17 +9,29 @@ import {
 } from "../../chat/transportLive";
 import { notifySessionConnection, notifySessionEvent } from "../../chat/sessionEvents";
 import SessionMonitorPanel from "../SessionMonitorPanel.vue";
-import type { RunTransportAttemptsResponse, SessionMonitorResponse } from "../../../../types";
+import type {
+    RunTraceResponse,
+    RunTransportAttemptsResponse,
+    SessionMonitorResponse,
+} from "../../../../types";
 
 vi.mock("../../../../composables/api", () => ({
     api: {
         getSessionMonitor: vi.fn<(sessionId: string) => Promise<SessionMonitorResponse>>(),
         getRunAttempts: vi.fn<(runId: string) => Promise<RunTransportAttemptsResponse>>(),
+        getRunTrace:
+            vi.fn<
+                (
+                    runId: string,
+                    options?: { cursor?: string; limit?: number },
+                ) => Promise<RunTraceResponse>
+            >(),
     },
 }));
 
 const getSessionMonitor = vi.mocked(api.getSessionMonitor);
 const getRunAttempts = vi.mocked(api.getRunAttempts);
+const getRunTrace = vi.mocked(api.getRunTrace);
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const RUN_ID = "33333333-3333-4333-8333-333333333333";
 const CONNECTION_ID = "22222222-2222-4222-8222-222222222222";
@@ -137,6 +149,45 @@ function attemptsResponse(
     };
 }
 
+function traceResponse(overrides: Partial<RunTraceResponse> = {}): RunTraceResponse {
+    return {
+        runId: RUN_ID,
+        asOf: "2026-10-14T02:00:00Z",
+        completeness: "complete",
+        provenance: {
+            status: "unknown",
+            providerConnectionId: null,
+            connectionRevision: null,
+            apiTypeId: null,
+            apiTypeVersion: null,
+            contextTemplateLayer: null,
+            contextTemplateId: null,
+            contextTemplateVersion: null,
+        },
+        sources: [{ source: "chat_run", status: "complete" }],
+        events: [],
+        nextCursor: null,
+        ...overrides,
+    };
+}
+
+function traceEvent(eventId: string, status: "started" | "succeeded" = "started") {
+    return {
+        eventId,
+        occurredAt: "2026-10-14T01:59:00Z",
+        source: "context_event" as const,
+        kind: "agent.tool" as const,
+        status,
+        durationMs: null,
+        toolName: "workspace.read_file",
+        providerId: null,
+        modelId: null,
+        errorCode: null,
+        usage: null,
+        references: { toolCallId: `call-${eventId}` },
+    };
+}
+
 function runningActivity() {
     return {
         runId: RUN_ID,
@@ -152,6 +203,7 @@ function runningActivity() {
 beforeEach(() => {
     clearTransportLive();
     getRunAttempts.mockResolvedValue(attemptsResponse());
+    getRunTrace.mockResolvedValue(traceResponse());
 });
 
 function mountPanel(): VueWrapper {
@@ -225,6 +277,179 @@ describe("SessionMonitorPanel", () => {
         expect(panel.get('[data-testid="monitor-connection-missing"]').text()).toBe(
             i18n.global.t("monitor.notProvided"),
         );
+        expect(
+            panel.get('[data-testid="monitor-trace-run-select"]').attributes("disabled"),
+        ).toBeDefined();
+    });
+
+    it("loads a selected Run trace and appends cursor pages without reordering or duplicating events", async () => {
+        const first = traceEvent("context_event:tool-called", "started");
+        const second = {
+            ...traceEvent("context_event:tool-result", "succeeded"),
+            occurredAt: "2026-10-14T01:59:01Z",
+        };
+        getSessionMonitor.mockResolvedValue(monitorResponse({ activity: [runningActivity()] }));
+        getRunTrace
+            .mockResolvedValueOnce(
+                traceResponse({ events: [first], nextCursor: "opaque/cursor+one" }),
+            )
+            .mockResolvedValueOnce(traceResponse({ events: [first, second], nextCursor: null }));
+
+        const panel = mountPanel();
+        await flushPromises();
+
+        expect(
+            (panel.get('[data-testid="monitor-trace-run-select"]').element as HTMLSelectElement)
+                .value,
+        ).toBe(RUN_ID);
+        expect(getRunTrace).toHaveBeenNthCalledWith(1, RUN_ID, { limit: 100 });
+        expect(panel.findAll('[data-testid="run-trace-event"]')).toHaveLength(1);
+
+        await panel.get('[data-testid="run-trace-load-more"]').trigger("click");
+        await flushPromises();
+
+        expect(getRunTrace).toHaveBeenNthCalledWith(2, RUN_ID, {
+            cursor: "opaque/cursor+one",
+            limit: 100,
+        });
+        expect(
+            panel
+                .findAll('[data-testid="run-trace-event"]')
+                .map((row) => row.attributes("data-event-id")),
+        ).toEqual(["context_event:tool-called", "context_event:tool-result"]);
+        expect(panel.find('[data-testid="run-trace-load-more"]').exists()).toBe(false);
+    });
+
+    it("refreshes the selected Run trace when it moves from activity into history", async () => {
+        const terminalEvent = traceEvent("context_event:terminal");
+        getSessionMonitor
+            .mockResolvedValueOnce(monitorResponse({ activity: [runningActivity()] }))
+            .mockResolvedValueOnce(monitorResponse({ activity: [] }));
+        getRunTrace
+            .mockResolvedValueOnce(traceResponse({ events: [] }))
+            .mockResolvedValueOnce(traceResponse({ events: [terminalEvent] }));
+
+        const panel = mountPanel();
+        await flushPromises();
+        expect(getRunTrace).toHaveBeenCalledTimes(1);
+        expect(panel.findAll('[data-testid="run-trace-event"]')).toHaveLength(0);
+
+        vi.useFakeTimers();
+        try {
+            notifySessionEvent(SESSION_ID);
+            await vi.advanceTimersByTimeAsync(500);
+            await flushPromises();
+        } finally {
+            vi.useRealTimers();
+        }
+
+        expect(getRunTrace).toHaveBeenCalledTimes(2);
+        expect(
+            panel
+                .findAll('[data-testid="run-trace-event"]')
+                .map((row) => row.attributes("data-event-id")),
+        ).toEqual(["context_event:terminal"]);
+    });
+
+    it("keeps trace errors generic and retries the selected Run", async () => {
+        getSessionMonitor.mockResolvedValue(monitorResponse());
+        getRunTrace.mockRejectedValueOnce(new Error("raw server detail with prompt=secret"));
+        const panel = mountPanel();
+        await flushPromises();
+
+        const alert = panel.get('[data-testid="run-trace-timeline"] [role="alert"]');
+        expect(alert.text()).toBe(i18n.global.t("monitor.trace.failed"));
+        expect(panel.get('[data-testid="run-trace-timeline"]').text()).not.toContain(
+            "prompt=secret",
+        );
+
+        getRunTrace.mockResolvedValueOnce(
+            traceResponse({ events: [traceEvent("context_event:retry")] }),
+        );
+        await panel.get('[data-testid="run-trace-retry"]').trigger("click");
+        await flushPromises();
+
+        expect(getRunTrace).toHaveBeenLastCalledWith(RUN_ID, { limit: 100 });
+        expect(panel.findAll('[data-testid="run-trace-event"]')).toHaveLength(1);
+    });
+
+    it("rejects a cursor page with a different asOf and retries the same opaque cursor", async () => {
+        const first = traceEvent("context_event:first");
+        const second = traceEvent("context_event:second", "succeeded");
+        getSessionMonitor.mockResolvedValue(monitorResponse());
+        getRunTrace
+            .mockResolvedValueOnce(
+                traceResponse({ events: [first], nextCursor: "fixed-snapshot-cursor" }),
+            )
+            .mockResolvedValueOnce(
+                traceResponse({
+                    asOf: "2026-10-14T02:01:00Z",
+                    events: [second],
+                }),
+            )
+            .mockResolvedValueOnce(traceResponse({ events: [second] }));
+
+        const panel = mountPanel();
+        await flushPromises();
+        await panel.get('[data-testid="run-trace-load-more"]').trigger("click");
+        await flushPromises();
+
+        expect(panel.findAll('[data-testid="run-trace-event"]')).toHaveLength(1);
+        expect(panel.get('[data-testid="run-trace-timeline"] [role="alert"]').text()).toBe(
+            i18n.global.t("monitor.trace.loadMoreFailed"),
+        );
+
+        await panel.get('[data-testid="run-trace-retry-more"]').trigger("click");
+        await flushPromises();
+
+        expect(getRunTrace).toHaveBeenLastCalledWith(RUN_ID, {
+            cursor: "fixed-snapshot-cursor",
+            limit: 100,
+        });
+        expect(panel.findAll('[data-testid="run-trace-event"]')).toHaveLength(2);
+    });
+
+    it("preserves unknown completeness and conservative source statuses across conflicting pages", async () => {
+        getSessionMonitor.mockResolvedValue(monitorResponse());
+        getRunTrace
+            .mockResolvedValueOnce(
+                traceResponse({
+                    completeness: "unknown",
+                    sources: [
+                        { source: "context_event", status: "complete" },
+                        { source: "provider_attempt", status: "unknown" },
+                        { source: "runtime_job", status: "complete" },
+                    ],
+                    events: [traceEvent("context_event:first")],
+                    nextCursor: "source-conflict-cursor",
+                }),
+            )
+            .mockResolvedValueOnce(
+                traceResponse({
+                    sources: [
+                        { source: "context_event", status: "unavailable" },
+                        { source: "provider_attempt", status: "complete" },
+                        { source: "runtime_job", status: "not_applicable" },
+                    ],
+                    events: [traceEvent("context_event:second", "succeeded")],
+                }),
+            );
+
+        const panel = mountPanel();
+        await flushPromises();
+        await panel.get('[data-testid="run-trace-load-more"]').trigger("click");
+        await flushPromises();
+
+        expect(
+            panel.get('[data-testid="run-trace-completeness"]').attributes("data-completeness"),
+        ).toBe("unknown");
+        expect(
+            panel.findAll('[data-testid="run-trace-sources"] li').map((row) => row.text()),
+        ).toEqual([
+            `context_event: ${i18n.global.t("monitor.trace.sourceStatus.unavailable")}`,
+            `provider_attempt: ${i18n.global.t("monitor.trace.sourceStatus.unknown")}`,
+            `runtime_job: ${i18n.global.t("monitor.trace.sourceStatus.unavailable")}`,
+        ]);
     });
 
     it("surfaces a fetch failure with retry that recovers", async () => {

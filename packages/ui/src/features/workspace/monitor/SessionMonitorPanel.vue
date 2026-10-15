@@ -4,8 +4,13 @@ import { useI18n } from "vue-i18n";
 import { RefreshCw } from "@lucide/vue";
 import { api } from "../../../composables/api";
 import { logger } from "../../../lib/logger";
+import RunTraceTimeline from "./RunTraceTimeline.vue";
 import type {
     ChatTransportAttempt,
+    RunTraceCompleteness,
+    RunTraceResponse,
+    RunTraceSourceName,
+    RunTraceSourceStatus,
     RunTransportAttemptsResponse,
     SessionMonitorResponse,
 } from "../../../types";
@@ -35,6 +40,14 @@ const connection = ref<Connection>("snapshot");
 const attempts = ref<RunTransportAttemptsResponse | null>(null);
 const attemptsRunId = ref<string | null>(null);
 const attemptsLoadFailed = ref(false);
+const selectedTraceRunId = ref<string | null>(null);
+const trace = ref<RunTraceResponse | null>(null);
+const traceLoading = ref(false);
+const traceLoadFailed = ref(false);
+const traceLoadingMore = ref(false);
+const traceMoreFailed = ref(false);
+let traceRequestGeneration = 0;
+let consumedTraceCursors = new Set<string>();
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let inFlight = false;
 let attemptsInFlight = false;
@@ -99,6 +112,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
     unsubscribe?.();
     if (debounceTimer !== null) clearTimeout(debounceTimer);
+    traceRequestGeneration += 1;
 });
 
 watch(
@@ -108,6 +122,8 @@ watch(
         loading.value = true;
         loadFailed.value = false;
         connection.value = "snapshot";
+        trace.value = null;
+        selectedTraceRunId.value = null;
         subscribe(id);
         void fetchMonitor();
     },
@@ -128,6 +144,181 @@ function retry(): void {
 const diagnoseRunId = computed<string | null>(
     () => data.value?.activity[0]?.runId ?? data.value?.history.recent[0]?.runId ?? null,
 );
+
+interface TraceRunOption {
+    runId: string;
+    label: string;
+    active: boolean;
+}
+
+const traceRunOptions = computed<TraceRunOption[]>(() => {
+    const options = new Map<string, TraceRunOption>();
+    for (const item of data.value?.activity ?? []) {
+        options.set(item.runId, {
+            runId: item.runId,
+            label: statusLabel(item.status),
+            active: true,
+        });
+    }
+    for (const item of data.value?.history.recent ?? []) {
+        if (!options.has(item.runId)) {
+            options.set(item.runId, {
+                runId: item.runId,
+                label: item.terminalOutcome ?? t("monitor.trace.unknown"),
+                active: false,
+            });
+        }
+    }
+    return [...options.values()];
+});
+
+watch(traceRunOptions, (options) => {
+    if (options.length === 0) {
+        selectedTraceRunId.value = null;
+    } else if (!options.some((option) => option.runId === selectedTraceRunId.value)) {
+        selectedTraceRunId.value = options[0]?.runId ?? null;
+    }
+});
+
+const selectedTraceRunActive = computed(
+    () =>
+        traceRunOptions.value.find((option) => option.runId === selectedTraceRunId.value)?.active ??
+        false,
+);
+
+watch(
+    [selectedTraceRunId, selectedTraceRunActive],
+    ([runId, active], [previousRunId, wasActive]) => {
+        if (runId !== null && runId === previousRunId && wasActive && !active) {
+            void fetchTrace(runId);
+        }
+    },
+);
+
+function selectTraceRun(event: Event): void {
+    const value = (event.target as HTMLSelectElement).value;
+    selectedTraceRunId.value = value || null;
+}
+
+function isCurrentTraceRequest(generation: number, runId: string): boolean {
+    return generation === traceRequestGeneration && selectedTraceRunId.value === runId;
+}
+
+async function fetchTrace(runId: string | null): Promise<void> {
+    const generation = ++traceRequestGeneration;
+    consumedTraceCursors = new Set();
+    trace.value = null;
+    traceLoadingMore.value = false;
+    traceMoreFailed.value = false;
+    traceLoadFailed.value = false;
+    if (runId === null) {
+        traceLoading.value = false;
+        return;
+    }
+
+    traceLoading.value = true;
+    try {
+        const response = await api.getRunTrace(runId, { limit: 100 });
+        if (!isCurrentTraceRequest(generation, runId)) return;
+        if (response.runId !== runId) throw new Error("Run trace response did not match request");
+        trace.value = response;
+    } catch {
+        if (!isCurrentTraceRequest(generation, runId)) return;
+        logger.warn("run trace fetch failed");
+        traceLoadFailed.value = true;
+    } finally {
+        if (isCurrentTraceRequest(generation, runId)) traceLoading.value = false;
+    }
+}
+
+function retryTrace(): void {
+    void fetchTrace(selectedTraceRunId.value);
+}
+
+watch(selectedTraceRunId, (runId) => {
+    void fetchTrace(runId);
+});
+
+async function loadMoreTrace(): Promise<void> {
+    const current = trace.value,
+        runId = selectedTraceRunId.value,
+        cursor = current?.nextCursor;
+    if (
+        !current ||
+        runId === null ||
+        cursor === null ||
+        cursor === undefined ||
+        traceLoadingMore.value
+    )
+        return;
+
+    if (consumedTraceCursors.has(cursor)) {
+        traceMoreFailed.value = true;
+        return;
+    }
+
+    const generation = traceRequestGeneration,
+        asOf = current.asOf;
+    traceLoadingMore.value = true;
+    traceMoreFailed.value = false;
+    try {
+        const page = await api.getRunTrace(runId, { cursor, limit: 100 });
+        if (!isCurrentTraceRequest(generation, runId)) return;
+        if (page.runId !== runId || page.asOf !== asOf) {
+            throw new Error("Run trace page did not match its snapshot");
+        }
+
+        consumedTraceCursors.add(cursor);
+        const eventIds = new Set(current.events.map((event) => event.eventId));
+        const appended = page.events.filter((event) => {
+            if (eventIds.has(event.eventId)) return false;
+            eventIds.add(event.eventId);
+            return true;
+        });
+        const sourceStatuses = new Map<RunTraceSourceName, RunTraceSourceStatus>();
+        for (const source of current.sources) sourceStatuses.set(source.source, source.status);
+        let conflictingSource = false;
+        for (const source of page.sources) {
+            const existing = sourceStatuses.get(source.source);
+            if (existing !== undefined && existing !== source.status) {
+                sourceStatuses.set(
+                    source.source,
+                    existing === "unknown" || source.status === "unknown"
+                        ? "unknown"
+                        : "unavailable",
+                );
+                conflictingSource = true;
+            } else if (existing === undefined) {
+                sourceStatuses.set(source.source, source.status);
+            }
+        }
+        const completeness: RunTraceCompleteness =
+            current.completeness === "unknown" ||
+            page.completeness === "unknown" ||
+            [...sourceStatuses.values()].includes("unknown")
+                ? "unknown"
+                : conflictingSource ||
+                    current.completeness === "partial" ||
+                    page.completeness === "partial"
+                  ? "partial"
+                  : "complete";
+        trace.value = {
+            ...current,
+            completeness,
+            sources: [...sourceStatuses].map(([source, status]) => ({ source, status })),
+            events: [...current.events, ...appended],
+            nextCursor: page.nextCursor,
+        };
+    } catch {
+        if (!isCurrentTraceRequest(generation, runId)) return;
+        logger.warn("run trace page fetch failed");
+        traceMoreFailed.value = true;
+    } finally {
+        if (isCurrentTraceRequest(generation, runId)) traceLoadingMore.value = false;
+    }
+}
+
+const traceHasMore = computed(() => trace.value !== null && trace.value.nextCursor !== null);
 
 const transportAggregate = computed(() => data.value?.transport);
 
@@ -582,6 +773,48 @@ const connectionChipClass = computed(() => {
                             {{ t("monitor.transport.empty") }}
                         </p>
                     </div>
+                </section>
+
+                <!-- PLAN-0509: select a real Run from Monitor data and load its durable trace. -->
+                <section class="space-y-2" data-testid="monitor-run-trace">
+                    <label class="block space-y-1 text-xs" for="monitor-trace-run-select">
+                        <span class="font-medium">{{ t("monitor.trace.runLabel") }}</span>
+                        <select
+                            id="monitor-trace-run-select"
+                            class="w-full min-w-0 rounded border bg-background px-2 py-1.5 text-xs"
+                            :value="selectedTraceRunId ?? ''"
+                            :disabled="traceRunOptions.length === 0"
+                            :aria-label="t('monitor.trace.runLabel')"
+                            data-testid="monitor-trace-run-select"
+                            @change="selectTraceRun"
+                        >
+                            <option value="" disabled>
+                                {{ t("monitor.trace.runPlaceholder") }}
+                            </option>
+                            <option
+                                v-for="option in traceRunOptions"
+                                :key="option.runId"
+                                :value="option.runId"
+                            >
+                                {{
+                                    t("monitor.trace.runOption", {
+                                        runId: runIdShort(option.runId),
+                                        label: option.label,
+                                    })
+                                }}
+                            </option>
+                        </select>
+                    </label>
+                    <RunTraceTimeline
+                        :trace="trace"
+                        :loading="traceLoading"
+                        :error="traceLoadFailed"
+                        :retry="retryTrace"
+                        :has-more="traceHasMore"
+                        :loading-more="traceLoadingMore"
+                        :more-error="traceMoreFailed"
+                        :load-more="loadMoreTrace"
+                    />
                 </section>
 
                 <!-- History -->

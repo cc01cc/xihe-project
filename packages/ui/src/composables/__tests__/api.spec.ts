@@ -1345,6 +1345,298 @@ describe("workspaceJobErrorReason", () => {
     });
 });
 
+describe("api.getRunTrace (PLAN-0509)", () => {
+    it("requests an opaque cursor page and strips fields outside the safe DTO", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    runId: RUN_ID,
+                    asOf: "2026-10-15T10:00:00Z",
+                    completeness: "partial",
+                    provenance: {
+                        status: "complete",
+                        providerConnectionId: "11111111-1111-4111-8111-111111111111",
+                        connectionRevision: 4,
+                        apiTypeId: "openai-chat-completions",
+                        apiTypeVersion: 2,
+                        contextTemplateLayer: "workspace",
+                        contextTemplateId: "22222222-2222-4222-8222-222222222222",
+                        contextTemplateVersion: 3,
+                        templateBody: "TEMPLATE_BODY_SECRET",
+                    },
+                    sources: [{ source: "context_event", status: "complete" }],
+                    events: [
+                        {
+                            eventId: "context_event:evt-1",
+                            occurredAt: "2026-10-15T09:00:00.000000001Z",
+                            source: "context_event",
+                            kind: "agent.tool",
+                            status: "started",
+                            durationMs: null,
+                            toolName: "workspace.read_file",
+                            providerId: "provider/openai-compatible",
+                            modelId: "vendor/model-v1",
+                            errorCode: null,
+                            usage: null,
+                            references: {
+                                toolCallId: "call-1",
+                                privatePayload: "PRIVATE_REFERENCE_SECRET",
+                            },
+                            arguments: "ARGUMENT_SECRET",
+                            result: "RESULT_SECRET",
+                            prompt: "PROMPT_SECRET",
+                            body: "BODY_SECRET",
+                        },
+                    ],
+                    nextCursor: null,
+                    internalDebug: "DEBUG_SECRET",
+                }),
+        } as Response);
+
+        const response = await api.getRunTrace(RUN_ID, { cursor: "opaque/cursor+one", limit: 100 });
+
+        expect(fetchSpy).toHaveBeenCalledWith(
+            `/api/v1/chat/runs/${RUN_ID}/trace?cursor=opaque%2Fcursor%2Bone&limit=100`,
+            expect.any(Object),
+        );
+        expect(response.events).toHaveLength(1);
+        expect(response.events[0]?.references).toEqual({ toolCallId: "call-1" });
+        expect(response.events[0]?.providerId).toBe("provider/openai-compatible");
+        expect(response.events[0]?.modelId).toBe("vendor/model-v1");
+        expect(response.provenance).toEqual({
+            status: "complete",
+            providerConnectionId: "11111111-1111-4111-8111-111111111111",
+            connectionRevision: 4,
+            apiTypeId: "openai-chat-completions",
+            apiTypeVersion: 2,
+            contextTemplateLayer: "workspace",
+            contextTemplateId: "22222222-2222-4222-8222-222222222222",
+            contextTemplateVersion: 3,
+        });
+        expect(response.events[0]).not.toHaveProperty("arguments");
+        expect(response.events[0]).not.toHaveProperty("result");
+        expect(response.events[0]).not.toHaveProperty("prompt");
+        expect(response).not.toHaveProperty("internalDebug");
+        expect(JSON.stringify(response)).not.toContain("SECRET");
+    });
+
+    it("normalizes prompt admission as a separate content-free input event", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    runId: RUN_ID,
+                    asOf: "2026-10-15T10:00:00Z",
+                    completeness: "complete",
+                    provenance: {
+                        status: "unknown",
+                        providerConnectionId: null,
+                        connectionRevision: null,
+                        apiTypeId: null,
+                        apiTypeVersion: null,
+                        contextTemplateLayer: null,
+                        contextTemplateId: null,
+                        contextTemplateVersion: null,
+                    },
+                    sources: [{ source: "context_event", status: "complete" }],
+                    events: [
+                        {
+                            eventId: "context_event:77777777-7777-4777-8777-777777777777",
+                            occurredAt: "2026-10-15T09:00:00Z",
+                            source: "context_event",
+                            kind: "input.admitted",
+                            status: "admitted",
+                            durationMs: null,
+                            toolName: null,
+                            providerId: null,
+                            modelId: null,
+                            errorCode: null,
+                            usage: null,
+                            references: {
+                                contextEventId: "77777777-7777-4777-8777-777777777777",
+                            },
+                            message: { content: "PROMPT_BODY_SECRET" },
+                        },
+                    ],
+                    nextCursor: null,
+                }),
+        } as Response);
+
+        const response = await api.getRunTrace(RUN_ID);
+
+        expect(response.events[0]).toMatchObject({ kind: "input.admitted", status: "admitted" });
+        expect(response.events[0]?.references).toEqual({
+            contextEventId: "77777777-7777-4777-8777-777777777777",
+        });
+        expect(JSON.stringify(response)).not.toContain("PROMPT_BODY_SECRET");
+    });
+
+    it("rejects an unrecognized normalized event status", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    runId: RUN_ID,
+                    asOf: "2026-10-15T10:00:00Z",
+                    completeness: "complete",
+                    provenance: {
+                        status: "unknown",
+                        providerConnectionId: null,
+                        connectionRevision: null,
+                        apiTypeId: null,
+                        apiTypeVersion: null,
+                        contextTemplateLayer: null,
+                        contextTemplateId: null,
+                        contextTemplateVersion: null,
+                    },
+                    sources: [],
+                    events: [
+                        {
+                            eventId: "context_event:evt-1",
+                            occurredAt: "2026-10-15T09:00:00Z",
+                            source: "context_event",
+                            kind: "agent.tool",
+                            status: "success-ish",
+                        },
+                    ],
+                    nextCursor: null,
+                }),
+        } as Response);
+
+        await expect(api.getRunTrace(RUN_ID)).rejects.toThrow("Invalid run trace status");
+    });
+
+    it("rejects input admission events with invalid source, references, or omitted null fields", async () => {
+        const baseResponse = (event: Record<string, unknown>) => ({
+            runId: RUN_ID,
+            asOf: "2026-10-15T10:00:00Z",
+            completeness: "complete",
+            provenance: {
+                status: "unknown",
+                providerConnectionId: null,
+                connectionRevision: null,
+                apiTypeId: null,
+                apiTypeVersion: null,
+                contextTemplateLayer: null,
+                contextTemplateId: null,
+                contextTemplateVersion: null,
+            },
+            sources: [],
+            events: [event],
+            nextCursor: null,
+        });
+        const validAdmission = {
+            eventId: "context_event:77777777-7777-4777-8777-777777777777",
+            occurredAt: "2026-10-15T09:00:00Z",
+            source: "context_event",
+            kind: "input.admitted",
+            status: "admitted",
+            durationMs: null,
+            toolName: null,
+            providerId: null,
+            modelId: null,
+            errorCode: null,
+            usage: null,
+            references: { contextEventId: "77777777-7777-4777-8777-777777777777" },
+        };
+        const missingNullField: Record<string, unknown> = { ...validAdmission };
+        delete missingNullField.usage;
+        for (const event of [
+            { ...validAdmission, source: "provider_attempt" },
+            { ...validAdmission, eventId: "context_event:evt-1" },
+            {
+                ...validAdmission,
+                references: { ...validAdmission.references, attemptId: "attempt-1" },
+            },
+            missingNullField,
+        ]) {
+            fetchSpy.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve(baseResponse(event)),
+            } as Response);
+            await expect(api.getRunTrace(RUN_ID)).rejects.toThrow("Invalid input admission event");
+        }
+    });
+
+    it("bounds provider/model IDs and keeps only non-negative integer measurements", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    runId: RUN_ID,
+                    asOf: "2026-10-15T10:00:00Z",
+                    completeness: "complete",
+                    provenance: {
+                        status: "unknown",
+                        providerConnectionId: null,
+                        connectionRevision: null,
+                        apiTypeId: null,
+                        apiTypeVersion: null,
+                        contextTemplateLayer: null,
+                        contextTemplateId: null,
+                        contextTemplateVersion: null,
+                    },
+                    sources: [],
+                    events: [
+                        {
+                            eventId: "attempt-1",
+                            occurredAt: "2026-10-15T09:00:00Z",
+                            source: "provider_attempt",
+                            kind: "provider.attempt",
+                            status: "succeeded",
+                            durationMs: 1.5,
+                            providerId: "provider name with spaces",
+                            modelId: "m".repeat(129),
+                            usage: {
+                                inputTokens: 1.5,
+                                outputTokens: -1,
+                                totalTokens: 12,
+                            },
+                        },
+                    ],
+                    nextCursor: null,
+                }),
+        } as Response);
+
+        const response = await api.getRunTrace(RUN_ID);
+
+        expect(response.events[0]).toMatchObject({
+            durationMs: null,
+            providerId: null,
+            modelId: null,
+            usage: { inputTokens: null, outputTokens: null, totalTokens: 12 },
+        });
+    });
+
+    it("rejects an oversized next cursor", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    runId: RUN_ID,
+                    asOf: "2026-10-15T10:00:00Z",
+                    completeness: "complete",
+                    provenance: {
+                        status: "unknown",
+                        providerConnectionId: null,
+                        connectionRevision: null,
+                        apiTypeId: null,
+                        apiTypeVersion: null,
+                        contextTemplateLayer: null,
+                        contextTemplateId: null,
+                        contextTemplateVersion: null,
+                    },
+                    sources: [],
+                    events: [],
+                    nextCursor: "c".repeat(1025),
+                }),
+        } as Response);
+
+        await expect(api.getRunTrace(RUN_ID)).rejects.toThrow("Invalid run trace response");
+    });
+});
+
 describe("api audit entries (PLAN-0466 T2.1)", () => {
     it("lists audit entries with the type/status/paging query", async () => {
         fetchSpy.mockResolvedValueOnce({

@@ -223,6 +223,105 @@ export interface RunTransportAttemptsResponse {
     aggregate: ChatTransportAggregate;
 }
 
+/** PLAN-0509: safe per-Run trace projection; event payloads are never included. */
+export type RunTraceCompleteness = "complete" | "partial" | "unknown";
+
+export type RunTraceSourceName =
+    | "chat_run"
+    | "context_event"
+    | "provider_attempt"
+    | "mcp_invocation"
+    | "runtime_job";
+
+export type RunTraceSourceStatus = "complete" | "unavailable" | "not_applicable" | "unknown";
+
+export type RunTraceEventKind =
+    | "run.lifecycle"
+    | "input.admitted"
+    | "context.source"
+    | "agent.tool"
+    | "provider.attempt"
+    | "mcp.invocation"
+    | "runtime.job"
+    | "usage.recorded";
+
+export type RunTraceEventStatus =
+    | "created"
+    | "queued"
+    | "running"
+    | "awaiting_approval"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "admitted"
+    | "resolved"
+    | "missing"
+    | "rejected"
+    | "stale"
+    | "started"
+    | "succeeded"
+    | "pending"
+    | "ambiguous"
+    | "recorded"
+    | "estimated"
+    | "unknown";
+
+export type RunTraceReferenceName =
+    | "contextEventId"
+    | "attemptId"
+    | "toolCallId"
+    | "mcpInvocationId"
+    | "runtimeJobId";
+
+export interface RunTraceUsage {
+    inputTokens: number | null;
+    outputTokens: number | null;
+    totalTokens: number | null;
+}
+
+export type RunTraceProvenanceStatus = "complete" | "partial" | "unknown";
+
+export interface RunTraceProvenance {
+    status: RunTraceProvenanceStatus;
+    providerConnectionId: string | null;
+    connectionRevision: number | null;
+    apiTypeId: string | null;
+    apiTypeVersion: number | null;
+    contextTemplateLayer: "instance" | "user" | "workspace" | null;
+    contextTemplateId: string | null;
+    contextTemplateVersion: number | null;
+}
+
+export interface RunTraceSource {
+    source: RunTraceSourceName;
+    status: RunTraceSourceStatus;
+}
+
+export interface RunTraceEvent {
+    eventId: string;
+    occurredAt: string;
+    source: RunTraceSourceName;
+    kind: RunTraceEventKind;
+    status: RunTraceEventStatus | null;
+    durationMs: number | null;
+    toolName: string | null;
+    providerId: string | null;
+    modelId: string | null;
+    errorCode: string | null;
+    usage: RunTraceUsage | null;
+    references: Partial<Record<RunTraceReferenceName, string>>;
+}
+
+export interface RunTraceResponse {
+    runId: string;
+    asOf: string;
+    completeness: RunTraceCompleteness;
+    provenance: RunTraceProvenance;
+    sources: RunTraceSource[];
+    events: RunTraceEvent[];
+    nextCursor: string | null;
+}
+
 /** UI join of the PLAN-0464 waiting link and the derived child projection. */
 export interface ToolCallWaitingOn {
     childRunId: string;
