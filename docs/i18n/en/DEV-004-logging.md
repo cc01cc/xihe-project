@@ -6,7 +6,7 @@ sidebar_group: "Developer Guide"
 sidebar_order: 4
 created: 2026-06-03
 status: active
-updated: 2026-09-19
+updated: 2026-10-15
 ---
 
 # DEV-004: Logging System Design
@@ -231,6 +231,7 @@ Scans for `Bearer`/JWT/PEM/`Authorization:`/JSON sensitive fields; any hit exits
 
 - Chat lifecycle logs carry `requestId`, `runId`, `sessionId`, `outcome`, and the relevant `errorCode`; asynchronous CP workers receive correlation IDs explicitly.
 - Provider logs contain only provider/model/status/duration/errorCode and token/character counts. Prompts, token content, raw responses, and credentials are excluded.
+- Run Trace read projections must not log raw requests, prompts, responses, tool arguments/results, or credentials.
 - ConfigAudit stores only `present`/`missing` plus an irreversible fingerprint for provider secrets. The development Admin raw-read exception must never enter logs, traces, screenshots, or evidence.
 
 ## 7. Error Logging Standards

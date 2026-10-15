@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 14
 status: active
 created: 2026-09-03
-updated: 2026-10-12
+updated: 2026-10-15
 ---
 
 # DEV-014: CP 架构
@@ -81,6 +81,7 @@ flowchart LR
 - `ChatRun.origin ∈ {user_submission, spawn}`；公开提交固定为前者。CP 内部 `ChatSubmissionService.createSpawn` 只接受父 Agent `spawn_agent` tool_call 对应的 durable `mcp_invocations` 行，校验父 run/invocation 与 child Session provenance，并绕过浏览器 SSE gate；waiting link 记录在 child `chat_runs` 行（`waiting_on_run_id`/`waiting_tool_call_id`）。PLAN-0407 T2.10 将 `spawn_agent` 暴露为 CP-owned logical MCP tool；Agent 经 MCPProxy 现有 grant/approval gate，CP local dispatch 执行 child transaction 并在 commit 后 handoff worker。`POST /internal/v1/agents/spawn` 保留为 CP internal service surface，不由 Agent 调用。
 - user submission 以 `(userId, sessionId, Idempotency-Key)` 唯一约束；spawn 另以 `(userId, idempotencyKey) WHERE origin='spawn'` 部分唯一索引防跨 child-session 并发重复。同事件同 request hash 返回既有 run，不同 hash 返回 `IDEMPOTENCY_KEY_CONFLICT`。
 - Agent provider failure 进入 `failed`/`partial`，流断开或缺少终态进入 `ambiguous`；`ambiguous` 不自动 retry，人工确认后使用新的幂等键。
+- **Run Trace 只读读面（PLAN-0509）**：`GET /api/v1/chat/runs/{runId}/trace` 校验当前用户对 Run 的所有权及其 Session 关联；首屏确定 `asOf`，不透明 cursor 固定水位并分页读取有界安全投影。若同 Session、Run 时间窗内发现 `run_id` 为空的 Runtime Job 候选，只将 `runtime_job` source 与整体 `completeness` 标为 `unknown`，不把该 Job 归属或投影为 Run 事件。完整 wire schema 见 [`OpenAPI`](../../api/openapi.yaml) 与 [`API inventory`](../../api/inventory.md)。
 - `/api/v1/exec` 已删除，所有聊天 caller 统一迁移至 `/api/v1/chat`。
 - **健康**：`/actuator/health`；方法级 `@PreAuthorize`（禁类级，避免与 `/health` 冲突）。
 

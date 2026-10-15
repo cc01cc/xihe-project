@@ -677,6 +677,47 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/chat/runs/{runId}/trace:
+    get:
+      operationId: getChatRunTrace
+      summary: Read a bounded, privacy-safe timeline of durable ChatRun facts
+      description: |
+        PLAN-0509: projects only allowlisted durable facts from the ChatRun,
+        ContextEvent, provider-attempt, MCP-invocation, and Runtime-job sources.
+        The response never contains prompts, message bodies, tool arguments/results,
+        credential values, template bodies, or raw payloads. Configuration provenance
+        contains only provider-connection/API-type/template identity and revision scalars;
+        `prompt.admitted` is projected as a separate content-free `input.admitted` event.
+        `asOf` is fixed by the first page and
+        embedded in the opaque cursor so later pages use the same watermark.
+        Events are ordered by occurredAt/source/sourceRecordId. Missing or unmappable
+        source facts yield `completeness: partial` rather than fabricated data. A
+        same-Session unlinked Runtime-job candidate only marks runtime coverage and
+        overall completeness `unknown`; it is never attributed to this Run or returned
+        as an event.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: runId
+          required: true
+          schema: { type: string, format: uuid }
+        - in: query
+          name: cursor
+          schema: { type: string, maxLength: 1024 }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+      responses:
+        '200':
+          description: A stable page of safe Run Trace facts
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunTraceResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
   /api/v1/chat/sessions/{sessionId}/runs:
     get:
       operationId: listSessionChatRuns
@@ -2660,6 +2701,107 @@ components:
         runId: { type: string, format: uuid }
         attempts: { type: array, items: { $ref: '#/components/schemas/ChatTransportAttempt' } }
         aggregate: { $ref: '#/components/schemas/ChatTransportAggregate' }
+    RunTraceResponse:
+      type: object
+      additionalProperties: false
+      description: PLAN-0509 read-only, bounded projection of privacy-safe durable Run facts.
+      required: [runId, asOf, completeness, provenance, sources, events, nextCursor]
+      properties:
+        runId: { type: string, format: uuid }
+        asOf: { type: string, format: date-time }
+        completeness: { type: string, enum: [complete, partial, unknown] }
+        provenance: { $ref: '#/components/schemas/RunTraceProvenance' }
+        sources:
+          type: array
+          items: { $ref: '#/components/schemas/RunTraceSource' }
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/RunTraceEvent' }
+        nextCursor: { type: [string, 'null'], maxLength: 1024 }
+    RunTraceProvenance:
+      type: object
+      additionalProperties: false
+      description: >-
+        PLAN-0509 allowlisted scalar provenance only. status is complete when all seven
+        values are valid, partial when some are valid, and unknown when none are available.
+        No template body, request template, credential, or connection secret is included.
+      required: [status, providerConnectionId, connectionRevision, apiTypeId, apiTypeVersion, contextTemplateLayer, contextTemplateId, contextTemplateVersion]
+      properties:
+        status: { type: string, enum: [complete, partial, unknown] }
+        providerConnectionId: { type: [string, 'null'], format: uuid }
+        connectionRevision: { type: [integer, 'null'], format: int64, minimum: 0 }
+        apiTypeId: { type: [string, 'null'], minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9_.:-]+$' }
+        apiTypeVersion: { type: [integer, 'null'], minimum: 1 }
+        contextTemplateLayer: { type: [string, 'null'], enum: [instance, user, workspace, null] }
+        contextTemplateId: { type: [string, 'null'], format: uuid }
+        contextTemplateVersion: { type: [integer, 'null'], minimum: 1 }
+    RunTraceSource:
+      type: object
+      additionalProperties: false
+      required: [source, status]
+      properties:
+        source: { type: string, enum: [chat_run, context_event, provider_attempt, mcp_invocation, runtime_job] }
+        status: { type: string, enum: [complete, unavailable, not_applicable, unknown] }
+    RunTraceEvent:
+      type: object
+      additionalProperties: false
+      description: >-
+        Allowlisted durable fact. This projection never exposes prompts, message bodies,
+        tool arguments/results, credentials, raw ContextEvent payloads, or Runtime state.
+      required: [eventId, occurredAt, source, kind, status, durationMs, providerId, modelId, errorCode, usage, toolName, references]
+      properties:
+        eventId: { type: string, maxLength: 256 }
+        occurredAt: { type: string, format: date-time }
+        source: { type: string, enum: [chat_run, context_event, provider_attempt, mcp_invocation, runtime_job] }
+        kind: { type: string, enum: [run.lifecycle, input.admitted, context.source, agent.tool, provider.attempt, mcp.invocation, runtime.job, usage.recorded] }
+        status: { type: [string, 'null'], enum: [created, queued, running, awaiting_approval, completed, failed, cancelled, admitted, started, succeeded, pending, ambiguous, resolved, missing, rejected, stale, recorded, estimated, unknown, null] }
+        durationMs: { type: [integer, 'null'], minimum: 0 }
+        providerId: { type: [string, 'null'], maxLength: 128 }
+        modelId: { type: [string, 'null'], maxLength: 128 }
+        errorCode: { type: [string, 'null'], maxLength: 64 }
+        usage:
+          oneOf:
+            - { $ref: '#/components/schemas/RunTraceUsage' }
+            - { type: 'null' }
+        toolName: { type: [string, 'null'], maxLength: 128 }
+        references:
+          type: object
+          additionalProperties: false
+          properties:
+            contextEventId: { type: string, format: uuid }
+            toolCallId: { type: string, maxLength: 128 }
+            attemptId: { type: string, format: uuid }
+            mcpInvocationId: { type: string, format: uuid }
+            runtimeJobId: { type: string, format: uuid }
+      allOf:
+        - if:
+            required: [kind]
+            properties: { kind: { const: input.admitted } }
+          then:
+            properties:
+              source: { const: context_event }
+              status: { const: admitted }
+              durationMs: { type: "null" }
+              toolName: { type: "null" }
+              providerId: { type: "null" }
+              modelId: { type: "null" }
+              errorCode: { type: "null" }
+              usage: { type: "null" }
+              references:
+                type: object
+                additionalProperties: false
+                required: [contextEventId]
+                maxProperties: 1
+                properties:
+                  contextEventId: { type: string, format: uuid }
+    RunTraceUsage:
+      type: object
+      additionalProperties: false
+      required: [inputTokens, outputTokens, totalTokens]
+      properties:
+        inputTokens: { type: [integer, 'null'], minimum: 0 }
+        outputTokens: { type: [integer, 'null'], minimum: 0 }
+        totalTokens: { type: [integer, 'null'], minimum: 0 }
     ChatTransportAttempt:
       type: object
       additionalProperties: false

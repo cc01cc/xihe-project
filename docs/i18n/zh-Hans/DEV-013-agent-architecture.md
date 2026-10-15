@@ -7,7 +7,7 @@ sidebar_group: "开发指南"
 sidebar_order: 13
 status: active
 created: 2026-07-07
-updated: 2026-10-12
+updated: 2026-10-15
 ---
 
 # DEV-013: Agent 架构与接口抽象
@@ -126,6 +126,8 @@ flowchart TD
 | `context.overflow_retry` | 溢出重跑审计（PLAN-0341 T1.1：runId + 预检 maxInputTokens） |
 | `assistant.responded` | assistant 回复持久化（PLAN-294 M1；runner 流成功终态 append，读模型映射为 ai 消息） |
 | `llm.usage` | run 用量镜像（PLAN-294 M3；CP relay 写入，压缩门信号源。PLAN-0343：payload 增 `model`（`provider/model`，pricing 查表键）与 `cost/costCurrency/costSource/costNote`（CP 终态一次映射；unmapped→`cost=null`+告警，禁 0） |
+
+PLAN-0509 Run Trace 将耐久 `prompt.admitted` 独立投影为不含消息正文的 `input.admitted`；只从 `tool.called` / `tool.result` 提取 allowlist 标量，将未关联 MCP invocation 的 Agent 自定义工具安全投影为 `agent.tool`，与 MCP invocation 对应的调用由 MCP 事实规范表示并去重。配置来源只包含 Provider Connection、API Type、上下文模板的 ID/版本安全标量；读取只选 ChatRun 必需列与 JSONB 白名单路径，不加载模板正文。Trace 响应不包含输入正文、工具参数或结果正文。
 
 两套事件命名空间不同，映射由 `LangGraphEventAdapter` 维护：
 

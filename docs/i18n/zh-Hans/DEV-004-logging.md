@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 4
 created: 2026-06-03
 status: active
-updated: 2026-09-12
+updated: 2026-10-15
 ---
 
 # DEV-004: 日志系统设计
@@ -272,6 +272,7 @@ node scripts/scan-log-secrets.mjs [path ...]   # 默认扫描 logs/
 
 - Chat 生命周期日志必须同时携带 `requestId`、`runId`、`sessionId`、`outcome` 和必要的 `errorCode`；异步 CP worker 使用显式参数传递关联 ID。
 - provider 仅记录 provider/model/status/duration/errorCode 和 token/字符计数，不记录 prompt、token 内容、raw response 或凭据。
+- Run Trace 只读投影不得在日志中记录原始请求、prompt、response、工具参数/结果或 credential。
 - ConfigAudit 对 provider secret 只记录 `present`/`missing` 与不可逆 fingerprint；ADMIN 配置 GET 的 raw-read 例外仅限配置 API 响应本身，不得进入日志、trace、截图或 evidence。
 
 ## 7. 错误日志规范
