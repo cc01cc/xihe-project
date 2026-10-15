@@ -320,6 +320,10 @@ test.describe("@host PLAN-0509 Run trace browser acceptance", () => {
             ...ctx.headers,
             "X-Workspace-Id": ctx.workspaceId,
         });
+        await waitForAgentCircuitRecovered(request, {
+            ...ctx.headers,
+            "X-Workspace-Id": ctx.workspaceId,
+        });
     });
 
     test.beforeEach(async ({ page }) => {
@@ -508,6 +512,46 @@ test.describe("@host PLAN-0509 Run trace browser acceptance", () => {
         return (traceResponses.get(runId) ?? [])
             .filter((response) => response.status() === 200)
             .at(-1)!;
+    }
+
+    async function waitForAgentCircuitRecovered(
+        request: APIRequestContext,
+        headers: Record<string, string>,
+    ): Promise<void> {
+        let lastObserved = "unobserved";
+        await expect
+            .poll(
+                async () => {
+                    try {
+                        const response = await request.get(`${CP_URL}/api/v1/status`, { headers });
+                        if (!response.ok()) {
+                            lastObserved = `status HTTP ${response.status()}`;
+                            return lastObserved;
+                        }
+                        const body = (await response.json()) as {
+                            services?: Array<{ key: string; circuitBreaker?: string }>;
+                        };
+                        const agent = body.services?.find((service) => service.key === "agent");
+                        if (!agent) {
+                            lastObserved = "Agent entry missing";
+                            return lastObserved;
+                        }
+                        // Rebinding restarts the Agent and can open CP's 30s circuit; a Chat
+                        // sent inside the cooldown is rejected, so wait until it clears.
+                        lastObserved = `circuit=${agent.circuitBreaker ?? "missing"}`;
+                        return agent.circuitBreaker !== "OPEN" ? "recovered" : lastObserved;
+                    } catch (cause) {
+                        lastObserved = cause instanceof Error ? cause.message : String(cause);
+                        return "unavailable";
+                    }
+                },
+                {
+                    timeout: 90_000,
+                    intervals: [1000, 2000],
+                    message: `CP Agent circuit did not clear before the browser Chat; last observation: ${lastObserved}`,
+                },
+            )
+            .toBe("recovered");
     }
 
     test("desktop: a real UI Run loads a safe trace and rebuilds it after refresh", async ({

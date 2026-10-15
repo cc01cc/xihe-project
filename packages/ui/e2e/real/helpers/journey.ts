@@ -26,7 +26,6 @@ export async function waitForControlPlaneAgentReady(
     headers: Record<string, string>,
 ): Promise<void> {
     let lastObserved = "unobserved";
-    let agentReadySince: number | undefined;
     await expect
         .poll(
             async () => {
@@ -42,46 +41,22 @@ export async function waitForControlPlaneAgentReady(
                             status?: string;
                             liveness?: string;
                             llmReady?: string;
-                            circuitBreaker?: string;
                         }>;
                     };
                     const agent = body.services?.find((service) => service.key === "agent");
-                    if (!agent) {
-                        agentReadySince = undefined;
-                        lastObserved = "Agent entry missing";
-                        return lastObserved;
-                    }
-
-                    const health = `${agent.status}/${agent.liveness}/${agent.llmReady}`;
-                    if (health !== "up/up/ready") {
-                        agentReadySince = undefined;
-                        lastObserved = `${health}/circuit=${agent.circuitBreaker ?? "missing"}`;
-                        return lastObserved;
-                    }
-
-                    if (agent.circuitBreaker === "OPEN") {
-                        agentReadySince ??= Date.now();
-                        const stableMs = Date.now() - agentReadySince;
-                        // CP keeps the circuit open for 30s after Agent health recovers.
-                        lastObserved = `${health}/circuit=OPEN/stable=${stableMs}ms`;
-                        return stableMs >= 30_000 ? health : lastObserved;
-                    }
-
-                    agentReadySince = undefined;
-                    lastObserved = `${health}/circuit=${agent.circuitBreaker ?? "missing"}`;
-                    return agent.circuitBreaker === "CLOSED" || agent.circuitBreaker === "HALF_OPEN"
-                        ? health
-                        : lastObserved;
+                    lastObserved = agent
+                        ? `${agent.status}/${agent.liveness}/${agent.llmReady}`
+                        : "Agent entry missing";
+                    return lastObserved;
                 } catch (cause) {
-                    agentReadySince = undefined;
                     lastObserved = cause instanceof Error ? cause.message : String(cause);
                     return "unavailable";
                 }
             },
             {
-                timeout: 60_000,
+                timeout: 45_000,
                 intervals: [250, 500, 1000, 2000],
-                message: `CP Agent readiness/circuit recovery did not complete; last observation: ${lastObserved}`,
+                message: `CP Agent readiness did not reach up/up/ready; last observation: ${lastObserved}`,
             },
         )
         .toBe("up/up/ready");
