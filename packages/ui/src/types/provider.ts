@@ -60,11 +60,27 @@ export interface ModelCache {
 export interface ModelCapabilities {
     /** PLAN-0364 M4: model-level vision/tools are no longer guessed here. */
     chat: boolean;
+    /** PLAN-0523 T1.1: image generation capability (litellm mode / name fallback). */
+    image?: boolean;
+}
+
+/** PLAN-0523 T1.1: per-1M-token pricing from the litellm cost map. */
+export interface ModelPricing {
+    currency: string;
+    unit: string;
+    input: number;
+    output: number;
 }
 
 export interface CatalogModel {
     name: string;
     capabilities: ModelCapabilities;
+    /** PLAN-0523 T1.1 additive metadata; absent = unknown (UI shows 未知). */
+    inputModalities?: string[];
+    outputModalities?: string[];
+    contextWindowTokens?: number;
+    maxOutputTokens?: number;
+    pricing?: ModelPricing;
 }
 
 export interface ProviderCatalog {

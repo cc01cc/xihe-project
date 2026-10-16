@@ -240,3 +240,137 @@ async def test_scoped_catalog_preserves_same_provider_different_connections():
     assert result["providers"]["conn-1"]["connectionKey"] == "default"
     assert result["providers"]["conn-2"]["connectionKey"] == "secondary"
     assert result["providers"]["conn-2"]["scope"] == "WORKSPACE"
+
+
+def _run_scoped_catalog(model_ids, monkeypatch, model_discovery="remote-models", manual_models=None):
+    """Run fetch_connection_catalog for one connection (callers patch litellm)."""
+    from xihe_agent.llm.models import fetch_connection_catalog
+
+    config_client = MagicMock()
+    config_client.config_revision = "connection-rev"
+    grant = {
+        "provider": "test",
+        "routeProvider": "test",
+        "model": "*",
+        "baseUrl": "https://provider.test/v1",
+        "apiKey": "sk-scoped",
+        "connectionRevision": 4,
+        "modelDiscovery": model_discovery,
+        "manualModels": manual_models if manual_models is not None else [],
+        "connectionKey": "default",
+        "apiTypeId": "openai-chat-completions",
+        "apiTypeVersion": 1,
+        "operation": "chat",
+    }
+    config_client.redeem_provider_lease = AsyncMock(return_value=grant)
+    response = MagicMock(status_code=200)
+    response.json.return_value = {"data": [{"id": m} for m in model_ids]}
+
+    async def _run():
+        with patch("xihe_agent.llm.models.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client_cls.return_value.__aenter__.return_value = mock_client
+            mock_client.get.return_value = response
+            return await fetch_connection_catalog(
+                config_client,
+                [
+                    {
+                        "lease": "pl-test",
+                        "runId": "catalog-run",
+                        "connectionId": "conn-1",
+                        "connectionKey": "default",
+                        "providerId": "test",
+                        "apiTypeId": "openai-chat-completions",
+                        "apiTypeVersion": 1,
+                        "operation": "chat",
+                        "scope": "USER",
+                        "displayName": "Test",
+                        "connectionRevision": 4,
+                    }
+                ],
+            )
+
+    import asyncio
+
+    return asyncio.run(_run())
+
+
+def test_model_record_includes_litellm_metadata(monkeypatch):
+    monkeypatch.setattr("xihe_agent.llm.models.litellm.get_model_info", lambda _m: {
+        "mode": "chat",
+        "supports_vision": True,
+        "max_input_tokens": 128000,
+        "max_output_tokens": 16384,
+        "max_tokens": 16384,
+        "input_cost_per_token": 2.5e-06,
+        "output_cost_per_token": 1e-05,
+    })
+    from xihe_agent.llm.models import _model_record
+
+    record = _model_record("openai", "gpt-4o")
+    assert record["capabilities"] == {"chat": True, "image": False}
+    assert record["inputModalities"] == ["text", "image"]
+    assert record["outputModalities"] == ["text"]
+    assert record["contextWindowTokens"] == 128000
+    assert record["maxOutputTokens"] == 16384
+    assert record["pricing"] == {"currency": "USD", "unit": "1M tokens", "input": 2.5, "output": 10.0}
+
+
+def test_model_record_omits_metadata_for_unknown_model(monkeypatch):
+    monkeypatch.setattr("xihe_agent.llm.models.litellm.get_model_info", lambda _m: (_ for _ in ()).throw(Exception("unmapped")))
+    from xihe_agent.llm.models import _model_record
+
+    record = _model_record("test", "totally-unknown-model")
+    assert record["capabilities"] == {"chat": True, "image": False}
+    for key in ("inputModalities", "outputModalities", "contextWindowTokens", "maxOutputTokens", "pricing"):
+        assert key not in record
+
+
+def test_model_record_image_capability_from_litellm_mode(monkeypatch):
+    monkeypatch.setattr("xihe_agent.llm.models.litellm.get_model_info", lambda _m: {"mode": "image_generation"})
+    from xihe_agent.llm.models import _model_record
+
+    record = _model_record("test", "seedream-4")  # name does NOT match the fallback pattern
+    assert record["capabilities"]["image"] is True
+    assert record["outputModalities"] == ["image"]
+
+
+def test_model_record_image_capability_name_fallback(monkeypatch):
+    monkeypatch.setattr("xihe_agent.llm.models.litellm.get_model_info", lambda _m: (_ for _ in ()).throw(Exception("unmapped")))
+    from xihe_agent.llm.models import _model_record
+
+    assert _model_record("openai", "dall-e-3")["capabilities"]["image"] is True
+    assert _model_record("deepseek", "deepseek-chat")["capabilities"]["image"] is False
+
+
+def test_scoped_catalog_remote_records_include_metadata(monkeypatch):
+    info = {
+        "mode": "chat",
+        "supports_vision": False,
+        "max_input_tokens": 64000,
+        "max_output_tokens": 8192,
+        "max_tokens": 8192,
+        "input_cost_per_token": 1e-07,
+        "output_cost_per_token": 5e-07,
+    }
+    monkeypatch.setattr("xihe_agent.llm.models.litellm.get_model_info", lambda _m: info)
+    result = _run_scoped_catalog(["known-model"], monkeypatch)
+    record = result["providers"]["conn-1"]["models"][0]
+    assert record["contextWindowTokens"] == 64000
+    assert record["maxOutputTokens"] == 8192
+    assert record["inputModalities"] == ["text"]
+    assert record["capabilities"]["image"] is False
+
+
+def test_scoped_catalog_manual_models_include_metadata(monkeypatch):
+    monkeypatch.setattr("xihe_agent.llm.models.litellm.get_model_info", lambda _m: {"mode": "image_generation"})
+    result = _run_scoped_catalog(
+        [],
+        monkeypatch,
+        model_discovery="manual",
+        manual_models=["custom-image-model"],
+    )
+    record = result["providers"]["conn-1"]["models"][0]
+    assert record["name"] == "custom-image-model"
+    assert record["capabilities"]["image"] is True
+    assert result["providers"]["conn-1"]["status"] == "ready"
