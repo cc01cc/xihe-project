@@ -1003,9 +1003,9 @@ erDiagram
 | V66 | `V66__credential_leases.sql` | 通用凭据租约（PLAN-0497 T1.1）：新建 `credential_leases`（SHA-256 `lease_hash` 唯一、五元组绑定、expected_revision 对齐、TTL + redeem）；不复用 `provider_credential_leases` | `credential_leases` |
 | V67 | `V67__llm_provider_legacy_key_cleanup.sql` | 仅数据清理（PLAN-0504）：删除 `llm-provider` 域 13 个 legacy 键（`defaultProvider/defaultModel/baseUrl` 与五 provider 的 `*Model/*ApiBase`）；默认身份改整单元 `profile`；幂等，config_audit 行随既有 FK 级联清理 | `config` |
 | V68 | `V68__chat_run_transport_attempts.sql` | 新增 ChatRun provider HTTP transport attempt 生命周期表（PLAN-0508 T2.1）：`run_id` FK 级联 `chat_runs`、`session_id` 无 FK 冗余聚合键、`(run_id, seq)` 唯一；CHECK 覆盖 seq/status/outcome/生命周期形状/非负指标/error 与 HTTP status 互斥；B1 最小版增最后阶段样本两列 `last_progress_stage/last_progress_elapsed_ms`（stage 枚举/成对/非负三 CHECK）；Session 统计索引 + running-run 部分索引；无回填 | `chat_run_transport_attempts/chat_runs` |
-| V69 | `V69__agent_graph_checkpoints.sql` | PLAN-0510 CP-owned LangGraph saver：lineage、checkpoint 和 pending-write 三表；owner/branch 绑定、saver identity 唯一键、延迟 parent FK 与 Session 删除级联 | `agent_graph_checkpoint_lineages/agent_graph_checkpoints/agent_graph_checkpoint_writes` |
-| V70 | `V70__chat_run_continuation_provenance.sql` | PLAN-0510：`chat_runs` 增加 source Run、lineage/thread/checkpoint、EventStore cursor 与 continuation mode；完整 tuple CHECK 和 lineage/source FK | `chat_runs` |
-| V71 | `V71__agent_lineage_invocation_ledger.sql` | PLAN-0510：跨 Run mutation invocation 去重账本；lineage/toolCall 唯一、参数 hash 与状态约束；MCP invocation 删除时只置空引用 | `agent_lineage_invocations` |
+| V72 | `V72__agent_graph_checkpoints.sql` | PLAN-0510 CP-owned LangGraph saver：lineage、checkpoint 和 pending-write 三表；owner/branch 绑定、saver identity 唯一键、延迟 parent FK 与 Session 删除级联 | `agent_graph_checkpoint_lineages/agent_graph_checkpoints/agent_graph_checkpoint_writes` |
+| V73 | `V73__chat_run_continuation_provenance.sql` | PLAN-0510：`chat_runs` 增加 source Run、lineage/thread/checkpoint、EventStore cursor 与 continuation mode；完整 tuple CHECK 和 lineage/source FK | `chat_runs` |
+| V74 | `V74__agent_lineage_invocation_ledger.sql` | PLAN-0510：跨 Run mutation invocation 去重账本；lineage/toolCall 唯一、参数 hash 与状态约束；MCP invocation 删除时只置空引用 | `agent_lineage_invocations` |
 
 ## 5. 本地查看与运维
 

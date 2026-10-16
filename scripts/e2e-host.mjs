@@ -780,7 +780,7 @@ function runScratchCheckpointMigrationRecovery() {
     'resources',
     'db',
     'migration',
-    'V69__agent_graph_checkpoints.sql',
+    'V72__agent_graph_checkpoints.sql',
   )
   if (!existsSync(migrationPath)) throw new Error('checkpoint migration source is unavailable')
   const migrationSql = readFileSync(migrationPath, 'utf8')

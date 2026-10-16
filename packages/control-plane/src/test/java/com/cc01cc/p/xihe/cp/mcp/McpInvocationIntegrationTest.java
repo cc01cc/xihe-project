@@ -388,7 +388,7 @@ class McpInvocationIntegrationTest extends AbstractIntegrationTest {
                 SELECT count(*) FROM agent_lineage_invocations
                  WHERE lineage_id = ? AND originating_tool_call_id = ? AND mcp_invocation_id IS NULL
                 """, Integer.class, UUID.fromString(fixture.lineageId()), fixture.originatingToolCallId()),
-                "V71's FK must null the missing invocation reference rather than erase the ledger row");
+                "V74's FK must null the missing invocation reference rather than erase the ledger row");
         assertContinuationRejected(fixture);
     }
 
