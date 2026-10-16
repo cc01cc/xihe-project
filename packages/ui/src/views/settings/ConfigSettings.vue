@@ -266,6 +266,12 @@ const domainSchemas = computed<Record<string, DomainField[]>>(() => ({
             type: "select",
             options: levelOptions,
         },
+        {
+            key: "centralTelemetryEnabled",
+            label: t("settings.fieldCentralTelemetryEnabled"),
+            type: "select",
+            options: boolOptions,
+        },
     ],
 }));
 
