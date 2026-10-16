@@ -21,7 +21,7 @@ from xihe_agent.context.crash_recovery import CrashRecovery
 from xihe_agent.interfaces.context import AgentContext
 from xihe_agent.interfaces.event import Event
 from xihe_agent.interfaces.message import TextMessage, ToolCallRef
-from xihe_agent.interfaces.tool import ToolSpec
+from xihe_agent.interfaces.tool import UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER, ToolSpec
 
 
 def _spec(name: str = "execute_command") -> ToolSpec:
@@ -114,7 +114,9 @@ async def test_same_round_success_keeps_legacy_shape_and_defaults_to_completed(
     assert [e.type for e in events] == ["tool.called", "tool.result"]
     # m3-contract §1.1：gate OFF completed 保持 pre-gate 字段集（无 status 键）。
     assert "status" not in events[1].payload
-    assert events[1].payload["result"] == "file content"
+    # PLAN-0510 决策 #6：未登记 checkpoint-safe 输出 schema 的工具，durable
+    # tool.result 只落固定通用占位符（当前 Run 仍用内存结果）。
+    assert events[1].payload["result"] == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
 
     ctx = AgentContext.from_events("s1", events)
     assert ctx.messages[1].status == "completed"  # reader 缺省
@@ -132,7 +134,9 @@ async def test_failed_tool_closes_pair_with_explicit_failed_status(
     store = _fresh_store()
     adapter = _adapter(_FailingTool(), AgentContext.empty("s2"), store)
 
-    with pytest.raises(ValueError, match="boom from tool"):
+    # PLAN-0510：工具失败文本可能含工具数据，adapter 故意只透出笼统错误
+    # （tool_adapter.py:591-593），避免工具内容进入 graph 日志/SSE。
+    with pytest.raises(RuntimeError, match="Tool execution failed"):
         await adapter._arun(command="ls")
 
     events = _captured(store)
@@ -141,7 +145,8 @@ async def test_failed_tool_closes_pair_with_explicit_failed_status(
     assert [e.type for e in events] == ["tool.called", "tool.result"]
     result = events[1].payload
     assert result["status"] == "failed", "gate OFF 非 completed 必须显式写 status"
-    assert "ValueError" in result["result"] and "boom from tool" in result["result"]
+    # PLAN-0510 决策 #6：失败结果在 durable 只落固定占位符（工具数据不外泄）。
+    assert result["result"] == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
     assert list(result)[:4] == ["call_id", "tool_name", "result", "status"]
 
     # 失败状态贯穿：事件 → 上下文 → provider 映射
@@ -150,7 +155,7 @@ async def test_failed_tool_closes_pair_with_explicit_failed_status(
     mapped = langgraph_runner_module.to_langchain_messages(ctx.messages)
     assert isinstance(mapped[1], ToolMessage)
     assert mapped[1].status == "error"
-    assert "boom from tool" in str(mapped[1].content)
+    assert UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER in str(mapped[1].content)
     _assert_no_unanswered_calls(mapped)
 
 
@@ -160,14 +165,15 @@ async def test_failed_tool_with_gate_on_writes_v2_status(
 ) -> None:
     monkeypatch.setenv(EVENT_WRITER_V2_ENV, "1")
     store = _fresh_store()
-    with pytest.raises(ValueError):
+    with pytest.raises(RuntimeError, match="Tool execution failed"):
         await _adapter(_FailingTool(), AgentContext.empty("s3"), store)._arun(command="ls")
 
     result = next(e for e in _captured(store) if e.type == "tool.result").payload
     assert result["schemaVersion"] == 2
     assert result["status"] == "failed"
     assert isinstance(result["result"], dict)
-    assert "boom from tool" in result["result"]["preview"]
+    # PLAN-0510 决策 #6：失败结果同样只落占位符（不泄露工具数据）。
+    assert result["result"]["preview"] == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
     assert result["result"]["truncated"] is False
 
 

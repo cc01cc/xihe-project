@@ -32,6 +32,7 @@ from xihe_agent.interfaces.tool import (
     ACQUIRE_CREDENTIAL_TOOL_NAME,
     CREDENTIAL_DELIVERED_PLACEHOLDER,
     CREDENTIAL_HANDOFF_REQUIRED_KEY,
+    UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER,
     ToolSpec,
 )
 from xihe_agent.llm.base import create_llm
@@ -436,9 +437,10 @@ async def test_writer_gate_off_emits_legacy_payload(monkeypatch):
     assert list(result.payload)[:3] == ["call_id", "tool_name", "result"]
     assert "schemaVersion" not in called.payload
     assert "status" not in result.payload
-    # PLAN-0381 T2.3：legacy 形状仍是字符串（旧 reader `asText` 直读），内容
-    # 已是有界 preview（低水位 = 原文）。
-    assert result.payload["result"] == "file content"
+    # PLAN-0381 T2.3：legacy 形状仍是字符串（旧 reader `asText` 直读）。
+    # PLAN-0510 决策 #6：未登记 checkpoint-safe 输出 schema 的工具，其 durable
+    # tool.result 只落固定通用占位符（当前 Run 仍用内存结果），故不再是原文。
+    assert result.payload["result"] == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
 
 
 @pytest.mark.asyncio
@@ -463,12 +465,12 @@ async def test_writer_gate_on_emits_v2_payload(monkeypatch):
     assert "call_id" not in called.payload
     assert result.payload["schemaVersion"] == 2
     assert result.payload["status"] == "completed"
-    # PLAN-0381 T2.3 gate ON：result 对象化（preview/truncated/sizeBytes 白名单
-    # 形状，M1 reader 规则 4 读取）。
+    # PLAN-0381 T2.3 gate ON：result 对象化（preview/truncated 白名单形状，M1 reader
+    # 规则 4 读取）。PLAN-0510 决策 #6：未登记 checkpoint-safe schema 的工具只落固定
+    # 占位符，且 withheld 分支不带 sizeBytes（无有意义的原结果尺寸）。
     assert result.payload["result"] == {
-        "preview": "file content",
+        "preview": UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER,
         "truncated": False,
-        "sizeBytes": 12,
     }
     assert "call_id" not in result.payload
 
@@ -584,12 +586,14 @@ async def test_acquire_credential_value_stays_in_memory_only():
     assert len(result_events) == 1
     assert CREDENTIAL_DELIVERED_PLACEHOLDER in json.dumps(result_events[0].payload)
 
-    # tool.called only carries the credential id argument.
+    # tool.called only carries the credential id argument. 键名随 writer gate 而变
+    # （v2 `toolCallId` / legacy `call_id`），故按值断言关联 id 语义。
     called_events = [event for event in appended if event.type == "tool.called"]
     assert called_events
-    assert "d9a22f34-7a60-4f0e-a036-60e7a9c6cf9b" in json.dumps(called_events[0].payload)
-    assert called_events[0].payload["callId"] == tool.call_id_seen_by_tool
-    assert called_events[0].payload["callId"] != originating_call_id
+    called_payload = json.dumps(called_events[0].payload)
+    assert "d9a22f34-7a60-4f0e-a036-60e7a9c6cf9b" in called_payload
+    assert tool.call_id_seen_by_tool in called_payload
+    assert originating_call_id not in called_payload
 
 
 def test_credential_handoff_historical_placeholder_and_restart_fail_closed():

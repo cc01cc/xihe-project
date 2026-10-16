@@ -95,7 +95,7 @@ async def test_turns_budget_stops_loop_and_emits_trigger(monkeypatch):
                 consumed.append(f"m{i}")
                 yield _llm_usage_event(f"m{i}")
 
-    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, tools: FakeAgent())
+    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, tools, **_kwargs: FakeAgent())
     runner = LangGraphRunner(model_factory=lambda _model: object())
     config = RunnerConfig(
         model="fake",
@@ -122,7 +122,7 @@ async def test_budget_within_limits_emits_no_trigger(monkeypatch):
             yield _llm_usage_event("m0")
             yield _llm_usage_event("m1")
 
-    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, tools: FakeAgent())
+    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, tools, **_kwargs: FakeAgent())
     runner = LangGraphRunner(model_factory=lambda _model: object())
     config = RunnerConfig(
         model="fake",
@@ -149,7 +149,7 @@ async def test_tokens_dimension_counts_every_llm_usage(monkeypatch):
             yield {"event": "on_chain_end", "name": "LangGraph", "data": {}, "run_id": "graph"}
             yield _llm_usage_event("m1", total_tokens=2)
 
-    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, tools: FakeAgent())
+    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, tools, **_kwargs: FakeAgent())
     runner = LangGraphRunner(model_factory=lambda _model: object())
     config = RunnerConfig(
         model="fake",
@@ -180,7 +180,7 @@ async def test_elapsed_budget_excludes_approval_wait(monkeypatch):
                 await asyncio.sleep(1.5)
             yield _llm_usage_event("m1")
 
-    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, tools: FakeAgent())
+    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, tools, **_kwargs: FakeAgent())
     runner = LangGraphRunner(model_factory=lambda _model: object())
     config = RunnerConfig(
         model="fake",

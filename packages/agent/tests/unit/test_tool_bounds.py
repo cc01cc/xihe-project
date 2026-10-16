@@ -19,7 +19,7 @@ from xihe_agent.agent_runner.tool_adapter import (
 )
 from xihe_agent.context.diagnostics import extract_command_result
 from xihe_agent.interfaces.context import AgentContext
-from xihe_agent.interfaces.tool import ToolSpec
+from xihe_agent.interfaces.tool import UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER, ToolSpec
 
 STDOUT_FIELD = tool_adapter_module.COMMAND_STDOUT_PREVIEW_CHARS
 STDERR_FIELD = tool_adapter_module.COMMAND_STDERR_PREVIEW_CHARS
@@ -293,9 +293,9 @@ async def test_arun_event_and_model_body_only_carry_bounded_preview(monkeypatch)
     result_event = next(event for event in events if event.type == "tool.result")
     result = result_event.payload["result"]
     assert isinstance(result, dict)
-    assert len(result["preview"]) <= RESULT_PREVIEW_LIMIT
-    assert result["artifactRef"] == "art-9"
-    assert result["status"] == "available"
+    # PLAN-0510 决策 #6：未登记 checkpoint-safe 输出 schema 的 `build` 命令工具 → durable
+    # tool.result 只落占位符（模型 body 仍带真实有界 preview，见下方断言）。
+    assert result == {"preview": UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER, "truncated": False}
     assert "x" * 5000 not in json.dumps(result)
 
     # 模型 body：预览有界 + 关键元数据（exit/artifact 引用）仍可见。
@@ -320,8 +320,7 @@ async def test_arun_legacy_gate_writes_bounded_string_result(monkeypatch):
     result_event = next(event for event in events if event.type == "tool.result")
     stored = result_event.payload["result"]
     assert isinstance(stored, str), "gate OFF 必须保持 legacy 字符串形状"
-    assert len(stored) <= RESULT_PREVIEW_LIMIT
-    assert "art-legacy" in stored
+    assert stored == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
     assert "x" * 5000 not in stored
 
 

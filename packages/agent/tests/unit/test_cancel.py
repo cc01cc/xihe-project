@@ -132,7 +132,7 @@ class _HungStreamAgent:
 async def test_langgraph_runner_stream_yields_cancelled_on_cancel_event(monkeypatch):
     monkeypatch.setattr(
         "xihe_agent.agent_runner.langgraph_runner.build_react_graph",
-        lambda _model, tools: _HungStreamAgent(),
+        lambda _model, tools, **_kwargs: _HungStreamAgent(),
     )
     cancel_event = asyncio.Event()
     runner = LangGraphRunner(model_factory=lambda _model: object())
@@ -168,7 +168,7 @@ async def test_langgraph_runner_stream_yields_cancelled_on_cancel_event(monkeypa
 async def test_langgraph_runner_pre_cancelled_event_stops_immediately(monkeypatch):
     monkeypatch.setattr(
         "xihe_agent.agent_runner.langgraph_runner.build_react_graph",
-        lambda _model, tools: _HungStreamAgent(),
+        lambda _model, tools, **_kwargs: _HungStreamAgent(),
     )
     cancel_event = asyncio.Event()
     cancel_event.set()

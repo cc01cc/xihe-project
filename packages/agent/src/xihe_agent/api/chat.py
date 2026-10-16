@@ -431,41 +431,55 @@ async def chat(request: Request):
                     all_tools = list(mcp_tools) + all_tools
 
                 user_id = data.get("userId")
-                if not isinstance(user_id, str) or not workspace_id:
+                has_owner_context = isinstance(user_id, str) and bool(workspace_id)
+                if continuation is not None and not has_owner_context:
+                    # 续跑必须有 owner 归属才能重验 lineage/owner：缺失即 fail closed。
                     raise CheckpointStoreError("Checkpoint owner context is unavailable")
-                if continuation is not None and (
-                    context.branch_id != continuation["branchId"]
-                    or context.latest_sequence != continuation["eventSequence"]
-                ):
-                    raise CheckpointStoreError("Continuation source checkpoint is stale")
-                tool_specs = [spec for tool in all_tools if isinstance((spec := getattr(tool, "spec", None)), ToolSpec)]
-                saver_args = {
-                    "cp_url": CP_URL,
-                    "service_token": CP_API_TOKEN,
-                    "session_id": session_id,
-                    "user_id": user_id,
-                    "workspace_id": workspace_id,
-                    "event_sequence_provider": lambda: context.latest_sequence,
-                    "tool_specs": tool_specs,
-                }
-                if continuation is None:
-                    checkpoint_saver = await CpAgentCheckpointSaver.create(
-                        source_run_id=run_id,
-                        **saver_args,
-                    )
-                else:
-                    checkpoint_saver = await CpAgentCheckpointSaver.attach(
-                        thread_id=continuation["threadId"],
-                        source_run_id=continuation["sourceRunId"],
-                        **saver_args,
-                    )
-                    trace = checkpoint_saver.trace_metadata
-                    if (
-                        checkpoint_saver.lineage_id != continuation["lineageId"]
-                        or trace.get("branchId") != continuation["branchId"]
-                        or trace.get("sourceRunId") != continuation["sourceRunId"]
+                checkpoint_saver = None
+                if has_owner_context:
+                    if continuation is not None and (
+                        context.branch_id != continuation["branchId"]
+                        or context.latest_sequence != continuation["eventSequence"]
                     ):
-                        raise CheckpointStoreError("Continuation lineage does not match CP admission")
+                        raise CheckpointStoreError("Continuation source checkpoint is stale")
+                    tool_specs = [spec for tool in all_tools if isinstance((spec := getattr(tool, "spec", None)), ToolSpec)]
+                    saver_args = {
+                        "cp_url": CP_URL,
+                        "service_token": CP_API_TOKEN,
+                        "session_id": session_id,
+                        "user_id": user_id,
+                        "workspace_id": workspace_id,
+                        "event_sequence_provider": lambda: context.latest_sequence,
+                        "tool_specs": tool_specs,
+                    }
+                    if continuation is None:
+                        checkpoint_saver = await CpAgentCheckpointSaver.create(
+                            source_run_id=run_id,
+                            **saver_args,
+                        )
+                    else:
+                        checkpoint_saver = await CpAgentCheckpointSaver.attach(
+                            thread_id=continuation["threadId"],
+                            source_run_id=continuation["sourceRunId"],
+                            **saver_args,
+                        )
+                        trace = checkpoint_saver.trace_metadata
+                        if (
+                            checkpoint_saver.lineage_id != continuation["lineageId"]
+                            or trace.get("branchId") != continuation["branchId"]
+                            or trace.get("sourceRunId") != continuation["sourceRunId"]
+                        ):
+                            raise CheckpointStoreError("Continuation lineage does not match CP admission")
+                else:
+                    # PLAN-0510：checkpoint 是 owner-scoped 的；无 owner 上下文（内部/最小调用）
+                    # 的 Run 保持既有非 checkpoint 行为，不因缺少归属而让整个流失败。续跑不在此列
+                    # （上面已 fail closed）。属可恢复性降级，故留 WARN 以便观测。
+                    logger.warning(
+                        "[LIFECYCLE] service=agent event=checkpoint_saver_disabled"
+                        " reason=owner_context_unavailable runId={} sessionId={}",
+                        run_id,
+                        session_id,
+                    )
 
                 policy = _resolve_policy_for_model(
                     model_override or request_config.model, user_overrides, workspace_overrides
