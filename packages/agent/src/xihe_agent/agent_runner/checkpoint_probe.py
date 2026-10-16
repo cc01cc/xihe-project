@@ -9,6 +9,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import empty_checkpoint
 
 from xihe_agent.agent_runner.checkpoint_saver import CpAgentCheckpointSaver
@@ -60,6 +61,7 @@ async def run_checkpoint_saver_probe(
         "probe_id": str(isolated_probe_id),
     }
     if checkpoint_id is not None:
+        assert thread_id is not None
         return await run_checkpoint_saver_recovery_probe(
             saver_args=saver_args,
             thread_id=thread_id,
@@ -67,7 +69,9 @@ async def run_checkpoint_saver_probe(
             probe_id=str(isolated_probe_id),
         )
     saver = await CpAgentCheckpointSaver.create(**saver_args)
-    base_config = {"configurable": {"thread_id": saver.thread_id, "checkpoint_ns": ""}}
+    base_config: RunnableConfig = {
+        "configurable": {"thread_id": saver.thread_id, "checkpoint_ns": ""}
+    }
 
     first_message = HumanMessage(content="Synthetic checkpoint probe message", id="probe-human-message-1")
     first = empty_checkpoint()
@@ -208,14 +212,16 @@ async def run_checkpoint_saver_recovery_probe(
     saver = await CpAgentCheckpointSaver.attach(thread_id=thread_id, **saver_args)
     if saver.thread_id != thread_id or saver.trace_metadata.get("probeId") != probe_id:
         raise RuntimeError("checkpoint recovery changed the graph thread")
-    requested_config = {
+    requested_config: RunnableConfig = {
         "configurable": {
             "thread_id": saver.thread_id,
             "checkpoint_ns": "",
             "checkpoint_id": checkpoint_id,
         }
     }
-    base_config = {"configurable": {"thread_id": saver.thread_id, "checkpoint_ns": ""}}
+    base_config: RunnableConfig = {
+        "configurable": {"thread_id": saver.thread_id, "checkpoint_ns": ""}
+    }
     loaded = await saver.aget_tuple(requested_config)
     latest = await saver.aget_tuple(base_config)
     listed = [item async for item in saver.alist(base_config, limit=10)]

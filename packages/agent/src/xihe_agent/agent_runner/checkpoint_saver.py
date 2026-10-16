@@ -13,7 +13,7 @@ import math
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
 from importlib.metadata import PackageNotFoundError, version
 from threading import Event
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote
 
 import httpx
@@ -62,6 +62,14 @@ SAFE_REACT_CONTROL_CHANNELS = {
     "branch:to:tools",
     "branch:to:__end__",
 }
+# The LangGraph saver API includes a method named ``list``; inside
+# ``CpAgentCheckpointSaver`` that method shadows the builtin for annotations written
+# in the class body. Bind the builtin once at module scope so those annotations stay
+# valid and keep their element types (otherwise mypy degrades them to an unusable
+# ``list?[...]`` partial type).
+_BuiltinList = list
+
+
 SAFE_REACT_NODE_NAMES = {"__input__", "__start__", "__end__", "__interrupt__", "model", "tools"}
 # PLAN-0510（2026-10-16 用户裁定 A+）：LangGraph 内部任务调度通道承载 `Send`（"下一步派哪些
 # 任务"），与设计里已刻意置空的 `pending_sends` 同类——不写入 checkpoint（恢复时由框架按图
@@ -450,10 +458,10 @@ class CpAgentCheckpointSaver(BaseCheckpointSaver[str]):
             safe_results[call_id] = projected.name or ""
 
         for call_id in expected_ids:
-            call_name = tool_calls.get(call_id)
-            if call_name is None or self._checkpoint_safe_schemas.get(call_name) is None:
+            declared_name = tool_calls.get(call_id)
+            if declared_name is None or self._checkpoint_safe_schemas.get(declared_name) is None:
                 raise CheckpointStoreError("Completed side effect has no safe checkpoint tool call")
-            if safe_results.get(call_id) != call_name:
+            if safe_results.get(call_id) != declared_name:
                 raise CheckpointStoreError("Completed side effect has no matching safe checkpoint result")
 
     async def alist(
@@ -561,7 +569,7 @@ class CpAgentCheckpointSaver(BaseCheckpointSaver[str]):
         before_checkpoint_id: str | None = None,
         limit: int | None = None,
         filter: dict[str, Any] | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> _BuiltinList[dict[str, Any]]:
         page_limit = self._page_limit(limit)
         params: dict[str, Any] = {**self._owner, "checkpointNs": checkpoint_ns, "limit": page_limit}
         if before_checkpoint_id is not None:
@@ -577,7 +585,7 @@ class CpAgentCheckpointSaver(BaseCheckpointSaver[str]):
         before_checkpoint_id: str | None = None,
         limit: int | None = None,
         filter: dict[str, Any] | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> _BuiltinList[dict[str, Any]]:
         page_limit = self._page_limit(limit)
         params: dict[str, Any] = {**self._owner, "checkpointNs": checkpoint_ns, "limit": page_limit}
         if before_checkpoint_id is not None:
@@ -595,7 +603,7 @@ class CpAgentCheckpointSaver(BaseCheckpointSaver[str]):
         return min(cls._LIST_PAGE_SIZE, limit)
 
     @staticmethod
-    def _validate_list_page(page: Any, page_limit: int) -> list[dict[str, Any]]:
+    def _validate_list_page(page: Any, page_limit: int) -> _BuiltinList[dict[str, Any]]:
         if not isinstance(page, list) or len(page) > page_limit:
             raise CheckpointStoreError("CP checkpoint response is invalid")
         if any(not isinstance(row, dict) for row in page):
@@ -656,7 +664,9 @@ class CpAgentCheckpointSaver(BaseCheckpointSaver[str]):
                 return
             cursor = self._safe_bounded_id(page[-1].get("checkpointId"), "checkpoint id")
 
-    def _filtered_tuples(self, rows: list[dict[str, Any]], filter: dict[str, Any] | None) -> list[CheckpointTuple]:
+    def _filtered_tuples(
+        self, rows: _BuiltinList[dict[str, Any]], filter: dict[str, Any] | None
+    ) -> _BuiltinList[CheckpointTuple]:
         result = []
         for row in rows:
             checkpoint_tuple = self._tuple(row)
@@ -744,7 +754,13 @@ class CpAgentCheckpointSaver(BaseCheckpointSaver[str]):
                 "producerVersion": trace["producerVersion"],
             }
         )
-        return CheckpointTuple(config, checkpoint, metadata, parent_config, pending_writes)
+        return CheckpointTuple(
+            config,
+            checkpoint,
+            cast("CheckpointMetadata", metadata),
+            parent_config,
+            cast("_BuiltinList[tuple[str, str, Any]] | None", pending_writes),
+        )
 
     def _load_typed_payload(self, payload_type: Any, payload_base64: Any) -> Any:
         """Decode a CP payload without exposing malformed data in exceptions."""
@@ -838,9 +854,9 @@ class CpAgentCheckpointSaver(BaseCheckpointSaver[str]):
             projected["pending_sends"] = []
         if "updated_channels" in checkpoint:
             projected["updated_channels"] = list(updated_channels) if updated_channels is not None else None
-        return projected
+        return cast("Checkpoint", projected)
 
-    def _safe_messages_for_storage(self, messages: Any) -> list[BaseMessage]:
+    def _safe_messages_for_storage(self, messages: Any) -> _BuiltinList[BaseMessage]:
         if not isinstance(messages, list):
             raise CheckpointStoreError("LangGraph messages channel is invalid")
         credential_calls: set[str] = set()

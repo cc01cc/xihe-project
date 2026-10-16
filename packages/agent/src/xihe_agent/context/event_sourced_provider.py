@@ -1,8 +1,11 @@
 """Event-sourced context provider implementation."""
 
+from typing import cast
+
 from xihe_agent.context.store_client import CPContextServiceClient
 from xihe_agent.interfaces.context import AgentContext, ContextProvider
 from xihe_agent.interfaces.history_safety import mask_historical_messages
+from xihe_agent.interfaces.message import TextMessage
 
 
 class EventSourcedContextProvider(ContextProvider):
@@ -27,5 +30,10 @@ class EventSourcedContextProvider(ContextProvider):
             aggregate_id, after_sequence=after_sequence, run_id=run_id
         )
         context = AgentContext.from_snapshot(snapshot)
-        context.messages = mask_historical_messages(context.messages)
+        # Snapshot history is always concrete TextMessage (see AgentContext), and the
+        # mask preserves each element's concrete type by rewriting TextMessage copies
+        # in place; the cast documents that invariant for the narrowed declaration.
+        context.messages = cast(
+            "list[TextMessage]", mask_historical_messages(context.messages)
+        )
         return context
