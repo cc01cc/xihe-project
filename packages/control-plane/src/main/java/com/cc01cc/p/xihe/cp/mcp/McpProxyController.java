@@ -171,6 +171,7 @@ public class McpProxyController {
     private final JobStateService jobStateService;
     private final AgentSpawnExecutionService agentSpawnExecutionService;
     private final McpInvocationService mcpInvocationService;
+    private final LineageInvocationService lineageInvocationService;
     private final CredentialLeaseService credentialLeaseService;
 
     public McpProxyController(
@@ -189,6 +190,7 @@ public class McpProxyController {
             org.springframework.core.env.Environment environment,
             AgentSpawnExecutionService agentSpawnExecutionService,
             McpInvocationService mcpInvocationService,
+            LineageInvocationService lineageInvocationService,
             McpToolTimeoutService toolTimeoutService,
             CredentialLeaseService credentialLeaseService) {
         this.httpClient = HttpClient.newBuilder()
@@ -209,6 +211,7 @@ public class McpProxyController {
         this.environment = environment;
         this.agentSpawnExecutionService = agentSpawnExecutionService;
         this.mcpInvocationService = mcpInvocationService;
+        this.lineageInvocationService = lineageInvocationService;
         this.toolTimeoutService = toolTimeoutService;
         this.credentialLeaseService = credentialLeaseService;
     }
@@ -648,16 +651,55 @@ public class McpProxyController {
                 verdict, face, policyContext,
                 reusedSessionGrant ? Boolean.TRUE : null).orElse(null);
 
+        // PLAN-0510 T1.3: reserve checkpoint-lineage mutations after current
+        // authorization/approval gates and before any CP-owned or Runtime dispatch.
+        // The provider-originated ID is a separate opaque key from the existing
+        // run-local UUID correlation header. It is consumed here and is never
+        // forwarded to an MCP server or Runtime.
+        LineageInvocationService.Reservation lineageReservation = null;
+        if (access.internalService() && !ToolFaceRegistry.ACTION_READ.equals(face.actionClass())) {
+            String runId = headers.getFirst("X-Chat-Run-Id");
+            String runLocalToolCallId = canonicalToolCallIdFromHeader(headers);
+            UUID mcpInvocationId = mcpInvocationService
+                    .findAgentInvocation(runId, runLocalToolCallId).orElse(null);
+            try {
+                LineageInvocationService.ReservationDecision reservationDecision = lineageInvocationService.reserve(
+                        runId, runLocalToolCallId, mcpInvocationId,
+                        headers.getFirst("X-Originating-Tool-Call-Id"), toolName, body);
+                switch (reservationDecision.kind()) {
+                    case RESERVED -> lineageReservation = reservationDecision.reservation();
+                    case NOT_LINEAGED -> { /* Existing non-checkpoint Runs keep their current behavior. */ }
+                    case REPLAY_BLOCKED -> {
+                        settleRejectedLineageInvocation(mcpInvocationId);
+                        audit.record(sessionId, toolName, "lineage_invocation_replay_blocked",
+                                "RECONCILIATION_REQUIRED");
+                        return problem(HttpStatus.CONFLICT, "RECONCILIATION_REQUIRED",
+                                "Mutation result requires reconciliation");
+                    }
+                    case IDENTITY_CONFLICT -> {
+                        settleRejectedLineageInvocation(mcpInvocationId);
+                        audit.record(sessionId, toolName, "lineage_invocation_conflict",
+                                "originating tool-call identity mismatch");
+                        return problem(HttpStatus.CONFLICT, "LINEAGE_INVOCATION_CONFLICT",
+                                "Tool-call identity conflicts with a prior mutation");
+                    }
+                }
+            } catch (CpApiException e) {
+                settleRejectedLineageInvocation(mcpInvocationId);
+                throw e;
+            }
+        }
+
         if (cpOwnedAcquire) {
             // PLAN-0497 T2.1: gates above already ran the credential_use evaluation
             // (allow/ask on the extracted credential:<id> resource) and opened the
             // durable invocation — the handler now issues and delivers the lease.
-            return dispatchCpOwnedAcquire(body, headers, sessionId, access, policySummary);
+            return dispatchCpOwnedAcquire(body, headers, sessionId, access, policySummary, lineageReservation);
         }
 
         if (cpOwnedSpawn) {
             return dispatchCpOwnedSpawn(body, headers, sessionId, access, spawnInvocation,
-                    deferredApprovalGrantId, policySummary);
+                    deferredApprovalGrantId, policySummary, lineageReservation);
         }
 
         // PLAN-0308 M1（spec S1/S2）：预算由 CP 唯一计算并下发；出站头只由 CP 写入，
@@ -723,7 +765,8 @@ public class McpProxyController {
         }
 
         if ("__system__".equals(serverId)) {
-            return forwardToRuntime(wsId, null, body, headers, sessionId, access, forwardWait, policySummary);
+            return forwardToRuntime(wsId, null, body, headers, sessionId, access,
+                    forwardWait, policySummary, lineageReservation);
         }
 
         // Policy already evaluated above for all tool types (including __system__).
@@ -731,17 +774,20 @@ public class McpProxyController {
         Optional<McpProxyCatalogService.RemoteServerView> remote = remoteServer(wsId, serverId);
         if (remote.isPresent()) {
             return forwardRemoteToRuntime(
-                    wsId, remote.get(), rewritten, headers, sessionId, access, forwardWait, policySummary);
+                    wsId, remote.get(), rewritten, headers, sessionId, access,
+                    forwardWait, policySummary, lineageReservation);
         }
 
         body = rewritten;
-        return forwardToRuntime(wsId, serverId, body, headers, sessionId, access, forwardWait, policySummary);
+        return forwardToRuntime(wsId, serverId, body, headers, sessionId, access,
+                forwardWait, policySummary, lineageReservation);
     }
 
     private ResponseEntity<String> dispatchCpOwnedSpawn(
             String body, HttpHeaders headers, String sessionId, AccessContext access,
-            ChatSubmissionService.SpawnInvocation invocation, String approvalGrantId, String policySummary) {
-        McpDispatch dispatch = startMcpDispatch(body, headers, sessionId, access);
+            ChatSubmissionService.SpawnInvocation invocation, String approvalGrantId, String policySummary,
+            LineageInvocationService.Reservation lineageReservation) {
+        McpDispatch dispatch = startMcpDispatch(body, headers, sessionId, access, lineageReservation);
         attachPolicySummary(dispatch, policySummary);
         String responseBody;
         try {
@@ -787,8 +833,9 @@ public class McpProxyController {
      * {@code spec/agent/context-tool.md} rule 5.
      */
     private ResponseEntity<String> dispatchCpOwnedAcquire(
-            String body, HttpHeaders headers, String sessionId, AccessContext access, String policySummary) {
-        McpDispatch dispatch = startMcpDispatch(body, headers, sessionId, access);
+            String body, HttpHeaders headers, String sessionId, AccessContext access, String policySummary,
+            LineageInvocationService.Reservation lineageReservation) {
+        McpDispatch dispatch = startMcpDispatch(body, headers, sessionId, access, lineageReservation);
         attachPolicySummary(dispatch, policySummary);
         String runId = headers.getFirst("X-Chat-Run-Id");
         String responseBody;
@@ -873,6 +920,37 @@ public class McpProxyController {
                 .contentType(MediaType.APPLICATION_JSON)
                 .header("MCP-Protocol-Version", STATELESS_PROTOCOL_VERSION)
                 .body(body);
+    }
+
+    /**
+     * PLAN-0510 A类修复：把 Runtime remote-mcp 的裸 MCP {@code result} 本体包装成 Agent 侧
+     * JSON-RPC 2.0 响应（回显调用方 {@code id}），并补齐 2026-07-28 必填的
+     * {@code resultType}（缺省按 {@code complete}；SDK 对该字段做严格校验）。
+     * 已是 JSON-RPC 消息或非 2xx 的正文原样返回。
+     */
+    private String jsonRpcEnvelope(int status, String requestBody, String upstreamBody) {
+        if (status < 200 || status >= 300 || upstreamBody == null || upstreamBody.isBlank()) {
+            return upstreamBody;
+        }
+        try {
+            JsonNode parsed = objectMapper.readTree(upstreamBody);
+            if (!parsed.isObject() || parsed.has("jsonrpc")) {
+                return upstreamBody;
+            }
+            ObjectNode result = (ObjectNode) parsed;
+            if (!result.has("resultType")) {
+                // Spec 2026-07-28: modern `Result.resultType` is required (servers MUST include it).
+                result.put("resultType", "complete");
+            }
+            ObjectNode envelope = objectMapper.createObjectNode();
+            envelope.put("jsonrpc", "2.0");
+            envelope.set("id", objectMapper.valueToTree(readJsonRpcId(requestBody)));
+            envelope.set("result", result);
+            return envelope.toString();
+        } catch (Exception e) {
+            logger.debug("Remote MCP body is not a JSON result to envelope: {}", e.getMessage());
+            return upstreamBody;
+        }
     }
 
     /**
@@ -1175,6 +1253,14 @@ public class McpProxyController {
     private ResponseEntity<String> forwardToRuntime(
             String wsId, String serverId, String body, HttpHeaders headers,
             String sessionId, AccessContext access, ForwardWait forwardWait, String policySummary) {
+        return forwardToRuntime(wsId, serverId, body, headers, sessionId, access,
+                forwardWait, policySummary, null);
+    }
+
+    private ResponseEntity<String> forwardToRuntime(
+            String wsId, String serverId, String body, HttpHeaders headers,
+            String sessionId, AccessContext access, ForwardWait forwardWait, String policySummary,
+            LineageInvocationService.Reservation lineageReservation) {
         long waitSeconds = forwardWait == null
                 ? forwardTimeoutS
                 : (forwardWait.seconds() > 0 ? forwardWait.seconds() : forwardTimeoutS);
@@ -1187,10 +1273,11 @@ public class McpProxyController {
                 Optional<McpProxyCatalogService.RemoteServerView> remote = remoteServer(wsId, serverId);
                 if (remote.isPresent()) {
                     return forwardRemoteToRuntime(
-                            wsId, remote.get(), body, headers, sessionId, access, forwardWait, policySummary);
+                            wsId, remote.get(), body, headers, sessionId, access,
+                            forwardWait, policySummary, lineageReservation);
                 }
             }
-            dispatch = startMcpDispatch(body, headers, sessionId, access);
+            dispatch = startMcpDispatch(body, headers, sessionId, access, lineageReservation);
             attachPolicySummary(dispatch, policySummary);
             String path;
             if (serverId == null) {
@@ -1450,6 +1537,11 @@ public class McpProxyController {
     }
 
     private McpDispatch startMcpDispatch(String body, HttpHeaders headers, String sessionId, AccessContext access) {
+        return startMcpDispatch(body, headers, sessionId, access, null);
+    }
+
+    private McpDispatch startMcpDispatch(String body, HttpHeaders headers, String sessionId, AccessContext access,
+                                        LineageInvocationService.Reservation lineageReservation) {
         if (!"tools/call".equals(extractMethod(body))) {
             return null;
         }
@@ -1462,18 +1554,27 @@ public class McpProxyController {
             return null;
         }
         String requestId = headers.getFirst("X-Request-Id");
-        UUID invocationId = null;
-        if (isUserDirectMutation(headers, access) && isWorkspaceUserMutationTool(toolName)) {
+        UUID invocationId = lineageReservation == null ? null : lineageReservation.mcpInvocationId();
+        if (lineageReservation != null
+                && !lineageReservation.runLocalToolCallId().toString().equals(toolCallId)) {
+            throw new CpApiException(HttpStatus.CONFLICT, "RECONCILIATION_REQUIRED",
+                    "Reserved mutation identity no longer matches the dispatch");
+        }
+        if (invocationId == null && isUserDirectMutation(headers, access) && isWorkspaceUserMutationTool(toolName)) {
             invocationId = mcpInvocationService.openDirectUserInvocation(
                     sessionId, com.cc01cc.p.xihe.cp.config.TenantContext.getWorkspaceId(),
                     com.cc01cc.p.xihe.cp.config.TenantContext.getUserId(), toolCallId, toolName,
                     requestId, safePreview(body)).orElse(null);
-        } else {
+        } else if (invocationId == null) {
             invocationId = mcpInvocationService.findAgentInvocation(
                     headers.getFirst("X-Chat-Run-Id"), toolCallId).orElse(null);
         }
         UUID dispatchAttemptId = startAgentDispatchAttempt(invocationId, requestId);
-        return new McpDispatch(toolCallId, invocationId, dispatchAttemptId);
+        if (lineageReservation != null && (invocationId == null || dispatchAttemptId == null)) {
+            throw new CpApiException(HttpStatus.CONFLICT, "RECONCILIATION_REQUIRED",
+                    "Mutation dispatch provenance is unavailable");
+        }
+        return new McpDispatch(toolCallId, invocationId, dispatchAttemptId, lineageReservation);
     }
 
     // Three-tier MCP dispatch settlement:
@@ -1482,7 +1583,7 @@ public class McpProxyController {
     //   unparseable body / non-2xx / transport error → undecidable or failed attempt.
     private void finishMcpDispatchAttempt(McpDispatch dispatch, int httpStatus,
                                           String errorCode, String responseBody) {
-        if (dispatch == null || dispatch.invocationId() == null || dispatch.dispatchAttemptId() == null) {
+        if (dispatch == null) {
             return;
         }
         McpResult mcpResult = parseMcpResult(responseBody);
@@ -1493,13 +1594,30 @@ public class McpProxyController {
                             case PROTOCOL_ERROR -> McpInvocationService.McpDispatchVerdict.PROTOCOL_ERROR;
                             case COMPLETED -> McpInvocationService.McpDispatchVerdict.COMPLETED;
                         };
-        try {
-            mcpInvocationService.finishDispatchAttempt(dispatch.invocationId(),
-                    dispatch.dispatchAttemptId(), httpStatus, errorCode, verdict);
-        } catch (RuntimeException e) {
-            logger.error("[LIFECYCLE] service=cp event=mcp_dispatch_attempt_finish_failed invocationId={} attemptId={} failureType={}",
-                    dispatch.invocationId(), dispatch.dispatchAttemptId(),
-                    e.getClass().getName(), e);
+        if (dispatch.invocationId() != null && dispatch.dispatchAttemptId() != null) {
+            try {
+                mcpInvocationService.finishDispatchAttempt(dispatch.invocationId(),
+                        dispatch.dispatchAttemptId(), httpStatus, errorCode, verdict);
+            } catch (RuntimeException e) {
+                logger.error("[LIFECYCLE] service=cp event=mcp_dispatch_attempt_finish_failed invocationId={} attemptId={} failureType={}",
+                        dispatch.invocationId(), dispatch.dispatchAttemptId(),
+                        e.getClass().getName(), e);
+            }
+        }
+        if (dispatch.lineageReservation() != null) {
+            // Only a complete, parseable MCP success is a completed invocation.
+            // Tool/protocol errors, non-2xx, and transport-unknown responses may
+            // still follow a partial side effect, so they remain fail-closed.
+            String lineageStatus = httpStatus >= 200 && httpStatus < 300
+                    && errorCode == null && mcpResult != null && mcpResult.kind() == McpResultKind.COMPLETED
+                    ? com.cc01cc.p.xihe.cp.entity.AgentLineageInvocation.STATUS_COMPLETED
+                    : com.cc01cc.p.xihe.cp.entity.AgentLineageInvocation.STATUS_AMBIGUOUS;
+            try {
+                lineageInvocationService.settle(dispatch.lineageReservation(), lineageStatus);
+            } catch (RuntimeException e) {
+                logger.error("[LIFECYCLE] service=cp event=lineage_invocation_settle_failed failureType={}",
+                        e.getClass().getName(), e);
+            }
         }
     }
 
@@ -1610,12 +1728,27 @@ public class McpProxyController {
         }
     }
 
+    /** Record a CP-side fail-closed rejection on the already-open Run invocation. */
+    private void settleRejectedLineageInvocation(UUID invocationId) {
+        if (invocationId == null) return;
+        try {
+            mcpInvocationService.startDispatchAttempt(invocationId, null).ifPresent(attemptId ->
+                    mcpInvocationService.finishDispatchAttempt(invocationId, attemptId, 409,
+                            "LINEAGE_INVOCATION_REJECTED",
+                            McpInvocationService.McpDispatchVerdict.PROTOCOL_ERROR));
+        } catch (RuntimeException e) {
+            logger.error("[LIFECYCLE] service=cp event=lineage_invocation_rejection_record_failed failureType={}",
+                    e.getClass().getName(), e);
+        }
+    }
+
     /**
      * PLAN-0463: dispatch tracking is owned by the MCP execution domain.
      * {@code invocationId}/{@code dispatchAttemptId} are null when the invocation
      * or attempt could not be recorded; there is no Ledger fallback.
      */
-    private record McpDispatch(String toolCallId, UUID invocationId, UUID dispatchAttemptId) {}
+    private record McpDispatch(String toolCallId, UUID invocationId, UUID dispatchAttemptId,
+                               LineageInvocationService.Reservation lineageReservation) {}
 
     private long nextGeneration(String wsId) {
         return toolGenerations.computeIfAbsent(wsId, key -> new AtomicLong()).incrementAndGet();
@@ -1663,12 +1796,20 @@ public class McpProxyController {
     private ResponseEntity<String> forwardRemoteToRuntime(
             String wsId, McpProxyCatalogService.RemoteServerView server, String body, HttpHeaders headers,
             String sessionId, AccessContext access, ForwardWait forwardWait, String policySummary) {
+        return forwardRemoteToRuntime(wsId, server, body, headers, sessionId, access,
+                forwardWait, policySummary, null);
+    }
+
+    private ResponseEntity<String> forwardRemoteToRuntime(
+            String wsId, McpProxyCatalogService.RemoteServerView server, String body, HttpHeaders headers,
+            String sessionId, AccessContext access, ForwardWait forwardWait, String policySummary,
+            LineageInvocationService.Reservation lineageReservation) {
         long waitSeconds = forwardWait == null
                 ? forwardTimeoutS
                 : (forwardWait.seconds() > 0 ? forwardWait.seconds() : forwardTimeoutS);
         long startedMs = System.currentTimeMillis();
         String method = extractMethod(body);
-        McpDispatch dispatch = startMcpDispatch(body, headers, sessionId, access);
+        McpDispatch dispatch = startMcpDispatch(body, headers, sessionId, access, lineageReservation);
         attachPolicySummary(dispatch, policySummary);
         try {
             ObjectNode request = objectMapper.createObjectNode();
@@ -1731,7 +1872,13 @@ public class McpProxyController {
                     .timeout(Duration.ofSeconds(waitSeconds > 0 ? waitSeconds : 30))
                     .build();
             HttpResponse<String> response = httpClient.send(forwardRequest, HttpResponse.BodyHandlers.ofString());
-            finishMcpDispatchAttempt(dispatch, response.statusCode(), null, response.body());
+            // PLAN-0510 A类修复：Runtime 的 remote-mcp/call 契约返回的是 MCP `result` 对象本体
+            // （runtime `remote_call_reaches_fake_without_container` 断言 result.content[0].text）。
+            // CP 是 Agent 侧逻辑 MCP 端点的协议 owner，必须补齐 JSON-RPC 2.0 信封并回显调用方 id，
+            // 否则官方 MCP 客户端把裸 result 当非法 JSON-RPC 消息拒收（xc-cross-cutting-checklist
+            // §响应合成点：id 回显 + 协议必填字段）。非 2xx 仍走 problem 透传，不包装。
+            String agentBody = jsonRpcEnvelope(response.statusCode(), body, response.body());
+            finishMcpDispatchAttempt(dispatch, response.statusCode(), null, agentBody);
             HttpHeaders responseHeaders = new HttpHeaders();
             responseHeaders.set("Content-Type", MediaType.APPLICATION_JSON_VALUE);
             audit.record(sessionId, method, "allow",
@@ -1746,7 +1893,7 @@ public class McpProxyController {
                         System.currentTimeMillis() - startedMs,
                         response.statusCode() >= 400 ? "downstream" : "-");
             }
-            return new ResponseEntity<>(response.body(), responseHeaders,
+            return new ResponseEntity<>(agentBody, responseHeaders,
                     HttpStatus.valueOf(response.statusCode()));
         } catch (Exception e) {
             // A transport failure after dispatch cannot prove whether the tool ran.

@@ -181,10 +181,44 @@ public class ChatRunReadService {
                 .map(run -> new ExecutionRun(run.getProvider(), run.getModel(), run.getProviderConnectionId(),
                         run.getConnectionRevision(), new ContextTemplateSourceService.RunContext(
                         run.getSessionId(), run.getWorkspaceId(), run.getUserId(),
-                        run.getContextTemplateSnapshot())));
+                        run.getContextTemplateSnapshot()), continuationDescriptor(run)));
     }
 
     record ExecutionRun(String provider, String model, String providerConnectionId, Long connectionRevision,
-                        ContextTemplateSourceService.RunContext context) {
+                        ContextTemplateSourceService.RunContext context,
+                        ContinuationDescriptor continuation) {
+    }
+
+    Optional<ContinuationDispatchRun> findContinuationDispatchRun(String runId) {
+        return chatRunRepository.findById(UUID.fromString(runId))
+                .filter(run -> run.getContinuationSourceRunId() != null)
+                .map(run -> new ContinuationDispatchRun(
+                        run.getId().toString(), run.getSessionId(), run.getUserId(), run.getWorkspaceId(),
+                        run.getOrigin(), run.getStatus(), run.getUserMessageId(), run.getProvider(),
+                        run.getModel(), run.getToolMode(), continuationDescriptor(run)));
+    }
+
+    private static ContinuationDescriptor continuationDescriptor(ChatRun run) {
+        if (run.getContinuationSourceRunId() == null) {
+            return null;
+        }
+        if (run.getContinuationLineageId() == null || run.getContinuationThreadId() == null
+                || run.getContinuationCheckpointId() == null || run.getContinuationEventSequence() == null
+                || run.getContinuationMode() == null || run.getBranchId() == null) {
+            throw new IllegalStateException("Continuation ChatRun has incomplete provenance");
+        }
+        return new ContinuationDescriptor(run.getContinuationMode(), run.getContinuationSourceRunId(),
+                run.getContinuationLineageId(), run.getContinuationThreadId(), run.getContinuationCheckpointId(),
+                run.getContinuationEventSequence(), run.getBranchId());
+    }
+
+    record ContinuationDescriptor(String mode, String sourceRunId, String lineageId, String threadId,
+                                  String checkpointId, long eventSequence, String branchId) {
+    }
+
+    record ContinuationDispatchRun(String id, String sessionId, String userId, String workspaceId,
+                                   String origin, String status, String userMessageId,
+                                   String provider, String model, String toolMode,
+                                   ContinuationDescriptor continuation) {
     }
 }

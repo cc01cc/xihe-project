@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp;
 
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,6 +24,11 @@ public class CpApplication {
         // PLAN-0307 T3.4: reject dangerous factory defaults in prod (WARN in dev/test).
         SecurityDefaultsValidator.enforce();
         SpringApplication.run(CpApplication.class, args);
+    }
+
+    @Bean
+    public ToolFaceRegistry toolFaceRegistry() {
+        return new ToolFaceRegistry();
     }
 
     @Bean

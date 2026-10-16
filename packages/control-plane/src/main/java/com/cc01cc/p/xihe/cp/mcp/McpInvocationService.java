@@ -16,9 +16,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -59,17 +61,26 @@ public class McpInvocationService {
     private final McpDispatchHistoryRepository history;
     private final ChatRunRepository chatRuns;
     private final DbLockTimeout dbLockTimeout;
+    /**
+     * PLAN-0510 A类修复：并发 relay/gate 对同一 (run, toolCallId) 双写时，唯一约束违规会把
+     * 事务标记为 aborted / rollback-only。因此在**独立新事务**里执行插入尝试，并在另一个
+     * 新事务里回读赢家；绝不在被污染的事务中继续（否则报 25P02 或提交时 UnexpectedRollback）。
+     */
+    private final TransactionTemplate newTransaction;
 
     public McpInvocationService(McpInvocationRepository invocations,
                                 McpAttemptRepository attempts,
                                 McpDispatchHistoryRepository history,
                                 ChatRunRepository chatRuns,
-                                DbLockTimeout dbLockTimeout) {
+                                DbLockTimeout dbLockTimeout,
+                                PlatformTransactionManager transactionManager) {
         this.invocations = invocations;
         this.attempts = attempts;
         this.history = history;
         this.chatRuns = chatRuns;
         this.dbLockTimeout = dbLockTimeout;
+        this.newTransaction = new TransactionTemplate(transactionManager);
+        this.newTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     /**
@@ -154,11 +165,15 @@ public class McpInvocationService {
      * <p>Returns {@code empty} when the run context is unusable (missing/invalid
      * ids, ChatRun row absent) or when the write failed — the caller's invocation
      * context gate then rejects the dispatch. No legacy owner fallback is used.</p>
+     *
+     * <p>PLAN-0510 A类修复：本方法不再整体置于单个事务中。并发 relay/gate 对同一
+     * {@code (run, toolCallId)} 双写时，唯一约束违规会把事务标记为 aborted /
+     * rollback-only；若仍在事务内"正常返回"，提交时会抛 {@code UnexpectedRollbackException}
+     * （500），在异常事务内回读也会报 25P02。改为编程式事务：插入尝试自成一个新事务
+     * （失败即干净回滚），竞态回读在另一个新事务里进行。</p>
      */
-    @Transactional(isolation = Isolation.READ_COMMITTED, propagation = Propagation.REQUIRES_NEW)
     public Optional<UUID> openAgentInvocation(String runId, String toolCallId, String toolName,
                                               String requestId, String argumentsPreview) {
-        dbLockTimeout.apply();
         InvocationScope scope = agentScope(runId).orElse(null);
         if (scope == null) {
             return Optional.empty();
@@ -169,27 +184,33 @@ public class McpInvocationService {
                     scope.runId());
             return Optional.empty();
         }
-        Optional<McpInvocation> existing = invocations
-                .findByRunIdAndToolCallIdAndSource(scope.runId(), canonicalToolCallId,
-                        McpInvocation.SOURCE_AGENT);
+        Optional<UUID> existing = findAgentInvocationId(scope.runId(), canonicalToolCallId);
         if (existing.isPresent()) {
-            return Optional.of(existing.get().getId());
+            return existing;
         }
         try {
-            return Optional.of(create(scope.runId(), scope.sessionId(), scope.workspaceId(),
-                    scope.userId(), canonicalToolCallId, toolName,
-                    McpInvocation.SOURCE_AGENT, requestId, argumentsPreview).getId());
-        } catch (DataIntegrityViolationException race) {
-            // Concurrent gate/relay for the same (run, toolCallId): re-read winner.
-            return invocations
-                    .findByRunIdAndToolCallIdAndSource(scope.runId(), canonicalToolCallId,
-                            McpInvocation.SOURCE_AGENT)
-                    .map(McpInvocation::getId);
-        } catch (RuntimeException e) {
+            return newTransaction.execute(status -> {
+                dbLockTimeout.apply();
+                return Optional.of(create(scope.runId(), scope.sessionId(), scope.workspaceId(),
+                        scope.userId(), canonicalToolCallId, toolName,
+                        McpInvocation.SOURCE_AGENT, requestId, argumentsPreview).getId());
+            });
+        } catch (RuntimeException openFailure) {
+            // 插入事务已干净回滚，回读赢家不复用被污染的事务；回读失败按类契约 fail-closed。
+            Optional<UUID> winner = findAgentInvocationId(scope.runId(), canonicalToolCallId);
+            if (winner.isPresent()) {
+                return winner;
+            }
             logger.error("[LIFECYCLE] service=cp event=mcp_invocation_open_failed runId={} toolCallId={} failureType={}",
-                    scope.runId(), canonicalToolCallId, e.getClass().getName(), e);
+                    scope.runId(), canonicalToolCallId, openFailure.getClass().getName());
             return Optional.empty();
         }
+    }
+
+    private Optional<UUID> findAgentInvocationId(String runId, String canonicalToolCallId) {
+        return invocations
+                .findByRunIdAndToolCallIdAndSource(runId, canonicalToolCallId, McpInvocation.SOURCE_AGENT)
+                .map(McpInvocation::getId);
     }
 
     /**

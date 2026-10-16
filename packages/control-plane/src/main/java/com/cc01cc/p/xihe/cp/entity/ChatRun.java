@@ -126,6 +126,28 @@ public class ChatRun {
     @Convert(converter = UuidStringConverter.class)
     private String waitingToolCallId;
 
+    /** PLAN-0510: controlled continuation provenance; null on ordinary Runs. */
+    @Column(name = "continuation_source_run_id", columnDefinition = "uuid")
+    @Convert(converter = UuidStringConverter.class)
+    private String continuationSourceRunId;
+
+    @Column(name = "continuation_lineage_id", columnDefinition = "uuid")
+    @Convert(converter = UuidStringConverter.class)
+    private String continuationLineageId;
+
+    @Column(name = "continuation_thread_id", columnDefinition = "uuid")
+    @Convert(converter = UuidStringConverter.class)
+    private String continuationThreadId;
+
+    @Column(name = "continuation_checkpoint_id", length = 128)
+    private String continuationCheckpointId;
+
+    @Column(name = "continuation_event_sequence")
+    private Long continuationEventSequence;
+
+    @Column(name = "continuation_mode", length = 32)
+    private String continuationMode;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -232,6 +254,28 @@ public class ChatRun {
     public void setWaitingOnRunId(String waitingOnRunId) { this.waitingOnRunId = waitingOnRunId; }
     public String getWaitingToolCallId() { return waitingToolCallId; }
     public void setWaitingToolCallId(String waitingToolCallId) { this.waitingToolCallId = waitingToolCallId; }
+    public String getContinuationSourceRunId() { return continuationSourceRunId; }
+    public void setContinuationSourceRunId(String continuationSourceRunId) {
+        this.continuationSourceRunId = continuationSourceRunId;
+    }
+    public String getContinuationLineageId() { return continuationLineageId; }
+    public void setContinuationLineageId(String continuationLineageId) {
+        this.continuationLineageId = continuationLineageId;
+    }
+    public String getContinuationThreadId() { return continuationThreadId; }
+    public void setContinuationThreadId(String continuationThreadId) {
+        this.continuationThreadId = continuationThreadId;
+    }
+    public String getContinuationCheckpointId() { return continuationCheckpointId; }
+    public void setContinuationCheckpointId(String continuationCheckpointId) {
+        this.continuationCheckpointId = continuationCheckpointId;
+    }
+    public Long getContinuationEventSequence() { return continuationEventSequence; }
+    public void setContinuationEventSequence(Long continuationEventSequence) {
+        this.continuationEventSequence = continuationEventSequence;
+    }
+    public String getContinuationMode() { return continuationMode; }
+    public void setContinuationMode(String continuationMode) { this.continuationMode = continuationMode; }
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }

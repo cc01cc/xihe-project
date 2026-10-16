@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.context;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.context.entity.ContextEvent;
+import com.cc01cc.p.xihe.cp.context.service.ContextEventPayloadSafety;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -70,6 +71,13 @@ public class ContextEventResponseMapper {
             Map<String, Object> payload = payloadReader.readValue(event.getPayload());
             if (payload == null) {
                 throw failure(event, "null_payload");
+            }
+            if ("tool.result".equals(event.getEventType())
+                    || "assistant.responded".equals(event.getEventType())
+                    || "context.prune".equals(event.getEventType())
+                    || "session.forked".equals(event.getEventType())) {
+                var safePayload = ContextEventPayloadSafety.sanitize(event.getEventType(), payload, mapper);
+                payload = mapper.convertValue(safePayload, new TypeReference<Map<String, Object>>() { });
             }
             return new ContextEventResponse(event.getSessionId(), event.getSequence(),
                     event.getEventType(), payload, event.getCreatedAt().toString(),

@@ -677,6 +677,13 @@ public class ContextService {
         return events.isEmpty() ? 0L : events.get(events.size() - 1).getSequence();
     }
 
+    /** Exact visible EventStore cursor for one CP-validated Session branch. */
+    @Transactional(readOnly = true)
+    public long latestVisibleSequence(String sessionId, String branchId) {
+        BranchScope scope = resolveScope(sessionId, null, branchId);
+        return latestVisibleSequence(sessionId, scope);
+    }
+
     // PLAN-294 decisions #5/#11/#18 (M3): the pre-run compaction gate.
     // Soft threshold (default 70% of the model window) triggers a从容 compaction
     // before the run; hysteresis parameters (appendix G / E.5) keep a full

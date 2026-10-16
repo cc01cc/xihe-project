@@ -119,8 +119,13 @@ public interface ChatRunRepository extends JpaRepository<ChatRun, UUID> {
             @Param("id") UUID id,
             @Param("expectedStatuses") Collection<String> expectedStatuses);
 
+    // PLAN-0510 A类修复：continuation dispatch 由 ContinuationRunDispatchRequestedEvent 的
+    // afterCommit 监听器触发（与 PLAN-0442 的 releaseRun 同形），外层事务已完成但
+    // synchronization 标志仍在，REQUIRED 会“加入”已完成事务并报 no transaction is in
+    // progress，导致续跑永远起不来。REQUIRES_NEW 挂起完成态资源并开启独立短事务，
+    // 普通调用路径行为不变（与下方 releaseLease 同一处置）。
     @Modifying
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     @Query("update ChatRun r set r.leaseOwner = :owner, r.leaseExpiresAt = :expiresAt "
             + "where r.id = :runId and r.status in :activeStatuses "
             + "and (r.leaseOwner = :owner or r.leaseOwner is null or r.leaseExpiresAt < :now)")

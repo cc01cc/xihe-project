@@ -381,11 +381,21 @@ public class ChatRunTerminalService {
     /**
      * PLAN-0463 handoff gap 2: gate-created invocations whose relay was lost stay
      * {@code active}; the terminal transition is their reconciliation point.
+     *
+     * <p>PLAN-0510（2026-10-16 用户裁定 甲）：Run 中止于 {@code ambiguous}（如
+     * {@code CP_RESTARTED}）时，搁置副作用的"是否发生"未知，必须收敛为
+     * {@link McpInvocation#STATUS_UNKNOWN} 而非 {@code failed}——把"未知"记成"失败"会
+     * 破坏 fail-closed 设计赖以区分的语义（spec 矩阵要求 transport-unknown 为 ambiguous）。</p>
      */
     private void settleStrandedInvocationsAfterCommit(String runId, TerminalRequest request) {
-        String targetStatus = "cancelled".equals(request.status())
-                ? McpInvocation.STATUS_CANCELLED
-                : McpInvocation.STATUS_FAILED;
+        String targetStatus;
+        if ("cancelled".equals(request.status())) {
+            targetStatus = McpInvocation.STATUS_CANCELLED;
+        } else if ("ambiguous".equals(request.status())) {
+            targetStatus = McpInvocation.STATUS_UNKNOWN;
+        } else {
+            targetStatus = McpInvocation.STATUS_FAILED;
+        }
         String errorCode = request.errorCode() == null ? "RUN_TERMINAL" : request.errorCode();
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override

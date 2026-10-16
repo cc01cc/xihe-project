@@ -8,6 +8,7 @@ import com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository;
 import com.cc01cc.p.xihe.cp.service.BranchPathService;
 import com.cc01cc.p.xihe.cp.service.SessionLockService;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -123,14 +124,15 @@ public class EventStoreService {
         validateNativeCarrier(eventType, payload, correlationId);
         dbLockTimeout.apply();
         String effectiveBranch = resolveEffectiveBranch(sessionId, correlationId, branchId);
-        String payloadJson = toJson(payload);
+        String incomingPayloadJson = toJson(payload);
+        String payloadJson = toJson(ContextEventPayloadSafety.sanitize(eventType, payload, objectMapper));
         UUID requested = parseEventId(eventId);
         lockSessionForSequence(UUID.fromString(sessionId));
         if (requested != null) {
             var existing = eventStoreRepository.findById(requested);
             if (existing.isPresent()) {
                 return sameIdentityOrConflict(existing.get(), sessionId, workspaceId, userId,
-                        eventType, payloadJson, correlationId, effectiveBranch);
+                        eventType, payloadJson, incomingPayloadJson, correlationId, effectiveBranch);
             }
         }
         Long nextSequence = getLatestSequence(sessionId) + 1;
@@ -164,6 +166,7 @@ public class EventStoreService {
 
     private ContextEvent sameIdentityOrConflict(ContextEvent existing, String sessionId,
             String workspaceId, String userId, String eventType, String payloadJson,
+            String incomingPayloadJson,
             String correlationId, String branchId) {
         java.util.List<String> differing = new java.util.ArrayList<>();
         if (!java.util.Objects.equals(existing.getSessionId(), sessionId)) {
@@ -178,7 +181,8 @@ public class EventStoreService {
         if (!java.util.Objects.equals(existing.getEventType(), eventType)) {
             differing.add("eventType");
         }
-        if (!payloadMatches(existing.getPayload(), payloadJson)) {
+        if (!payloadMatches(existing.getPayload(), payloadJson)
+                && !payloadMatches(existing.getPayload(), incomingPayloadJson)) {
             differing.add("payload");
         }
         if (!java.util.Objects.equals(existing.getCorrelationId(), correlationId)) {
@@ -229,7 +233,9 @@ public class EventStoreService {
         List<ContextEvent> events = new java.util.ArrayList<>();
         List<ContextEvent> fresh = new java.util.ArrayList<>();
         for (EventPayload ep : payloads) {
-            String payloadJson = toJson(ep.payload());
+            String incomingPayloadJson = toJson(ep.payload());
+            String payloadJson = toJson(ContextEventPayloadSafety.sanitize(
+                    ep.eventType(), ep.payload(), objectMapper));
             boolean runScoped = ep.correlationId() != null && !ep.correlationId().isBlank();
             String branchId = runScoped ? branchByRun.get(ep.correlationId()) : null;
             UUID requested = parseEventId(ep.eventId());
@@ -239,7 +245,8 @@ public class EventStoreService {
                     // Same identity replays the original row and never consumes
                     // a new sequence slot; differing content is a conflict.
                     events.add(sameIdentityOrConflict(existing.get(), sessionId, workspaceId,
-                            userId, ep.eventType(), payloadJson, ep.correlationId(), branchId));
+                            userId, ep.eventType(), payloadJson, incomingPayloadJson,
+                            ep.correlationId(), branchId));
                     continue;
                 }
             }
@@ -321,7 +328,7 @@ public class EventStoreService {
             }
             ContextEvent copy = new ContextEvent(
                     newSessionId, workspaceId, userId,
-                    source.getEventType(), source.getSequence(), source.getPayload()
+                    source.getEventType(), source.getSequence(), sanitizePayloadForCopy(source)
             );
             copy.setCorrelationId(source.getCorrelationId());
             copy.setCausationId(source.getCausationId());
@@ -336,6 +343,23 @@ public class EventStoreService {
             latestSequence = copy.getSequence();
         }
         return latestSequence;
+    }
+
+    private String sanitizePayloadForCopy(ContextEvent source) {
+        String eventType = source.getEventType();
+        if (!List.of("tool.result", "assistant.responded", "context.prune", "session.forked")
+                .contains(eventType)) {
+            return source.getPayload();
+        }
+        try {
+            JsonNode payload = objectMapper.readTree(source.getPayload());
+            return toJson(ContextEventPayloadSafety.sanitize(eventType, payload, objectMapper));
+        } catch (JsonProcessingException exception) {
+            logger.error("Failed to sanitize copied context event eventType={} sequence={}",
+                    eventType, source.getSequence());
+            throw new CpApiException(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR",
+                    "Context event could not be copied safely");
+        }
     }
 
     private String resolveBranchForCorrelation(String sessionId, String correlationId) {

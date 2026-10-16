@@ -28,6 +28,8 @@ import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -743,6 +745,70 @@ public class ChatController {
                 event.parentRunId(), event.childRunId(), dispatched);
     }
 
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    void onContinuationRunDispatchRequested(ContinuationRunDispatchRequestedEvent event) {
+        try {
+            boolean dispatched = dispatchContinuationRun(event);
+            logger.info("[LIFECYCLE] service=cp event=continuation_dispatch_result sourceRunId={} runId={} dispatched={}",
+                    event.sourceRunId(), event.continuationRunId(), dispatched);
+        } catch (RuntimeException e) {
+            logger.error("[LIFECYCLE] service=cp event=continuation_dispatch_failed sourceRunId={} runId={} failureType={}",
+                    event.sourceRunId(), event.continuationRunId(), e.getClass().getSimpleName(), e);
+        }
+    }
+
+    /** Dispatches a committed continuation through the same worker and lease path as other Chat Runs. */
+    boolean dispatchContinuationRun(ContinuationRunDispatchRequestedEvent event) {
+        ChatRunReadService.ContinuationDispatchRun run = chatRunReadService
+                .findContinuationDispatchRun(event.continuationRunId()).orElse(null);
+        if (run == null || !ChatRun.ORIGIN_USER_SUBMISSION.equals(run.origin())
+                || !"accepted".equals(run.status()) || run.continuation() == null
+                || !event.sourceRunId().equals(run.continuation().sourceRunId())) {
+            return false;
+        }
+        boolean appendsMessage = ChatRunContinuationRequest.APPEND_USER_TURN.equals(run.continuation().mode());
+        boolean resumesPending = ChatRunContinuationRequest.RESUME_PENDING.equals(run.continuation().mode());
+        if ((!appendsMessage && !resumesPending) || appendsMessage != (run.userMessageId() != null)) {
+            throw new IllegalStateException("Continuation Run mode and user Message provenance do not match");
+        }
+
+        Session session;
+        try {
+            session = sessionService.requireCurrent(run.sessionId(), run.userId(), run.workspaceId());
+        } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
+            throw new IllegalStateException("Committed continuation Session is no longer dispatchable", e);
+        }
+        MessageReadService.DispatchMessage userMessage = appendsMessage
+                ? messageReadService.findDispatchMessage(run.userMessageId()).orElse(null) : null;
+        if (session == null || !run.userId().equals(session.getUserId())
+                || !run.workspaceId().equals(session.getWorkspaceId())
+                || appendsMessage && (userMessage == null
+                    || !run.id().equals(userMessage.runId())
+                    || !run.sessionId().equals(userMessage.sessionId()))) {
+            throw new IllegalStateException("Committed continuation Run is missing its Session or user Message");
+        }
+
+        String sessionId = run.sessionId();
+        if (activeRunRegistry.putIfAbsent(sessionId, run.id()) != null) {
+            return false;
+        }
+        if (!acquireLeaseForExistingRun(run.id())) {
+            activeRunRegistry.remove(sessionId, run.id());
+            return false;
+        }
+        try {
+            ContinuationDispatchContext continuation = new ContinuationDispatchContext(
+                    run.continuation(), event.completedToolCallIds());
+            execAsync(sessionId, userMessage == null ? "" : userMessage.content(),
+                    run.provider(), run.model(), run.toolMode(), Map.of(), List.of(),
+                    run.userId(), run.workspaceId(), run.id(), run.id(), continuation);
+            return true;
+        } catch (RuntimeException e) {
+            releaseRun(sessionId, run.id(), "continuation_dispatch_handoff_failed");
+            throw e;
+        }
+    }
+
     /** Dispatches a committed spawn Run through the same local worker and lease path as user Runs. */
     public boolean dispatchSpawnRun(String runId) {
         ChatRunReadService.DispatchRun run = chatRunReadService.findDispatchRun(runId).orElse(null);
@@ -840,6 +906,15 @@ public class ChatController {
                            Map<String, Integer> toolTimeouts,
                            List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachments,
                            String userId, String workspaceId, String requestId, String runId) {
+        execAsync(sessionId, content, provider, model, toolMode, toolTimeouts, attachments,
+                userId, workspaceId, requestId, runId, null);
+    }
+
+    private void execAsync(String sessionId, String content, String provider, String model, String toolMode,
+                           Map<String, Integer> toolTimeouts,
+                           List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachments,
+                           String userId, String workspaceId, String requestId, String runId,
+                           ContinuationDispatchContext continuationContext) {
         Thread worker = new Thread(() -> {
             MDC.put("requestId", requestId);
             MDC.put("chatRunId", runId);
@@ -855,7 +930,7 @@ public class ChatController {
                 try {
                     // PLAN-0410 T2.2: the gate resolves THIS Run's branch path —
                     // sibling Run usage/summary/circuit never drive the decision.
-                    if (contextService.shouldAutoCompact(sessionId, runId)) {
+                    if (continuationContext == null && contextService.shouldAutoCompact(sessionId, runId)) {
                         contextService.compact(sessionId, workspaceId, userId, null, "auto", runId);
                         logger.info("[LIFECYCLE] service=cp event=chat_pre_run_compaction sessionId={} runId={}", sessionId, runId);
                     }
@@ -872,25 +947,27 @@ public class ChatController {
                 // PLAN-0340/0415: the source policy is fixed by the admission
                 // template. per_chat_run refreshes each turn; per_session pins
                 // the first successful source snapshot for this Session.
-                try {
-                    String sourceStatus = contextSourceRefreshService.refreshForRun(
-                            sessionId, workspaceId, userId, refreshRootAgentsMd);
-                    logger.info("[LIFECYCLE] service=cp event=chat_pre_run_source_refresh sessionId={} runId={} status={}",
-                            sessionId, runId, sourceStatus);
-                    // PLAN-0340 U2: only AGENTS.md chain created/updated (not env, not unchanged/failed).
-                    if ("created".equals(sourceStatus) || "updated".equals(sourceStatus)) {
-                        sseManager.send(sessionId, "context_sources_changed", Map.of(
-                                "type", "context_sources_changed",
-                                "sourceKey", "AGENTS.md",
-                                "status", sourceStatus));
-                    }
-                } catch (Exception sourceError) {
-                    logger.warn("[LIFECYCLE] service=cp event=chat_pre_run_source_refresh_failed sessionId={} runId={} error={}",
-                            sessionId, runId, sourceError.getMessage());
-                    // Env refresh can fail while per_session L1 is deliberately
-                    // frozen; only mark L1 unavailable when this Run attempted it.
-                    if (refreshRootAgentsMd) {
-                        contextSourceRefreshService.markSourceUnavailable(sessionId, workspaceId, userId);
+                if (continuationContext == null) {
+                    try {
+                        String sourceStatus = contextSourceRefreshService.refreshForRun(
+                                sessionId, workspaceId, userId, refreshRootAgentsMd);
+                        logger.info("[LIFECYCLE] service=cp event=chat_pre_run_source_refresh sessionId={} runId={} status={}",
+                                sessionId, runId, sourceStatus);
+                        // PLAN-0340 U2: only AGENTS.md chain created/updated (not env, not unchanged/failed).
+                        if ("created".equals(sourceStatus) || "updated".equals(sourceStatus)) {
+                            sseManager.send(sessionId, "context_sources_changed", Map.of(
+                                    "type", "context_sources_changed",
+                                    "sourceKey", "AGENTS.md",
+                                    "status", sourceStatus));
+                        }
+                    } catch (Exception sourceError) {
+                        logger.warn("[LIFECYCLE] service=cp event=chat_pre_run_source_refresh_failed sessionId={} runId={} error={}",
+                                sessionId, runId, sourceError.getMessage());
+                        // Env refresh can fail while per_session L1 is deliberately
+                        // frozen; only mark L1 unavailable when this Run attempted it.
+                        if (refreshRootAgentsMd) {
+                            contextSourceRefreshService.markSourceUnavailable(sessionId, workspaceId, userId);
+                        }
                     }
                 }
                 transitionRun(runId, List.of("accepted", "queued"), "running", null, null, null, 0, 0);
@@ -916,6 +993,22 @@ public class ChatController {
                 agentRequest.put("requestId", requestId);
                 agentRequest.put("runId", runId);
                 agentRequest.put("stream", true);
+                if (continuationContext != null) {
+                    if (!continuationContext.checkpoint().equals(persistedRun.continuation())) {
+                        throw new IllegalStateException("Continuation dispatch event does not match ChatRun provenance");
+                    }
+                    Map<String, Object> continuation = new java.util.LinkedHashMap<>();
+                    continuation.put("mode", continuationContext.checkpoint().mode());
+                    continuation.put("sourceRunId", continuationContext.checkpoint().sourceRunId());
+                    continuation.put("continuationRunId", runId);
+                    continuation.put("lineageId", continuationContext.checkpoint().lineageId());
+                    continuation.put("threadId", continuationContext.checkpoint().threadId());
+                    continuation.put("checkpointId", continuationContext.checkpoint().checkpointId());
+                    continuation.put("eventSequence", continuationContext.checkpoint().eventSequence());
+                    continuation.put("branchId", continuationContext.checkpoint().branchId());
+                    continuation.put("completedToolCallIds", continuationContext.completedToolCallIds());
+                    agentRequest.put("continuation", continuation);
+                }
                 if (effectiveProvider != null && !effectiveProvider.isBlank()) {
                     agentRequest.put("provider", effectiveProvider);
                 }
@@ -1906,6 +1999,15 @@ public class ChatController {
             com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder.RunState runState,
             Map<?, ?> usageEnvelope
     ) {}
+
+    private record ContinuationDispatchContext(
+            ChatRunReadService.ContinuationDescriptor checkpoint,
+            List<String> completedToolCallIds
+    ) {
+        private ContinuationDispatchContext {
+            completedToolCallIds = completedToolCallIds == null ? List.of() : List.copyOf(completedToolCallIds);
+        }
+    }
 
     private record RelayedTerminalEvent(String name, String data) {}
 

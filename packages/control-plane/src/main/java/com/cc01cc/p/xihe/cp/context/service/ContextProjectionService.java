@@ -209,7 +209,7 @@ public class ContextProjectionService {
             case "context.env_updated" -> applyEnvUpdated(context, payload);
             case "epoch.started", "epoch.replaced" -> setEpoch(context, payload);
             case "runtime.state_cleared" -> clearRuntimeState(context);
-            case "session.forked" -> recordFork(context, payload);
+            case "session.forked" -> recordFork(context, payload, replay);
             case "compaction.applied", "compaction.manual_applied" -> applyCompaction(context, payload);
             // PLAN-0341 T1.2: prune tombstones are durable anti-resurrection facts.
             case "context.prune" -> applyPrune(context, payload, replay);
@@ -305,9 +305,12 @@ public class ContextProjectionService {
         message.put("role", "ai");
         message.put("content", source.path("content").asText(""));
         putSequence(message, sequence);
-        for (String field : List.of("apiTypeId", "apiTypeVersion", "nativeRecords")) {
-            message.set(field, source.get(field).deepCopy());
-        }
+        String apiTypeId = source.path("apiTypeId").asText("");
+        JsonNode nativeRecords = source.get("nativeRecords");
+        hashes.addAll(nativeToolOutputHashes(apiTypeId, nativeRecords));
+        message.set("apiTypeId", source.get("apiTypeId").deepCopy());
+        message.set("apiTypeVersion", source.get("apiTypeVersion").deepCopy());
+        message.set("nativeRecords", maskNativeToolOutputs(apiTypeId, nativeRecords));
         messages.add(message);
         replaced.add(message);
         replay.carrierHashes.put(message, hashes);
@@ -328,6 +331,11 @@ public class ContextProjectionService {
     private static final int ARG_PREFIX_CHARS = 4000;
     private static final int JSON_PREVIEW_LIMIT = 4096;
     private static final String JSON_TRUNCATED_SUFFIX = "...[truncated]";
+    /** Historical tool bodies are untrusted unless a reader can prove a current schema match. */
+    private static final String UNSAFE_TOOL_RESULT_PLACEHOLDER =
+            "Tool result withheld from durable history because no checkpoint-safe output schema is registered.";
+    private static final String CREDENTIAL_RESULT_PLACEHOLDER =
+            "<credential value delivered in-memory; single-use lease, five minute TTL>";
 
     /** Contract §3 dual-read: v2 camelCase payload keys fall back to legacy. */
     private static String pairingField(ObjectNode payload, String v2Key, String legacyKey) {
@@ -545,38 +553,7 @@ public class ContextProjectionService {
      * still projected (V12) — it is never dropped.
      */
     private void putResultContent(ObjectNode message, JsonNode result) {
-        String content = "";
-        boolean legacyNormalized = false;
-        if (result != null && !result.isNull()) {
-            if (result.isTextual()) {
-                content = result.asText();
-            } else if (result.isObject()) {
-                ObjectNode object = (ObjectNode) result;
-                JsonNode inner = object.get("content");
-                if (inner != null && inner.isTextual()) {
-                    content = inner.asText();
-                    putResultWhitelist(message, object);
-                } else {
-                    JsonNode preview = object.get("preview");
-                    if (preview != null && preview.isTextual()) {
-                        content = preview.asText();
-                        putResultWhitelist(message, object);
-                    } else {
-                        putBoundedJsonPreview(message, object);
-                        legacyNormalized = true;
-                    }
-                }
-            } else {
-                putBoundedJsonPreview(message, result);
-                legacyNormalized = true;
-            }
-        }
-        if (legacyNormalized) {
-            message.put("legacy_normalized", true);
-        } else {
-            // putBoundedJsonPreview already wrote content on the legacy path.
-            message.put("content", content);
-        }
+        message.put("content", UNSAFE_TOOL_RESULT_PLACEHOLDER);
     }
 
     private void addToolResult(ObjectNode context, ObjectNode payload, long sequence, String runId, ReplayState replay) {
@@ -593,6 +570,7 @@ public class ContextProjectionService {
         ObjectNode message = objectMapper.createObjectNode();
         message.put("role", "tool");
         putResultContent(message, payload.get("result"));
+        replay.carrierHashes.put(message, resultContentHashes(payload.get("result")));
         putSequence(message, sequence);
         if (callId.isBlank()) {
             message.put("degraded", true);
@@ -605,6 +583,146 @@ public class ContextProjectionService {
         String status = payload.path("status").asText("");
         message.put("status", status.isBlank() ? "completed" : status);
         messages.add(message);
+    }
+
+    /** Keep provider-required call/result shape while hiding every historical body. */
+    private ArrayNode maskNativeToolOutputs(String apiTypeId, JsonNode records) {
+        ArrayNode safe = objectMapper.createArrayNode();
+        if (records == null || !records.isArray()) {
+            return safe;
+        }
+        if (!List.of("openai-chat-completions", "anthropic-messages", "mimo-responses").contains(apiTypeId)) {
+            return safe;
+        }
+        java.util.Set<String> credentialCalls = nativeCredentialCallIds(apiTypeId, records);
+        for (JsonNode raw : records) {
+            if (!raw.isObject()) {
+                continue;
+            }
+            ObjectNode record = ((ObjectNode) raw).deepCopy();
+            if (apiTypeId.equals("openai-chat-completions")) {
+                String role = record.path("role").asText("");
+                if (role.equals("tool") || role.equals("function")) {
+                    String callId = record.path("tool_call_id").asText(record.path("id").asText(""));
+                    record.put("content", credentialCalls.contains(callId)
+                            ? CREDENTIAL_RESULT_PLACEHOLDER : UNSAFE_TOOL_RESULT_PLACEHOLDER);
+                }
+            } else if (apiTypeId.equals("anthropic-messages")) {
+                JsonNode content = record.get("content");
+                if (content != null && content.isArray()) {
+                    ArrayNode blocks = (ArrayNode) content;
+                    for (int i = 0; i < blocks.size(); i++) {
+                        JsonNode block = blocks.get(i);
+                        if (!block.isObject() || !block.path("type").asText("").equals("tool_result")) {
+                            continue;
+                        }
+                        String callId = block.path("tool_use_id").asText("");
+                        String placeholder = credentialCalls.contains(callId)
+                                ? CREDENTIAL_RESULT_PLACEHOLDER : UNSAFE_TOOL_RESULT_PLACEHOLDER;
+                        ObjectNode masked = ((ObjectNode) block).deepCopy();
+                        if (block.path("content").isArray()) {
+                            ArrayNode text = objectMapper.createArrayNode();
+                            text.add(objectMapper.createObjectNode().put("type", "text").put("text", placeholder));
+                            masked.set("content", text);
+                        } else {
+                            masked.put("content", placeholder);
+                        }
+                        blocks.set(i, masked);
+                    }
+                }
+            } else if (record.path("type").asText("").equals("function_call_output")) {
+                String callId = record.path("call_id").asText("");
+                record.put("output", credentialCalls.contains(callId)
+                        ? CREDENTIAL_RESULT_PLACEHOLDER : UNSAFE_TOOL_RESULT_PLACEHOLDER);
+            }
+            safe.add(record);
+        }
+        return safe;
+    }
+
+    private java.util.Set<String> nativeCredentialCallIds(String apiTypeId, JsonNode records) {
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        for (JsonNode record : records) {
+            if (apiTypeId.equals("openai-chat-completions")) {
+                for (JsonNode call : record.path("tool_calls")) {
+                    if (call.path("function").path("name").asText("").equals("acquire_credential")) {
+                        ids.add(call.path("id").asText(""));
+                    }
+                }
+            } else if (apiTypeId.equals("anthropic-messages")) {
+                for (JsonNode block : record.path("content")) {
+                    if (block.path("type").asText("").equals("tool_use")
+                            && block.path("name").asText("").equals("acquire_credential")) {
+                        ids.add(block.path("id").asText(""));
+                    }
+                }
+            } else if (record.path("type").asText("").equals("function_call")
+                    && record.path("name").asText("").equals("acquire_credential")) {
+                ids.add(record.path("call_id").asText(""));
+            }
+        }
+        return ids;
+    }
+
+    /** Original-value hashes stay process-local so old prune tombstones still reconcile. */
+    private java.util.Set<String> nativeToolOutputHashes(String apiTypeId, JsonNode records) {
+        java.util.Set<String> hashes = new java.util.HashSet<>();
+        if (records == null || !records.isArray()) {
+            return hashes;
+        }
+        for (JsonNode record : records) {
+            if (apiTypeId.equals("openai-chat-completions")
+                    && (record.path("role").asText("").equals("tool")
+                    || record.path("role").asText("").equals("function"))) {
+                addTextHash(hashes, record.get("content"));
+            } else if (apiTypeId.equals("anthropic-messages")) {
+                for (JsonNode block : record.path("content")) {
+                    if (block.path("type").asText("").equals("tool_result")) {
+                        addTextHash(hashes, block.get("content"));
+                    }
+                }
+            } else if (apiTypeId.equals("mimo-responses")
+                    && record.path("type").asText("").equals("function_call_output")) {
+                addTextHash(hashes, record.get("output"));
+            }
+        }
+        return hashes;
+    }
+
+    private void addTextHash(java.util.Set<String> hashes, JsonNode value) {
+        if (value == null || value.isNull()) {
+            return;
+        }
+        if (value.isTextual()) {
+            hashes.add(sha256Hex(value.asText()));
+        } else if (value.isArray()) {
+            for (JsonNode item : value) {
+                JsonNode text = item.has("text") ? item.get("text") : item.get("content");
+                if (text != null && text.isTextual()) {
+                    hashes.add(sha256Hex(text.asText()));
+                }
+            }
+        }
+    }
+
+    private java.util.Set<String> resultContentHashes(JsonNode result) {
+        java.util.Set<String> hashes = new java.util.HashSet<>();
+        String content;
+        if (result == null || result.isNull()) {
+            content = "";
+        } else if (result.isTextual()) {
+            content = result.asText();
+        } else if (result.isObject() && result.path("content").isTextual()) {
+            content = result.path("content").asText();
+        } else if (result.isObject() && result.path("preview").isTextual()) {
+            content = result.path("preview").asText();
+        } else {
+            ObjectNode bounded = objectMapper.createObjectNode();
+            putBoundedJsonPreview(bounded, result);
+            content = bounded.path("content").asText("");
+        }
+        hashes.add(sha256Hex(content));
+        return hashes;
     }
 
     private void emptyContextSlots(ObjectNode context) {
@@ -774,7 +892,7 @@ public class ContextProjectionService {
         context.set("runtime_state", objectMapper.createObjectNode());
     }
 
-    private void recordFork(ObjectNode context, ObjectNode payload) {
+    private void recordFork(ObjectNode context, ObjectNode payload, ReplayState replay) {
         ObjectNode metadata = (ObjectNode) context.get("metadata");
         ObjectNode forkInfo = objectMapper.createObjectNode();
         if (payload.has("source_session_id")) {
@@ -816,6 +934,23 @@ public class ContextProjectionService {
             while (fieldNames.hasNext()) {
                 String field = fieldNames.next();
                 message.set(field, sourceMessage.get(field));
+            }
+            java.util.Set<String> historicalHashes = new java.util.HashSet<>();
+            if (role.equals("tool")) {
+                historicalHashes.add(sha256Hex(sourceMessage.path("content").asText("")));
+                message.put("content", sourceMessage.path("tool_name").asText("").equals("acquire_credential")
+                        ? CREDENTIAL_RESULT_PLACEHOLDER : UNSAFE_TOOL_RESULT_PLACEHOLDER);
+                for (String sensitive : List.of("artifact_ref", "artifact_status", "size_bytes", "truncated", "error_code")) {
+                    message.remove(sensitive);
+                }
+            }
+            if (sourceMessage.has("nativeRecords")) {
+                String apiTypeId = sourceMessage.path("apiTypeId").asText("");
+                historicalHashes.addAll(nativeToolOutputHashes(apiTypeId, sourceMessage.get("nativeRecords")));
+                message.set("nativeRecords", maskNativeToolOutputs(apiTypeId, sourceMessage.get("nativeRecords")));
+            }
+            if (!historicalHashes.isEmpty()) {
+                replay.carrierHashes.put(message, historicalHashes);
             }
             messages.add(message);
         }
