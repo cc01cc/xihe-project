@@ -625,6 +625,46 @@ paths:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
               example: { type: "https://xihe.dev/problems/sse-subscription-required", title: "SSE subscription required", status: 409, code: "SSE_SUBSCRIPTION_REQUIRED", detail: "An active SSE subscription is required", requestId: "req-..." }
         '503': { $ref: '#/components/responses/Problem' }
+  /api/v1/chat/runs/{sourceRunId}/continue:
+    post:
+      operationId: continueChatRun
+      summary: Continue an eligible ChatRun from its latest safe graph checkpoint
+      description: |
+        Creates a new child ChatRun from an eligible `ambiguous/CP_RESTARTED` source.
+        `resume_pending` resumes without adding a user message; `append_user_turn`
+        appends exactly one new message to the checkpoint. The source Run remains
+        terminal and immutable. CP rechecks the authenticated tenant, source owner,
+        Session, branch cursor and side-effect eligibility under the Session lock.
+        Same key and canonical request hash return the existing child; a different
+        hash returns `409 IDEMPOTENCY_KEY_REUSED`. Internal checkpoint identifiers
+        and completed tool-call IDs are never returned by this public route.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sourceRunId, required: true, schema: { type: string, format: uuid } }
+        - { in: header, name: Idempotency-Key, required: true, schema: { type: string, minLength: 1, maxLength: 128 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - { $ref: '#/components/schemas/ChatRunResumePendingRequest' }
+                - { $ref: '#/components/schemas/ChatRunAppendUserTurnRequest' }
+      responses:
+        '202':
+          description: Accepted continuation child Run
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatRunContinuationResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409':
+          description: Source is ineligible/stale, a side effect needs reconciliation, or the idempotency key conflicts
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
   /api/v1/chat/runs/{runId}:
     get:
       operationId: getChatRunStatus
@@ -2571,6 +2611,31 @@ components:
          state: { type: string, enum: [success, error, partial, ambiguous, cancelled] }
          terminalAt: { type: string, format: date-time }
     ChatRequest: { type: object, required: [sessionId, branchId, content], properties: { sessionId: { type: string }, branchId: { type: string, format: uuid, description: Required selected branch; included in Chat idempotency request hash. }, content: { type: string }, agentPrincipalId: { type: [string, 'null'], format: uuid, description: Required to bind a principal-null empty placeholder; if supplied for a bound Session it must match the persisted principal. }, provider: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, model: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, toolMode: { type: string, enum: [none, workspace], default: none }, attachments: { type: array, items: { type: string } }, toolTimeouts: { type: object, description: 'PLAN-0308 T1.9/T3.1: optional per-tool timeout request (per-call), the highest-priority input to the CP-computed tool budget. Values are positive integer seconds, max 30 (code constant MAX_BUDGET_SECONDS, shared with the DB config ceiling); invalid or oversized values are rejected with 400 INVALID_REQUEST (never silently clamped); sync waits >30s belong to async jobs.', additionalProperties: { type: integer, minimum: 1, maximum: 30 }, example: { execute_command: 20 } } } }
+    ChatRunResumePendingRequest:
+      type: object
+      additionalProperties: false
+      required: [mode]
+      properties:
+        mode: { type: string, enum: [resume_pending] }
+    ChatRunAppendUserTurnRequest:
+      type: object
+      additionalProperties: false
+      required: [mode, message]
+      properties:
+        mode: { type: string, enum: [append_user_turn] }
+        message:
+          type: object
+          additionalProperties: false
+          required: [content]
+          properties:
+            content: { type: string }
+    ChatRunContinuationResponse:
+      type: object
+      additionalProperties: false
+      required: [runId, mode]
+      properties:
+        runId: { type: string, format: uuid }
+        mode: { type: string, enum: [resume_pending, append_user_turn] }
     ChatRunResponse: { type: object, required: [status, origin, sessionId, runId], properties: { status: { type: string, enum: [accepted, queued, running, streaming, awaiting_approval, dispatching, cancelling, succeeded, failed, partial, ambiguous, cancelled] }, origin: { type: string, enum: [user_submission], readOnly: true, description: Public POST /chat only returns user_submission; spawn is visible through GET run status }, sessionId: { type: string }, messageId: { type: string }, runId: { type: string }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, outcome: { type: string, enum: [success, error, partial, ambiguous] }, errorCode: { type: string }, reason: { type: string } } }
     SessionRunSummary:
       type: object
@@ -3504,6 +3569,31 @@ components:
           enum: [full, partial]
           description: "PLAN-0308 M1 (decision #23): `partial` when the CP tool→server cache was cold at payload time, so some tools have no per-tool wait entry."
         attachments: { type: array, items: { type: object, additionalProperties: true } }
+        continuation:
+          $ref: '#/components/schemas/AgentChatContinuation'
+    AgentChatContinuation:
+      type: object
+      additionalProperties: false
+      description: >-
+        CP-authenticated internal continuation descriptor. It is derived from
+        locked ChatRun/checkpoint/lineage records and is never accepted from or
+        returned to a public caller. completedToolCallIds contains only bounded
+        opaque originating IDs; Agent must match each against a checkpoint-safe
+        ToolMessage before graph execution, and must fail closed on any mismatch.
+      required: [mode, sourceRunId, continuationRunId, lineageId, threadId, checkpointId, eventSequence, branchId, completedToolCallIds]
+      properties:
+        mode: { type: string, enum: [resume_pending, append_user_turn] }
+        sourceRunId: { type: string, format: uuid }
+        continuationRunId: { type: string, format: uuid }
+        lineageId: { type: string, format: uuid }
+        threadId: { type: string, format: uuid }
+        checkpointId: { type: string, minLength: 1, maxLength: 128 }
+        eventSequence: { type: integer, minimum: 0 }
+        branchId: { type: string, format: uuid }
+        completedToolCallIds:
+          type: array
+          maxItems: 8192
+          items: { type: string, minLength: 1, maxLength: 128 }
     ContextTemplateSnapshot:
       type: object
       description: Exact admission snapshot; the historical carrier field name is retained, but legacy Markdown snapshots are audit-only.
