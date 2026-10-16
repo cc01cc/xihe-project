@@ -9,11 +9,12 @@ import {
     templateKey as optionKey,
     type TemplateOption,
 } from "../../../../services/apiRequestTemplates";
-import { listProviderConnections } from "../../../../services/providerConnectionService";
+import { useConfigStore } from "../../../../stores/config";
 import { useSessionStore } from "../../../../stores/session";
 const props = defineProps<{ sessionId: string }>();
 const { t } = useI18n();
-const sessionStore = useSessionStore();
+const sessionStore = useSessionStore(),
+    configStore = useConfigStore();
 const options = ref<TemplateOption[]>([]),
     binding = ref<TemplateOption | null>(null);
 const session = ref<ApiSession | null>(null),
@@ -53,14 +54,14 @@ watch(
                 const loaded = await request<ApiSession>(
                     "/sessions/" + encodeURIComponent(sessionId),
                 );
-                const [all, connections] = await Promise.all([
+                const [all] = await Promise.all([
                     listVisibleTemplates(loaded.workspaceId),
-                    listProviderConnections(),
+                    configStore.loadProviderConnections(),
                 ]);
                 if (generation !== currentGeneration || props.sessionId !== sessionId) return;
                 session.value = loaded;
                 loadedSessionId = sessionId;
-                const connection = connections.connections.find(
+                const connection = configStore.providerConnections.find(
                     (item) => item.id === loaded.providerConnectionId,
                 );
                 if (connection) loaded.connectionRevision = connection.revision;

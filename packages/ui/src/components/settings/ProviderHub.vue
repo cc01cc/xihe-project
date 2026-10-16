@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { logger } from "../../lib/logger";
 import { request } from "../../composables/api";
-import type { ProviderCatalog } from "../../types/provider";
+import type { ProviderCatalog, CatalogModel, ModelPricing } from "../../types/provider";
+import { parseLlmProfileValue } from "../../services/llmProviderProfile";
 import { Search } from "@lucide/vue";
 import {
     createProviderConnection,
     deleteProviderConnection,
     listProviderCatalog,
-    listProviderConnections,
     updateProviderConnection,
     verifyProviderConnection,
     getConnectionTypeImpact,
@@ -17,6 +18,7 @@ import {
     type ConnectionTypeImpact,
     type DeleteImpact,
 } from "../../services/providerConnectionService";
+import { useConfigStore } from "../../stores/config";
 import {
     listVisibleTemplates,
     readTemplateConfig,
@@ -42,9 +44,40 @@ const props = withDefaults(
     },
 );
 
-const providers = ref<ProviderDefinition[]>([]),
-    connections = ref<ProviderConnection[]>([]),
+const { t } = useI18n();
+
+// PLAN-0523 T3.5: single-source connection list lives in the config store.
+const configStore = useConfigStore(),
+    providers = ref<ProviderDefinition[]>([]),
+    connections = computed<ProviderConnection[]>(() => configStore.providerConnections),
     search = ref("");
+
+// PLAN-0523 T3.2: layer-scope default identity (profile) and per-model
+// sampling params, both read/written on the current scope layer's
+// llm-provider domain. The default connection is pinned to the top of the
+// list; a stored profile whose connection is no longer visible renders as an
+// amber "kept" entry (drift, spec/ui-surfaces.md S2).
+const currentLayer = computed<"user" | "workspace">(() =>
+        props.scope === "USER" ? "user" : "workspace",
+    ),
+    layerLlmEntries = computed<Record<string, string>>(
+        () => configStore.layerConfig[currentLayer.value]?.["llm-provider"] ?? {},
+    ),
+    storedProfile = computed(() => parseLlmProfileValue(layerLlmEntries.value.profile)),
+    defaultConnection = computed(() => {
+        const profile = storedProfile.value;
+        if (!profile) return null;
+        return (
+            connections.value.find(
+                (item) =>
+                    item.providerId === profile.providerId &&
+                    item.connectionKey === profile.connectionKey,
+            ) ?? null
+        );
+    }),
+    driftedProfile = computed(() =>
+        storedProfile.value && !defaultConnection.value ? storedProfile.value : null,
+    );
 const loading = ref(false),
     modalOpen = ref(false),
     formOpen = ref(false);
@@ -160,16 +193,181 @@ async function saveBinding(model: string | null, value: string) {
         else userTemplateEntries.value = entries;
     } catch (cause) {
         logger.warn("Template binding save failed", cause);
-        toast.error(cause instanceof Error ? cause.message : "模板绑定失败");
+        toast.error(
+            cause instanceof Error
+                ? cause.message
+                : t("settings.providerHub.toastTemplateBindingFailed"),
+        );
     } finally {
         bindingBusy.value = false;
     }
+}
+
+// PLAN-0523 T3.2: in-place default identity + per-model sampling params.
+const savingDefault = ref(false),
+    savingParams = ref(false),
+    expandedModel = ref<string | null>(null),
+    paramDrafts = reactive<
+        Record<
+            string,
+            { maxTokens: string | number; temperature: string | number; timeout: string | number }
+        >
+    >({});
+
+/** Chat models usable as the layer default model for a connection. */
+function chatModelsOf(connection: ProviderConnection): string[] {
+    const catalog = modelCatalogs.value[connection.id],
+        models = catalog?.connectionId === connection.id ? catalog.models : [],
+        chat = models.filter((model) => model.capabilities?.chat).map((model) => model.name);
+    if (chat.length) return chat;
+    return connection.operation === "chat" && connection.modelDiscovery === "manual"
+        ? connection.manualModels
+        : [];
+}
+
+/**
+ * 就地设定默认连接（列表项「设为默认」）。模型取 stored（若存在于该连接
+ * 目录）否则目录首个 chat 模型；无可用模型则拒绝写入（T3.2 实施语义）。
+ * modelOverride pins a specific model (默认模型置顶行)。
+ */
+async function setAsDefault(connection: ProviderConnection, modelOverride?: string) {
+    if (props.readonly || savingDefault.value) return;
+    const models = chatModelsOf(connection),
+        profile = storedProfile.value,
+        model =
+            modelOverride ??
+            (profile && models.includes(profile.model) ? profile.model : models[0]);
+    if (!model) {
+        toast.error(t("settings.providerHub.toastNoModel"));
+        return;
+    }
+    savingDefault.value = true;
+    try {
+        await configStore.putLayerConfig(
+            currentLayer.value,
+            "llm-provider",
+            {
+                ...layerLlmEntries.value,
+                profile: JSON.stringify({
+                    providerId: connection.providerId,
+                    connectionKey: connection.connectionKey,
+                    model,
+                }),
+            },
+            props.workspaceId,
+        );
+        await configStore.loadLayerDomains(currentLayer.value, props.workspaceId);
+        toast.success(
+            modelOverride
+                ? t("settings.providerHub.toastDefaultModelUpdated")
+                : t("settings.providerHub.toastDefaultConnectionUpdated"),
+        );
+    } catch (cause) {
+        logger.warn("Set default failed", cause);
+        toast.error(
+            cause instanceof Error
+                ? cause.message
+                : t("settings.providerHub.toastDefaultUpdateFailed"),
+        );
+    } finally {
+        savingDefault.value = false;
+    }
+}
+
+interface ModelSamplingParams {
+    maxTokens?: number;
+    temperature?: number;
+    timeout?: number;
+}
+/** 当前层 `modelParams` 整域 map（模型名 → 采样参数）。 */
+const storedModelParams = computed<Record<string, ModelSamplingParams>>(() => {
+    try {
+        const parsed: unknown = JSON.parse(layerLlmEntries.value.modelParams ?? "{}");
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+        return parsed as Record<string, ModelSamplingParams>;
+    } catch {
+        return {};
+    }
+});
+function toggleModel(model: string) {
+    if (expandedModel.value === model) {
+        expandedModel.value = null;
+        return;
+    }
+    expandedModel.value = model;
+    const stored = storedModelParams.value[model] ?? {};
+    paramDrafts[model] = {
+        maxTokens: stored.maxTokens?.toString() ?? "",
+        temperature: stored.temperature?.toString() ?? "",
+        timeout: stored.timeout?.toString() ?? "",
+    };
+}
+/** 每模型参数配置就地保存：整域 map 合并该模型项后写回当前层。 */
+async function saveModelParams(model: string) {
+    if (props.readonly || savingParams.value) return;
+    const draft = paramDrafts[model];
+    if (!draft) return;
+    const parse = (raw: string | number): number | undefined => {
+        const trimmed = String(raw).trim();
+        if (!trimmed) return undefined;
+        const value = Number(trimmed);
+        return Number.isFinite(value) ? value : undefined;
+    };
+    savingParams.value = true;
+    try {
+        await configStore.putLayerConfig(
+            currentLayer.value,
+            "llm-provider",
+            {
+                ...layerLlmEntries.value,
+                modelParams: JSON.stringify({
+                    ...storedModelParams.value,
+                    [model]: {
+                        maxTokens: parse(draft.maxTokens),
+                        temperature: parse(draft.temperature),
+                        timeout: parse(draft.timeout),
+                    },
+                }),
+            },
+            props.workspaceId,
+        );
+        await configStore.loadLayerDomains(currentLayer.value, props.workspaceId);
+        toast.success(t("settings.providerHub.toastParamsSaved"));
+    } catch (cause) {
+        logger.warn("Model params save failed", cause);
+        toast.error(
+            cause instanceof Error
+                ? cause.message
+                : t("settings.providerHub.toastParamsSaveFailed"),
+        );
+    } finally {
+        savingParams.value = false;
+    }
+}
+
+// T3.3 详情格式化（缺省「未知」）。
+function formatModalities(modalities?: string[]): string {
+    return modalities?.length ? modalities.join(" / ") : t("settings.providerHub.unknown");
+}
+function formatTokenCount(value?: number): string {
+    return value === undefined ? t("settings.providerHub.unknown") : value.toLocaleString();
+}
+function formatPricing(pricing?: ModelPricing): string {
+    if (!pricing) return t("settings.providerHub.unknown");
+    return t("settings.providerHub.pricingFormat", {
+        currency: pricing.currency,
+        input: pricing.input,
+        unit: pricing.unit,
+        output: pricing.output,
+    });
 }
 
 const connectionGroups = computed(() => {
     const query = search.value.trim().toLowerCase();
     const groups = new Map<string, ProviderConnection[]>();
     for (const connection of connections.value) {
+        // T3.2: the default connection renders pinned above the groups.
+        if (defaultConnection.value && connection.id === defaultConnection.value.id) continue;
         if (
             query &&
             !`${providerName(connection.providerId)} ${connection.connectionKey} ${connection.label} ${connection.scope}`
@@ -184,9 +382,14 @@ const connectionGroups = computed(() => {
     return Array.from(groups, ([providerId, items]) => ({ providerId, items }));
 });
 const activeConnection = computed(() => {
-    const visible = connectionGroups.value.flatMap((group) => group.items);
-    return visible.find((connection) => connection.id === selectedConnectionId.value) ?? visible[0];
+    const visible = connectionGroups.value.flatMap((group) => group.items),
+        pinned = defaultConnection.value,
+        pool = pinned ? [pinned, ...visible] : visible;
+    return pool.find((connection) => connection.id === selectedConnectionId.value) ?? pool[0];
 });
+const isDefaultConnectionActive = computed(
+    () => !!defaultConnection.value && activeConnection.value?.id === defaultConnection.value.id,
+);
 const activeModels = computed(() => {
     const connection = activeConnection.value;
     if (!connection) return [];
@@ -194,6 +397,38 @@ const activeModels = computed(() => {
     if (catalog?.connectionId === connection.id) return catalog.models.map((model) => model.name);
     return connection.modelDiscovery === "manual" ? connection.manualModels : [];
 });
+/**
+ * PLAN-0523 T3.2: on the default connection the profile model is pinned to
+ * the top of the model list; a stored model missing from the catalog is kept
+ * as a drifted row (amber), never auto-rewritten.
+ */
+const displayModels = computed(() => {
+    const models = [...activeModels.value];
+    if (!isDefaultConnectionActive.value) return models;
+    const pinnedModel = storedProfile.value?.model,
+        index = models.indexOf(pinnedModel ?? "");
+    if (pinnedModel && index > 0) {
+        models.splice(index, 1);
+        models.unshift(pinnedModel);
+    } else if (pinnedModel && index === -1) {
+        models.unshift(pinnedModel);
+    }
+    return models;
+});
+/** T3.3: per-model catalog metadata (absent = unknown → 未知). */
+const activeModelDetails = computed<Record<string, CatalogModel>>(() => {
+    const connection = activeConnection.value;
+    if (!connection) return {};
+    const catalog = modelCatalogs.value[connection.id];
+    if (catalog?.connectionId !== connection.id) return {};
+    return Object.fromEntries(catalog.models.map((model) => [model.name, model]));
+});
+function isDefaultModel(model: string): boolean {
+    return isDefaultConnectionActive.value && storedProfile.value?.model === model;
+}
+function isDriftedDefaultModel(model: string): boolean {
+    return isDefaultModel(model) && !!activeConnection.value && !activeModels.value.includes(model);
+}
 /**
  * PLAN-0503 T2.6 (I4): models with a stored template binding that are not in
  * the current catalog must stay visible (never rendered as an absent row);
@@ -212,11 +447,19 @@ const orphanModels = computed(() => {
  * clearing when the row actually has the control (chat connections).
  */
 const orphanNotice = computed(() => {
-    if (modelsError.value) return "目录加载失败 · 无法判定，绑定保留";
+    if (modelsError.value) return t("settings.providerHub.orphanNoticeError");
     return activeConnection.value?.operation === "chat"
-        ? "不在当前目录 · 绑定保留，可清除"
-        : "不在当前目录 · 绑定保留";
+        ? t("settings.providerHub.orphanNoticeChat")
+        : t("settings.providerHub.orphanNoticeOther");
 });
+
+/** T3.2: 离开连接时收起展开行，避免参数草稿串连接。 */
+watch(
+    () => activeConnection.value?.id,
+    () => {
+        expandedModel.value = null;
+    },
+);
 
 watch(
     () => [activeConnection.value?.id, props.workspaceId] as const,
@@ -238,7 +481,7 @@ watch(
             userTemplateEntries.value = user;
         } catch (cause) {
             logger.warn("Connection templates load failed", cause);
-            toast.error("请求模板加载失败");
+            toast.error(t("settings.providerHub.toastTemplatesLoadFailed"));
         }
     },
 );
@@ -277,9 +520,9 @@ function providerName(providerId: string): string {
 
 function adapterLabel(provider: ProviderDefinition): string {
     return {
-        "native-litellm": "原生适配",
-        "openai-compatible": "OpenAI 兼容",
-        "manual-model": "手动模型",
+        "native-litellm": t("settings.providerHub.adapterNative"),
+        "openai-compatible": t("settings.providerHub.adapterOpenAi"),
+        "manual-model": t("settings.providerHub.adapterManual"),
     }[provider.adapter];
 }
 
@@ -297,14 +540,18 @@ const selectableProviders = computed(() => {
 
 function pickerGroupLabel(provider: ProviderDefinition): string {
     // PLAN-0364 M4：按协议族（catalog adapter）一级分组，未来可加组（如 Anthropic）。
-    if (provider.adapter === "openai-compatible") return "OpenAI 兼容";
-    if (provider.adapter === "native-litellm") return "原生协议";
-    return "本地与自定义";
+    if (provider.adapter === "openai-compatible") return t("settings.providerHub.groupOpenAi");
+    if (provider.adapter === "native-litellm") return t("settings.providerHub.groupNative");
+    return t("settings.providerHub.groupLocal");
 }
 
 const pickerGroups = computed(() => {
     const groups: Array<{ label: string; items: ProviderDefinition[] }> = [],
-        labels = ["原生协议", "OpenAI 兼容", "本地与自定义"];
+        labels = [
+            t("settings.providerHub.groupNative"),
+            t("settings.providerHub.groupOpenAi"),
+            t("settings.providerHub.groupLocal"),
+        ];
     for (const label of labels) {
         const items = selectableProviders.value.filter(
             (provider) => pickerGroupLabel(provider) === label,
@@ -316,12 +563,12 @@ const pickerGroups = computed(() => {
 
 function statusLabel(status: ProviderConnection["status"]): string {
     return {
-        READY: "已连接",
-        VERIFYING: "验证中",
-        INVALID_CREDENTIALS: "密钥无效",
-        UNREACHABLE: "无法连接",
-        DISABLED: "已停用",
-        UNVERIFIED: "待验证",
+        READY: t("settings.providerHub.statusReady"),
+        VERIFYING: t("settings.providerHub.statusVerifying"),
+        INVALID_CREDENTIALS: t("settings.providerHub.statusInvalidCredentials"),
+        UNREACHABLE: t("settings.providerHub.statusUnreachable"),
+        DISABLED: t("settings.providerHub.statusDisabled"),
+        UNVERIFIED: t("settings.providerHub.statusUnverified"),
     }[status];
 }
 
@@ -334,21 +581,25 @@ function statusClass(status: ProviderConnection["status"]): string {
 }
 
 function formatVerifiedAt(value?: string | null): string {
-    if (!value) return "未验证";
+    if (!value) return t("settings.providerHub.neverVerified");
     const time = new Date(value);
-    if (Number.isNaN(time.getTime())) return "未验证";
+    if (Number.isNaN(time.getTime())) return t("settings.providerHub.neverVerified");
     const diff = Date.now() - time.getTime();
-    if (diff < 60_000) return "刚刚验证";
-    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前验证`;
-    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前验证`;
-    return `${Math.floor(diff / 86_400_000)} 天前验证`;
+    if (diff < 60_000) return t("settings.providerHub.justVerified");
+    if (diff < 3_600_000)
+        return t("settings.providerHub.minutesAgo", { count: Math.floor(diff / 60_000) });
+    if (diff < 86_400_000)
+        return t("settings.providerHub.hoursAgo", { count: Math.floor(diff / 3_600_000) });
+    return t("settings.providerHub.daysAgo", { count: Math.floor(diff / 86_400_000) });
 }
 
 function resetForm(provider: ProviderDefinition, connection?: ProviderConnection) {
     selectedProvider.value = provider;
     editingConnection.value = connection ?? null;
     formScope.value = connection?.scope === "WORKSPACE" ? "WORKSPACE" : props.scope;
-    form.label = connection?.label ?? `${provider.displayName} 连接`;
+    form.label =
+        connection?.label ??
+        t("settings.providerHub.connectionNameFallback", { name: provider.displayName });
     form.apiKey = "";
     form.apiType =
         (connection?.apiTypeId ?? provider.defaultApiType.apiTypeId) +
@@ -396,7 +647,9 @@ async function previewTypeChange() {
         templateOptions.value = options;
     } catch (cause) {
         logger.warn("Connection Type impact failed", cause);
-        toast.error(cause instanceof Error ? cause.message : "影响预览失败");
+        toast.error(
+            cause instanceof Error ? cause.message : t("settings.providerHub.toastImpactFailed"),
+        );
     }
 }
 
@@ -432,14 +685,18 @@ function closeForm() {
 async function load() {
     loading.value = true;
     try {
-        const [catalog, connected] = await Promise.all([
-            listProviderCatalog(),
-            listProviderConnections(),
-        ]);
+        const catalog = await listProviderCatalog();
         // Defensive: a malformed/partial response must not leave undefined state
         // (template and computed read `.length`/`.map`).
         providers.value = catalog.providers ?? [];
-        connections.value = connected.connections ?? [];
+        await configStore.loadProviderConnections();
+        // T3.2: profile / modelParams live on the current layer's llm-provider domain.
+        // Non-fatal: a config-backend hiccup must not block connection/model loading.
+        try {
+            await configStore.loadLayerDomains(currentLayer.value, props.workspaceId);
+        } catch (cause) {
+            logger.warn("Layer config load failed", cause);
+        }
         try {
             const typeList = await request<{
                 types: import("../../types/providerConnection").ApiInputType[];
@@ -455,7 +712,9 @@ async function load() {
         await loadModels();
     } catch (cause: unknown) {
         logger.warn("Provider Hub load failed", cause);
-        toast.error(cause instanceof Error ? cause.message : "Provider 配置加载失败");
+        toast.error(
+            cause instanceof Error ? cause.message : t("settings.providerHub.toastLoadFailed"),
+        );
     } finally {
         loading.value = false;
     }
@@ -479,16 +738,16 @@ async function save() {
             !confirmedTypeChange.value ||
             (formOperation.value === "chat" && !defaultTemplate))
     ) {
-        toast.error("请先预览影响、选择兼容默认模板并确认协议变更");
+        toast.error(t("settings.providerHub.toastTypePreviewRequired"));
         return;
     }
     if (provider.credential.required && !editingConnection.value && !form.apiKey.trim()) {
-        toast.error("请输入 API key");
+        toast.error(t("settings.providerHub.toastApiKeyRequired"));
         return;
     }
     const connectionKey = form.connectionKey.trim();
     if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(connectionKey) || connectionKey.length > 64) {
-        toast.error("连接标识只能包含小写字母、数字和连字符");
+        toast.error(t("settings.providerHub.toastKeyInvalid"));
         return;
     }
 
@@ -526,14 +785,23 @@ async function save() {
         selectedConnectionId.value = connection.id;
         form.apiKey = "";
         const verification = await verifyProviderConnection(connection.id);
+        configStore.invalidateProviderConnections();
         await load();
-        if (verification.connection.status === "READY") toast.success("Provider 已连接并验证");
-        else toast.warning(`Provider ${statusLabel(verification.connection.status)}`);
+        if (verification.connection.status === "READY")
+            toast.success(t("settings.providerHub.toastConnectedVerified"));
+        else
+            toast.warning(
+                t("settings.providerHub.toastStatus", {
+                    status: statusLabel(verification.connection.status),
+                }),
+            );
         saving.value = false;
         closeForm();
     } catch (cause: unknown) {
         logger.warn("Provider Hub save failed", cause);
-        toast.error(cause instanceof Error ? cause.message : "Provider 保存失败");
+        toast.error(
+            cause instanceof Error ? cause.message : t("settings.providerHub.toastSaveFailed"),
+        );
     } finally {
         saving.value = false;
     }
@@ -543,12 +811,21 @@ async function verify(connection: ProviderConnection) {
     verifyingId.value = connection.id;
     try {
         const result = await verifyProviderConnection(connection.id);
+        configStore.invalidateProviderConnections();
         await load();
-        if (result.connection.status === "READY") toast.success("Provider 验证成功");
-        else toast.error(`Provider ${statusLabel(result.connection.status)}`);
+        if (result.connection.status === "READY")
+            toast.success(t("settings.providerHub.toastVerifyOk"));
+        else
+            toast.error(
+                t("settings.providerHub.toastStatus", {
+                    status: statusLabel(result.connection.status),
+                }),
+            );
     } catch (cause: unknown) {
         logger.warn("Provider Hub verification failed", cause);
-        toast.error(cause instanceof Error ? cause.message : "Provider 验证失败");
+        toast.error(
+            cause instanceof Error ? cause.message : t("settings.providerHub.toastVerifyFailed"),
+        );
     } finally {
         verifyingId.value = null;
     }
@@ -564,10 +841,16 @@ const deleteTarget = ref<ProviderConnection | null>(null),
 function impactSummary(impact: DeleteImpact): string[] {
     const parts: string[] = [];
     if (impact.bindingCount > 0) {
-        parts.push(`模型绑定 ${impact.bindingCount} 项（${impact.bindingUserScopes} 个用户）`);
+        parts.push(
+            t("settings.providerHub.impactModelBindings", {
+                count: impact.bindingCount,
+                scopes: impact.bindingUserScopes,
+            }),
+        );
     }
-    if (impact.defaultTemplateRef) parts.push("连接默认模板指向 1 项");
-    if (impact.profileCount > 0) parts.push(`默认身份 profile ${impact.profileCount} 项`);
+    if (impact.defaultTemplateRef) parts.push(t("settings.providerHub.impactDefaultTemplate"));
+    if (impact.profileCount > 0)
+        parts.push(t("settings.providerHub.impactProfiles", { count: impact.profileCount }));
     return parts;
 }
 
@@ -580,7 +863,10 @@ async function remove(connection: ProviderConnection) {
         deleteImpact.value = await getDeleteImpact(connection.id);
     } catch (cause: unknown) {
         logger.warn("Provider Hub delete impact failed", cause);
-        deleteError.value = cause instanceof Error ? cause.message : "删除预览加载失败";
+        deleteError.value =
+            cause instanceof Error
+                ? cause.message
+                : t("settings.providerHub.toastDeletePreviewFailed");
     } finally {
         deleteImpactLoading.value = false;
     }
@@ -606,12 +892,14 @@ async function confirmDelete() {
     deleteError.value = "";
     try {
         await deleteProviderConnection(target.id);
+        configStore.invalidateProviderConnections();
         await load();
-        toast.success("Provider 已删除");
+        toast.success(t("settings.providerHub.toastDeleted"));
         closeDeleteDialog();
     } catch (cause: unknown) {
         logger.warn("Provider Hub delete failed", cause);
-        deleteError.value = cause instanceof Error ? cause.message : "Provider 删除失败";
+        deleteError.value =
+            cause instanceof Error ? cause.message : t("settings.providerHub.toastDeleteFailed");
     } finally {
         deleting.value = false;
     }
@@ -625,15 +913,17 @@ onMounted(() => {
 <template>
     <section data-testid="provider-hub" class="space-y-6 rounded-xl border bg-card p-5 sm:p-7">
         <header>
-            <div class="text-xs font-semibold uppercase tracking-widest text-primary">连接层</div>
-            <h3 class="mt-1 text-xl font-semibold tracking-tight sm:text-2xl">Provider 连接</h3>
-            <p class="mt-1.5 text-sm text-muted-foreground">
-                连接模型服务。密钥由 Control Plane 加密保存，不写入浏览器存储。
-            </p>
+            <div class="text-xs font-semibold uppercase tracking-widest text-primary">
+                {{ t("settings.providerHub.kicker") }}
+            </div>
+            <h3 class="mt-1 text-xl font-semibold tracking-tight sm:text-2xl">
+                {{ t("settings.providerHub.title") }}
+            </h3>
+            <p class="mt-1.5 text-sm text-muted-foreground">{{ t("settings.providerHub.desc") }}</p>
         </header>
 
         <div v-if="loading" class="py-10 text-center text-sm text-muted-foreground">
-            加载 Provider Catalog...
+            {{ t("settings.providerHub.loading") }}
         </div>
 
         <template v-else>
@@ -646,7 +936,7 @@ onMounted(() => {
                         v-model="search"
                         data-testid="provider-connection-search"
                         class="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-                        placeholder="搜索已连接的 Provider"
+                        :placeholder="t('settings.providerHub.searchPlaceholder')"
                     />
                 </label>
                 <button
@@ -656,7 +946,7 @@ onMounted(() => {
                     :disabled="providers.length === 0"
                     @click="openPicker"
                 >
-                    ＋ 连接 Provider
+                    {{ t("settings.providerHub.connect") }}
                 </button>
             </div>
 
@@ -664,26 +954,129 @@ onMounted(() => {
                 data-testid="provider-master-detail"
                 class="grid min-w-0 gap-4 lg:grid-cols-[minmax(240px,0.31fr)_minmax(0,0.69fr)]"
             >
-                <nav aria-label="Provider 连接导航" class="min-w-0">
+                <nav :aria-label="t('settings.providerHub.navLabel')" class="min-w-0">
                     <div class="mb-2.5 flex items-center justify-between">
-                        <h4 class="text-sm font-semibold">已连接</h4>
-                        <span class="text-xs text-muted-foreground"
-                            >{{ connections.length }} 个连接</span
-                        >
+                        <h4 class="text-sm font-semibold">
+                            {{ t("settings.providerHub.connected") }}
+                        </h4>
+                        <span class="text-xs text-muted-foreground">{{
+                            t("settings.providerHub.connectionCount", { count: connections.length })
+                        }}</span>
                     </div>
                     <div
                         v-if="connections.length === 0"
                         class="rounded-lg border border-dashed px-4 py-7 text-center text-sm text-muted-foreground"
                     >
-                        尚未连接 Provider，点击右上角「连接 Provider」开始。
+                        {{ t("settings.providerHub.empty") }}
                     </div>
                     <div v-else class="space-y-4">
                         <p
-                            v-if="connectionGroups.length === 0"
+                            v-if="connectionGroups.length === 0 && !defaultConnection"
                             class="text-sm text-muted-foreground"
                         >
-                            没有匹配的连接
+                            {{ t("settings.providerHub.noMatch") }}
                         </p>
+                        <!-- PLAN-0523 T3.2 漂移：存储的默认连接已不可见 → 顶部保留琥珀色失效条目 -->
+                        <article
+                            v-if="driftedProfile"
+                            data-testid="provider-default-drift"
+                            class="min-w-0 rounded-lg border border-amber-300 bg-amber-50 p-3"
+                        >
+                            <div class="flex flex-wrap items-center gap-2">
+                                <span class="break-all font-mono text-sm font-semibold">{{
+                                    driftedProfile.connectionKey
+                                }}</span>
+                                <span
+                                    class="rounded bg-amber-200 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900"
+                                    >{{ t("settings.providerHub.badgeDefault") }}</span
+                                >
+                                <span
+                                    class="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700"
+                                >
+                                    <span class="size-1.5 rounded-full bg-current" />{{
+                                        t("settings.providerHub.driftBadge")
+                                    }}
+                                </span>
+                            </div>
+                            <p class="mt-1 text-xs text-amber-700">
+                                {{ t("settings.providerHub.driftDesc") }}
+                            </p>
+                        </article>
+                        <!-- PLAN-0523 T3.2 默认连接置顶（徽标） -->
+                        <article
+                            v-if="defaultConnection"
+                            data-testid="provider-default-connection"
+                            class="min-w-0 rounded-lg border bg-background p-3"
+                            :class="{
+                                'border-primary': activeConnection?.id === defaultConnection.id,
+                            }"
+                            :data-connection-key="defaultConnection.connectionKey"
+                        >
+                            <button
+                                type="button"
+                                class="block w-full min-w-0 rounded text-left outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                                :aria-pressed="activeConnection?.id === defaultConnection.id"
+                                @click="selectedConnectionId = defaultConnection.id"
+                            >
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <span class="break-all font-mono text-sm font-semibold">{{
+                                        defaultConnection.connectionKey
+                                    }}</span>
+                                    <span
+                                        class="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
+                                        >{{ t("settings.providerHub.badgeDefault") }}</span
+                                    >
+                                    <span class="text-xs text-muted-foreground">{{
+                                        defaultConnection.scope === "WORKSPACE"
+                                            ? t("settings.providerHub.scopeWorkspace")
+                                            : t("settings.providerHub.scopeUser")
+                                    }}</span>
+                                    <span
+                                        class="inline-flex items-center gap-1.5 text-xs font-semibold"
+                                        :class="statusClass(defaultConnection.status)"
+                                    >
+                                        <span class="size-1.5 rounded-full bg-current" />{{
+                                            statusLabel(defaultConnection.status)
+                                        }}
+                                    </span>
+                                </div>
+                                <div
+                                    class="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground"
+                                >
+                                    <span class="break-all">{{ defaultConnection.label }}</span>
+                                </div>
+                            </button>
+                            <div class="mt-3 flex flex-wrap gap-1.5">
+                                <button
+                                    class="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
+                                    :disabled="
+                                        verifyingId === defaultConnection.id || props.readonly
+                                    "
+                                    @click="verify(defaultConnection)"
+                                >
+                                    {{
+                                        verifyingId === defaultConnection.id
+                                            ? t("settings.providerHub.verifying")
+                                            : t("settings.providerHub.verify")
+                                    }}
+                                </button>
+                                <button
+                                    class="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
+                                    :disabled="props.readonly"
+                                    @click="openManage(defaultConnection)"
+                                >
+                                    {{ t("settings.providerHub.manage") }}
+                                </button>
+                                <button
+                                    class="rounded-md border px-2.5 py-1.5 text-xs text-destructive transition-colors hover:border-destructive disabled:opacity-50"
+                                    :disabled="props.readonly"
+                                    :data-testid="`provider-connection-delete-${defaultConnection.id}`"
+                                    @click="remove(defaultConnection)"
+                                >
+                                    {{ t("settings.providerHub.delete") }}
+                                </button>
+                            </div>
+                        </article>
                         <section
                             v-for="group in connectionGroups"
                             :key="group.providerId"
@@ -713,7 +1106,9 @@ onMounted(() => {
                                             connection.connectionKey
                                         }}</span>
                                         <span class="text-xs text-muted-foreground">{{
-                                            connection.scope === "WORKSPACE" ? "Workspace" : "User"
+                                            connection.scope === "WORKSPACE"
+                                                ? t("settings.providerHub.scopeWorkspace")
+                                                : t("settings.providerHub.scopeUser")
                                         }}</span>
                                         <span
                                             class="inline-flex items-center gap-1.5 text-xs font-semibold"
@@ -736,14 +1131,31 @@ onMounted(() => {
                                         :disabled="verifyingId === connection.id || props.readonly"
                                         @click="verify(connection)"
                                     >
-                                        {{ verifyingId === connection.id ? "验证中" : "验证" }}
+                                        {{
+                                            verifyingId === connection.id
+                                                ? t("settings.providerHub.verifying")
+                                                : t("settings.providerHub.verify")
+                                        }}
                                     </button>
                                     <button
                                         class="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
                                         :disabled="props.readonly"
                                         @click="openManage(connection)"
                                     >
-                                        管理
+                                        {{ t("settings.providerHub.manage") }}
+                                    </button>
+                                    <!-- PLAN-0523 T3.2 就地设定默认连接 -->
+                                    <button
+                                        class="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
+                                        :disabled="
+                                            props.readonly ||
+                                            savingDefault ||
+                                            chatModelsOf(connection).length === 0
+                                        "
+                                        :data-testid="`provider-connection-default-${connection.id}`"
+                                        @click="setAsDefault(connection)"
+                                    >
+                                        {{ t("settings.providerHub.setAsDefault") }}
                                     </button>
                                     <button
                                         class="rounded-md border px-2.5 py-1.5 text-xs text-destructive transition-colors hover:border-destructive disabled:opacity-50"
@@ -751,7 +1163,7 @@ onMounted(() => {
                                         :data-testid="`provider-connection-delete-${connection.id}`"
                                         @click="remove(connection)"
                                     >
-                                        删除
+                                        {{ t("settings.providerHub.delete") }}
                                     </button>
                                 </div>
                             </article>
@@ -771,13 +1183,20 @@ onMounted(() => {
                             {{ activeConnection.connectionKey }}
                         </h4>
                         <p class="mt-1 text-xs text-muted-foreground">
-                            {{ activeConnection.scope === "WORKSPACE" ? "Workspace" : "User" }} ·
+                            {{
+                                activeConnection.scope === "WORKSPACE"
+                                    ? t("settings.providerHub.scopeWorkspace")
+                                    : t("settings.providerHub.scopeUser")
+                            }}
+                            ·
                             {{ activeConnection.label }}
                         </p>
                     </header>
                     <dl class="space-y-3 text-sm">
                         <div>
-                            <dt class="text-xs text-muted-foreground">API Type · 只读</dt>
+                            <dt class="text-xs text-muted-foreground">
+                                {{ t("settings.providerHub.apiTypeReadonly") }}
+                            </dt>
                             <dd data-testid="provider-connection-readonly-type" class="break-all">
                                 {{ activeConnection.apiTypeId }}@{{
                                     activeConnection.apiTypeVersion
@@ -786,22 +1205,29 @@ onMounted(() => {
                             </dd>
                         </div>
                         <div>
-                            <dt class="text-xs text-muted-foreground">Endpoint</dt>
+                            <dt class="text-xs text-muted-foreground">
+                                {{ t("settings.providerHub.endpoint") }}
+                            </dt>
                             <dd class="break-all">
-                                {{ activeConnection.baseUrl || "Provider 默认地址" }}
+                                {{
+                                    activeConnection.baseUrl ||
+                                    t("settings.providerHub.defaultEndpoint")
+                                }}
                             </dd>
                         </div>
                         <div>
-                            <dt class="text-xs text-muted-foreground">Credential</dt>
+                            <dt class="text-xs text-muted-foreground">
+                                {{ t("settings.providerHub.credential") }}
+                            </dt>
                             <dd>
                                 {{
                                     providers.find(
                                         (provider) => provider.id === activeConnection?.providerId,
                                     )?.credential.required === false
-                                        ? "Not required"
+                                        ? t("settings.providerHub.credentialNotRequired")
                                         : activeConnection.hasKey
-                                          ? "Configured · hidden"
-                                          : "未配置"
+                                          ? t("settings.providerHub.credentialConfigured")
+                                          : t("settings.providerHub.credentialMissing")
                                 }}
                             </dd>
                             <button
@@ -815,11 +1241,17 @@ onMounted(() => {
                                 class="mt-1 rounded-md border px-2.5 py-1.5 text-xs hover:border-primary"
                                 @click="openManage(activeConnection)"
                             >
-                                {{ activeConnection.hasKey ? "替换 API key" : "添加 API key" }}
+                                {{
+                                    activeConnection.hasKey
+                                        ? t("settings.providerHub.replaceKey")
+                                        : t("settings.providerHub.addKey")
+                                }}
                             </button>
                         </div>
                         <div>
-                            <dt class="text-xs text-muted-foreground">连接状态</dt>
+                            <dt class="text-xs text-muted-foreground">
+                                {{ t("settings.providerHub.statusLabel") }}
+                            </dt>
                             <dd :class="statusClass(activeConnection.status)">
                                 {{ statusLabel(activeConnection.status) }} ·
                                 {{ formatVerifiedAt(activeConnection.lastVerifiedAt) }}
@@ -828,23 +1260,29 @@ onMounted(() => {
                                 v-if="activeConnection.lastErrorCode"
                                 class="mt-1 break-all text-xs text-destructive"
                             >
-                                验证错误：{{ activeConnection.lastErrorCode }}
+                                {{
+                                    t("settings.providerHub.verifyError", {
+                                        code: activeConnection.lastErrorCode,
+                                    })
+                                }}
                             </dd>
                         </div>
                     </dl>
                     <section v-if="activeConnection.operation === 'chat'" class="border-t pt-4">
                         <label class="block text-xs"
-                            >连接默认请求模板
+                            >{{ t("settings.providerHub.connDefaultTemplate") }}
                             <select
                                 :value="currentDefaultKey()"
-                                :disabled="readonly || bindingBusy"
+                                :disabled="props.readonly || bindingBusy"
                                 class="mt-1 w-full rounded border bg-background p-2"
-                                aria-label="连接默认请求模板"
+                                :aria-label="t('settings.providerHub.connDefaultTemplate')"
                                 @change="
                                     saveBinding(null, ($event.target as HTMLSelectElement).value)
                                 "
                             >
-                                <option value="">API Type 内置默认模板</option>
+                                <option value="">
+                                    {{ t("settings.providerHub.builtinTemplate") }}
+                                </option>
                                 <option
                                     v-for="item in activeTemplates"
                                     :key="templateKey(item)"
@@ -856,55 +1294,254 @@ onMounted(() => {
                         </label>
                     </section>
                     <section data-testid="provider-connection-models" class="border-t pt-4">
-                        <h5 class="text-sm font-semibold">Models</h5>
+                        <!-- PLAN-0523 批注 v5-①: 模型区标题即「模型」，请求模板与参数配置地位相同（两个平级块）。 -->
+                        <h5 class="text-sm font-semibold">
+                            {{ t("settings.providerHub.models") }}
+                        </h5>
                         <p class="mt-1 text-xs text-muted-foreground">
-                            模型发现：{{ activeConnection.modelDiscovery }}
+                            {{
+                                t("settings.providerHub.modelDiscovery", {
+                                    mode: activeConnection.modelDiscovery,
+                                })
+                            }}
                         </p>
                         <p v-if="modelsError" class="mt-2 text-xs text-destructive">
-                            模型目录加载失败；下列手动配置不代表验证通过。
+                            {{ t("settings.providerHub.modelsError") }}
                         </p>
-                        <ul v-if="activeModels.length" class="mt-2 divide-y">
+                        <ul v-if="displayModels.length" class="mt-2 divide-y">
                             <li
-                                v-for="model in activeModels"
+                                v-for="model in displayModels"
                                 :key="model"
-                                class="flex flex-wrap justify-between gap-2 py-2 text-xs"
+                                class="py-2 text-xs"
+                                :data-testid="`provider-model-${model}`"
                             >
-                                <span class="break-all">{{ model }}</span>
-                                <select
-                                    v-if="activeConnection.operation === 'chat'"
-                                    :value="currentModelKey(model)"
-                                    :disabled="readonly || bindingBusy"
-                                    class="max-w-full rounded border bg-background p-1"
-                                    :aria-label="model + ' 请求模板'"
-                                    @change="
-                                        saveBinding(
-                                            model,
-                                            ($event.target as HTMLSelectElement).value,
-                                        )
-                                    "
-                                >
-                                    <option value="">继承连接默认模板</option>
-                                    <option
-                                        v-for="item in activeTemplates"
-                                        :key="templateKey(item)"
-                                        :value="templateKey(item)"
+                                <div class="flex flex-wrap items-center justify-between gap-2">
+                                    <button
+                                        type="button"
+                                        class="flex min-w-0 items-center gap-2 rounded text-left outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                                        :aria-expanded="expandedModel === model"
+                                        @click="toggleModel(model)"
                                     >
-                                        {{ item.name }} v{{ item.version }}
-                                    </option>
-                                </select>
-                                <span class="break-all text-muted-foreground"
-                                    >{{ activeConnection.apiTypeId }}@{{
-                                        activeConnection.apiTypeVersion
-                                    }}
-                                    · 继承连接</span
+                                        <span aria-hidden="true" class="text-muted-foreground">{{
+                                            expandedModel === model ? "▾" : "▸"
+                                        }}</span>
+                                        <span class="break-all font-medium">{{ model }}</span>
+                                        <span
+                                            v-if="isDefaultModel(model)"
+                                            class="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
+                                            >{{ t("settings.providerHub.badgeDefault") }}</span
+                                        >
+                                        <span
+                                            v-if="isDriftedDefaultModel(model)"
+                                            class="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700"
+                                            >{{ t("settings.providerHub.driftBadge") }}</span
+                                        >
+                                    </button>
+                                    <!-- 默认连接的其余模型：就地设定为层默认模型 -->
+                                    <button
+                                        v-if="
+                                            isDefaultConnectionActive &&
+                                            !isDefaultModel(model) &&
+                                            activeConnection
+                                        "
+                                        class="rounded-md border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
+                                        :disabled="props.readonly || savingDefault"
+                                        :data-testid="`provider-model-default-${model}`"
+                                        @click="setAsDefault(activeConnection, model)"
+                                    >
+                                        {{ t("settings.providerHub.setAsDefault") }}
+                                    </button>
+                                </div>
+                                <!-- 展开区：模型详情（T3.3）+ 请求模板 / 参数配置两个平级块（T3.2 批注⑤） -->
+                                <div
+                                    v-if="expandedModel === model"
+                                    class="mt-2 space-y-3 rounded-md border bg-muted/20 p-3"
                                 >
+                                    <dl
+                                        class="grid grid-cols-2 gap-x-4 gap-y-1.5 sm:grid-cols-3"
+                                        :data-testid="`provider-model-detail-${model}`"
+                                    >
+                                        <div>
+                                            <dt class="text-muted-foreground">
+                                                {{ t("settings.providerHub.detailInput") }}
+                                            </dt>
+                                            <dd>
+                                                {{
+                                                    formatModalities(
+                                                        activeModelDetails[model]?.inputModalities,
+                                                    )
+                                                }}
+                                            </dd>
+                                        </div>
+                                        <div>
+                                            <dt class="text-muted-foreground">
+                                                {{ t("settings.providerHub.detailOutput") }}
+                                            </dt>
+                                            <dd>
+                                                {{
+                                                    formatModalities(
+                                                        activeModelDetails[model]?.outputModalities,
+                                                    )
+                                                }}
+                                            </dd>
+                                        </div>
+                                        <div>
+                                            <dt class="text-muted-foreground">
+                                                {{ t("settings.providerHub.detailContext") }}
+                                            </dt>
+                                            <dd>
+                                                {{
+                                                    formatTokenCount(
+                                                        activeModelDetails[model]
+                                                            ?.contextWindowTokens,
+                                                    )
+                                                }}
+                                            </dd>
+                                        </div>
+                                        <div>
+                                            <dt class="text-muted-foreground">
+                                                {{ t("settings.providerHub.detailMaxOutput") }}
+                                            </dt>
+                                            <dd>
+                                                {{
+                                                    formatTokenCount(
+                                                        activeModelDetails[model]?.maxOutputTokens,
+                                                    )
+                                                }}
+                                            </dd>
+                                        </div>
+                                        <div class="col-span-2">
+                                            <dt class="text-muted-foreground">
+                                                {{ t("settings.providerHub.detailPricing") }}
+                                            </dt>
+                                            <dd>
+                                                {{
+                                                    formatPricing(
+                                                        activeModelDetails[model]?.pricing,
+                                                    )
+                                                }}
+                                            </dd>
+                                        </div>
+                                    </dl>
+                                    <div v-if="activeConnection?.operation === 'chat'">
+                                        <h6
+                                            class="mb-1 text-xs font-semibold text-muted-foreground"
+                                        >
+                                            {{ t("settings.providerHub.requestTemplate") }}
+                                        </h6>
+                                        <select
+                                            :value="currentModelKey(model)"
+                                            :disabled="props.readonly || bindingBusy"
+                                            class="w-full max-w-full rounded border bg-background p-1.5"
+                                            :aria-label="
+                                                t('settings.providerHub.modelTemplateAria', {
+                                                    model,
+                                                })
+                                            "
+                                            @change="
+                                                saveBinding(
+                                                    model,
+                                                    ($event.target as HTMLSelectElement).value,
+                                                )
+                                            "
+                                        >
+                                            <option value="">
+                                                {{ t("settings.providerHub.inheritTemplate") }}
+                                            </option>
+                                            <option
+                                                v-for="item in activeTemplates"
+                                                :key="templateKey(item)"
+                                                :value="templateKey(item)"
+                                            >
+                                                {{ item.name }} v{{ item.version }}
+                                            </option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <h6
+                                            class="mb-1 text-xs font-semibold text-muted-foreground"
+                                        >
+                                            {{ t("settings.providerHub.params") }}
+                                        </h6>
+                                        <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                                            <label class="block">
+                                                <span class="text-muted-foreground">{{
+                                                    t("settings.providerHub.maxTokens")
+                                                }}</span>
+                                                <input
+                                                    v-model="paramDrafts[model].maxTokens"
+                                                    type="number"
+                                                    min="0"
+                                                    class="mt-0.5 w-full rounded border bg-background p-1.5"
+                                                    :disabled="props.readonly"
+                                                    :aria-label="
+                                                        t('settings.providerHub.maxTokensAria', {
+                                                            model,
+                                                        })
+                                                    "
+                                                />
+                                            </label>
+                                            <label class="block">
+                                                <span class="text-muted-foreground">{{
+                                                    t("settings.providerHub.temperature")
+                                                }}</span>
+                                                <input
+                                                    v-model="paramDrafts[model].temperature"
+                                                    type="number"
+                                                    step="0.1"
+                                                    class="mt-0.5 w-full rounded border bg-background p-1.5"
+                                                    :disabled="props.readonly"
+                                                    :aria-label="
+                                                        t('settings.providerHub.temperatureAria', {
+                                                            model,
+                                                        })
+                                                    "
+                                                />
+                                            </label>
+                                            <label class="block">
+                                                <span class="text-muted-foreground">{{
+                                                    t("settings.providerHub.timeout")
+                                                }}</span>
+                                                <input
+                                                    v-model="paramDrafts[model].timeout"
+                                                    type="number"
+                                                    min="0"
+                                                    class="mt-0.5 w-full rounded border bg-background p-1.5"
+                                                    :disabled="props.readonly"
+                                                    :aria-label="
+                                                        t('settings.providerHub.timeoutAria', {
+                                                            model,
+                                                        })
+                                                    "
+                                                />
+                                            </label>
+                                        </div>
+                                        <div class="mt-2 flex items-center gap-2">
+                                            <button
+                                                class="rounded-md border px-2.5 py-1.5 text-xs transition-colors hover:border-primary disabled:opacity-50"
+                                                :disabled="props.readonly || savingParams"
+                                                :data-testid="`provider-model-params-save-${model}`"
+                                                @click="saveModelParams(model)"
+                                            >
+                                                {{
+                                                    savingParams
+                                                        ? t("settings.providerHub.savingParams")
+                                                        : t("settings.providerHub.saveParams")
+                                                }}
+                                            </button>
+                                            <span class="text-[11px] text-muted-foreground">
+                                                {{ t("settings.providerHub.paramsHint") }}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
                             </li>
                         </ul>
                         <p
                             v-else-if="!orphanModels.length"
                             class="mt-2 text-sm text-muted-foreground"
                         >
-                            此连接暂无可显示的模型。请验证连接或管理手动模型。
+                            {{ t("settings.providerHub.noModels") }}
                         </p>
                         <section
                             v-if="orphanModels.length"
@@ -914,8 +1551,8 @@ onMounted(() => {
                             <h6 class="text-xs font-semibold text-amber-600">
                                 {{
                                     modelsError
-                                        ? "已绑定（目录不可达，无法判定）"
-                                        : "已绑定但当前不可用"
+                                        ? t("settings.providerHub.orphanTitleError")
+                                        : t("settings.providerHub.orphanTitle")
                                 }}
                             </h6>
                             <ul class="mt-1 divide-y">
@@ -929,9 +1566,11 @@ onMounted(() => {
                                     <select
                                         v-if="activeConnection.operation === 'chat'"
                                         :value="currentModelKey(model)"
-                                        :disabled="readonly || bindingBusy"
+                                        :disabled="props.readonly || bindingBusy"
                                         class="max-w-full rounded border bg-background p-1"
-                                        :aria-label="model + ' 请求模板'"
+                                        :aria-label="
+                                            t('settings.providerHub.modelTemplateAria', { model })
+                                        "
                                         @change="
                                             saveBinding(
                                                 model,
@@ -939,7 +1578,9 @@ onMounted(() => {
                                             )
                                         "
                                     >
-                                        <option value="">继承连接默认模板</option>
+                                        <option value="">
+                                            {{ t("settings.providerHub.inheritTemplate") }}
+                                        </option>
                                         <option
                                             v-for="item in activeTemplates"
                                             :key="templateKey(item)"
@@ -957,7 +1598,7 @@ onMounted(() => {
                     </section>
                 </section>
                 <p v-else class="py-7 text-sm text-muted-foreground">
-                    选择或创建连接以查看详情与 Models。
+                    {{ t("settings.providerHub.selectConnection") }}
                 </p>
             </section>
 
@@ -969,10 +1610,11 @@ onMounted(() => {
                     >i</span
                 >
                 <div>
-                    <strong class="font-semibold text-foreground">连接作用域</strong><br />
-                    按连接 key 选择具体的 User 或 Workspace 作用域记录；Workspace/User overlay 按同
-                    key 的完整记录执行 Workspace 优先与 User 回退。API key 由 Control Plane
-                    加密存储，不会出现在浏览器存储或日志中。
+                    <strong class="font-semibold text-foreground">{{
+                        t("settings.providerHub.scopeNoteTitle")
+                    }}</strong
+                    ><br />
+                    {{ t("settings.providerHub.scopeNoteBody") }}
                 </div>
             </div>
         </template>
@@ -991,14 +1633,20 @@ onMounted(() => {
                 aria-modal="true"
             >
                 <header class="border-b px-5 py-4">
-                    <h3 class="text-lg font-semibold text-destructive">删除 Provider 连接</h3>
+                    <h3 class="text-lg font-semibold text-destructive">
+                        {{ t("settings.providerHub.deleteTitle") }}
+                    </h3>
                     <p class="mt-1 text-sm text-muted-foreground">
-                        确认删除「{{ deleteTarget.label }}」？此操作不可撤销。
+                        {{
+                            t("settings.providerHub.deleteConfirmDesc", {
+                                label: deleteTarget.label,
+                            })
+                        }}
                     </p>
                 </header>
                 <div class="px-5 py-4 text-sm">
                     <p v-if="deleteImpactLoading" class="text-muted-foreground">
-                        正在加载删除影响预览...
+                        {{ t("settings.providerHub.deleteImpactLoading") }}
                     </p>
                     <template v-else-if="deleteImpact">
                         <div
@@ -1007,28 +1655,34 @@ onMounted(() => {
                             data-testid="provider-delete-blocked"
                         >
                             <p class="font-semibold text-destructive">
-                                无法删除：仍有 {{ deleteImpact.sessionCount }} 个会话引用此连接
+                                {{
+                                    t("settings.providerHub.deleteBlocked", {
+                                        count: deleteImpact.sessionCount,
+                                    })
+                                }}
                             </p>
                             <p class="mt-1 text-xs text-muted-foreground">
-                                请先删除或迁移这些会话，再删除连接。
+                                {{ t("settings.providerHub.deleteBlockedHint") }}
                             </p>
                         </div>
                         <div
                             v-else-if="impactSummary(deleteImpact).length > 0"
                             data-testid="provider-delete-impact-summary"
                         >
-                            <p class="mb-1.5 font-semibold">删除时将级联清理以下引用：</p>
+                            <p class="mb-1.5 font-semibold">
+                                {{ t("settings.providerHub.deleteCascade") }}
+                            </p>
                             <ul class="list-inside list-disc space-y-0.5 text-muted-foreground">
                                 <li v-for="part in impactSummary(deleteImpact)" :key="part">
                                     {{ part }}
                                 </li>
                             </ul>
                             <p class="mt-2 text-xs text-muted-foreground">
-                                请求模板本体不受影响；其他连接与其引用保持不变。
+                                {{ t("settings.providerHub.deleteCascadeNote") }}
                             </p>
                         </div>
                         <p v-else class="text-muted-foreground">
-                            该连接没有引用它的模型绑定、默认模板指向或默认身份 profile。
+                            {{ t("settings.providerHub.deleteNoRefs") }}
                         </p>
                     </template>
                     <p
@@ -1047,7 +1701,7 @@ onMounted(() => {
                         data-testid="provider-delete-cancel"
                         @click="cancelDelete"
                     >
-                        取消
+                        {{ t("settings.providerHub.cancel") }}
                     </button>
                     <button
                         type="button"
@@ -1061,7 +1715,11 @@ onMounted(() => {
                         data-testid="provider-delete-confirm"
                         @click="confirmDelete"
                     >
-                        {{ deleting ? "删除中..." : "确认删除" }}
+                        {{
+                            deleting
+                                ? t("settings.providerHub.deleting")
+                                : t("settings.providerHub.confirmDelete")
+                        }}
                     </button>
                 </footer>
             </div>
@@ -1077,7 +1735,7 @@ onMounted(() => {
                 class="flex max-h-[calc(100vh-48px)] w-full max-w-lg flex-col overflow-hidden rounded-xl border bg-card shadow-2xl"
             >
                 <header class="border-b px-5 py-4">
-                    <h3 class="text-lg font-semibold">选择 Provider</h3>
+                    <h3 class="text-lg font-semibold">{{ t("settings.providerHub.pickTitle") }}</h3>
                     <label
                         class="mt-3 flex items-center gap-2.5 rounded-lg border bg-background px-3 py-2"
                     >
@@ -1086,7 +1744,7 @@ onMounted(() => {
                             v-model="pickerSearch"
                             data-testid="provider-picker-search"
                             class="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-                            placeholder="搜索名称、描述或 ID"
+                            :placeholder="t('settings.providerHub.pickSearchPlaceholder')"
                         />
                     </label>
                 </header>
@@ -1095,7 +1753,7 @@ onMounted(() => {
                         v-if="selectableProviders.length === 0"
                         class="px-3 py-8 text-center text-sm text-muted-foreground"
                     >
-                        没有匹配的 Provider
+                        {{ t("settings.providerHub.pickNoMatch") }}
                     </p>
                     <template v-for="group in pickerGroups" :key="group.label">
                         <div
@@ -1127,29 +1785,29 @@ onMounted(() => {
                                     <span
                                         v-if="provider.supports.streaming"
                                         class="rounded bg-muted px-1 text-[10px] text-muted-foreground"
-                                        >流式</span
+                                        >{{ t("settings.providerHub.supportsStreaming") }}</span
                                     >
                                     <span
                                         v-if="provider.supports.tools"
                                         class="rounded bg-muted px-1 text-[10px] text-muted-foreground"
-                                        >工具</span
+                                        >{{ t("settings.providerHub.supportsTools") }}</span
                                     >
                                     <span
                                         v-if="provider.supports.vision"
                                         class="rounded bg-muted px-1 text-[10px] text-muted-foreground"
-                                        >视觉</span
+                                        >{{ t("settings.providerHub.supportsVision") }}</span
                                     >
                                     <span
                                         v-if="provider.supports.customBaseUrl"
                                         class="rounded bg-muted px-1 text-[10px] text-muted-foreground"
-                                        >可自定义地址</span
+                                        >{{ t("settings.providerHub.supportsCustomBaseUrl") }}</span
                                     >
                                 </span>
                             </span>
                             <span
                                 v-if="connectedProviderIds.has(provider.id)"
                                 class="shrink-0 text-[11px] text-muted-foreground"
-                                >已连接</span
+                                >{{ t("settings.providerHub.pickConnected") }}</span
                             >
                         </button>
                     </template>
@@ -1157,12 +1815,14 @@ onMounted(() => {
                 <footer
                     class="flex items-center justify-between border-t px-5 py-3 text-xs text-muted-foreground"
                 >
-                    <span>{{ selectableProviders.length }} 个可连接</span>
+                    <span>{{
+                        t("settings.providerHub.pickCount", { count: selectableProviders.length })
+                    }}</span>
                     <button
                         class="rounded-md border px-3 py-1.5 transition-colors hover:border-primary hover:text-foreground"
                         @click="modalOpen = false"
                     >
-                        取消
+                        {{ t("settings.providerHub.cancel") }}
                     </button>
                 </footer>
             </div>
@@ -1180,12 +1840,16 @@ onMounted(() => {
             >
                 <header class="flex items-center justify-between border-b px-5 py-4">
                     <h3 class="text-lg font-semibold">
-                        {{ editingConnection ? "管理 Provider" : "连接 Provider" }}
+                        {{
+                            editingConnection
+                                ? t("settings.providerHub.formManageTitle")
+                                : t("settings.providerHub.formConnectTitle")
+                        }}
                     </h3>
                     <button
                         type="button"
                         class="text-2xl leading-none text-muted-foreground transition-colors hover:text-foreground"
-                        aria-label="关闭"
+                        :aria-label="t('settings.providerHub.close')"
                         @click="closeForm"
                     >
                         ×
@@ -1225,22 +1889,26 @@ onMounted(() => {
                             data-testid="connection-type-impact"
                         >
                             <p>
-                                将移除不兼容的模型模板覆盖：{{
-                                    typeImpact.incompatibleOverrides.reduce(
-                                        (sum, item) => sum + item.count,
-                                        0,
-                                    )
-                                }}；{{ typeImpact.sessionRebindCount }}
-                                个会话需显式重新绑定。共享模板与历史记录保留。
+                                {{
+                                    t("settings.providerHub.typeImpactSummary", {
+                                        overrides: typeImpact.incompatibleOverrides.reduce(
+                                            (sum, item) => sum + item.count,
+                                            0,
+                                        ),
+                                        sessions: typeImpact.sessionRebindCount,
+                                    })
+                                }}
                             </p>
                             <label v-if="formOperation === 'chat'" class="block"
-                                >新连接默认模板
+                                >{{ t("settings.providerHub.newDefaultTemplate") }}
                                 <select
                                     v-model="targetDefaultKey"
                                     class="mt-1 w-full rounded border bg-background p-2"
-                                    aria-label="新连接默认模板"
+                                    :aria-label="t('settings.providerHub.newDefaultTemplate')"
                                 >
-                                    <option value="" disabled>选择兼容模板</option>
+                                    <option value="" disabled>
+                                        {{ t("settings.providerHub.chooseCompatible") }}
+                                    </option>
                                     <option
                                         v-for="item in formTemplates"
                                         :key="templateKey(item)"
@@ -1251,16 +1919,17 @@ onMounted(() => {
                                 </select>
                             </label>
                             <label class="flex items-center gap-2"
-                                ><input
-                                    v-model="confirmedTypeChange"
-                                    type="checkbox"
-                                />确认协议变更及覆盖清理</label
+                                ><input v-model="confirmedTypeChange" type="checkbox" />{{
+                                    t("settings.providerHub.confirmTypeChange")
+                                }}</label
                             >
                         </div>
                     </div>
 
                     <label class="block">
-                        <span class="mb-1.5 block text-xs font-semibold">连接名称</span>
+                        <span class="mb-1.5 block text-xs font-semibold">{{
+                            t("settings.providerHub.fieldLabel")
+                        }}</span>
                         <input
                             v-model="form.label"
                             class="w-full rounded-md border bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30"
@@ -1269,7 +1938,9 @@ onMounted(() => {
                         />
                     </label>
                     <label class="mt-4 block">
-                        <span class="mb-1.5 block text-xs font-semibold">连接标识</span>
+                        <span class="mb-1.5 block text-xs font-semibold">{{
+                            t("settings.providerHub.fieldKey")
+                        }}</span>
                         <input
                             v-model="form.connectionKey"
                             data-testid="provider-connection-form-key"
@@ -1280,31 +1951,35 @@ onMounted(() => {
                             pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
                             placeholder="default"
                         />
-                        <span class="mt-1.5 block text-[11px] text-muted-foreground"
-                            >小写字母、数字和连字符；同一
-                            Provider/作用域内不可重复。保存后不可修改。</span
-                        >
+                        <span class="mt-1.5 block text-[11px] text-muted-foreground">{{
+                            t("settings.providerHub.keyHint")
+                        }}</span>
                     </label>
                     <label class="mt-4 block">
-                        <span class="mb-1.5 block text-xs font-semibold">API key</span>
+                        <span class="mb-1.5 block text-xs font-semibold">{{
+                            t("settings.providerHub.fieldApiKey")
+                        }}</span>
                         <input
                             v-model="form.apiKey"
                             class="w-full rounded-md border bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30"
                             type="password"
                             :placeholder="
                                 editingConnection
-                                    ? '留空表示不替换'
-                                    : selectedProvider.credential.placeholder || '可选'
+                                    ? t('settings.providerHub.keyPlaceholderKeep')
+                                    : selectedProvider.credential.placeholder ||
+                                      t('settings.providerHub.optional')
                             "
                         />
-                        <span class="mt-1.5 block text-[11px] text-muted-foreground"
-                            >密钥只提交一次，保存后不会回显。</span
-                        >
+                        <span class="mt-1.5 block text-[11px] text-muted-foreground">{{
+                            t("settings.providerHub.keySaveHint")
+                        }}</span>
                     </label>
                     <label v-if="selectedProvider.supports.customBaseUrl" class="mt-4 block">
                         <span class="mb-1.5 block text-xs font-semibold"
-                            >Base URL
-                            <span class="font-normal text-muted-foreground">可选</span></span
+                            >{{ t("settings.providerHub.fieldBaseUrl") }}
+                            <span class="font-normal text-muted-foreground">{{
+                                t("settings.providerHub.optional")
+                            }}</span></span
                         >
                         <input
                             v-model="form.baseUrl"
@@ -1314,15 +1989,21 @@ onMounted(() => {
                         />
                     </label>
                     <div class="mt-4">
-                        <span class="mb-1.5 block text-xs font-semibold">连接作用域</span>
+                        <span class="mb-1.5 block text-xs font-semibold">{{
+                            t("settings.providerHub.fieldScope")
+                        }}</span>
                         <div class="grid grid-cols-2 gap-2">
                             <label
                                 v-for="option in [
-                                    { value: 'USER', title: '个人', desc: '仅自己可使用。' },
+                                    {
+                                        value: 'USER',
+                                        title: t('settings.providerHub.scopeUserTitle'),
+                                        desc: t('settings.providerHub.scopeUserDesc'),
+                                    },
                                     {
                                         value: 'WORKSPACE',
-                                        title: '工作区共享',
-                                        desc: '工作区内授权用户可用。',
+                                        title: t('settings.providerHub.scopeWorkspaceTitle'),
+                                        desc: t('settings.providerHub.scopeWorkspaceDesc'),
                                     },
                                 ] as const"
                                 :key="option.value"
@@ -1349,26 +2030,34 @@ onMounted(() => {
                         </div>
                     </div>
                     <label class="mt-4 block">
-                        <span class="mb-1.5 block text-xs font-semibold">模型发现</span>
+                        <span class="mb-1.5 block text-xs font-semibold">{{
+                            t("settings.providerHub.fieldDiscovery")
+                        }}</span>
                         <select
                             v-model="form.modelDiscovery"
                             class="w-full rounded-md border bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30"
                         >
                             <option value="remote-models">Provider /models</option>
                             <option value="litellm-catalog">LiteLLM Catalog</option>
-                            <option value="curated">Provider 预置模型</option>
-                            <option value="manual">手动输入模型</option>
+                            <option value="curated">
+                                {{ t("settings.providerHub.discoveryCurated") }}
+                            </option>
+                            <option value="manual">
+                                {{ t("settings.providerHub.discoveryManual") }}
+                            </option>
                         </select>
-                        <span class="mt-1.5 block text-[11px] text-muted-foreground"
-                            >XH 会先验证连接可用，再让模型进入选择器。</span
-                        >
+                        <span class="mt-1.5 block text-[11px] text-muted-foreground">{{
+                            t("settings.providerHub.discoveryHint")
+                        }}</span>
                     </label>
                     <label v-if="form.modelDiscovery === 'manual'" class="mt-4 block">
-                        <span class="mb-1.5 block text-xs font-semibold">模型列表</span>
+                        <span class="mb-1.5 block text-xs font-semibold">{{
+                            t("settings.providerHub.fieldManualModels")
+                        }}</span>
                         <textarea
                             v-model="form.manualModels"
                             class="min-h-20 w-full rounded-md border bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-                            placeholder="每行一个模型 ID"
+                            :placeholder="t('settings.providerHub.manualModelsPlaceholder')"
                         />
                     </label>
                 </div>
@@ -1378,14 +2067,18 @@ onMounted(() => {
                         class="rounded-md border px-3.5 py-2 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
                         @click="closeForm"
                     >
-                        取消
+                        {{ t("settings.providerHub.cancel") }}
                     </button>
                     <button
                         type="submit"
                         class="rounded-md bg-primary px-3.5 py-2 text-xs font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
                         :disabled="saving"
                     >
-                        {{ saving ? "保存中..." : "验证并保存" }}
+                        {{
+                            saving
+                                ? t("settings.providerHub.saving")
+                                : t("settings.providerHub.saveVerify")
+                        }}
                     </button>
                 </footer>
             </form>

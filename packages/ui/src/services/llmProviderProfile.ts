@@ -1,5 +1,3 @@
-import type { ProviderConnection } from "../types/providerConnection";
-
 /**
  * PLAN-0504: the whole llm-provider default profile unit
  * (providerId + connectionKey + model). It is stored as one JSON value and
@@ -28,13 +26,4 @@ export function parseLlmProfileValue(raw: string | null | undefined): LlmProvide
     } catch {
         return null;
     }
-}
-
-/** PLAN-0504: profile candidates are the visible chat-ready connections. */
-export function chatProfileConnections(
-    connections: ProviderConnection[] | undefined | null,
-): ProviderConnection[] {
-    return (connections ?? []).filter(
-        (item) => item.enabled && item.status === "READY" && item.operation === "chat",
-    );
 }

@@ -9,14 +9,13 @@ import ConfigDomainPanel, {
 import AgentTemplatesPanel from "../../components/settings/AgentTemplatesPanel.vue";
 import ContextTemplatesPanel from "../../components/settings/ContextTemplatesPanel.vue";
 import EmbeddingSettingsPanel from "../../components/settings/EmbeddingSettingsPanel.vue";
-import LlmProviderProfilePanel from "../../components/settings/LlmProviderProfilePanel.vue";
 import McpStdioServerList from "../../components/settings/McpStdioServerList.vue";
 import ProviderHub from "../../components/settings/ProviderHub.vue";
 import SettingsNav from "../../components/settings/SettingsNav.vue";
 import BackToChatButton from "../../components/settings/BackToChatButton.vue";
 import { api } from "../../composables/api";
 import { logger } from "../../lib/logger";
-import { getProviderInfo, BUILTIN_PROVIDERS } from "../../types/provider";
+import { getProviderInfo } from "../../types/provider";
 import type { ProviderDefinition } from "../../types/providerConnection";
 import { listProviderCatalog } from "../../services/providerConnectionService";
 import { parseLlmProfileValue } from "../../services/llmProviderProfile";
@@ -32,8 +31,10 @@ const activeTab = ref<LayerTab>(authStore.isAdmin ? "instance" : "user");
 const tabs = computed<{ key: LayerTab; label: string }[]>(() => {
     const list: { key: LayerTab; label: string }[] = [];
     if (authStore.isAdmin) list.push({ key: "instance", label: t("settings.tabInstance") });
-    list.push({ key: "workspace", label: t("settings.tabWorkspace") });
+    // PLAN-0523 批注④: 实例 → 个人 → 工作区（继承链由广到窄；
+    // 生效优先级仍为 工作区 > 个人 > 实例，见 spec/ui-surfaces.md S1）。
     list.push({ key: "user", label: t("settings.tabUser") });
+    list.push({ key: "workspace", label: t("settings.tabWorkspace") });
     return list;
 });
 
@@ -59,16 +60,6 @@ const domainLabels: Record<string, string> = {
  */
 const catalogProviders = ref<ProviderDefinition[]>([]);
 
-const providerOptions = computed(() => {
-    if (catalogProviders.value.length) {
-        return catalogProviders.value.map((provider) => ({
-            label: provider.displayName,
-            value: provider.id,
-        }));
-    }
-    return BUILTIN_PROVIDERS.map((provider) => ({ label: provider.name, value: provider.id }));
-});
-
 const levelOptions = ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"].map((level) => ({
         label: level,
         value: level,
@@ -86,40 +77,11 @@ function providerDisplayName(providerId: string): string {
     );
 }
 
-/** PLAN-0503 T2.4: directory freshness from the /models response (no new API). */
-const llmProviderNote = computed(() => {
-    const cache = configStore.modelCache;
-    const verified = Object.values(cache.providers ?? {})
-        .map((catalog) => catalog?.verifiedAt)
-        .filter((value): value is string => !!value)
-        .map((value) => new Date(value).getTime())
-        .filter((value) => !Number.isNaN(value));
-    const revision = cache.configRevision ?? "";
-    if (!revision && verified.length === 0) return "";
-    const verifiedLabel = verified.length
-        ? new Date(Math.max(...verified)).toLocaleString()
-        : t("settings.catalogVerifiedNever");
-    return t("settings.catalogFreshness", {
-        revision: revision || t("settings.notSet"),
-        verified: verifiedLabel,
-    });
-});
-
 const domainSchemas = computed<Record<string, DomainField[]>>(() => ({
-    // PLAN-0504: the default identity lives in the whole `profile` unit and is
-    // edited by LlmProviderProfilePanel; the legacy provider/base-URL/model
-    // fields are retired (no compat).
-    "llm-provider": [
-        {
-            key: "imageProvider",
-            label: t("settings.fieldImageProvider"),
-            type: "select",
-            options: [...providerOptions.value, { label: t("settings.notSet"), value: "" }],
-        },
-        { key: "maxTokens", label: t("settings.fieldMaxTokens"), type: "number" },
-        { key: "temperature", label: t("settings.fieldTemperature"), type: "number" },
-        { key: "timeout", label: t("settings.fieldTimeout"), type: "number" },
-    ],
+    // PLAN-0523 T3.6 (决策 #13): llm-provider 不再有通用表单字段——默认身份
+    // profile / 每模型 modelParams 均由「模型提供方」分区（ProviderHub）就地编辑；
+    // 旧 imageProvider/三采样键随 schema 与迁移退役（imageProvider 键保留给冻结的图像块）。
+    "llm-provider": [],
     "context-policy": [
         { key: "defaults", label: t("settings.fieldCompactionDefaults"), type: "json" },
         { key: "models", label: t("settings.fieldCompactionModels"), type: "json" },
@@ -805,31 +767,46 @@ async function handleImportFile(event: Event) {
                     </div>
 
                     <template v-for="domain in visibleDomains" :key="domain">
-                        <ProviderHub
-                            :workspace-id="currentWorkspaceId() || undefined"
-                            v-if="domain === 'llm-provider' && activeTab !== 'instance'"
-                            :scope="activeTab === 'user' ? 'USER' : 'WORKSPACE'"
-                        />
+                        <!-- PLAN-0523 T3.1: llm-provider 合并为单一「模型提供方」分区
+                             （spec/ui-surfaces.md S1/S3）；旧 ProfilePanel / 层全局参数表单
+                             退役（组件删除在 T3.6）。 -->
                         <template v-if="domain === 'llm-provider'">
-                            <LlmProviderProfilePanel
-                                :layer="activeTab"
-                                :workspace-id="currentWorkspaceId() || undefined"
-                                :entries="configStore.layerConfig[activeTab][domain] || {}"
-                                :saving="savingDomains[domain] || false"
-                                @saved="reloadActiveLayer()"
-                            />
-                            <ConfigDomainPanel
-                                :domain="domain"
-                                :title="domainLabels[domain] || domain"
-                                :entries="configStore.layerConfig[activeTab][domain] || {}"
-                                :admin="activeTab !== 'user'"
-                                :summary="generateSummary(domain)"
-                                :schema="schemaFor(domain)"
-                                :env-locked="envLockedFor(domain)"
-                                :note="llmProviderNote"
-                                @save="handleSave(domain, $event)"
-                                @reset="handleReset(domain, $event)"
-                            />
+                            <div
+                                class="border rounded-lg mb-2 overflow-hidden"
+                                data-testid="provider-partition"
+                            >
+                                <div class="px-4 py-3 bg-muted/30 space-y-1">
+                                    <div
+                                        class="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                                    >
+                                        {{ t("settings.providerPartitionKicker") }}
+                                    </div>
+                                    <h3 class="text-sm font-semibold">
+                                        {{ t("settings.providerPartitionTitle") }}
+                                    </h3>
+                                    <p class="text-xs text-muted-foreground">
+                                        {{ t("settings.providerPartitionDesc") }}
+                                    </p>
+                                </div>
+                                <div class="px-4 py-3 space-y-3">
+                                    <template v-if="activeTab === 'instance'">
+                                        <p class="text-sm text-muted-foreground">
+                                            {{ t("settings.providerInstanceGuidance") }}
+                                        </p>
+                                        <div
+                                            class="flex gap-2 items-start border-l-2 border-border pl-3 text-xs text-muted-foreground"
+                                        >
+                                            <span aria-hidden="true">i</span>
+                                            <span>{{ t("settings.providerInstanceNote") }}</span>
+                                        </div>
+                                    </template>
+                                    <ProviderHub
+                                        v-else
+                                        :workspace-id="currentWorkspaceId() || undefined"
+                                        :scope="activeTab === 'user' ? 'USER' : 'WORKSPACE'"
+                                    />
+                                </div>
+                            </div>
                         </template>
                         <AgentTemplatesPanel
                             v-else-if="domain === 'agent-templates'"

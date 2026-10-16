@@ -25,7 +25,6 @@ import { ApiError } from "../../../../composables/api";
 import { logger } from "../../../../lib/logger";
 import { toast } from "vue-sonner";
 import { getProviderInfo } from "../../../../types/provider";
-import { listProviderConnections } from "../../../../services/providerConnectionService";
 import type { ProviderConnection } from "../../../../types/providerConnection";
 import {
     listVisibleTemplates,
@@ -87,8 +86,9 @@ const hasProviders = computed(() => {
 
 // PLAN-0307 T2.22/T2.17: readiness hint is grounded in provider_connections,
 // not the removed config-table `*ApiKey` keys (decision #21).
-const configuredConnectionCount = ref(0);
-const connections = ref<ProviderConnection[]>([]);
+// PLAN-0523 T3.5: subscribe to the store's single-source connection list.
+const configuredConnectionCount = computed(() => configStore.providerConnections.length);
+const connections = computed<ProviderConnection[]>(() => configStore.providerConnections);
 const pendingSwitch = ref<{
     provider: string;
     model: string;
@@ -312,14 +312,9 @@ function handleSelect(event: { detail: { value?: string } }) {
 
 onMounted(() => {
     configStore.fetchModels();
-    listProviderConnections()
-        .then((response) => {
-            configuredConnectionCount.value = response.connections?.length ?? 0;
-            connections.value = response.connections ?? [];
-        })
-        .catch((e) => {
-            logger.warn("Failed to load provider connections for readiness hint", e);
-        });
+    configStore.loadProviderConnections().catch((e) => {
+        logger.warn("Failed to load provider connections for readiness hint", e);
+    });
 });
 </script>
 

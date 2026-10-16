@@ -70,30 +70,32 @@ class ConfigServiceTest {
     void resolve_workspaceOverridesUserOverridesInstance() {
         // PLAN-0504: llm-provider identity moved to the profile unit; the
         // generic per-key resolution chain still applies to the kept keys.
+        // PLAN-0523 T3.6: imageProvider is the remaining scalar llm-provider
+        // key (sampling keys retired to per-model modelParams, decision #13).
         configService.putLayer("instance", "llm-provider",
-            Map.of("temperature", "0.1"), "admin", null, null);
+            Map.of("imageProvider", "inst"), "admin", null, null);
         configService.putLayer("user", "llm-provider",
-            Map.of("temperature", "0.2"), "user", userA, null);
+            Map.of("imageProvider", "usr"), "user", userA, null);
         configService.putLayer("workspace", "llm-provider",
-            Map.of("temperature", "0.3"), "user", null, wsA);
+            Map.of("imageProvider", "wrk"), "user", null, wsA);
 
-        assertEquals("0.3",
-            configService.resolveDomain("llm-provider", userA, wsA).get("temperature"));
-        assertEquals("0.2",
-            configService.resolveDomain("llm-provider", userA, null).get("temperature"));
-        assertEquals("0.1",
-            configService.resolveDomain("llm-provider", null, null).get("temperature"));
+        assertEquals("wrk",
+            configService.resolveDomain("llm-provider", userA, wsA).get("imageProvider"));
+        assertEquals("usr",
+            configService.resolveDomain("llm-provider", userA, null).get("imageProvider"));
+        assertEquals("inst",
+            configService.resolveDomain("llm-provider", null, null).get("imageProvider"));
     }
 
     @Test
     void resolve_userLayerIsIsolatedByUserId() {
         configService.putLayer("user", "llm-provider",
-            Map.of("temperature", "0.1"), "user", userA, null);
+            Map.of("imageProvider", "u-a"), "user", userA, null);
         configService.putLayer("user", "llm-provider",
-            Map.of("temperature", "0.2"), "user", userB, null);
+            Map.of("imageProvider", "u-b"), "user", userB, null);
 
-        assertEquals("0.1", configService.resolveDomain("llm-provider", userA, null).get("temperature"));
-        assertEquals("0.2", configService.resolveDomain("llm-provider", userB, null).get("temperature"));
+        assertEquals("u-a", configService.resolveDomain("llm-provider", userA, null).get("imageProvider"));
+        assertEquals("u-b", configService.resolveDomain("llm-provider", userB, null).get("imageProvider"));
     }
 
     @Test
@@ -239,13 +241,13 @@ class ConfigServiceTest {
     @Test
     void putLayer_createsAuditEntryWithNewLayerValue() {
         configService.putLayer("instance", "llm-provider",
-            Map.of("maxTokens", "8192"), "tester", null, null);
+            Map.of("imageProvider", "deepseek"), "tester", null, null);
 
         List<ConfigAuditEntity> audits = auditRepo.findAll();
         assertFalse(audits.isEmpty());
         ConfigAuditEntity audit = audits.get(audits.size() - 1);
         assertEquals("instance", audit.getLayer());
-        assertEquals("8192", audit.getNewValue());
+        assertEquals("deepseek", audit.getNewValue());
         assertEquals("tester", audit.getChangedBy());
     }
 
@@ -259,12 +261,13 @@ class ConfigServiceTest {
 
     @Test
     void importJsonc_acceptsNumericValues() {
-        String jsonc = "{\"llm-provider\":{\"maxTokens\":8192,\"temperature\":0.5}}";
+        // PLAN-0523 T3.6: llm-provider no longer carries scalar numeric keys;
+        // job-policy defaultTimeoutSecs keeps exercising the numeric coercion.
+        String jsonc = "{\"job-policy\":{\"defaultTimeoutSecs\":30}}";
         configService.importJsonc(jsonc, "instance", null, null);
 
-        Map<String, String> entries = configService.layerEntries("instance", "llm-provider", null, null);
-        assertEquals("8192", entries.get("maxTokens"));
-        assertEquals("0.5", entries.get("temperature"));
+        Map<String, String> entries = configService.layerEntries("instance", "job-policy", null, null);
+        assertEquals("30", entries.get("defaultTimeoutSecs"));
     }
 
     @Test
@@ -278,13 +281,14 @@ class ConfigServiceTest {
         // PLAN-0307 T2.12 (decision #20): import semantics = per-domain merge;
         // a second import updates only the keys it carries.
         configService.importJsonc(
-            "{\"llm-provider\":{\"temperature\":0.5,\"maxTokens\":3000}}", "instance", null, null);
+            "{\"llm-provider\":{\"imageProvider\":\"deepseek\",\"modelParams\":\"{\\\"m\\\":{}}\"}}",
+            "instance", null, null);
         configService.importJsonc(
-            "{\"llm-provider\":{\"temperature\":0.7}}", "instance", null, null);
+            "{\"llm-provider\":{\"imageProvider\":\"xiaomi\"}}", "instance", null, null);
 
         Map<String, String> entries = configService.layerEntries("instance", "llm-provider", null, null);
-        assertEquals("0.7", entries.get("temperature"));
-        assertEquals("3000", entries.get("maxTokens"));
+        assertEquals("xiaomi", entries.get("imageProvider"));
+        assertEquals("{\"m\":{}}", entries.get("modelParams"));
     }
 
     @Test
@@ -338,31 +342,31 @@ class ConfigServiceTest {
     @Test
     void overrides_returnsExplicitLayerRowsPerDomain() {
         configService.putLayer("instance", "llm-provider",
-            Map.of("maxTokens", "8192"), "admin", null, null);
+            Map.of("imageProvider", "inst"), "admin", null, null);
         configService.putLayer("user", "llm-provider",
-            Map.of("temperature", "0.5"), "user", userA, null);
+            Map.of("imageProvider", "usr"), "user", userA, null);
         configService.putLayer("user", "agent-profile",
             Map.of("userName", "Alice"), "user", userA, null);
         configService.putLayer("workspace", "llm-provider",
-            Map.of("temperature", "0.2"), "user", userA, wsA);
+            Map.of("imageProvider", "wrk"), "user", userA, wsA);
 
         Map<String, Map<String, String>> userOverrides = configService.overrides(
             "user", List.of("llm-provider", "agent-profile"), userA, wsA);
-        assertEquals(Map.of("temperature", "0.5"), userOverrides.get("llm-provider"));
+        assertEquals(Map.of("imageProvider", "usr"), userOverrides.get("llm-provider"));
         assertEquals(Map.of("userName", "Alice"), userOverrides.get("agent-profile"));
 
         Map<String, Map<String, String>> workspaceOverrides = configService.overrides(
             "workspace", List.of("llm-provider", "agent-profile"), userA, wsA);
-        assertEquals(Map.of("temperature", "0.2"), workspaceOverrides.get("llm-provider"));
+        assertEquals(Map.of("imageProvider", "wrk"), workspaceOverrides.get("llm-provider"));
         assertFalse(workspaceOverrides.containsKey("agent-profile"));
     }
 
     @Test
     void overrides_areScopedByUserAndWorkspace() {
         configService.putLayer("user", "llm-provider",
-            Map.of("temperature", "0.1"), "user", userA, null);
+            Map.of("imageProvider", "u-a"), "user", userA, null);
         configService.putLayer("workspace", "llm-provider",
-            Map.of("temperature", "0.2"), "user", userA, wsA);
+            Map.of("imageProvider", "w-a"), "user", userA, wsA);
 
         assertTrue(configService.overrides(
             "user", List.of("llm-provider"), userB, wsA).isEmpty());
