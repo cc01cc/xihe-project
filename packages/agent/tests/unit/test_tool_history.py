@@ -9,11 +9,16 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 import xihe_agent.agent_runner.langgraph_runner as langgraph_runner_module
 import xihe_agent.agent_runner.tool_adapter as tool_adapter_module
 from xihe_agent.agent_runner import LangGraphRunner
+from xihe_agent.agent_runner.credential_handoff import (
+    CredentialHandoffError,
+    RunScopedCredentialHandoff,
+)
 from xihe_agent.interfaces.agent_runner import RunnerConfig
 from xihe_agent.interfaces.context import (
     ARG_LIMIT,
@@ -26,6 +31,7 @@ from xihe_agent.interfaces.message import TextMessage, ToolCallRef
 from xihe_agent.interfaces.tool import (
     ACQUIRE_CREDENTIAL_TOOL_NAME,
     CREDENTIAL_DELIVERED_PLACEHOLDER,
+    CREDENTIAL_HANDOFF_REQUIRED_KEY,
     ToolSpec,
 )
 from xihe_agent.llm.base import create_llm
@@ -517,6 +523,7 @@ class _CredentialDeliveryTool:
         return self._spec
 
     async def execute(self, input: dict, context: dict) -> dict:
+        self.call_id_seen_by_tool = context.metadata["toolCallId"]
         return {"content": json.dumps({"value": "sk-live-delivery-secret-98765"})}
 
 
@@ -525,14 +532,44 @@ async def test_acquire_credential_value_stays_in_memory_only():
     ctx = AgentContext.empty("session-1")
     ctx.metadata["runId"] = "run-1"
     event_store = AsyncMock()
-    adapter = LCToolAdapter(_CredentialDeliveryTool(), ctx, event_store)
+    handoff = RunScopedCredentialHandoff()
+    tool = _CredentialDeliveryTool()
+    adapter = LCToolAdapter(tool, ctx, event_store, handoff)
 
-    text, _artifact = await adapter._arun(
-        run_manager=None, credentialId="d9a22f34-7a60-4f0e-a036-60e7a9c6cf9b"
+    class _EndTrace(AsyncCallbackHandler):
+        def __init__(self) -> None:
+            self.outputs = []
+
+        async def on_tool_end(self, output, **kwargs):
+            self.outputs.append(output)
+
+    trace = _EndTrace()
+    originating_call_id = "originating-ai-tool-call-1"
+    exposed_schema = adapter.tool_call_schema.model_json_schema()
+    assert "tool_call_id" not in exposed_schema.get("properties", {})
+    output = await adapter.ainvoke(
+        {
+            "type": "tool_call",
+            "name": ACQUIRE_CREDENTIAL_TOOL_NAME,
+            "args": {"credentialId": "d9a22f34-7a60-4f0e-a036-60e7a9c6cf9b"},
+            "id": originating_call_id,
+        },
+        config={"callbacks": [trace]},
     )
 
-    # The current model call keeps the delivered value (that is the tool's job).
-    assert "sk-live-delivery-secret-98765" in text
+    # LangChain trace/end output and graph state carry only the marked fixed placeholder.
+    assert isinstance(output, ToolMessage)
+    assert trace.outputs == [output]
+    assert output.content == CREDENTIAL_DELIVERED_PLACEHOLDER
+    assert output.tool_call_id == originating_call_id
+    assert output.additional_kwargs == {CREDENTIAL_HANDOFF_REQUIRED_KEY: True}
+    assert "sk-live-delivery-secret-98765" not in json.dumps(output.model_dump())
+
+    # The current Run model gets the same wrapped tool text from a provider-only copy.
+    hydrated = handoff.hydrate_for_request([output])
+    assert isinstance(hydrated[0], ToolMessage)
+    assert "sk-live-delivery-secret-98765" in hydrated[0].content
+    assert output.content == CREDENTIAL_DELIVERED_PLACEHOLDER
 
     # Durable events (history replay / UI projection / audit source) never carry it.
     appended = [call.args[0] for call in event_store.append.call_args_list]
@@ -551,3 +588,47 @@ async def test_acquire_credential_value_stays_in_memory_only():
     called_events = [event for event in appended if event.type == "tool.called"]
     assert called_events
     assert "d9a22f34-7a60-4f0e-a036-60e7a9c6cf9b" in json.dumps(called_events[0].payload)
+    assert called_events[0].payload["callId"] == tool.call_id_seen_by_tool
+    assert called_events[0].payload["callId"] != originating_call_id
+
+
+def test_credential_handoff_historical_placeholder_and_restart_fail_closed():
+    historical = ToolMessage(
+        content=CREDENTIAL_DELIVERED_PLACEHOLDER,
+        tool_call_id="old-call",
+        name=ACQUIRE_CREDENTIAL_TOOL_NAME,
+    )
+    handoff = RunScopedCredentialHandoff()
+    assert handoff.hydrate_for_request([historical]) == [historical]
+
+    persisted_current_run = ToolMessage(
+        content=CREDENTIAL_DELIVERED_PLACEHOLDER,
+        tool_call_id="current-call",
+        name=ACQUIRE_CREDENTIAL_TOOL_NAME,
+        additional_kwargs={CREDENTIAL_HANDOFF_REQUIRED_KEY: True},
+    )
+    with pytest.raises(CredentialHandoffError, match="unavailable"):
+        RunScopedCredentialHandoff().hydrate_for_request([persisted_current_run])
+
+    handoff.store("current-call", "wrapped secret result", secret_material="canary-secret")
+    assert "wrapped secret result" in handoff.hydrate_for_request([persisted_current_run])[0].content
+    assert handoff.pending_count == 1
+    handoff.clear()
+    assert handoff.pending_count == 0
+    with pytest.raises(CredentialHandoffError, match="unavailable"):
+        handoff.hydrate_for_request([persisted_current_run])
+
+
+def test_credential_handoff_mismatched_call_id_and_echo_fail_closed():
+    handoff = RunScopedCredentialHandoff()
+    handoff.store("call-a", "wrapped canary-secret", secret_material={"value": "canary-secret"})
+    message = ToolMessage(
+        content=CREDENTIAL_DELIVERED_PLACEHOLDER,
+        tool_call_id="call-b",
+        name=ACQUIRE_CREDENTIAL_TOOL_NAME,
+        additional_kwargs={CREDENTIAL_HANDOFF_REQUIRED_KEY: True},
+    )
+    with pytest.raises(CredentialHandoffError, match="unavailable"):
+        handoff.hydrate_for_request([message])
+    with pytest.raises(CredentialHandoffError, match="contains credential"):
+        handoff.reject_secret_echo({"calls": [{"args": {"token": "canary-secret"}}]})

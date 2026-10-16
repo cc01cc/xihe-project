@@ -23,6 +23,7 @@ from loguru import logger
 
 from xihe_agent.adapters.approval_tool import APPROVAL_EVENT_SINK_KEY, ApprovalTerminalError
 from xihe_agent.adapters.sse_adapter import LangGraphEventAdapter
+from xihe_agent.agent_runner.credential_handoff import RunScopedCredentialHandoff
 from xihe_agent.agent_runner.graph_builder import build_react_graph
 from xihe_agent.agent_runner.tool_adapter import (
     EVENT_STORE_FAILURES_KEY,
@@ -39,7 +40,7 @@ from xihe_agent.interfaces.event import Event
 from xihe_agent.interfaces.event_adapter import EventAdapter
 from xihe_agent.interfaces.event_store import EventStore
 from xihe_agent.interfaces.message import Message, TextMessage
-from xihe_agent.interfaces.tool import BaseAgentTool
+from xihe_agent.interfaces.tool import ACQUIRE_CREDENTIAL_TOOL_NAME, BaseAgentTool
 from xihe_agent.interfaces.usage import RunUsage
 from xihe_agent.llm.api_request import ApiRequestError
 
@@ -219,12 +220,43 @@ class LangGraphRunner(AgentRunner):
             raise RuntimeError(
                 f"runner branch {config_branch} does not match the CP-given context branch {context_branch}"
             )
+        continuation = config.continuation
+        continuation_mode: str | None = None
+        if continuation is not None:
+            if not isinstance(continuation, dict):
+                raise RuntimeError("continuation metadata is invalid")
+            continuation_mode = continuation.get("mode")
+            if continuation_mode not in {"resume_pending", "append_user_turn"}:
+                raise RuntimeError("continuation mode is invalid")
+            saver = config.checkpoint_saver
+            preflight = getattr(saver, "preflight_completed_tool_calls", None)
+            if not callable(preflight):
+                raise RuntimeError("continuation checkpoint preflight is unavailable")
+            trace = getattr(saver, "trace_metadata", {})
+            if (
+                getattr(saver, "thread_id", None) != continuation.get("threadId")
+                or getattr(saver, "lineage_id", None) != continuation.get("lineageId")
+                or not isinstance(trace, dict)
+                or trace.get("sourceRunId") != continuation.get("sourceRunId")
+                or trace.get("branchId") != continuation.get("branchId")
+            ):
+                raise RuntimeError("continuation checkpoint lineage does not match CP admission")
+            await preflight(
+                checkpoint_id=continuation.get("checkpointId"),
+                completed_tool_call_ids=continuation.get("completedToolCallIds", []),
+                event_sequence=continuation.get("eventSequence"),
+            )
+            if continuation_mode == "resume_pending" and config.admitted_prompt is not None:
+                raise RuntimeError("resume_pending cannot append a user prompt")
+            if continuation_mode == "append_user_turn" and not config.admitted_prompt:
+                raise RuntimeError("append_user_turn requires one admitted user prompt")
         prompt_events = (
             [TextMessage(role="human", content=config.admitted_prompt)]
             if config.admitted_prompt is not None
             else messages
         )
-        await self._append_prompt_admitted(prompt_events, context)
+        if continuation_mode != "resume_pending":
+            await self._append_prompt_admitted(prompt_events, context)
 
         usage = RunUsage()
         approval_events: asyncio.Queue[AgentEvent] = asyncio.Queue()
@@ -246,8 +278,14 @@ class LangGraphRunner(AgentRunner):
             config.loop, config.loop_exempt_tools
         )
 
+        credential_handoff = RunScopedCredentialHandoff()
         model = self._model_factory(config.model)
-        tools = [self._adapt_tool(t, context) for t in config.tools]
+        handoff_setter = getattr(model, "set_credential_handoff", None)
+        if callable(handoff_setter):
+            handoff_setter(credential_handoff)
+        elif any(tool.spec.name == ACQUIRE_CREDENTIAL_TOOL_NAME for tool in config.tools):
+            raise RuntimeError("credential delivery requires a Run-scoped model handoff")
+        tools = [self._adapt_tool(t, context, credential_handoff) for t in config.tools]
 
         # PLAN-294 M1 (decision #1): the projection snapshot is the canonical
         # conversation history (compaction already applied by CP). The caller's
@@ -275,9 +313,11 @@ class LangGraphRunner(AgentRunner):
         # PLAN-0492 T1.2: the chat runner builds its graph through
         # `graph_builder` (the single owner of `create_react_agent`); no
         # name/system_prompt is passed so graph behavior stays identical.
-        agent = build_react_graph(model, tools)
+        agent = build_react_graph(model, tools, checkpointer=config.checkpoint_saver)
 
-        inputs: InputAgentState = {"messages": langchain_messages}
+        inputs: InputAgentState | None = {"messages": langchain_messages}
+        if continuation_mode == "resume_pending":
+            inputs = None
         seen_tool_ids: set[str] = set()
         cancel_event = config.cancel_event
         cancelled = False
@@ -297,6 +337,19 @@ class LangGraphRunner(AgentRunner):
         stream_config: dict[str, Any] = {}
         if budget.max_turns > 0:
             stream_config["recursion_limit"] = 2 * budget.max_turns + 4
+        if config.checkpoint_saver is not None:
+            thread_id = getattr(config.checkpoint_saver, "thread_id", None)
+            if not isinstance(thread_id, str) or not thread_id:
+                raise RuntimeError("checkpoint saver thread is unavailable")
+            stream_config["configurable"] = {
+                "thread_id": thread_id,
+                "checkpoint_ns": "",
+            }
+        if continuation is not None:
+            thread_id = getattr(config.checkpoint_saver, "thread_id", None)
+            if not isinstance(thread_id, str) or thread_id != continuation.get("threadId"):
+                raise RuntimeError("continuation checkpoint thread does not match the CP lineage")
+            stream_config["configurable"]["checkpoint_id"] = continuation.get("checkpointId")
 
         try:
             if agent is None:
@@ -449,13 +502,16 @@ class LangGraphRunner(AgentRunner):
             )
         except Exception as e:
             failed = True
-            logger.error("LangGraph stream failed", exc_info=e)
+            # loguru 只认 opt(exception=...)/exception=，旧的 exc_info=e 不进 stacktrace
+            # （record.exception 恒为 null），违反「每个 catch 必须有日志 + stacktrace」。
+            logger.opt(exception=e).error("LangGraph stream failed")
             # PLAN-0410 T2.3: this error already surfaces as the terminal
             # outcome — drop the failure ledger so the post-run check below
             # does not re-raise a duplicate of the same failure.
             context.metadata.pop(EVENT_STORE_FAILURES_KEY, None)
             yield AgentEvent(type="error", data={"error": str(e)})
         finally:
+            credential_handoff.clear()
             # PLAN-0508: flush telemetry left over by teardown (e.g. the sender's
             # aborted terminal on cancel) so the CP durable relay always reads the
             # attempt terminal before usage/done close the stream. An event the
@@ -491,7 +547,7 @@ class LangGraphRunner(AgentRunner):
 
                     if isinstance(model, ApiChatModel):
                         message.update(durable_native_carrier(model, config.prune_window_chars))
-                    await self._event_store.append(
+                    persisted = await self._event_store.append(
                         Event(
                             aggregate_id=context.aggregate_id,
                             sequence=0,
@@ -504,6 +560,8 @@ class LangGraphRunner(AgentRunner):
                             correlation_id=_run_correlation(context),
                         )
                     )
+                    if isinstance(getattr(persisted, "sequence", None), int):
+                        context.set_latest_sequence(max(context.latest_sequence, persisted.sequence))
                 except ApiRequestError as e:
                     logger.warning("Native history persistence rejected code={}", e.terminal_code)
                     yield AgentEvent(
@@ -565,7 +623,7 @@ class LangGraphRunner(AgentRunner):
             return
         for message in messages:
             try:
-                await self._event_store.append(
+                persisted = await self._event_store.append(
                     Event(
                         aggregate_id=context.aggregate_id,
                         sequence=0,
@@ -579,6 +637,8 @@ class LangGraphRunner(AgentRunner):
                         correlation_id=_run_correlation(context),
                     )
                 )
+                if isinstance(getattr(persisted, "sequence", None), int):
+                    context.set_latest_sequence(max(context.latest_sequence, persisted.sequence))
             except Exception as e:
                 logger.error("Failed to append prompt.admitted event: {}", e, exc_info=True)
                 _record_event_store_failure(context, "prompt.admitted", e)
@@ -589,7 +649,7 @@ class LangGraphRunner(AgentRunner):
         if self._event_store is None or not tombstones:
             return
         try:
-            await self._event_store.append(
+            persisted = await self._event_store.append(
                 Event(
                     aggregate_id=context.aggregate_id,
                     sequence=0,
@@ -604,6 +664,8 @@ class LangGraphRunner(AgentRunner):
                     correlation_id=_run_correlation(context),
                 )
             )
+            if isinstance(getattr(persisted, "sequence", None), int):
+                context.set_latest_sequence(max(context.latest_sequence, persisted.sequence))
             logger.info(
                 "Prune applied: count={} reasons={}",
                 len(tombstones),
@@ -661,8 +723,13 @@ class LangGraphRunner(AgentRunner):
             messages.append(SystemMessage(content=text))
         return messages
 
-    def _adapt_tool(self, tool: BaseAgentTool, context: AgentContext) -> BaseTool:
-        return LCToolAdapter(tool, context, self._event_store)
+    def _adapt_tool(
+        self,
+        tool: BaseAgentTool,
+        context: AgentContext,
+        credential_handoff: RunScopedCredentialHandoff | None = None,
+    ) -> BaseTool:
+        return LCToolAdapter(tool, context, self._event_store, credential_handoff)
 
     def _translate_raw_event(
         self,

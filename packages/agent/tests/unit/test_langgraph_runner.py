@@ -13,6 +13,7 @@ import xihe_agent.agent_runner.tool_adapter as tool_adapter_module
 from xihe_agent.adapters.approval_tool import ApprovalAgentTool
 from xihe_agent.adapters.sse_adapter import LangGraphEventAdapter
 from xihe_agent.agent_runner import LangGraphRunner
+from xihe_agent.agent_runner.credential_handoff import RunScopedCredentialHandoff
 from xihe_agent.context.diagnostics import get_diagnostics_ledger
 from xihe_agent.interfaces.agent_runner import AgentEvent, RunnerConfig
 from xihe_agent.interfaces.context import AgentContext, ContextEpoch
@@ -72,6 +73,34 @@ class FakeCommandTool:
         return {"content": self._payload}
 
 
+@pytest.mark.asyncio
+async def test_runner_clears_run_handoff_in_finally(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Model:
+        handoff: RunScopedCredentialHandoff | None = None
+        native_records: list[dict] = []
+
+        def set_credential_handoff(self, handoff: RunScopedCredentialHandoff) -> None:
+            self.handoff = handoff
+            handoff.store("only-this-run", "private model content", secret_material="credential-canary")
+
+    model = _Model()
+    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, _tools, **_kwargs: None)
+    runner = langgraph_runner_module.LangGraphRunner(model_factory=lambda _name: model)
+    config = RunnerConfig(
+        model="fixture",
+        system_prompt="fixture",
+        tools=[],
+        context=AgentContext.empty("session-fixture"),
+    )
+
+    events = [event async for event in runner.stream([], config)]
+
+    assert any(event.type == "error" for event in events)
+    assert model.handoff is not None
+    assert model.handoff.pending_count == 0
+    assert model.handoff.secrets_for_stream_filter() == ()
+
+
 def _command_result(exit_code: int, stdout: str = "", stderr: str = "") -> str:
     return json.dumps(
         {
@@ -122,7 +151,7 @@ async def test_template_context_does_not_inject_hidden_runner_system_messages(mo
             if False:
                 yield {}
 
-    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, tools: FakeAgent())
+    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, tools, **_kwargs: FakeAgent())
     context = AgentContext("session", epoch=ContextEpoch(
         "epoch", "hash", ["unselected summary"], l1_status="ok", l1_rendered="unselected L1",
         env_status="ok", env_platform="unselected env",
@@ -197,7 +226,7 @@ async def test_stream_template_admits_only_current_prompt_not_history(monkeypatc
             if False:
                 yield {}
 
-    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, tools: EmptyAgent())
+    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, tools, **_kwargs: EmptyAgent())
     runner = LangGraphRunner(
         model_factory=lambda _model: object(),
         event_store=event_store,
@@ -225,7 +254,7 @@ async def test_stream_legacy_without_admitted_prompt_preserves_message_behavior(
             if False:
                 yield {}
 
-    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, tools: EmptyAgent())
+    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, tools, **_kwargs: EmptyAgent())
     runner = LangGraphRunner(model_factory=lambda _model: object(), event_store=event_store)
     async for _ in runner.stream(
         [TextMessage("human", "legacy historical turn"), TextMessage("human", "legacy current turn")],
@@ -274,7 +303,7 @@ async def test_runner_fans_in_approval_event_before_blocked_tool_completes(monke
     monkeypatch.setattr(
         langgraph_runner_module,
         "build_react_graph",
-        lambda _model, tools: FakeAgent(tools),
+        lambda _model, tools, **_kwargs: FakeAgent(tools),
     )
     runner = LangGraphRunner(model_factory=lambda _model: object())
     context = AgentContext.empty("session-1")
@@ -586,7 +615,7 @@ async def test_arun_l2_bundle_is_empty_with_low_confidence():
 
 
 @pytest.mark.asyncio
-async def test_tool_result_event_payload_carries_bundle_only_when_triggered():
+async def test_tool_result_event_payload_keeps_unmarked_diagnostics_run_local():
     event_store = MagicMock()
     event_store.append = AsyncMock()
 
@@ -595,13 +624,15 @@ async def test_tool_result_event_payload_carries_bundle_only_when_triggered():
         AgentContext.empty("session-diag-event"),
         event_store,
     )
-    await failing._arun(command="make")
+    _text, artifact = await failing._arun(command="make")
+    assert artifact is not None
+    assert artifact["diagnostics"]["items"][0]["file"] == "a.rs"
 
     payloads = [
         call.args[0].payload for call in event_store.append.await_args_list if call.args[0].type == "tool.result"
     ]
     assert len(payloads) == 1
-    assert payloads[0]["diagnostics"]["items"][0]["file"] == "a.rs"
+    assert "diagnostics" not in payloads[0]
 
     event_store.append.reset_mock()
     succeeding = LCToolAdapter(
@@ -652,7 +683,7 @@ async def test_runner_fans_transport_events_into_stream_before_done(monkeypatch)
 
             return events()
 
-    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, tools: FakeAgent())
+    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, tools, **_kwargs: FakeAgent())
     runner = LangGraphRunner(model_factory=lambda _model: object())
 
     received: list[AgentEvent] = []
@@ -693,7 +724,7 @@ async def test_runner_flushes_pending_transport_events_on_cancel(monkeypatch):
 
             return events()
 
-    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, tools: FakeAgent())
+    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, tools, **_kwargs: FakeAgent())
     runner = LangGraphRunner(model_factory=lambda _model: object())
 
     received: list[AgentEvent] = []

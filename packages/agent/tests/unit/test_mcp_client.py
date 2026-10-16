@@ -51,6 +51,30 @@ def _fake_manager(approval_tool=None, result=None, side_effect=None):
     return manager
 
 
+def test_checkpoint_resume_fixture_schema_is_exact_host_only(monkeypatch):
+    tool = MCPAgentTool(_stub_tool("remote_mutate", args_schema={"type": "object"}), MagicMock())
+    monkeypatch.delenv("XIHE_E2E_CHECKPOINT_RESUME", raising=False)
+    monkeypatch.setenv("XIHE_ENV", "dev")
+    monkeypatch.setenv("XIHE_E2E_PROFILE", "host")
+    assert tool.spec.checkpoint_safe_schema is None
+
+    monkeypatch.setenv("XIHE_E2E_CHECKPOINT_RESUME", "1")
+    schema = tool.spec.checkpoint_safe_schema
+    assert schema is not None
+    assert schema.version == "e2e-checkpoint-resume.v1"
+    assert schema.project_input({"operation": "increment"}) == {"operation": "increment"}
+    with pytest.raises(ValueError):
+        schema.project_input({"operation": "arbitrary"})
+    assert schema.project_output({"result": "mutation completed"}) == {
+        "result": "mutation completed"
+    }
+    with pytest.raises(ValueError):
+        schema.project_output({"result": "unregistered output"})
+
+    monkeypatch.setenv("XIHE_E2E_PROFILE", "dev")
+    assert tool.spec.checkpoint_safe_schema is None
+
+
 class _FakeDiscoveryClient:
     def __init__(self, *args, **kwargs):
         self.args = args
@@ -263,6 +287,7 @@ class TestMCPAgentToolApproval:
     async def test_sensitive_tool_dispatches_without_any_local_approval(self, context):
         """PLAN-0337 M2：写类工具首调用直达 CP 闸门，Agent 不做本地前置审批。"""
         context.metadata["toolCallId"] = "item-1"
+        context.metadata["originatingToolCallId"] = "provider-call-id-not-a-uuid"
         approval_tool = MagicMock(spec=ApprovalAgentTool)
         approval_tool.execute = AsyncMock()
         manager = _fake_manager(approval_tool=approval_tool, result=_tool_result("ok"))
@@ -278,6 +303,7 @@ class TestMCPAgentToolApproval:
             "X-Chat-Run-Id": "run-1",
             # Canonical tool-call correlation header.
             "X-Tool-Call-Id": "item-1",
+            "X-Originating-Tool-Call-Id": "provider-call-id-not-a-uuid",
         }
         assert APPROVAL_GRANT_HEADER not in headers
 

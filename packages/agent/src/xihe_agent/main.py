@@ -332,6 +332,28 @@ app.include_router(rag_router)
 app.include_router(approval_router)
 app.include_router(registry_router)
 
+# PLAN-0510 T0.5: expose the synthetic saver probe only under the exact
+# isolated host E2E profile; ordinary dev and production exclude this route.
+if (
+    os.getenv("XIHE_ENV") == "dev"
+    and os.getenv("XIHE_E2E_PROFILE") == "host"
+    and os.getenv("XIHE_E2E_CHECKPOINT_PROBE") == "1"
+):
+    from xihe_agent.api.checkpoint_probe import router as checkpoint_probe_router  # noqa: E402
+
+    app.include_router(checkpoint_probe_router)
+
+# PLAN-0510 checkpoint-resume E2E: expose destructive failpoints only to the
+# exact isolated Host spec, never to ordinary dev or production processes.
+if (
+    os.getenv("XIHE_ENV") == "dev"
+    and os.getenv("XIHE_E2E_PROFILE") == "host"
+    and os.getenv("XIHE_E2E_CHECKPOINT_RESUME") == "1"
+):
+    from xihe_agent.api.checkpoint_resume_probe import router as checkpoint_resume_probe_router  # noqa: E402
+
+    app.include_router(checkpoint_resume_probe_router)
+
 
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):

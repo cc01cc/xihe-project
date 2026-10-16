@@ -9,6 +9,7 @@ from xihe_agent.interfaces.event_adapter import EventAdapter
 from xihe_agent.interfaces.tool import (
     ACQUIRE_CREDENTIAL_TOOL_NAME,
     CREDENTIAL_DELIVERED_PLACEHOLDER,
+    UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER,
 )
 
 FINAL_CHAIN_NAME = "LangGraph"
@@ -120,29 +121,23 @@ class LangGraphEventAdapter(EventAdapter):
                 # 排除清单），抑制孤儿事件，避免 CP 中继 unmatched 噪声。
                 return None
             tool_output = data.get("output")
-            diagnostics: dict[str, Any] | None = None
             if isinstance(tool_output, ToolMessage):
-                formatted = tool_output.content
-                # PLAN-0497 T2.1: the credential value must never stream to the
-                # UI/projection channel — the model call consumed it in-run.
-                if name == ACQUIRE_CREDENTIAL_TOOL_NAME:
-                    formatted = CREDENTIAL_DELIVERED_PLACEHOLDER
+                # Tool results remain available to the current graph/model but
+                # never cross the public presentation boundary as raw text.
+                formatted = (
+                    CREDENTIAL_DELIVERED_PLACEHOLDER
+                    if name == ACQUIRE_CREDENTIAL_TOOL_NAME
+                    else UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
+                )
                 # Provider ToolMessage IDs only pair LangGraph messages; CP
                 # MCP headers use the callback lifecycle run ID.
                 tool_call_id = run_id or tool_output.tool_call_id
-                # PLAN-0342 T1.2: structured diagnostics are copied from the
-                # ToolMessage artifact channel into the SSE payload.
-                artifact = tool_output.artifact
-                if isinstance(artifact, dict):
-                    candidate = artifact.get("diagnostics")
-                    if isinstance(candidate, dict) and candidate:
-                        diagnostics = candidate
             else:
-                formatted = str(tool_output or "")
-                # PLAN-0497 T2.1: raw (non-ToolMessage) outputs must not fail open —
-                # the credential value may never reach the SSE/UI channel.
-                if name == ACQUIRE_CREDENTIAL_TOOL_NAME:
-                    formatted = CREDENTIAL_DELIVERED_PLACEHOLDER
+                formatted = (
+                    CREDENTIAL_DELIVERED_PLACEHOLDER
+                    if name == ACQUIRE_CREDENTIAL_TOOL_NAME
+                    else UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
+                )
                 tool_call_id = run_id
             tool_event_data: dict[str, Any] = {
                 "tool": name,
@@ -152,8 +147,6 @@ class LangGraphEventAdapter(EventAdapter):
                 "toolCallId": tool_call_id,
                 "origin": self._origin(name),
             }
-            if diagnostics is not None:
-                tool_event_data["diagnostics"] = diagnostics
             return AgentEvent(type="tool_result", data=tool_event_data)
 
         if event_type == "on_llm_error":

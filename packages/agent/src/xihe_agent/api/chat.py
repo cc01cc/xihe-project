@@ -6,7 +6,7 @@ resolution, event translation, and terminal-outcome semantics unchanged.
 
 import asyncio
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -17,10 +17,13 @@ from xihe_agent.adapters.api_chat_model import ApiChatModel, native_history, nat
 from xihe_agent.adapters.approval_tool import ApprovalExecutorUnsupportedError, ApprovalTerminalError
 from xihe_agent.adapters.sse_adapter import render_sse
 from xihe_agent.agent_runner import LangGraphRunner
+from xihe_agent.agent_runner.checkpoint_saver import CheckpointStoreError, CpAgentCheckpointSaver
 from xihe_agent.agent_runner.langgraph_runner import prune_history_tool_results
 from xihe_agent.api.shared import problem_details, verify_api_token
 from xihe_agent.app_state import (
     AGENT_USER_NAME,
+    CP_API_TOKEN,
+    CP_URL,
     USE_SUPERVISOR,
     _classify_llm_exception,
     _content_length,
@@ -47,6 +50,7 @@ from xihe_agent.interfaces.agent_runner import AgentEvent, RunnerConfig
 from xihe_agent.interfaces.chat_run_context import ContextBuildError
 from xihe_agent.interfaces.event import Event
 from xihe_agent.interfaces.message import TextMessage
+from xihe_agent.interfaces.tool import ToolSpec
 from xihe_agent.llm.api_request import ApiRequestError, render_request, uses_rag_context, validate_snapshot
 from xihe_agent.llm.base import LLMConfig
 from xihe_agent.llm.models import fetch_model_catalog  # noqa: F401  (import parity with prior main)
@@ -60,6 +64,74 @@ _PROVIDER_USAGE_WIRE: dict[str, str] = {
     "output_tokens": "outputTokens",
     "cache_read_input_tokens": "cacheReadInputTokens",
 }
+
+_CONTINUATION_FIELDS = frozenset(
+    {
+        "mode",
+        "sourceRunId",
+        "continuationRunId",
+        "lineageId",
+        "threadId",
+        "checkpointId",
+        "eventSequence",
+        "branchId",
+        "completedToolCallIds",
+    }
+)
+
+
+def _validate_continuation(value: Any, *, run_id: str, content: str) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(content, str) or not isinstance(value, dict) or set(value) != _CONTINUATION_FIELDS:
+        raise ValueError("continuation envelope is invalid")
+    mode = value.get("mode")
+    if mode not in {"resume_pending", "append_user_turn"}:
+        raise ValueError("continuation mode is invalid")
+    uuid_fields = ("sourceRunId", "continuationRunId", "lineageId", "threadId", "branchId")
+    normalized: dict[str, str] = {}
+    for field in uuid_fields:
+        raw = value.get(field)
+        if not isinstance(raw, str):
+            raise ValueError("continuation identity is invalid")
+        try:
+            parsed = str(UUID(raw)).lower()
+        except ValueError as exc:
+            raise ValueError("continuation identity is invalid") from exc
+        if parsed != raw:
+            raise ValueError("continuation identity is not canonical")
+        normalized[field] = parsed
+    checkpoint_id = value.get("checkpointId")
+    if (
+        not isinstance(checkpoint_id, str)
+        or not checkpoint_id
+        or len(checkpoint_id) > 128
+        or not checkpoint_id.isprintable()
+    ):
+        raise ValueError("continuation checkpoint identity is invalid")
+    event_sequence = value.get("eventSequence")
+    if type(event_sequence) is not int or event_sequence < 0:
+        raise ValueError("continuation event cursor is invalid")
+    completed = value.get("completedToolCallIds")
+    if not isinstance(completed, list) or len(completed) > 256:
+        raise ValueError("continuation side-effect IDs are invalid")
+    if any(not isinstance(item, str) or not item or len(item) > 128 or not item.isprintable() for item in completed) or len(
+        set(completed)
+    ) != len(completed):
+        raise ValueError("continuation side-effect IDs are invalid")
+    if normalized["continuationRunId"] != run_id:
+        raise ValueError("continuation Run identity does not match request")
+    if mode == "resume_pending" and content:
+        raise ValueError("resume_pending cannot include a user turn")
+    if mode == "append_user_turn" and not content.strip():
+        raise ValueError("append_user_turn requires one user turn")
+    return {
+        **value,
+        **normalized,
+        "checkpointId": checkpoint_id,
+        "eventSequence": event_sequence,
+        "completedToolCallIds": list(completed),
+    }
 
 
 def _apply_provider_usage(usage_data: dict[str, Any], model: ApiChatModel) -> None:
@@ -112,6 +184,10 @@ async def chat(request: Request):
     workspace_id: str | None = data.get("workspaceId") or None
     request_id: str = request.headers.get("X-Request-Id") or str(uuid4())
     run_id: str = request.headers.get("X-Chat-Run-Id") or data.get("runId") or str(uuid4())
+    try:
+        continuation = _validate_continuation(data.get("continuation"), run_id=run_id, content=content)
+    except ValueError:
+        return problem_details(request_id, 400, "INVALID_CONTINUATION", "Continuation metadata is invalid")
     model_override: str | None = data.get("model")
     provider_override: str | None = data.get("provider")
     tool_mode: str = data.get("toolMode", "none")
@@ -339,14 +415,55 @@ async def chat(request: Request):
                 if mcp_tools:
                     all_tools = list(mcp_tools) + all_tools
 
+                user_id = data.get("userId")
+                if not isinstance(user_id, str) or not workspace_id:
+                    raise CheckpointStoreError("Checkpoint owner context is unavailable")
+                if continuation is not None and (
+                    context.branch_id != continuation["branchId"]
+                    or context.latest_sequence != continuation["eventSequence"]
+                ):
+                    raise CheckpointStoreError("Continuation source checkpoint is stale")
+                tool_specs = [spec for tool in all_tools if isinstance((spec := getattr(tool, "spec", None)), ToolSpec)]
+                saver_args = {
+                    "cp_url": CP_URL,
+                    "service_token": CP_API_TOKEN,
+                    "session_id": session_id,
+                    "user_id": user_id,
+                    "workspace_id": workspace_id,
+                    "event_sequence_provider": lambda: context.latest_sequence,
+                    "tool_specs": tool_specs,
+                }
+                if continuation is None:
+                    checkpoint_saver = await CpAgentCheckpointSaver.create(
+                        source_run_id=run_id,
+                        **saver_args,
+                    )
+                else:
+                    checkpoint_saver = await CpAgentCheckpointSaver.attach(
+                        thread_id=continuation["threadId"],
+                        source_run_id=continuation["sourceRunId"],
+                        **saver_args,
+                    )
+                    trace = checkpoint_saver.trace_metadata
+                    if (
+                        checkpoint_saver.lineage_id != continuation["lineageId"]
+                        or trace.get("branchId") != continuation["branchId"]
+                        or trace.get("sourceRunId") != continuation["sourceRunId"]
+                    ):
+                        raise CheckpointStoreError("Continuation lineage does not match CP admission")
+
                 policy = _resolve_policy_for_model(
                     model_override or request_config.model, user_overrides, workspace_overrides
                 )
-                pruned = prune_history_tool_results(context.messages, policy.prune_window_chars)
-                if pruned.tombstones:
+                pruned = (
+                    prune_history_tool_results(context.messages, policy.prune_window_chars)
+                    if continuation is None
+                    else None
+                )
+                if pruned is not None and pruned.tombstones:
                     from datetime import UTC, datetime
 
-                    await cp_event_store_client.append(
+                    persisted = await cp_event_store_client.append(
                         Event(
                             aggregate_id=context.aggregate_id,
                             sequence=0,
@@ -360,7 +477,10 @@ async def chat(request: Request):
                             correlation_id=run_id,
                         )
                     )
-                context.messages = pruned.messages
+                    if isinstance(getattr(persisted, "sequence", None), int):
+                        context.set_latest_sequence(max(context.latest_sequence, persisted.sequence))
+                if pruned is not None:
+                    context.messages = pruned.messages
 
                 # PLAN-0508: the model's transport collector publishes bounded
                 # provider-attempt telemetry into this queue; the runner fans it
@@ -380,23 +500,25 @@ async def chat(request: Request):
                         "user_input": content,
                         "agent_instructions": instructions,
                         "rag_context": rag_context,
-                        "conversation_history": native_history(context.messages, api_type),
+                        "conversation_history": (
+                            [] if continuation is not None else native_history(context.messages, api_type)
+                        ),
                         "tools": native_tools(all_tools, api_type),
                     },
                     request_id=request_id,
                     timeout=request_config.timeout,
                     token_estimator=_estimate_native_body_tokens,
                     transport_sink=publish_transport,
+                    include_initial_messages=continuation is not None,
                 )
                 request_runner = LangGraphRunner(model_factory=lambda _model: model, event_store=cp_event_store_client)
                 # The Runner owns approval/durable/tool execution. This prompt is
                 # its admitted event input, not a provider-neutral body builder.
-                messages = [TextMessage(role="human", content=content)]
+                resume_pending = continuation is not None and continuation["mode"] == "resume_pending"
+                messages = [] if resume_pending else [TextMessage(role="human", content=content)]
                 has_template = True
 
-                loop_thresholds, loop_exempt_tools = _resolve_loop_guard(
-                    user_overrides, workspace_overrides
-                )
+                loop_thresholds, loop_exempt_tools = _resolve_loop_guard(user_overrides, workspace_overrides)
                 config = RunnerConfig(
                     model=model_override or request_config.model,
                     system_prompt="" if has_template else instructions,
@@ -413,9 +535,11 @@ async def chat(request: Request):
                     prune_window_chars=policy.prune_window_chars,
                     branch_id=context.branch_id,
                     template_context=has_template,
-                    admitted_prompt=content,
+                    admitted_prompt=None if resume_pending else content,
                     # PLAN-0508: bounded provider-attempt telemetry fan-in.
                     transport_events=transport_events,
+                    continuation=continuation,
+                    checkpoint_saver=checkpoint_saver,
                 )
 
                 llm_request_started = True

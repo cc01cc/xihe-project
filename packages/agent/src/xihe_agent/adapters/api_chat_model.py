@@ -14,8 +14,13 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 from loguru import logger
 from pydantic import PrivateAttr
 
+from xihe_agent.agent_runner.credential_handoff import (
+    CredentialHandoffError,
+    RunScopedCredentialHandoff,
+    StreamingSecretRedactor,
+)
 from xihe_agent.interfaces.message import Message
-from xihe_agent.interfaces.tool import BaseAgentTool
+from xihe_agent.interfaces.tool import ACQUIRE_CREDENTIAL_TOOL_NAME, BaseAgentTool
 from xihe_agent.llm.api_request import ApiRequestError, ChatApiType, render_request
 from xihe_agent.llm.api_sender import NATIVE_USAGE_COUNTERS, ApiSender, NativeResponse
 from xihe_agent.llm.transport_metrics import TransportEventSink, TransportMetricsCollector
@@ -117,9 +122,11 @@ def native_history(messages: Sequence[Message], api_type: ChatApiType) -> list[d
     # Reuse existing durable pairing/missing-result rules only for history;
     # the template-authored request body never passes through this converter.
     from xihe_agent.agent_runner.langgraph_runner import to_langchain_messages
+    from xihe_agent.interfaces.history_safety import mask_historical_messages, mask_native_tool_outputs
 
     result: list[dict[str, Any]] = []
     pending: list[Message] = []
+    safe_messages = mask_historical_messages(messages)
 
     def flush() -> None:
         result.extend(
@@ -127,7 +134,7 @@ def native_history(messages: Sequence[Message], api_type: ChatApiType) -> list[d
         )
         pending.clear()
 
-    for message in messages:
+    for message in safe_messages:
         records = getattr(message, "native_records", None)
         if records is None:
             pending.append(message)
@@ -138,78 +145,38 @@ def native_history(messages: Sequence[Message], api_type: ChatApiType) -> list[d
             or getattr(message, "api_type_version", None) != api_type.version
         ):
             raise ApiRequestError("API_TYPE_TEMPLATE_MISMATCH", 409)
-        result.extend(copy.deepcopy(records))
+        result.extend(mask_native_tool_outputs(api_type.id, records))
     flush()
     return result
 
 
-def _acquire_tool_call_ids(api_type_id: str, records: list[dict[str, Any]]) -> set[str]:
-    """PLAN-0497 I5 (wave review): ids of acquire_credential calls whose durable
-    tool outputs must be masked before the records leave the process."""
-    from xihe_agent.interfaces.tool import ACQUIRE_CREDENTIAL_TOOL_NAME
-
-    ids: set[str] = set()
-    for record in records:
-        if api_type_id == "openai-chat-completions":
-            for call in record.get("tool_calls", []):
-                if call.get("function", {}).get("name") == ACQUIRE_CREDENTIAL_TOOL_NAME:
-                    ids.add(str(call.get("id", "")))
-        elif api_type_id == "anthropic-messages":
-            for block in record.get("content", []):
-                if not isinstance(block, dict):
-                    continue
-                if block.get("type") == "tool_use" and block.get("name") == ACQUIRE_CREDENTIAL_TOOL_NAME:
-                    ids.add(str(block.get("id", "")))
-        else:
-            if record.get("type") == "function_call" and record.get("name") == ACQUIRE_CREDENTIAL_TOOL_NAME:
-                ids.add(str(record.get("call_id", "")))
-    return ids
-
-
 def durable_native_carrier(model: ApiChatModel, limit: int) -> dict[str, Any]:
-    """Bound only tool payloads; signatures and reasoning remain exact.
+    """Bound tool-call arguments and replace tool-result bodies before append.
 
-    PLAN-0497 I5 (wave review): the delivered credential value never enters the
-    durable replay records — acquire_credential tool outputs are swapped for the
-    fixed placeholder in every API-type family, while the in-memory ToolMessage
-    keeps the value for the current run only.
+    Credential results retain their fixed credential placeholder. Other results
+    use a generic placeholder because durable history lacks trusted schema
+    provenance for cross-Run reuse.
     """
-    from xihe_agent.agent_runner.tool_adapter import bound_tool_preview
     from xihe_agent.interfaces.context import bound_tool_arguments, compact_json
-    from xihe_agent.interfaces.tool import CREDENTIAL_DELIVERED_PLACEHOLDER
+    from xihe_agent.interfaces.history_safety import mask_native_tool_outputs
     from xihe_agent.llm.api_request import strict_json
 
-    records = model.native_records
-    acquire_call_ids = _acquire_tool_call_ids(model.api_type.id, records)
+    records = copy.deepcopy(model.native_records)
     for record in records:
         if model.api_type.id == "openai-chat-completions":
             for call in record.get("tool_calls", []):
                 function = call["function"]
                 function["arguments"] = compact_json(bound_tool_arguments(strict_json(function["arguments"])))
-            if record.get("role") == "tool":
-                if str(record.get("tool_call_id", "")) in acquire_call_ids:
-                    record["content"] = CREDENTIAL_DELIVERED_PLACEHOLDER
-                else:
-                    record["content"], _ = bound_tool_preview(str(record.get("content", "")), None)
         elif model.api_type.id == "anthropic-messages":
             for block in record.get("content", []):
                 if not isinstance(block, dict):
                     continue
                 if block.get("type") == "tool_use":
                     block["input"] = bound_tool_arguments(block.get("input"))
-                elif block.get("type") == "tool_result":
-                    if str(block.get("tool_use_id", "")) in acquire_call_ids:
-                        block["content"] = CREDENTIAL_DELIVERED_PLACEHOLDER
-                    else:
-                        block["content"], _ = bound_tool_preview(str(block.get("content", "")), None)
         else:
             if record.get("type") == "function_call":
                 record["arguments"] = compact_json(bound_tool_arguments(strict_json(record["arguments"])))
-            elif record.get("type") == "function_call_output":
-                if str(record.get("call_id", "")) in acquire_call_ids:
-                    record["output"] = CREDENTIAL_DELIVERED_PLACEHOLDER
-                else:
-                    record["output"], _ = bound_tool_preview(str(record.get("output", "")), None)
+    records = mask_native_tool_outputs(model.api_type.id, records)
     carrier = {"apiTypeId": model.api_type.id, "apiTypeVersion": model.api_type.version, "nativeRecords": records}
     if len(compact_json(carrier)) > limit:
         raise ApiRequestError("CONTEXT_BUILD_FAILED")
@@ -228,6 +195,8 @@ class ApiChatModel(BaseChatModel):
     _tool_names: set[str] = PrivateAttr(default_factory=set)
     _native_turns: list[dict[str, Any]] = PrivateAttr(default_factory=list)
     _current_suffix: list[dict[str, Any]] = PrivateAttr(default_factory=list)
+    _credential_handoff: RunScopedCredentialHandoff | None = PrivateAttr(default=None)
+    _include_initial_messages: bool = PrivateAttr(default=False)
     # PLAN-0416 T2.3: budget estimation over the final serialized native body,
     # taken once per dispatched provider step, plus the provider counters each
     # step actually returned (absent counters stay unknown, never 0).
@@ -247,6 +216,7 @@ class ApiChatModel(BaseChatModel):
         timeout: float,
         token_estimator: Callable[[dict[str, Any]], int] | None = None,
         transport_sink: TransportEventSink | None = None,
+        include_initial_messages: bool = False,
     ):
         super().__init__(cache=False)
         self._api_type = api_type
@@ -258,6 +228,7 @@ class ApiChatModel(BaseChatModel):
         self._body_source = body_source
         self._values = copy.deepcopy(values)
         self._token_estimator = token_estimator
+        self._include_initial_messages = bool(include_initial_messages)
         self._tool_names = {
             str(tool.get("function", tool).get("name"))
             for tool in self._base.get("tools", [])
@@ -307,19 +278,39 @@ class ApiChatModel(BaseChatModel):
             raise ApiRequestError("RUNTIME_FIELD_CONFLICT")
         return self
 
+    def set_credential_handoff(self, handoff: RunScopedCredentialHandoff) -> None:
+        """Attach the current Run's volatile credential channel explicitly."""
+        self._credential_handoff = handoff
+
     def _body(self, messages: list[BaseMessage]) -> dict[str, Any]:
         if self._initial_count is None:
-            self._initial_count = len(messages)
+            self._initial_count = 0 if self._include_initial_messages else len(messages)
         if len(messages) < self._initial_count:
             raise ApiRequestError("INVALID_REQUEST_SHAPE")
         # RAG stays in its independent template data slot on every step; it is
         # never appended to baseline instructions or admitted durable messages.
         body = render_request(self._body_source, self._api_type, self._values)
         suffix = messages[self._initial_count :]
-        if any(not isinstance(message, (AIMessage, ToolMessage)) for message in suffix):
+        if any(not isinstance(message, (HumanMessage, SystemMessage, AIMessage, ToolMessage)) for message in suffix):
             raise ApiRequestError("INVALID_REQUEST_SHAPE")
         self._current_suffix = [record for message in suffix for record in native_message(message, self._api_type)]
-        body[self._api_type.input_field].extend(copy.deepcopy(self._current_suffix))
+        if self._credential_handoff is None:
+            if any(
+                isinstance(message, ToolMessage) and message.name == ACQUIRE_CREDENTIAL_TOOL_NAME
+                for message in messages
+            ):
+                raise CredentialHandoffError("Credential handoff is unavailable")
+            provider_messages = messages
+        else:
+            # Inspect the whole state, including the initial prefix. On Agent
+            # restart it contains only the durable placeholder; with no current
+            # Run-local value that continuation must fail closed.
+            provider_messages = self._credential_handoff.hydrate_for_request(messages)
+        provider_suffix = provider_messages[self._initial_count :]
+        provider_records = [
+            record for message in provider_suffix for record in native_message(message, self._api_type)
+        ]
+        body[self._api_type.input_field].extend(copy.deepcopy(provider_records))
         return body
 
     def _dispatch_body(self, messages: list[BaseMessage]) -> dict[str, Any]:
@@ -344,6 +335,10 @@ class ApiChatModel(BaseChatModel):
         return body
 
     def _check_response(self, response: NativeResponse) -> None:
+        if self._credential_handoff is not None:
+            self._credential_handoff.reject_secret_echo(
+                [response.text, response.calls, response.records]
+            )
         if any(call["name"] not in self._tool_names for call in response.calls):
             raise ApiRequestError("TOOL_NOT_AUTHORIZED", 403)
         for name, value in response.provider_usage.items():
@@ -381,16 +376,25 @@ class ApiChatModel(BaseChatModel):
     async def _astream(
         self, messages: list[BaseMessage], stop: list[str] | None = None, run_manager: Any = None, **kwargs: Any
     ) -> AsyncIterator[ChatGenerationChunk]:
+        secrets = self._credential_handoff.secrets_for_stream_filter() if self._credential_handoff else ()
+        text_redactor = StreamingSecretRedactor(secrets)
+        reasoning_redactor = StreamingSecretRedactor(secrets)
         async for text, reasoning, result in self._sender.stream(self._dispatch_body(messages)):
-            if text or reasoning:
+            if result is not None:
+                # A complete provider response can contain a credential even
+                # when its stream chunks did not; reject it before callbacks or
+                # graph state observe the final message.
+                self._check_response(result)
+            safe_text = text_redactor.feed(text or "")
+            safe_reasoning = reasoning_redactor.feed(reasoning or "")
+            if safe_text or safe_reasoning:
                 yield ChatGenerationChunk(
                     message=AIMessageChunk(
-                        content=text or reasoning,
-                        response_metadata={"reasoning_content": reasoning} if reasoning else {},
+                        content=safe_text or safe_reasoning,
+                        response_metadata={"reasoning_content": safe_reasoning} if safe_reasoning else {},
                     )
                 )
             if result is not None:
-                self._check_response(result)
                 # Native records include thinking/signature/reasoning and provider
                 # IDs. One final chunk supplies tool calls without re-emitting text.
                 yield ChatGenerationChunk(
@@ -414,3 +418,12 @@ class ApiChatModel(BaseChatModel):
                         ],
                     )
                 )
+        safe_text_tail = text_redactor.finish()
+        safe_reasoning_tail = reasoning_redactor.finish()
+        if safe_text_tail or safe_reasoning_tail:
+            yield ChatGenerationChunk(
+                message=AIMessageChunk(
+                    content=safe_text_tail or safe_reasoning_tail,
+                    response_metadata={"reasoning_content": safe_reasoning_tail} if safe_reasoning_tail else {},
+                )
+            )

@@ -88,6 +88,10 @@ class RunnerConfig:
     # (populated by the transport_sink bound at model construction). The runner
     # fans these into the same SSE event stream; None keeps the run untouched.
     transport_events: asyncio.Queue[AgentEvent] | None = None
+    # PLAN-0510: an internally admitted continuation carries CP-owned lineage,
+    # checkpoint and side-effect IDs. These fields are never public client input.
+    continuation: dict[str, Any] | None = None
+    checkpoint_saver: Any | None = None
 
 
 class AgentRunner(ABC):

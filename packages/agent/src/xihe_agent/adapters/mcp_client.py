@@ -22,7 +22,7 @@ from xihe_agent.adapters.approval_tool import (
     parse_approval_expiry,
 )
 from xihe_agent.interfaces.context import AgentContext
-from xihe_agent.interfaces.tool import BaseAgentTool, ToolSpec
+from xihe_agent.interfaces.tool import BaseAgentTool, CheckpointSafeToolSchema, ToolSpec
 
 # PLAN-0308 M2（决策 #34）：客户端栈迁移到 `langchain[mcp]`（fastmcp 4.x + mcp 2.x）。
 # `langchain.mcp` 处于 beta（导入时发一次 LangChainBetaWarning），本模块按路线 C
@@ -73,6 +73,33 @@ DEFAULT_MCP_TOOL_TIMEOUT_S = _parse_timeout_s(os.environ.get("XIHE_MCP_TOOL_TIME
 # 避免兜底把发现挂死窗口从 300s 放大到 3600s（评审修复）。
 SESSION_READ_HANG_BACKSTOP_S = 3600.0
 DISCOVERY_READ_TIMEOUT_S = 30.0
+
+# The fake remote MCP fixture exposes this deliberately tiny result only in
+# the isolated PLAN-0510 checkpoint-resume Host lane. It is not a production
+# tool registration and must never make arbitrary MCP output checkpointable.
+_CHECKPOINT_RESUME_FIXTURE_SCHEMA = CheckpointSafeToolSchema(
+    version="e2e-checkpoint-resume.v1",
+    input_schema={
+        "type": "object",
+        "properties": {"operation": {"type": "string", "enum": ["increment"]}},
+        "required": ["operation"],
+        "additionalProperties": False,
+    },
+    output_schema={
+        "type": "object",
+        "properties": {"result": {"type": "string", "enum": ["mutation completed"]}},
+        "required": ["result"],
+        "additionalProperties": False,
+    },
+)
+
+
+def _checkpoint_resume_fixture_enabled() -> bool:
+    return (
+        os.getenv("XIHE_ENV") == "dev"
+        and os.getenv("XIHE_E2E_PROFILE") == "host"
+        and os.getenv("XIHE_E2E_CHECKPOINT_RESUME") == "1"
+    )
 
 
 def _env_override() -> float | None:
@@ -187,6 +214,16 @@ def _context_headers(
         tool_call_id = metadata.get("toolCallId")
         if tool_call_id:
             headers["X-Tool-Call-Id"] = str(tool_call_id)
+        originating_tool_call_id = metadata.get("originatingToolCallId")
+        if originating_tool_call_id is not None:
+            if (
+                not isinstance(originating_tool_call_id, str)
+                or not originating_tool_call_id
+                or len(originating_tool_call_id) > 128
+                or "\x00" in originating_tool_call_id
+            ):
+                raise ValueError("originating tool call identity is invalid")
+            headers["X-Originating-Tool-Call-Id"] = originating_tool_call_id
     # PLAN-0465（0463 gap 4 生产方收口）：job-scoped dispatch 携带 X-Job-Id——
     # 工具实参已知 jobId（get/cancel_background_process）时发送该 Runtime handle，
     # CP 转发后 Runtime 侧 `Correlation.job_id` 才能对上日志时间线；值 = Agent
@@ -496,10 +533,17 @@ class MCPAgentTool(BaseAgentTool):
                 input_schema = args_schema.schema()
         else:
             input_schema = {}
+        checkpoint_safe_schema = (
+            _CHECKPOINT_RESUME_FIXTURE_SCHEMA
+            if self._tool.name == "remote_mutate" and _checkpoint_resume_fixture_enabled()
+            else None
+        )
         return ToolSpec(
             name=self._tool.name,
             description=self._tool.description or "",
             input_schema=input_schema,
+            checkpoint_safe_schema=checkpoint_safe_schema,
+            requires_originating_tool_call_id=True,
         )
 
 

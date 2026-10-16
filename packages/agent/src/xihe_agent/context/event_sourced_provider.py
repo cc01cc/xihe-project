@@ -2,6 +2,7 @@
 
 from xihe_agent.context.store_client import CPContextServiceClient
 from xihe_agent.interfaces.context import AgentContext, ContextProvider
+from xihe_agent.interfaces.history_safety import mask_historical_messages
 
 
 class EventSourcedContextProvider(ContextProvider):
@@ -25,4 +26,6 @@ class EventSourcedContextProvider(ContextProvider):
         snapshot = await self._cp_client.get_context_snapshot(
             aggregate_id, after_sequence=after_sequence, run_id=run_id
         )
-        return AgentContext.from_snapshot(snapshot)
+        context = AgentContext.from_snapshot(snapshot)
+        context.messages = mask_historical_messages(context.messages)
+        return context

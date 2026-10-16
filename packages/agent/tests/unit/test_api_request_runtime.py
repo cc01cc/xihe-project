@@ -674,7 +674,14 @@ async def test_real_runner_tool_loop_single_execution_and_native_suffix(type_id,
         key = "input" if type_id == TYPES[2] else "messages"
         assert captures[1][2][key][0] == captures[0][2][key][0]
         assert len([event for event in events if event.type == "tool_call"]) == 1
-        assert len([event for event in events if event.type == "tool_result"]) == 1
+        tool_results = [event for event in events if event.type == "tool_result"]
+        assert len(tool_results) == 1
+        from xihe_agent.interfaces.tool import UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
+
+        assert tool_results[0].data["result"] == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
+        assert "tool-result" not in json.dumps(tool_results[0].data)
+        # The active graph turn still gives the real volatile result to the provider.
+        assert "tool-result" in json.dumps(captures[1][2][key])
         responded = [
             call.args[0] for call in store.append.await_args_list if call.args[0].type == "assistant.responded"
         ]
@@ -682,6 +689,9 @@ async def test_real_runner_tool_loop_single_execution_and_native_suffix(type_id,
         carrier = responded[0].payload["message"]
         assert carrier["apiTypeId"] == type_id
         assert carrier["apiTypeVersion"] == 1
+        carrier_json = json.dumps(carrier["nativeRecords"])
+        assert "tool-result" not in carrier_json
+        assert UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER in carrier_json
         from xihe_agent.adapters.api_chat_model import native_history
         from xihe_agent.interfaces.context import message_from_dict
 
@@ -756,10 +766,10 @@ def test_durable_native_bounds_type_mismatch_and_oversize(type_id):
 @pytest.mark.parametrize("type_id", TYPES)
 def test_durable_native_carrier_masks_acquire_credential_output(type_id):
     """PLAN-0497 I5 (wave review): the durable replay carrier must never carry the
-    delivered credential value — acquire_credential outputs are swapped for the
-    placeholder across all API-type families; other tool outputs stay untouched."""
+    delivered credential value — acquire_credential outputs keep their dedicated
+    placeholder and all other tool outputs are withheld across API-type families."""
     from xihe_agent.adapters.api_chat_model import durable_native_carrier
-    from xihe_agent.interfaces.tool import CREDENTIAL_DELIVERED_PLACEHOLDER
+    from xihe_agent.interfaces.tool import CREDENTIAL_DELIVERED_PLACEHOLDER, UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
 
     secret = "e2e-acquire-secret-1791901753580-ab12cd34"
     acquire_call = {"type": "function", "id": "a1", "function": {"name": "acquire_credential", "arguments": '{"credentialId":"x"}'}}
@@ -808,7 +818,8 @@ def test_durable_native_carrier_masks_acquire_credential_output(type_id):
     serialized = json.dumps(carrier["nativeRecords"])
     assert secret not in serialized
     assert CREDENTIAL_DELIVERED_PLACEHOLDER in serialized
-    assert "plain-tool-output" in serialized
+    assert "plain-tool-output" not in serialized
+    assert UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER in serialized
 
 
 def test_native_replay_fork_prune_compaction_atomic():

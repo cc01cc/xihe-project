@@ -11,15 +11,21 @@ Behavior moved verbatim; wire shapes stay byte-identical.
 import json
 import os
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from langchain_core.callbacks import AsyncCallbackManagerForToolRun
-from langchain_core.tools import BaseTool
+from langchain_core.messages import ToolMessage
+from langchain_core.tools import BaseTool, InjectedToolCallId
 from loguru import logger
 from pydantic import BaseModel, create_model
 
 from xihe_agent.adapters.approval_tool import ApprovalTerminalError
+from xihe_agent.agent_runner.checkpoint_resume_failpoint import pause_if_armed
+from xihe_agent.agent_runner.credential_handoff import (
+    CredentialHandoffError,
+    RunScopedCredentialHandoff,
+)
 from xihe_agent.context.diagnostics import (
     TOP_N as DIAGNOSTICS_TOP_N,
 )
@@ -40,9 +46,15 @@ from xihe_agent.interfaces.event import Event
 from xihe_agent.interfaces.event_store import EventStore
 from xihe_agent.interfaces.tool import (
     ACQUIRE_CREDENTIAL_TOOL_NAME,
+    CHECKPOINT_SAFE_OUTPUT_PREFIX,
+    CHECKPOINT_SAFE_OUTPUT_SCHEMA_KEY,
+    CHECKPOINT_SAFE_OUTPUT_SUFFIX,
     CREDENTIAL_DELIVERED_PLACEHOLDER,
+    CREDENTIAL_HANDOFF_REQUIRED_KEY,
+    UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER,
     BaseAgentTool,
     ToolSpec,
+    strict_json_loads,
 )
 
 __all__ = [
@@ -87,14 +99,19 @@ def _python_type(prop: dict[str, Any]) -> type:
 def _build_args_schema(spec: ToolSpec) -> type[BaseModel]:
     """Build a Pydantic model from a JSON Schema for LangGraph."""
     schema = spec.input_schema
-    if not schema or not isinstance(schema, dict):
-        return BaseModel
-    properties = schema.get("properties", {})
-    required = set(schema.get("required", []))
     fields: dict[str, Any] = {}
-    for name, prop in properties.items():
-        default = ... if name in required else None
-        fields[name] = (_python_type(prop), default)
+    if isinstance(schema, dict):
+        properties = schema.get("properties", {})
+        required = set(schema.get("required", []))
+        for name, prop in properties.items():
+            default = ... if name in required else None
+            fields[name] = (_python_type(prop), default)
+    if (
+        spec.name == ACQUIRE_CREDENTIAL_TOOL_NAME
+        or spec.checkpoint_safe_schema is not None
+        or spec.requires_originating_tool_call_id
+    ):
+        fields["tool_call_id"] = (Annotated[str, InjectedToolCallId], ...)
     return create_model(f"{spec.name}Input", **fields)
 
 
@@ -430,7 +447,13 @@ class LCToolAdapter(BaseTool):
     # the annotated override of the inherited field.
     response_format: Literal["content", "content_and_artifact"] = "content_and_artifact"
 
-    def __init__(self, tool: BaseAgentTool, context: AgentContext, event_store: EventStore | None):
+    def __init__(
+        self,
+        tool: BaseAgentTool,
+        context: AgentContext,
+        event_store: EventStore | None,
+        credential_handoff: RunScopedCredentialHandoff | None = None,
+    ):
         super().__init__(
             name=tool.spec.name,
             description=tool.spec.description,
@@ -439,12 +462,13 @@ class LCToolAdapter(BaseTool):
         self._tool = tool
         self._context = context
         self._event_store = event_store
+        self._credential_handoff = credential_handoff
 
     async def _arun(
         self,
         run_manager: AsyncCallbackManagerForToolRun | None = None,
         **kwargs: Any,
-    ) -> tuple[str, dict[str, Any] | None]:
+    ) -> tuple[str | ToolMessage, dict[str, Any] | None]:
         """Execute the tool; return ``(content, artifact)``.
 
         PLAN-0342 T1.2: a failed, parseable command result yields a diagnostics
@@ -453,10 +477,43 @@ class LCToolAdapter(BaseTool):
         middle-truncated raw output stay inside the untrusted envelope.
         """
         # Share LangChain's tool-run identity with SSE start/end and the CP MCP header.
+        tool_spec = self._tool.spec
+        credential_tool = tool_spec.name == ACQUIRE_CREDENTIAL_TOOL_NAME
+        safe_schema = tool_spec.checkpoint_safe_schema
+        needs_originating_id = (
+            credential_tool or safe_schema is not None or tool_spec.requires_originating_tool_call_id
+        )
+        originating_tool_call_id = kwargs.pop("tool_call_id", None) if needs_originating_id else None
+        if needs_originating_id and (
+            not isinstance(originating_tool_call_id, str)
+            or not originating_tool_call_id
+            or len(originating_tool_call_id) > 128
+            or "\x00" in originating_tool_call_id
+        ):
+            if credential_tool:
+                raise CredentialHandoffError("Credential handoff is unavailable")
+            raise ValueError("Originating tool call identity is invalid")
+        if credential_tool and self._credential_handoff is None:
+            raise CredentialHandoffError("Credential handoff is unavailable")
+        if safe_schema is not None:
+            try:
+                kwargs = safe_schema.project_input(kwargs)
+            except (TypeError, ValueError):
+                raise ValueError("Tool arguments do not match the checkpoint-safe input schema") from None
+        # Keep the LangChain execution id for event/MCP telemetry; it is not
+        # the model's originating tool_call_id used by the volatile handoff.
         call_id = str(run_manager.run_id) if run_manager is not None else str(uuid4())
+        # Exact Host failpoint: the LangGraph model-step checkpoint already
+        # contains the pending AI tool call, while no durable tool.called
+        # event or external side effect has happened yet. Keep it before the
+        # EventStore append so the checkpoint cursor still matches branch head.
+        await pause_if_armed("before_tool_dispatch", tool_spec.name)
         await self._append_tool_called(call_id, kwargs)
         previous_tool_call_id = self._context.metadata.get("toolCallId")
+        previous_originating_tool_call_id = self._context.metadata.get("originatingToolCallId")
         self._context.metadata["toolCallId"] = call_id
+        if needs_originating_id:
+            self._context.metadata["originatingToolCallId"] = originating_tool_call_id
         try:
             # PLAN-0493 T2.1: tier-1 admission before execution. Refuse closes
             # the durable pair with the hint text (Run keeps going); escalate
@@ -473,13 +530,22 @@ class LCToolAdapter(BaseTool):
                         self._context.metadata[NO_PROGRESS_SIGNAL_KEY] = pre.signal
                     await self._append_tool_result(
                         call_id,
-                        build_tool_event_result(notice, {}),
+                        build_tool_event_result(
+                            CREDENTIAL_DELIVERED_PLACEHOLDER
+                            if credential_tool
+                            else UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER,
+                            {},
+                        ),
                         status="failed",
                     )
                     return wrap_untrusted_tool_output(notice), None
                 pre_message = pre.message
             try:
                 result = await self._tool.execute(kwargs, self._context)
+                # Exact Host failpoint: CP/Runtime has completed the mutation,
+                # but LangGraph has not received a ToolMessage and cannot have
+                # checkpointed the result.
+                await pause_if_armed("after_tool_dispatch", tool_spec.name)
             except ApprovalTerminalError:
                 # PLAN-0381 T3.2 / m3-contract §1.1：审批终态走独立事件序列，
                 # 不落 failed tool.result（已知边界，契约登记）。
@@ -506,12 +572,14 @@ class LCToolAdapter(BaseTool):
                     if rec.level == "escalate":
                         self._context.metadata[NO_PROGRESS_SIGNAL_KEY] = rec.signal
                 try:
-                    preview, preview_meta = bound_tool_preview(
-                        f"Tool execution failed: {type(exc).__name__}: {exc}", None
-                    )
                     await self._append_tool_result(
                         call_id,
-                        build_tool_event_result(preview, preview_meta),
+                        build_tool_event_result(
+                            CREDENTIAL_DELIVERED_PLACEHOLDER
+                            if credential_tool
+                            else UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER,
+                            {},
+                        ),
                         status="failed",
                     )
                 except Exception:
@@ -520,56 +588,80 @@ class LCToolAdapter(BaseTool):
                         call_id,
                         exc_info=True,
                     )
-                raise
+                # Do not let arbitrary exception text escape through graph logs
+                # or SSE error details; the source exception may contain tool data.
+                raise RuntimeError("Tool execution failed") from None
             content = result.get("content", result)
             if not isinstance(content, str):
                 content = str(content)
 
             parsed = extract_command_result(content)
-            try:
-                diagnostics = self._build_diagnostics(parsed, kwargs)
-            except Exception as exc:  # diagnostics must never break the run
-                logger.warning(
-                    "diagnostics extraction failed; continuing without bundle",
-                    error=str(exc),
-                    exc_info=True,
-                )
+            if credential_tool or safe_schema is not None:
                 diagnostics = None
-            # PLAN-0381 T2.3：事件只携带有界 preview（gate 决定字符串/对象
-            # 形状）；诊断从原始 content 提取，顺序在加界之前冻结。
-            preview, preview_meta = bound_tool_preview(content, parsed)
+            else:
+                try:
+                    diagnostics = self._build_diagnostics(parsed, kwargs)
+                except Exception as exc:  # diagnostics must never break the run
+                    logger.warning(
+                        "diagnostics extraction failed; continuing without bundle",
+                        error=str(exc),
+                        exc_info=True,
+                    )
+                    diagnostics = None
+            safe_output = None
+            safe_output_content = None
+            if safe_schema is not None and diagnostics is None and not pre_message:
+                try:
+                    safe_output = safe_schema.project_output(strict_json_loads(content))
+                    safe_output_content = json.dumps(
+                        safe_output,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                except (TypeError, ValueError):
+                    # Never let malformed or duplicate-key JSON reach the model
+                    # or durable ToolMessage. The generic result also ensures a
+                    # failed schema check cannot echo the original content.
+                    safe_output = None
+                    safe_output_content = None
+            safe_output_rejected = safe_schema is not None and safe_output_content is None
+            safe_output_rejected_text = (
+                "Tool result withheld: checkpoint-safe output validation failed."
+            )
+            unsafe_durable_placeholder = UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
+            # Only versioned, allowlisted outputs may cross a Run boundary.
+            # The current Run still receives the existing bounded result below,
+            # while EventStore stores a generic placeholder for unregistered tools.
+            preview_source = (
+                safe_output_content
+                if safe_schema is not None and safe_output_content is not None
+                else safe_output_rejected_text
+                if safe_output_rejected
+                else content
+            )
+            preview, preview_meta = bound_tool_preview(
+                preview_source,
+                parsed if safe_schema is None else None,
+            )
             # PLAN-0497 T2.1: acquire_credential's delivered value stays in this
             # run's memory — the durable tool.result preview (the source for
             # history replay, UI projection and audit) carries only the fixed
             # placeholder, while the returned content below keeps the value for
             # the current model call.
-            if self._tool.spec.name == ACQUIRE_CREDENTIAL_TOOL_NAME:
+            if credential_tool:
                 durable_preview: Any = CREDENTIAL_DELIVERED_PLACEHOLDER
                 durable_meta: Any = {}
+            elif safe_schema is None:
+                durable_preview = unsafe_durable_placeholder
+                durable_meta = {}
             else:
                 durable_preview = preview
                 durable_meta = preview_meta
-            await self._append_tool_result(
-                call_id,
-                build_tool_event_result(durable_preview, durable_meta),
-                diagnostics=diagnostics,
-            )
-            if isinstance(window, LoopObservationWindow):
-                # PLAN-0493 T2.1: post-execution bookkeeping (window + error/
-                # stale signals); an escalate verdict flips the runner flag.
-                rec = window.record_result(
-                    self._tool.spec.name,
-                    kwargs,
-                    ok=True,
-                    result_text=content,
-                )
-                if rec.level == "escalate":
-                    self._context.metadata[NO_PROGRESS_SIGNAL_KEY] = rec.signal
-
             # PLAN-0342 P2-4 → PLAN-0381 T2.3：48k middle truncation 保留为命令
             # 分支兜底（对 ≤4096 的 preview 恒 no-op）；非命令载荷同样只出
             # 有界 preview——`read_file` 等超限内容不再整段进模型。
-            body = truncate_middle(preview) if parsed is not None else preview
+            body = truncate_middle(preview) if parsed is not None and safe_schema is None else preview
             if diagnostics is not None and diagnostics["items"]:
                 block = format_diagnostics_block(diagnostics["items"], diagnostics["total"])
                 body = f"{body}\n{block}"
@@ -581,12 +673,76 @@ class LCToolAdapter(BaseTool):
                 # executed result (the call runs; only the text is added).
                 text = f"{text}\n{pre_message}"
             artifact = {"diagnostics": diagnostics} if diagnostics is not None else None
+            if credential_tool:
+                assert self._credential_handoff is not None
+                assert isinstance(originating_tool_call_id, str)
+                self._credential_handoff.store(originating_tool_call_id, text, secret_material=content)
+                artifact = None
+
+            await self._append_tool_result(
+                call_id,
+                build_tool_event_result(durable_preview, durable_meta),
+                diagnostics=diagnostics if credential_tool or safe_schema is not None else None,
+                status="failed" if safe_output_rejected else "completed",
+            )
+            if isinstance(window, LoopObservationWindow):
+                # Keep sensitive acquisition results out of even in-memory
+                # observation records; other tools retain the original signal.
+                rec = window.record_result(
+                    self._tool.spec.name,
+                    kwargs,
+                    ok=not safe_output_rejected,
+                    error_key="checkpoint_safe_schema" if safe_output_rejected else None,
+                    result_text=(
+                        CREDENTIAL_DELIVERED_PLACEHOLDER
+                        if credential_tool
+                        else safe_output_rejected_text
+                        if safe_output_rejected
+                        else preview_source
+                    ),
+                )
+                if rec.level == "escalate":
+                    self._context.metadata[NO_PROGRESS_SIGNAL_KEY] = rec.signal
+
+            if credential_tool:
+                return (
+                    ToolMessage(
+                        content=CREDENTIAL_DELIVERED_PLACEHOLDER,
+                        tool_call_id=originating_tool_call_id,
+                        name=ACQUIRE_CREDENTIAL_TOOL_NAME,
+                        additional_kwargs={CREDENTIAL_HANDOFF_REQUIRED_KEY: True},
+                        status="success",
+                    ),
+                    None,
+                )
+            if safe_output_rejected:
+                return safe_output_rejected_text, None
+            if safe_schema is not None and safe_output is not None and not jit and not diagnostics and not pre_message:
+                assert isinstance(originating_tool_call_id, str)
+                return (
+                    ToolMessage(
+                        content=(
+                            f"{CHECKPOINT_SAFE_OUTPUT_PREFIX}"
+                            f"{safe_output_content}"
+                            f"{CHECKPOINT_SAFE_OUTPUT_SUFFIX}"
+                        ),
+                        tool_call_id=originating_tool_call_id,
+                        name=tool_spec.name,
+                        additional_kwargs={CHECKPOINT_SAFE_OUTPUT_SCHEMA_KEY: safe_schema.version},
+                        status="success",
+                    ),
+                    None,
+                )
             return text, artifact
         finally:
             if previous_tool_call_id is None:
                 self._context.metadata.pop("toolCallId", None)
             else:
                 self._context.metadata["toolCallId"] = previous_tool_call_id
+            if previous_originating_tool_call_id is None:
+                self._context.metadata.pop("originatingToolCallId", None)
+            else:
+                self._context.metadata["originatingToolCallId"] = previous_originating_tool_call_id
 
     def _build_diagnostics(
         self,
@@ -637,7 +793,7 @@ class LCToolAdapter(BaseTool):
             include_status=False,
         )
         try:
-            await self._event_store.append(
+            persisted = await self._event_store.append(
                 Event(
                     aggregate_id=self._context.aggregate_id,
                     sequence=0,
@@ -647,6 +803,8 @@ class LCToolAdapter(BaseTool):
                     correlation_id=_run_correlation(self._context),
                 )
             )
+            if isinstance(getattr(persisted, "sequence", None), int):
+                self._context.set_latest_sequence(max(self._context.latest_sequence, persisted.sequence))
         except ApprovalTerminalError:
             raise
         except Exception as e:
@@ -681,7 +839,7 @@ class LCToolAdapter(BaseTool):
         if diagnostics is not None:
             payload["diagnostics"] = diagnostics
         try:
-            await self._event_store.append(
+            persisted = await self._event_store.append(
                 Event(
                     aggregate_id=self._context.aggregate_id,
                     sequence=0,
@@ -691,6 +849,8 @@ class LCToolAdapter(BaseTool):
                     correlation_id=_run_correlation(self._context),
                 )
             )
+            if isinstance(getattr(persisted, "sequence", None), int):
+                self._context.set_latest_sequence(max(self._context.latest_sequence, persisted.sequence))
         except Exception as e:
             # PLAN-0410 T2.3: required tool event — observable + run-failing.
             logger.error("Failed to append tool.result event: {}", e, exc_info=True)

@@ -38,6 +38,7 @@ def build_react_graph(
     *,
     name: str | None = None,
     system_prompt: str | None = None,
+    checkpointer: Any | None = None,
 ) -> Any:
     """Create a ReAct agent graph; failure returns ``None`` (frozen).
 
@@ -51,6 +52,8 @@ def build_react_graph(
         kwargs["name"] = name
     if system_prompt is not None:
         kwargs["system_prompt"] = system_prompt
+    if checkpointer is not None:
+        kwargs["checkpointer"] = checkpointer
     try:
         return create_react_agent(
             model,

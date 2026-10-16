@@ -6,7 +6,10 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from xihe_agent.adapters.sse_adapter import LangGraphEventAdapter, translate_events
-from xihe_agent.interfaces.tool import CREDENTIAL_DELIVERED_PLACEHOLDER
+from xihe_agent.interfaces.tool import (
+    CREDENTIAL_DELIVERED_PLACEHOLDER,
+    UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER,
+)
 
 
 class FakeChunk:
@@ -98,7 +101,7 @@ async def test_translate_tool_end_with_tool_message():
     assert len(results) == 1
     payload = json.loads(results[0].removeprefix("event: tool_result\ndata: ").strip())
     assert payload["tool"] == "read_file"
-    assert payload["result"] == "file content"
+    assert payload["result"] == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
     assert payload["type"] == "tool_result"
     assert payload["run_id"] == "run-3"
     # Provider ToolMessage IDs remain internal to LangGraph correlation.
@@ -233,7 +236,7 @@ async def test_translate_tool_end_with_raw_output():
     assert len(results) == 1
     payload = json.loads(results[0].removeprefix("event: tool_result\ndata: ").strip())
     assert payload["tool"] == "list_dir"
-    assert "src" in payload["result"]
+    assert payload["result"] == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
 
 
 @pytest.mark.asyncio
@@ -405,7 +408,7 @@ DIAGNOSTICS_BUNDLE = {
 
 
 @pytest.mark.asyncio
-async def test_tool_end_copies_diagnostics_artifact_into_event_data():
+async def test_tool_end_masks_result_and_diagnostics_artifact_from_event_data():
     events = [
         {
             "event": "on_tool_end",
@@ -426,9 +429,9 @@ async def test_tool_end_copies_diagnostics_artifact_into_event_data():
 
     assert len(results) == 1
     payload = _parse(results[0])
-    assert payload["result"] == "raw output"
+    assert payload["result"] == UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER
     assert payload["toolCallId"] == "run-20"
-    assert payload["diagnostics"] == DIAGNOSTICS_BUNDLE
+    assert "diagnostics" not in payload
 
 
 @pytest.mark.asyncio
@@ -533,7 +536,7 @@ async def test_acquire_credential_raw_output_streams_placeholder():
 
 
 @pytest.mark.asyncio
-async def test_other_tool_results_still_stream_their_content():
+async def test_other_tool_results_are_replaced_with_placeholder():
     events = [
         {
             "event": "on_tool_end",
@@ -547,4 +550,5 @@ async def test_other_tool_results_still_stream_their_content():
         results.append(sse)
 
     assert len(results) == 1
-    assert "plain file text" in results[0]
+    assert UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER in results[0]
+    assert "plain file text" not in results[0]
