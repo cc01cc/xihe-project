@@ -26,7 +26,8 @@ DEV-032 提出 `human/agent/service/system` 四类 principal，以及独立的 A
 
 - `proposed`。单机单用户部署 **MAY** 启用 `XIHE_LOCAL_MODE`（bootstrap env，默认关闭），为登录入口提供显式的 fail-closed 例外。
 - 例外只覆盖 `GET /api/v1/auth/bootstrap-status`、`POST /api/v1/auth/local-login`、`POST /api/v1/auth/local-password-reset` 与 register 的省密分支，并 **MUST** 同时满足：模式开启、CP 绑定回环地址、请求来源为回环地址、`Origin`（缺省时为 `Host`）为回环主机。任一不满足 **MUST** 以 404 拒绝且不签发 token；门禁在应用层实现，`SecurityConfig` 不因本例外放开新通配。
-- `local-login`/`local-password-reset` **MUST** 仅对**唯一的非 ADMIN 可登录用户**签发；user 数不等于 1（含仅 ADMIN）**MUST** 409 拒绝，**MUST NOT** 为 ADMIN 签发免密 token。
+- `local-login`/`local-password-reset` **MUST** 仅对**唯一的可登录用户（任意角色，含 ADMIN）**签发；user 数不等于 1 **MUST** 409 拒绝（允许 ADMIN，PLAN-0526 决策 #9）。
+- 本地模式 **MUST** 跳过默认 admin seed，使「0 用户」可达（引导）；本地模式注册的用户角色 **MUST** 为 `ADMIN`（决策 #10）。
 - 本地模式 **MUST NOT** 改变既有 JWT/授权模型（仍走 `/api/v1/**` 的 `hasAnyRole` 与 grants）；`users.password_hash` 保持 `NOT NULL`，自动密码为真实存储值。
 - `bootstrap-status` **MUST** 恒定 200 且只暴露 `initialized`/`localMode` 两个布尔，不参与 I1 门禁。
 - 开启 `XIHE_LOCAL_MODE` 时 CP **MUST** 绑定回环地址，且 `XIHE_ENV=prod` 下 **MUST** 拒绝启动。

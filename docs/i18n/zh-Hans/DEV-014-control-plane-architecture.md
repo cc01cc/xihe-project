@@ -38,7 +38,7 @@ flowchart LR
 ## 1a. 认证入口与单机本地模式（PLAN-0526）
 
 - 认证入口为 `/api/v1/auth/**`（permitAll）：`register`/`login`/`refresh`/`me`。PLAN-0526 新增 `GET /bootstrap-status`（恒 200，`{initialized, localMode}`）、`POST /local-login`、`POST /local-password-reset`，并允许 register 在本地模式省略密码（服务端生成、201）。
-- 单机本地模式由 `LocalModeService` 门禁：仅 `XIHE_LOCAL_MODE=true` + 回环来源 + `Origin`/`Host` 回环时可用，且签发对象必须是**唯一非 ADMIN 用户**（否则 409）；其余一律 404 且不签发 token。门禁在应用层，`SecurityConfig` 不放开通配。
+- 单机本地模式由 `LocalModeService` 门禁：仅 `XIHE_LOCAL_MODE=true` + 回环来源 + `Origin`/`Host` 回环时可用，且签发对象必须是**唯一可登录用户（任意角色，含 ADMIN）**（否则 409）；本地模式跳过默认 admin seed，注册用户即 ADMIN；其余一律 404 且不签发 token。门禁在应用层，`SecurityConfig` 不放开通配。
 - 契约见 [`spec/security/authentication.md`](../../../spec/security/authentication.md) §4 与 `docs/api/inventory.md`。
 
 ## 2. 会话级持久 SSE（PLAN-230）
