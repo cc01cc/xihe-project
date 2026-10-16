@@ -8,6 +8,7 @@ import {
 import { actionableErrors } from "./helpers/console";
 import {
     CP_URL,
+    assertAgentLlmReady,
     awaitLatestChatRunCompleted,
     awaitOperationCompletedForRun,
     ensureAgentWorkspaceBinding,
@@ -69,6 +70,13 @@ test.describe("@host PLAN-0508 transport telemetry relay and diagnostics", () =>
     const shots: Array<{ name: string; bytes: number; viewport: string }> = [];
 
     test.beforeAll(async ({ request }) => {
+        // PLAN-0525: align this hook's own budget with `ensureAgentWorkspaceBinding`'s
+        // 180s readiness wait. A describe-scope `test.setTimeout` only widens the
+        // *test* timeout; called inside a hook it widens that hook. Without this the
+        // hook died at the 30s config default and masked the real reason, so a
+        // readiness delay now surfaces as the helper's descriptive error instead of
+        // an opaque beforeAll timeout.
+        test.setTimeout(200000);
         ctx = await registerJourneyUser(request, "plan-0508-transport");
         // AgentAuth uses `accessToken` while JourneyContext exposes `authToken`.
         const agentAuth = { accessToken: ctx.authToken, workspaceId: ctx.workspaceId };
@@ -171,6 +179,9 @@ test.describe("@host PLAN-0508 transport telemetry relay and diagnostics", () =>
         await page.goto("/workspace/" + ctx.workspaceId, { waitUntil: "load" });
         await ensureChatReady(page);
         await ensureChatBinding(page, sessionId);
+        // PLAN-0525: check readiness per layer before the wire send — Agent direct
+        // health here, Session Provider connection inside ensureChatBinding.
+        await assertAgentLlmReady();
 
         const panel = page.locator(PANEL);
         await expect(panel, "monitor panel visible").toBeVisible({ timeout: 20000 });

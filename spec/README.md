@@ -56,14 +56,15 @@ spec/
 | agent run guardrails（总览索引） | proposed | partial | Agent owner（索引 owner，不裁决跨域规则） | Agent、CP、Runtime、Security、UI、后续 XH PLAN | A03-xihe | PLAN-0429；只导航风险类别/执行层/实现状态，领域细则仍归各 owner SPEC |
 | session boundaries | proposed | partial | CP/Session owner | UI、CP/Session、Agent、Context、Workspace、Runtime/MCP | A03-xihe | PLAN-0387；Chat Session、ChatRun 与 MCP session 分开；fork/branch actions 见 PLAN-0409；派生协作 Inbox 见 PLAN-0408；Ledger 根行由 PLAN-0467 退役 |
 | session branch context isolation | active | partial | CP Context + Agent Context owners | CP Chat/EventStore/Context、Agent Context、UI | A03-xihe | PLAN-0410；V43 数据面已实现并承接 child `session.forked` seed consumer（T3.6），公开 branch selector、fork action 与浏览器验收由 PLAN-0409 消费；不覆盖 PLAN-0387 的 Session 生命周期 SPEC |
-| authentication / authorization | proposed | partial | Security owner | Authentication：CP API、UI 登录、Agent/Runtime 内部客户端；Authorization：CP policy、Workspace API、MCP 工具门、UI 结果 | A03-xihe | PLAN-0386；principal/role/scope 归 Security |
+| authentication / authorization | proposed | partial | Security owner | Authentication：CP API、UI 登录、Agent/Runtime 内部客户端；Authorization：CP policy、Workspace API、MCP 工具门、UI 结果 | A03-xihe | PLAN-0386；PLAN-0526 本地模式例外；principal/role/scope 归 Security |
 | agent role/scope binding | proposed | partial | Agent owner | CP、Agent、Runtime、UI 审计 | A03-xihe | PLAN-0387；只写绑定、传播和消费，不复制授权模型 |
 | agent principal / Workspace binding | active | partial | Agent binding owner（PLAN-0374；Security canonical 归 PLAN-0407） | CP authorization/session/MCP、Workspace Agent API、Agent、UI Agent 管理与 Session 选择 | A03-xihe | PLAN-0374 principal/Workspace binding、template CRUD/form 与 V5/V6/V7 已完成；fork 创建归 PLAN-0409/0410；Agent 铸造与多层审批后置 BL-70/71 |
 | capability / approval / audit | proposed | partial | Runtime/Security/CP owners | Capability：Runtime、CP、UI；Approval：CP、Agent、UI、Audit；Audit：CP、授权/审批调用方 | A03-xihe | PLAN-0386/0389；能力策略、审批、审计分别建模 |
 | credential management | proposed | partial | Security（授权/审计）+ CP ConfigService（存储/密钥） | 0496 授权接入与 API、0497 交付通道、0498 UI、运维轮换 | A03-xihe | PLAN-0495；存储/生命周期/轮换已实现（M1–M3）；交付与用户 API 归 0496/0497，UI 归 0498；`security/credential-management.md` |
 | workspace / sandbox / checkpoint | proposed | partial | Workspace/Runtime owners | CP、Runtime、UI、Agent | A03-xihe | PLAN-0389 |
 | execution job / scope / durable continuation | proposed | partial | CP durable-record + Runtime Job owners | CP Job API/durable record、Runtime Job backend、UI、Agent | A03-xihe | PLAN-0390; backend adapters PLAN-0392–0395; Workspace release PLAN-0391 |
-| configuration / env | proposed | partial | CP ConfigService owner | CP、Agent、Runtime、UI、Audit | A03-xihe | PLAN-0389；以现行配置模型整合历史来源 |
+| configuration / env | proposed | partial | CP ConfigService owner | CP、Agent、Runtime、UI、Audit | A03-xihe | PLAN-0389；以现行配置模型整合历史来源；env 危险默认清单见 `config-env-target.md` §6 |
+| telemetry reporting | proposed | partial | XH owner（接收端契约归 A11/TLM） | UI logger、CP、A11/TLM 接收端 | A03-xihe | PLAN-0522；上游接收契约为 A11 PLAN-0521；`security/telemetry-reporting.md` |
 | protocol | proposed | partial | 对应协议 owners | UI、CP、Agent、Runtime | A03-xihe | PLAN-0385；OpenAPI/inventory/schema 保持各自事实源 |
 | protocol / Provider API Type + Connection identity | proposed | partial | CP Provider owner | CP Provider/Models/Lease、Agent catalog、UI ProviderHub | A03-xihe | PLAN-0438 completed at 692b89fb; PLAN-0439 active writer; downstream PLAN-0485/0416 consume by sequential handoff; `protocol/provider-api-types.md` |
 | protocol / Embedding provider + RAG proxy | proposed | partial | CP Provider owner | CP Embedding/RAG proxy、Agent RAG routes、UI KnowledgeBase/EmbeddingSettings | A03-xihe | PLAN-0485；profile/lease wire 与分区 tuple 冻结，见 `embedding-provider-contract.md` |
@@ -159,6 +160,10 @@ PLAN-0389 已建立 Workspace/Configuration proposed 草案；Workspace logical 
 PLAN-0495 建立凭据管理 proposed 草案（存储、生命周期与轮换；用户管理 API、交付通道与 UI 分别归 PLAN-0496/0497/0498）：
 
 - [凭据管理](security/credential-management.md)
+
+PLAN-0522 建立前端遥测上报与中央中继 proposed 草案（本地 sink 与实例级中继边界；接收端契约与 wire 归 A11 PLAN-0521）：
+
+- [遥测上报与中央中继](security/telemetry-reporting.md)
 
 ## 5. Spec Impact 与写回
 

@@ -85,7 +85,7 @@ class ConfigControllerTest extends AbstractH2Test {
     void putUserConfig_llmProvider_succeeds() {
         ResponseEntity<Map> resp = restTemplate.exchange(
             url("/api/v1/config/user/llm-provider"), HttpMethod.PUT,
-            new HttpEntity<>(Map.of("temperature", "0.5"), authHeaders(userToken())), Map.class);
+            new HttpEntity<>(Map.of("imageProvider", "deepseek"), authHeaders(userToken())), Map.class);
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
     }
@@ -140,31 +140,31 @@ class ConfigControllerTest extends AbstractH2Test {
         headers.set("X-Workspace-Id", workspaceId);
         ResponseEntity<Map> putInstance = restTemplate.exchange(
             url("/api/v1/config/instance/llm-provider"), HttpMethod.PUT,
-            new HttpEntity<>(Map.of("temperature", "0.1"), authHeaders(adminToken())), Map.class);
+            new HttpEntity<>(Map.of("imageProvider", "inst-prov"), authHeaders(adminToken())), Map.class);
         assertEquals(HttpStatus.OK, putInstance.getStatusCode());
 
         ResponseEntity<Map> putWorkspace = restTemplate.exchange(
             url("/api/v1/config/workspace/llm-provider"), HttpMethod.PUT,
-            new HttpEntity<>(Map.of("temperature", "0.2"), headers), Map.class);
+            new HttpEntity<>(Map.of("imageProvider", "ws-prov"), headers), Map.class);
         assertEquals(HttpStatus.OK, putWorkspace.getStatusCode());
 
         ResponseEntity<Map> resolved = restTemplate.exchange(
             url("/api/v1/config/llm-provider?workspaceId=" + workspaceId), HttpMethod.GET,
             new HttpEntity<>(authHeaders(token)), Map.class);
         assertEquals(HttpStatus.OK, resolved.getStatusCode());
-        assertEquals("0.2", resolved.getBody().get("temperature"));
+        assertEquals("ws-prov", resolved.getBody().get("imageProvider"));
 
         ResponseEntity<Map> layerView = restTemplate.exchange(
             url("/api/v1/config/llm-provider?layer=workspace&workspaceId=" + workspaceId), HttpMethod.GET,
             new HttpEntity<>(authHeaders(token)), Map.class);
         assertEquals(HttpStatus.OK, layerView.getStatusCode());
-        assertEquals("0.2", layerView.getBody().get("temperature"));
+        assertEquals("ws-prov", layerView.getBody().get("imageProvider"));
 
         ResponseEntity<Map> instanceView = restTemplate.exchange(
             url("/api/v1/config/llm-provider?layer=instance"), HttpMethod.GET,
             new HttpEntity<>(authHeaders(token)), Map.class);
         assertEquals(HttpStatus.OK, instanceView.getStatusCode());
-        assertEquals("0.1", instanceView.getBody().get("temperature"));
+        assertEquals("inst-prov", instanceView.getBody().get("imageProvider"));
     }
 
     @Test

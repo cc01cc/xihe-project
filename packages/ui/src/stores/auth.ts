@@ -105,6 +105,28 @@ export const useAuthStore = defineStore("auth", () => {
         }
     }
 
+    /** PLAN-0526: passwordless re-entry for the single local user (loopback-only gate on CP). */
+    async function localLogin(): Promise<boolean> {
+        loading.value = true;
+        error.value = null;
+        try {
+            const res = await api.localLogin();
+            const ws =
+                res.workspace ??
+                (res.workspaceId ? { id: res.workspaceId, name: "Default Workspace" } : null);
+            _saveToken(res.accessToken, res.user, ws);
+            clearSessionCaches();
+            return true;
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : "Local login failed";
+            logger.warn("Local login failed: " + msg);
+            error.value = msg;
+            return false;
+        } finally {
+            loading.value = false;
+        }
+    }
+
     function clearSessionCaches() {
         try {
             const sessionStore = useSessionStore();
@@ -194,6 +216,7 @@ export const useAuthStore = defineStore("auth", () => {
         currentWorkspaceId,
         login,
         register,
+        localLogin,
         logout,
         hydrateWorkspace,
         selectWorkspace,

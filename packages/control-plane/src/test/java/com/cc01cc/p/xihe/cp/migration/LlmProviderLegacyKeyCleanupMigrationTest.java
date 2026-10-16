@@ -108,10 +108,11 @@ class LlmProviderLegacyKeyCleanupMigrationTest {
             assertEquals(profileValue, scalarString(connection, "SELECT config_value FROM config "
                     + "WHERE layer = 'instance' AND domain = 'llm-provider' AND config_key = 'profile'"),
                     "the profile unit must survive the cleanup untouched");
-            assertEquals(4, scalarInt(connection, "SELECT count(*) FROM config WHERE layer = "
-                    + "'instance' AND domain = 'llm-provider' AND config_key IN "
-                    + "('imageProvider', 'maxTokens', 'temperature', 'timeout')"),
-                    "kept llm-provider keys must survive the cleanup");
+            // PLAN-0523 T3.6: the sampling keys survive V67 but are retired by V69
+            // (per-model modelParams replaces them); only imageProvider remains.
+            assertEquals(1, scalarInt(connection, "SELECT count(*) FROM config WHERE layer = "
+                    + "'instance' AND domain = 'llm-provider' AND config_key = 'imageProvider'"),
+                    "imageProvider must survive the full chain (sampling keys are V69's job)");
             assertEquals(1, scalarInt(connection, "SELECT count(*) FROM config WHERE domain = "
                     + "'context-policy' AND config_key = 'defaults'"),
                     "other domains must not be touched");

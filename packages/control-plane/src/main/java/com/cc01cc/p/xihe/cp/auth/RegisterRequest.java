@@ -11,7 +11,8 @@ public class RegisterRequest {
     @Size(max = 255)
     private String email;
 
-    @NotBlank
+    // PLAN-0526: not @NotBlank — local mode may omit the password (server generates
+    // one). Non-local mode still requires it; the controller enforces that as 400.
     @Size(min = 8, max = 128)
     private String password;
 

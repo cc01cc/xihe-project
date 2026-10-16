@@ -35,6 +35,12 @@ flowchart LR
 - **MCP 反向代理通道**（`POST /api/v1/mcp`，另有同前缀 GET/DELETE）：JSON-RPC 解析 → 工具名提取 → 权限检查 → 请求改写 → 三层路由转发（详见 DEV-016）。CP 为纯 HTTP 反代，不依赖 MCP SDK。
 - **状态分发通道**：Runtime/Workspace storage watcher → CP Workspace event ingress → UI Workspace SSE；ChatRun 仍独立使用 Session SSE，不把无 Session 文件事件塞入 Chat。
 
+## 1a. 认证入口与单机本地模式（PLAN-0526）
+
+- 认证入口为 `/api/v1/auth/**`（permitAll）：`register`/`login`/`refresh`/`me`。PLAN-0526 新增 `GET /bootstrap-status`（恒 200，`{initialized, localMode}`）、`POST /local-login`、`POST /local-password-reset`，并允许 register 在本地模式省略密码（服务端生成、201）。
+- 单机本地模式由 `LocalModeService` 门禁：仅 `XIHE_LOCAL_MODE=true` + 回环来源 + `Origin`/`Host` 回环时可用，且签发对象必须是**唯一可登录用户（任意角色，含 ADMIN）**（否则 409）；本地模式跳过默认 admin seed，注册用户即 ADMIN；其余一律 404 且不签发 token。门禁在应用层，`SecurityConfig` 不放开通配。
+- 契约见 [`spec/security/authentication.md`](../../../spec/security/authentication.md) §4 与 `docs/api/inventory.md`。
+
 ## 2. 会话级持久 SSE（PLAN-230）
 
 - `SseEmitterManager` 按 `{sessionId, generation, emitter}` 存储，单会话单活；新连接替换旧连接（`chat_sse_replaced`），旧 `onCompletion` 用 `removeIfCurrent` 身份比对保护（误删记 `stale_cleanup_ignored`）。

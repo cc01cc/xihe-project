@@ -1032,3 +1032,44 @@ async def test_usage_wire_separates_estimate_from_provider_counters():
     assert unreported["providerUnknownFields"] == ["cache_read_input_tokens", "input_tokens", "output_tokens"]
     assert unreported["source"] == "estimated"
     assert unreported["estimatedInputTokens"] == 9
+
+
+@pytest.mark.parametrize("type_id", TYPES)
+async def test_sampling_overrides_replace_and_extend_step_body(type_id):
+    """PLAN-0523 #9/#12: model-level sampling overrides land on every step body."""
+    async with recorder(response(type_id, False)) as (base, captures):
+        model = ApiChatModel(
+            api_type=chat_type(type_id, 1),
+            grant=grant(type_id, base),
+            body_source=json.dumps(body(type_id, False)),
+            values=VALUES,
+            request_id="request-1",
+            timeout=3,
+            sampling_overrides={"temperature": 0.2, "max_tokens": 2048},
+        )
+        await model.ainvoke([HumanMessage(content="hello")])
+        assert len(captures) == 1
+        assert captures[0][2]["temperature"] == 0.2
+        # anthropic-messages templates carry a literal max_tokens=64; the
+        # model-level value must win.
+        assert captures[0][2]["max_tokens"] == 2048
+
+
+@pytest.mark.parametrize("type_id", TYPES)
+async def test_sampling_overrides_absent_keeps_template_body(type_id):
+    async with recorder(response(type_id, False)) as (base, captures):
+        model = ApiChatModel(
+            api_type=chat_type(type_id, 1),
+            grant=grant(type_id, base),
+            body_source=json.dumps(body(type_id, False)),
+            values=VALUES,
+            request_id="request-1",
+            timeout=3,
+        )
+        await model.ainvoke([HumanMessage(content="hello")])
+        assert len(captures) == 1
+        assert "temperature" not in captures[0][2]
+        if type_id == TYPES[1]:
+            assert captures[0][2]["max_tokens"] == 64
+        else:
+            assert "max_tokens" not in captures[0][2]

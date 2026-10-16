@@ -3,7 +3,9 @@ import { ref } from "vue";
 import { useLocalStorage } from "@vueuse/core";
 import { type ModelCache } from "../types/provider";
 import type { SessionModelBinding, ModelFavorite } from "../types";
+import type { ProviderConnection } from "../types/providerConnection";
 import { request } from "../composables/api";
+import { listProviderConnections } from "../services/providerConnectionService";
 import { parseLlmProfileValue } from "../services/llmProviderProfile";
 
 export type ConfigLayer = "instance" | "workspace" | "user";
@@ -100,7 +102,32 @@ export const useConfigStore = defineStore("config", () => {
             {},
         ),
         modelFavorites = useLocalStorage<ModelFavorite[]>(MODEL_FAVORITES_KEY, []),
-        modelError = ref<string | null>(null);
+        modelError = ref<string | null>(null),
+        // PLAN-0523 T3.5: single-source provider connection list; consumers
+        // subscribe here instead of issuing their own listProviderConnections.
+        providerConnections = ref<ProviderConnection[]>([]),
+        providerConnectionsLoaded = ref(false);
+    let providerConnectionsInflight: Promise<void> | null = null;
+
+    async function loadProviderConnections(options?: { force?: boolean }): Promise<void> {
+        if (providerConnectionsLoaded.value && !options?.force) return;
+        if (providerConnectionsInflight) return providerConnectionsInflight;
+        providerConnectionsInflight = (async () => {
+            const list = await listProviderConnections();
+            providerConnections.value = list.connections ?? [];
+            providerConnectionsLoaded.value = true;
+        })();
+        try {
+            await providerConnectionsInflight;
+        } finally {
+            providerConnectionsInflight = null;
+        }
+    }
+
+    /** Mutation hook: create/update/delete/verify must invalidate before reload. */
+    function invalidateProviderConnections() {
+        providerConnectionsLoaded.value = false;
+    }
 
     function findProviderForModel(modelId: string): string | undefined {
         for (const [catalogKey, catalog] of Object.entries(modelCache.value.providers ?? {})) {
@@ -334,6 +361,8 @@ export const useConfigStore = defineStore("config", () => {
         modelError.value = null;
         layerConfig.value = { instance: {}, workspace: {}, user: {} };
         envOverridden.value = {};
+        providerConnections.value = [];
+        providerConnectionsLoaded.value = false;
     }
 
     async function fetchModels() {
@@ -365,6 +394,10 @@ export const useConfigStore = defineStore("config", () => {
         modelError,
         modelCache,
         modelFavorites,
+        providerConnections,
+        providerConnectionsLoaded,
+        loadProviderConnections,
+        invalidateProviderConnections,
         fetchDomain,
         loadAllDomains,
         loadLayerDomains,

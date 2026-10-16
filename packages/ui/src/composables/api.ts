@@ -1554,7 +1554,12 @@ async function checkedFetch(path: string, options?: RequestInit): Promise<Respon
             ...options,
             headers: apiAuthHeaders(options?.headers, includeContentType),
         }),
-        isAuthEndpoint = path === "/auth/login" || path === "/auth/register",
+        isAuthEndpoint =
+            path === "/auth/login" ||
+            path === "/auth/register" ||
+            path === "/auth/bootstrap-status" ||
+            path === "/auth/local-login" ||
+            path === "/auth/local-password-reset",
         // PLAN-0498 T3.1: a wrong reveal step-up password is a 401 domain outcome,
         // not session expiry — it must stay inline in the reveal dialog.
         isStepUpEndpoint = /^\/credentials\/[^/]+\/reveal$/.test(path);
@@ -1701,6 +1706,12 @@ export const api = {
         });
     },
     register(email: string, password: string, name: string) {
+        // PLAN-0526: local mode may omit the password (server generates one).
+        const body: Record<string, string | undefined> = {
+            email,
+            password: password || undefined,
+            name,
+        };
         return request<{
             accessToken: string;
             user: { id: string; email: string; workspaceId?: string };
@@ -1708,7 +1719,25 @@ export const api = {
             workspace?: ApiWorkspace;
         }>("/auth/register", {
             method: "POST",
-            body: JSON.stringify({ email, password, name }),
+            body: JSON.stringify(body),
+        });
+    },
+    // PLAN-0526: loopback-only local mode entry.
+    bootstrapStatus() {
+        return request<{ initialized: boolean; localMode: boolean }>("/auth/bootstrap-status");
+    },
+    localLogin() {
+        return request<{
+            accessToken: string;
+            user: { id: string; email: string; workspaceId?: string };
+            workspaceId?: string;
+            workspace?: ApiWorkspace;
+        }>("/auth/local-login", { method: "POST" });
+    },
+    localPasswordReset(newPassword: string) {
+        return request<void>("/auth/local-password-reset", {
+            method: "POST",
+            body: JSON.stringify({ newPassword }),
         });
     },
     async getSessions(): Promise<SessionListResponse> {

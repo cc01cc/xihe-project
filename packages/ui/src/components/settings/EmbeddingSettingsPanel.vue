@@ -11,7 +11,7 @@ import {
     type EmbeddingEffectiveProfile,
     type EmbeddingTestResult,
 } from "../../services/embeddingProfile";
-import { listProviderConnections } from "../../services/providerConnectionService";
+import { useConfigStore } from "../../stores/config";
 import type { ProviderConnection } from "../../types/providerConnection";
 import { logger } from "../../lib/logger";
 
@@ -25,12 +25,14 @@ const emit = defineEmits<{
     (e: "saved"): void;
 }>();
 
-const { t } = useI18n();
+const { t } = useI18n(),
+    configStore = useConfigStore();
 // Pre-load fallback only; the server-served contract wins once loaded.
 const FALLBACK_MODEL = "tongyi-embedding-vision-flash-2026-03-06";
 const FALLBACK_DIMENSION = 768;
 
-const connections = ref<ProviderConnection[]>([]);
+/** PLAN-0523 T3.5: subscribe to the store's single-source connection list. */
+const connections = computed<ProviderConnection[]>(() => configStore.providerConnections);
 const effective = ref<EmbeddingEffectiveProfile | null>(null);
 const selectedConnectionId = ref<string>("");
 const testing = ref(false);
@@ -62,11 +64,8 @@ const currentProfileConnectionId = computed(() => {
 async function load() {
     loading.value = true;
     try {
-        const [connectionList, profile] = await Promise.all([
-            listProviderConnections(),
-            fetchEmbeddingEffective(props.workspaceId),
-        ]);
-        connections.value = connectionList.connections;
+        const profile = await fetchEmbeddingEffective(props.workspaceId);
+        await configStore.loadProviderConnections();
         effective.value = profile;
         selectedConnectionId.value = currentProfileConnectionId.value;
     } catch (cause) {

@@ -47,6 +47,63 @@ def _model_capabilities(_provider: str, model_id: str) -> dict[str, bool]:
     return {"chat": chat}
 
 
+# PLAN-0523 T1.1: conservative image-model name fallback for models absent from
+# the litellm cost map (e.g. dall-e-3 on older litellm versions).
+_IMAGE_MODEL_PATTERN = re.compile(
+    r"(?:^|[-_])(?:dall[-_]?e|image|imagen|flux|sdxl|kolors|midjourney)",
+    re.IGNORECASE,
+)
+
+
+def _model_record(provider_id: str, model_id: str) -> dict[str, Any]:
+    """Build one catalog model record (PLAN-0523 T1.1, additive).
+
+    Adds optional metadata (modalities / context window / max output / pricing)
+    and `capabilities.image`. Source: the litellm model cost map (bundled local
+    copy; remote fetch failure is tolerated by litellm itself). Best-effort and
+    never raises: unknown models simply carry no metadata fields (UI renders
+    未知) and rely on the conservative name fallback for image capability.
+    """
+    record: dict[str, Any] = {
+        "name": model_id,
+        "capabilities": _model_capabilities(provider_id, model_id),
+    }
+    info: dict[str, Any] = {}
+    try:
+        fetched = litellm.get_model_info(model_id)
+        if isinstance(fetched, dict):
+            info = fetched
+    except Exception:
+        info = {}
+
+    mode = info.get("mode")
+    record["capabilities"]["image"] = mode == "image_generation" or bool(
+        _IMAGE_MODEL_PATTERN.search(model_id)
+    )
+    if mode == "image_generation":
+        record["outputModalities"] = ["image"]
+    elif mode:
+        record["outputModalities"] = ["text"]
+    if info:
+        record["inputModalities"] = ["text", "image"] if info.get("supports_vision") is True else ["text"]
+        context = info.get("max_input_tokens")
+        if isinstance(context, int) and context > 0:
+            record["contextWindowTokens"] = context
+        max_output = info.get("max_output_tokens") or info.get("max_tokens")
+        if isinstance(max_output, int) and max_output > 0:
+            record["maxOutputTokens"] = max_output
+        in_cost = info.get("input_cost_per_token")
+        out_cost = info.get("output_cost_per_token")
+        if isinstance(in_cost, (int, float)) and isinstance(out_cost, (int, float)):
+            record["pricing"] = {
+                "currency": "USD",
+                "unit": "1M tokens",
+                "input": round(in_cost * 1_000_000, 4),
+                "output": round(out_cost * 1_000_000, 4),
+            }
+    return record
+
+
 async def fetch_model_catalog(config_client: Any) -> dict[str, Any]:
     """Fetch provider models while preserving actionable status semantics."""
     if config_client is None:
@@ -103,10 +160,7 @@ async def fetch_model_catalog(config_client: Any) -> dict[str, Any]:
                         else:
                             results[provider_id] = model_ids
                             models = [
-                                {
-                                    "name": model_id,
-                                    "capabilities": _model_capabilities(provider_id, model_id),
-                                }
+                                _model_record(provider_id, model_id)
                                 for model_id in model_ids
                             ]
             except httpx.TimeoutException:
@@ -184,7 +238,7 @@ async def fetch_connection_catalog(
                 manual_models = grant.get("manualModels")
                 if grant.get("modelDiscovery") == "manual" and isinstance(manual_models, list):
                     models = [
-                        {"name": str(model_id), "capabilities": _model_capabilities(provider_id, str(model_id))}
+                        _model_record(provider_id, str(model_id))
                         for model_id in manual_models
                         if isinstance(model_id, str) and model_id
                     ]
@@ -222,12 +276,7 @@ async def fetch_connection_catalog(
                                     reason_code = "LLM_MODEL_CATALOG_INVALID"
                                     models = []
                                     break
-                                models.append(
-                                    {
-                                        "name": model_id,
-                                        "capabilities": _model_capabilities(provider_id, model_id),
-                                    }
-                                )
+                                models.append(_model_record(provider_id, model_id))
                 results[catalog_key] = [model["name"] for model in models]
                 provider_catalog[catalog_key] = {
                     "connectionId": connection_id,

@@ -52,7 +52,7 @@ from xihe_agent.interfaces.event import Event
 from xihe_agent.interfaces.message import TextMessage
 from xihe_agent.interfaces.tool import ToolSpec
 from xihe_agent.llm.api_request import ApiRequestError, render_request, uses_rag_context, validate_snapshot
-from xihe_agent.llm.base import LLMConfig
+from xihe_agent.llm.base import LLMConfig, parse_model_params
 from xihe_agent.llm.models import fetch_model_catalog  # noqa: F401  (import parity with prior main)
 from xihe_agent.rag.chat_context import retrieve_chat_context
 
@@ -346,11 +346,26 @@ async def chat(request: Request):
         return problem_details(request_id, 503, "PROVIDER_CONNECTION_UNAVAILABLE", "Provider connection unavailable")
 
     run_llm_entries = _merge_run_domain("llm-provider", user_overrides, workspace_overrides)
+    # PLAN-0523 decisions #9/#12: per-model sampling overrides from the layer
+    # modelParams map. T3.6 (决策 #13): the legacy layer-global `timeout` key
+    # is retired with the CP schema/migration — the default stays 60s.
+    effective_model = str(model_override or "")
+    model_params = parse_model_params(run_llm_entries, effective_model)
     request_config = LLMConfig(
         provider=str(provider_override),
-        model=str(model_override),
-        timeout=float(run_llm_entries.get("timeout") or "60"),
+        model=effective_model,
+        timeout=(
+            float(model_params["timeout"])
+            if model_params and "timeout" in model_params
+            else 60.0
+        ),
     )
+    sampling_overrides: dict[str, Any] = {}
+    if model_params:
+        if "temperature" in model_params:
+            sampling_overrides["temperature"] = model_params["temperature"]
+        if "maxTokens" in model_params:
+            sampling_overrides["max_tokens"] = model_params["maxTokens"]
 
     logger.info(
         "[LIFECYCLE] service=agent event=chat_stream_started requestId={} sessionId={} workspaceId={} runId={} provider={} model={} contentLength={}",
@@ -507,6 +522,7 @@ async def chat(request: Request):
                     },
                     request_id=request_id,
                     timeout=request_config.timeout,
+                    sampling_overrides=sampling_overrides or None,
                     token_estimator=_estimate_native_body_tokens,
                     transport_sink=publish_transport,
                     include_initial_messages=continuation is not None,

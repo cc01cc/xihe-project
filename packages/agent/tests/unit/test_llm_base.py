@@ -15,6 +15,7 @@ from xihe_agent.llm.base import (
     default_api_base,
     env_api_key,
     fallback_provider_configs,
+    parse_model_params,
     resolve_provider_base_url,
 )
 
@@ -584,3 +585,63 @@ class TestLLMProvider:
         switched = model.with_model("gpt-5")
         assert isinstance(switched, LLMProvider)
         assert isinstance(switched, MockChatModel)
+
+
+class TestParseModelParams:
+    """PLAN-0523 decisions #9/#12/#14: layer modelParams map lookup by model name."""
+
+    def test_absent_key_returns_none(self):
+        assert parse_model_params({}, "gpt-4o") is None
+        assert parse_model_params({"modelParams": "  "}, "gpt-4o") is None
+
+    def test_malformed_json_degrades_to_none(self):
+        assert parse_model_params({"modelParams": "not-json"}, "gpt-4o") is None
+
+    def test_non_object_map_degrades_to_none(self):
+        assert parse_model_params({"modelParams": "[1]"}, "gpt-4o") is None
+
+    def test_model_entry_with_all_valid_keys(self):
+        entries = {
+            "modelParams": '{"gpt-4o": {"maxTokens": 2048, "temperature": 0.2, "timeout": 120}}',
+        }
+        assert parse_model_params(entries, "gpt-4o") == {
+            "maxTokens": 2048,
+            "temperature": 0.2,
+            "timeout": 120.0,
+        }
+
+    def test_partial_entry_keeps_only_configured_keys(self):
+        entries = {"modelParams": '{"gpt-4o": {"temperature": 0.9}}'}
+        assert parse_model_params(entries, "gpt-4o") == {"temperature": 0.9}
+
+    def test_model_without_entry_returns_none(self):
+        entries = {"modelParams": '{"other-model": {"temperature": 0.9}}'}
+        assert parse_model_params(entries, "gpt-4o") is None
+
+    def test_entry_not_an_object_is_ignored(self):
+        entries = {"modelParams": '{"gpt-4o": "fast"}'}
+        assert parse_model_params(entries, "gpt-4o") is None
+
+    def test_invalid_keys_are_filtered_out(self):
+        entries = {
+            "modelParams": ('{"gpt-4o": {"maxTokens": 0, "temperature": "hot", "timeout": -1}}'),
+        }
+        assert parse_model_params(entries, "gpt-4o") is None
+
+    def test_non_finite_temperature_is_filtered(self):
+        entries = {"modelParams": '{"gpt-4o": {"temperature": NaN}}'}
+        assert parse_model_params(entries, "gpt-4o") is None
+
+    def test_bool_values_are_filtered(self):
+        entries = {"modelParams": '{"gpt-4o": {"maxTokens": true, "timeout": false}}'}
+        assert parse_model_params(entries, "gpt-4o") is None
+
+    def test_provider_prefixed_model_falls_back_to_bare_name(self):
+        entries = {"modelParams": '{"gpt-4o": {"temperature": 0.3}}'}
+        assert parse_model_params(entries, "openai/gpt-4o") == {"temperature": 0.3}
+
+    def test_exact_match_beats_bare_name_fallback(self):
+        entries = {
+            "modelParams": ('{"openai/gpt-4o": {"temperature": 0.1}, "gpt-4o": {"temperature": 0.9}}'),
+        }
+        assert parse_model_params(entries, "openai/gpt-4o") == {"temperature": 0.1}

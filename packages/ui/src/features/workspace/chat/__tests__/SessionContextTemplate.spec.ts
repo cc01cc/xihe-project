@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createPinia, setActivePinia } from "pinia";
 import { flushPromises, mount } from "@vue/test-utils";
 import { reactive } from "vue";
 import Panel from "../components/SessionContextTemplate.vue";
@@ -43,6 +44,8 @@ function session(id: string, templateId = "template"): ApiSession {
     } as ApiSession;
 }
 beforeEach(() => {
+    // PLAN-0523 T3.5: the panel resolves the template connection via the config store.
+    setActivePinia(createPinia());
     vi.clearAllMocks();
     state.sessions = [
         { id: "a", updatedAt: "1" },

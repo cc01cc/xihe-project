@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.http.HttpStatus;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.cc01cc.p.xihe.cp.entity.User;
@@ -12,6 +13,7 @@ import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -41,6 +43,16 @@ public class AuthService {
     /** Creates the user row and its default grants; returns the persisted user. */
     @Transactional
     public User registerUser(RegisterRequest request) {
+        return registerUser(request, false);
+    }
+
+    /**
+     * Creates the user row and its default grants; returns the persisted user.
+     * PLAN-0526: local single-user registration grants the ADMIN role so the
+     * single-machine user has full capability.
+     */
+    @Transactional
+    public User registerUser(RegisterRequest request, boolean adminRole) {
         if (userRepository.existsByEmail(request.getEmail())) {
             throw new IllegalArgumentException("Email already registered");
         }
@@ -48,13 +60,13 @@ public class AuthService {
         User user = new User(
                 request.getEmail(),
                 passwordEncoder.encode(request.getPassword()),
-                UserRole.USER,
+                adminRole ? UserRole.ADMIN : UserRole.USER,
                 request.getName() != null ? request.getName() : request.getEmail().split("@")[0]
         );
         user = userRepository.save(user);
         grantDefaultService.ensureUserDefault(user);
 
-        logger.info("User registered: id={} email={}", user.getId(), user.getEmail());
+        logger.info("User registered: id={} email={} role={}", user.getId(), user.getEmail(), user.getRole());
         return user;
     }
 
@@ -107,6 +119,34 @@ public class AuthService {
     /** PLAN-0470 #22: narrow existence probe; callers keep their own error text. */
     public boolean userExists(UUID userId) {
         return userRepository.existsById(userId);
+    }
+
+    /** PLAN-0526: whether the instance has any user (onboarding bootstrap signal). */
+    public boolean hasAnyUser() {
+        return userRepository.count() > 0;
+    }
+
+    /**
+     * PLAN-0526 I2: resolve the single login-able user for local mode. Any role
+     * (including ADMIN) is allowed; only a count other than exactly one is
+     * rejected, so local mode never guesses a target.
+     */
+    @Transactional(readOnly = true)
+    public User requireSingleUser() {
+        List<User> users = userRepository.findAll();
+        if (users.size() != 1) {
+            throw new CpApiException(HttpStatus.CONFLICT, "LOCAL_SINGLE_USER_REQUIRED",
+                    "Local mode requires exactly one user");
+        }
+        return users.get(0);
+    }
+
+    /** PLAN-0526: local-mode password reset (loopback-gated by the caller). */
+    @Transactional
+    public void resetPassword(User user, String rawPassword) {
+        user.setPasswordHash(passwordEncoder.encode(rawPassword));
+        userRepository.save(user);
+        logger.info("Local-mode password reset: id={} email={}", user.getId(), user.getEmail());
     }
 
     /**

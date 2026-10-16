@@ -25,6 +25,19 @@ paths:
       operationId: currentUser
       security: [{ bearerAuth: [] }]
       responses: { '200': { description: OK }, '401': { $ref: '#/components/responses/Problem' } }
+  /api/v1/auth/bootstrap-status:
+    get:
+      operationId: authBootstrapStatus
+      responses: { '200': { description: 'Onboarding status {initialized, localMode} (always 200, ungated)' } }
+  /api/v1/auth/local-login:
+    post:
+      operationId: localLogin
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AuthResponse' } } } }, '404': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' } }
+  /api/v1/auth/local-password-reset:
+    post:
+      operationId: localPasswordReset
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/LocalPasswordResetRequest' } } } }
+      responses: { '204': { description: Reset }, '400': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' } }
   /api/v1/workspaces/current:
     get: { operationId: getCurrentWorkspace, security: [{ bearerAuth: [] }], responses: { '200': { description: Current workspace, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
   /api/v1/workspaces:
@@ -1312,7 +1325,45 @@ paths:
   /api/v1/logs:
     post: { operationId: ingestLogs, security: [{ bearerAuth: [] }], responses: { '200': { description: Accepted } } }
   /api/v1/telemetry/logs:
-    post: { operationId: ingestTelemetry, security: [{ bearerAuth: [] }], responses: { '200': { description: Accepted } } }
+    post:
+      operationId: ingestTelemetry
+      security: [{ bearerAuth: [] }]
+      description: >
+        Client telemetry ingress (PLAN-0522). The batch is validated against server-side caps and
+        written to the local {XIHE_LOG_DIR}/telemetry.log sink; 200 {"status":"ok"} acknowledges
+        only that local sink. Entries carrying an explicit structured eventId/eventType are
+        additionally relayed best-effort to the shared TLM service when the instance
+        logging.centralTelemetryEnabled gate is "true" and XIHE_TLM_URL/XIHE_TLM_INGEST_TOKEN are
+        configured; message/data/free text are never relayed, and relay failures never change
+        this response.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                batchId: { type: string, maxLength: 64 }
+                deviceId: { type: string, maxLength: 64 }
+                entries:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: object
+                    additionalProperties: false
+                    properties:
+                      timestamp: { type: integer }
+                      level: { type: string, enum: [debug, info, warn, error] }
+                      message: { type: string, maxLength: 8192 }
+                      data: { description: 'Local sink only; never relayed to TLM' }
+                      eventId: { type: string, maxLength: 64 }
+                      eventType: { type: string, maxLength: 64 }
+                      errorCode: { type: string, maxLength: 128 }
+                      appVersion: { type: string, maxLength: 64 }
+      responses:
+        '200': { description: 'Local sink accepted the batch ({"status":"ok"}); central relay is best-effort and server-side' }
+        '400': { $ref: '#/components/responses/Problem' }
   /api/v1/config/{domain}:
     get: { operationId: getConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }, { in: query, name: layer, required: false, schema: { type: string, enum: [instance, user, workspace] } }, { in: query, name: includeMeta, required: false, schema: { type: boolean, default: false } }, { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid } }], responses: { '200': { description: 'Resolved configuration (env > workspace > user > instance > defaults); layer selects one layer; includeMeta wraps {domain, entries, envOverridden} where envOverridden lists env-effective locked values (decision #22)' } } }
   /api/v1/config/instance/{domain}:
@@ -2424,7 +2475,8 @@ components:
     RuntimeReadFileResult: { type: object, required: [found, content, truncated], properties: { found: { type: boolean, description: 'false = path resolved to no content (missing file or unmaterialized root); true = content authoritative even when empty string.' }, content: { type: string, description: 'File content; empty string when found=false or the file is empty (distinguish via found).' }, truncated: { type: boolean } } }
     AgentSpawnRequest: { type: object, required: [parentRunId, toolCallId], additionalProperties: false, properties: { parentRunId: { type: string, format: uuid }, toolCallId: { type: string, format: uuid, description: 'Canonical MCP tool-call correlation ID for the spawn invocation.' } } }
     AgentSpawnResponse: { type: object, required: [sessionId, runId, principalId, workspaceId], properties: { sessionId: { type: string, format: uuid }, runId: { type: string, format: uuid }, principalId: { type: string, format: uuid, description: 'Stable AgentPrincipal resolved from the durable parent Session; never taken from the request' }, workspaceId: { type: string, format: uuid } } }
-    RegisterRequest: { type: object, required: [email, password, name], properties: { email: { type: string }, password: { type: string }, name: { type: string } } }
+    RegisterRequest: { type: object, required: [email, name], properties: { email: { type: string }, password: { type: string, description: 'Optional in local mode (server generates one); required otherwise' }, name: { type: string } } }
+    LocalPasswordResetRequest: { type: object, required: [newPassword], properties: { newPassword: { type: string, minLength: 8, maxLength: 128 } } }
     LoginRequest: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string } } }
     AuthResponse: { type: object, properties: { accessToken: { type: string }, refreshToken: { type: string }, user: { type: object }, workspaceId: { type: string } } }
     Workspace: { type: object, required: [id, name, ownerId, storageBackend, storageRef, storageMode, executionMode, generation], properties: { id: { type: string }, name: { type: string }, description: { type: [string, 'null'] }, ownerId: { type: string }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'], description: 'Canonical host path only for the owner/admin; null for ordinary members. Never a display or authorization substitute.' }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] }, generation: { type: integer }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
@@ -3328,6 +3380,20 @@ components:
          source: { type: [string, 'null'], enum: [remote, litellm, curated, manual, null] }
          verifiedAt: { type: [string, 'null'], format: date-time }
          capabilities: { $ref: '#/components/schemas/ProviderModelCapabilities' }
+         inputModalities: { type: array, items: { type: string }, description: 'PLAN-0523 additive: e.g. [text, image]; absent when unknown' }
+         outputModalities: { type: array, items: { type: string }, description: 'PLAN-0523 additive: e.g. [text] or [image]; absent when unknown' }
+         contextWindowTokens: { type: integer, minimum: 1, description: 'PLAN-0523 additive: max input tokens from the litellm cost map; absent when unknown' }
+         maxOutputTokens: { type: integer, minimum: 1, description: 'PLAN-0523 additive: max output tokens; absent when unknown' }
+         pricing: { $ref: '#/components/schemas/ProviderModelPricing' }
+    ProviderModelPricing:
+       type: object
+       required: [currency, unit, input, output]
+       description: 'PLAN-0523 additive: per-1M-token pricing from the litellm cost map; absent when unknown'
+       properties:
+         currency: { type: string, example: USD }
+         unit: { type: string, example: '1M tokens' }
+         input: { type: number }
+         output: { type: number }
     ProviderModelCapabilities:
        type: object
        required: [chat, vision, tools]
@@ -3338,6 +3404,7 @@ components:
          audio: { type: [boolean, 'null'] }
          video: { type: [boolean, 'null'] }
          pdf: { type: [boolean, 'null'] }
+         image: { type: boolean, description: 'PLAN-0523 additive: image-generation capability (litellm mode=image_generation or conservative name fallback)' }
     ProviderCredentialLeaseRedeemRequest:
        type: object
        required: [lease, runId, providerConnectionId, providerId, model, connectionRevision]

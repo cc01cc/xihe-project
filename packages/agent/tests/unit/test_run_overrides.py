@@ -83,6 +83,8 @@ class TestLLMConfigFromEntries:
         cfg = LLMConfig.from_entries(
             {
                 "profile": '{"providerId":"openai","connectionKey":"default","model":"gpt-4o-mini"}',
+                # PLAN-0523 T3.6: layer-global sampling keys are retired — they
+                # must be ignored (defaults win), never read.
                 "timeout": "120",
                 "maxTokens": "2048",
                 "temperature": "0.1",
@@ -91,9 +93,9 @@ class TestLLMConfigFromEntries:
 
         assert cfg.provider == "openai"
         assert cfg.model == "gpt-4o-mini"
-        assert cfg.timeout == 120.0
-        assert cfg.max_tokens == 2048
-        assert cfg.temperature == 0.1
+        assert cfg.timeout == 60.0
+        assert cfg.max_tokens == 4096
+        assert cfg.temperature == 0.7
 
     def test_profile_uses_env_fallback_key_and_ignores_legacy_keys(self, monkeypatch: pytest.MonkeyPatch):
         for env_name in ENV_PROVIDER_KEY_MAP.values():

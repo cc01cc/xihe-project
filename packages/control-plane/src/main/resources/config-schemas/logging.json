@@ -5,7 +5,8 @@
     "levelAgent": { "type": "string", "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "trace", "debug", "info", "warn", "error"] },
     "levelCp": { "type": "string", "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "trace", "debug", "info", "warn", "error"] },
     "levelRuntime": { "type": "string", "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "trace", "debug", "info", "warn", "error"] },
-    "levelUi": { "type": "string", "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "trace", "debug", "info", "warn", "error"] }
+    "levelUi": { "type": "string", "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "trace", "debug", "info", "warn", "error"] },
+    "centralTelemetryEnabled": { "type": "string", "enum": ["true", "false"] }
   },
   "additionalProperties": false
 }

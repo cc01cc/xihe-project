@@ -8,6 +8,7 @@ import {
 import { actionableErrors } from "./helpers/console";
 import {
     CP_URL,
+    assertAgentLlmReady,
     awaitLatestChatRunCompleted,
     ensureAgentWorkspaceBinding,
     ensureChatBinding,
@@ -54,6 +55,13 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
     const shots: Array<{ name: string; bytes: number; viewport: string }> = [];
 
     test.beforeAll(async ({ request }) => {
+        // PLAN-0525: align this hook's own budget with `ensureAgentWorkspaceBinding`'s
+        // 180s readiness wait. A describe-scope `test.setTimeout` only widens the
+        // *test* timeout; called inside a hook it widens that hook. Without this the
+        // hook died at the 30s config default and masked the real reason, so a
+        // readiness delay now surfaces as the helper's descriptive error instead of
+        // an opaque beforeAll timeout.
+        test.setTimeout(200000);
         // Agent binds one workspace per process — register exactly once.
         ctx = await registerJourneyUser(request, "plan-0507-monitor");
         // AgentAuth uses `accessToken` while JourneyContext exposes `authToken`.
@@ -144,6 +152,9 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
         // Bind a chat connection through the same fixture path sendChat specs use,
         // so readiness.connection has a READY fact to show.
         await ensureChatBinding(page, sessionId);
+        // PLAN-0525: readiness is checked per layer before the first send — Agent
+        // direct health here, Session Provider connection inside ensureChatBinding.
+        await assertAgentLlmReady();
 
         // The Monitor is the default right-panel view on desktop.
         const panel = page.locator(PANEL);
@@ -173,9 +184,7 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
                 runs?: Array<{ runId: string; status: string; terminalOutcome: string | null }>;
             },
             newest = runsBody.runs?.[0];
-        expect(newest?.status, "newest run is terminal").toMatch(
-            /^(succeeded|failed|partial|cancelled|ambiguous)$/,
-        );
+        expect(newest?.status, "mock probe run succeeds").toBe("succeeded");
 
         const monitor = await monitorApi(request);
         expect(monitor.activity, "terminal run leaves activity empty").toEqual([]);
