@@ -235,6 +235,9 @@ class ApiChatModel(BaseChatModel):
     _step_estimates: list[int] = PrivateAttr(default_factory=list)
     _provider_usage: dict[str, int] = PrivateAttr(default_factory=dict)
     _provider_reported: set[str] = PrivateAttr(default_factory=set)
+    # PLAN-0523 decisions #9/#12: per-model sampling overrides resolved from the
+    # layer `modelParams` map, applied onto every rendered step body.
+    _sampling_overrides: dict[str, Any] | None = PrivateAttr(default=None)
 
     def __init__(
         self,
@@ -247,6 +250,7 @@ class ApiChatModel(BaseChatModel):
         timeout: float,
         token_estimator: Callable[[dict[str, Any]], int] | None = None,
         transport_sink: TransportEventSink | None = None,
+        sampling_overrides: dict[str, Any] | None = None,
     ):
         super().__init__(cache=False)
         self._api_type = api_type
@@ -258,6 +262,7 @@ class ApiChatModel(BaseChatModel):
         self._body_source = body_source
         self._values = copy.deepcopy(values)
         self._token_estimator = token_estimator
+        self._sampling_overrides = dict(sampling_overrides) if sampling_overrides else None
         self._tool_names = {
             str(tool.get("function", tool).get("name"))
             for tool in self._base.get("tools", [])
@@ -320,6 +325,10 @@ class ApiChatModel(BaseChatModel):
             raise ApiRequestError("INVALID_REQUEST_SHAPE")
         self._current_suffix = [record for message in suffix for record in native_message(message, self._api_type)]
         body[self._api_type.input_field].extend(copy.deepcopy(self._current_suffix))
+        # PLAN-0523 decisions #9/#12: model-level sampling wins over template
+        # literals; unset keys keep whatever the template/provider defaults to.
+        if self._sampling_overrides:
+            body.update(self._sampling_overrides)
         return body
 
     def _dispatch_body(self, messages: list[BaseMessage]) -> dict[str, Any]:

@@ -374,15 +374,28 @@ public class ConfigService {
         rejectProviderSecrets(domain, entries);
         validateInstructionsScope(layer, domain, entries);
         Map<String, String> effectiveEntries = entries;
-        boolean clearLlmProfile = false;
+        Set<String> clearLlmKeys = new java.util.LinkedHashSet<>();
         if ("llm-provider".equals(domain)) {
             effectiveEntries = new LinkedHashMap<>(entries);
+            // PLAN-0504: an empty profile value clears the layer row so the
+            // layer inherits again (embedding round-4 item 1 semantics).
+            // PLAN-0523 T2.1: imageProfile/modelParams follow the same
+            // whole-unit clear semantics (blank clears; "{}" clears modelParams).
             String profileRaw = effectiveEntries.get("profile");
             if (profileRaw != null && profileRaw.isBlank()) {
-                // PLAN-0504: an empty profile value clears the layer row so the
-                // layer inherits again (embedding round-4 item 1 semantics).
                 effectiveEntries.remove("profile");
-                clearLlmProfile = true;
+                clearLlmKeys.add("profile");
+            }
+            String imageRaw = effectiveEntries.get("imageProfile");
+            if (imageRaw != null && imageRaw.isBlank()) {
+                effectiveEntries.remove("imageProfile");
+                clearLlmKeys.add("imageProfile");
+            }
+            String modelParamsRaw = effectiveEntries.get("modelParams");
+            if (modelParamsRaw != null
+                    && (modelParamsRaw.isBlank() || modelParamsRaw.trim().equals("{}"))) {
+                effectiveEntries.remove("modelParams");
+                clearLlmKeys.add("modelParams");
             }
         }
         List<String> errors = validateBySchema(domain, effectiveEntries);
@@ -411,8 +424,8 @@ public class ConfigService {
             validateEmbeddingLayer(layer, effectiveEntries);
         }
         putLayerInternal(layer, domain, effectiveEntries, changedBy, userId, workspaceId);
-        if (clearLlmProfile) {
-            deleteKey(layer, "llm-provider", "profile", changedBy, userId, workspaceId);
+        for (String key : clearLlmKeys) {
+            deleteKey(layer, "llm-provider", key, changedBy, userId, workspaceId);
         }
         publishLoggingChanged(domain, layer);
     }
@@ -649,22 +662,35 @@ public class ConfigService {
                                                  UUID userId, UUID workspaceId) {
         List<String> errors = new ArrayList<>();
         String raw = entries.get("profile");
-        if (raw == null || raw.isBlank()) {
-            return errors;
+        if (raw != null && !raw.isBlank()) {
+            LlmProfile profile = parseLlmProfile(raw);
+            if (profile != null) {
+                Set<String> supported = providerCatalog.providerIds();
+                if (!supported.contains(profile.providerId())) {
+                    errors.add("profile.providerId is unsupported: " + profile.providerId());
+                } else if (requiresReadyConnection(layer)
+                        && !hasReadyProfileConnection(profile, userId, workspaceId)) {
+                    // PLAN-0307 T2.24 (review P1-5): provider readiness is grounded
+                    // in provider_connections, not config keys (decision #21/#37).
+                    errors.add("No ready provider connection for profile: "
+                        + profile.providerId() + "/" + profile.connectionKey());
+                }
+            }
         }
-        LlmProfile profile = parseLlmProfile(raw);
-        if (profile == null) {
-            return errors;
-        }
-        Set<String> supported = providerCatalog.providerIds();
-        if (!supported.contains(profile.providerId())) {
-            errors.add("profile.providerId is unsupported: " + profile.providerId());
-        } else if (requiresReadyConnection(layer)
-                && !hasReadyProfileConnection(profile, userId, workspaceId)) {
-            // PLAN-0307 T2.24 (review P1-5): provider readiness is grounded
-            // in provider_connections, not config keys (decision #21/#37).
-            errors.add("No ready provider connection for profile: "
-                + profile.providerId() + "/" + profile.connectionKey());
+        String imageRaw = entries.get("imageProfile");
+        if (imageRaw != null && !imageRaw.isBlank()) {
+            // PLAN-0523 decision #7/#14: imageProfile is the instance-layer global
+            // default; user/workspace writes are rejected. Like the instance-layer
+            // profile (decision #11), connection readiness is resolved at run time.
+            if (requiresReadyConnection(layer)) {
+                errors.add("imageProfile is instance-layer only");
+            } else {
+                LlmProfile imageProfile = parseProfileUnit(imageRaw, "imageProfile");
+                if (imageProfile != null
+                        && !providerCatalog.providerIds().contains(imageProfile.providerId())) {
+                    errors.add("imageProfile.providerId is unsupported: " + imageProfile.providerId());
+                }
+            }
         }
         return errors;
     }
@@ -706,6 +732,15 @@ public class ConfigService {
      * (no partial writes, no field merging — decision #4).
      */
     public LlmProfile parseLlmProfile(String raw) {
+        return parseProfileUnit(raw, "LLM profile");
+    }
+
+    /**
+     * PLAN-0523 T2.1: shared whole-unit parser for the identical
+     * providerId/connectionKey/model shape used by `profile` and
+     * `imageProfile`.
+     */
+    private LlmProfile parseProfileUnit(String raw, String fieldName) {
         if (raw == null || raw.isBlank()) {
             return null;
         }
@@ -714,10 +749,10 @@ public class ConfigService {
             node = objectMapper.readTree(raw);
         } catch (JsonProcessingException e) {
             throw new CpApiException(org.springframework.http.HttpStatus.BAD_REQUEST,
-                    "INVALID_REQUEST", "LLM profile is not valid JSON");
+                    "INVALID_REQUEST", fieldName + " is not valid JSON");
         }
         if (node == null || !node.isObject()) {
-            throw invalidLlmProfile();
+            throw invalidProfileUnit(fieldName);
         }
         String providerId = node.path("providerId").asText(null);
         String connectionKey = node.path("connectionKey").asText(null);
@@ -726,15 +761,19 @@ public class ConfigService {
                 || connectionKey == null || connectionKey.isBlank()
                 || model == null || model.isBlank()
                 || node.size() != 3) {
-            throw invalidLlmProfile();
+            throw invalidProfileUnit(fieldName);
         }
         return new LlmProfile(providerId, connectionKey, model);
     }
 
-    private CpApiException invalidLlmProfile() {
+    private CpApiException invalidProfileUnit(String fieldName) {
         return new CpApiException(org.springframework.http.HttpStatus.BAD_REQUEST,
                 "INVALID_REQUEST",
-                "LLM profile must be a complete providerId/connectionKey/model unit");
+                fieldName + " must be a complete providerId/connectionKey/model unit");
+    }
+
+    private CpApiException invalidLlmProfile() {
+        return invalidProfileUnit("LLM profile");
     }
 
     /**

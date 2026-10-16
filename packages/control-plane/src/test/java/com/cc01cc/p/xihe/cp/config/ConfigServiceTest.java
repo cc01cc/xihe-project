@@ -1004,4 +1004,98 @@ class ConfigServiceTest {
         assertEquals("65536", configService.layerEntries("instance", "agent-runtime", null, null)
             .get("runMaxTokens"));
     }
+
+    // ------------------------------------------------------------------
+    // PLAN-0523 T2.1: imageProfile / modelParams additive schema
+    // ------------------------------------------------------------------
+
+    @Test
+    void putLayer_instanceAcceptsImageProfile() {
+        // Instance-layer global image default: no ready-connection gate
+        // (decision #11 run-time scope resolution, same as instance profile).
+        configService.putLayer("instance", "llm-provider",
+            Map.of("imageProfile", profile("deepseek", "default", "deepseek-image")),
+            "admin", null, null);
+
+        assertEquals(profile("deepseek", "default", "deepseek-image"),
+            configService.layerEntries("instance", "llm-provider", null, null).get("imageProfile"));
+    }
+
+    @Test
+    void putLayer_userLayerRejectsImageProfile() {
+        saveConnection("USER", userA.toString(), "deepseek", "default", true, "READY");
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("user", "llm-provider",
+                Map.of("imageProfile", profile("deepseek", "default", "deepseek-image")),
+                "user", userA, null));
+
+        assertTrue(error.getMessage().contains("imageProfile is instance-layer only"));
+    }
+
+    @Test
+    void putLayer_rejectsImageProfileOutsideCatalog() {
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "llm-provider",
+                Map.of("imageProfile", profile("dashscope", "default", "some-image")),
+                "admin", null, null));
+
+        assertTrue(error.getMessage().contains("imageProfile.providerId is unsupported: dashscope"));
+    }
+
+    @Test
+    void putLayer_imageProfileBlankClears() {
+        configService.putLayer("instance", "llm-provider",
+            Map.of("imageProfile", profile("deepseek", "default", "deepseek-image")),
+            "admin", null, null);
+        configService.putLayer("instance", "llm-provider",
+            Map.of("imageProfile", ""), "admin", null, null);
+
+        assertNull(configService.layerEntries("instance", "llm-provider", null, null)
+            .get("imageProfile"));
+    }
+
+    @Test
+    void putLayer_imageProfileRejectsPartialUnit() {
+        // Schema required-keys fire before provider validation (400 INVALID_REQUEST).
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "llm-provider",
+                Map.of("imageProfile", "{\"providerId\":\"deepseek\"}"), "admin", null, null));
+
+        assertTrue(error.getMessage().contains("Schema validation failed"));
+    }
+
+    @Test
+    void putLayer_modelParamsRoundTripAndClear() {
+        String params = "{\"deepseek-chat\":{\"maxTokens\":8192,\"temperature\":\"0.6\",\"timeout\":60}}";
+        configService.putLayer("instance", "llm-provider",
+            Map.of("modelParams", params), "admin", null, null);
+
+        assertEquals(params,
+            configService.layerEntries("instance", "llm-provider", null, null).get("modelParams"));
+
+        // Empty object clears the whole map (decision #14 whole-domain override).
+        configService.putLayer("instance", "llm-provider",
+            Map.of("modelParams", "{}"), "admin", null, null);
+
+        assertNull(configService.layerEntries("instance", "llm-provider", null, null)
+            .get("modelParams"));
+    }
+
+    @Test
+    void putLayer_rejectsOutOfRangeModelParams() {
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "llm-provider",
+                Map.of("modelParams", "{\"deepseek-chat\":{\"temperature\":5}}"), "admin", null, null));
+
+        assertTrue(error.getMessage().contains("Schema validation failed"));
+    }
+
+    @Test
+    void putLayer_rejectsUnknownModelParamsField() {
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "llm-provider",
+                Map.of("modelParams", "{\"deepseek-chat\":{\"topP\":0.9}}"), "admin", null, null));
+
+        assertTrue(error.getMessage().contains("Schema validation failed"));
+    }
 }

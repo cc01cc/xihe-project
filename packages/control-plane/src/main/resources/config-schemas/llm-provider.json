@@ -12,10 +12,34 @@
       "required": ["providerId", "connectionKey", "model"],
       "additionalProperties": false
     },
+    "imageProfile": {
+      "type": "object",
+      "description": "Global default image generation model (PLAN-0523 decision #5/#7): connection-scoped identity, instance-layer only; an empty value clears.",
+      "properties": {
+        "providerId": { "type": "string" },
+        "connectionKey": { "type": "string" },
+        "model": { "type": "string" }
+      },
+      "required": ["providerId", "connectionKey", "model"],
+      "additionalProperties": false
+    },
     "imageProvider": { "type": "string" },
     "maxTokens": { "type": ["integer", "string"], "minimum": 1, "maximum": 128000 },
     "temperature": { "type": ["number", "string"], "minimum": 0, "maximum": 2 },
-    "timeout": { "type": ["integer", "string"], "minimum": 1 }
+    "timeout": { "type": ["integer", "string"], "minimum": 1 },
+    "modelParams": {
+      "type": "object",
+      "description": "Per-model sampling parameters (PLAN-0523 decision #9/#12): map of model name to optional {maxTokens, temperature, timeout}. PUT replaces the whole map; an empty object clears. Layer-scoped (whole-domain override).",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "maxTokens": { "type": ["integer", "string"], "minimum": 1, "maximum": 128000 },
+          "temperature": { "type": ["number", "string"], "minimum": 0, "maximum": 2 },
+          "timeout": { "type": ["integer", "string"], "minimum": 1 }
+        },
+        "additionalProperties": false
+      }
+    }
   },
   "additionalProperties": false
 }

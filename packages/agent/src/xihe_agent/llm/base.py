@@ -1,4 +1,5 @@
 import json
+import math
 import os
 from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
@@ -199,6 +200,49 @@ def parse_llm_profile(raw: str | None) -> dict[str, str] | None:
         logger.warning("llm-provider profile is incomplete; treating as absent")
         return None
     return {"providerId": provider_id, "connectionKey": connection_key, "model": model}
+
+
+def parse_model_params(entries: Mapping[str, str], model: str) -> dict[str, float | int] | None:
+    """Resolve this model's sampling overrides from the `modelParams` layer map (PLAN-0523).
+
+    `modelParams` is a layer-scoped ``Record<模型名, {maxTokens?, temperature?, timeout?}>``
+    (decisions #9/#12/#14): whole-domain replacement at the writing layer, looked up
+    here per run by bare model name. Returns only schema-valid keys (positive
+    ``maxTokens``/``timeout``, finite ``temperature``); returns ``None`` when the map
+    is absent, the model has no entry, or no valid key remains — callers then keep
+    API/template defaults. Malformed stored values degrade to "no overrides" with a
+    warning that never includes the raw value.
+    """
+    raw = entries.get("modelParams")
+    if raw is None or not raw.strip():
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        logger.warning("llm-provider modelParams is not valid JSON; ignoring")
+        return None
+    if not isinstance(parsed, dict):
+        logger.warning("llm-provider modelParams is not an object; ignoring")
+        return None
+    candidates = (model, model.split("/", 1)[1] if "/" in model else None)
+    entry: Any = None
+    for candidate in candidates:
+        if candidate and isinstance(parsed.get(candidate), dict):
+            entry = parsed[candidate]
+            break
+    if entry is None:
+        return None
+    overrides: dict[str, float | int] = {}
+    max_tokens = entry.get("maxTokens")
+    if isinstance(max_tokens, int) and not isinstance(max_tokens, bool) and max_tokens > 0:
+        overrides["maxTokens"] = max_tokens
+    temperature = entry.get("temperature")
+    if isinstance(temperature, (int, float)) and not isinstance(temperature, bool) and math.isfinite(temperature):
+        overrides["temperature"] = float(temperature)
+    timeout = entry.get("timeout")
+    if isinstance(timeout, (int, float)) and not isinstance(timeout, bool) and math.isfinite(timeout) and timeout > 0:
+        overrides["timeout"] = float(timeout)
+    return overrides or None
 
 
 def resolve_provider_base_url(provider: str, fallback: str | None = "") -> str | None:
