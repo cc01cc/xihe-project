@@ -1,21 +1,21 @@
 ---
-title: "羲和 — 通用 Agent 运行时平台"
+title: "羲和 — 通用 Agent 协作平台"
 category: dev-guide
 sidebar_group: "项目概览"
 sidebar_order: 0
 lang: zh-Hans
 status: active
 created: 2026-05-28
-updated: 2026-10-12
+updated: 2026-10-16
 ---
 
 [English](https://github.com/cc01cc/xihe-project#readme)
 
 <!-- 同步约定：架构图、Quick Start 命令、端口、技术栈摘要与根 README.md 同步；功能状态表仅由中文版维护。 -->
 
-# xihe — 通用 Agent 运行时平台
+# 羲和 — 通用 Agent 协作平台
 
-**给 Agent 以人的地位与约束。** 多 Agent 编排、工具调用、沙盒执行与权限控制。
+**羲和，观天以授时，御日以成序。** 人与 Agent 各展所长，协力而行。
 
 > **开发状态：** 项目仍在积极开发，API 和数据结构可能变化，不建议用于生产环境。
 

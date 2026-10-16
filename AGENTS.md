@@ -24,7 +24,7 @@
 
 ## Commands
 
-- 单文件/包级命令见对应包指南；里程碑和 PLAN 收尾运行 `mise run validate`，仅按改动边界增加集成/E2E profile（DEV-020/021/022/023）。
+- 单文件/包级命令见对应包指南；里程碑和 PLAN 收尾运行 `mise run validate`，仅按改动边界增加集成/E2E profile（DEV-020/021/022/023）。`validate` 若被存量环境性基线失败 fail-fast 挡住（白名单见 workspace 私有技术债文档《xh-backlog-and-debt》的「环境性基线失败白名单」），改按组件级补跑（lint:links / runtime / test:cp / test:agent / test:ui / build:ui）并逐红点做基线对照，不因存量红点阻塞收尾。
 - Compose E2E（`mise run test:e2e:compose`，旧名 `test:e2e`）**已冻结注释（2026-10-07 docker 冻结裁定）**，不得用于验收或临时验证；Sandbox/host E2E 使用 `mise run test:e2e:host`，由 host runner 管理每轮隔离环境。清理/就绪要求见 [`DEV-020`](docs/i18n/zh-Hans/DEV-020-e2e-test-strategy.md) / [`DEV-021`](docs/i18n/zh-Hans/DEV-021-integration-test-strategy.md)。
 - 环境搭建、模块任务、资源清理和全栈排障见 [`DEV-002`](docs/i18n/zh-Hans/DEV-002-developer-guide.md)。
 - 根 `README.md`（英文 GitHub 门面）与 `docs/i18n/zh-Hans/README.md`（中文文档页）独立维护；架构图、Quick Start 命令、端口和技术栈摘要同批同步，功能状态表仅在中文版维护。`scripts/sync-readmes.sh` 只管理包 README symlink，不管理根 README。
@@ -89,6 +89,7 @@
 ## Plan and Release Rules
 
 - 遵循 workspace `plan-mode`/`plan-completion`；PLAN 工作包统一存放在 workspace 根 `plans/`，不在本仓库另设；XH Spec Impact 和 DEV/OpenAPI 同批同步按 `spec/README.md`、DEV-030 执行。PLAN 是目录工作包，不是单文件 `PLAN-XXX.md`。
+- XH PLAN 隔离实施统一在**本仓库内**建 git worktree（如 `git worktree add .worktrees/<name> -b <branch> develop`）；**禁止**用 Kilo / Agent Manager 的 worktree 模式代劳——两者是不同机制（2026-10-14 用户再次纠正；工作区硬规则见 `../AGENTS.md` §Git 操作约束）。
 - 本指南不授权 package 发布、版本 bump、commit 或 push；任何 release 动作先核对当前项目依据并遵循 workspace permissions。
 
 ## Skills
