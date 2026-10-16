@@ -5,6 +5,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { stat as stat2, readdir, writeFile, readFile, mkdir } from 'node:fs/promises'
 import { rm } from 'node:fs/promises'
 import { createServer as createTcpServer } from 'node:net'
+import { waitForAgentLlmReady } from './lib/agent-readiness.mjs'
 
 const projectDir = dirname(import.meta.dirname)
 const uiDir = join(projectDir, 'packages', 'ui')
@@ -1391,18 +1392,15 @@ async function main() {
         // PLAN-0504: `missing` intentionally has no profile and stays
         // not-ready (LLM_NOT_CONFIGURED) — that lane must not burn the full
         // readiness budget waiting for a state it will never reach.
+        // PLAN-0525 (decision #9): the wait is fail-closed — exhausting the
+        // budget now aborts the run instead of falling through to Playwright,
+        // where it used to surface as an opaque 30s `beforeAll` timeout.
         const expectNotReady = llmMode === 'missing'
-        const agentDeadline = Date.now() + (expectNotReady ? 0 : readinessTimeoutMs)
-        while (Date.now() < agentDeadline) {
-          try {
-            const res = await fetch(`http://127.0.0.1:${agentPort}/internal/v1/agent/health`)
-            if (res.ok) {
-              const body = await res.json()
-              if (body.llmReady === 'ready') break
-            }
-          } catch {}
-          await new Promise((resolve) => setTimeout(resolve, 2_000))
-        }
+        await waitForAgentLlmReady({
+          healthUrl: `http://127.0.0.1:${agentPort}/internal/v1/agent/health`,
+          expectReady: !expectNotReady,
+          timeoutMs: readinessTimeoutMs,
+        })
       })(),
       ...(skipRuntime ? [] : [(async () => {
         await launchNativeService({

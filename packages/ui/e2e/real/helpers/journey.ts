@@ -167,6 +167,19 @@ async function agentHealthOk(): Promise<{ ok: boolean; llmReady: string }> {
     }
 }
 
+/**
+ * PLAN-0525: assert the isolated Agent's own health endpoint reports
+ * `llmReady=ready`. Readiness is a per-layer fact: this checks the Agent
+ * directly, not the CP cache and not any Provider Connection.
+ */
+export async function assertAgentLlmReady(): Promise<void> {
+    const health = await agentHealthOk();
+    expect(
+        health.ok && health.llmReady === "ready",
+        `agent direct health llmReady=${health.llmReady} (ok=${health.ok})`,
+    ).toBe(true);
+}
+
 function readBindingWorkspace(): string | null {
     try {
         return (
@@ -299,7 +312,24 @@ export async function ensureChatBinding(page: Page, sessionId: string): Promise<
                 "Content-Type": "application/json",
             };
             const session = await (await fetch(`/api/v1/sessions/${sid}`, { headers })).json();
-            if (session?.providerConnectionId) return "bound";
+            if (session?.providerConnectionId) {
+                // PLAN-0525: a bound Session is only chat-ready when the connection
+                // body itself reports READY. An id, HTTP 200, or an earlier verify
+                // response is not readiness evidence (CP has no GET /{id}, so the
+                // status comes from the list view).
+                const boundList = await (
+                    await fetch("/api/v1/provider-connections", { headers })
+                ).json();
+                const boundConnection = (
+                    (boundList?.connections ?? []) as Array<{ id: string; status?: string }>
+                ).find((item) => item.id === session.providerConnectionId);
+                if (!boundConnection) {
+                    return `bound-connection-missing:${String(session.providerConnectionId)}`;
+                }
+                return boundConnection.status === "READY"
+                    ? "bound"
+                    : `bound-not-ready:${String(boundConnection.status)}`;
+            }
             const list = await (await fetch("/api/v1/provider-connections", { headers })).json();
             type ConnectionView = {
                 id: string;
@@ -343,6 +373,11 @@ export async function ensureChatBinding(page: Page, sessionId: string): Promise<
                 );
                 if (!verified.ok) return `verify ${verified.status} ${await verified.text()}`;
                 connection = ((await verified.json()) as { connection: ConnectionView }).connection;
+                // PLAN-0525: verify returns HTTP 200 even for non-READY outcomes, so
+                // the body status is the only trustworthy gate before dispatch.
+                if (connection.status !== "READY") {
+                    return `verify-not-ready:${String(connection.status)}`;
+                }
             }
             // Manual discovery gates dispatch on the registered model set.
             if (!(connection.manualModels ?? []).includes(modelName)) {
