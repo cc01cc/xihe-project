@@ -1,10 +1,11 @@
 import { join, dirname, isAbsolute } from 'node:path'
-import { spawn } from 'node:child_process'
-import { randomBytes, createHash } from 'node:crypto'
+import { spawn, execFileSync } from 'node:child_process'
+import { randomBytes, createHash, timingSafeEqual } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { stat as stat2, readdir, writeFile, readFile, mkdir } from 'node:fs/promises'
 import { rm } from 'node:fs/promises'
 import { createServer as createTcpServer } from 'node:net'
+import { createServer as createHttpServer } from 'node:http'
 
 const projectDir = dirname(import.meta.dirname)
 const uiDir = join(projectDir, 'packages', 'ui')
@@ -120,8 +121,32 @@ let fakeOAuthPort = process.env.XIHE_FAKE_OAUTH_PORT ?? String(portBase + 10)
 let fakeMcpPort = process.env.XIHE_FAKE_MCP_PORT ?? String(portBase + 11)
 let fakeLlmPort = process.env.XIHE_FAKE_LLM_PORT ?? String(portBase + 12)
 const llmModeArg = process.argv.find((arg) => arg.startsWith('--llm-mode='))
-const llmMode = process.env.XIHE_E2E_LLM_MODE ?? llmModeArg?.slice('--llm-mode='.length) ?? batch?.llmMode ?? 'mock'
+const requestedLlmMode = process.env.XIHE_E2E_LLM_MODE ?? llmModeArg?.slice('--llm-mode='.length) ?? batch?.llmMode
 const batchSpecs = batch?.specs ?? []
+const checkpointSaverProbeRequested = process.argv.some((arg) => {
+  const normalized = arg.replaceAll('\\', '/')
+  return normalized === 'checkpoint-saver-probe.spec.ts'
+    || normalized === 'e2e/real/checkpoint-saver-probe.spec.ts'
+    || normalized.endsWith('/e2e/real/checkpoint-saver-probe.spec.ts')
+}) || batchSpecs.some((spec) => {
+  const normalized = spec.replaceAll('\\', '/')
+  return normalized === 'e2e/real/checkpoint-saver-probe.spec.ts'
+    || normalized.endsWith('/e2e/real/checkpoint-saver-probe.spec.ts')
+})
+const checkpointResumeRequested = process.argv.some((arg) => {
+  const normalized = arg.replaceAll('\\', '/')
+  return normalized === 'checkpoint-resume.spec.ts'
+    || normalized === 'e2e/real/checkpoint-resume.spec.ts'
+    || normalized.endsWith('/e2e/real/checkpoint-resume.spec.ts')
+}) || batchSpecs.some((spec) => {
+  const normalized = spec.replaceAll('\\', '/')
+  return normalized === 'e2e/real/checkpoint-resume.spec.ts'
+    || normalized.endsWith('/e2e/real/checkpoint-resume.spec.ts')
+})
+const exactCheckpointHostProbeRequested = checkpointSaverProbeRequested || checkpointResumeRequested
+const llmMode = checkpointResumeRequested && requestedLlmMode === undefined
+  ? 'checkpoint_resume'
+  : requestedLlmMode ?? 'mock'
 const skipRuntime = process.argv.includes('--skip-runtime')
 // Supplementary real-provider sampling (PLAN-247, requires explicit user
 // approval per run). The key travels only via this env var into the CP Admin
@@ -141,6 +166,7 @@ const realRoute = process.env.XIHE_E2E_REAL_ROUTE ?? 'native'
 // read XIHE_E2E_REAL_OPENAI_BASE from the inherited env directly when they
 // create the connection fixture, so the runner keeps no constant for it.
 const fakeMcpAccessToken = randomPassword(24)
+const fakeMcpResumeControlToken = checkpointResumeRequested ? randomPassword(32) : ''
 let e2eAdminPassword = randomPassword(24)
 
 // PLAN-0465: reuse 模式下按栈 runId 恢复（与 pgProjectName 同批）——DB 名由栈
@@ -192,6 +218,12 @@ const nativeNoProxy = [
 const dockerCommand = process.platform === 'win32' ? 'docker.exe' : 'docker'
 
 const dockerProcesses = []
+const nativeServiceConfigs = new Map()
+const nativeServiceChildren = new Map()
+let checkpointProbeControlServer = null
+let checkpointProbeControlToken = null
+let checkpointProbeControlUrl = null
+let agentDatabaseConfigPresent = null
 let cleaned = false
 let teardownResult = { ok: true, failures: [] }
 let result = { code: 0 }
@@ -620,28 +652,68 @@ async function migrateIsolatedSchema() {
   // The CP migration runs on boot. We just wait for it via the actuator health probe.
 }
 
+function isDatabaseConnectionEnvKey(key) {
+  const databaseSegments = /^(?:PG[A-Z0-9]*|POSTGRES(?:QL)?[A-Z0-9]*|DATABASE[A-Z0-9]*|DATASOURCE[A-Z0-9]*|JDBC[A-Z0-9]*|DB[A-Z0-9]*|SQLALCHEMY[A-Z0-9]*|MYSQL[A-Z0-9]*|MARIADB[A-Z0-9]*|MONGO(?:DB)?[A-Z0-9]*|REDIS[A-Z0-9]*|ORACLE[A-Z0-9]*|MSSQL[A-Z0-9]*|SQLSERVER[A-Z0-9]*)$/i
+  return key.split('_').some((segment) => databaseSegments.test(segment))
+}
+
+function withoutDatabaseConnectionEnv(source) {
+  const env = {}
+  for (const [key, value] of Object.entries(source)) {
+    if (!isDatabaseConnectionEnvKey(key) && value !== undefined) env[key] = value
+  }
+  return env
+}
+
 async function launchNativeService({ name, cmd, args, cwd, extraEnv, healthUrl }) {
   console.log(`[e2e-host] launching native ${name}`)
+  const inheritedEnv = name === 'agent' ? withoutDatabaseConnectionEnv(process.env) : process.env
+  const serviceEnv = {
+    ...inheritedEnv,
+    XIHE_ENV: 'dev',
+    XIHE_CP_API_TOKEN: serviceToken,
+    XIHE_AGENT_API_TOKEN: serviceToken,
+    XIHE_E2E_RUN_ID: e2eRunId,
+    XIHE_WORKSPACE_HOST_ROOT: hostRoot,
+    XIHE_LOG_DIR: e2eLogDir,
+    XIHE_LOAD_DOTENV: '0',
+    XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL: 'true',
+    NO_PROXY: nativeNoProxy,
+    no_proxy: nativeNoProxy,
+    ...extraEnv,
+  }
+  if (name === 'agent') {
+    // Only the exact T0.5 spec receives the dedicated router flag. The same
+    // pair is carried separately in agentRestartEnv for workspace rebinds.
+    serviceEnv.XIHE_E2E_PROFILE = exactCheckpointHostProbeRequested ? 'host' : ''
+    serviceEnv.XIHE_E2E_CHECKPOINT_PROBE = checkpointSaverProbeRequested ? '1' : '0'
+    serviceEnv.XIHE_E2E_CHECKPOINT_RESUME = checkpointResumeRequested ? '1' : '0'
+    agentDatabaseConfigPresent = Object.keys(serviceEnv).some(isDatabaseConnectionEnvKey)
+    if (agentDatabaseConfigPresent) {
+      throw new Error('Agent environment contains database connection configuration')
+    }
+    console.log(`[e2e-host] Agent database connection env present=${agentDatabaseConfigPresent}`)
+  } else if (name === 'control-plane') {
+    // Probe lineage IDs are accepted only by the runner-owned exact T0.5 lane.
+    serviceEnv.XIHE_E2E_CHECKPOINT_PROBE = checkpointSaverProbeRequested ? '1' : '0'
+  }
   const child = spawnCommand(cmd, args, {
     cwd: cwd ?? join(projectDir, 'packages', name),
-    env: {
-      ...process.env,
-      XIHE_ENV: 'dev',
-       XIHE_CP_API_TOKEN: serviceToken,
-       XIHE_AGENT_API_TOKEN: serviceToken,
-      XIHE_E2E_RUN_ID: e2eRunId,
-      XIHE_WORKSPACE_HOST_ROOT: hostRoot,
-      XIHE_LOG_DIR: e2eLogDir,
-      XIHE_LOAD_DOTENV: '0',
-      XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL: 'true',
-      NO_PROXY: nativeNoProxy,
-      no_proxy: nativeNoProxy,
-      ...extraEnv,
-    },
+    env: serviceEnv,
     stdio: 'inherit',
     windowsHide: true,
   })
-  dockerProcesses.push({ name, child })
+  const processEntry = { name, child }
+  dockerProcesses.push(processEntry)
+  nativeServiceConfigs.set(name, {
+    name,
+    cmd,
+    args: [...args],
+    cwd,
+    extraEnv: { ...extraEnv },
+    healthUrl,
+  })
+  nativeServiceChildren.set(name, child)
   child.once('exit', (code, signal) => {
     console.log(`[e2e-host] native ${name} exited code=${code ?? 'null'} signal=${signal ?? 'none'}`)
   })
@@ -649,6 +721,281 @@ async function launchNativeService({ name, cmd, args, cwd, extraEnv, healthUrl }
     console.error(`[e2e-host] native ${name} error: ${error.message}`)
   })
   await waitForHttp(name, healthUrl, readinessTimeoutMs, {}, child)
+  return child
+}
+
+async function waitForChildExit(child, timeoutMs = 15_000) {
+  if (child.exitCode !== null || child.signalCode !== null) return
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('runner-owned service did not exit in time')), timeoutMs)
+    child.once('close', () => {
+      clearTimeout(timer)
+      resolve()
+    })
+  })
+}
+
+async function restartNativeService(name) {
+  const config = nativeServiceConfigs.get(name)
+  const previous = nativeServiceChildren.get(name)
+  if (!config || !previous || !previous.pid) {
+    throw new Error('requested service is not runner-owned')
+  }
+  const previousPid = previous.pid
+  await stopProcess(previous)
+  await waitForChildExit(previous)
+  for (let index = dockerProcesses.length - 1; index >= 0; index -= 1) {
+    if (dockerProcesses[index].child === previous) dockerProcesses.splice(index, 1)
+  }
+  nativeServiceChildren.delete(name)
+
+  const replacement = await launchNativeService(config)
+  const pidChanged = Boolean(replacement.pid && replacement.pid !== previousPid)
+  if (!pidChanged) {
+    await stopProcess(replacement)
+    throw new Error('runner-owned service process identity did not change')
+  }
+  console.log(`[e2e-host] checkpoint probe restarted ${name}; pidChanged=${pidChanged}`)
+  return { service: name, pidChanged }
+}
+
+function runScratchCheckpointMigrationRecovery() {
+  const container = `${pgProjectName}-postgres-1`
+  const scratchPrefix = `xihe_cp_probe_${e2eRunId.replace(/[^a-z0-9]/gi, '_')}`
+  const scratchName = `${scratchPrefix}_${randomBytes(4).toString('hex')}`
+  if (
+    !/^xihe_cp_probe_[a-z0-9_]+_[0-9a-f]{8}$/.test(scratchName) ||
+    !scratchName.startsWith(`${scratchPrefix}_`) ||
+    scratchName === pgDatabase
+  ) {
+    throw new Error('scratch database identity validation failed')
+  }
+  const migrationPath = join(
+    projectDir,
+    'packages',
+    'control-plane',
+    'src',
+    'main',
+    'resources',
+    'db',
+    'migration',
+    'V69__agent_graph_checkpoints.sql',
+  )
+  if (!existsSync(migrationPath)) throw new Error('checkpoint migration source is unavailable')
+  const migrationSql = readFileSync(migrationPath, 'utf8')
+  const targetTables = [
+    'agent_graph_checkpoint_lineages',
+    'agent_graph_checkpoints',
+    'agent_graph_checkpoint_writes',
+  ]
+  const execPsql = (database, sql, { input = undefined } = {}) => execFileSync(
+    dockerCommand,
+    [
+      'exec',
+      ...(input === undefined ? [] : ['-i']),
+      container,
+      'psql',
+      '-X',
+      '-q',
+      '-A',
+      '-t',
+      '-v',
+      'ON_ERROR_STOP=1',
+      '-U',
+      pgUser,
+      '-d',
+      database,
+      ...(input === undefined ? ['-c', sql] : ['-f', '-']),
+    ],
+    {
+      input,
+      encoding: 'utf8',
+      timeout: 15_000,
+      windowsHide: true,
+      stdio: input === undefined ? ['ignore', 'pipe', 'ignore'] : ['pipe', 'pipe', 'ignore'],
+    },
+  ).trim()
+  const tableCount = () => {
+    const names = targetTables.map((name) => `'${name}'`).join(', ')
+    const value = execPsql(
+      scratchName,
+      `SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN (${names})`,
+    )
+    if (!/^\d+$/.test(value)) throw new Error('scratch migration table count is invalid')
+    return Number(value)
+  }
+  const createScratch = () => execPsql('postgres', `CREATE DATABASE ${scratchName}`)
+  const dropScratch = () => execPsql('postgres', `DROP DATABASE IF EXISTS ${scratchName}`)
+  let createAttempted = false
+  let failedMigrationRolledBack = false
+  let rollbackTableCount = -1
+  let recoveredTableCount = -1
+  let cleanupSucceeded = false
+  try {
+    createAttempted = true
+    createScratch()
+    execPsql(
+      scratchName,
+      'CREATE TABLE sessions (id uuid PRIMARY KEY); ' +
+        'CREATE TABLE session_branches (' +
+        'session_id uuid NOT NULL, id uuid NOT NULL, PRIMARY KEY (session_id, id), ' +
+        'FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE);',
+    )
+    const interruptionMarker = 'xihe_checkpoint_migration_before_interruption'
+    try {
+      execPsql(scratchName, '', {
+        input: `BEGIN;\n${migrationSql}\nSELECT '${interruptionMarker}';\nSELECT 1 / 0;\nCOMMIT;\n`,
+      })
+    } catch (error) {
+      const output = typeof error?.stdout === 'string'
+        ? error.stdout
+        : Buffer.isBuffer(error?.stdout)
+          ? error.stdout.toString('utf8')
+          : ''
+      failedMigrationRolledBack = error?.status !== 0 && output.includes(interruptionMarker)
+    }
+    rollbackTableCount = tableCount()
+    if (!failedMigrationRolledBack || rollbackTableCount !== 0) {
+      throw new Error('interrupted migration did not roll back cleanly')
+    }
+    execPsql(scratchName, '', { input: `BEGIN;\n${migrationSql}\nCOMMIT;\n` })
+    recoveredTableCount = tableCount()
+    if (recoveredTableCount !== targetTables.length) {
+      throw new Error('scratch migration replay did not create the expected schema')
+    }
+  } finally {
+    if (createAttempted) {
+      dropScratch()
+      cleanupSucceeded = execPsql(
+        'postgres',
+        `SELECT count(*) FROM pg_database WHERE datname='${scratchName}'`,
+      ) === '0'
+    }
+  }
+  if (!cleanupSucceeded) throw new Error('scratch database cleanup could not be verified')
+  return {
+    migrationFailed: failedMigrationRolledBack,
+    rollbackTableCount,
+    recoveredTableCount,
+    cleanupSucceeded,
+  }
+}
+
+function readControlRequestBody(request, maxBytes = 4_096) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    let size = 0
+    request.on('data', (chunk) => {
+      size += chunk.length
+      if (size > maxBytes) {
+        reject(new Error('control request too large'))
+        request.destroy()
+        return
+      }
+      chunks.push(chunk)
+    })
+    request.once('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    request.once('error', reject)
+  })
+}
+
+function sendControlJson(response, status, value) {
+  response.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+    connection: 'close',
+  })
+  response.end(JSON.stringify(value))
+}
+
+async function startCheckpointProbeControl() {
+  if (!exactCheckpointHostProbeRequested || externalServer || isPersistent) {
+    throw new Error('checkpoint probe control is limited to an owned exact-spec host run')
+  }
+  checkpointProbeControlToken = randomBytes(32).toString('base64url')
+  const expected = Buffer.from(`Bearer ${checkpointProbeControlToken}`, 'utf8')
+  checkpointProbeControlServer = createHttpServer(async (request, response) => {
+    const supplied = Buffer.from(request.headers.authorization ?? '', 'utf8')
+    const authorized = supplied.length === expected.length && timingSafeEqual(supplied, expected)
+    if (!authorized) {
+      request.resume()
+      sendControlJson(response, 401, { error: 'unauthorized' })
+      return
+    }
+    const allowedPaths = ['/restart-service', '/migration-recovery']
+    if (checkpointResumeRequested) allowedPaths.push('/resume-fixture')
+    if (request.method !== 'POST' || !allowedPaths.includes(request.url ?? '')) {
+      request.resume()
+      sendControlJson(response, 404, { error: 'not found' })
+      return
+    }
+    try {
+      const rawBody = await readControlRequestBody(request)
+      const body = JSON.parse(rawBody || '{}')
+      if (request.url === '/resume-fixture') {
+        if (
+          !body || typeof body !== 'object' || Array.isArray(body) ||
+          Object.keys(body).length !== 1 || !['state', 'arm-ambiguous', 'reset'].includes(body.action)
+        ) {
+          sendControlJson(response, 400, { error: 'invalid resume fixture request' })
+          return
+        }
+        const fixtureResponse = await fetch(`http://127.0.0.1:${fakeMcpPort}/__e2e/checkpoint-resume`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${fakeMcpResumeControlToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ action: body.action }),
+          signal: AbortSignal.timeout(5_000),
+        })
+        if (!fixtureResponse.ok) throw new Error('resume fixture control failed')
+        sendControlJson(response, 200, await fixtureResponse.json())
+        return
+      }
+      if (request.url === '/restart-service') {
+        if (
+          !body || typeof body !== 'object' || Array.isArray(body) ||
+          Object.keys(body).length !== 1 || !['agent', 'control-plane'].includes(body.service)
+        ) {
+          sendControlJson(response, 400, { error: 'invalid service restart request' })
+          return
+        }
+        const restarted = await restartNativeService(body.service)
+        sendControlJson(response, 200, restarted)
+        return
+      }
+      if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 0) {
+        sendControlJson(response, 400, { error: 'invalid migration recovery request' })
+        return
+      }
+      const migration = runScratchCheckpointMigrationRecovery()
+      sendControlJson(response, 200, migration)
+    } catch (error) {
+      // Server-side only: the HTTP body stays generic, but hiding the cause entirely made
+      // the V1 scratch-migration failure undiagnosable. Loopback + token-gated control.
+      console.error(`[e2e-host] checkpoint probe control failed: ${error?.message ?? error}`)
+      sendControlJson(response, 500, { error: 'checkpoint probe control operation failed' })
+    }
+  })
+  await new Promise((resolve, reject) => {
+    checkpointProbeControlServer.once('error', reject)
+    checkpointProbeControlServer.listen(0, '127.0.0.1', resolve)
+  })
+  const address = checkpointProbeControlServer.address()
+  if (!address || typeof address === 'string') throw new Error('checkpoint probe control did not bind a TCP port')
+  checkpointProbeControlUrl = `http://127.0.0.1:${address.port}`
+  console.log('[e2e-host] checkpoint probe control bound to loopback')
+}
+
+async function closeCheckpointProbeControl() {
+  if (checkpointProbeControlServer) {
+    const server = checkpointProbeControlServer
+    checkpointProbeControlServer = null
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+  }
+  checkpointProbeControlToken = null
+  checkpointProbeControlUrl = null
 }
 
 async function launchUIVite() {
@@ -690,6 +1037,8 @@ function describeFixtures() {
     { name: 'Fake MCP', script: 'fake-mcp-server.mjs', port: fakeMcpPort, env: {
       XIHE_FAKE_MCP_PORT: fakeMcpPort,
       XIHE_FAKE_MCP_ACCESS_TOKEN: fakeMcpAccessToken,
+      XIHE_FAKE_MCP_CHECKPOINT_RESUME: checkpointResumeRequested ? '1' : '0',
+      ...(checkpointResumeRequested ? { XIHE_FAKE_MCP_CONTROL_TOKEN: fakeMcpResumeControlToken } : {}),
     } },
   ]
         if (!realXiaomiKey) {
@@ -886,6 +1235,14 @@ async function runPlaywright() {
               XIHE_DEEPSEEK_API_KEY: 'fake-deepseek-key',
             }),
       }
+  if (checkpointSaverProbeRequested) {
+    agentRestartEnv.XIHE_E2E_PROFILE = 'host'
+    agentRestartEnv.XIHE_E2E_CHECKPOINT_PROBE = '1'
+  }
+  if (checkpointResumeRequested) {
+    agentRestartEnv.XIHE_E2E_PROFILE = 'host'
+    agentRestartEnv.XIHE_E2E_CHECKPOINT_RESUME = '1'
+  }
   return run(pnpmCommand, [
     'exec',
     'playwright',
@@ -921,6 +1278,15 @@ async function runPlaywright() {
       XIHE_E2E_LLM_MODE: llmMode,
       XIHE_E2E_ADMIN_PASSWORD: e2eAdminPassword,
       XIHE_E2E_AGENT_RESTART_ENV: JSON.stringify(agentRestartEnv),
+      XIHE_E2E_AGENT_DB_CONFIG_PRESENT: agentDatabaseConfigPresent === false ? 'false' : 'unknown',
+      XIHE_E2E_CHECKPOINT_PROBE_ACTIVE: checkpointSaverProbeRequested ? 'true' : 'false',
+      XIHE_E2E_CHECKPOINT_RESUME_ACTIVE: checkpointResumeRequested ? 'true' : 'false',
+      ...(exactCheckpointHostProbeRequested
+        ? {
+            XIHE_E2E_HOST_CONTROL_URL: checkpointProbeControlUrl,
+            XIHE_E2E_HOST_CONTROL_TOKEN: checkpointProbeControlToken,
+          }
+        : {}),
       // PLAN-0372 decisions #A/#B: the real-lane cases read the selected route
       // fixture (no secrets; mock lane ignores it).
       XIHE_E2E_REAL_ROUTE: realRoute,
@@ -1045,13 +1411,19 @@ async function cleanup() {
   if (preserveRunDir && existsSync(e2eLogDir)) {
     console.log(`[e2e-host] tests failed; preserving logs at ${e2eLogDir} (recycle with .tmp cleanup)`)
   }
+  const controlFailures = []
+  try {
+    await closeCheckpointProbeControl()
+  } catch {
+    controlFailures.push('checkpoint probe control server shutdown failed')
+  }
   try {
     const failures = await collectIsolatedResources(preserveRunDir)
-    teardownResult = { ok: failures.length === 0, failures }
+    teardownResult = { ok: failures.length + controlFailures.length === 0, failures: [...controlFailures, ...failures] }
   } catch (error) {
     teardownResult = {
       ok: false,
-      failures: [`teardown crashed: ${error instanceof Error ? error.message : String(error)}`],
+      failures: [...controlFailures, `teardown crashed: ${error instanceof Error ? error.message : String(error)}`],
     }
   }
   return teardownResult
@@ -1170,6 +1542,14 @@ async function runPreflightGate({ allowPorts = [], ownRunId = '', extraSelfPids 
 }
 
 async function main() {
+  if (checkpointSaverProbeRequested && (externalServer || isPersistent)) {
+    throw new Error('checkpoint saver probe requires an owned, non-persistent exact-spec host run')
+  }
+  if (checkpointResumeRequested && (
+    externalServer || isPersistent || realXiaomiKey || llmMode !== 'checkpoint_resume'
+  )) {
+    throw new Error('checkpoint resume probe requires its owned offline fake-LLM exact-spec lane')
+  }
   if (showHelp) {
     printRunnerHelp()
     return
@@ -1319,30 +1699,14 @@ async function main() {
           })
           await configureFakeLlm()
         } else {
-          const child = spawnCommand('java', ['-jar', cpJar, '--spring.profiles.active=e2e'], {
+          await launchNativeService({
+            name: 'control-plane',
+            cmd: 'java',
+            args: ['-jar', cpJar, '--spring.profiles.active=e2e'],
             cwd: join(projectDir, 'packages', 'control-plane'),
-            env: {
-              ...process.env,
-              XIHE_CP_API_TOKEN: serviceToken,
-              XIHE_AGENT_API_TOKEN: serviceToken,
-              XIHE_E2E_RUN_ID: e2eRunId,
-              XIHE_WORKSPACE_HOST_ROOT: hostRoot,
-              XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL: 'true',
-              ...commonCpEnv,
-              XIHE_CP_PORT: cpPort,
-              XIHE_LOG_DIR: e2eLogDir,
-              XIHE_LOAD_DOTENV: '0',
-            },
-            stdio: 'inherit',
-            windowsHide: true,
+            extraEnv: { ...commonCpEnv, XIHE_CP_PORT: cpPort, XIHE_LOG_DIR: e2eLogDir },
+            healthUrl: `http://127.0.0.1:${cpPort}/actuator/health`,
           })
-          dockerProcesses.push({ name: 'control-plane', child })
-          child.once('exit', (code, signal) => {
-            console.log(`[e2e-host] native control-plane exited code=${code ?? 'null'} signal=${signal ?? 'none'}`)
-          })
-          // PG readiness was already gated by waitPostgresReady in the CP
-          // task prologue; just wait for Spring to finish booting.
-          await waitForHttp('control-plane', `http://127.0.0.1:${cpPort}/actuator/health`, readinessTimeoutMs, {}, child)
           await configureFakeLlm()
         }
       })(),
@@ -1455,6 +1819,7 @@ async function main() {
     return
   }
   await writeArtifactsManifest(cpBootPlan)
+  if (exactCheckpointHostProbeRequested) await startCheckpointProbeControl()
   result = await runPlaywright()
   const teardown = await cleanup()
   if (!teardown.ok) {
