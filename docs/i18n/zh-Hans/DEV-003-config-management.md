@@ -112,6 +112,8 @@ CLI --set KEY=VALUE（最高，启动日志掩码标注）
 
 **危险默认 fail-fast（决策 #7/#25/#32/T3.4）**：各模块启动时校验最终生效值——显式 `XIHE_ENV=prod` 命中出厂态危险默认（JWT secret/服务 token/allow-dev-key/加密 key）即**拒绝启动**并列键与修复指引；未设或 dev 仅 WARN；发布门禁强制显式 `prod`。清单见 `spec/config-env-target.md` §6。
 
+**本地模式（PLAN-0526）**：`XIHE_LOCAL_MODE=true` 是单机单用户部署的登录入口例外（默认关）。开启时 CP **必须**绑定回环地址（`server.address`，可用 `SERVER_ADDRESS=127.0.0.1` 注入），且在 `XIHE_ENV=prod` 或非回环绑定下**拒绝启动**；该键同时进 CP 危险默认校验（prod-only），契约见 [`spec/security/authentication.md`](../../../spec/security/authentication.md) §4。
+
 **配置归属速查**：
 
 | 配置类别 | 归属 | 生效方式 |
