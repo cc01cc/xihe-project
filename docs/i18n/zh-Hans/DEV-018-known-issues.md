@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 18
 status: active
 created: 2026-09-02
-updated: 2026-10-08
+updated: 2026-10-16
 ---
 
 # DEV-018: Known Issues (Supplement)
@@ -128,7 +128,7 @@ updated: 2026-10-08
 
 ## PLAN-0505 D-1 判定修正 — 部分唯一索引可命中非前导列（已证伪，供回溯）
 
-- 审查曾判定「`config` 表 `WHERE layer=? AND domain=?` 无法走索引，删除事务锁持有时间随表规模线性增长」。经 600k 行合成基准实测推翻：Postgres 对 partial index 的 `WHERE layer='user'` 谓词匹配后，可按非前导列 `domain` 做 Bitmap Index Scan（8.9ms，含 2KB config_value 堆取），4 次扫描合计 ≈36ms。删除路径无需 `(layer, domain)` 迁移（V69+ 备用）；证据与口径见 `plans/PLAN-0505-*/design.md` 技术债 D-1。
+- 审查曾判定「`config` 表 `WHERE layer=? AND domain=?` 无法走索引，删除事务锁持有时间随表规模线性增长」。经 600k 行合成基准实测推翻：Postgres 对 partial index 的 `WHERE layer='user'` 谓词匹配后，可按非前导列 `domain` 做 Bitmap Index Scan（8.9ms，含 2KB config_value 堆取），4 次扫描合计 ≈36ms。删除路径无需 `(layer, domain)` 迁移（V72+ 备用）；证据与口径见 `plans/PLAN-0505-*/design.md` 技术债 D-1。
 
 ## PLAN-247 已修复边界
 
