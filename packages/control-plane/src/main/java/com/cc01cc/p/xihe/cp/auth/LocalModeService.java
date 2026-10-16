@@ -55,9 +55,9 @@ public class LocalModeService {
         boolean loopbackBound = isLoopbackHostName(hostWithoutPort(boundAddress));
         if (prod || !loopbackBound) {
             logger.error("Refusing to start: XIHE_LOCAL_MODE=true requires a loopback-bound, "
-                    + "non-prod CP (XIHE_ENV=prod, server.address={}). "
+                    + "non-prod CP (XIHE_ENV={}, server.address='{}'). "
                     + "Set server.address=127.0.0.1 (e.g. SERVER_ADDRESS=127.0.0.1) and do not run "
-                    + "local mode in prod, or set XIHE_LOCAL_MODE=false.", boundAddress);
+                    + "local mode in prod, or set XIHE_LOCAL_MODE=false.", effective("XIHE_ENV"), boundAddress);
             throw new IllegalStateException(
                     "XIHE_LOCAL_MODE requires loopback binding and non-prod environment");
         }
