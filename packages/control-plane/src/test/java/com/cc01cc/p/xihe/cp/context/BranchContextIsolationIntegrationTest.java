@@ -127,15 +127,17 @@ class BranchContextIsolationIntegrationTest extends AbstractIntegrationTest {
         List<String> a = contents(snapshotA);
         List<String> b = contents(snapshotB);
 
-        // A sees its own facts, never B's (messages, tool results, replies).
+        // A sees its own prompt and reply, while historical tool outputs are withheld.
         assertTrue(contains(a, MARKER_A), "branch A snapshot must contain its own prompt");
-        assertTrue(contains(a, "A-only-tool-result"), "branch A snapshot must contain its own tool result");
+        assertFalse(contains(a, "A-only-tool-result"), "branch A tool result must be withheld from history");
+        assertTrue(contains(a, "Tool result withheld from durable history"));
         assertFalse(contains(a, MARKER_B), "branch A must not see branch B messages");
         assertFalse(contains(a, "B-only-tool-result"), "branch A must not see branch B tool results");
 
         // Reverse direction.
         assertTrue(contains(b, MARKER_B), "branch B snapshot must contain its own prompt");
-        assertTrue(contains(b, "B-only-tool-result"), "branch B snapshot must contain its own tool result");
+        assertFalse(contains(b, "B-only-tool-result"), "branch B tool result must be withheld from history");
+        assertTrue(contains(b, "Tool result withheld from durable history"));
         assertFalse(contains(b, MARKER_A), "branch B must not see branch A messages");
         assertFalse(contains(b, "A-only-tool-result"), "branch B must not see branch A tool results");
 

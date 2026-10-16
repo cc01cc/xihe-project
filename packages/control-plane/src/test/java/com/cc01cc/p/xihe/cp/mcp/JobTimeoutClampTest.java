@@ -105,6 +105,7 @@ class JobTimeoutClampTest {
                 new org.springframework.mock.env.MockEnvironment(),
                 agentSpawnExecutionService,
                 mock(com.cc01cc.p.xihe.cp.mcp.McpInvocationService.class),
+                mock(com.cc01cc.p.xihe.cp.mcp.LineageInvocationService.class),
                 toolTimeoutService,
                 mock(com.cc01cc.p.xihe.cp.credentials.CredentialLeaseService.class)
         );

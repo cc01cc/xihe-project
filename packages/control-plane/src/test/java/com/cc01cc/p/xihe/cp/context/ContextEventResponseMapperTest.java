@@ -10,6 +10,7 @@ import ch.qos.logback.core.read.ListAppender;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.context.entity.ContextEvent;
+import com.cc01cc.p.xihe.cp.context.service.ContextEventPayloadSafety;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -93,6 +94,40 @@ class ContextEventResponseMapperTest {
         assertThat(mapper.events(List.of())).isEmpty();
         assertThat(mapper.replay(Map.of("snapshot", new ObjectMapper().createObjectNode(), "events", List.of()))
                 .get("events")).isEmpty();
+    }
+
+    @Test
+    void oldToolResultAndNativeCarrierRowsAreMaskedFromEventResponses() throws Exception {
+        String canary = "legacy-event-response-canary";
+        ObjectMapper payloadMapper = new ObjectMapper();
+        var toolResult = event(payloadMapper.writeValueAsString(Map.of(
+                "toolCallId", "legacy-call", "toolName", "read_file", "result", canary,
+                "artifactRef", "artifact-" + canary)));
+        toolResult.setEventType("tool.result");
+        var carrier = event(payloadMapper.writeValueAsString(Map.of("message", Map.of(
+                "role", "ai", "content", "done", "apiTypeId", "mimo-responses", "apiTypeVersion", 1,
+                "nativeRecords", List.of(
+                        Map.of("type", "function_call", "call_id", "call-1", "name", "read_file", "arguments", "{}"),
+                        Map.of("type", "function_call_output", "call_id", "call-1", "output", canary))))));
+        carrier.setEventType("assistant.responded");
+        var prune = event(payloadMapper.writeValueAsString(Map.of("pruned_count", 1,
+                "tombstones", List.of(Map.of("tool_call_id", "pruned-call", "sequence", 8,
+                        "content_hash", "a".repeat(64), "head", canary, "tail", canary,
+                        "reason", "oversized")))));
+        prune.setEventType("context.prune");
+        var fork = event(payloadMapper.writeValueAsString(Map.of("source_session_id", "source",
+                "summary_seed", Map.of("contextEpoch", "child-epoch", "messages", List.of(
+                        Map.of("role", "tool", "tool_name", "read_file", "content", canary,
+                                "artifact_ref", "artifact-" + canary))))));
+        fork.setEventType("session.forked");
+
+        var responses = mapper.events(List.of(toolResult, carrier, prune, fork));
+        String wire = wireMapper.writeValueAsString(responses);
+
+        assertThat(wire).doesNotContain(canary, "artifact-" + canary);
+        assertThat(wire).contains(ContextEventPayloadSafety.UNSAFE_TOOL_RESULT_PLACEHOLDER,
+                "legacy-call", "call-1", "pruned-call");
+        assertThat(wire).doesNotContain("head", "tail", "artifact_ref");
     }
 
     @ParameterizedTest

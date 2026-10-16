@@ -73,6 +73,7 @@ class McpProxyTest {
     private SessionService sessionService;
     private McpProxyCatalogService catalogService;
     private McpInvocationService mcpInvocationService;
+    private LineageInvocationService lineageInvocationService;
     private AgentSpawnExecutionService agentSpawnExecutionService;
     private McpProxyController controller;
     private McpToolTimeoutService toolTimeoutService;
@@ -178,6 +179,14 @@ class McpProxyTest {
         catalogService = new McpProxyCatalogService(
                 stdioServerRepository, mcpServerRepository, aliasRepository);
         mcpInvocationService = mock(McpInvocationService.class);
+        lineageInvocationService = mock(LineageInvocationService.class);
+        // PLAN-0510：handleToolsCall 现在总会调用 reserve；legacy（非 lineage）Run 的正常语义
+        // 是 NOT_LINEAGED，本类多数用例与该语义无关，故给一个 lenient 默认桩，专项用例可覆盖。
+        org.mockito.Mockito.lenient()
+                .when(lineageInvocationService.reserve(
+                        any(), any(), any(), any(), any(), any()))
+                .thenReturn(new LineageInvocationService.ReservationDecision(
+                        LineageInvocationService.DecisionKind.NOT_LINEAGED, null));
         agentSpawnExecutionService = mock(AgentSpawnExecutionService.class);
         environment = new org.springframework.mock.env.MockEnvironment();
 
@@ -195,6 +204,7 @@ class McpProxyTest {
                 environment,
                 agentSpawnExecutionService,
                 mcpInvocationService,
+                lineageInvocationService,
                 toolTimeoutService,
                 mock(com.cc01cc.p.xihe.cp.credentials.CredentialLeaseService.class)
         );
@@ -1462,6 +1472,57 @@ class McpProxyTest {
         seedToolCache("read_file", "__system__");
     }
 
+    @Test
+    void handleToolsCall_replayedLineageMutationIsRejectedBeforeRuntimeDispatch() throws Exception {
+        String runId = "11111111-1111-1111-1111-111111111111";
+        String runLocalId = "33333333-3333-3333-3333-333333333333";
+        String originId = "opaque-provider-call-7";
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"write_file\",\"arguments\":{\"path\":\"x\"}},\"id\":81}";
+        UUID invocationId = UUID.randomUUID();
+        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
+        when(policyEngine.faceOf(any(PolicyContext.class), eq("write_file")))
+                .thenReturn(new ToolFaceRegistry.Face("write", ToolShape.STRUCTURED));
+        when(mcpInvocationService.findAgentInvocation(eq(runId), eq(runLocalId)))
+                .thenReturn(java.util.Optional.of(invocationId));
+        when(lineageInvocationService.reserve(eq(runId), eq(runLocalId), eq(invocationId),
+                eq(originId), eq("write_file"), eq(body)))
+                .thenReturn(new LineageInvocationService.ReservationDecision(
+                        LineageInvocationService.DecisionKind.REPLAY_BLOCKED, null));
+        seedToolCache("write_file", "__system__");
+
+        java.util.concurrent.atomic.AtomicInteger runtimeHits = new java.util.concurrent.atomic.AtomicInteger();
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange -> {
+            runtimeHits.incrementAndGet();
+            byte[] response = "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[]},\"id\":81}"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        stub.start();
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("X-Chat-Run-Id", runId);
+            headers.set("X-Tool-Call-Id", runLocalId);
+            headers.set("X-Originating-Tool-Call-Id", originId);
+            ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
+                    internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
+
+            assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+            assertEquals(0, runtimeHits.get(), "a replay-blocked mutation must never reach Runtime");
+            verify(lineageInvocationService).reserve(runId, runLocalId, invocationId, originId, "write_file", body);
+        } finally {
+            stub.stop(0);
+        }
+    }
+
     private com.sun.net.httpserver.HttpServer stubRuntime(String responseJson) throws java.io.IOException {
         com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
                 new java.net.InetSocketAddress("127.0.0.1", 0), 0);
@@ -1489,6 +1550,43 @@ class McpProxyTest {
             assertEquals(HttpStatus.OK, response.getStatusCode());
             verify(mcpInvocationService).finishDispatchAttempt(eq(dispatch[0]), eq(dispatch[1]),
                     eq(200), isNull(), eq(McpInvocationService.McpDispatchVerdict.COMPLETED));
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    @Test
+    void originatingToolCallIdIsConsumedByCpAndNotForwardedToRuntime() throws Exception {
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"read_file\",\"arguments\":{}},\"id\":82}";
+        seedReadFileAllow(body);
+        seedMcpDispatchMocks();
+        java.util.concurrent.atomic.AtomicReference<String> leakedOriginId = new java.util.concurrent.atomic.AtomicReference<>();
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange -> {
+            leakedOriginId.set(exchange.getRequestHeaders().getFirst("X-Originating-Tool-Call-Id"));
+            byte[] responseBody = "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[]},\"id\":82}"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, responseBody.length);
+            exchange.getResponseBody().write(responseBody);
+            exchange.close();
+        });
+        stub.start();
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("X-Chat-Run-Id", TEST_WS_UUID);
+            headers.set("X-Tool-Call-Id", UUID.randomUUID().toString());
+            headers.set("X-Originating-Tool-Call-Id", "origin-only-inside-cp");
+
+            ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
+                    internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
+
+            assertEquals(HttpStatus.OK, response.getStatusCode());
+            assertNull(leakedOriginId.get(), "CP's lineage key must not cross the Runtime boundary");
         } finally {
             stub.stop(0);
         }

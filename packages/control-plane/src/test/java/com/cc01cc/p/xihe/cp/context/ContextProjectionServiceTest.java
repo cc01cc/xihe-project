@@ -357,7 +357,8 @@ class ContextProjectionServiceTest extends AbstractH2Test {
                 assertThat(msg.path("content").asText()).isEqualTo("[old tool result cleared]");
             } else {
                 survived++;
-                assertThat(msg.path("content").asText()).isEqualTo(shared);
+                assertThat(msg.path("content").asText()).isEqualTo(
+                        "Tool result withheld from durable history because no checkpoint-safe output schema is registered.");
             }
         }
         assertThat(masked).isEqualTo(1);
@@ -401,7 +402,8 @@ class ContextProjectionServiceTest extends AbstractH2Test {
             }
             if ("call-second".equals(msg.path("tool_call_id").asText())) {
                 assertThat(msg.path("pruned").asBoolean(false)).isFalse();
-                assertThat(msg.path("content").asText()).isEqualTo(shared);
+                assertThat(msg.path("content").asText()).isEqualTo(
+                        "Tool result withheld from durable history because no checkpoint-safe output schema is registered.");
             }
         }
     }
@@ -537,7 +539,8 @@ class ContextProjectionServiceTest extends AbstractH2Test {
         ObjectNode ctx = projectionService.project(sessionId, 0L);
         var message = ctx.get("messages").get(0);
         assertThat(message.path("role").asText()).isEqualTo("tool");
-        assertThat(message.path("content").asText()).isEqualTo("file content");
+        assertThat(message.path("content").asText()).isEqualTo(
+                "Tool result withheld from durable history because no checkpoint-safe output schema is registered.");
         assertThat(message.path("tool_call_id").asText()).isEqualTo("c1");
         assertThat(message.path("tool_name").asText()).isEqualTo("read_file");
         assertThat(message.path("status").asText()).isEqualTo("completed");
@@ -556,7 +559,8 @@ class ContextProjectionServiceTest extends AbstractH2Test {
 
         ObjectNode ctx = projectionService.project(sessionId, 0L);
         var message = ctx.get("messages").get(0);
-        assertThat(message.path("content").asText()).isEqualTo("plain output");
+        assertThat(message.path("content").asText()).isEqualTo(
+                "Tool result withheld from durable history because no checkpoint-safe output schema is registered.");
         assertThat(message.path("legacy_normalized").isMissingNode()).isTrue();
     }
 
@@ -571,8 +575,9 @@ class ContextProjectionServiceTest extends AbstractH2Test {
 
         ObjectNode ctx = projectionService.project(sessionId, 0L);
         var message = ctx.get("messages").get(0);
-        assertThat(message.path("content").asText()).isEqualTo("{\"foo\":1}");
-        assertThat(message.path("legacy_normalized").asBoolean(false)).isTrue();
+        assertThat(message.path("content").asText()).isEqualTo(
+                "Tool result withheld from durable history because no checkpoint-safe output schema is registered.");
+        assertThat(message.path("legacy_normalized").isMissingNode()).isTrue();
     }
 
     @Test
@@ -586,13 +591,14 @@ class ContextProjectionServiceTest extends AbstractH2Test {
 
         ObjectNode ctx = projectionService.project(sessionId, 0L);
         var message = ctx.get("messages").get(0);
-        assertThat(message.path("content").asText()).isEqualTo("[1,2]");
-        assertThat(message.path("legacy_normalized").asBoolean(false)).isTrue();
+        assertThat(message.path("content").asText()).isEqualTo(
+                "Tool result withheld from durable history because no checkpoint-safe output schema is registered.");
+        assertThat(message.path("legacy_normalized").isMissingNode()).isTrue();
     }
 
     @Test
     void toolResultM2PreviewShapeCarriesWhitelistFields() {
-        // reader-first: the M2 bounded-preview payload must be readable now.
+        // Legacy preview metadata and content are withheld from later Provider history.
         String sessionId = "aaaaab00-0000-0000-0000-000000000009";
         contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.result", Map.of(
                 "toolCallId", "c1",
@@ -609,13 +615,14 @@ class ContextProjectionServiceTest extends AbstractH2Test {
 
         ObjectNode ctx = projectionService.project(sessionId, 0L);
         var message = ctx.get("messages").get(0);
-        assertThat(message.path("content").asText()).isEqualTo("bounded");
+        assertThat(message.path("content").asText()).isEqualTo(
+                "Tool result withheld from durable history because no checkpoint-safe output schema is registered.");
         assertThat(message.path("tool_call_id").asText()).isEqualTo("c1");
         assertThat(message.path("status").asText()).isEqualTo("failed");
-        assertThat(message.path("truncated").asBoolean(false)).isTrue();
-        assertThat(message.path("artifact_ref").asText()).isEqualTo("art-1");
-        assertThat(message.path("size_bytes").asInt()).isEqualTo(9000);
-        assertThat(message.path("error_code").asText()).isEqualTo("E1");
+        assertThat(message.path("truncated").isMissingNode()).isTrue();
+        assertThat(message.path("artifact_ref").isMissingNode()).isTrue();
+        assertThat(message.path("size_bytes").isMissingNode()).isTrue();
+        assertThat(message.path("error_code").isMissingNode()).isTrue();
     }
 
     @Test
@@ -631,7 +638,8 @@ class ContextProjectionServiceTest extends AbstractH2Test {
         assertThat(message.path("degraded").asBoolean(false)).isTrue();
         assertThat(message.path("tool_call_id").isMissingNode()).isTrue();
         assertThat(message.path("status").asText()).isEqualTo("completed");
-        assertThat(message.path("content").asText()).isEqualTo("legacy");
+        assertThat(message.path("content").asText()).isEqualTo(
+                "Tool result withheld from durable history because no checkpoint-safe output schema is registered.");
     }
 
     @Test
@@ -878,7 +886,8 @@ class ContextProjectionServiceTest extends AbstractH2Test {
         assertThat(messages).hasSize(1);
         assertThat(messages.get(0).path("role").asText()).isEqualTo("tool");
         assertThat(messages.get(0).path("tool_call_id").asText()).isEqualTo("dup-result");
-        assertThat(messages.get(0).path("content").asText()).isEqualTo("output");
+        assertThat(messages.get(0).path("content").asText()).isEqualTo(
+                "Tool result withheld from durable history because no checkpoint-safe output schema is registered.");
     }
 
     @Test
@@ -937,9 +946,11 @@ class ContextProjectionServiceTest extends AbstractH2Test {
         assertThat(messages.get(2).path("tool_call_id").asText()).isEqualTo("seed-c1");
         assertThat(messages.get(2).path("tool_name").asText()).isEqualTo("read_file");
         assertThat(messages.get(2).path("status").asText()).isEqualTo("completed");
-        assertThat(messages.get(2).path("artifact_ref").asText()).isEqualTo("art-1");
-        assertThat(messages.get(2).path("size_bytes").asInt()).isEqualTo(11);
-        assertThat(messages.get(2).path("truncated").asBoolean()).isTrue();
+        assertThat(messages.get(2).path("content").asText()).isEqualTo(
+                "Tool result withheld from durable history because no checkpoint-safe output schema is registered.");
+        assertThat(messages.get(2).path("artifact_ref").isMissingNode()).isTrue();
+        assertThat(messages.get(2).path("size_bytes").isMissingNode()).isTrue();
+        assertThat(messages.get(2).path("truncated").isMissingNode()).isTrue();
         assertNoOrphanToolResults(messages);
     }
 }

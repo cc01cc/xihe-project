@@ -1,6 +1,8 @@
 package com.cc01cc.p.xihe.cp.mcp;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.checkpoint.AgentGraphCheckpointService;
+import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
@@ -38,6 +40,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.HashMap;
 import java.util.List;
@@ -49,6 +52,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -72,6 +76,9 @@ class McpInvocationIntegrationTest extends AbstractIntegrationTest {
     @Autowired private McpAttemptRepository attemptRepository;
     @Autowired private McpDispatchHistoryRepository historyRepository;
     @Autowired private McpInvocationService mcpInvocationService;
+    @Autowired private LineageInvocationService lineageInvocationService;
+    @Autowired private AgentGraphCheckpointService checkpointService;
+    @Autowired private JdbcTemplate jdbc;
     @Autowired private GrantAuthorizationService grantAuthorizationService;
     @Autowired private McpRelayToolRecorder relayToolRecorder;
     @Autowired private ObjectMapper objectMapper;
@@ -82,6 +89,7 @@ class McpInvocationIntegrationTest extends AbstractIntegrationTest {
     private String sessionId;
     private String runId;
     private UUID principalId;
+    private String childRunId;
 
     @BeforeEach
     void setUpFixtures() {
@@ -117,6 +125,9 @@ class McpInvocationIntegrationTest extends AbstractIntegrationTest {
 
     @AfterEach
     void cleanFixtures() {
+        if (childRunId != null) {
+            chatRunRepository.deleteById(UUID.fromString(childRunId));
+        }
         if (runId != null) {
             chatRunRepository.deleteById(UUID.fromString(runId));
         }
@@ -142,6 +153,379 @@ class McpInvocationIntegrationTest extends AbstractIntegrationTest {
     private String open(String toolCallId, String toolName) {
         return mcpInvocationService
                 .openAgentInvocation(runId, toolCallId, toolName, UUID.randomUUID().toString(),
+                        "{\"path\":\"README.md\"}")
+                .orElseThrow().toString();
+    }
+
+    @Test
+    void lineageLedgerReservesBeforeReplayAndExposesOnlyBoundedIds() {
+        String firstToolCallId = UUID.randomUUID().toString();
+        String originId = "provider-call-opaque-1";
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"write_file\",\"arguments\":{\"path\":\"safe-name.txt\"}}}";
+        AgentGraphCheckpointService.LineageView lineage = checkpointService.createLineage(
+                new AgentGraphCheckpointService.LineageRequest(
+                        sessionId, userId, workspaceId, runId, null, "test-producer-v1"));
+        UUID mcpInvocationId = UUID.fromString(open(firstToolCallId, "write_file"));
+
+        LineageInvocationService.ReservationDecision reserved = lineageInvocationService.reserve(
+                runId, firstToolCallId, mcpInvocationId, originId, "write_file", body);
+        assertEquals(LineageInvocationService.DecisionKind.RESERVED, reserved.kind());
+        assertEquals("pending", jdbc.queryForObject(
+                "SELECT status FROM agent_lineage_invocations WHERE lineage_id = ? AND originating_tool_call_id = ?",
+                String.class, UUID.fromString(lineage.lineageId()), originId));
+        assertEquals(64, jdbc.queryForObject(
+                "SELECT length(arguments_hash) FROM agent_lineage_invocations WHERE lineage_id = ? AND originating_tool_call_id = ?",
+                Integer.class, UUID.fromString(lineage.lineageId()), originId));
+        CpApiException pending = assertThrows(CpApiException.class,
+                () -> lineageInvocationService.requireContinuationEligible(runId, lineage.lineageId()));
+        assertEquals("RECONCILIATION_REQUIRED", pending.getCode());
+
+        UUID attemptId = mcpInvocationService.startDispatchAttempt(mcpInvocationId, UUID.randomUUID().toString())
+                .orElseThrow();
+        mcpInvocationService.finishDispatchAttempt(mcpInvocationId, attemptId, 200, null,
+                McpInvocationService.McpDispatchVerdict.COMPLETED);
+        lineageInvocationService.settle(reserved.reservation(), "completed");
+
+        LineageInvocationService.ContinuationAdmission firstAdmission =
+                lineageInvocationService.requireContinuationEligible(runId, lineage.lineageId());
+        assertEquals(List.of(originId), firstAdmission.completedToolCallIds());
+        assertEquals(List.of(runId), firstAdmission.lineageRunIds());
+
+        String changedArguments = "{\"method\":\"tools/call\",\"params\":{\"name\":\"write_file\","
+                + "\"arguments\":{\"path\":\"different.txt\"}}}";
+        LineageInvocationService.ReservationDecision conflict = lineageInvocationService.reserve(
+                runId, firstToolCallId, mcpInvocationId, originId, "write_file", changedArguments);
+        assertEquals(LineageInvocationService.DecisionKind.IDENTITY_CONFLICT, conflict.kind());
+        assertEquals(1, jdbc.queryForObject(
+                "SELECT conflict_count FROM agent_lineage_invocations WHERE lineage_id = ? AND originating_tool_call_id = ?",
+                Integer.class, UUID.fromString(lineage.lineageId()), originId));
+        assertEquals(0, jdbc.queryForObject("""
+                SELECT count(*) FROM information_schema.columns
+                 WHERE table_name = 'agent_lineage_invocations'
+                   AND column_name IN ('arguments_preview', 'result_body', 'result_json')
+                """, Integer.class));
+
+        ChatRun child = new ChatRun(UUID.randomUUID().toString(), sessionId, userId, workspaceId,
+                "lineage-child-" + UUID.randomUUID(), "hash", "provider", "model", "workspace", "running");
+        child.setBranchId(chatRunRepository.findById(UUID.fromString(runId)).orElseThrow().getBranchId());
+        child.setContinuationSourceRunId(runId);
+        child.setContinuationLineageId(lineage.lineageId());
+        child.setContinuationThreadId(lineage.threadId());
+        child.setContinuationCheckpointId("checkpoint-1");
+        child.setContinuationEventSequence(1L);
+        child.setContinuationMode("append_user_turn");
+        childRunId = chatRunRepository.saveAndFlush(child).getId().toString();
+
+        LineageInvocationService.ContinuationAdmission withChild =
+                lineageInvocationService.requireContinuationEligible(runId, lineage.lineageId());
+        assertEquals(List.of(runId, childRunId).stream().sorted().toList(), withChild.lineageRunIds());
+
+        String secondToolCallId = UUID.randomUUID().toString();
+        UUID childMcpInvocationId = UUID.fromString(openForRun(childRunId, secondToolCallId, "write_file"));
+        LineageInvocationService.ReservationDecision replay = lineageInvocationService.reserve(
+                childRunId, secondToolCallId, childMcpInvocationId, originId, "write_file", body);
+        assertEquals(LineageInvocationService.DecisionKind.REPLAY_BLOCKED, replay.kind());
+        // PLAN-0510 准入语义：未进入 CP 派发尝试（无 cp_forward）的 relay 记账不算外部副作用，
+        // 因此这里的"未决"场景必须让该调用真实派发过，才能真正落入守卫。
+        mcpInvocationService.startDispatchAttempt(childMcpInvocationId, UUID.randomUUID().toString())
+                .orElseThrow();
+        CpApiException blocked = assertThrows(CpApiException.class,
+                () -> lineageInvocationService.requireContinuationEligible(runId, lineage.lineageId()));
+        assertEquals("RECONCILIATION_REQUIRED", blocked.getCode());
+    }
+
+    /**
+     * PLAN-0510（2026-10-16 用户裁定）：SSE relay 记账半会为"计划中"的 tool call 先建
+     * source=agent invocation（PLAN-0464 T2.2），此时 MCP gate 尚未运行。未进入 CP 派发
+     * 尝试（无 cp_forward attempt）的 mutation invocation 没有外部副作用，不得阻塞续跑。
+     */
+    @Test
+    void relayOnlyMutationInvocationDoesNotBlockContinuation() {
+        AgentGraphCheckpointService.LineageView lineage = createTestLineage();
+        String toolCallId = UUID.randomUUID().toString();
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("type", "tool_call");
+        payload.put("tool", "write_file");
+        payload.put("run_id", runId);
+        payload.put("toolCallId", toolCallId);
+        payload.put("arguments", Map.of("path", "relay-only.txt"));
+
+        relayToolRecorder.record("tool_call", payload, runId, UUID.randomUUID().toString(),
+                McpRelayToolRecorder.RunState.create());
+        UUID invocationId = invocationRepository
+                .findByRunIdAndToolCallIdAndSource(runId, toolCallId, "agent").orElseThrow().getId();
+        assertEquals(List.of(McpAttempt.STAGE_AGENT_TOOL),
+                attemptRepository.findByInvocationIdOrderByStartedAtAsc(invocationId).stream()
+                        .map(McpAttempt::getStage).toList(),
+                "the relay half records only the agent_tool attempt");
+        // CP 重启会把这条搁置的 relay invocation 收敛为 failed（生产同形）。
+        mcpInvocationService.settle(invocationId, McpInvocation.STATUS_FAILED, null);
+
+        LineageInvocationService.ContinuationAdmission admission =
+                lineageInvocationService.requireContinuationEligible(runId, lineage.lineageId());
+        assertTrue(admission.completedToolCallIds().isEmpty());
+        assertEquals(List.of(runId), admission.lineageRunIds());
+
+        // 对照：一旦该调用真的进入 CP 派发尝试，缺 lineage provenance 仍必须阻塞续跑。
+        mcpInvocationService.startDispatchAttempt(invocationId, UUID.randomUUID().toString()).orElseThrow();
+        CpApiException blocked = assertThrows(CpApiException.class,
+                () -> lineageInvocationService.requireContinuationEligible(runId, lineage.lineageId()));
+        assertEquals("RECONCILIATION_REQUIRED", blocked.getCode());
+    }
+
+    /**
+     * PLAN-0510 A类修复：并发 relay/gate 对同一 (run, toolCallId) 双写时，唯一约束违规会把
+     * 事务标记为 aborted；恢复必须在新事务里回读赢家，绝不能复用被污染的事务（否则 500）。
+     */
+    @Test
+    void concurrentOpenForOneToolCallRecoversTheWinner() throws Exception {
+        createTestLineage();
+        String toolCallId = UUID.randomUUID().toString();
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(4);
+        try {
+            var futures = new java.util.ArrayList<java.util.concurrent.Future<java.util.Optional<UUID>>>();
+            for (int i = 0; i < 4; i++) {
+                futures.add(pool.submit(() -> mcpInvocationService.openAgentInvocation(
+                        runId, toolCallId, "write_file", UUID.randomUUID().toString(), "{}")));
+            }
+            java.util.Set<UUID> ids = new java.util.HashSet<>();
+            for (var future : futures) {
+                java.util.Optional<UUID> opened = future.get(30, java.util.concurrent.TimeUnit.SECONDS);
+                assertTrue(opened.isPresent(), "concurrent open must resolve to an invocation id");
+                ids.add(opened.get());
+            }
+            assertEquals(1, ids.size(), "concurrent opens for one (run, toolCall) must agree on one row");
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    /**
+     * PLAN-0510（2026-10-16 用户裁定 甲）：中止于 ambiguous 的 Run 必须把搁置副作用记为
+     * {@code unknown}（"是否发生未知"），不能记成 {@code failed}；服务层需接受该收敛值。
+     */
+    @Test
+    void settleStrandedRecordsUnknownSoAmbiguousRunsAreNotReportedAsFailed() {
+        createTestLineage();
+        String toolCallId = UUID.randomUUID().toString();
+        UUID invocationId = UUID.fromString(openForRun(runId, toolCallId, "write_file"));
+
+        int settled = mcpInvocationService.settleStrandedForRun(
+                runId, McpInvocation.STATUS_UNKNOWN, "CP_RESTARTED");
+
+        assertEquals(1, settled);
+        McpInvocation settledInvocation = invocationRepository.findById(invocationId).orElseThrow();
+        assertEquals(McpInvocation.STATUS_UNKNOWN, settledInvocation.getStatus());
+        assertEquals("CP_RESTARTED", settledInvocation.getErrorCode());
+    }
+
+    @Test
+    void reserveRejectsMissingOrMismatchedMcpInvocationBinding() {
+        String body = lineageMutationBody("bound.txt");
+        AgentGraphCheckpointService.LineageView lineage = createTestLineage();
+        String rootToolCallId = UUID.randomUUID().toString();
+        UUID rootInvocationId = UUID.fromString(open(rootToolCallId, "write_file"));
+
+        ChatRun child = createLineageChild(lineage);
+        String childToolCallId = UUID.randomUUID().toString();
+        UUID childInvocationId = UUID.fromString(openForRun(childRunId, childToolCallId, "write_file"));
+
+        String completedToolCallId = UUID.randomUUID().toString();
+        UUID completedInvocationId = UUID.fromString(open(completedToolCallId, "write_file"));
+        mcpInvocationService.settle(completedInvocationId, McpInvocation.STATUS_COMPLETED, null);
+
+        String directUserToolCallId = UUID.randomUUID().toString();
+        UUID directUserInvocationId = mcpInvocationService.openDirectUserInvocation(
+                sessionId, workspaceId, userId, directUserToolCallId, "write_file",
+                UUID.randomUUID().toString(), "{}")
+                .orElseThrow();
+
+        assertReservationRejected(runId, rootToolCallId, UUID.randomUUID(),
+                "missing-invocation-id", "write_file", body);
+        assertReservationRejected(runId, rootToolCallId, childInvocationId,
+                "wrong-run-binding", "write_file", body);
+        assertReservationRejected(runId, UUID.randomUUID().toString(), rootInvocationId,
+                "wrong-tool-call-binding", "write_file", body);
+        assertReservationRejected(runId, rootToolCallId, rootInvocationId,
+                "wrong-tool-name-binding", "delete_file", body);
+        assertReservationRejected(runId, directUserToolCallId, directUserInvocationId,
+                "wrong-source-binding", "write_file", body);
+        assertReservationRejected(runId, completedToolCallId, completedInvocationId,
+                "inactive-invocation", "write_file", body);
+
+        assertEquals(0, jdbc.queryForObject(
+                "SELECT count(*) FROM agent_lineage_invocations WHERE lineage_id = ?",
+                Integer.class, UUID.fromString(lineage.lineageId())),
+                "a rejected identity must not leave a reservation that could be mistaken for dispatch");
+    }
+
+    @Test
+    void reserveRejectsMcpInvocationAlreadyBoundToAnotherOriginatingId() {
+        AgentGraphCheckpointService.LineageView lineage = createTestLineage();
+        String toolCallId = UUID.randomUUID().toString();
+        UUID invocationId = UUID.fromString(open(toolCallId, "write_file"));
+        String body = lineageMutationBody("single-binding.txt");
+        LineageInvocationService.ReservationDecision first = lineageInvocationService.reserve(
+                runId, toolCallId, invocationId, "origin-call-first", "write_file", body);
+        assertEquals(LineageInvocationService.DecisionKind.RESERVED, first.kind());
+
+        assertReservationRejected(runId, toolCallId, invocationId,
+                "origin-call-second", "write_file", body);
+        assertEquals(1, jdbc.queryForObject(
+                "SELECT count(*) FROM agent_lineage_invocations WHERE lineage_id = ? AND mcp_invocation_id = ?",
+                Integer.class, UUID.fromString(lineage.lineageId()), invocationId),
+                "one MCP invocation may be bound to only one originating call");
+    }
+
+    @Test
+    void continuationEligibilityRejectsLedgerRowAfterMcpInvocationIsDeleted() {
+        LineageMutationFixture fixture = completeLineageMutation();
+
+        deleteMcpInvocation(fixture.mcpInvocationId());
+
+        assertEquals(1, jdbc.queryForObject("""
+                SELECT count(*) FROM agent_lineage_invocations
+                 WHERE lineage_id = ? AND originating_tool_call_id = ? AND mcp_invocation_id IS NULL
+                """, Integer.class, UUID.fromString(fixture.lineageId()), fixture.originatingToolCallId()),
+                "V71's FK must null the missing invocation reference rather than erase the ledger row");
+        assertContinuationRejected(fixture);
+    }
+
+    @Test
+    void continuationEligibilityRejectsLedgerIdPointingAtAnotherLineageInvocation() {
+        LineageMutationFixture fixture = completeLineageMutation();
+        createLineageChild(fixture.lineage());
+        String childToolCallId = UUID.randomUUID().toString();
+        UUID childInvocationId = UUID.fromString(openForRun(childRunId, childToolCallId, "write_file"));
+        jdbc.update("UPDATE mcp_invocations SET status = ? WHERE id = ?",
+                McpInvocation.STATUS_COMPLETED, childInvocationId);
+        deleteMcpInvocation(fixture.mcpInvocationId());
+        jdbc.update("""
+                UPDATE agent_lineage_invocations SET mcp_invocation_id = ?
+                 WHERE lineage_id = ? AND originating_tool_call_id = ?
+                """, childInvocationId, UUID.fromString(fixture.lineageId()), fixture.originatingToolCallId());
+
+        assertContinuationRejected(fixture);
+    }
+
+    @Test
+    void continuationEligibilityRejectsMismatchedFirstRunOrToolCallBinding() {
+        LineageMutationFixture fixture = completeLineageMutation();
+        jdbc.update("""
+                UPDATE agent_lineage_invocations SET first_run_id = ?
+                 WHERE lineage_id = ? AND originating_tool_call_id = ?
+                """, UUID.randomUUID(), UUID.fromString(fixture.lineageId()), fixture.originatingToolCallId());
+
+        assertContinuationRejected(fixture);
+
+        jdbc.update("""
+                UPDATE agent_lineage_invocations
+                   SET first_run_id = ?, first_tool_call_id = ?
+                 WHERE lineage_id = ? AND originating_tool_call_id = ?
+                """, UUID.fromString(runId), UUID.randomUUID(), UUID.fromString(fixture.lineageId()),
+                fixture.originatingToolCallId());
+        assertContinuationRejected(fixture);
+    }
+
+    @Test
+    void continuationEligibilityRejectsMismatchedToolNameOrMcpStatus() {
+        LineageMutationFixture fixture = completeLineageMutation();
+        jdbc.update("UPDATE mcp_invocations SET tool_name = ? WHERE id = ?",
+                "read_file", fixture.mcpInvocationId());
+
+        assertContinuationRejected(fixture);
+
+        jdbc.update("UPDATE mcp_invocations SET tool_name = ?, status = ? WHERE id = ?",
+                "write_file", McpInvocation.STATUS_FAILED, fixture.mcpInvocationId());
+        assertContinuationRejected(fixture);
+    }
+
+    @Test
+    void continuationEligibilityRejectsDuplicateLedgerReferencesToOneMcpInvocation() {
+        LineageMutationFixture fixture = completeLineageMutation();
+        jdbc.update("""
+                INSERT INTO agent_lineage_invocations
+                    (id, lineage_id, originating_tool_call_id, first_run_id, first_tool_call_id,
+                     mcp_invocation_id, tool_name, arguments_hash, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed')
+                """, UUID.randomUUID(), UUID.fromString(fixture.lineageId()),
+                fixture.originatingToolCallId() + "-duplicate", UUID.fromString(runId),
+                UUID.fromString(fixture.toolCallId()), fixture.mcpInvocationId(), "write_file", "0".repeat(64));
+
+        assertContinuationRejected(fixture);
+    }
+
+    private AgentGraphCheckpointService.LineageView createTestLineage() {
+        return checkpointService.createLineage(new AgentGraphCheckpointService.LineageRequest(
+                sessionId, userId, workspaceId, runId, null, "test-producer-v1"));
+    }
+
+    private ChatRun createLineageChild(AgentGraphCheckpointService.LineageView lineage) {
+        ChatRun child = new ChatRun(UUID.randomUUID().toString(), sessionId, userId, workspaceId,
+                "lineage-child-" + UUID.randomUUID(), "hash", "provider", "model", "workspace", "running");
+        child.setBranchId(chatRunRepository.findById(UUID.fromString(runId)).orElseThrow().getBranchId());
+        child.setContinuationSourceRunId(runId);
+        child.setContinuationLineageId(lineage.lineageId());
+        child.setContinuationThreadId(lineage.threadId());
+        child.setContinuationCheckpointId("checkpoint-1");
+        child.setContinuationEventSequence(1L);
+        child.setContinuationMode("append_user_turn");
+        childRunId = chatRunRepository.saveAndFlush(child).getId().toString();
+        return child;
+    }
+
+    private LineageMutationFixture completeLineageMutation() {
+        AgentGraphCheckpointService.LineageView lineage = createTestLineage();
+        String toolCallId = UUID.randomUUID().toString();
+        String originId = "completed-origin-" + UUID.randomUUID();
+        String body = lineageMutationBody("completed.txt");
+        UUID invocationId = UUID.fromString(open(toolCallId, "write_file"));
+        LineageInvocationService.ReservationDecision reservation = lineageInvocationService.reserve(
+                runId, toolCallId, invocationId, originId, "write_file", body);
+        assertEquals(LineageInvocationService.DecisionKind.RESERVED, reservation.kind());
+        UUID attemptId = mcpInvocationService.startDispatchAttempt(invocationId, UUID.randomUUID().toString())
+                .orElseThrow();
+        mcpInvocationService.finishDispatchAttempt(invocationId, attemptId, 200, null,
+                McpInvocationService.McpDispatchVerdict.COMPLETED);
+        lineageInvocationService.settle(reservation.reservation(), "completed");
+        return new LineageMutationFixture(lineage, originId, toolCallId, invocationId);
+    }
+
+    private void deleteMcpInvocation(UUID invocationId) {
+        jdbc.update("DELETE FROM mcp_dispatch_history WHERE invocation_id = ?", invocationId);
+        jdbc.update("DELETE FROM mcp_attempts WHERE invocation_id = ?", invocationId);
+        jdbc.update("DELETE FROM mcp_invocations WHERE id = ?", invocationId);
+    }
+
+    private static String lineageMutationBody(String path) {
+        return "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"write_file\",\"arguments\":{\"path\":\"" + path + "\"}}}";
+    }
+
+    private void assertReservationRejected(String targetRunId, String toolCallId, UUID invocationId,
+                                           String originId, String toolName, String body) {
+        CpApiException exception = assertThrows(CpApiException.class,
+                () -> lineageInvocationService.reserve(
+                        targetRunId, toolCallId, invocationId, originId, toolName, body));
+        assertEquals("RECONCILIATION_REQUIRED", exception.getCode());
+    }
+
+    private void assertContinuationRejected(LineageMutationFixture fixture) {
+        CpApiException exception = assertThrows(CpApiException.class,
+                () -> lineageInvocationService.requireContinuationEligible(runId, fixture.lineageId()));
+        assertEquals("RECONCILIATION_REQUIRED", exception.getCode());
+    }
+
+    private record LineageMutationFixture(AgentGraphCheckpointService.LineageView lineage,
+                                          String originatingToolCallId, String toolCallId,
+                                          UUID mcpInvocationId) {
+        private String lineageId() { return lineage.lineageId(); }
+    }
+
+    private String openForRun(String targetRunId, String toolCallId, String toolName) {
+        return mcpInvocationService
+                .openAgentInvocation(targetRunId, toolCallId, toolName, UUID.randomUUID().toString(),
                         "{\"path\":\"README.md\"}")
                 .orElseThrow().toString();
     }

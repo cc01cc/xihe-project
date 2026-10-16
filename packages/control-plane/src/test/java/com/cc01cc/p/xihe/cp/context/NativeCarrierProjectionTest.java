@@ -127,6 +127,53 @@ class NativeCarrierProjectionTest {
         verifyNoInteractions(repository);
     }
 
+    @Test
+    void legacyToolResultAndAllNativeFamiliesAreMaskedFromSnapshots() throws Exception {
+        String canary = "legacy-preview-canary-9a31";
+        var input = new ArrayList<ContextEvent>();
+        input.add(event("tool.result", "legacy-result-run", Map.of(
+                "toolCallId", "legacy-call", "toolName", "read_file",
+                "result", Map.of("preview", canary, "artifactRef", "legacy-artifact"))));
+
+        List<Map<String, Object>> families = List.of(
+                Map.of("apiTypeId", "openai-chat-completions", "callId", "openai-call",
+                        "nativeRecords", List.of(
+                                Map.of("role", "assistant", "content", "", "tool_calls", List.of(Map.of(
+                                        "id", "openai-call", "type", "function", "function", Map.of(
+                                                "name", "read_file", "arguments", "{}")))),
+                                Map.of("role", "tool", "tool_call_id", "openai-call", "content", canary))),
+                Map.of("apiTypeId", "anthropic-messages", "callId", "anthropic-call",
+                        "nativeRecords", List.of(
+                                Map.of("role", "assistant", "content", List.of(Map.of(
+                                        "type", "tool_use", "id", "anthropic-call", "name", "read_file", "input", Map.of()))),
+                                Map.of("role", "user", "content", List.of(Map.of(
+                                        "type", "tool_result", "tool_use_id", "anthropic-call", "content", canary))))),
+                Map.of("apiTypeId", "mimo-responses", "callId", "responses-call",
+                        "nativeRecords", List.of(
+                                Map.of("type", "function_call", "call_id", "responses-call", "name", "read_file", "arguments", "{}"),
+                                Map.of("type", "function_call_output", "call_id", "responses-call", "output", canary))));
+
+        int index = 0;
+        for (Map<String, Object> family : families) {
+            input.add(event("assistant.responded", "native-run-" + index++, Map.of("message", Map.of(
+                    "role", "ai", "content", "answer", "apiTypeId", family.get("apiTypeId"),
+                    "apiTypeVersion", 1, "nativeRecords", family.get("nativeRecords")))));
+        }
+        when(events.read("session", 0L, null)).thenReturn(input);
+
+        JsonNode snapshot = projector.project("session", 0L, null);
+        String rendered = snapshot.path("messages").toString();
+        assertTrue(input.stream().anyMatch(event -> event.getPayload().contains(canary)),
+                "the old EventStore event remains unchanged; masking happens at the read boundary");
+        assertFalse(rendered.contains(canary));
+        assertTrue(rendered.contains("Tool result withheld from durable history because no checkpoint-safe output schema is registered."));
+        assertTrue(rendered.contains("legacy-call"));
+        assertTrue(rendered.contains("openai-call"));
+        assertTrue(rendered.contains("anthropic-call"));
+        assertTrue(rendered.contains("responses-call"));
+        assertEquals(4, snapshot.path("messages").size());
+    }
+
     private ArrayList<ContextEvent> runEvents() throws Exception {
         var input = new ArrayList<ContextEvent>();
         input.add(event("prompt.admitted", "old", Map.of("content", "earlier human")));
@@ -177,7 +224,8 @@ class NativeCarrierProjectionTest {
         when(events.read("session", 0L, null)).thenReturn(input);
         JsonNode messages = projector.project("session", 0L, null).path("messages");
         assertEquals(4, messages.size());
-        assertEquals("same", messages.get(2).path("content").asText());
+        assertEquals("Tool result withheld from durable history because no checkpoint-safe output schema is registered.",
+                messages.get(2).path("content").asText());
         assertEquals(first.getSequence(), messages.get(2).path("sequence").asLong());
         assertFalse(messages.get(2).path("pruned").asBoolean());
         assertEquals("[old tool result cleared]", messages.get(3).path("content").asText());
@@ -195,8 +243,9 @@ class NativeCarrierProjectionTest {
                 Map.of("sequence", b.getSequence(), "tool_call_id", "a")))));
         when(events.read("session", 0L, null)).thenReturn(input);
         JsonNode messages = projector.project("session", 0L, null).path("messages");
-        assertEquals("one", messages.get(0).path("content").asText());
-        assertEquals("two", messages.get(1).path("content").asText());
+        String placeholder = "Tool result withheld from durable history because no checkpoint-safe output schema is registered.";
+        assertEquals(placeholder, messages.get(0).path("content").asText());
+        assertEquals(placeholder, messages.get(1).path("content").asText());
         assertFalse(messages.toString().contains("pruned"));
     }
 

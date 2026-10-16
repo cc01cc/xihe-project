@@ -5,12 +5,15 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
+import com.cc01cc.p.xihe.cp.context.entity.ContextEvent;
+import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
+import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,7 +30,9 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * PLAN-0346 (gap E): context_events sequence allocation runs under the session
@@ -50,6 +55,9 @@ class EventStoreServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private WorkspaceRepository workspaceRepository;
+
+    @Autowired
+    private ChatRunRepository chatRunRepository;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -132,6 +140,88 @@ class EventStoreServiceIntegrationTest extends AbstractIntegrationTest {
         assertEquals(first.get(0).getSequence() + 1, second.get(1).getSequence(),
                 "only new payloads consume the next sequence slot");
         assertEquals(countAfterFirst + 1, eventStoreRepository.count());
+    }
+
+    @Test
+    void singleAndBatchWritesPersistOnlyWithheldToolOutputBodies() throws Exception {
+        String canary = "event-store-write-canary-712c";
+        var single = eventStoreService.append(sessionId, workspaceId, userId,
+                "tool.result", Map.of("call_id", "single-call", "tool_name", "read_file", "result", canary));
+        String singlePayload = jdbcTemplate.queryForObject(
+                "select payload::text from context_events where id = ?::uuid", String.class, single.getId());
+        assertFalse(singlePayload.contains(canary));
+        assertTrue(singlePayload.contains("Tool result withheld from durable history"));
+
+        String runId = UUID.randomUUID().toString();
+        chatRunRepository.save(new ChatRun(runId, sessionId, userId, workspaceId,
+                "event-store-safety-" + UUID.randomUUID(), "a".repeat(64), "fixture", "fixture", "none", "accepted"));
+        List<EventStoreService.EventPayload> batch = List.of(
+                new EventStoreService.EventPayload("tool.result",
+                        Map.of("toolCallId", "batch-call", "toolName", "read_file", "result", canary), runId),
+                new EventStoreService.EventPayload("assistant.responded",
+                        Map.of("message", Map.of("role", "ai", "content", "done",
+                                "apiTypeId", "openai-chat-completions", "apiTypeVersion", 1,
+                                "nativeRecords", List.of(
+                                        Map.of("role", "assistant", "content", "",
+                                                "tool_calls", List.of(Map.of("id", "native-call", "type", "function",
+                                                        "function", Map.of("name", "read_file", "arguments", "{}")))),
+                                        Map.of("role", "tool", "tool_call_id", "native-call", "content", canary)))), runId));
+        var saved = eventStoreService.appendBatch(sessionId, workspaceId, userId, batch);
+
+        String batchToolPayload = storedPayload(saved.get(0).getId());
+        assertFalse(batchToolPayload.contains(canary));
+        assertTrue(batchToolPayload.contains("Tool result withheld from durable history"));
+
+        String batchCarrierPayload = storedPayload(saved.get(1).getId());
+        assertFalse(batchCarrierPayload.contains(canary));
+        assertTrue(batchCarrierPayload.contains("Tool result withheld from durable history"));
+        assertTrue(batchCarrierPayload.contains("native-call"));
+
+        var prune = eventStoreService.append(sessionId, workspaceId, userId, "context.prune", Map.of(
+                "runId", runId,
+                "pruned_count", 1,
+                "tombstones", List.of(Map.of("tool_call_id", "pruned-call", "sequence", 4,
+                        "content_hash", "b".repeat(64), "size", 400, "head", canary,
+                        "tail", canary, "reason", "oversized", "pruned", true))));
+        String prunePayload = storedPayload(prune.getId());
+        assertFalse(prunePayload.contains(canary));
+        assertFalse(prunePayload.contains("head"));
+        assertFalse(prunePayload.contains("tail"));
+        assertTrue(prunePayload.contains("pruned-call"));
+
+        var fork = eventStoreService.append(sessionId, workspaceId, userId, "session.forked", Map.of(
+                "source_session_id", sessionId,
+                "summary_seed", Map.of("contextEpoch", UUID.randomUUID().toString(),
+                        "messages", List.of(Map.of("role", "tool", "tool_name", "read_file",
+                                "content", canary, "artifact_ref", "artifact-" + canary)))));
+        String forkPayload = storedPayload(fork.getId());
+        assertFalse(forkPayload.contains(canary));
+        assertTrue(forkPayload.contains("Tool result withheld from durable history"));
+        assertFalse(forkPayload.contains("artifact_ref"));
+    }
+
+    @Test
+    void forkDoesNotCopyLegacyRawToolResultRows() {
+        String canary = "legacy-fork-copy-canary-2e9";
+        ContextEvent legacy = new ContextEvent(sessionId, workspaceId, userId, "tool.result", 1L,
+                "{\"toolName\":\"read_file\",\"result\":\"" + canary + "\"}");
+        eventStoreRepository.save(legacy);
+
+        Session child = new Session(workspaceId, userId, "Forked Event Store Session");
+        child.setId(UUID.randomUUID());
+        String childSessionId = sessionRepository.save(child).getId().toString();
+
+        assertEquals(1L, eventStoreService.fork(sessionId, 1L, childSessionId, workspaceId, userId));
+
+        ContextEvent copied = eventStoreRepository
+                .findBySessionIdAndSequenceGreaterThanOrderBySequenceAsc(childSessionId, 0L).getFirst();
+        assertFalse(copied.getPayload().contains(canary));
+        assertTrue(copied.getPayload().contains("Tool result withheld from durable history"));
+    }
+
+    private String storedPayload(UUID eventId) {
+        return jdbcTemplate.queryForObject(
+                "select payload::text from context_events where id = ?::uuid", String.class, eventId);
     }
 
     @Test

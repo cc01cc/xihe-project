@@ -31,7 +31,8 @@ class McpInvocationReadProjectionTest {
                 repository, mock(McpAttemptRepository.class),
                 mock(McpDispatchHistoryRepository.class),
                 mock(ChatRunRepository.class),
-                mock(DbLockTimeout.class));
+                mock(DbLockTimeout.class),
+                mock(org.springframework.transaction.PlatformTransactionManager.class));
 
         assertEquals(Map.of("call-a", "shell"), service.toolNamesByCallForRun(runId));
     }
