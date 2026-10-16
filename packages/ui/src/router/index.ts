@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from "vue-router";
+import { api } from "../composables/api";
 
 const router = createRouter({
     history: createWebHistory(),
@@ -108,6 +109,12 @@ const router = createRouter({
             component: () => import("../views/auth/RegisterView.vue"),
         },
         {
+            // PLAN-0526: first-run bootstrap when the instance has no account yet.
+            path: "/onboarding",
+            name: "onboarding",
+            component: () => import("../views/auth/OnboardingView.vue"),
+        },
+        {
             // Legacy bookmarks (e.g. removed /chat/:sessionId) recover to the
             // Workspace-first landing instead of a blank unmatched-route view.
             path: "/:pathMatch(.*)*",
@@ -116,13 +123,54 @@ const router = createRouter({
     ],
 });
 
-router.beforeEach((to) => {
+/**
+ * PLAN-0526: resolved once per page load. On failure we behave exactly like the
+ * pre-local-mode login wall, so an unreachable CP never changes the entry.
+ */
+let bootstrapCache: { initialized: boolean; localMode: boolean } | null = null;
+
+async function resolveBootstrap(): Promise<{ initialized: boolean; localMode: boolean }> {
+    if (bootstrapCache) return bootstrapCache;
+    try {
+        bootstrapCache = await api.bootstrapStatus();
+    } catch {
+        bootstrapCache = { initialized: true, localMode: false };
+    }
+    return bootstrapCache;
+}
+
+router.beforeEach(async (to) => {
     const token = localStorage.getItem("xihe-token"),
         requiresAuth = to.matched.some((r) => r.meta?.requiresAuth);
 
     if (requiresAuth && !token) {
+        const bootstrap = await resolveBootstrap();
+        if (!bootstrap.initialized) {
+            return { name: "onboarding", query: { redirect: to.fullPath } };
+        }
+        if (bootstrap.localMode) {
+            try {
+                const res = await api.localLogin();
+                localStorage.setItem("xihe-token", res.accessToken);
+                localStorage.setItem("xihe-user", JSON.stringify(res.user));
+                if (res.workspace) {
+                    localStorage.setItem("xihe-workspace", JSON.stringify(res.workspace));
+                } else if (res.workspaceId) {
+                    localStorage.setItem(
+                        "xihe-workspace",
+                        JSON.stringify({ id: res.workspaceId, name: "Default Workspace" }),
+                    );
+                }
+                return true;
+            } catch {
+                // Gate refused (non-loopback / not single-user) — fall back to login.
+            }
+        }
         return { name: "login", query: { redirect: to.fullPath } };
-    } else if ((to.name === "login" || to.name === "register") && token) {
+    } else if (
+        (to.name === "login" || to.name === "register" || to.name === "onboarding") &&
+        token
+    ) {
         return { path: "/workspace" };
     }
 
