@@ -271,7 +271,8 @@ async def chat(request: Request):
 
     run_llm_entries = _merge_run_domain("llm-provider", user_overrides, workspace_overrides)
     # PLAN-0523 decisions #9/#12: per-model sampling overrides from the layer
-    # modelParams map; a valid model-level timeout beats the legacy global key.
+    # modelParams map. T3.6 (决策 #13): the legacy layer-global `timeout` key
+    # is retired with the CP schema/migration — the default stays 60s.
     effective_model = str(model_override or "")
     model_params = parse_model_params(run_llm_entries, effective_model)
     request_config = LLMConfig(
@@ -280,7 +281,7 @@ async def chat(request: Request):
         timeout=(
             float(model_params["timeout"])
             if model_params and "timeout" in model_params
-            else float(run_llm_entries.get("timeout") or "60")
+            else 60.0
         ),
     )
     sampling_overrides: dict[str, Any] = {}

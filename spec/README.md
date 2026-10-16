@@ -64,6 +64,7 @@ spec/
 | workspace / sandbox / checkpoint | proposed | partial | Workspace/Runtime owners | CP、Runtime、UI、Agent | A03-xihe | PLAN-0389 |
 | execution job / scope / durable continuation | proposed | partial | CP durable-record + Runtime Job owners | CP Job API/durable record、Runtime Job backend、UI、Agent | A03-xihe | PLAN-0390; backend adapters PLAN-0392–0395; Workspace release PLAN-0391 |
 | configuration / env | proposed | partial | CP ConfigService owner | CP、Agent、Runtime、UI、Audit | A03-xihe | PLAN-0389；以现行配置模型整合历史来源 |
+| telemetry reporting | proposed | partial | XH owner（接收端契约归 A11/TLM） | UI logger、CP、A11/TLM 接收端 | A03-xihe | PLAN-0522；上游接收契约为 A11 PLAN-0521；`security/telemetry-reporting.md` |
 | protocol | proposed | partial | 对应协议 owners | UI、CP、Agent、Runtime | A03-xihe | PLAN-0385；OpenAPI/inventory/schema 保持各自事实源 |
 | protocol / Provider API Type + Connection identity | proposed | partial | CP Provider owner | CP Provider/Models/Lease、Agent catalog、UI ProviderHub | A03-xihe | PLAN-0438 completed at 692b89fb; PLAN-0439 active writer; downstream PLAN-0485/0416 consume by sequential handoff; `protocol/provider-api-types.md` |
 | protocol / Embedding provider + RAG proxy | proposed | partial | CP Provider owner | CP Embedding/RAG proxy、Agent RAG routes、UI KnowledgeBase/EmbeddingSettings | A03-xihe | PLAN-0485；profile/lease wire 与分区 tuple 冻结，见 `embedding-provider-contract.md` |
@@ -159,6 +160,10 @@ PLAN-0389 已建立 Workspace/Configuration proposed 草案；Workspace logical 
 PLAN-0495 建立凭据管理 proposed 草案（存储、生命周期与轮换；用户管理 API、交付通道与 UI 分别归 PLAN-0496/0497/0498）：
 
 - [凭据管理](security/credential-management.md)
+
+PLAN-0522 建立前端遥测上报与中央中继 proposed 草案（本地 sink 与实例级中继边界；接收端契约与 wire 归 A11 PLAN-0521）：
+
+- [遥测上报与中央中继](security/telemetry-reporting.md)
 
 ## 5. Spec Impact 与写回
 

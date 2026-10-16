@@ -416,18 +416,15 @@ class LLMConfig(BaseModel):
         defaults = PROVIDER_DEFAULTS.get(provider, {})
         api_base = os.getenv("XIHE_API_BASE", "") or defaults.get("api_base", "")
 
-        timeout_str = entries.get("timeout") or "60"
-        max_tokens_str = entries.get("maxTokens") or "4096"
-        temp_str = entries.get("temperature") or "0.7"
-
+        # PLAN-0523 T3.6 (决策 #13): the layer-global sampling keys
+        # (timeout/maxTokens/temperature) are retired with the CP schema keys
+        # and the V69 cleanup migration — no compat reads. Sampling overrides
+        # come only from the per-model `modelParams` map (parse_model_params).
         return cls(
             provider=provider,
             api_key=api_key,
             api_base=api_base.rstrip("/"),
             model=model,
-            timeout=float(timeout_str),
-            max_tokens=int(max_tokens_str),
-            temperature=float(temp_str),
         )
 
 

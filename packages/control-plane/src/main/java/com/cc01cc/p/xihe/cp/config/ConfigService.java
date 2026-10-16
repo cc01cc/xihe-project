@@ -107,7 +107,10 @@ public class ConfigService {
             "logLevel", "INFO",
             "levelCp", "INFO",
             "levelAgent", "INFO",
-            "levelRuntime", "INFO"),
+            "levelRuntime", "INFO",
+            // PLAN-0522: central telemetry relay is opt-in per instance; the
+            // deployment still needs XIHE_TLM_URL/XIHE_TLM_INGEST_TOKEN.
+            "centralTelemetryEnabled", "false"),
         // PLAN-0373 decision #8: job-policy code defaults — default 3600s (aligned
         // with the Runtime job fallback); max 0 = no cap configured (no clamping
         // until instance/env sets a positive ceiling).

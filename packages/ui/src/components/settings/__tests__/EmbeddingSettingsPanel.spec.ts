@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createPinia, setActivePinia } from "pinia";
 import { flushPromises, mount } from "@vue/test-utils";
 import EmbeddingSettingsPanel from "../EmbeddingSettingsPanel.vue";
 import type { ProviderConnection } from "../../../types/providerConnection";
@@ -65,6 +66,8 @@ const mockedSave = vi.mocked(saveEmbeddingProfile);
 const mockedTest = vi.mocked(testEmbedding);
 
 beforeEach(() => {
+    // PLAN-0523 T3.5: the panel reads connections through the config store.
+    setActivePinia(createPinia());
     vi.clearAllMocks();
     mockedConnections.mockResolvedValue({ connections: [] } as never);
     mockedEffective.mockResolvedValue({ profile: null, profileScope: null, resolved: null });

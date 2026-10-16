@@ -339,7 +339,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
         UUID uid = UUID.fromString(userId);
         UUID wid = UUID.fromString(workspaceId);
         configService.putLayer("user", "llm-provider",
-                Map.of("temperature", "0.5"), "test", uid, null);
+                Map.of("modelParams", "{\"m-1\":{\"temperature\":0.5}}"), "test", uid, null);
         configService.putLayer("user", "agent-profile",
                 Map.of("userName", "Alice"), "test", uid, null);
         configService.putLayer("user", "rag",
@@ -347,7 +347,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
         // PLAN-0485: the embedding domain is a whole-unit profile and no longer
         // participates in Chat userOverrides/workspaceOverrides.
         configService.putLayer("workspace", "llm-provider",
-                Map.of("temperature", "0.2"), "test", uid, wid);
+                Map.of("modelParams", "{\"m-1\":{\"temperature\":0.2}}"), "test", uid, wid);
         configService.putLayer("workspace", "agent-runtime",
                 Map.of("useRegistry", "true"), "test", uid, wid);
 
@@ -380,20 +380,22 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
 
         wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/agent/chat"))
                 .withRequestBody(matchingJsonPath(
-                        "$.userOverrides['llm-provider'].temperature", equalTo("0.5")))
+                        "$.userOverrides['llm-provider'].modelParams",
+                        equalTo("{\"m-1\":{\"temperature\":0.5}}")))
                 .withRequestBody(matchingJsonPath(
                         "$.userOverrides['agent-profile'].userName", equalTo("Alice")))
                 .withRequestBody(matchingJsonPath(
                         "$.userOverrides['rag'].chunkSize", equalTo("512")))
                 .withRequestBody(matchingJsonPath(
-                        "$.workspaceOverrides['llm-provider'].temperature", equalTo("0.2")))
+                        "$.workspaceOverrides['llm-provider'].modelParams",
+                        equalTo("{\"m-1\":{\"temperature\":0.2}}")))
                 .withRequestBody(matchingJsonPath(
                         "$.workspaceOverrides['agent-runtime'].useRegistry", equalTo("true"))));
 
-        configService.deleteKey("user", "llm-provider", "temperature", "test", uid, null);
+        configService.deleteKey("user", "llm-provider", "modelParams", "test", uid, null);
         configService.deleteKey("user", "agent-profile", "userName", "test", uid, null);
         configService.deleteKey("user", "rag", "chunkSize", "test", uid, null);
-        configService.deleteKey("workspace", "llm-provider", "temperature", "test", uid, wid);
+        configService.deleteKey("workspace", "llm-provider", "modelParams", "test", uid, wid);
         configService.deleteKey("workspace", "agent-runtime", "useRegistry", "test", uid, wid);
     }
 

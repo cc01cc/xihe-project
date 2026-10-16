@@ -189,6 +189,8 @@
     "levelAgent": "debug",
     "levelCp": "debug",
     "levelRuntime": "debug",
-    "levelUi": "debug"
+    "levelUi": "debug",
+    // PLAN-0522：中央遥测中继开关（默认 false；还需部署侧 XIHE_TLM_URL/XIHE_TLM_INGEST_TOKEN）
+    "centralTelemetryEnabled": "false"
   }
 }

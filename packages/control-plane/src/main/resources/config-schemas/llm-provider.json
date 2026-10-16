@@ -24,9 +24,6 @@
       "additionalProperties": false
     },
     "imageProvider": { "type": "string" },
-    "maxTokens": { "type": ["integer", "string"], "minimum": 1, "maximum": 128000 },
-    "temperature": { "type": ["number", "string"], "minimum": 0, "maximum": 2 },
-    "timeout": { "type": ["integer", "string"], "minimum": 1 },
     "modelParams": {
       "type": "object",
       "description": "Per-model sampling parameters (PLAN-0523 decision #9/#12): map of model name to optional {maxTokens, temperature, timeout}. PUT replaces the whole map; an empty object clears. Layer-scoped (whole-domain override).",
