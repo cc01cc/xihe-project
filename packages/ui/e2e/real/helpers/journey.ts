@@ -178,6 +178,16 @@ function readBindingWorkspace(): string | null {
     }
 }
 
+function isDatabaseConnectionEnvKey(key: string): boolean {
+    const databaseSegments =
+        /^(?:PG[A-Z0-9]*|POSTGRES(?:QL)?[A-Z0-9]*|DATABASE[A-Z0-9]*|DATASOURCE[A-Z0-9]*|JDBC[A-Z0-9]*|DB[A-Z0-9]*|SQLALCHEMY[A-Z0-9]*|MYSQL[A-Z0-9]*|MARIADB[A-Z0-9]*|MONGO(?:DB)?[A-Z0-9]*|REDIS[A-Z0-9]*|ORACLE[A-Z0-9]*|MSSQL[A-Z0-9]*|SQLSERVER[A-Z0-9]*)$/i;
+    return key.split("_").some((segment) => databaseSegments.test(segment));
+}
+
+function isRunnerHostControlEnvKey(key: string): boolean {
+    return key.startsWith("XIHE_E2E_HOST_CONTROL_");
+}
+
 /**
  * Restart the isolated Agent so its MCP context belongs to `workspaceId`.
  * No-op when the recorded binding already matches, or when the runner did not
@@ -214,6 +224,36 @@ export async function ensureAgentWorkspaceBinding(workspaceId: string): Promise<
             .toBe(false);
     }
 
+    const restartEnv = Object.fromEntries(
+        Object.entries({
+            ...process.env,
+            XIHE_ENV: "dev",
+            XIHE_AGENT_PORT: String(AGENT_PORT),
+            XIHE_CP_URL: `http://127.0.0.1:${CP_PORT}`,
+            XIHE_CP_API_TOKEN: process.env.XIHE_CP_API_TOKEN ?? "",
+            XIHE_AGENT_API_TOKEN: process.env.XIHE_CP_API_TOKEN ?? "",
+            XIHE_E2E_RUN_ID: process.env.XIHE_E2E_RUN_ID ?? "",
+            XIHE_LOG_DIR: path.join(HOST_ROOT, "logs"),
+            XIHE_LOAD_DOTENV: "0",
+            ...contract,
+        }).filter(
+            ([key, value]) =>
+                value !== undefined &&
+                !isDatabaseConnectionEnvKey(key) &&
+                !isRunnerHostControlEnvKey(key),
+        ),
+    ) as Record<string, string>;
+    if (Object.keys(restartEnv).some(isDatabaseConnectionEnvKey)) {
+        throw new Error("Agent restart environment contains database connection configuration");
+    }
+    const hasRunnerHostControlEnv = Object.keys(restartEnv).some(isRunnerHostControlEnvKey);
+    if (hasRunnerHostControlEnv) {
+        throw new Error("Agent restart environment contains runner host-control configuration");
+    }
+    console.log(
+        "[journey] Agent restart database connection env present=false; runner host-control env present=false",
+    );
+
     const logFile = path.join(HOST_ROOT, "logs", `agent-rebind-${Date.now()}.log`);
     mkdirSync(path.dirname(logFile), { recursive: true });
     const fd = openSync(logFile, "a");
@@ -226,18 +266,7 @@ export async function ensureAgentWorkspaceBinding(workspaceId: string): Promise<
                 detached: true,
                 windowsHide: true,
                 stdio: ["ignore", fd, fd],
-                env: {
-                    ...process.env,
-                    XIHE_ENV: "dev",
-                    XIHE_AGENT_PORT: String(AGENT_PORT),
-                    XIHE_CP_URL: `http://127.0.0.1:${CP_PORT}`,
-                    XIHE_CP_API_TOKEN: process.env.XIHE_CP_API_TOKEN ?? "",
-                    XIHE_AGENT_API_TOKEN: process.env.XIHE_CP_API_TOKEN ?? "",
-                    XIHE_E2E_RUN_ID: process.env.XIHE_E2E_RUN_ID ?? "",
-                    XIHE_LOG_DIR: path.join(HOST_ROOT, "logs"),
-                    XIHE_LOAD_DOTENV: "0",
-                    ...contract,
-                } as Record<string, string>,
+                env: restartEnv,
             },
         );
         child.unref();

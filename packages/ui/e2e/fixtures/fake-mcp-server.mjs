@@ -4,6 +4,11 @@ import { randomUUID } from "node:crypto";
 const port = Number(process.env.XIHE_FAKE_MCP_PORT ?? 13641);
 const accessToken = process.env.XIHE_FAKE_MCP_ACCESS_TOKEN ?? "",
     sessions = new Map();
+const checkpointResumeEnabled = process.env.XIHE_FAKE_MCP_CHECKPOINT_RESUME === "1",
+    resumeControlToken = process.env.XIHE_FAKE_MCP_CONTROL_TOKEN ?? "",
+    heldMutationResponses = new Set();
+let mutationCount = 0,
+    ambiguousNextMutation = false;
 const disconnectedSessions = new Set(),
     requestStates = new Map();
 
@@ -19,6 +24,56 @@ function authorized(request) {
 const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", `http://127.0.0.1:${port}`);
     if (url.pathname === "/health") return json(response, 200, { status: "ok" });
+    if (url.pathname === "/__e2e/checkpoint-resume") {
+        if (!checkpointResumeEnabled || !resumeControlToken) {
+            request.resume();
+            return json(response, 404, { error: "not_found" });
+        }
+        if (request.headers.authorization !== `Bearer ${resumeControlToken}`) {
+            request.resume();
+            return json(response, 401, { error: "unauthorized" });
+        }
+        if (request.method !== "POST") return json(response, 405, { error: "method_not_allowed" });
+        let control;
+        try {
+            control = JSON.parse(await readBody(request));
+        } catch {
+            return json(response, 400, { error: "invalid_request" });
+        }
+        const keys = control && typeof control === "object" && !Array.isArray(control)
+            ? Object.keys(control)
+            : [];
+        if (keys.length !== 1 || !["action"].includes(keys[0])) {
+            return json(response, 400, { error: "invalid_request" });
+        }
+        if (control.action === "state") {
+            return json(response, 200, {
+                mutationCount,
+                ambiguousArmed: ambiguousNextMutation,
+                pendingResponses: heldMutationResponses.size,
+            });
+        }
+        if (control.action === "arm-ambiguous") {
+            if (ambiguousNextMutation) return json(response, 409, { error: "already_armed" });
+            ambiguousNextMutation = true;
+            return json(response, 200, {
+                mutationCount,
+                ambiguousArmed: true,
+                pendingResponses: heldMutationResponses.size,
+            });
+        }
+        if (control.action === "reset") {
+            if (heldMutationResponses.size > 0) return json(response, 409, { error: "mutation_pending" });
+            mutationCount = 0;
+            ambiguousNextMutation = false;
+            return json(response, 200, {
+                mutationCount,
+                ambiguousArmed: false,
+                pendingResponses: 0,
+            });
+        }
+        return json(response, 400, { error: "invalid_action" });
+    }
     if (url.pathname !== "/mcp") return json(response, 404, { error: "not_found" });
     if (!authorized(request))
         return json(response, 401, { error: "invalid_token" }, { "WWW-Authenticate": "Bearer" });
@@ -106,10 +161,35 @@ const server = createServer(async (request, response) => {
                             description: "Fake remote echo",
                             inputSchema: { type: "object" },
                         },
+                        ...(checkpointResumeEnabled
+                            ? [{
+                                  name: "remote_mutate",
+                                  description: "Test-only mutation with observable dispatch count",
+                                  inputSchema: {
+                                      type: "object",
+                                      properties: { operation: { type: "string", enum: ["increment"] } },
+                                      required: ["operation"],
+                                  },
+                              }]
+                            : []),
                     ],
                 }
               : body.method === "tools/call"
-                ? body.params?.arguments?.mode === "input_required"
+                ? body.params?.name === "remote_mutate" && checkpointResumeEnabled
+                    ? (() => {
+                          mutationCount += 1;
+                          if (ambiguousNextMutation) {
+                              ambiguousNextMutation = false;
+                              heldMutationResponses.add(response);
+                              response.once("close", () => heldMutationResponses.delete(response));
+                              return null;
+                          }
+                          return {
+                              content: [{ type: "text", text: JSON.stringify({ result: "mutation completed" }) }],
+                              isError: false,
+                          };
+                      })()
+                    : body.params?.arguments?.mode === "input_required"
                     ? (() => {
                           const requestState = { nonce: randomUUID(), required: ["value"] };
                           requestStates.set(JSON.stringify(requestState), {
@@ -129,6 +209,10 @@ const server = createServer(async (request, response) => {
                           isError: false,
                       }
                 : undefined;
+    if (!result && body.method === "tools/call" && body.params?.name === "remote_mutate"
+        && checkpointResumeEnabled && heldMutationResponses.size > 0 && !response.headersSent) {
+        return;
+    }
     if (!result)
         return json(response, 400, {
             jsonrpc: "2.0",

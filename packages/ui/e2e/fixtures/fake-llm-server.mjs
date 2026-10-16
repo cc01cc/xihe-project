@@ -72,6 +72,11 @@ async function sendCompletion(response, provider, requestBody) {
         return;
     }
 
+    if (mode === "checkpoint_resume") {
+        sendCheckpointResumeCompletion(response, requestBody);
+        return;
+    }
+
     if (mode === "exec_command") {
         sendExecCommandCompletion(response, requestBody);
         return;
@@ -299,6 +304,64 @@ function sendWriteFileCompletion(response, requestBody) {
     for (const content of chunks) {
         response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
     }
+    response.end("data: [DONE]\n\n");
+}
+
+// PLAN-0510: exact Host checkpoint-resume lane. The first provider turn emits
+// one deterministic pending mutation call; after the matching ToolMessage is
+// delivered, the follow-up returns fixed text and never echoes tool arguments.
+function sendCheckpointResumeCompletion(response, requestBody) {
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [],
+        last = messages.at(-1) ?? {},
+        lastUser = [...messages].reverse().find((message) => message.role === "user"),
+        text = typeof lastUser?.content === "string" ? lastUser.content : "";
+    if (last.role === "tool") {
+        response.write(
+            `data: ${JSON.stringify({ choices: [{ delta: { content: "Continuation completed." } }] })}\n\n`,
+        );
+        response.end("data: [DONE]\n\n");
+        return;
+    }
+
+    const mutation = text.match(/XIHE-E2E-RESUME-MUTATE\s+([A-Za-z0-9_-]+)/);
+    const toolCall = mutation
+        ? {
+              id: `call-resume-mutate-${mutation[1].slice(0, 48)}`,
+              name: "remote_mutate",
+              arguments: { operation: "increment" },
+          }
+        : null;
+    if (!toolCall) {
+        response.write(
+            `data: ${JSON.stringify({ choices: [{ delta: { content: "No checkpoint test action." } }] })}\n\n`,
+        );
+        response.end("data: [DONE]\n\n");
+        return;
+    }
+
+    const toolCallDelta = {
+        choices: [
+            {
+                delta: {
+                    tool_calls: [
+                        {
+                            index: 0,
+                            id: toolCall.id,
+                            type: "function",
+                            function: {
+                                name: toolCall.name,
+                                arguments: JSON.stringify(toolCall.arguments),
+                            },
+                        },
+                    ],
+                },
+                finish_reason: null,
+            },
+        ],
+    };
+    const finishDelta = { choices: [{ delta: {}, finish_reason: "tool_calls" }] };
+    response.write(`data: ${JSON.stringify(toolCallDelta)}\n\n`);
+    response.write(`data: ${JSON.stringify(finishDelta)}\n\n`);
     response.end("data: [DONE]\n\n");
 }
 
