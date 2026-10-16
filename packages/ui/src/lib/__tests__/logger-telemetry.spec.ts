@@ -20,6 +20,7 @@ describe("logger telemetry (PLAN-0522)", () => {
     afterEach(() => {
         vi.unstubAllGlobals();
         localStorage.clear();
+        sessionStorage.clear();
     });
 
     it("flush posts a camelCase batch to the local CP endpoint with the JWT", async () => {
@@ -128,5 +129,53 @@ describe("logger telemetry (PLAN-0522)", () => {
         );
         expect(kinds).toContainEqual(["ui.unhandled_error", "TypeError"]);
         expect(kinds).toContainEqual(["ui.unhandled_rejection", "RangeError"]);
+    });
+
+    it("attaches coarsened environment dimensions to structured events (PLAN-0527)", async () => {
+        const fetchSpy = okFetch();
+        vi.stubGlobal("fetch", fetchSpy);
+        const { logger } = await import("../logger");
+
+        logger.recordEvent("ui.unhandled_error", "error", "TypeError");
+        await logger.flush();
+
+        const [entry] = JSON.parse(fetchSpy.mock.calls[0][1]?.body as string).entries;
+        expect(["windows", "macos", "linux", "ios", "android", "other"]).toContain(entry.osFamily);
+        expect(["chrome", "edge", "firefox", "safari", "other"]).toContain(entry.browserFamily);
+        expect(["stable", "beta", "dev"]).toContain(entry.releaseChannel);
+        expect(["xs", "sm", "md", "lg", "xl"]).toContain(entry.screenBucket);
+        expect(entry.anonSessionId).toMatch(/^[A-Za-z0-9_-]{22,64}$/);
+        // never the raw user-agent or any free text
+        expect(entry.message).toBeUndefined();
+        expect(entry.data).toBeUndefined();
+        expect(JSON.stringify(entry)).not.toContain(navigator.userAgent);
+    });
+
+    it("rotates the anonymous session id on login and clears it on logout (PLAN-0527)", async () => {
+        const fetchSpy = okFetch();
+        vi.stubGlobal("fetch", fetchSpy);
+        const { logger, rotateAnonSessionId, clearAnonSessionId } = await import("../logger");
+
+        const readSent = (call: number) =>
+            JSON.parse(fetchSpy.mock.calls[call][1]?.body as string).entries[0].anonSessionId;
+
+        logger.recordEvent("ui.unhandled_error", "error", "TypeError");
+        await logger.flush();
+        const first = readSent(0);
+        expect(first).toMatch(/^[A-Za-z0-9_-]{22,64}$/);
+
+        rotateAnonSessionId();
+        logger.recordEvent("ui.unhandled_error", "error", "TypeError");
+        await logger.flush();
+        const second = readSent(1);
+        expect(second).toMatch(/^[A-Za-z0-9_-]{22,64}$/);
+        expect(second).not.toBe(first);
+
+        clearAnonSessionId();
+        logger.recordEvent("ui.unhandled_error", "error", "TypeError");
+        await logger.flush();
+        const third = readSent(2);
+        expect(third).toMatch(/^[A-Za-z0-9_-]{22,64}$/);
+        expect(third).not.toBe(second);
     });
 });

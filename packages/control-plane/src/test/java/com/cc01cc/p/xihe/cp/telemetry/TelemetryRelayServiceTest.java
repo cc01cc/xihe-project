@@ -28,6 +28,7 @@ import static org.mockito.Mockito.when;
 class TelemetryRelayServiceTest {
 
     private static final String CANARY = "SECRET-CANARY-VALUE";
+    private static final String DEPLOYMENT_ID = "deployment-test-0000000000000000";
 
     private HttpServer server;
     private final AtomicInteger requestCount = new AtomicInteger();
@@ -61,7 +62,8 @@ class TelemetryRelayServiceTest {
         ConfigService configService = mock(ConfigService.class);
         when(configService.resolve(TelemetryRelayService.GATE_DOMAIN, TelemetryRelayService.GATE_KEY, null, null))
                 .thenReturn(gate);
-        return new TelemetryRelayService(configService, new ObjectMapper(), url, token);
+        DeploymentIdProvider deploymentIdProvider = new DeploymentIdProvider(DEPLOYMENT_ID, "logs");
+        return new TelemetryRelayService(configService, new ObjectMapper(), deploymentIdProvider, url, token);
     }
 
     private static TelemetryEntry structured(String eventId, String type, long timestamp) {
@@ -71,7 +73,13 @@ class TelemetryRelayServiceTest {
         entry.setTimestamp(timestamp);
         entry.setLevel("error");
         entry.setErrorCode("TypeError");
-        entry.setAppVersion("0.1.0");
+        entry.setServiceVersion("0.1.0");
+        entry.setReleaseChannel("stable");
+        entry.setOsFamily("windows");
+        entry.setBrowserFamily("chrome");
+        entry.setLang("en-US");
+        entry.setScreenBucket("md");
+        entry.setAnonSessionId("anon-session-0000000000000000");
         entry.setMessage(CANARY);
         entry.setData(Map.of("blob", CANARY));
         return entry;
@@ -128,7 +136,16 @@ class TelemetryRelayServiceTest {
         assertEquals("2023-11-14T22:13:20Z", Instant.parse(event.get("occurredAt").asText()).toString());
         assertEquals("ERROR", event.get("fields").get("level").asText());
         assertEquals("TypeError", event.get("fields").get("errorCode").asText());
-        assertEquals("0.1.0", event.get("fields").get("appVersion").asText());
+        JsonNode fields = event.get("fields");
+        assertEquals(DEPLOYMENT_ID, fields.get("deploymentId").asText());
+        assertEquals("0.1.0", fields.get("serviceVersion").asText());
+        assertEquals("stable", fields.get("releaseChannel").asText());
+        assertEquals("windows", fields.get("osFamily").asText());
+        assertEquals("chrome", fields.get("browserFamily").asText());
+        assertEquals("en-US", fields.get("lang").asText());
+        assertEquals("md", fields.get("screenBucket").asText());
+        assertEquals("anon-session-0000000000000000", fields.get("anonSessionId").asText());
+        assertFalse(fields.has("appVersion"), "retired appVersion must not be relayed");
         service.shutdown();
     }
 

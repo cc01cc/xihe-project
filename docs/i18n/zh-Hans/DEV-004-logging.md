@@ -181,7 +181,7 @@ CP `TelemetryController` 接收前端遥测日志：
 
 写入 `{XIHE_LOG_DIR}/telemetry.log`（日轮转，7d / 500MB / 100MB，JSONL；经 `RedactingLogstashEncoder` 脱敏）。
 
-**中央 TLM 中继（PLAN-0522）**：当 instance 域 `logging.centralTelemetryEnabled` = `"true"`（ADMIN 写、默认 false）且部署侧 `XIHE_TLM_URL` / `XIHE_TLM_INGEST_TOKEN` 均已配置时，CP 把携带显式 `eventId`/`eventType` 的结构化条目按 A11/TLM 冻结契约批量转发（server-to-server Bearer）；仅发 `level`/`errorCode`/`appVersion` 等 allowlist 元数据，`message`/`data` 只留本地 sink。转发为 best-effort：5s 超时、有界队列（256）、队列满丢弃中央副本，失败不阻塞本地 sink 或业务请求；缺失 URL/token 时 fail-closed 仅关闭中央副本。`200 {"status":"ok"}` 只确认本地 sink 接收。
+**中央 TLM 中继（PLAN-0522 / PLAN-0527）**：当 instance 域 `logging.centralTelemetryEnabled` = `"true"`（ADMIN 写、默认 false）且部署侧 `XIHE_TLM_URL` / `XIHE_TLM_INGEST_TOKEN` 均已配置时，CP 把携带显式 `eventId`/`eventType` 的结构化条目按 A11/TLM 冻结契约批量转发（server-to-server Bearer）；仅发 `level`/`errorCode`/`serviceVersion`/`releaseChannel`/`osFamily`/`browserFamily`/`lang`/`screenBucket`/`anonSessionId` 及 CP 注入的实例级 `deploymentId` 等 allowlist 元数据（`appVersion` 已退役），`message`/`data` 只留本地 sink。转发为 best-effort：5s 超时、有界队列（256）、队列满丢弃中央副本，失败不阻塞本地 sink 或业务请求；缺失 URL/token 时 fail-closed 仅关闭中央副本。`200 {"status":"ok"}` 只确认本地 sink 接收。
 
 ## 5. 审计日志
 

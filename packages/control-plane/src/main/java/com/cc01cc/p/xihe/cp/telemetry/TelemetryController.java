@@ -45,11 +45,18 @@ public class TelemetryController {
     static final int MAX_EVENT_TYPE_LENGTH = 64;
     static final int MAX_EVENT_ID_LENGTH = 64;
     static final int MAX_ERROR_CODE_LENGTH = 128;
-    static final int MAX_APP_VERSION_LENGTH = 64;
+    static final int MAX_DIMENSION_LENGTH = 64;
+    static final int MAX_LANG_LENGTH = 16;
     static final int MAX_BATCH_ID_LENGTH = 64;
     static final int MAX_DEVICE_ID_LENGTH = 64;
     static final String DEFAULT_DEVICE_ID = "unknown";
     private static final Set<String> LEVELS = Set.of("debug", "info", "warn", "error");
+    private static final Set<String> RELEASE_CHANNELS = Set.of("stable", "beta", "dev");
+    private static final Set<String> OS_FAMILIES =
+            Set.of("windows", "macos", "linux", "ios", "android", "other");
+    private static final Set<String> BROWSER_FAMILIES =
+            Set.of("chrome", "edge", "firefox", "safari", "other");
+    private static final Set<String> SCREEN_BUCKETS = Set.of("xs", "sm", "md", "lg", "xl");
     private static final Pattern EVENT_TYPE_PATTERN =
             Pattern.compile("^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$");
 
@@ -149,11 +156,36 @@ public class TelemetryController {
             if (entry.getErrorCode() != null && entry.getErrorCode().length() > MAX_ERROR_CODE_LENGTH) {
                 return invalid("entries[" + i + "].errorCode is too long");
             }
-            if (entry.getAppVersion() != null && entry.getAppVersion().length() > MAX_APP_VERSION_LENGTH) {
-                return invalid("entries[" + i + "].appVersion is too long");
+            if (tooLong(entry.getServiceVersion(), MAX_DIMENSION_LENGTH)) {
+                return invalid("entries[" + i + "].serviceVersion is too long");
+            }
+            if (entry.getReleaseChannel() != null
+                    && !RELEASE_CHANNELS.contains(entry.getReleaseChannel())) {
+                return invalid("entries[" + i + "].releaseChannel is invalid");
+            }
+            if (entry.getOsFamily() != null && !OS_FAMILIES.contains(entry.getOsFamily())) {
+                return invalid("entries[" + i + "].osFamily is invalid");
+            }
+            if (entry.getBrowserFamily() != null
+                    && !BROWSER_FAMILIES.contains(entry.getBrowserFamily())) {
+                return invalid("entries[" + i + "].browserFamily is invalid");
+            }
+            if (tooLong(entry.getLang(), MAX_LANG_LENGTH)) {
+                return invalid("entries[" + i + "].lang is too long");
+            }
+            if (entry.getScreenBucket() != null
+                    && !SCREEN_BUCKETS.contains(entry.getScreenBucket())) {
+                return invalid("entries[" + i + "].screenBucket is invalid");
+            }
+            if (tooLong(entry.getAnonSessionId(), MAX_DIMENSION_LENGTH)) {
+                return invalid("entries[" + i + "].anonSessionId is too long");
             }
         }
         return null;
+    }
+
+    private static boolean tooLong(String value, int max) {
+        return value != null && value.length() > max;
     }
 
     private static ResponseEntity<?> invalid(String detail) {
@@ -181,8 +213,26 @@ public class TelemetryController {
             if (entry.getErrorCode() != null) {
                 record.put("errorCode", entry.getErrorCode());
             }
-            if (entry.getAppVersion() != null) {
-                record.put("appVersion", entry.getAppVersion());
+            if (entry.getServiceVersion() != null) {
+                record.put("serviceVersion", entry.getServiceVersion());
+            }
+            if (entry.getReleaseChannel() != null) {
+                record.put("releaseChannel", entry.getReleaseChannel());
+            }
+            if (entry.getOsFamily() != null) {
+                record.put("osFamily", entry.getOsFamily());
+            }
+            if (entry.getBrowserFamily() != null) {
+                record.put("browserFamily", entry.getBrowserFamily());
+            }
+            if (entry.getLang() != null) {
+                record.put("lang", entry.getLang());
+            }
+            if (entry.getScreenBucket() != null) {
+                record.put("screenBucket", entry.getScreenBucket());
+            }
+            if (entry.getAnonSessionId() != null) {
+                record.put("anonSessionId", entry.getAnonSessionId());
             }
             try {
                 telemetryLogger.info(objectMapper.writeValueAsString(record));

@@ -1320,7 +1320,13 @@ paths:
                       eventId: { type: string, maxLength: 64 }
                       eventType: { type: string, maxLength: 64 }
                       errorCode: { type: string, maxLength: 128 }
-                      appVersion: { type: string, maxLength: 64 }
+                      serviceVersion: { type: string, maxLength: 64 }
+                      releaseChannel: { type: string, enum: [stable, beta, dev] }
+                      osFamily: { type: string, enum: [windows, macos, linux, ios, android, other] }
+                      browserFamily: { type: string, enum: [chrome, edge, firefox, safari, other] }
+                      lang: { type: string, maxLength: 16 }
+                      screenBucket: { type: string, enum: [xs, sm, md, lg, xl] }
+                      anonSessionId: { type: string, maxLength: 64 }
       responses:
         '200': { description: 'Local sink accepted the batch ({"status":"ok"}); central relay is best-effort and server-side' }
         '400': { $ref: '#/components/responses/Problem' }

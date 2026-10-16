@@ -2,6 +2,11 @@ import { defineConfig, loadEnv } from "vite";
 import vue from "@vitejs/plugin-vue";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
+import { readFileSync } from "node:fs";
+
+const pkgVersion = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"))
+    .version as string;
+const RELEASE_CHANNELS = ["stable", "beta", "dev"] as const;
 
 const processEnv =
     (
@@ -52,6 +57,10 @@ export default defineConfig(({ mode }) => {
         pickEnv(env, "XIHE_CP_URL") ||
         `http://localhost:${pickEnv(env, "XIHE_CP_PORT") || "12631"}`;
     const uiLogLevel = resolveUiLogLevel(env);
+    const releaseChannelRaw = (pickEnv(env, "XIHE_RELEASE_CHANNEL") || "dev").toLowerCase();
+    const releaseChannel = (RELEASE_CHANNELS as readonly string[]).includes(releaseChannelRaw)
+        ? releaseChannelRaw
+        : "dev";
 
     return {
         logLevel: uiLogLevel,
@@ -60,6 +69,8 @@ export default defineConfig(({ mode }) => {
                 uiLogLevel === "silent" ? "error" : uiLogLevel === "warn" ? "warn" : "info",
             ),
             "import.meta.env.VITE_XIHE_CP_BASE_URL": JSON.stringify(cpBaseUrl),
+            "import.meta.env.VITE_XIHE_SERVICE_VERSION": JSON.stringify(pkgVersion),
+            "import.meta.env.VITE_XIHE_RELEASE_CHANNEL": JSON.stringify(releaseChannel),
         },
         plugins: [vue(), tailwindcss()],
         test: {

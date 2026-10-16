@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
 import { api, type ApiWorkspace } from "../composables/api";
-import { logger } from "../lib/logger";
+import { logger, rotateAnonSessionId, clearAnonSessionId } from "../lib/logger";
 import { useSessionStore } from "./session";
 import { clearWorkspaceChatForUserSwitch } from "../features/workspace/chat/lifecycle";
 import { useConfigStore } from "./config";
@@ -61,6 +61,8 @@ export const useAuthStore = defineStore("auth", () => {
         localStorage.setItem("xihe-user", JSON.stringify(user.value));
         if (ws) localStorage.setItem("xihe-workspace", JSON.stringify(ws));
         else localStorage.removeItem("xihe-workspace");
+        // New authentication session: rotate the anonymous telemetry session id (PLAN-0527).
+        rotateAnonSessionId();
     }
 
     async function login(email: string, password: string) {
@@ -174,6 +176,8 @@ export const useAuthStore = defineStore("auth", () => {
         localStorage.removeItem("xihe-token");
         localStorage.removeItem("xihe-user");
         localStorage.removeItem("xihe-workspace");
+        // Logout: clear the anonymous telemetry session id (PLAN-0527 decision #5).
+        clearAnonSessionId();
         clearSessionCaches();
     }
 
