@@ -19,7 +19,7 @@ xihe 采用**分层统一**的日志系统：
 
 ```
 XIHE_LOG_LEVEL (全局默认)
-  ├── XIHE_LOG_LEVEL_UI       → Vite logLevel + 浏览器 logger (console/IndexedDB 有效，telemetry 发送已禁用)
+  ├── XIHE_LOG_LEVEL_UI       → Vite logLevel + 浏览器 logger (console/IndexedDB 与本地 CP telemetry sink 有效；中央 TLM 中继默认关闭，见 §4)
   ├── XIHE_LOG_LEVEL_CP        → Logback (logback-spring.xml)
   ├── XIHE_LOG_LEVEL_AGENT     → loguru (Python)
   └── XIHE_LOG_LEVEL_RUNTIME   → tracing EnvFilter
@@ -150,7 +150,7 @@ Workspace 执行事件（PLAN-235 约定，`WorkspaceExecutionRouter` + oneshot 
 
 ### 3.4. UI (TypeScript/Vue) — 输出通道
 
-浏览器端 `logger`（`lib/logger.ts`）输出通道（telemetry 发送当前禁用，见下表备注）：
+浏览器端 `logger`（`lib/logger.ts`）输出通道（telemetry batch 发送至本机 CP 本地 sink；中央 TLM 中继默认关闭，见 §4）：
 
 ```typescript
 import { logger } from '../lib/logger'
@@ -165,7 +165,7 @@ catch (e) {
 |--------|------|------|
 | Console | `console.log/debug/warn/error` | 开发调试 |
 | IndexedDB | Dexie (`XiheLogDB.logs`) | 本地持久化，10k 条上限，自动清理 |
-| Telemetry batch | POST `/api/v1/telemetry/logs` | 5s 间隔，50 条/批，64KB 上限；**当前 UI 侧已禁用发送**（`sendTelemetry` 直接丢弃），CP 端点保留 |
+| Telemetry batch | POST `/api/v1/telemetry/logs` | 5s 间隔，≤50 条/批，UTF-8 64KiB 上限；批次发往本机 CP 本地 sink（JSONL）；单批在途、失败即丢弃（中央副本 best-effort） |
 
 支持 `logger.exportLogs()` / `logger.download()` 导出和下载日志。
 
@@ -180,6 +180,8 @@ CP `TelemetryController` 接收前端遥测日志：
 > 旧 `POST /api/v1/telemetry/anonymous` 已移除（PLAN-245）：该路径实际被 `/api/v1/**` 角色门槛拦截、从未可用，且无消费者；遥测统一走 JWT 端点。
 
 写入 `{XIHE_LOG_DIR}/telemetry.log`（日轮转，7d / 500MB / 100MB，JSONL；经 `RedactingLogstashEncoder` 脱敏）。
+
+**中央 TLM 中继（PLAN-0522）**：当 instance 域 `logging.centralTelemetryEnabled` = `"true"`（ADMIN 写、默认 false）且部署侧 `XIHE_TLM_URL` / `XIHE_TLM_INGEST_TOKEN` 均已配置时，CP 把携带显式 `eventId`/`eventType` 的结构化条目按 A11/TLM 冻结契约批量转发（server-to-server Bearer）；仅发 `level`/`errorCode`/`appVersion` 等 allowlist 元数据，`message`/`data` 只留本地 sink。转发为 best-effort：5s 超时、有界队列（256）、队列满丢弃中央副本，失败不阻塞本地 sink 或业务请求；缺失 URL/token 时 fail-closed 仅关闭中央副本。`200 {"status":"ok"}` 只确认本地 sink 接收。
 
 ## 5. 审计日志
 
@@ -341,7 +343,7 @@ node scripts/scan-log-secrets.mjs [path ...]   # 默认扫描 logs/
    → HTTPS / OTLP / 云厂商日志服务
 ```
 
-CP 不做日志中心：不新增 CP 日志汇聚端点；`/api/v1/logs`、`/api/v1/telemetry/logs` 仅是客户端事件入口。采集失败不得阻塞业务请求；投递语义 at-least-once，下游按日志 ID 去重。
+CP 不做日志中心：不新增 CP 日志汇聚端点；`/api/v1/logs`、`/api/v1/telemetry/logs` 仅是客户端事件入口。采集失败不得阻塞业务请求；投递语义 at-least-once，下游按日志 ID 去重。（PLAN-0522 窄例外：仅对既有客户端遥测入口收到的 UI 结构化事件做实例显式开启的下游中继；仍不新增汇聚端点、不 tail 自身/Agent/Runtime 日志。）
 
 ### 9.2 采集路径
 

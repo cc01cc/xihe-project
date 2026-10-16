@@ -68,22 +68,25 @@ describe("BUG-1: /chat Content-Type mismatch", () => {
     });
 });
 
-// Bug 2: /telemetry/logs 404 — 后端没有这个端点
-describe("BUG-2: /telemetry/logs 404", () => {
-    it("logger.flush should not send to non-existent endpoint", async () => {
+// BUG-2 (superseded by PLAN-0522): the telemetry batch now intentionally posts
+// to the same-instance CP endpoint; the central TLM relay stays server-side
+// gated (logging.centralTelemetryEnabled + XIHE_TLM_* deployment config).
+describe("BUG-2 (PLAN-0522): telemetry batch targets the local CP endpoint", () => {
+    it("logger.flush posts the batch to /api/v1/telemetry/logs with the JWT", async () => {
+        localStorage.setItem("xihe-token", "test-jwt-token");
         const fetchSpy = vi
             .fn<(input: string, init?: RequestInit) => Promise<Response>>()
-            .mockResolvedValue({ ok: false, status: 404 } as Response);
+            .mockResolvedValue({ ok: true, status: 200 } as Response);
         vi.stubGlobal("fetch", fetchSpy);
 
         const { logger } = await import("../../../../lib/logger");
-        logger.info("test message");
+        logger.info("telemetry contract check");
         await logger.flush();
 
-        if (fetchSpy.mock.calls.length > 0) {
-            const [endpoint] = fetchSpy.mock.calls[0];
-            expect(endpoint).not.toBe("/api/v1/telemetry/logs");
-        }
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        const [endpoint, options] = fetchSpy.mock.calls[0];
+        expect(endpoint).toBe("/api/v1/telemetry/logs");
+        expect(options?.headers).toMatchObject({ Authorization: "Bearer test-jwt-token" });
     });
 });
 

@@ -137,7 +137,7 @@ Sub-binaries (`xihe-container-runtime`, `xihe-mcp-bridge`) use the same `XIHE_*`
 
 ### 3.4. UI (TypeScript/Vue) — 3-Way Parallel
 
-Browser-side `logger` (`lib/logger.ts`) outputs in three parallel ways:
+Browser-side `logger` (`lib/logger.ts`) outputs in parallel ways (the telemetry batch targets the local CP sink; the central TLM relay is opt-in, see §4):
 
 ```typescript
 import { logger } from '../lib/logger'
@@ -152,7 +152,7 @@ catch (e) {
 |----------------|--------|-------------|
 | Console | `console.log/debug/warn/error` | Development debugging |
 | IndexedDB | Dexie (`XiheLogDB.logs`) | Local persistence, 10k entry limit, auto-cleanup |
-| Telemetry batch | POST `/api/v1/telemetry/logs` | 5s interval, 50 entries/batch, 64KB limit; **UI-side sending is intentionally disabled** (`sendTelemetry` drops the batch), CP endpoint retained |
+| Telemetry batch | POST `/api/v1/telemetry/logs` | 5s interval, ≤50 entries/batch, UTF-8 64KiB cap; the batch is posted to the same-instance CP local sink (JSONL); a single in-flight batch, failures drop the central copy (best-effort) |
 
 Supports `logger.exportLogs()` / `logger.download()` for exporting and downloading logs.
 
@@ -167,6 +167,8 @@ CP `TelemetryController` receives frontend telemetry logs:
 > The former `POST /api/v1/telemetry/anonymous` endpoint has been removed (PLAN-245): it was blocked by the `/api/v1/**` role gate, never reachable anonymously, and had no consumers. Telemetry uses the JWT endpoint only.
 
 Writes to `{XIHE_LOG_DIR}/telemetry.log` (daily rotation, 7d / 500MB / 100MB, JSONL; redacted via `RedactingLogstashEncoder`).
+
+**Central TLM relay (PLAN-0522)**: when the instance-domain `logging.centralTelemetryEnabled` is `"true"` (ADMIN-writable, default false) and both `XIHE_TLM_URL` / `XIHE_TLM_INGEST_TOKEN` are configured, CP relays entries that carry an explicit `eventId`/`eventType` to the shared TLM service per the frozen A11/TLM contract (server-to-server Bearer); only allowlisted metadata (`level`/`errorCode`/`appVersion`) is relayed while `message`/`data` stay in the local sink. The relay is best-effort: 5s timeout, bounded queue (256), central copies dropped on overflow, and failures never block the local sink or business requests; a missing URL/token fails closed for the central copy only. `200 {"status":"ok"}` acknowledges the local sink only.
 
 ## 5. Audit Logging
 

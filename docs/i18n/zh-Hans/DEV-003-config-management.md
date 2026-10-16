@@ -31,7 +31,7 @@ ConfigService 按三层作用域 × 领域（Domain）组织配置；域集合�
 | `agent-runtime` | ✅ | ✅ | ✅ | `useRegistry` / `useSupervisor` / `workersDir`；`instructions` **仅 instance**（决策 #17） |
 | `agent-profile` | ✅（默认） | ✅（个人） | ❌ | `userName` |
 | `user-preference` | ✅（默认） | ✅（个人） | ❌ | `theme` / `language` |
-| `logging` | ✅ | ❌ | ❌ | instance 层唯一权威，可热更（决策 #23） |
+| `logging` | ✅ | ❌ | ❌ | instance 层唯一权威，可热更（决策 #23）；`centralTelemetryEnabled` = 中央遥测中继开关（PLAN-0522，默认 `false`，详见 DEV-004 §4） |
 | `approval-policy` | ✅（平台 ADMIN） | ❌ | ✅ | 审批模式 `mode`（`manual` / `auto`）与要问清单 `askActionClasses[]`（actionClass 数组，PLAN-0407 T2.8：缺省 = 代码默认 8 项 `write`/`exec`/`delete`/`credential`/`CREATE_ACCOUNT`/`CREATE_TEMPLATE`/`MANAGE_WORKSPACE_AGENTS`/`SPAWN_AGENT`；在册 + `manual` → 弹审批、在册 + `auto` → 放行记 `allowed_by`、不在册 → 授权过后直过；缺配置回退默认清单，显式空数组 = 什么都不问）；**instance 层可写默认、workspace 可覆盖**，user 层不可写（显式例外）；审计来源层由 `DbPolicyContextProvider` 按 `ConfigService.effective(...).source` 回填（PLAN-0364 决策 #9，supersede PLAN-0337 选项①；env 命中视为 instance 钉死） |
 | `job-policy` | ✅（平台 ADMIN） | ❌ | ✅ | `defaultTimeoutSecs` / `maxTimeoutSecs`（job 运行时限默认与硬上限，PLAN-0373 BL-22）；**instance 默认+上限权威、workspace 上限内下调、user 不可写**（与 approval-policy 同构的第二显式例外，决策 #1）；`maxTimeoutSecs=0`=上限未设不钳制（决策 #8），执行点在 CP `tools/call` 路由分叉前无条件覆写工具 `timeout`（决策 #5） |
 | `agent-templates` | ✅ | ✅ | ✅ | Agent 角色模板域（PLAN-0374，细则见 §3a） |
@@ -103,6 +103,7 @@ CLI --set KEY=VALUE（最高，启动日志掩码标注）
 | `XIHE_SANDBOX_MEMORY_MB` / `XIHE_SANDBOX_CPUS` / `XIHE_SANDBOX_PIDS_LIMIT` | 沙盒容器资源（默认 512MB / 2 CPU / 100 pids；env 部署权威，非法或越界值按字段回退默认并告警，创建容器时记录生效值） |
 | `XIHE_LOAD_DOTENV` | `0`：各模块不从 `.env` 读取应用层配置 |
 | `XIHE_LOG_LEVEL` / `XIHE_LOG_LEVEL_<MODULE>` | 日志启动引导等级（运行期权威为 DB `logging` 域，详见 DEV-004） |
+| `XIHE_TLM_URL` / `XIHE_TLM_INGEST_TOKEN` | PLAN-0522 中央遥测中继的端点与项目令牌（server-to-server）；令牌仅部署注入、不入库文件；任一缺失时中央转发 fail-closed 关闭，本地 sink 不受影响（详见 DEV-004 §4） |
 
 **业务域键禁入 env（硬约束）**：业务配置（模型/provider/域参数）以 DB 为唯一权威；env 与 DB 的重合属兜底路径，必须显式暴露（决策 #22）。当前注册表重合键为 `embedding.model ← XIHE_EMBEDDING_MODEL` 与 `job-policy.{defaultTimeoutSecs,maxTimeoutSecs} ← XIHE_JOB_TIMEOUT_{DEFAULT,MAX}_SECS`（后者为装机注入类，PLAN-0373 决策 #8）：命中时 CP resolved/effective 使用 env 值，UI 锁定显示（绕 UI 改 DB 无效），日志记录冲突与胜者。目标态为逐步把业务键移出 `.env*`。
 
