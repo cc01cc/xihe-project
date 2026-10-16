@@ -94,6 +94,12 @@ public final class SecurityDefaultsValidator {
             violations.add("XIHE_CP_CREDENTIALS_KEY: required in prod "
                     + "(provide a base64 key or a key ring)");
         }
+        // PLAN-0526: local single-user mode disables the login entry; never in prod.
+        if ("true".equalsIgnoreCase(lookup.apply("XIHE_LOCAL_MODE"))
+                && PROD_ENV_NAME.equals(lookup.apply("XIHE_ENV"))) {
+            violations.add("XIHE_LOCAL_MODE: must be `false` in prod "
+                    + "(local single-user mode disables the login entry)");
+        }
         return violations;
     }
 

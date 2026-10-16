@@ -11,6 +11,9 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration and
 | CP | `POST /auth/login` | `POST /api/v1/auth/login` | public | UI, integration tests |
 | CP | `POST /auth/refresh` | `POST /api/v1/auth/refresh` | public | UI |
 | CP | `GET /auth/me` | `GET /api/v1/auth/me` | user Bearer | UI |
+| CP | `GET /auth/bootstrap-status` | `GET /api/v1/auth/bootstrap-status` | public | UI (PLAN-0526) |
+| CP | `POST /auth/local-login` | `POST /api/v1/auth/local-login` | public (local-mode gate) | UI (PLAN-0526) |
+| CP | `POST /auth/local-password-reset` | `POST /api/v1/auth/local-password-reset` | public (local-mode gate) | UI (PLAN-0526) |
 | CP | `POST /oauth/sessions` | `POST /api/v1/oauth/sessions` | user Bearer | UI |
 | CP | `GET /oauth/callback` | `GET /api/v1/oauth/callback` | public | OAuth provider |
 | CP | `POST /oauth/revoke` | `POST /api/v1/oauth/revoke` | user Bearer | UI |

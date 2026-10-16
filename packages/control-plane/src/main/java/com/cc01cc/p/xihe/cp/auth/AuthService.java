@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.http.HttpStatus;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.cc01cc.p.xihe.cp.entity.User;
@@ -12,6 +13,7 @@ import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -107,6 +109,34 @@ public class AuthService {
     /** PLAN-0470 #22: narrow existence probe; callers keep their own error text. */
     public boolean userExists(UUID userId) {
         return userRepository.existsById(userId);
+    }
+
+    /** PLAN-0526: whether the instance has any user (onboarding bootstrap signal). */
+    public boolean hasAnyUser() {
+        return userRepository.count() > 0;
+    }
+
+    /**
+     * PLAN-0526 I2: resolve the single non-admin login-able user for local mode.
+     * Admin/system accounts and any count other than exactly one are rejected,
+     * so local mode never mints an ADMIN token and never guesses a target.
+     */
+    @Transactional(readOnly = true)
+    public User requireSingleNonAdminUser() {
+        List<User> users = userRepository.findByRole(UserRole.USER);
+        if (users.size() != 1) {
+            throw new CpApiException(HttpStatus.CONFLICT, "LOCAL_SINGLE_USER_REQUIRED",
+                    "Local mode requires exactly one non-admin user");
+        }
+        return users.get(0);
+    }
+
+    /** PLAN-0526: local-mode password reset (loopback-gated by the caller). */
+    @Transactional
+    public void resetPassword(User user, String rawPassword) {
+        user.setPasswordHash(passwordEncoder.encode(rawPassword));
+        userRepository.save(user);
+        logger.info("Local-mode password reset: id={} email={}", user.getId(), user.getEmail());
     }
 
     /**

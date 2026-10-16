@@ -25,6 +25,19 @@ paths:
       operationId: currentUser
       security: [{ bearerAuth: [] }]
       responses: { '200': { description: OK }, '401': { $ref: '#/components/responses/Problem' } }
+  /api/v1/auth/bootstrap-status:
+    get:
+      operationId: authBootstrapStatus
+      responses: { '200': { description: 'Onboarding status {initialized, localMode} (always 200, ungated)' } }
+  /api/v1/auth/local-login:
+    post:
+      operationId: localLogin
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AuthResponse' } } } }, '404': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' } }
+  /api/v1/auth/local-password-reset:
+    post:
+      operationId: localPasswordReset
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/LocalPasswordResetRequest' } } } }
+      responses: { '204': { description: Reset }, '400': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' } }
   /api/v1/workspaces/current:
     get: { operationId: getCurrentWorkspace, security: [{ bearerAuth: [] }], responses: { '200': { description: Current workspace, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
   /api/v1/workspaces:
@@ -2384,7 +2397,8 @@ components:
     RuntimeReadFileResult: { type: object, required: [found, content, truncated], properties: { found: { type: boolean, description: 'false = path resolved to no content (missing file or unmaterialized root); true = content authoritative even when empty string.' }, content: { type: string, description: 'File content; empty string when found=false or the file is empty (distinguish via found).' }, truncated: { type: boolean } } }
     AgentSpawnRequest: { type: object, required: [parentRunId, toolCallId], additionalProperties: false, properties: { parentRunId: { type: string, format: uuid }, toolCallId: { type: string, format: uuid, description: 'Canonical MCP tool-call correlation ID for the spawn invocation.' } } }
     AgentSpawnResponse: { type: object, required: [sessionId, runId, principalId, workspaceId], properties: { sessionId: { type: string, format: uuid }, runId: { type: string, format: uuid }, principalId: { type: string, format: uuid, description: 'Stable AgentPrincipal resolved from the durable parent Session; never taken from the request' }, workspaceId: { type: string, format: uuid } } }
-    RegisterRequest: { type: object, required: [email, password, name], properties: { email: { type: string }, password: { type: string }, name: { type: string } } }
+    RegisterRequest: { type: object, required: [email, name], properties: { email: { type: string }, password: { type: string, description: 'Optional in local mode (server generates one); required otherwise' }, name: { type: string } } }
+    LocalPasswordResetRequest: { type: object, required: [newPassword], properties: { newPassword: { type: string, minLength: 8, maxLength: 128 } } }
     LoginRequest: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string } } }
     AuthResponse: { type: object, properties: { accessToken: { type: string }, refreshToken: { type: string }, user: { type: object }, workspaceId: { type: string } } }
     Workspace: { type: object, required: [id, name, ownerId, storageBackend, storageRef, storageMode, executionMode, generation], properties: { id: { type: string }, name: { type: string }, description: { type: [string, 'null'] }, ownerId: { type: string }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'], description: 'Canonical host path only for the owner/admin; null for ordinary members. Never a display or authorization substitute.' }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] }, generation: { type: integer }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
