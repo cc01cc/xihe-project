@@ -3263,6 +3263,20 @@ components:
          source: { type: [string, 'null'], enum: [remote, litellm, curated, manual, null] }
          verifiedAt: { type: [string, 'null'], format: date-time }
          capabilities: { $ref: '#/components/schemas/ProviderModelCapabilities' }
+         inputModalities: { type: array, items: { type: string }, description: 'PLAN-0523 additive: e.g. [text, image]; absent when unknown' }
+         outputModalities: { type: array, items: { type: string }, description: 'PLAN-0523 additive: e.g. [text] or [image]; absent when unknown' }
+         contextWindowTokens: { type: integer, minimum: 1, description: 'PLAN-0523 additive: max input tokens from the litellm cost map; absent when unknown' }
+         maxOutputTokens: { type: integer, minimum: 1, description: 'PLAN-0523 additive: max output tokens; absent when unknown' }
+         pricing: { $ref: '#/components/schemas/ProviderModelPricing' }
+    ProviderModelPricing:
+       type: object
+       required: [currency, unit, input, output]
+       description: 'PLAN-0523 additive: per-1M-token pricing from the litellm cost map; absent when unknown'
+       properties:
+         currency: { type: string, example: USD }
+         unit: { type: string, example: '1M tokens' }
+         input: { type: number }
+         output: { type: number }
     ProviderModelCapabilities:
        type: object
        required: [chat, vision, tools]
@@ -3273,6 +3287,7 @@ components:
          audio: { type: [boolean, 'null'] }
          video: { type: [boolean, 'null'] }
          pdf: { type: [boolean, 'null'] }
+         image: { type: boolean, description: 'PLAN-0523 additive: image-generation capability (litellm mode=image_generation or conservative name fallback)' }
     ProviderCredentialLeaseRedeemRequest:
        type: object
        required: [lease, runId, providerConnectionId, providerId, model, connectionRevision]
