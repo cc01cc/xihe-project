@@ -10,6 +10,8 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -102,20 +104,29 @@ class AuthLocalModeTest {
     }
 
     @Test
-    void singleNonAdminUser_onlyOne_passes() {
+    void singleUser_onlyOne_passes() {
         AuthService authService = AuthTestDoubles.authServiceWithUsers(List.of(oneUser()));
-        assertNotNull(authService.requireSingleNonAdminUser());
+        assertNotNull(authService.requireSingleUser());
     }
 
     @Test
-    void singleNonAdminUser_noneOrMany_conflict() {
+    void singleUser_adminAllowed() {
+        com.cc01cc.p.xihe.cp.entity.User admin = new com.cc01cc.p.xihe.cp.entity.User(
+                "admin@xihe.local", "hash", com.cc01cc.p.xihe.cp.entity.UserRole.ADMIN, "Admin");
+        AuthService authService = AuthTestDoubles.authServiceWithUsers(List.of(admin));
+        assertEquals(com.cc01cc.p.xihe.cp.entity.UserRole.ADMIN,
+                authService.requireSingleUser().getRole());
+    }
+
+    @Test
+    void singleUser_noneOrMany_conflict() {
         assertEquals("LOCAL_SINGLE_USER_REQUIRED", assertThrows(
                 com.cc01cc.p.xihe.cp.config.CpApiException.class,
-                () -> AuthTestDoubles.authServiceWithUsers(List.of()).requireSingleNonAdminUser()).getCode());
+                () -> AuthTestDoubles.authServiceWithUsers(List.of()).requireSingleUser()).getCode());
         assertEquals("LOCAL_SINGLE_USER_REQUIRED", assertThrows(
                 com.cc01cc.p.xihe.cp.config.CpApiException.class,
                 () -> AuthTestDoubles.authServiceWithUsers(List.of(oneUser(), oneUser()))
-                        .requireSingleNonAdminUser()).getCode());
+                        .requireSingleUser()).getCode());
     }
 
     @Test
@@ -135,6 +146,26 @@ class AuthLocalModeTest {
                 () -> controller.register(request, request("192.168.1.10", null, "127.0.0.1")));
     }
 
+    @Test
+    void register_localMode_grantsAdminRole() {
+        com.cc01cc.p.xihe.cp.repository.UserRepository repo =
+                mock(com.cc01cc.p.xihe.cp.repository.UserRepository.class);
+        when(repo.existsByEmail(anyString())).thenReturn(false);
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        org.springframework.security.crypto.password.PasswordEncoder encoder =
+                mock(org.springframework.security.crypto.password.PasswordEncoder.class);
+        when(encoder.encode(anyString())).thenReturn("hash");
+        AuthService service = new AuthService(repo, encoder,
+                mock(com.cc01cc.p.xihe.cp.config.JwtTokenProvider.class),
+                mock(com.cc01cc.p.xihe.cp.policy.GrantDefaultService.class));
+        RegisterRequest request = new RegisterRequest("local@test.com", "pw-12345678", "Local");
+
+        assertEquals(com.cc01cc.p.xihe.cp.entity.UserRole.ADMIN,
+                service.registerUser(request, true).getRole());
+        assertEquals(com.cc01cc.p.xihe.cp.entity.UserRole.USER,
+                service.registerUser(request, false).getRole());
+    }
+
     private static com.cc01cc.p.xihe.cp.entity.User oneUser() {
         return new com.cc01cc.p.xihe.cp.entity.User(
                 "local@test.com", "hash", com.cc01cc.p.xihe.cp.entity.UserRole.USER, "Local");
@@ -146,7 +177,7 @@ class AuthLocalModeTest {
         static AuthService authServiceWithUsers(List<com.cc01cc.p.xihe.cp.entity.User> users) {
             com.cc01cc.p.xihe.cp.repository.UserRepository userRepository =
                     mock(com.cc01cc.p.xihe.cp.repository.UserRepository.class);
-            when(userRepository.findByRole(com.cc01cc.p.xihe.cp.entity.UserRole.USER)).thenReturn(users);
+            when(userRepository.findAll()).thenReturn(users);
             return new AuthService(userRepository,
                     mock(org.springframework.security.crypto.password.PasswordEncoder.class),
                     mock(com.cc01cc.p.xihe.cp.config.JwtTokenProvider.class),

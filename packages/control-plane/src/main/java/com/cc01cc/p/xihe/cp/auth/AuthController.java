@@ -81,7 +81,7 @@ public class AuthController {
         }
         try {
             AuthResponse response = transactionTemplate.execute(status -> {
-                User user = authService.registerUser(request);
+                User user = authService.registerUser(request, localModeService.enabled());
                 return withDefaultWorkspace(user);
             });
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
@@ -115,11 +115,11 @@ public class AuthController {
         }
     }
 
-    /** PLAN-0526: passwordless re-entry for the single non-admin local user. */
+    /** PLAN-0526: passwordless re-entry for the single local user. */
     @PostMapping("/local-login")
     public ResponseEntity<?> localLogin(HttpServletRequest httpRequest) {
         localModeService.requireLocalAccess(httpRequest);
-        User user = authService.requireSingleNonAdminUser();
+        User user = authService.requireSingleUser();
         return ResponseEntity.ok(withDefaultWorkspace(user));
     }
 
@@ -128,7 +128,7 @@ public class AuthController {
     public ResponseEntity<?> localPasswordReset(@Valid @RequestBody LocalPasswordResetRequest request,
                                                 HttpServletRequest httpRequest) {
         localModeService.requireLocalAccess(httpRequest);
-        User user = authService.requireSingleNonAdminUser();
+        User user = authService.requireSingleUser();
         authService.resetPassword(user, request.getNewPassword());
         return ResponseEntity.noContent().build();
     }

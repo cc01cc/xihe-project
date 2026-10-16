@@ -7,6 +7,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
+import com.cc01cc.p.xihe.cp.auth.LocalModeService;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 
@@ -24,12 +25,14 @@ public class DataSeeder implements CommandLineRunner {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final GrantDefaultService grantDefaultService;
+    private final LocalModeService localModeService;
 
     public DataSeeder(UserRepository userRepository, PasswordEncoder passwordEncoder,
-                      GrantDefaultService grantDefaultService) {
+                      GrantDefaultService grantDefaultService, LocalModeService localModeService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.grantDefaultService = grantDefaultService;
+        this.localModeService = localModeService;
     }
 
     static String seededAdminPassword() {
@@ -39,6 +42,12 @@ public class DataSeeder implements CommandLineRunner {
     @Override
     @Transactional
     public void run(String... args) {
+        // PLAN-0526: local mode is a fresh single-user bootstrap — do not seed the
+        // default admin, so the instance starts with zero users and can onboard.
+        if (localModeService.enabled()) {
+            log.info("Local mode enabled: skipping default admin seed");
+            return;
+        }
         User admin = userRepository.findByEmail("admin@xihe.local").orElse(null);
         if (admin == null) {
             admin = new User("admin@xihe.local", passwordEncoder.encode(ADMIN_PASSWORD),

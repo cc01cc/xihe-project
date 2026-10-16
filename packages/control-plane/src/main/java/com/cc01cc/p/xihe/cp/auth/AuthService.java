@@ -43,6 +43,16 @@ public class AuthService {
     /** Creates the user row and its default grants; returns the persisted user. */
     @Transactional
     public User registerUser(RegisterRequest request) {
+        return registerUser(request, false);
+    }
+
+    /**
+     * Creates the user row and its default grants; returns the persisted user.
+     * PLAN-0526: local single-user registration grants the ADMIN role so the
+     * single-machine user has full capability.
+     */
+    @Transactional
+    public User registerUser(RegisterRequest request, boolean adminRole) {
         if (userRepository.existsByEmail(request.getEmail())) {
             throw new IllegalArgumentException("Email already registered");
         }
@@ -50,13 +60,13 @@ public class AuthService {
         User user = new User(
                 request.getEmail(),
                 passwordEncoder.encode(request.getPassword()),
-                UserRole.USER,
+                adminRole ? UserRole.ADMIN : UserRole.USER,
                 request.getName() != null ? request.getName() : request.getEmail().split("@")[0]
         );
         user = userRepository.save(user);
         grantDefaultService.ensureUserDefault(user);
 
-        logger.info("User registered: id={} email={}", user.getId(), user.getEmail());
+        logger.info("User registered: id={} email={} role={}", user.getId(), user.getEmail(), user.getRole());
         return user;
     }
 
@@ -117,16 +127,16 @@ public class AuthService {
     }
 
     /**
-     * PLAN-0526 I2: resolve the single non-admin login-able user for local mode.
-     * Admin/system accounts and any count other than exactly one are rejected,
-     * so local mode never mints an ADMIN token and never guesses a target.
+     * PLAN-0526 I2: resolve the single login-able user for local mode. Any role
+     * (including ADMIN) is allowed; only a count other than exactly one is
+     * rejected, so local mode never guesses a target.
      */
     @Transactional(readOnly = true)
-    public User requireSingleNonAdminUser() {
-        List<User> users = userRepository.findByRole(UserRole.USER);
+    public User requireSingleUser() {
+        List<User> users = userRepository.findAll();
         if (users.size() != 1) {
             throw new CpApiException(HttpStatus.CONFLICT, "LOCAL_SINGLE_USER_REQUIRED",
-                    "Local mode requires exactly one non-admin user");
+                    "Local mode requires exactly one user");
         }
         return users.get(0);
     }
