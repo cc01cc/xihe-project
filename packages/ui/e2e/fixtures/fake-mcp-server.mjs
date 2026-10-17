@@ -40,9 +40,10 @@ const server = createServer(async (request, response) => {
         } catch {
             return json(response, 400, { error: "invalid_request" });
         }
-        const keys = control && typeof control === "object" && !Array.isArray(control)
-            ? Object.keys(control)
-            : [];
+        const keys =
+            control && typeof control === "object" && !Array.isArray(control)
+                ? Object.keys(control)
+                : [];
         if (keys.length !== 1 || !["action"].includes(keys[0])) {
             return json(response, 400, { error: "invalid_request" });
         }
@@ -63,7 +64,8 @@ const server = createServer(async (request, response) => {
             });
         }
         if (control.action === "reset") {
-            if (heldMutationResponses.size > 0) return json(response, 409, { error: "mutation_pending" });
+            if (heldMutationResponses.size > 0)
+                return json(response, 409, { error: "mutation_pending" });
             mutationCount = 0;
             ambiguousNextMutation = false;
             return json(response, 200, {
@@ -162,15 +164,20 @@ const server = createServer(async (request, response) => {
                             inputSchema: { type: "object" },
                         },
                         ...(checkpointResumeEnabled
-                            ? [{
-                                  name: "remote_mutate",
-                                  description: "Test-only mutation with observable dispatch count",
-                                  inputSchema: {
-                                      type: "object",
-                                      properties: { operation: { type: "string", enum: ["increment"] } },
-                                      required: ["operation"],
+                            ? [
+                                  {
+                                      name: "remote_mutate",
+                                      description:
+                                          "Test-only mutation with observable dispatch count",
+                                      inputSchema: {
+                                          type: "object",
+                                          properties: {
+                                              operation: { type: "string", enum: ["increment"] },
+                                          },
+                                          required: ["operation"],
+                                      },
                                   },
-                              }]
+                              ]
                             : []),
                     ],
                 }
@@ -185,32 +192,43 @@ const server = createServer(async (request, response) => {
                               return null;
                           }
                           return {
-                              content: [{ type: "text", text: JSON.stringify({ result: "mutation completed" }) }],
+                              content: [
+                                  {
+                                      type: "text",
+                                      text: JSON.stringify({ result: "mutation completed" }),
+                                  },
+                              ],
                               isError: false,
                           };
                       })()
                     : body.params?.arguments?.mode === "input_required"
-                    ? (() => {
-                          const requestState = { nonce: randomUUID(), required: ["value"] };
-                          requestStates.set(JSON.stringify(requestState), {
-                              sessionId,
-                              expiresAt: Date.now() + 1000,
-                          });
-                          return {
-                              content: [{ type: "text", text: "input required" }],
-                              isError: true,
-                              requestState,
-                          };
-                      })()
-                    : {
-                          content: [
-                              { type: "text", text: String(body.params?.arguments?.text ?? "") },
-                          ],
-                          isError: false,
-                      }
+                      ? (() => {
+                            const requestState = { nonce: randomUUID(), required: ["value"] };
+                            requestStates.set(JSON.stringify(requestState), {
+                                sessionId,
+                                expiresAt: Date.now() + 1000,
+                            });
+                            return {
+                                content: [{ type: "text", text: "input required" }],
+                                isError: true,
+                                requestState,
+                            };
+                        })()
+                      : {
+                            content: [
+                                { type: "text", text: String(body.params?.arguments?.text ?? "") },
+                            ],
+                            isError: false,
+                        }
                 : undefined;
-    if (!result && body.method === "tools/call" && body.params?.name === "remote_mutate"
-        && checkpointResumeEnabled && heldMutationResponses.size > 0 && !response.headersSent) {
+    if (
+        !result &&
+        body.method === "tools/call" &&
+        body.params?.name === "remote_mutate" &&
+        checkpointResumeEnabled &&
+        heldMutationResponses.size > 0 &&
+        !response.headersSent
+    ) {
         return;
     }
     if (!result)
