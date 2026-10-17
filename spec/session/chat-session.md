@@ -38,7 +38,7 @@ Session 负责连续对话上下文、消息、附件引用、模型绑定和 Ch
 
 ## 承接与验证
 
-- Session 固定 Workspace 与跨 Session 延续：PLAN-0348。
+- Session 固定 Workspace 与跨 Session 延续：PLAN-0348。条款 1–2（固定绑定、不 rebind）已负向验证：CP 跨 Workspace 作用域拒绝（404）+ Agent 跨 workspace `fail-closed`；跨 Session 延续入口**未实施**（退 backlog）。证据见 PLAN-0348 `evidence/`。
 - Agent principal Workspace scope：PLAN-0374。
 - 当前实现对账：PLAN-0387 `evidence/current-state.md`。
 - 真实 delete/recovery/SSE 验证：PLAN-0387 V7，尚未完成。
