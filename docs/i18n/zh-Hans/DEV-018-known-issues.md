@@ -18,7 +18,7 @@ updated: 2026-10-16
 ## 全量 host E2E 基线口径（PLAN-0365，2026-09-18）
 
 - **入口必须走 `node scripts/e2e-host.mjs [--llm-mode=<mode>] <spec>`**：手动 `npx playwright test` 不注入 baseURL/fake 端口会产生假失败（ERR_CONNECTION_REFUSED / invalid URL）。
-- **Agent 单 workspace MCP 绑定（PLAN-262）**：Agent 进程首个 chat 绑定 workspace 后，其它 workspace 的 chat 将 fail（`MCP workspace context cannot be reused across workspaces`）。全量串行 host E2E 中跨 workspace 的 write_file 审批类 spec（checkpoint-rollback S1、checkpoint-slices S1、journey-a、journey-c）因此**预期失败**；单 spec 复跑（Agent 首绑=本 spec workspace）为验证口径。根治归 PLAN-0348 rebind。
+- **Agent 单 workspace MCP 绑定（PLAN-262）**：Agent 进程首个 chat 绑定 workspace 后，其它 workspace 的 chat 将 fail-closed（`MCP workspace context cannot be reused across workspaces`）。全量串行 host E2E 中跨 workspace 的 write_file 审批类 spec（checkpoint-rollback S1、checkpoint-slices S1、journey-a、journey-c）因此**预期失败**；单 spec 复跑（Agent 首绑=本 spec workspace）为验证口径。**按 fail-closed 接受（PLAN-0348，2026-10-17 决策 #7）**：该行为是 Session 固定 Workspace 的既定安全边界，不实现 Session 内 rebind；根治若需要另立计划/backlog。PLAN-0348 已将本条收敛为「验证型收口」并补负向证据（CP 作用域拒绝 + Agent 跨 workspace fail-closed）。
 - llm-mode 是 boot 期属性：external 复用栈时 0365 已补 fixture 启动 + provider 重导入，但**最可靠做法仍是以目标 mode boot**。
 - 视觉基线（toHaveScreenshot）在 UI 结构变更后须重置，重置前先确认 DOM 断言全过。
 
