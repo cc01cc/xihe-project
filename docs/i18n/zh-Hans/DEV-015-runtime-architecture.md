@@ -103,7 +103,7 @@ sequenceDiagram
 - Checkpoint 是**系统侧 Git 快照**，不是用户仓库的历史分支：**不是** Git 官方「shadow repo」功能；影子库与用户 `.git` **平行**，互不读写 refs/index/branch。
 - 用户可感动作：**capture（存）→ preview（看）→ restore（回滚）→ cleanup（清）**。
 - Runtime 在 `<hostRoot>/.xihe-shadow/<workspaceId>.git` 维护影子库；位于 workspace 外、不 bind 进 Sandbox。`hostRoot` 下做路径校验；未知 workspace、Git 不可用或版本不足 → 显式 `CHECKPOINT_UNAVAILABLE`，不回退到宿主任意目录。
-- 嵌套仓库按不透明 gitlink（`opaqueNestedRepos[]`）；可选 `XIHE_CHECKPOINT_REJECT_NESTED_REPOS`（默认关，开启则 `NESTED_REPO_LIMIT` 降级）。**子仓内部文件不进入切片**（不可恢复嵌套内容）；可恢复方案见 backlog **BL-15**。
+- 嵌套仓库默认按 **L1 文件级展开**（`flatten`，PLAN-0361）：Runtime 自研 stage 决策层跳过子仓 `.git`（目录或 gitdir 指针），子仓文件（含未提交改动）作为**普通 blob 进父切片**，**可按文件恢复**；`opaqueNestedRepos[]` 在 L1 下为空。策略由 `XIHE_CHECKPOINT_NESTED_POLICY` 选择（`flatten` 默认 / `opaque` 旧 gitlink 行为 / `reject`）；`reject`（或 `XIHE_CHECKPOINT_REJECT_NESTED_REPOS=1`）时拒绝捕获并给 `NESTED_REPO_LIMIT` 降级原因，CP durable reason 透传该码。
 - `apply_patch` 为 Gateway-public 工具之一，走正常审批；捕获只在 Run 终止 / 异常补拍 / C0，不由派发前置触发；UI 回滚只经 CP public workspace route。
 
 ### 6.2 对象模型（Git 本体）
@@ -176,7 +176,7 @@ refs/xihe/slices/<epochMs>-<commitHash>   ← 自定义 ref（非 refs/heads 分
 - 进不了当前树 `C` 的路径 → diff 不出现 → **还原零触碰**；capture 与 restore **共用**该语义。
 - 未跟踪：排除集内不碰；集内且 T 无 → 删；T 有 → 写回。
 - 与用户 ignore 分离的产品方案见 backlog（BL-14），不在本节展开。
-- **当前实现调用形态**：stage 决策与机制均在 **系统 `git` 子进程**（porcelain `add -A` + plumbing）；**无** libgit2/`git2`/gitoxide 等进程内库，**不 fork Git**。嵌套默认 opaque；文件级可恢复与 ignore 分离的未来方案（收回 stage 决策层、机制仍 CLI/可选库）见 workspace backlog **BL-14/BL-15** 及内部方案备忘，不在本节展开。
+- **当前实现调用形态**：非嵌套路径的 stage 决策与机制均在 **系统 `git` 子进程**（porcelain `add -A` + plumbing）；嵌套仓库由 Runtime 自研 walk + plumbing（`hash-object -w` / `update-index --add --cacheinfo`）**文件级展开**（跳过每个 `.git`，不写入影子对象库）；**无** libgit2/`git2`/gitoxide 等进程内库，**不 fork Git**。用户 ignore 与 Xihe 排除分离等未来方案见 workspace backlog **BL-14** 及内部方案备忘，不在本节展开。
 
 ### 6.7 性能（PLAN-0358）
 

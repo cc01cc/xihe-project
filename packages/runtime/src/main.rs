@@ -3009,17 +3009,32 @@ fn runtime_checkpoint_host_root() -> PathBuf {
         })
 }
 
-/// Opt-in nested-repository hard limit (`XIHE_CHECKPOINT_REJECT_NESTED_REPOS`,
-/// default off). When enabled, captures refuse workspaces containing nested
-/// repositories with an explicit `NESTED_REPO_LIMIT` degraded reason; the
-/// default policy records them as opaque gitlinks (PLAN-0338 T1.2 / V2).
+/// Nested-repository capture policy (PLAN-0361). Default `flatten` (L1): nested
+/// repositories are captured file-by-file and restorable. `opaque` restores the
+/// legacy PLAN-0338 gitlink behavior; `reject` refuses such captures with an
+/// explicit `NESTED_REPO_LIMIT` degraded reason. `XIHE_CHECKPOINT_NESTED_POLICY`
+/// selects the policy; the legacy `XIHE_CHECKPOINT_REJECT_NESTED_REPOS=true`
+/// still forces `reject`.
 fn runtime_checkpoint_nested_repo_policy() -> NestedRepoPolicy {
-    let enabled = std::env::var("XIHE_CHECKPOINT_REJECT_NESTED_REPOS")
+    if let Ok(value) = std::env::var("XIHE_CHECKPOINT_NESTED_POLICY") {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "opaque" => return NestedRepoPolicy::Opaque,
+            "reject" => return NestedRepoPolicy::Reject,
+            "flatten" | "" => {}
+            other => {
+                tracing::warn!(
+                    value = other,
+                    "unknown XIHE_CHECKPOINT_NESTED_POLICY; using default flatten"
+                );
+            }
+        }
+    }
+    let reject = std::env::var("XIHE_CHECKPOINT_REJECT_NESTED_REPOS")
         .is_ok_and(|value| value.eq_ignore_ascii_case("true") || value == "1");
-    if enabled {
+    if reject {
         NestedRepoPolicy::Reject
     } else {
-        NestedRepoPolicy::Opaque
+        NestedRepoPolicy::Flatten
     }
 }
 

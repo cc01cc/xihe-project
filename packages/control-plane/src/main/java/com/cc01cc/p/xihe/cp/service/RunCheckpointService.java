@@ -22,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -60,6 +61,13 @@ public class RunCheckpointService {
     public static final String REASON_DEGRADED = "DEGRADED";
     public static final String REASON_INVALID_REQUEST = "INVALID_REQUEST";
     public static final String REASON_TOO_LARGE = "TOO_LARGE";
+
+    /**
+     * PLAN-0361 B6: Runtime capture-failure reasons that are surfaced verbatim as
+     * the durable {@code unrollableReason} instead of being normalized to
+     * {@link #REASON_UNAVAILABLE}. Unknown/transport reasons still normalize.
+     */
+    private static final Set<String> PROPAGATED_CAPTURE_REASONS = Set.of("NESTED_REPO_LIMIT");
 
     /** Retention constants: newest N slices + TTL days per workspace. */
     public static final int RETENTION_MAX_RUNS = 50;
@@ -170,7 +178,11 @@ public class RunCheckpointService {
                     yield false;
                 }
                 default -> {
-                    persistDegraded(run, REASON_UNAVAILABLE, result.reason());
+                    String reason = result.reason();
+                    String durable = reason != null && PROPAGATED_CAPTURE_REASONS.contains(reason)
+                            ? reason
+                            : REASON_UNAVAILABLE;
+                    persistDegraded(run, durable, reason);
                     yield false;
                 }
             };

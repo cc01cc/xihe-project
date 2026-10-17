@@ -254,8 +254,23 @@ class RunCheckpointServiceTest {
     }
 
     @Test
-    void transportFailureDegradesInsteadOfThrowing() {
+    void nestedRepoLimitCaptureDegradesWithItsOwnReason() {
         when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
+                .thenReturn(Optional.of(runWithStatus("succeeded")));
+        when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
+                .thenReturn(new RuntimeCheckpointClient.CaptureResult(
+                        RuntimeCheckpointClient.Outcome.UNAVAILABLE, RUN_ID, false, null, null, null,
+                        null, List.of(), List.of(), null, "NESTED_REPO_LIMIT"));
+
+        assertFalse(service.captureCheckpoint(RUN_ID));
+
+        assertEquals(1, rows.size());
+        assertEquals(RunCheckpoint.STATE_DEGRADED, rows.get(0).getState());
+        assertEquals("NESTED_REPO_LIMIT", rows.get(0).getUnrollableReason());
+    }
+
+    @Test
+    void transportFailureDegradesInsteadOfThrowing() {        when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
                 .thenReturn(Optional.of(runWithStatus("succeeded")));
         when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
                 .thenReturn(new RuntimeCheckpointClient.CaptureResult(
