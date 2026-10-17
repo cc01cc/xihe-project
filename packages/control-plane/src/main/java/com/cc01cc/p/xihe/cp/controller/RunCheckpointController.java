@@ -260,6 +260,8 @@ public class RunCheckpointController {
             case RESTORE_LOCKED -> ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT,
                     "CHECKPOINT_RESTORE_LOCKED",
                     "another restore is already running in this workspace", details);
+            case RUN_ACTIVE -> ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT,
+                    "RUN_ACTIVE", "a chat run is active in this workspace", details);
             case INVALID_REQUEST -> ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
                     "CHECKPOINT_INVALID_REQUEST", "Invalid checkpoint request", details);
             case TOO_LARGE -> ProblemDetailsHandler.problemResponse(HttpStatus.PAYLOAD_TOO_LARGE,

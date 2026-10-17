@@ -491,6 +491,23 @@ class RunCheckpointServiceTest {
     }
 
     @Test
+    void revertRefusesWhileARunIsActiveInTheWorkspace() {
+        when(chatRunRepository.existsByWorkspaceIdAndStatusIn(eq(WORKSPACE_ID), any())).thenReturn(true);
+
+        RunCheckpointService.PreviewOutcome preview = service.previewRevert(WORKSPACE_ID, SLICE_REF);
+        assertEquals(RunCheckpointService.Gate.RUN_ACTIVE, preview.gate());
+        assertEquals("RUN_ACTIVE", preview.reason());
+
+        RunCheckpointService.RevertOutcome revert = service.revert(WORKSPACE_ID, SLICE_REF, List.of());
+        assertEquals(RunCheckpointService.Gate.RUN_ACTIVE, revert.gate());
+        assertEquals("RUN_ACTIVE", revert.reason());
+
+        // The gate precedes slice resolution: no Runtime call is made.
+        verify(client, never()).previewRevert(anyString(), anyString());
+        verify(client, never()).revert(anyString(), anyString(), any());
+    }
+
+    @Test
     void previewRevertPassesSliceRefToRuntimePreview() {
         seedCapturedRow();
         when(client.previewRevert(WORKSPACE_ID, SLICE_REF)).thenReturn(previewOk());

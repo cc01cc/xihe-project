@@ -847,7 +847,10 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         expect(await awaitChatRunTerminal(request, sharedHeaders, runId)).toBe("succeeded");
         const view = await awaitCheckpointCaptured(request, sharedHeaders, sharedWs, runId);
 
-        // Two sequential executes exercise idempotency; a concurrent restore is fail-fast.
+        // Two sequential executes exercise idempotency. Reverting to the captured slice
+        // preserves the captured run file and deletes a later edit (same semantics as S1).
+        const extraFile = path.join(hostDir, `s6-extra-${nonce}.md`);
+        writeFileSync(extraFile, `S6-EXTRA-${nonce}\n`);
         const first = await executeRevert(request, sharedHeaders, sharedWs, view.sliceRef!);
         expect(first.status).toBe(200);
         expect(first.body.counts.deleted).toBe(1);
@@ -859,16 +862,19 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         expect(second.body.counts.failed).toBe(0);
         expect(second.body.suspects).toEqual([]);
 
-        // Persistence: the projection carries the last (noop) summary and the file stays deleted.
+        // Persistence: the projection carries the last (noop) summary; the captured run
+        // file stays, the post-capture edit is gone.
         const after = await checkpointView(request, sharedHeaders, sharedWs, runId);
         expect(after.revert?.state).toBe("rolled_back");
         expect(after.revert?.attemptCount).toBe(2);
-        expect(existsSync(hostFile)).toBe(false);
+        expect(existsSync(hostFile), "the captured run file is preserved").toBe(true);
+        expect(existsSync(extraFile), "the post-capture edit is deleted").toBe(false);
 
         // Final state is stable across a re-read.
         const stable = await checkpointView(request, sharedHeaders, sharedWs, runId);
         expect(stable).toEqual(after);
-        expect(existsSync(hostFile)).toBe(false);
+        expect(existsSync(hostFile)).toBe(true);
+        expect(existsSync(extraFile)).toBe(false);
     });
 
     // S7 ─ dual diff separation ────────────────────────────────────────────────

@@ -87,6 +87,10 @@ public class RunCheckpointService {
     private static final List<String> TERMINAL_RUN_STATUSES = List.of(
             "succeeded", "failed", "partial", "ambiguous", "cancelled");
 
+    /** ChatRun non-terminal statuses (mirrors {@code ChatRunCancellationService}); revert refuses while any is present. */
+    private static final List<String> NON_TERMINAL_RUN_STATUSES = List.of(
+            "accepted", "queued", "running", "streaming", "awaiting_approval", "dispatching", "cancelling");
+
     /** PLAN-0338: a terminal Run counts as abnormal unless it succeeded or was cancelled. */
     private static final List<String> NORMAL_RUN_STATUSES = List.of("succeeded", "cancelled");
 
@@ -236,6 +240,8 @@ public class RunCheckpointService {
         TYPE_CHANGES_UNACKNOWLEDGED,
         /** 409 CHECKPOINT_RESTORE_LOCKED — another restore holds the workspace restore lock. */
         RESTORE_LOCKED,
+        /** 409 RUN_ACTIVE — a ChatRun is active in the workspace; revert must wait. */
+        RUN_ACTIVE,
         /** 400 CHECKPOINT_INVALID_REQUEST — malformed blob request. */
         INVALID_REQUEST,
         /** 413 CHECKPOINT_BLOB_TOO_LARGE — preview cap exceeded. */
@@ -309,6 +315,9 @@ public class RunCheckpointService {
      * {@code 409 CHECKPOINT_NOT_AVAILABLE {reason=EXPIRED}}.
      */
     public PreviewOutcome previewRevert(String workspaceId, String sliceRef) {
+        if (hasActiveRun(workspaceId)) {
+            return new PreviewOutcome(Gate.RUN_ACTIVE, "RUN_ACTIVE", null, Map.of());
+        }
         RunCheckpoint row = findSlice(workspaceId, sliceRef);
         GateVerdict verdict = rowGate(row);
         if (verdict != null) {
@@ -339,6 +348,9 @@ public class RunCheckpointService {
      * bookkeeping is best-effort and never rewrites the Runtime's result.
      */
     public RevertOutcome revert(String workspaceId, String sliceRef, List<String> acknowledgeTypeChanges) {
+        if (hasActiveRun(workspaceId)) {
+            return new RevertOutcome(Gate.RUN_ACTIVE, "RUN_ACTIVE", null, Map.of());
+        }
         RunCheckpoint row = findSlice(workspaceId, sliceRef);
         GateVerdict verdict = rowGate(row);
         if (verdict != null) {
@@ -630,6 +642,12 @@ public class RunCheckpointService {
             return null;
         }
         return checkpoints.findByWorkspaceIdAndSliceRef(workspaceId, sliceRef).orElse(null);
+    }
+
+    /** Restoring under an active ChatRun is unsafe: revert refuses while the workspace has one. */
+    private boolean hasActiveRun(String workspaceId) {
+        return !isBlank(workspaceId)
+                && chatRuns.existsByWorkspaceIdAndStatusIn(workspaceId, NON_TERMINAL_RUN_STATUSES);
     }
 
     private static Map<String, Object> problemDetails(Map<String, Object> problem, String... keys) {
