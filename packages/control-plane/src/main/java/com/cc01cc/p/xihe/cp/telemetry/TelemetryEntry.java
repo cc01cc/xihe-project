@@ -10,7 +10,13 @@ public class TelemetryEntry {
     private String eventId;
     private String eventType;
     private String errorCode;
-    private String appVersion;
+    private String serviceVersion;
+    private String releaseChannel;
+    private String osFamily;
+    private String browserFamily;
+    private String lang;
+    private String screenBucket;
+    private String anonSessionId;
 
     public long getTimestamp() { return timestamp; }
     public void setTimestamp(long timestamp) { this.timestamp = timestamp; }
@@ -26,8 +32,20 @@ public class TelemetryEntry {
     public void setEventType(String eventType) { this.eventType = eventType; }
     public String getErrorCode() { return errorCode; }
     public void setErrorCode(String errorCode) { this.errorCode = errorCode; }
-    public String getAppVersion() { return appVersion; }
-    public void setAppVersion(String appVersion) { this.appVersion = appVersion; }
+    public String getServiceVersion() { return serviceVersion; }
+    public void setServiceVersion(String serviceVersion) { this.serviceVersion = serviceVersion; }
+    public String getReleaseChannel() { return releaseChannel; }
+    public void setReleaseChannel(String releaseChannel) { this.releaseChannel = releaseChannel; }
+    public String getOsFamily() { return osFamily; }
+    public void setOsFamily(String osFamily) { this.osFamily = osFamily; }
+    public String getBrowserFamily() { return browserFamily; }
+    public void setBrowserFamily(String browserFamily) { this.browserFamily = browserFamily; }
+    public String getLang() { return lang; }
+    public void setLang(String lang) { this.lang = lang; }
+    public String getScreenBucket() { return screenBucket; }
+    public void setScreenBucket(String screenBucket) { this.screenBucket = screenBucket; }
+    public String getAnonSessionId() { return anonSessionId; }
+    public void setAnonSessionId(String anonSessionId) { this.anonSessionId = anonSessionId; }
 
     public static class BatchRequest {
         private String batchId;

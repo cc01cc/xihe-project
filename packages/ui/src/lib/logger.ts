@@ -15,6 +15,26 @@ export type LogLevel = "debug" | "info" | "warn" | "error";
  */
 export type TelemetryEventType = "ui.unhandled_error" | "ui.unhandled_rejection";
 
+export type ReleaseChannel = "stable" | "beta" | "dev";
+export type OsFamily = "windows" | "macos" | "linux" | "ios" | "android" | "other";
+export type BrowserFamily = "chrome" | "edge" | "firefox" | "safari" | "other";
+export type ScreenBucket = "xs" | "sm" | "md" | "lg" | "xl";
+
+/**
+ * Coarsened environment dimensions attached to structured telemetry events
+ * (PLAN-0527). All values are deterministic, low-sensitivity derivations; no
+ * full user-agent, stable device id, or free text is ever produced.
+ */
+export interface TelemetryDimensions {
+    serviceVersion?: string;
+    releaseChannel?: ReleaseChannel;
+    osFamily?: OsFamily;
+    browserFamily?: BrowserFamily;
+    lang?: string;
+    screenBucket?: ScreenBucket;
+    anonSessionId?: string;
+}
+
 const STRUCTURED_ERROR_CODES = ["TypeError", "ReferenceError", "RangeError", "SyntaxError"],
     UNKNOWN_ERROR_CODE = "UnknownError";
 
@@ -34,6 +54,13 @@ interface TelemetryEntry {
     eventId?: string;
     eventType?: TelemetryEventType;
     errorCode?: string;
+    serviceVersion?: string;
+    releaseChannel?: string;
+    osFamily?: string;
+    browserFamily?: string;
+    lang?: string;
+    screenBucket?: string;
+    anonSessionId?: string;
 }
 
 const SENSITIVE_KEY_PATTERN =
@@ -108,6 +135,120 @@ class LogDatabase extends Dexie {
 
 const db = new LogDatabase(),
     MAX_LOGS = 10000;
+
+const ANON_SESSION_KEY = "xihe-anon-session-id";
+
+function randomToken(length: number): string {
+    const bytes = new Uint8Array(length);
+    if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+        crypto.getRandomValues(bytes);
+    } else {
+        for (let i = 0; i < length; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+    }
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0"))
+        .join("")
+        .slice(0, length);
+}
+
+/**
+ * Anonymous telemetry session id (PLAN-0527 decision #5): random, per browser
+ * session, rotated on login (auth calls `rotateAnonSessionId`) and cleared on
+ * logout (`clearAnonSessionId`). Never derived from user identity or a device
+ * fingerprint.
+ */
+function readAnonSessionId(): string | undefined {
+    try {
+        if (typeof sessionStorage === "undefined") return undefined;
+        const existing = sessionStorage.getItem(ANON_SESSION_KEY);
+        if (existing) return existing;
+        const created = randomToken(32);
+        sessionStorage.setItem(ANON_SESSION_KEY, created);
+        return created;
+    } catch {
+        return undefined;
+    }
+}
+
+export function rotateAnonSessionId(): void {
+    try {
+        if (typeof sessionStorage === "undefined") return;
+        sessionStorage.setItem(ANON_SESSION_KEY, randomToken(32));
+    } catch {
+        /* storage unavailable: rotation is best-effort */
+    }
+}
+
+export function clearAnonSessionId(): void {
+    try {
+        if (typeof sessionStorage === "undefined") return;
+        sessionStorage.removeItem(ANON_SESSION_KEY);
+    } catch {
+        /* storage unavailable: clearing is best-effort */
+    }
+}
+
+function deriveOsFamily(ua: string): OsFamily {
+    if (/android/i.test(ua)) return "android";
+    if (/iphone|ipad|ipod/i.test(ua)) return "ios";
+    if (/windows/i.test(ua)) return "windows";
+    if (/mac os x|macintosh/i.test(ua)) return "macos";
+    if (/linux/i.test(ua)) return "linux";
+    return "other";
+}
+
+function deriveBrowserFamily(ua: string): BrowserFamily {
+    if (/edg\//i.test(ua)) return "edge";
+    if (/firefox\//i.test(ua)) return "firefox";
+    if (/chrome\//i.test(ua) || /chromium\//i.test(ua)) return "chrome";
+    if (/safari\//i.test(ua)) return "safari";
+    return "other";
+}
+
+function deriveLang(): string | undefined {
+    if (typeof navigator === "undefined" || typeof navigator.language !== "string") {
+        return undefined;
+    }
+    const normalized = navigator.language.replace(/_/g, "-").slice(0, 16);
+    return /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(normalized) ? normalized : undefined;
+}
+
+function deriveScreenBucket(): ScreenBucket | undefined {
+    if (typeof screen === "undefined" || typeof screen.width !== "number") return undefined;
+    const width = screen.width;
+    if (width < 768) return "xs";
+    if (width < 1024) return "sm";
+    if (width < 1440) return "md";
+    if (width < 1920) return "lg";
+    return "xl";
+}
+
+function readReleaseChannel(): ReleaseChannel {
+    const raw = import.meta.env.VITE_XIHE_RELEASE_CHANNEL;
+    return raw === "stable" || raw === "beta" || raw === "dev" ? raw : "dev";
+}
+
+function readServiceVersion(): string | undefined {
+    const raw = import.meta.env.VITE_XIHE_SERVICE_VERSION;
+    return typeof raw === "string" && /^[A-Za-z0-9_.+-]{1,64}$/.test(raw) ? raw : undefined;
+}
+
+function buildTelemetryDimensions(): TelemetryDimensions {
+    const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+    const dimensions: TelemetryDimensions = {
+        releaseChannel: readReleaseChannel(),
+        osFamily: deriveOsFamily(ua),
+        browserFamily: deriveBrowserFamily(ua),
+    };
+    const serviceVersion = readServiceVersion();
+    if (serviceVersion) dimensions.serviceVersion = serviceVersion;
+    const lang = deriveLang();
+    if (lang) dimensions.lang = lang;
+    const screenBucket = deriveScreenBucket();
+    if (screenBucket) dimensions.screenBucket = screenBucket;
+    const anonSessionId = readAnonSessionId();
+    if (anonSessionId) dimensions.anonSessionId = anonSessionId;
+    return dimensions;
+}
 
 class Logger {
     private isEnabled = true;
@@ -273,6 +414,7 @@ class Logger {
             eventId: randomId(),
             eventType,
             errorCode: errorCode.slice(0, 128),
+            ...buildTelemetryDimensions(),
         });
         if (this.batch.length > MAX_BATCH_QUEUE) this.batch = this.batch.slice(-MAX_BATCH_QUEUE);
     }

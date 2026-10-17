@@ -1,6 +1,6 @@
 # XH 遥测上报与中央中继
 
-> 契约状态：`proposed`；实现状态：`partial`；Profile：`security`；Owner：XH owner（接收端契约归 A11/TLM）；来源：PLAN-0522、A11 PLAN-0521；更新：2026-10-15。
+> 契约状态：`proposed`；实现状态：`partial`；Profile：`security`；Owner：XH owner（接收端契约归 A11/TLM）；来源：PLAN-0522、PLAN-0527、A11 PLAN-0521；更新：2026-10-17。
 > 消费者：UI logger、CP TelemetryController/TelemetryRelayService、A11/TLM 接收端、后续 PLAN
 
 ## 1. 范围与边界
@@ -18,7 +18,8 @@
 
 ## 3. 数据最小化
 
-- V1 仅发送封闭枚举事件（`ui.unhandled_error` / `ui.unhandled_rejection`）与 allowlist 字段（`level`、`errorCode`、`appVersion`）；`errorCode` 是错误名封闭映射（`TypeError`/`ReferenceError`/`RangeError`/`SyntaxError`/`UnknownError`），不是自由文本。
+- V1 仅发送封闭枚举事件（`ui.unhandled_error` / `ui.unhandled_rejection`）与 allowlist 字段：`level`、`errorCode`，及 PLAN-0527 维度 `serviceVersion`、`releaseChannel`、`osFamily`、`browserFamily`、`lang`、`screenBucket`、`anonSessionId`，加上 CP 侧注入的实例级 `deploymentId`（`appVersion` 已退役）；`errorCode` 是错误名封闭映射（`TypeError`/`ReferenceError`/`RangeError`/`SyntaxError`/`UnknownError`），不是自由文本。
+- 维度均为粗化派生值：`osFamily`/`browserFamily` 由 UA 粗化（不存完整 UA），`lang` 取 `navigator.language`，`screenBucket` 为宽度档；`anonSessionId` 匿名、随登录会话轮换（登录生成、注销清除），`deploymentId` 为部署级稳定标识（随机、非硬件派生、管理员可重置）。组合准指纹风险已裁定接受并限定用途（仅聚合/环境归因，不用于个体再识别）。
 - `eventId` 在事件生成时分配并跨重试/重分批稳定；`batchId` 组批时分配、同批重试复用。
 - 服务端边界：CP 入口在写入/转发前执行条数/字段长度/枚举校验；TLM 侧另有独立 body/schema/限流边界（A11 契约）。
 
@@ -30,4 +31,4 @@
 
 ## 5. 现状差距
 
-- 实现状态 `partial`：本 SPEC 随 PLAN-0522 实施落地；真实浏览器 staging 闭环与 TLM 生产部署（PLAN-0521 M3）完成前不得标记 `implemented`。
+- 实现状态 `partial`：本 SPEC 随 PLAN-0522 实施落地，维度扩展随 PLAN-0527 落地；真实浏览器 staging 闭环与 TLM 生产部署（PLAN-0521 M3）完成前不得标记 `implemented`。

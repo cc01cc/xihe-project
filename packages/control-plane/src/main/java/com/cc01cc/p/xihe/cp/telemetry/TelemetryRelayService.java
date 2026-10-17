@@ -50,6 +50,7 @@ public class TelemetryRelayService {
     private final ObjectMapper objectMapper;
     private final String tlmUrl;
     private final String tlmToken;
+    private final String deploymentId;
     private final HttpClient httpClient;
     private final ThreadPoolExecutor executor;
     private final AtomicLong dropped = new AtomicLong();
@@ -57,10 +58,12 @@ public class TelemetryRelayService {
 
     public TelemetryRelayService(ConfigService configService,
                                  ObjectMapper objectMapper,
+                                 DeploymentIdProvider deploymentIdProvider,
                                  @Value("${XIHE_TLM_URL:}") String tlmUrl,
                                  @Value("${XIHE_TLM_INGEST_TOKEN:}") String tlmToken) {
         this.configService = configService;
         this.objectMapper = objectMapper;
+        this.deploymentId = deploymentIdProvider.get();
         this.tlmUrl = tlmUrl == null ? "" : tlmUrl.trim();
         this.tlmToken = tlmToken == null ? "" : tlmToken.trim();
         this.httpClient = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
@@ -97,8 +100,29 @@ public class TelemetryRelayService {
             if (entry.getErrorCode() != null) {
                 fields.put("errorCode", entry.getErrorCode());
             }
-            if (entry.getAppVersion() != null) {
-                fields.put("appVersion", entry.getAppVersion());
+            if (deploymentId != null) {
+                fields.put("deploymentId", deploymentId);
+            }
+            if (entry.getServiceVersion() != null) {
+                fields.put("serviceVersion", entry.getServiceVersion());
+            }
+            if (entry.getReleaseChannel() != null) {
+                fields.put("releaseChannel", entry.getReleaseChannel());
+            }
+            if (entry.getOsFamily() != null) {
+                fields.put("osFamily", entry.getOsFamily());
+            }
+            if (entry.getBrowserFamily() != null) {
+                fields.put("browserFamily", entry.getBrowserFamily());
+            }
+            if (entry.getLang() != null) {
+                fields.put("lang", entry.getLang());
+            }
+            if (entry.getScreenBucket() != null) {
+                fields.put("screenBucket", entry.getScreenBucket());
+            }
+            if (entry.getAnonSessionId() != null) {
+                fields.put("anonSessionId", entry.getAnonSessionId());
             }
             Map<String, Object> event = new LinkedHashMap<>();
             event.put("eventId", entry.getEventId());

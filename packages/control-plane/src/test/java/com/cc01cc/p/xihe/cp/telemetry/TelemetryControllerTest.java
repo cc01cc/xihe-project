@@ -116,4 +116,54 @@ class TelemetryControllerTest {
         assertEquals(200, response.getStatusCode().value());
         verify(relay, never()).forward(any(), any());
     }
+
+    @Test
+    void rejects_invalid_environment_dimension_values() {
+        TelemetryRelayService relay = mock(TelemetryRelayService.class);
+
+        TelemetryEntry badOs = entry();
+        badOs.setOsFamily("solaris");
+        assertProblem(controller(relay).ingestAuth(request(List.of(badOs))), "INVALID_REQUEST");
+
+        TelemetryEntry badBucket = entry();
+        badBucket.setScreenBucket("huge");
+        assertProblem(controller(relay).ingestAuth(request(List.of(badBucket))), "INVALID_REQUEST");
+
+        TelemetryEntry badChannel = entry();
+        badChannel.setReleaseChannel("nightly");
+        assertProblem(controller(relay).ingestAuth(request(List.of(badChannel))), "INVALID_REQUEST");
+
+        TelemetryEntry badBrowser = entry();
+        badBrowser.setBrowserFamily("netscape");
+        assertProblem(controller(relay).ingestAuth(request(List.of(badBrowser))), "INVALID_REQUEST");
+
+        TelemetryEntry longAnon = entry();
+        longAnon.setAnonSessionId("x".repeat(TelemetryController.MAX_DIMENSION_LENGTH + 1));
+        assertProblem(controller(relay).ingestAuth(request(List.of(longAnon))), "INVALID_REQUEST");
+    }
+
+    @Test
+    void writes_extended_dimensions_to_local_sink() throws Exception {
+        TelemetryRelayService relay = mock(TelemetryRelayService.class);
+        TelemetryEntry entry = entry();
+        entry.setServiceVersion("1.2.3");
+        entry.setReleaseChannel("beta");
+        entry.setOsFamily("linux");
+        entry.setBrowserFamily("firefox");
+        entry.setLang("de-DE");
+        entry.setScreenBucket("lg");
+        entry.setAnonSessionId("anon-000000000000000000000000");
+
+        ResponseEntity<?> response = controller(relay).ingestAuth(request(List.of(entry)));
+
+        assertEquals(200, response.getStatusCode().value());
+        String content = Files.readString(Path.of(System.getProperty("XIHE_LOG_DIR"), "telemetry.log"));
+        assertTrue(content.contains("serviceVersion"));
+        assertTrue(content.contains("1.2.3"));
+        assertTrue(content.contains("osFamily"));
+        assertTrue(content.contains("linux"));
+        assertTrue(content.contains("anonSessionId"));
+        assertTrue(content.contains("anon-000000000000000000000000"));
+        assertTrue(content.contains("releaseChannel"));
+    }
 }
