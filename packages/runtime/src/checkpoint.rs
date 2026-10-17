@@ -90,11 +90,16 @@ const MAX_RUN_ID_LEN: usize = 128;
 const MAX_DYNAMIC_EXCLUDES: usize = 4096;
 const LOCK_MAP_PRUNE_THRESHOLD: usize = 1024;
 
-/// Nested-repository capture policy (PLAN-0338 T1.2; default `Opaque`).
+/// Nested-repository capture policy (PLAN-0361; default `Flatten`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NestedRepoPolicy {
-    /// Record nested repositories as opaque gitlinks: their contents are not
-    /// captured and cannot be restored (default; full support is PLAN-0361).
+    /// L1 file-level flatten (default, PLAN-0361): each nested repository's files
+    /// are staged as ordinary blobs in the parent slice, so their contents are
+    /// captured and restorable per file. Any `.git` entry (directory or `gitdir:`
+    /// pointer) is skipped and never enters the shadow object store.
+    Flatten,
+    /// Legacy (PLAN-0338): record nested repositories as opaque gitlinks whose
+    /// contents are neither captured nor restorable.
     Opaque,
     /// Opt-in hard limit: refuse the capture when any nested repository is
     /// present, with an explicit degraded reason (never silent).
@@ -102,9 +107,10 @@ pub enum NestedRepoPolicy {
 }
 
 impl NestedRepoPolicy {
-    /// Wire/diagnostics token (`opaque` / `reject`).
+    /// Wire/diagnostics token (`flatten` / `opaque` / `reject`).
     pub fn as_str(self) -> &'static str {
         match self {
+            NestedRepoPolicy::Flatten => "flatten",
             NestedRepoPolicy::Opaque => "opaque",
             NestedRepoPolicy::Reject => "reject",
         }
@@ -344,7 +350,7 @@ impl ShadowGit {
             active_restore_locks: Arc::new(AtomicUsize::new(0)),
             probe_cache: StdMutex::new(ProbeCache::default()),
             max_untracked_file_bytes: DEFAULT_MAX_UNTRACKED_FILE_BYTES,
-            nested_repo_policy: NestedRepoPolicy::Opaque,
+            nested_repo_policy: NestedRepoPolicy::Flatten,
             call_timeout: GIT_CALL_TIMEOUT,
         }
     }
@@ -499,17 +505,10 @@ impl ShadowGit {
         // The temp index starts from the chain tail so the size cap and the
         // exclusion rules only judge genuinely new (untracked) paths: paths the
         // previous slice already indexed stay included even when they grew.
-        self.stage_index(&shadow, &work_tree, &index, &excludes, tail_tree.as_deref())
+        let (tree, opaque_nested_repos) = self
+            .stage_workspace(&shadow, &work_tree, &index, &excludes, tail_tree.as_deref())
             .await?;
-        let index_env = self.isolated_env(&shadow, &work_tree, Some(&index));
-        let tree = self.write_tree(&index_env).await?;
         self.save_last_index(&shadow, &index).await?;
-        let opaque_nested_repos = self.staged_gitlinks(&index_env).await?;
-        if self.nested_repo_policy == NestedRepoPolicy::Reject && !opaque_nested_repos.is_empty() {
-            return Err(CheckpointError::NestedRepoLimit {
-                paths: opaque_nested_repos,
-            });
-        }
 
         if tail_tree.as_deref() == Some(tree.as_str()) {
             debug!(
@@ -1003,6 +1002,214 @@ impl ShadowGit {
         Ok(())
     }
 
+    /// Stage the whole workspace into `index` and write its tree, applying the
+    /// nested-repository policy (PLAN-0361): `Flatten` drops each nested repo's
+    /// gitlink and stages its files as ordinary blobs (restorable per file),
+    /// `Opaque` keeps the legacy gitlinks, `Reject` fails with
+    /// [`CheckpointError::NestedRepoLimit`]. Returns the tree hash and the opaque
+    /// nested-repo paths (always empty under `Flatten`).
+    ///
+    /// Both capture and restore planning go through this so the "current" tree
+    /// they compare is built identically.
+    pub(crate) async fn stage_workspace(
+        &self,
+        shadow: &Path,
+        work_tree: &Path,
+        index: &Path,
+        excludes: &Path,
+        reference_tree: Option<&str>,
+    ) -> Result<(String, Vec<String>)> {
+        self.stage_index(shadow, work_tree, index, excludes, reference_tree)
+            .await?;
+        let index_env = self.isolated_env(shadow, work_tree, Some(index));
+        let detected = self.staged_gitlinks(&index_env).await?;
+        let opaque = match self.nested_repo_policy {
+            NestedRepoPolicy::Reject if !detected.is_empty() => {
+                return Err(CheckpointError::NestedRepoLimit { paths: detected });
+            }
+            NestedRepoPolicy::Flatten => {
+                self.flatten_nested_repos(shadow, work_tree, index, excludes, &detected)
+                    .await?;
+                Vec::new()
+            }
+            NestedRepoPolicy::Opaque | NestedRepoPolicy::Reject => detected,
+        };
+        let tree = self.write_tree(&index_env).await?;
+        Ok((tree, opaque))
+    }
+
+    /// L1 (PLAN-0361): flatten each detected nested repository into the parent
+    /// index as ordinary blobs so its contents are captured and restorable per
+    /// file. The repo-root gitlink is dropped and every file below is staged by
+    /// path with the same exclusion semantics as the workspace (static + dynamic
+    /// excludes and the workspace `.gitignore`), while any `.git` entry is skipped
+    /// and never enters the shadow object store. Returns the flattened repo roots.
+    async fn flatten_nested_repos(
+        &self,
+        shadow: &Path,
+        work_tree: &Path,
+        index: &Path,
+        excludes: &Path,
+        nested_roots: &[String],
+    ) -> Result<Vec<String>> {
+        if nested_roots.is_empty() {
+            return Ok(Vec::new());
+        }
+        let env = self.isolated_env(shadow, work_tree, Some(index));
+        let mut flattened = Vec::new();
+        for root in nested_roots {
+            let absolute_root = work_tree.join(root.replace('/', std::path::MAIN_SEPARATOR_STR));
+            // Drop the opaque gitlink for the repo root before staging its files.
+            self.run_git_checked(
+                &["update-index", "--force-remove", "--", root],
+                &env,
+                None,
+                self.call_timeout,
+            )
+            .await?;
+
+            let mut relative_files = Vec::new();
+            collect_nested_files(&absolute_root, Path::new(""), &mut relative_files)?;
+            if relative_files.is_empty() {
+                continue;
+            }
+            let repo_relative: Vec<String> = relative_files
+                .iter()
+                .map(|relative| format!("{root}/{relative}"))
+                .collect();
+            let ignored = self
+                .ignored_paths(&env, excludes, work_tree, &repo_relative)
+                .await?;
+
+            for relative in &relative_files {
+                let repo_path = format!("{root}/{relative}");
+                if ignored.contains(&repo_path) {
+                    continue;
+                }
+                let absolute =
+                    absolute_root.join(relative.replace('/', std::path::MAIN_SEPARATOR_STR));
+                let Ok(metadata) = std::fs::symlink_metadata(&absolute) else {
+                    continue;
+                };
+                if metadata.file_type().is_symlink() {
+                    let Ok(target) = std::fs::read_link(&absolute) else {
+                        continue;
+                    };
+                    let blob = target.to_string_lossy().replace('\\', "/");
+                    let oid = self.hash_object_stdin(&env, blob.as_bytes()).await?;
+                    self.update_index_cacheinfo(&env, "120000", &oid, &repo_path)
+                        .await?;
+                } else if metadata.is_file() {
+                    if metadata.len() > self.max_untracked_file_bytes {
+                        warn!(
+                            path = %repo_path,
+                            bytes = metadata.len(),
+                            cap = self.max_untracked_file_bytes,
+                            "oversized nested-repo file skipped by the size cap"
+                        );
+                        continue;
+                    }
+                    let oid = self.hash_object_file(&env, &absolute).await?;
+                    self.update_index_cacheinfo(&env, "100644", &oid, &repo_path)
+                        .await?;
+                }
+            }
+            flattened.push(root.clone());
+        }
+        Ok(flattened)
+    }
+
+    /// Paths (workspace-relative) the current excludes mark as ignored, via a
+    /// single batched `git check-ignore` against the same excludesFile used by
+    /// `add -A` (static + dynamic) plus any in-tree `.gitignore`.
+    async fn ignored_paths(
+        &self,
+        env: &[(String, String)],
+        excludes: &Path,
+        work_tree: &Path,
+        paths: &[String],
+    ) -> Result<std::collections::HashSet<String>> {
+        let mut payload = Vec::new();
+        for path in paths {
+            payload.extend_from_slice(path.as_bytes());
+            payload.push(0);
+        }
+        let config = format!("core.excludesFile={}", normalize_path_for_git(excludes));
+        let output = self
+            .run_git_with_stdin(
+                &["-c", &config, "check-ignore", "--no-index", "-z", "--stdin"],
+                env,
+                Some(work_tree),
+                &payload,
+                self.call_timeout,
+            )
+            .await?;
+        // Exit code 1 means "nothing ignored" (not an error); 0 means matches.
+        if !output.status.success() && output.status.code() != Some(1) {
+            return Err(CheckpointError::GitCommand {
+                command: "check-ignore".to_string(),
+                detail: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            });
+        }
+        let mut ignored = std::collections::HashSet::new();
+        for raw in output.stdout.split(|byte| *byte == 0) {
+            if raw.is_empty() {
+                continue;
+            }
+            ignored.insert(String::from_utf8_lossy(raw).into_owned());
+        }
+        Ok(ignored)
+    }
+
+    async fn hash_object_file(&self, env: &[(String, String)], path: &Path) -> Result<String> {
+        let normalized = normalize_path_for_git(path);
+        let stdout = self
+            .run_git_checked(
+                &["hash-object", "-w", "--no-filters", &normalized],
+                env,
+                None,
+                self.call_timeout,
+            )
+            .await?;
+        Ok(String::from_utf8_lossy(&stdout).trim().to_string())
+    }
+
+    async fn hash_object_stdin(&self, env: &[(String, String)], content: &[u8]) -> Result<String> {
+        let output = self
+            .run_git_with_stdin(
+                &["hash-object", "-w", "--no-filters", "-t", "blob", "--stdin"],
+                env,
+                None,
+                content,
+                self.call_timeout,
+            )
+            .await?;
+        if !output.status.success() {
+            return Err(CheckpointError::GitCommand {
+                command: "hash-object".to_string(),
+                detail: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            });
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    async fn update_index_cacheinfo(
+        &self,
+        env: &[(String, String)],
+        mode: &str,
+        oid: &str,
+        path: &str,
+    ) -> Result<()> {
+        self.run_git_checked(
+            &["update-index", "--add", "--cacheinfo", mode, oid, path],
+            env,
+            None,
+            self.call_timeout,
+        )
+        .await?;
+        Ok(())
+    }
+
     pub(crate) async fn write_tree(&self, env: &[(String, String)]) -> Result<String> {
         let stdout = self
             .run_git_checked(&["write-tree"], env, None, self.call_timeout)
@@ -1272,6 +1479,63 @@ impl ShadowGit {
         })
     }
 
+    /// Run git with a byte payload piped to stdin (PLAN-0361 L1: `hash-object`
+    /// for symlink targets and `check-ignore` for batched ignore checks). The
+    /// payload is written on a separate task so a full stdout pipe cannot
+    /// deadlock the writer.
+    async fn run_git_with_stdin(
+        &self,
+        args: &[&str],
+        envs: &[(String, String)],
+        cwd: Option<&Path>,
+        stdin_bytes: &[u8],
+        timeout: Duration,
+    ) -> Result<GitOutput> {
+        use tokio::io::AsyncWriteExt;
+
+        let mut command = Command::new(&self.git_binary);
+        command.arg("--no-optional-locks");
+        command.args(args);
+        command.env_clear();
+        for (key, value) in envs {
+            command.env(key, value);
+        }
+        if let Some(dir) = cwd {
+            command.current_dir(dir);
+        }
+        command.stdin(Stdio::piped());
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::piped());
+        command.kill_on_drop(true);
+        let mut child = command.spawn().map_err(|error| {
+            CheckpointError::GitUnavailable(format!(
+                "failed to spawn git ({}): {error}",
+                self.git_binary
+            ))
+        })?;
+        if let Some(mut stdin) = child.stdin.take() {
+            let payload = stdin_bytes.to_vec();
+            tokio::spawn(async move {
+                let _ = stdin.write_all(&payload).await;
+                let _ = stdin.shutdown().await;
+            });
+        }
+        let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
+            Ok(result) => result?,
+            Err(_) => {
+                return Err(CheckpointError::GitCommand {
+                    command: args.join(" "),
+                    detail: format!("timed out after {timeout:?}"),
+                });
+            }
+        };
+        Ok(GitOutput {
+            status: output.status,
+            stdout: output.stdout,
+            stderr: output.stderr,
+        })
+    }
+
     pub(crate) async fn run_git_checked(
         &self,
         args: &[&str],
@@ -1435,6 +1699,33 @@ fn parse_name_status_z(bytes: &[u8]) -> Result<Vec<ChangedFile>> {
         }
     }
     Ok(changed)
+}
+
+/// Depth-first walk of one nested repository, collecting file/symlink paths
+/// relative to the nested root (forward slashes). Any `.git` entry (directory or
+/// `gitdir:` pointer file) is skipped, so nested history never enters the parent
+/// slice (PLAN-0361 L1).
+fn collect_nested_files(root: &Path, prefix: &Path, out: &mut Vec<String>) -> Result<()> {
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name();
+        if name == std::ffi::OsStr::new(".git") {
+            continue;
+        }
+        let file_type = entry.file_type()?;
+        let relative = prefix.join(&name);
+        if file_type.is_dir() {
+            collect_nested_files(&entry.path(), &relative, out)?;
+        } else if file_type.is_file() || file_type.is_symlink() {
+            out.push(relative.to_string_lossy().replace('\\', "/"));
+        }
+    }
+    Ok(())
 }
 
 /// Parse `git ls-files --stage -z` output for mode 160000 (gitlink) entries.

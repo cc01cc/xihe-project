@@ -22,6 +22,8 @@ public interface ChatRunRepository extends JpaRepository<ChatRun, UUID> {
 
     boolean existsBySessionIdAndStatusIn(String sessionId, Collection<String> statuses);
 
+    boolean existsByWorkspaceIdAndStatusIn(String workspaceId, Collection<String> statuses);
+
     boolean existsBySessionIdAndLeaseOwnerIsNotNullAndLeaseExpiresAtAfter(String sessionId, Instant after);
 
     @Query("select max(r.leaseExpiresAt) from ChatRun r where r.sessionId = :sessionId "

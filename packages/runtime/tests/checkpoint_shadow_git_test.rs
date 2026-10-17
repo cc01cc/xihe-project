@@ -256,9 +256,12 @@ async fn spike_a_zero_noise_with_user_repo_node_modules_gitignored_and_untracked
 }
 
 #[tokio::test]
-async fn spike_a2_nested_repository_is_recorded_as_gitlink_only() {
+async fn spike_a2_nested_repository_files_are_flattened_into_the_parent_slice() {
     let fixture = Fixture::new().await;
     fixture.write("top.txt", "top\n");
+    let seed = fixture.capture("run-n0").await;
+    assert_slice_ref(&seed);
+
     fixture.write("sub/nested/README.md", "nested\n");
     let nested = fixture.ws().join("sub/nested");
     git_in(&nested, &["init"]);
@@ -266,40 +269,51 @@ async fn spike_a2_nested_repository_is_recorded_as_gitlink_only() {
     git_in(&nested, &["commit", "-m", "nested initial"]);
 
     let first = fixture.capture("run-n1").await;
+    assert!(
+        first.opaque_nested_repos.is_empty(),
+        "L1 flattens nested repositories; nothing stays opaque: {:?}",
+        first.opaque_nested_repos
+    );
     assert_eq!(
-        first.opaque_nested_repos,
-        vec!["sub/nested".to_string()],
-        "nested repositories are declared as opaque gitlinks"
+        sorted(&first),
+        vec![("A".to_string(), "sub/nested/README.md".to_string())],
+        "the nested file must be captured as an ordinary blob: {:?}",
+        first.changed_files
     );
 
+    // L1 surfaces uncommitted nested edits per file, unlike the legacy gitlink.
     fixture.write("sub/nested/README.md", "nested changed but uncommitted\n");
     let second = fixture.capture("run-n2").await;
-    assert!(
-        second.no_change,
-        "uncommitted nested-repo edits must not appear: {:?}",
+    assert_eq!(
+        sorted(&second),
+        vec![("M".to_string(), "sub/nested/README.md".to_string())],
+        "uncommitted nested edits must surface as a file change: {:?}",
         second.changed_files
     );
 
+    // Committed HEAD movement with identical work-tree content is a no-op, and
+    // `.git` never enters the shadow tree.
     git_in(&nested, &["add", "-A"]);
     git_in(&nested, &["commit", "-m", "nested second"]);
     let third = fixture.capture("run-n3").await;
-    assert_eq!(
-        sorted(&third),
-        vec![("M".to_string(), "sub/nested".to_string())],
-        "committed nested-repo HEAD movement must surface as one gitlink entry"
+    assert!(
+        third.no_change,
+        "committing identical file content must be a no-op: {:?}",
+        third.changed_files
+    );
+    let tail_ref = assert_slice_ref(&second);
+    let tree = fixture
+        .git(&["ls-tree", "-r", "--name-only", &tail_ref])
+        .await;
+    assert!(
+        tree.contains("sub/nested/README.md"),
+        "nested file in tree: {tree}"
     );
     assert!(
-        third
-            .changed_files
-            .iter()
-            .all(|file| !file.path.contains("sub/nested/")),
-        "nested-repo internals must never be tracked individually"
+        !tree.lines().any(|line| line.contains(".git")),
+        "no `.git` entry may enter the shadow tree: {tree}"
     );
-    assert_eq!(
-        third.opaque_nested_repos,
-        vec!["sub/nested".to_string()],
-        "the opaque declaration survives content changes"
-    );
+    assert!(third.opaque_nested_repos.is_empty());
 }
 
 #[tokio::test]

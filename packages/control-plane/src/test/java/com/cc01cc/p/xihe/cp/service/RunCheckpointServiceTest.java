@@ -254,8 +254,23 @@ class RunCheckpointServiceTest {
     }
 
     @Test
-    void transportFailureDegradesInsteadOfThrowing() {
+    void nestedRepoLimitCaptureDegradesWithItsOwnReason() {
         when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
+                .thenReturn(Optional.of(runWithStatus("succeeded")));
+        when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
+                .thenReturn(new RuntimeCheckpointClient.CaptureResult(
+                        RuntimeCheckpointClient.Outcome.UNAVAILABLE, RUN_ID, false, null, null, null,
+                        null, List.of(), List.of(), null, "NESTED_REPO_LIMIT"));
+
+        assertFalse(service.captureCheckpoint(RUN_ID));
+
+        assertEquals(1, rows.size());
+        assertEquals(RunCheckpoint.STATE_DEGRADED, rows.get(0).getState());
+        assertEquals("NESTED_REPO_LIMIT", rows.get(0).getUnrollableReason());
+    }
+
+    @Test
+    void transportFailureDegradesInsteadOfThrowing() {        when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
                 .thenReturn(Optional.of(runWithStatus("succeeded")));
         when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
                 .thenReturn(new RuntimeCheckpointClient.CaptureResult(
@@ -473,6 +488,23 @@ class RunCheckpointServiceTest {
         degraded.setState(RunCheckpoint.STATE_CAPTURED);
         degraded.setUnrollableReason(null);
         verify(client, never()).previewRevert(anyString(), anyString());
+    }
+
+    @Test
+    void revertRefusesWhileARunIsActiveInTheWorkspace() {
+        when(chatRunRepository.existsByWorkspaceIdAndStatusIn(eq(WORKSPACE_ID), any())).thenReturn(true);
+
+        RunCheckpointService.PreviewOutcome preview = service.previewRevert(WORKSPACE_ID, SLICE_REF);
+        assertEquals(RunCheckpointService.Gate.RUN_ACTIVE, preview.gate());
+        assertEquals("RUN_ACTIVE", preview.reason());
+
+        RunCheckpointService.RevertOutcome revert = service.revert(WORKSPACE_ID, SLICE_REF, List.of());
+        assertEquals(RunCheckpointService.Gate.RUN_ACTIVE, revert.gate());
+        assertEquals("RUN_ACTIVE", revert.reason());
+
+        // The gate precedes slice resolution: no Runtime call is made.
+        verify(client, never()).previewRevert(anyString(), anyString());
+        verify(client, never()).revert(anyString(), anyString(), any());
     }
 
     @Test

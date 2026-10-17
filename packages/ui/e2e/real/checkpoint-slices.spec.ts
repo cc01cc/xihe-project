@@ -9,8 +9,9 @@
  *   - restore is git-native against the slice (`restore` for M/D, `delete` for
  *     A) with `acknowledgeTypeChanges`, per-path outcomes + `suspects`; excluded
  *     paths (`.env`, `node_modules/`, …) are never planned and never touched;
- *   - nested repositories are opaque gitlinks (mode 160000), their contents are
- *     not part of the slice.
+ *   - nested repositories are flattened (PLAN-0361 L1): their files become
+ *     ordinary blobs in the slice (restorable per file) and any `.git` is
+ *     skipped and never enters the shadow object store.
  *
  * Runner invocations (the fake-LLM mode selects the runnable scenarios; the
  * others self-skip — `--llm-mode=`/`XIHE_E2E_LLM_MODE` are equivalent, the spec
@@ -46,13 +47,18 @@ import {
 import path from "node:path";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import {
-    awaitLatestChatRunCompleted,
     CP_URL,
     ensureAgentWorkspaceBinding,
+    ensureChatBinding,
     registerJourneyUser,
     seedPage,
+    waitForControlPlaneAgentReady,
     type JourneyContext,
 } from "./helpers/journey";
+import {
+    createSessionWithPrincipal,
+    provisionWorkspaceAgentPrincipal,
+} from "./helpers/agent-principal";
 
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock",
     RUN_ID = process.env.XIHE_E2E_RUN_ID ?? "";
@@ -65,6 +71,8 @@ const HOST_ROOT =
 const EVIDENCE_DIR = path.join(PROJECT_DIR, ".local", "evidence", "checkpoint-slices");
 // PLAN-0369: workspace this file's Agent binding was ensured for.
 let agentBindingWorkspaceId = "";
+// PLAN-0361: the bound-principal chat session this spec sends through.
+let checkpointSessionId = "";
 
 const NONCE = Date.now().toString(36),
     SEED_FILE = `s0-seed-${NONCE}.md`;
@@ -240,7 +248,25 @@ async function awaitPreviousRunSettled(
     request: APIRequestContext,
     headers: Record<string, string>,
 ): Promise<void> {
-    await awaitLatestChatRunCompleted(request, headers);
+    // A fresh workspace has no prior ChatRun — that is trivially settled. A strict
+    // terminal-status wait would fail on the empty list, so treat "no runs yet" as
+    // settled here (the first Run of the spec has nothing to wait for).
+    await expect
+        .poll(
+            async () => {
+                const res = await request.get(
+                    `${CP_URL}/api/v1/audit/entries?type=chat_run&size=5`,
+                    { headers },
+                );
+                if (!res.ok()) return "unavailable";
+                const body = (await res.json()) as { entries?: Array<{ status?: string }> };
+                const entries = body.entries ?? [];
+                if (entries.length === 0) return "settled";
+                return TERMINAL_RUN_PATTERN.test(entries[0]?.status ?? "") ? "settled" : "pending";
+            },
+            { timeout: 120000, intervals: [1000, 2000] },
+        )
+        .toBe("settled");
 }
 
 async function awaitRunTerminal(
@@ -367,7 +393,12 @@ async function checkpointFile(
 
 async function openWorkspace(page: Page, ctx: JourneyContext): Promise<void> {
     seedPage(page, ctx);
-    await page.goto(`/workspace/${ctx.workspaceId}`, { waitUntil: "load" });
+    // PLAN-0361 checkpoint E2E bootstrap fix: sessions need a bound Agent principal,
+    // so open the bootstrapped session's chat route directly rather than relying on
+    // the removed auto-create path that left the workspace on its empty state.
+    await page.goto(`/workspace/${ctx.workspaceId}/chat/${checkpointSessionId}`, {
+        waitUntil: "load",
+    });
     await expect(page.locator('[data-testid="chat-input"]'), "workspace chat input").toBeVisible({
         timeout: 30000,
     });
@@ -379,9 +410,21 @@ async function openWorkspace(page: Page, ctx: JourneyContext): Promise<void> {
  * switch clearing the input asynchronously, and a click before the SSE
  * component hydrates that never POSTs (PLAN-294 M1).
  */
-async function startRun(page: Page, text: string): Promise<string> {
+async function startRun(
+    page: Page,
+    request: APIRequestContext,
+    headers: Record<string, string>,
+    text: string,
+): Promise<string> {
     // PLAN-0369: keep the Agent's single MCP workspace bound to this spec.
     if (agentBindingWorkspaceId) await ensureAgentWorkspaceBinding(agentBindingWorkspaceId);
+    // The Agent rebind restarts the process; CP's cached Agent health gates chat
+    // admission. Without this wait the Run is queued with `agent_down` and can end
+    // without a `done` event → CP synthesizes `ambiguous` (AGENT_DONE_MISSING).
+    await waitForControlPlaneAgentReady(request, headers);
+    // PLAN-0439: chat admission requires an explicit Session binding (READY chat
+    // connection + template pin) — the send path binds the session first.
+    if (checkpointSessionId) await ensureChatBinding(page, checkpointSessionId);
     const input = page.locator('[data-testid="chat-input"]'),
         send = page.locator('[data-testid="chat-send-button"]');
     await expect(input).toBeVisible({ timeout: 30000 });
@@ -456,6 +499,18 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
         ctx = await registerJourneyUser(request, "checkpoint-slices");
         agentBindingWorkspaceId = ctx.workspaceId;
         hostDir = path.join(HOST_ROOT, ctx.workspaceId);
+        // New sessions require a bound Agent principal (UI contract), so provision
+        // one and create the chat session the scenarios send through.
+        const principalId = await provisionWorkspaceAgentPrincipal(
+            request,
+            { accessToken: ctx.authToken, workspaceId: ctx.workspaceId },
+            { name: `checkpoint-slices-${NONCE}`, actions: ["read", "write"] },
+        );
+        checkpointSessionId = await createSessionWithPrincipal(
+            request,
+            { accessToken: ctx.authToken, workspaceId: ctx.workspaceId },
+            { principalId, title: "checkpoint-slices" },
+        );
     });
 
     // Warm-up ─ deterministic C0 baseline ──────────────────────────────────────
@@ -505,7 +560,7 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
 
         const fileName = `s1-write-${NONCE}.md`,
             content = `S1-SLICE-${NONCE}-written-by-l1`;
-        const runId = await startRun(page, `XIHE-E2E-WRITE ${fileName} ${content}`);
+        const runId = await startRun(page, request, ctx.headers, `XIHE-E2E-WRITE ${fileName} ${content}`);
         await approveCard(page);
         await awaitHostFile(path.join(hostDir, fileName), content);
         expect(await awaitRunTerminal(request, ctx.headers, runId)).toBe("succeeded");
@@ -586,7 +641,7 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
         writeFileSync(path.join(hostDir, nodeRel), nodeOriginal);
 
         const content = `S2-RUN-${NONCE}`,
-            runId = await startRun(page, `XIHE-E2E-WRITE ${runRel} ${content}`);
+            runId = await startRun(page, request, ctx.headers, `XIHE-E2E-WRITE ${runRel} ${content}`);
         await approveCard(page);
         await awaitHostFile(path.join(hostDir, runRel), content);
         expect(await awaitRunTerminal(request, ctx.headers, runId)).toBe("succeeded");
@@ -738,8 +793,8 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
         });
     });
 
-    // S3 ─ nested repository is an opaque gitlink ──────────────────────────────
-    test("S3: nested repository is captured as an opaque gitlink (mode 160000)", async ({
+    // S3 ─ nested repository files are flattened and restorable (PLAN-0361 L1) ─
+    test("S3: nested repository files are captured as ordinary blobs and restorable", async ({
         page,
         request,
     }) => {
@@ -751,9 +806,11 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
         await awaitPreviousRunSettled(request, ctx.headers);
 
         const subRepo = path.join(hostDir, "sub-repo");
+        const nestedRel = "sub-repo/tracked.txt";
+        const nestedBase = `S3-NESTED-BASE-${NONCE}\n`;
         mkdirSync(subRepo, { recursive: true });
         gitIn(subRepo, ["init"]);
-        writeFileSync(path.join(subRepo, "tracked.txt"), `S3-NESTED-${NONCE}\n`);
+        writeFileSync(path.join(subRepo, "tracked.txt"), nestedBase);
         gitIn(subRepo, ["add", "--", "tracked.txt"]);
         gitIn(subRepo, [
             "-c",
@@ -768,7 +825,7 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
 
         const fileName = `s3-run-${NONCE}.txt`,
             content = `S3-RUN-${NONCE}`;
-        const runId = await startRun(page, `XIHE-E2E-WRITE ${fileName} ${content}`);
+        const runId = await startRun(page, request, ctx.headers, `XIHE-E2E-WRITE ${fileName} ${content}`);
         await approveCard(page);
         await awaitHostFile(path.join(hostDir, fileName), content);
         expect(await awaitRunTerminal(request, ctx.headers, runId)).toBe("succeeded");
@@ -781,6 +838,11 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
         );
 
         expect(view.sliceRef).toBeTruthy();
+        expect(
+            view.opaqueNestedRepos,
+            "L1 flattens nested repositories; nothing stays opaque",
+        ).toEqual([]);
+
         const preview = await previewRevert(request, ctx.headers, ctx.workspaceId, view.sliceRef!);
         expect(preview.status, `preview ${preview.status} ${JSON.stringify(preview.body)}`).toBe(
             200,
@@ -788,40 +850,80 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
         const sliceRef = preview.body.sliceRef;
         expect(sliceRef).toMatch(SLICE_REF_PATTERN);
 
+        // The slice holds the nested file as an ordinary blob — no gitlink, no `.git`.
         const treeLines = gitShadow(ctx.workspaceId, ["ls-tree", "-r", sliceRef])
             .split(/\r?\n/)
             .filter(Boolean);
-        const gitlink = treeLines.filter((line) => line.endsWith("\tsub-repo"));
-        expect(gitlink.length, "sub-repo is one tree entry").toBe(1);
         expect(
-            gitlink[0].startsWith("160000 commit "),
-            `gitlink mode 160000 (got: ${gitlink[0]})`,
+            treeLines.some((line) => line.endsWith("\tsub-repo")),
+            "no gitlink entry for the nested repo",
+        ).toBe(false);
+        const nestedEntry = treeLines.find((line) => line.endsWith(`\t${nestedRel}`));
+        expect(nestedEntry, `nested file is an ordinary blob in the slice`).toBeTruthy();
+        expect(
+            nestedEntry!.startsWith("100644 blob "),
+            `nested file mode is 100644 (got: ${nestedEntry})`,
         ).toBe(true);
         expect(
-            treeLines.some((line) => line.includes("sub-repo/")),
-            "nested contents are not part of the slice",
+            treeLines.some((line) => line.includes("/.git/") || line.endsWith("/.git")),
+            "no `.git` entry may enter the slice",
         ).toBe(false);
         expect(
             treeLines.some((line) => line.endsWith(`\t${fileName}`)),
             "the Run file is in the slice",
         ).toBe(true);
-
-        // The projection reports the gitlink path as part of this Run's change set.
-        const changedPaths = view.changedFiles.map((file) => file.path);
-        expect(changedPaths).toContain(fileName);
-        expect(changedPaths, "gitlink path is in the capture change set").toContain("sub-repo");
         expect(
-            view.opaqueNestedRepos,
-            "opaque nested repos are exposed by the projection",
-        ).toContain("sub-repo");
-        expect(preview.body.opaqueNestedRepos).toContain("sub-repo");
+            await checkpointFile(request, ctx.headers, ctx.workspaceId, sliceRef, nestedRel),
+            "the slice blob carries the nested file content",
+        ).toBe(nestedBase);
 
-        record("s3-nested-repo", {
+        // Post-capture drift inside the nested repo, then restore recovers file-by-file.
+        const nestedChanged = `S3-NESTED-CHANGED-${NONCE}\n`,
+            nestedAddRel = "sub-repo/new-nested.txt";
+        writeFileSync(path.join(subRepo, "tracked.txt"), nestedChanged);
+        writeFileSync(path.join(subRepo, "new-nested.txt"), `S3-NESTED-ADD-${NONCE}\n`);
+
+        const drift = await previewRevert(request, ctx.headers, ctx.workspaceId, sliceRef);
+        expect(drift.status, JSON.stringify(drift.body)).toBe(200);
+        const entryByPath = new Map(drift.body.entries.map((entry) => [entry.path, entry]));
+        expect(entryByPath.get(nestedRel), "nested edit is restored").toMatchObject({
+            action: "restore",
+            state: "execute",
+        });
+        expect(entryByPath.get(nestedAddRel), "post-capture nested file is deleted").toMatchObject({
+            action: "delete",
+            state: "execute",
+        });
+        expect(
+            drift.body.counts.typeConflict,
+            "flattened nested content is not a type change",
+        ).toBe(0);
+
+        const revert = await executeRevert(request, ctx.headers, ctx.workspaceId, sliceRef, []);
+        expect(revert.status, JSON.stringify(revert.body)).toBe(200);
+        expect(revert.body.counts, "nested restore outcome counts").toEqual({
+            restored: 1,
+            deleted: 1,
+            failed: 0,
+        });
+        expect(readFileSync(path.join(subRepo, "tracked.txt"), "utf8")).toBe(nestedBase);
+        expect(
+            existsSync(path.join(subRepo, "new-nested.txt")),
+            "post-capture nested file removed by the restore",
+        ).toBe(false);
+        expect(
+            existsSync(path.join(subRepo, ".git")),
+            "the nested `.git` is never captured and survives the restore",
+        ).toBe(true);
+        expect(gitIn(subRepo, ["status", "--porcelain"]), "the nested repo stays usable").toBe("");
+
+        record("s3-nested-l1", {
             runId,
             sliceRef,
-            gitlink: gitlink[0],
             treeEntries: treeLines.length,
-            changedFiles: view.changedFiles,
+            nestedEntry,
+            previewCounts: drift.body.counts,
+            revertCounts: revert.body.counts,
         });
     });
 
@@ -837,7 +939,7 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
 
         const fileName = `s4-shell-${NONCE}.txt`,
             content = `S4-SHELL-${NONCE}`;
-        const runId = await startRun(page, `XIHE-E2E-EXEC echo ${content} > ${fileName}`);
+        const runId = await startRun(page, request, ctx.headers, `XIHE-E2E-EXEC echo ${content} > ${fileName}`);
         await approveCard(page);
         await awaitHostFile(path.join(hostDir, fileName), content);
         expect(await awaitRunTerminal(request, ctx.headers, runId)).toBe("succeeded");
@@ -892,7 +994,7 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
         await awaitPreviousRunSettled(request, ctx.headers);
         const before = listSliceRefs(ctx.workspaceId);
 
-        const runId = await startRun(page, `XIHE-E2E-READ ${SEED_FILE}`);
+        const runId = await startRun(page, request, ctx.headers, `XIHE-E2E-READ ${SEED_FILE}`);
         // read_file is auto-allowed: no approval card may gate the Run.
         expect(await awaitRunTerminal(request, ctx.headers, runId)).toBe("succeeded");
 

@@ -201,4 +201,41 @@ class AgentGraphCheckpointServiceTest {
         assertEquals(true, sql.getValue().contains("ORDER BY c.created_at DESC, c.checkpoint_id DESC LIMIT ?"));
         assertArrayEquals(new Object[]{lineageId, threadId, "", "0003", "fork", 4, 10}, bindArgs.getValue());
     }
+
+    @Test
+    void putWritesAcceptsTheFrameworkNullEmptyPayload() {
+        UUID sessionId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID workspaceId = UUID.randomUUID();
+        UUID lineageId = UUID.randomUUID();
+        UUID threadId = UUID.randomUUID();
+        UUID branchId = UUID.randomUUID();
+        Session session = new Session(workspaceId.toString(), userId.toString(), "probe");
+        session.setId(sessionId);
+        when(sessions.findByIdAndUserIdAndWorkspaceIdAndArchivedFalse(
+                sessionId, userId.toString(), workspaceId.toString())).thenReturn(Optional.of(session));
+        when(jdbc.queryForObject(anyString(), eq(Integer.class), any(Object[].class))).thenReturn(1);
+        when(jdbc.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(0L);
+        // 1) scope lookup, 2) checkpoint existence, 3) existing write lookup.
+        when(jdbc.query(anyString(), any(RowMapper.class), any(Object[].class)))
+                .thenReturn(List.of(new AgentGraphCheckpointService.Scope(
+                        lineageId, threadId, sessionId, userId, workspaceId, branchId, null, null,
+                        1, "2026-10-14T00:00:00Z", "0.1.0")))
+                .thenReturn(List.of(UUID.randomUUID()))
+                .thenReturn(List.of());
+        when(jdbc.update(anyString(), any(Object[].class))).thenReturn(1);
+
+        AgentGraphCheckpointService service = new AgentGraphCheckpointService(
+                jdbc, sessions, new ObjectMapper(), branchPathService, contextService);
+        // LangGraph's JsonPlusSerializer encodes a control-channel None as ("null", b"").
+        AgentGraphCheckpointService.PutWritesRequest request =
+                new AgentGraphCheckpointService.PutWritesRequest(
+                        sessionId.toString(), userId.toString(), workspaceId.toString(),
+                        "", "0001", "task-1", "", List.of(
+                                new AgentGraphCheckpointService.WriteValue("branch:to:tools", "null", "", null)));
+
+        service.putWrites(threadId.toString(), request);
+
+        verify(jdbc).update(anyString(), any(Object[].class));
+    }
 }

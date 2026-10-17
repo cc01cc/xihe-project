@@ -2,7 +2,15 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
-import { awaitLatestChatRunCompleted, ensureAgentWorkspaceBinding } from "./helpers/journey";
+import {
+    ensureAgentWorkspaceBinding,
+    ensureChatBinding,
+    waitForControlPlaneAgentReady,
+} from "./helpers/journey";
+import {
+    createSessionWithPrincipal,
+    provisionWorkspaceAgentPrincipal,
+} from "./helpers/agent-principal";
 import { test, expect, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 
 /**
@@ -48,6 +56,8 @@ const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/checkpoint-rollback");
 // PLAN-0369: workspace this file's Agent binding was ensured for.
 let agentBindingWorkspaceId = "";
+// PLAN-0361: bound-principal chat session this spec sends through.
+let rollbackSessionId = "";
 const BASELINE_FILE = ".xihe-checkpoint-rollback-baseline.txt",
     BASELINE_CONTENT = "checkpoint rollback baseline\n";
 
@@ -140,10 +150,20 @@ function listSliceRefs(workspaceId: string): string[] {
 /**
  * Send a chat message and wait for the real request plus visible user bubble.
  */
-async function sendChat(page: Page, text: string): Promise<void> {
+async function sendChat(
+    page: Page,
+    request: APIRequestContext,
+    headers: Record<string, string>,
+    text: string,
+): Promise<void> {
     // PLAN-0369: workspace-tool chats need the Agent bound to THIS spec's
     // workspace (single-binding product rule); no-op when already bound.
     if (agentBindingWorkspaceId) await ensureAgentWorkspaceBinding(agentBindingWorkspaceId);
+    // The rebind restarts the Agent; CP's cached health gates chat admission, and a
+    // queued `agent_down` Run can end without a `done` → CP marks it `ambiguous`.
+    await waitForControlPlaneAgentReady(request, headers);
+    // PLAN-0439: chat admission requires an explicit Session binding.
+    if (rollbackSessionId) await ensureChatBinding(page, rollbackSessionId);
     const input = page.locator('[data-testid="chat-input"]'),
         send = page.locator('[data-testid="chat-send-button"]');
     await input.fill(text);
@@ -162,7 +182,7 @@ async function sendChat(page: Page, text: string): Promise<void> {
 
 async function openWorkspace(page: Page, token: string, wsId: string): Promise<void> {
     seedPage(page, token, wsId);
-    await page.goto(`/workspace/${wsId}`, { waitUntil: "load" });
+    await page.goto(`/workspace/${wsId}/chat/${rollbackSessionId}`, { waitUntil: "load" });
     await expect(page.locator('[data-testid="chat-input"]'), "workspace chat input").toBeVisible({
         timeout: 30000,
     });
@@ -181,7 +201,24 @@ async function awaitPreviousRunSettled(
     headers: Record<string, string>,
     workspaceId: string,
 ): Promise<void> {
-    await awaitLatestChatRunCompleted(request, headers, workspaceId);
+    // A workspace with no prior ChatRun is trivially settled — a strict terminal
+    // wait fails on the empty list (the first Run has nothing to wait for).
+    await expect
+        .poll(
+            async () => {
+                const res = await request.get(
+                    `${CP_URL}/api/v1/audit/entries?type=chat_run&size=5&workspaceId=${encodeURIComponent(workspaceId)}`,
+                    { headers },
+                );
+                if (!res.ok()) return "unavailable";
+                const body = (await res.json()) as { entries?: Array<{ status?: string }> };
+                const entries = body.entries ?? [];
+                if (entries.length === 0) return "settled";
+                return TERMINAL_RUN_PATTERN.test(entries[0]?.status ?? "") ? "settled" : "pending";
+            },
+            { timeout: 120000, intervals: [2000] },
+        )
+        .toBe("settled");
 }
 
 /** The newest ChatRun audit entry — i.e. the run just started. */
@@ -323,7 +360,7 @@ async function beginApprovalRun(
 ): Promise<Locator> {
     await awaitPreviousRunSettled(request, headers, workspaceId);
     const modal = page.locator('[data-testid="modal-content"]');
-    await sendChat(page, markerText);
+    await sendChat(page, request, headers, markerText);
     await expect(modal, "approval modal").toBeVisible({ timeout: 120000 });
     return modal;
 }
@@ -479,6 +516,17 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
             "Content-Type": "application/json",
         };
         hostDir = path.join(HOST_ROOT, sharedWs);
+        // PLAN-0361: a chat Session requires a bound Agent principal.
+        const principalId = await provisionWorkspaceAgentPrincipal(
+            request,
+            { accessToken: sharedAuth, workspaceId: sharedWs },
+            { name: "checkpoint-rollback", actions: ["read", "write"] },
+        );
+        rollbackSessionId = await createSessionWithPrincipal(
+            request,
+            { accessToken: sharedAuth, workspaceId: sharedWs },
+            { principalId, title: "checkpoint-rollback" },
+        );
     });
 
     test("W: materialize the workspace and establish the C0 slice baseline", async ({
@@ -733,7 +781,7 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
 
         await openWorkspace(page, sharedAuth, sharedWs);
         await awaitPreviousRunSettled(request, sharedHeaders, sharedWs);
-        await sendChat(page, `XIHE-E2E-READ ${seeded}`);
+        await sendChat(page, request, sharedHeaders, `XIHE-E2E-READ ${seeded}`);
         const runId = await currentRunId(request, sharedHeaders, sharedWs);
         // read_file is auto-allowed: no approval modal may appear, the run goes straight to terminal.
         const status = await awaitChatRunTerminal(request, sharedHeaders, runId);
@@ -799,7 +847,10 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         expect(await awaitChatRunTerminal(request, sharedHeaders, runId)).toBe("succeeded");
         const view = await awaitCheckpointCaptured(request, sharedHeaders, sharedWs, runId);
 
-        // Two sequential executes exercise idempotency; a concurrent restore is fail-fast.
+        // Two sequential executes exercise idempotency. Reverting to the captured slice
+        // preserves the captured run file and deletes a later edit (same semantics as S1).
+        const extraFile = path.join(hostDir, `s6-extra-${nonce}.md`);
+        writeFileSync(extraFile, `S6-EXTRA-${nonce}\n`);
         const first = await executeRevert(request, sharedHeaders, sharedWs, view.sliceRef!);
         expect(first.status).toBe(200);
         expect(first.body.counts.deleted).toBe(1);
@@ -811,16 +862,19 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         expect(second.body.counts.failed).toBe(0);
         expect(second.body.suspects).toEqual([]);
 
-        // Persistence: the projection carries the last (noop) summary and the file stays deleted.
+        // Persistence: the projection carries the last (noop) summary; the captured run
+        // file stays, the post-capture edit is gone.
         const after = await checkpointView(request, sharedHeaders, sharedWs, runId);
         expect(after.revert?.state).toBe("rolled_back");
         expect(after.revert?.attemptCount).toBe(2);
-        expect(existsSync(hostFile)).toBe(false);
+        expect(existsSync(hostFile), "the captured run file is preserved").toBe(true);
+        expect(existsSync(extraFile), "the post-capture edit is deleted").toBe(false);
 
         // Final state is stable across a re-read.
         const stable = await checkpointView(request, sharedHeaders, sharedWs, runId);
         expect(stable).toEqual(after);
-        expect(existsSync(hostFile)).toBe(false);
+        expect(existsSync(hostFile)).toBe(true);
+        expect(existsSync(extraFile)).toBe(false);
     });
 
     // S7 ─ dual diff separation ────────────────────────────────────────────────
@@ -851,6 +905,19 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         git(["commit", "--no-gpg-sign", "-m", "init"]);
 
         await openWorkspace(page, sharedAuth, sharedWs);
+        // The capture change set diffs against the previous slice, so a file created
+        // after it (repoFile) would otherwise count as this Run's change. Bake the
+        // committed repo file into the baseline slice with a preliminary run first.
+        const baselineFile = `s7-baseline-${nonce}.txt`;
+        await writeFileRunThroughUi(
+            page,
+            request,
+            sharedHeaders,
+            sharedWs,
+            hostDir,
+            baselineFile,
+            `S7-BASE-${nonce}`,
+        );
         const flow = await writeFileRunThroughUi(
             page,
             request,

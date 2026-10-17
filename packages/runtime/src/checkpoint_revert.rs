@@ -605,20 +605,17 @@ impl ShadowGit {
             ),
             None => None,
         };
-        self.stage_index(
-            &context.shadow,
-            &context.work_tree,
-            &index,
-            &excludes,
-            reference_tree.as_deref(),
-        )
-        .await
-        .map_err(restore_git_failure)?;
-        let index_env = self.isolated_env(&context.shadow, &context.work_tree, Some(&index));
-        let current_tree = self
-            .write_tree(&index_env)
+        let (current_tree, _opaque) = self
+            .stage_workspace(
+                &context.shadow,
+                &context.work_tree,
+                &index,
+                &excludes,
+                reference_tree.as_deref(),
+            )
             .await
             .map_err(restore_git_failure)?;
+        let index_env = self.isolated_env(&context.shadow, &context.work_tree, Some(&index));
         // Keep stat cache warm for the next capture/preview (PLAN-0358).
         if let Err(error) = self.save_last_index(&context.shadow, &index).await {
             warn!(
@@ -1310,6 +1307,153 @@ mod tests {
         assert_eq!(replay.counts.restored, 0);
         assert_eq!(replay.counts.deleted, 0);
         assert_eq!(replay.counts.failed, 0);
+    }
+
+    fn nested_git(dir: &Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .status()
+            .expect("nested git spawn");
+        assert!(status.success(), "nested git {args:?} failed");
+    }
+
+    /// PLAN-0361 L1: a nested repository's files are ordinary blobs, so restore
+    /// recovers them file-by-file while leaving the nested `.git` (never captured)
+    /// untouched and the nested repository usable.
+    #[tokio::test]
+    async fn checkpoint_restore_recovers_flattened_nested_repository_content() {
+        let fixture = Fixture::new().await;
+        fixture.write("top.txt", "top-base");
+        fixture.write("sub/nested/README.md", "nested-base");
+        let nested = fixture.ws().join("sub").join("nested");
+        nested_git(&nested, &["init"]);
+        nested_git(&nested, &["add", "-A"]);
+        nested_git(&nested, &["commit", "-m", "nested base"]);
+        let slice = fixture.capture("run-1").await;
+
+        // Post-capture drift inside the nested repository.
+        fixture.write("sub/nested/README.md", "nested-changed");
+        fixture.write("sub/nested/new.txt", "new-in-nested");
+
+        let preview = fixture
+            .engine
+            .restore_preview(WS, &slice)
+            .await
+            .expect("preview");
+        let changed: std::collections::BTreeSet<(String, String)> = preview
+            .entries
+            .iter()
+            .map(|entry| (entry.path.clone(), entry.action.as_str().to_string()))
+            .collect();
+        assert!(
+            changed.contains(&("sub/nested/README.md".to_string(), "restore".to_string())),
+            "nested edit must be a restore: {changed:?}"
+        );
+        assert!(
+            changed.contains(&("sub/nested/new.txt".to_string(), "delete".to_string())),
+            "added nested file must be a delete: {changed:?}"
+        );
+        assert_eq!(
+            preview.counts.type_conflict, 0,
+            "flattened nested content must not be a type change: {changed:?}"
+        );
+
+        let result = fixture.execute(&slice).await;
+        assert_eq!(result.counts.failed, 0);
+        assert_eq!(fixture.read("sub/nested/README.md"), "nested-base");
+        assert!(!fixture.exists("sub/nested/new.txt"));
+        assert!(
+            nested.join(".git").exists(),
+            "the nested `.git` (never captured) must survive the restore"
+        );
+        let status = std::process::Command::new("git")
+            .current_dir(&nested)
+            .args(["status", "--porcelain"])
+            .output()
+            .expect("nested git status");
+        assert!(status.status.success());
+    }
+
+    /// PLAN-0361 V5: a per-path failure inside a nested repository is reported per
+    /// path and never masked as overall success; the sibling nested path still
+    /// restores (partial success stays attributable). Windows-only: it needs a
+    /// no-share file handle (the platform these suites run on).
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn checkpoint_restore_reports_a_failed_nested_path_without_masking_partial_success() {
+        let fixture = Fixture::new().await;
+        fixture.write("top.txt", "top-base");
+        fixture.write("sub/nested/ok.txt", "ok-base");
+        fixture.write("sub/nested/blocked", "blocked-base");
+        let nested = fixture.ws().join("sub").join("nested");
+        nested_git(&nested, &["init"]);
+        nested_git(&nested, &["add", "-A"]);
+        nested_git(&nested, &["commit", "-m", "nested base"]);
+        let slice = fixture.capture("run-1").await;
+
+        // Shadow one nested file with a non-empty directory (the excluded file keeps
+        // it non-empty, so git cannot drop it): the file→directory change is
+        // acknowledged, and git then fails to overwrite that path while the sibling
+        // restores.
+        std::fs::remove_file(nested.join("blocked")).expect("remove blocked file");
+        std::fs::create_dir_all(nested.join("blocked").join("node_modules")).expect("blocked dir");
+        fixture.write("sub/nested/blocked/node_modules/keep", "excluded");
+        fixture.write("sub/nested/ok.txt", "ok-changed");
+
+        // Hold a no-share handle on the excluded file: git cannot remove the
+        // directory, so exactly this path's checkout fails.
+        let _keep_lock = {
+            use std::os::windows::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(nested.join("blocked").join("node_modules").join("keep"))
+                .expect("lock the excluded file")
+        };
+
+        // The file→directory shadow is a type change, so acknowledge it and let git
+        // fail to overwrite the non-empty directory: exactly that path fails.
+        let result = fixture
+            .engine
+            .restore_execute(WS, &slice, &[String::from("sub/nested/blocked")])
+            .await
+            .expect("fixture restore with acknowledged type change");
+
+        let mut paths: Vec<&str> = result
+            .entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect();
+        paths.sort_unstable();
+        assert!(
+            paths.contains(&"sub/nested/ok.txt"),
+            "sibling path listed: {paths:?}"
+        );
+        assert!(
+            paths.contains(&"sub/nested/blocked"),
+            "failed path listed: {paths:?}"
+        );
+        assert_eq!(
+            result.counts.failed, 1,
+            "exactly one nested path fails: {:?}",
+            result.counts
+        );
+        assert!(
+            result.counts.restored >= 1,
+            "the sibling path restores: {:?}",
+            result.counts
+        );
+        let failed = result
+            .entries
+            .iter()
+            .find(|entry| entry.path == "sub/nested/blocked")
+            .expect("failed entry");
+        assert_eq!(
+            failed.outcome,
+            crate::checkpoint_revert::RestoreItemOutcome::Failed,
+            "the shadowed nested path is reported as failed"
+        );
     }
 
     #[tokio::test]

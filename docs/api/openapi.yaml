@@ -1565,7 +1565,10 @@ paths:
         description: |
           Computes the complete set of changes between the selected slice and the current workspace.
           The bounded `entries` list is marked by `truncated`; counts always cover the full plan. The
-          preview does not acquire the restore lock and does not mutate the workspace.
+          preview does not acquire the restore lock and does not mutate the workspace. Returns
+          `409 RUN_ACTIVE` while a ChatRun is active in the workspace (checked before slice
+          resolution), plus `CHECKPOINT_NOT_AVAILABLE` / `CHECKPOINT_TYPE_CHANGES_UNACKNOWLEDGED` /
+          `CHECKPOINT_RESTORE_LOCKED` as applicable.
         security: [{ bearerAuth: [] }]
         parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
         requestBody:
@@ -1589,6 +1592,8 @@ paths:
           Executes the selected slice restore after explicit user confirmation. Only path type changes
           require acknowledgement; all changes after the target slice are intentionally included in the
           preview and may be discarded. The response reports each path and any concurrent-write suspects.
+          Returns `409 RUN_ACTIVE` while a ChatRun is active in the workspace (checked before slice
+          resolution).
         security: [{ bearerAuth: [] }]
         parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
         requestBody:
@@ -2530,7 +2535,7 @@ components:
          truncated: { type: boolean, description: True when the bounded changedFiles list is incomplete }
          opaqueNestedRepos: { type: array, items: { type: string } }
          state: { type: string, enum: [captured, abnormal-captured, degraded, expired] }
-         unrollableReason: { type: [string, 'null'], enum: [UNAVAILABLE, null] }
+         unrollableReason: { type: [string, 'null'], enum: [UNAVAILABLE, NESTED_REPO_LIMIT, null] }
          revert: { $ref: '#/components/schemas/CheckpointRevertBookkeeping' }
     CheckpointRevertPreviewRequest:
        type: object

@@ -269,7 +269,7 @@ public class AgentGraphCheckpointService {
             }
         }
         String payloadType = identifier(request.payloadType(), "payloadType", 64);
-        byte[] blob = decodePayload(request.payloadBase64(), MAX_CHECKPOINT_BYTES);
+        byte[] blob = decodePayload(payloadType, request.payloadBase64(), MAX_CHECKPOINT_BYTES);
         Map<String, Object> normalizedMetadata = normalizeMetadata(request.metadata());
         Long eventSequence = exactLong(normalizedMetadata.get("eventSequence"));
         if (scope.sourceRunId() != null && eventSequence == null) {
@@ -401,7 +401,7 @@ public class AgentGraphCheckpointService {
             if (write == null) throw invalid("write is invalid");
             String channel = identifier(write.channel(), "channel", 256);
             String payloadType = identifier(write.payloadType(), "payloadType", 64);
-            byte[] blob = decodePayload(write.payloadBase64(), MAX_WRITE_BYTES);
+            byte[] blob = decodePayload(payloadType, write.payloadBase64(), MAX_WRITE_BYTES);
             int writeIndex = write.writeIndex() == null ? index : write.writeIndex();
             List<ExistingWrite> existingRows = jdbc.query("""
                     SELECT task_path, channel, payload_type, value_blob
@@ -617,13 +617,17 @@ public class AgentGraphCheckpointService {
         }
     }
 
-    private static byte[] decodePayload(String value, int maximumBytes) {
+    private static byte[] decodePayload(String payloadType, String value, int maximumBytes) {
         if (value == null || value.length() > ((maximumBytes + 2L) / 3L) * 4L) {
             throw invalid("checkpoint payload is invalid");
         }
         try {
             byte[] decoded = Base64.getDecoder().decode(value);
-            if (decoded.length == 0 || decoded.length > maximumBytes) throw invalid("checkpoint payload is invalid");
+            // LangGraph's JsonPlusSerializer encodes None as ("null", b"") — an empty
+            // payload — so an empty blob is valid only for the "null" type.
+            if (decoded.length > maximumBytes || (decoded.length == 0 && !"null".equals(payloadType))) {
+                throw invalid("checkpoint payload is invalid");
+            }
             return decoded;
         } catch (IllegalArgumentException e) {
             throw invalid("checkpoint payload is invalid");

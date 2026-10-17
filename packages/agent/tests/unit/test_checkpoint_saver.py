@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 from types import SimpleNamespace
 from typing import Annotated, TypedDict
@@ -12,7 +13,7 @@ from langgraph.checkpoint.base import empty_checkpoint
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
-from xihe_agent.agent_runner.checkpoint_saver import CpAgentCheckpointSaver
+from xihe_agent.agent_runner.checkpoint_saver import CheckpointNotFoundError, CpAgentCheckpointSaver
 from xihe_agent.interfaces.tool import (
     ACQUIRE_CREDENTIAL_TOOL_NAME,
     CHECKPOINT_SAFE_OUTPUT_PREFIX,
@@ -446,6 +447,85 @@ def test_async_unsafe_checkpoint_latches_out_all_later_writes(monkeypatch: pytes
         )
     )
     assert requests == []
+
+
+def test_async_put_writes_persists_control_channel_none_like_sync(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression (PLAN-0510 async/sync parity): control-channel writes may carry
+    ``None`` scheduler values. Async ``aput_writes`` must persist them verbatim
+    (mirroring sync ``put_writes``) instead of raising
+    ``CheckpointStoreError("Checkpoint value has no checkpoint-safe projection")``,
+    which aborted the LangGraph stream and left the chat Run ``ambiguous``.
+    """
+    saver = _saver()
+    bodies: list[dict] = []
+
+    async def request(method: str, path: str, *, json=None, **kwargs):
+        bodies.append({"method": method, "path": path, "json": json})
+        return None
+
+    monkeypatch.setattr(saver, "_arequest", request)
+    config = {
+        "configurable": {
+            "thread_id": saver.thread_id,
+            "checkpoint_ns": "",
+            "checkpoint_id": "checkpoint-control-none",
+        }
+    }
+
+    _run_immediate(
+        saver.aput_writes(
+            config,
+            [("branch:to:tools", None)],
+            task_id="task-control-none",
+        )
+    )
+
+    assert len(bodies) == 1
+    assert bodies[0]["method"] == "POST"
+    assert bodies[0]["path"].endswith("/writes")
+    writes = bodies[0]["json"]["writes"]
+    assert [write["channel"] for write in writes] == ["branch:to:tools"]
+
+
+def test_async_put_writes_retries_pending_checkpoint_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pending write whose checkpoint is not yet visible to CP (404) is retried
+    rather than aborting the Run (the writes table has an FK to the checkpoint)."""
+    saver = _saver()
+    calls = {"writes": 0}
+
+    async def request(method: str, path: str, *, json=None, **kwargs):
+        if method == "POST" and path.endswith("/writes"):
+            calls["writes"] += 1
+            if calls["writes"] == 1:
+                raise CheckpointNotFoundError("checkpoint not visible yet")
+        return None
+
+    monkeypatch.setattr(saver, "_arequest", request)
+    monkeypatch.setattr(
+        "xihe_agent.agent_runner.checkpoint_saver._PENDING_WRITE_NOT_FOUND_BACKOFF_SECONDS",
+        0,
+    )
+    config = {
+        "configurable": {
+            "thread_id": saver.thread_id,
+            "checkpoint_ns": "",
+            "checkpoint_id": "checkpoint-retry",
+        }
+    }
+
+    asyncio.run(
+        saver.aput_writes(
+            config,
+            [("messages", HumanMessage(content="later safe write"))],
+            task_id="task-retry",
+        )
+    )
+
+    assert calls["writes"] == 2
 
 
 def test_runtime_pregel_v4_checkpoint_without_pending_sends_round_trips(

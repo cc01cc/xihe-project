@@ -22,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -61,6 +62,13 @@ public class RunCheckpointService {
     public static final String REASON_INVALID_REQUEST = "INVALID_REQUEST";
     public static final String REASON_TOO_LARGE = "TOO_LARGE";
 
+    /**
+     * PLAN-0361 B6: Runtime capture-failure reasons that are surfaced verbatim as
+     * the durable {@code unrollableReason} instead of being normalized to
+     * {@link #REASON_UNAVAILABLE}. Unknown/transport reasons still normalize.
+     */
+    private static final Set<String> PROPAGATED_CAPTURE_REASONS = Set.of("NESTED_REPO_LIMIT");
+
     /** Retention constants: newest N slices + TTL days per workspace. */
     public static final int RETENTION_MAX_RUNS = 50;
     public static final int RETENTION_TTL_DAYS = 30;
@@ -78,6 +86,10 @@ public class RunCheckpointService {
     /** ChatRun terminal statuses (mirrors {@code ChatController} terminal transitions). */
     private static final List<String> TERMINAL_RUN_STATUSES = List.of(
             "succeeded", "failed", "partial", "ambiguous", "cancelled");
+
+    /** ChatRun non-terminal statuses (mirrors {@code ChatRunCancellationService}); revert refuses while any is present. */
+    private static final List<String> NON_TERMINAL_RUN_STATUSES = List.of(
+            "accepted", "queued", "running", "streaming", "awaiting_approval", "dispatching", "cancelling");
 
     /** PLAN-0338: a terminal Run counts as abnormal unless it succeeded or was cancelled. */
     private static final List<String> NORMAL_RUN_STATUSES = List.of("succeeded", "cancelled");
@@ -170,7 +182,11 @@ public class RunCheckpointService {
                     yield false;
                 }
                 default -> {
-                    persistDegraded(run, REASON_UNAVAILABLE, result.reason());
+                    String reason = result.reason();
+                    String durable = reason != null && PROPAGATED_CAPTURE_REASONS.contains(reason)
+                            ? reason
+                            : REASON_UNAVAILABLE;
+                    persistDegraded(run, durable, reason);
                     yield false;
                 }
             };
@@ -224,6 +240,8 @@ public class RunCheckpointService {
         TYPE_CHANGES_UNACKNOWLEDGED,
         /** 409 CHECKPOINT_RESTORE_LOCKED — another restore holds the workspace restore lock. */
         RESTORE_LOCKED,
+        /** 409 RUN_ACTIVE — a ChatRun is active in the workspace; revert must wait. */
+        RUN_ACTIVE,
         /** 400 CHECKPOINT_INVALID_REQUEST — malformed blob request. */
         INVALID_REQUEST,
         /** 413 CHECKPOINT_BLOB_TOO_LARGE — preview cap exceeded. */
@@ -297,6 +315,9 @@ public class RunCheckpointService {
      * {@code 409 CHECKPOINT_NOT_AVAILABLE {reason=EXPIRED}}.
      */
     public PreviewOutcome previewRevert(String workspaceId, String sliceRef) {
+        if (hasActiveRun(workspaceId)) {
+            return new PreviewOutcome(Gate.RUN_ACTIVE, "RUN_ACTIVE", null, Map.of());
+        }
         RunCheckpoint row = findSlice(workspaceId, sliceRef);
         GateVerdict verdict = rowGate(row);
         if (verdict != null) {
@@ -327,6 +348,9 @@ public class RunCheckpointService {
      * bookkeeping is best-effort and never rewrites the Runtime's result.
      */
     public RevertOutcome revert(String workspaceId, String sliceRef, List<String> acknowledgeTypeChanges) {
+        if (hasActiveRun(workspaceId)) {
+            return new RevertOutcome(Gate.RUN_ACTIVE, "RUN_ACTIVE", null, Map.of());
+        }
         RunCheckpoint row = findSlice(workspaceId, sliceRef);
         GateVerdict verdict = rowGate(row);
         if (verdict != null) {
@@ -618,6 +642,12 @@ public class RunCheckpointService {
             return null;
         }
         return checkpoints.findByWorkspaceIdAndSliceRef(workspaceId, sliceRef).orElse(null);
+    }
+
+    /** Restoring under an active ChatRun is unsafe: revert refuses while the workspace has one. */
+    private boolean hasActiveRun(String workspaceId) {
+        return !isBlank(workspaceId)
+                && chatRuns.existsByWorkspaceIdAndStatusIn(workspaceId, NON_TERMINAL_RUN_STATUSES);
     }
 
     private static Map<String, Object> problemDetails(Map<String, Object> problem, String... keys) {

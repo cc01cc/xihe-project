@@ -7,6 +7,7 @@ or opens a database connection.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import math
@@ -52,6 +53,16 @@ class CheckpointUnsafeStateError(CheckpointStoreError):
     """The current graph state is usable in memory but unsafe to persist."""
 
 
+class CheckpointNotFoundError(CheckpointStoreError):
+    """The referenced graph checkpoint is not (yet) visible to CP.
+
+    ``put`` and ``put_writes`` are separate requests; a write can reach CP before
+    the checkpoint insert is visible, which CP correctly rejects with 404 (the
+    writes table has an FK to the checkpoint row). Callers retry briefly rather
+    than aborting the whole run.
+    """
+
+
 # `schemaVersion` on a CP lineage is the Agent graph-state schema version. It is
 # intentionally separate from Flyway's database schema version.
 SUPPORTED_STATE_SCHEMA_VERSION = 1
@@ -75,6 +86,11 @@ SAFE_REACT_NODE_NAMES = {"__input__", "__start__", "__end__", "__interrupt__", "
 # 任务"），与设计里已刻意置空的 `pending_sends` 同类——不写入 checkpoint（恢复时由框架按图
 # 状态重算），但每次跳过都要留痕，便于核查"确实只跳过了框架调度信息"。
 FRAMEWORK_SCHEDULING_CHANNELS = {"__pregel_tasks"}
+
+# Bounded readiness retry for pending writes whose checkpoint is not yet visible
+# to CP (see CheckpointNotFoundError). Total wait ~5s across the attempts.
+_PENDING_WRITE_NOT_FOUND_RETRIES = 6
+_PENDING_WRITE_NOT_FOUND_BACKOFF_SECONDS = 0.25
 
 
 def _log_framework_channel_skip(channel: Any, value: Any) -> None:
@@ -511,6 +527,12 @@ class CpAgentCheckpointSaver(BaseCheckpointSaver[str]):
             "metadata": self._metadata_for_write(metadata),
         }
         await self._arequest("PUT", f"/{quote(thread_id, safe='')}/checkpoints", json=body)
+        logger.info(
+            "checkpoint stored: ns={} checkpointId={} parent={}",
+            checkpoint_ns,
+            str(checkpoint["id"]),
+            body["parentCheckpointId"],
+        )
         return self._checkpoint_config(thread_id, checkpoint_ns, str(checkpoint["id"]))
 
     async def aput_writes(
@@ -532,7 +554,18 @@ class CpAgentCheckpointSaver(BaseCheckpointSaver[str]):
                 continue
             self._require_checkpoint_safe_write_channel(channel, value)
             try:
-                projected_value = self._value_for_storage(value)
+                # Control channels (except ``__start__``) carry scheduler values such
+                # as ``None``; persist them verbatim, mirroring the sync ``put_writes``.
+                # Projecting them through ``_value_for_storage`` raised
+                # "Checkpoint value has no checkpoint-safe projection" for ``None`` and
+                # aborted the async stream (chat Run then ended ``ambiguous``).
+                projected_value = (
+                    value
+                    if isinstance(channel, str)
+                    and channel in SAFE_REACT_CONTROL_CHANNELS
+                    and channel != "__start__"
+                    else self._value_for_storage(value)
+                )
             except CheckpointUnsafeStateError:
                 self._unsafe_state_seen.set()
                 return None
@@ -545,18 +578,35 @@ class CpAgentCheckpointSaver(BaseCheckpointSaver[str]):
                     "writeIndex": WRITES_IDX_MAP.get(channel, index),
                 }
             )
-        await self._arequest(
-            "POST",
-            f"/{quote(thread_id, safe='')}/writes",
-            json={
-                **self._owner,
-                "checkpointNs": checkpoint_ns,
-                "checkpointId": checkpoint_id,
-                "taskId": task_id,
-                "taskPath": task_path,
-                "writes": encoded_writes,
-            },
-        )
+        body = {
+            **self._owner,
+            "checkpointNs": checkpoint_ns,
+            "checkpointId": checkpoint_id,
+            "taskId": task_id,
+            "taskPath": task_path,
+            "writes": encoded_writes,
+        }
+        # LangGraph issues put/put_writes as separate requests; a write can arrive
+        # before the checkpoint insert is visible to CP (CP rejects it with 404 via
+        # the checkpoint FK). Retry briefly instead of failing the whole Run.
+        for attempt in range(_PENDING_WRITE_NOT_FOUND_RETRIES + 1):
+            try:
+                await self._arequest(
+                    "POST",
+                    f"/{quote(thread_id, safe='')}/writes",
+                    json=body,
+                )
+                return None
+            except CheckpointNotFoundError:
+                if attempt >= _PENDING_WRITE_NOT_FOUND_RETRIES:
+                    logger.warning(
+                        "checkpoint writes rejected after retries: checkpointId={} taskId={}",
+                        checkpoint_id,
+                        task_id,
+                    )
+                    raise
+                await asyncio.sleep(_PENDING_WRITE_NOT_FOUND_BACKOFF_SECONDS * (attempt + 1))
+        return None
 
     async def adelete_thread(self, thread_id: str) -> None:
         self._require_thread(thread_id)
@@ -1157,7 +1207,21 @@ class CpAgentCheckpointSaver(BaseCheckpointSaver[str]):
         if allow_not_found and response.status_code == 404:
             return None
         if response.status_code < 200 or response.status_code >= 300:
-            raise CheckpointStoreError("CP checkpoint request failed")
+            logger.warning(
+                "checkpoint store request failed: method={} path={} status={} body={}",
+                method,
+                path,
+                response.status_code,
+                response.text[:300],
+            )
+            if response.status_code == 404:
+                raise CheckpointNotFoundError(
+                    f"CP checkpoint request not found (method={method}, path={path})"
+                )
+            raise CheckpointStoreError(
+                f"CP checkpoint request failed (status={response.status_code}, "
+                f"method={method}, path={path})"
+            )
         if response.status_code == 204:
             return None
         try:
@@ -1178,7 +1242,21 @@ class CpAgentCheckpointSaver(BaseCheckpointSaver[str]):
         if allow_not_found and response.status_code == 404:
             return None
         if response.status_code < 200 or response.status_code >= 300:
-            raise CheckpointStoreError("CP checkpoint request failed")
+            logger.warning(
+                "checkpoint store request failed: method={} path={} status={} body={}",
+                method,
+                path,
+                response.status_code,
+                response.text[:300],
+            )
+            if response.status_code == 404:
+                raise CheckpointNotFoundError(
+                    f"CP checkpoint request not found (method={method}, path={path})"
+                )
+            raise CheckpointStoreError(
+                f"CP checkpoint request failed (status={response.status_code}, "
+                f"method={method}, path={path})"
+            )
         if response.status_code == 204:
             return None
         try:
