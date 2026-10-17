@@ -29,12 +29,15 @@ from xihe_agent.evaluation.report import (
     evaluate_task,
     summarize,
 )
+from xihe_agent.evaluation.runner import CpClient, RunTerminal, run_dataset, tool_mode_for
 from xihe_agent.evaluation.schema import DATASET_SCHEMA_VERSION, EvalTask, HardAssertion
+from xihe_agent.evaluation.trace import TraceEvent, TraceResponse, derive_facts, extract_citations
 
 __all__ = [
     "AssertionResult",
     "BudgetDimension",
     "ComparisonReport",
+    "CpClient",
     "DATASET_SCHEMA_VERSION",
     "DATASET_VERSION",
     "EvalReport",
@@ -42,18 +45,25 @@ __all__ = [
     "HardAssertion",
     "REPORT_SCHEMA_VERSION",
     "RunFacts",
+    "RunTerminal",
     "SCORER_VERSION",
     "STATUS_FAILED",
     "STATUS_NOT_EVALUATED",
     "STATUS_PASSED",
     "TaskDelta",
     "TaskReport",
+    "TraceEvent",
+    "TraceResponse",
     "build_report",
     "compare_reports",
     "dataset_sha256",
     "default_dataset_path",
+    "derive_facts",
     "evaluate_assertion",
     "evaluate_task",
+    "extract_citations",
     "load_dataset",
+    "run_dataset",
     "summarize",
+    "tool_mode_for",
 ]
