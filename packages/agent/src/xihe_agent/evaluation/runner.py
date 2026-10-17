@@ -57,12 +57,22 @@ class CpClient(Protocol):
 
 
 def _task_content(task: EvalTask) -> str:
+    """Compose the model input: synthetic context fixture first, then the instruction."""
+    parts: list[str] = []
+    fixture = task.context_fixture or {}
+    sources = fixture.get("sources")
+    if isinstance(sources, list) and sources:
+        lines = ["Provided sources:"]
+        for source in sources:
+            if isinstance(source, dict):
+                lines.append(f"[{source.get('id')}] {source.get('text')}")
+        parts.append("\n".join(lines))
     messages = task.input.messages
-    if not messages:
-        return ""
-    last = messages[-1]
-    content = last.get("content")
-    return content if isinstance(content, str) else ""
+    if messages:
+        content = messages[-1].get("content")
+        if isinstance(content, str):
+            parts.append(content)
+    return "\n\n".join(parts)
 
 
 def tool_mode_for(category: str) -> str:
