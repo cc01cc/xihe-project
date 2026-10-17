@@ -1375,6 +1375,87 @@ mod tests {
         assert!(status.status.success());
     }
 
+    /// PLAN-0361 V5: a per-path failure inside a nested repository is reported per
+    /// path and never masked as overall success; the sibling nested path still
+    /// restores (partial success stays attributable). Windows-only: it needs a
+    /// no-share file handle (the platform these suites run on).
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn checkpoint_restore_reports_a_failed_nested_path_without_masking_partial_success() {
+        let fixture = Fixture::new().await;
+        fixture.write("top.txt", "top-base");
+        fixture.write("sub/nested/ok.txt", "ok-base");
+        fixture.write("sub/nested/blocked", "blocked-base");
+        let nested = fixture.ws().join("sub").join("nested");
+        nested_git(&nested, &["init"]);
+        nested_git(&nested, &["add", "-A"]);
+        nested_git(&nested, &["commit", "-m", "nested base"]);
+        let slice = fixture.capture("run-1").await;
+
+        // Shadow one nested file with a non-empty directory (the excluded file keeps
+        // it non-empty, so git cannot drop it): the file→directory change is
+        // acknowledged, and git then fails to overwrite that path while the sibling
+        // restores.
+        std::fs::remove_file(nested.join("blocked")).expect("remove blocked file");
+        std::fs::create_dir_all(nested.join("blocked").join("node_modules")).expect("blocked dir");
+        fixture.write("sub/nested/blocked/node_modules/keep", "excluded");
+        fixture.write("sub/nested/ok.txt", "ok-changed");
+
+        // Hold a no-share handle on the excluded file: git cannot remove the
+        // directory, so exactly this path's checkout fails.
+        let _keep_lock = {
+            use std::os::windows::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(nested.join("blocked").join("node_modules").join("keep"))
+                .expect("lock the excluded file")
+        };
+
+        // The file→directory shadow is a type change, so acknowledge it and let git
+        // fail to overwrite the non-empty directory: exactly that path fails.
+        let result = fixture
+            .engine
+            .restore_execute(WS, &slice, &[String::from("sub/nested/blocked")])
+            .await
+            .expect("fixture restore with acknowledged type change");
+
+        let mut paths: Vec<&str> = result
+            .entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect();
+        paths.sort_unstable();
+        assert!(
+            paths.contains(&"sub/nested/ok.txt"),
+            "sibling path listed: {paths:?}"
+        );
+        assert!(
+            paths.contains(&"sub/nested/blocked"),
+            "failed path listed: {paths:?}"
+        );
+        assert_eq!(
+            result.counts.failed, 1,
+            "exactly one nested path fails: {:?}",
+            result.counts
+        );
+        assert!(
+            result.counts.restored >= 1,
+            "the sibling path restores: {:?}",
+            result.counts
+        );
+        let failed = result
+            .entries
+            .iter()
+            .find(|entry| entry.path == "sub/nested/blocked")
+            .expect("failed entry");
+        assert_eq!(
+            failed.outcome,
+            crate::checkpoint_revert::RestoreItemOutcome::Failed,
+            "the shadowed nested path is reported as failed"
+        );
+    }
+
     #[tokio::test]
     async fn checkpoint_restore_never_touches_excluded_paths() {
         let fixture = Fixture::new().await;
