@@ -66,6 +66,10 @@ uv sync          # 安装依赖（见 pyproject.toml）
 - **Workspace binding**：`toolMode=none` 不初始化 MCP；workspace 模式须按请求 Workspace 加载，发现结果不得跨 Workspace 复用。
 - **Tool visibility and tests**：`apply_patch` 是 Gateway-public mutation，必须走正常 approval；legacy snapshot 工具已移除。Agent 变更至少运行 `cd packages/agent && uv run pytest tests/unit/test_approval_tool.py tests/unit/test_mcp_client.py tests/unit/test_gate_owned_approval_contract.py tests/unit/test_tool_registry_contract.py tests/unit/test_mcp_timeout_override.py -q`，并按影响范围补跑 `uv run ruff check src/` 与 `uv run mypy src/`。
 
+## Logging
+
+- 本包用 loguru 风格 logger，占位符是 `{}` 而非 `%s`（`logger.warning("x={}", v)`）；写 `%s` 不会插值，日志只剩格式串。诊断性日志（如 checkpoint 请求失败带 `method/path/status`）务必用 `{}`。
+
 ## Permissions
 
 ### Allowed
