@@ -905,6 +905,19 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         git(["commit", "--no-gpg-sign", "-m", "init"]);
 
         await openWorkspace(page, sharedAuth, sharedWs);
+        // The capture change set diffs against the previous slice, so a file created
+        // after it (repoFile) would otherwise count as this Run's change. Bake the
+        // committed repo file into the baseline slice with a preliminary run first.
+        const baselineFile = `s7-baseline-${nonce}.txt`;
+        await writeFileRunThroughUi(
+            page,
+            request,
+            sharedHeaders,
+            sharedWs,
+            hostDir,
+            baselineFile,
+            `S7-BASE-${nonce}`,
+        );
         const flow = await writeFileRunThroughUi(
             page,
             request,
