@@ -12,7 +12,13 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict
 
-from xihe_agent.evaluation.report import EvalReport, TaskReport, build_report, evaluate_task
+from xihe_agent.evaluation.report import (
+    STATUS_NOT_EVALUATED,
+    EvalReport,
+    TaskReport,
+    build_report,
+    evaluate_task,
+)
 from xihe_agent.evaluation.schema import EvalTask
 from xihe_agent.evaluation.trace import TraceResponse, derive_facts
 
@@ -91,10 +97,26 @@ def run_dataset(
     model: str | None = None,
     prompt_version: str | None = None,
     timeout_s: float = 120.0,
+    tool_surface_enabled: bool = False,
 ) -> EvalReport:
-    """Run every task as a real ChatRun and assemble a content-free report."""
+    """Run every task as a real ChatRun and assemble a content-free report.
+
+    Tool-requiring categories are reported `not_evaluated(no_tool_surface)` while
+    no synthetic tool surface exists, instead of being trivially satisfied by an
+    empty tool set (see review/round-15.md B2).
+    """
     task_reports: list[TaskReport] = []
     for task in tasks:
+        if task.category in WORKSPACE_CATEGORIES and not tool_surface_enabled:
+            task_reports.append(
+                TaskReport(
+                    task_id=task.task_id,
+                    category=task.category,
+                    status=STATUS_NOT_EVALUATED,
+                    not_evaluated_reason="no_tool_surface",
+                )
+            )
+            continue
         session_id = client.create_session()
         branch_id = client.create_branch(session_id)
         run_id = client.create_run(

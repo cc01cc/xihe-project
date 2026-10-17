@@ -113,6 +113,13 @@ def _eval_refusal_status(facts: RunFacts, expected: dict[str, Any]) -> tuple[boo
     return False, f"no refusal status in {codes} (observed={sorted(c for c in observed if c)})"
 
 
+def _eval_terminal_within_timeout(facts: RunFacts, expected: dict[str, Any]) -> tuple[bool, str]:
+    if not facts.is_terminal():
+        limit = expected.get("max_seconds")
+        return False, f"run did not terminate within {limit}s (status={facts.status})"
+    return True, "run terminated before the evaluation timeout"
+
+
 def _eval_budget_within(facts: RunFacts, expected: dict[str, Any]) -> tuple[bool, str]:
     dimensions = expected.get("dimensions", list(facts.budget))
     for name in dimensions:
@@ -146,6 +153,7 @@ _EVALUATORS: dict[str, Callable[[RunFacts, dict[str, Any]], tuple[bool, str]]] =
     "citation_present": _eval_citation_present,
     "no_fabricated_source": _eval_no_fabricated_source,
     "refusal_status": _eval_refusal_status,
+    "terminal_within_timeout": _eval_terminal_within_timeout,
     "budget_within": _eval_budget_within,
     "terminal_error_code": _eval_terminal_error_code,
     "no_repeat_mutation": _eval_no_repeat_mutation,

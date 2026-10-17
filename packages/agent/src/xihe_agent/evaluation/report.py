@@ -74,6 +74,12 @@ def evaluate_task(task: EvalTask, facts: RunFacts) -> TaskReport:
     if not facts.trace_available:
         base.not_evaluated_reason = "missing_trace"
         return base
+    if facts.status == "timeout":
+        # A run that never reaches a terminal state is a real failure signal,
+        # not a missing observation (see review/round-15.md B1).
+        base.status = STATUS_FAILED
+        base.error_code = facts.terminal_error_code or "EVAL_TIMEOUT"
+        return base
     if not facts.is_terminal():
         base.not_evaluated_reason = f"non_terminal_status:{facts.status}"
         return base

@@ -55,6 +55,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     agent_principal_id = args.agent_principal or os.environ.get("XIHE_EVAL_AGENT_PRINCIPAL")
     only = {t for t in (args.only or os.environ.get("XIHE_EVAL_ONLY", "")).split(",") if t}
     timeout_s = float(args.timeout or os.environ.get("XIHE_EVAL_TIMEOUT", "180"))
+    tool_surface = bool(args.tool_surface) or os.environ.get("XIHE_EVAL_TOOL_SURFACE") == "1"
 
     dataset_path = Path(args.dataset) if args.dataset else None
     tasks = [t for t in load_dataset(dataset_path) if not only or t.task_id in only]
@@ -84,6 +85,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             provider=provider,
             model=model,
             timeout_s=timeout_s,
+            tool_surface_enabled=tool_surface,
         )
     finally:
         client.close()
@@ -125,6 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--agent-principal")
     run.add_argument("--only", help="comma-separated taskId filter")
     run.add_argument("--timeout")
+    run.add_argument("--tool-surface", action="store_true", help="enable tool-requiring categories")
     return parser
 
 

@@ -132,6 +132,26 @@ def test_run_dataset_missing_trace_is_not_evaluated() -> None:
     assert report.tasks[0].status == STATUS_NOT_EVALUATED
 
 
+def test_tool_categories_not_evaluated_without_tool_surface() -> None:
+    class _NoTraceClient(_FakeCpClient):
+        def get_trace(self, run_id: str) -> TraceResponse:
+            raise ValueError("trace unavailable")
+
+    report = run_dataset(
+        _NoTraceClient({}),
+        load_dataset(),
+        eval_run_id="eval-3",
+        commit="c",
+        dataset_version="v1",
+        dataset_hash="h",
+        tool_surface_enabled=False,
+    )
+    tool_reports = [t for t in report.tasks if t.category in {"tool_authorization", "failure_budget"}]
+    assert len(tool_reports) == 2
+    assert all(t.status == STATUS_NOT_EVALUATED for t in tool_reports)
+    assert all(t.not_evaluated_reason == "no_tool_surface" for t in tool_reports)
+
+
 def test_budget_dimension_used() -> None:
     dim = BudgetDimension(limit=3, used=3)
     assert dim.used == dim.limit

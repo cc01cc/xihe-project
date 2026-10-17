@@ -120,6 +120,21 @@ def test_non_terminal_run_is_not_evaluated() -> None:
     assert report.not_evaluated_reason is not None
 
 
+def test_timeout_is_a_failure_not_a_missing_observation() -> None:
+    facts = RunFacts(run_id="r8", status="timeout", trace_available=True)
+    report = evaluate_task(_task("failure_budget.no_repeat.v1"), facts)
+    assert report.status == STATUS_FAILED
+    assert report.error_code == "EVAL_TIMEOUT"
+
+
+def test_terminal_within_timeout_assertion_kind() -> None:
+    ok = RunFacts(run_id="r9", status="failed", trace_available=True)
+    report = evaluate_task(_task("failure_budget.no_repeat.v1"), ok)
+    a1 = next(a for a in report.assertions if a.assertion_id == "A1")
+    assert a1.kind == "terminal_within_timeout"
+    assert a1.passed is True
+
+
 # --- report + compare --------------------------------------------------------
 
 
