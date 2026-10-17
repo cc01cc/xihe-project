@@ -6,8 +6,8 @@ sidebar_group: "开发指南"
 sidebar_order: 19
 status: active
 created: 2026-09-07
-updated: 2026-10-16
-description: XH PostgreSQL 全量表结构速查：业务表按域分组、ER 关系、字段约束与索引、当前 V1~V71 升级迁移对照（PLAN-280 rebaseline 后）与本地查看方法
+updated: 2026-10-17
+description: XH PostgreSQL 全量表结构速查：业务表按域分组、ER 关系、字段约束与索引、当前 V1~V75 升级迁移对照（PLAN-280 rebaseline 后）与本地查看方法
 tags:
   - postgres
   - flyway
@@ -16,14 +16,14 @@ tags:
 
 # DEV-019: 数据库设计
 
-> 读者：新加入 XH 的后端 / 全栈开发者。内容：当前最终库表一览（结论先行），细节按域查表。Schema Source of Truth 是 `packages/control-plane/src/main/resources/db/migration` 的 V1~V71 Flyway 升级链；已删除的 Ledger 只留在历史迁移记录，JPA Entity 仅镜像当前 schema。前置阅读：[DEV-001](DEV-001-system-architecture.md)（四模块与 PG 定位）、[DEV-014](DEV-014-control-plane-architecture.md)（CP 通道）、[DEV-017](DEV-017-session-architecture.md)（会话语义）、[DEV-003](DEV-003-config-management.md)（Config 三层）。
+> 读者：新加入 XH 的后端 / 全栈开发者。内容：当前最终库表一览（结论先行），细节按域查表。Schema Source of Truth 是 `packages/control-plane/src/main/resources/db/migration` 的 V1~V75 Flyway 升级链；已删除的 Ledger 只留在历史迁移记录，JPA Entity 仅镜像当前 schema。前置阅读：[DEV-001](DEV-001-system-architecture.md)（四模块与 PG 定位）、[DEV-014](DEV-014-control-plane-architecture.md)（CP 通道）、[DEV-017](DEV-017-session-architecture.md)（会话语义）、[DEV-003](DEV-003-config-management.md)（Config 三层）。
 
 ## 1. 结论与使用规则
 
 | 结论 | 内容 |
 |------|------|
 | 数据库 | PostgreSQL 17 + pgvector，Docker 镜像 `pgvector/pgvector:pg17`，dev 端口 `12634`，库名/用户名 `xihe` |
-| 表数量 | 52 张 Flyway 管理业务表 + `flyway_schema_history`（Flyway 自维护） + 1 个只读 Audit view (`v_audit_entries`)，按 V71 fresh schema 盘点（计数口径见下方备注；`document_chunks` 由 Agent 侧自建自管、不计入） |
+| 表数量 | 53 张 Flyway 管理业务表 + `flyway_schema_history`（Flyway 自维护） + 1 个只读 Audit view (`v_audit_entries`)，按 V75 fresh schema 盘点（计数口径见下方备注；`document_chunks` 由 Agent 侧自建自管、不计入） |
 | 权威顺序 | Flyway SQL > JPA Entity > 本文档；`ddl-auto=validate`（PLAN-280），Flyway 是唯一 schema manager |
 | 主键风格 | 全部 PostgreSQL 原生 `UUID`（PLAN-280）；Java 侧 @Id 为 `UUID` 类型，FK 列为 `String` + `UuidStringConverter` |
 | 时间风格 | 当前 Flyway 链的时间列均为带时区类型：`TIMESTAMPTZ`（V21/V23 以等价的 `TIMESTAMP WITH TIME ZONE` 书写），默认值按各迁移定义；不存在裸 `TIMESTAMP` |
@@ -38,15 +38,15 @@ tags:
 | Compose PG 定义 | `docker-compose.yml`（`postgres` 服务，`./postgres-init:/docker-entrypoint-initdb.d:ro`） |
 | 扩展初始化 | `postgres-init/01-enable-pgvector.sql` |
 | 连接配置 | `packages/control-plane/src/main/resources/application.properties:12-24`（`datasource.url`、`flyway.locations=classpath:db/migration`） |
-| 迁移链 | `packages/control-plane/src/main/resources/db/migration/V1__init_schema.sql` 至 V71（当前 active upgrade chain；V56 退役 Ledger tables，V57–V71 增量见 §4） |
+| 迁移链 | `packages/control-plane/src/main/resources/db/migration/V1__init_schema.sql` 至 V75（当前 active upgrade chain；V56 退役 Ledger tables，V57–V75 增量见 §4；V70/V71 未使用） |
 | Entity 镜像 | `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/entity/` 与 `context/entity/`（按当前源码为准） |
 | Seed | `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/config/DataSeeder.java`（仅 seed `admin@xihe.local`，密码随机不落日志） |
 
-> **PLAN-280 rebaseline（2026-09-07）**：`V1__init_schema.sql` 是当前链的 schema 基线；V2–V71 在 active classpath 按顺序用于既有库升级。V71 是当前 schema 终点：V56 移除 Operation Ledger tables 与 Workspace Job transition anchor；V57–V71 继续以唯一连续版本增量（ProviderConnection API Type、scheduled tasks、Session 模板放宽、credential 域、ChatRun transport attempts 与 LangGraph checkpoint/continuation）。V49–V56 已按唯一连续版本整合 Follow-up、MCP、Approval、ChatRun、Workspace Job、Audit 与 Ledger retirement。统一原生 UUID、带时区时间类型、显式命名约束与 ON DELETE、`ddl-auto=validate`。更早的历史 V1~V22+U6 编号仍仅作 Git 历史溯源。`spring-boot-flyway` 模块缺失曾导致 Flyway 自动配置从未生效（schema 实际由 Hibernate 建），已在本轮修复。
+> **PLAN-280 rebaseline（2026-09-07）**：`V1__init_schema.sql` 是当前链的 schema 基线；V2–V75 在 active classpath 按顺序用于既有库升级。V75 是当前 schema 终点：V56 移除 Operation Ledger tables 与 Workspace Job transition anchor；V57–V75 继续以唯一连续版本增量（V70/V71 未使用；含 ProviderConnection API Type、scheduled tasks、Session 模板放宽、credential 域、ChatRun transport attempts 与 LangGraph checkpoint/continuation）。V49–V56 已按唯一连续版本整合 Follow-up、MCP、Approval、ChatRun、Workspace Job、Audit 与 Ledger retirement。统一原生 UUID、带时区时间类型、显式命名约束与 ON DELETE、`ddl-auto=validate`。更早的历史 V1~V22+U6 编号仍仅作 Git 历史溯源。`spring-boot-flyway` 模块缺失曾导致 Flyway 自动配置从未生效（schema 实际由 Hibernate 建），已在本轮修复。
 >
-> **版本标注约定**：§2/§3 各表括注与附录 A「旧链首次迁移」列的 `V<n>` 若注明“旧链”，仅用于迁移溯源；active 链统一以 §4 和 Flyway history（V1~V71）为准。逐表变更见 §4。
+> **版本标注约定**：§2/§3 各表括注与附录 A「旧链首次迁移」列的 `V<n>` 若注明“旧链”，仅用于迁移溯源；active 链统一以 §4 和 Flyway history（V1~V75）为准。逐表变更见 §4。
 >
-> **表数口径（V71）**：52 张 = Flyway 链创建的业务表（V1 基线 21 张起净增删后现为 52，含 V63 `credentials/credential_events`、V66 `credential_leases`、V68 `chat_run_transport_attempts`、V69 三张 graph checkpoint 表与 V71 `agent_lineage_invocations`）。V70 只为 `chat_runs` 增加 continuation provenance 列。Agent 侧 `document_chunks` 由 langchain_postgres 自建自管，不计入 Flyway 表数；旧文「44 张业务表（V56 盘点）」为该表计入口径下的时点快照，已随本节更新。
+> **表数口径（V75）**：53 张 = Flyway 链创建的业务表（V1 基线 21 张起净增删后现为 53，含 V63 `credentials/credential_events`、V66 `credential_leases`、V68 `chat_run_transport_attempts`、V72 三张 graph checkpoint 表、V74 `agent_lineage_invocations` 与 V75 `workspace_lifecycle_operations`）。V73 只为 `chat_runs` 增加 continuation provenance 列。Agent 侧 `document_chunks` 由 langchain_postgres 自建自管，不计入 Flyway 表数；旧文「44 张业务表（V56 盘点）」为该表计入口径下的时点快照，已随本节更新。
 
 ## 2. ER 关系（分域 erDiagram）
 
@@ -942,13 +942,13 @@ erDiagram
 
 | 表 / 对象 | 迁移 | 关键字段与约束 | 生命周期与索引 |
 |------|------|------|------|
-| `agent_graph_checkpoint_lineages` | V69 | `lineage_id`/`thread_id` 唯一；绑定 Session、user、workspace、branch 及 source Run 或 probe；schema version 必须为正数 | Session 删除级联；branch 复合 FK 为 deferred NO ACTION；按 Session/createdAt 索引，source Run 与 probe 各有部分唯一索引 |
-| `agent_graph_checkpoints` | V69 | LangGraph checkpoint identity、parent identity、serializer type、checkpoint BLOB、JSONB metadata；`(thread_id, checkpoint_ns, checkpoint_id)` 唯一 | Lineage 删除级联；parent FK deferred NO ACTION；lineage/namespace/createdAt 索引 |
-| `agent_graph_checkpoint_writes` | V69 | pending write 的 task/path/channel/index、serializer type 与 BLOB；saver key 唯一 | checkpoint 删除级联；按 lineage、thread、namespace、checkpoint 定位 |
-| `chat_runs` continuation provenance | V70 | 新增 source Run、lineage/thread/checkpoint、EventStore sequence 与 mode 六列；全部为空或满足完整 tuple 的 CHECK，source Run 与 lineage 均有 FK | source Run、lineage 删除按 FK 级联；source Run 有部分索引 |
-| `agent_lineage_invocations` | V71 | lineage + originating toolCallId 唯一；记录首次 Run/toolCall、可空 MCP invocation、tool、参数 SHA-256、状态和冲突计数；不存原始参数或结果 | Lineage 删除级联；MCP invocation 删除仅置空引用；按 lineage/status/createdAt 索引 |
+| `agent_graph_checkpoint_lineages` | V72 | `lineage_id`/`thread_id` 唯一；绑定 Session、user、workspace、branch 及 source Run 或 probe；schema version 必须为正数 | Session 删除级联；branch 复合 FK 为 deferred NO ACTION；按 Session/createdAt 索引，source Run 与 probe 各有部分唯一索引 |
+| `agent_graph_checkpoints` | V72 | LangGraph checkpoint identity、parent identity、serializer type、checkpoint BLOB、JSONB metadata；`(thread_id, checkpoint_ns, checkpoint_id)` 唯一 | Lineage 删除级联；parent FK deferred NO ACTION；lineage/namespace/createdAt 索引 |
+| `agent_graph_checkpoint_writes` | V72 | pending write 的 task/path/channel/index、serializer type 与 BLOB；saver key 唯一 | checkpoint 删除级联；按 lineage、thread、namespace、checkpoint 定位 |
+| `chat_runs` continuation provenance | V73 | 新增 source Run、lineage/thread/checkpoint、EventStore sequence 与 mode 六列；全部为空或满足完整 tuple 的 CHECK，source Run 与 lineage 均有 FK | source Run、lineage 删除按 FK 级联；source Run 有部分索引 |
+| `agent_lineage_invocations` | V74 | lineage + originating toolCallId 唯一；记录首次 Run/toolCall、可空 MCP invocation、tool、参数 SHA-256、状态和冲突计数；不存原始参数或结果 | Lineage 删除级联；MCP invocation 删除仅置空引用；按 lineage/status/createdAt 索引 |
 
-## 4. 迁移对照（当前 active 升级链 V1~V71）
+## 4. 迁移对照（当前 active 升级链 V1~V75）
 
 > PLAN-280 destructive rebaseline 取代了当时的历史链（旧 V2~V22/U6 移出 active classpath，仅 Git 历史可追溯）；V15 起的 V15~V41 均为当前 active 链的 post-rebaseline migrations。本节保留历史编号解释，不把两套编号混用；表内 V2/V3/V4/V30 的旧名属于历史迁移文件名与原表名（V33 改名后保留）。
 
@@ -1025,6 +1025,7 @@ erDiagram
 | V72 | `V72__agent_graph_checkpoints.sql` | PLAN-0510 CP-owned LangGraph saver：lineage、checkpoint 和 pending-write 三表；owner/branch 绑定、saver identity 唯一键、延迟 parent FK 与 Session 删除级联 | `agent_graph_checkpoint_lineages/agent_graph_checkpoints/agent_graph_checkpoint_writes` |
 | V73 | `V73__chat_run_continuation_provenance.sql` | PLAN-0510：`chat_runs` 增加 source Run、lineage/thread/checkpoint、EventStore cursor 与 continuation mode；完整 tuple CHECK 和 lineage/source FK | `chat_runs` |
 | V74 | `V74__agent_lineage_invocation_ledger.sql` | PLAN-0510：跨 Run mutation invocation 去重账本；lineage/toolCall 唯一、参数 hash 与状态约束；MCP invocation 删除时只置空引用 | `agent_lineage_invocations` |
+| V75 | `V75__workspace_lifecycle_operations.sql` | PLAN-0391：用户触发的「释放运行资源」durable 幂等操作专用表（`ledger_operations` 已于 V56 退役）；幂等部分唯一索引 `(user_id, workspace_id, idempotency_key)` + active 部分唯一索引 `(workspace_id) WHERE status IN ('accepted','running')` + 时间索引；status CHECK accepted/running/completed/failed/interrupted | `workspace_lifecycle_operations` |
 
 ## 5. 本地查看与运维
 
@@ -1040,11 +1041,11 @@ erDiagram
 | 重置 admin | `mise run reset-admin`（`scripts/reset-admin.ps1 -Password <pw>`，免重启，不删数据） |
 | 重建 dev 库 | `mise run dev:reset`（默认 dry-run，显式 `-Reset` 才执行，先备份） |
 
-> **当前链备注**：V21 的 `policy_revision` 是审批 grant 失效判断的 durable counter；V22/V23/V26 是 checkpoint 切片语义落地前的历史增量；V27 按 PLAN-0339 物理清空旧 `run_checkpoints` 行并重建 workspace slices；V28 按 PLAN-0357 删除 V4/V5 legacy snapshot 对象；V29 清空遗留单键源哈希；V30–V34 是 Ledger schema 历史增量，相关表于 V56 退役；V35–V41 落地 Workspace import、Session provenance/kind、authorization grants、ChatRun origin/幂等约束与 default grant backfill；V42–V47 落地 Agent Principal/Workspace 绑定、Session branch 隔离、terminal/waiting delta、派生协作 Inbox、fork 请求账本与删除意图屏障；V48 落地 Context Template binding；V49–V56 依次落地 Follow-up Queue、MCP invocation、Approval history、ChatRun history/waiting link、Workspace Job/history、Audit view 与 Ledger retirement；V57–V68 落地 ProviderConnection API Type、scheduled tasks、API 请求模板会话放宽、credential 域（V63–V67）与 ChatRun transport attempts（V68）；V69–V71 落地 LangGraph checkpoints、continuation provenance 与 lineage invocation ledger。具体历史变化以迁移 SQL 和 plan evidence 为准，禁止手工 DROP/回滚 active 链。
+> **当前链备注**：V21 的 `policy_revision` 是审批 grant 失效判断的 durable counter；V22/V23/V26 是 checkpoint 切片语义落地前的历史增量；V27 按 PLAN-0339 物理清空旧 `run_checkpoints` 行并重建 workspace slices；V28 按 PLAN-0357 删除 V4/V5 legacy snapshot 对象；V29 清空遗留单键源哈希；V30–V34 是 Ledger schema 历史增量，相关表于 V56 退役；V35–V41 落地 Workspace import、Session provenance/kind、authorization grants、ChatRun origin/幂等约束与 default grant backfill；V42–V47 落地 Agent Principal/Workspace 绑定、Session branch 隔离、terminal/waiting delta、派生协作 Inbox、fork 请求账本与删除意图屏障；V48 落地 Context Template binding；V49–V56 依次落地 Follow-up Queue、MCP invocation、Approval history、ChatRun history/waiting link、Workspace Job/history、Audit view 与 Ledger retirement；V57–V68 落地 ProviderConnection API Type、scheduled tasks、API 请求模板会话放宽、credential 域（V63–V67）与 ChatRun transport attempts（V68）；V69 为 Provider sampling key 清理；V72–V74 落地 LangGraph checkpoints、continuation provenance 与 lineage invocation ledger；V75 落地 Workspace 运行资源释放的 durable 幂等操作表（`workspace_lifecycle_operations`）。具体历史变化以迁移 SQL 和 plan evidence 为准，禁止手工 DROP/回滚 active 链。
 
 ## 附录 A：表—Entity—迁移三向对照
 
-> 「active 首次迁移」指当前 V1~V71 链中的出处；rebaseline 前的旧链编号仅作溯源备注，编号与 active 链不通用（见 §1 版本标注约定）。
+> 「active 首次迁移」指当前 V1~V75 链中的出处；rebaseline 前的旧链编号仅作溯源备注，编号与 active 链不通用（见 §1 版本标注约定）。
 
 | 表 | Entity | active 首次迁移 |
 |----|--------|-----------------|
@@ -1102,10 +1103,10 @@ erDiagram
 | credential_events | `entity/CredentialEvent.java` | V63 |
 | credential_leases | `entity/CredentialLease.java` | V66 |
 | chat_run_transport_attempts | `entity/ChatRunTransportAttempt.java` | V68 |
-| agent_graph_checkpoint_lineages | JDBC via `checkpoint/AgentGraphCheckpointService.java` | V69 |
-| agent_graph_checkpoints | JDBC via `checkpoint/AgentGraphCheckpointService.java` | V69 |
-| agent_graph_checkpoint_writes | JDBC via `checkpoint/AgentGraphCheckpointService.java` | V69 |
-| agent_lineage_invocations | `entity/AgentLineageInvocation.java` | V71 |
+| agent_graph_checkpoint_lineages | JDBC via `checkpoint/AgentGraphCheckpointService.java` | V72 |
+| agent_graph_checkpoints | JDBC via `checkpoint/AgentGraphCheckpointService.java` | V72 |
+| agent_graph_checkpoint_writes | JDBC via `checkpoint/AgentGraphCheckpointService.java` | V72 |
+| agent_lineage_invocations | `entity/AgentLineageInvocation.java` | V74 |
 | document_chunks | 无独立 Entity（Agent RAG 直读） | 不在 Flyway 链（langchain 自建自管） |
 
 ## 附录 B：删除与脱敏约定
