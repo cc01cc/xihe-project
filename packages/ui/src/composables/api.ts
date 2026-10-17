@@ -67,6 +67,7 @@ import type {
     WorkspaceCheckpointRevertView,
     WorkspaceEvent,
     WorkspaceEnvironment,
+    WorkspaceReleaseOperation,
     WorkspaceJob,
     WorkspaceJobStartRequest,
     WorkspaceExecutionMode,
@@ -2504,6 +2505,23 @@ export const api = {
             method: "POST",
             headers: workspaceHeaders(wsId),
         });
+    },
+    /**
+     * PLAN-0391: release the workspace runtime (202 accepted / 200 idempotent replay).
+     * `Idempotency-Key` is required by the server; 409 WORKSPACE_BUSY when a Job is
+     * active or another release is in flight.
+     */
+    releaseWorkspaceRuntime(wsId: string, idempotencyKey: string) {
+        return request<WorkspaceReleaseOperation>(
+            `/workspaces/${encodeURIComponent(wsId)}/runtime/release`,
+            {
+                method: "POST",
+                headers: {
+                    ...workspaceHeaders(wsId),
+                    "Idempotency-Key": idempotencyKey,
+                },
+            },
+        );
     },
     saveMcpConfig(wsId: string, mcpServers: string) {
         return request<{ status: string }>(`/workspaces/${encodeURIComponent(wsId)}/mcp-config`, {

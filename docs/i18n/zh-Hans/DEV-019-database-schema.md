@@ -433,7 +433,7 @@ erDiagram
 >
 > 语义注记：硬上限 5 统计全部未结束项（queued/paused/admitted），完成/撤回后释放；QueueItem 状态转换与 child ChatRun/Message 在同一事务原子写入，执行事实归 ChatRun；claim/withdraw 以 Session 行锁 + item 行锁串行（并发至多一方成功）。API 与状态机见 [`spec/session/chat-run-operation.md`](../../../spec/session/chat-run-operation.md) §Follow-up 队列 与 DEV-017 §1.3。
 
-### 3.3 Workspace 执行（workspace_execution_specs）
+### 3.3 Workspace 执行（workspace_execution_specs / workspace_lifecycle_operations）
 
 **workspace_execution_specs**（`V1` 内建；旧链溯源：旧 V11 建 `workspace_assignments`、旧 V12 加唯一、旧 V13 重命名；Entity `entity/WorkspaceExecutionSpec.java`）：期望执行规格（非调度绑定，旧 V13 注释原名误导已纠正）。
 
@@ -453,6 +453,25 @@ erDiagram
 > 索引：
 > - `idx_workspace_execution_specs_workspace_generation (workspace_id, generation)`
 > - 唯一约束 `uq_workspace_execution_specs_workspace_generation (workspace_id, generation)` — 同代唯一
+
+**workspace_lifecycle_operations**（`V75`，PLAN-0391；Entity `entity/WorkspaceLifecycleOperation.java`）：用户触发的「释放运行资源」durable 幂等操作，与 Job 域解耦（`ledger_operations` 已在 `V56` 退役，不再复用）。
+
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| id | UUID | PK | wire `releaseOperationId` |
+| workspace_id | UUID | NOT NULL FK `workspaces(id) ON DELETE CASCADE` | 归属 |
+| user_id | UUID | NOT NULL FK `users(id)` | 发起者 |
+| idempotency_key | VARCHAR(128) | nullable | 请求 `Idempotency-Key` |
+| status | VARCHAR(24) | NOT NULL `ck_workspace_lifecycle_operations_status` | `accepted/running/completed/failed/interrupted` |
+| reason | VARCHAR(32) | nullable | `USER_RELEASED`/`CLEANUP_FAILED` 等 |
+| error_code | VARCHAR(64) | nullable | 失败码（如 `RUNTIME_UNAVAILABLE`） |
+| created_at / updated_at | TIMESTAMPTZ | NOT NULL DEFAULT `now()` | — |
+| ended_at | TIMESTAMPTZ | nullable | 终态时间 |
+
+> 索引：
+> - 唯一 `uq_workspace_lifecycle_operations_idempotency (user_id, workspace_id, idempotency_key) WHERE idempotency_key IS NOT NULL` — 同键幂等重放
+> - 唯一 `uq_workspace_lifecycle_operations_active (workspace_id) WHERE status IN ('accepted','running')` — 每 workspace 同时最多一个在飞释放
+> - `idx_workspace_lifecycle_operations_workspace_created_at (workspace_id, created_at DESC)`
 
 ### 3.4 MCP 与 Provider（mcp_remote_servers / mcp_stdio_servers / mcp_tool_aliases / oauth_credentials / provider_connections / provider_credential_leases / provider_connection_audit）
 
@@ -767,7 +786,7 @@ erDiagram
 | `operation_attempts` / `operation_events` | MCP 调用阶段与执行事实归 `mcp_attempts` / `mcp_dispatch_history`；审批归 `approval_requests` / `approval_history`；Job 状态变化归 `workspace_job_history`。 |
 | `operation_extensions` / `diagnostic_artifacts` | 不做跨域回填；按 owner 生命周期随对应 Session/Workspace 事实处理。受保护工件仍由其 domain-owned storage reference 管理。 |
 
-当前 schema 以本文件 §3.2–§3.6、§3.8–§3.13、`docs/api/openapi.yaml`、`docs/api/inventory.md` 与 V1–V71 migrations 为准。
+当前 schema 以本文件 §3.2–§3.6、§3.8–§3.13、`docs/api/openapi.yaml`、`docs/api/inventory.md` 与 V1–V75 migrations 为准。
 ### 3.8 任务连续性（task_plans / task_items）
 
 **task_plans**（`V6`，Entity `entity/TaskPlan.java`）：一次 run 的目标导向计划（PLAN-276 M1）。

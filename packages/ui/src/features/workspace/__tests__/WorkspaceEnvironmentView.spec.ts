@@ -29,6 +29,7 @@ vi.mock("../../../composables/api", async (importOriginal) => {
             ...actual.api,
             getWorkspaceEnvironment: vi.fn<typeof apiModule.api.getWorkspaceEnvironment>(),
             getWorkspaceJobs: vi.fn<typeof apiModule.api.getWorkspaceJobs>(),
+            releaseWorkspaceRuntime: vi.fn<typeof apiModule.api.releaseWorkspaceRuntime>(),
         },
     };
 });
@@ -99,6 +100,15 @@ beforeEach(() => {
     setActivePinia(createPinia());
     mockedApi.getWorkspaceEnvironment.mockResolvedValue(environment("docker") as never);
     mockedApi.getWorkspaceJobs.mockResolvedValue([] as never);
+    mockedApi.releaseWorkspaceRuntime.mockResolvedValue({
+        releaseOperationId: "op-1",
+        workspaceId: "workspace-1",
+        status: "accepted",
+        reason: null,
+        errorCode: null,
+        createdAt: null,
+        endedAt: null,
+    } as never);
 });
 
 describe("WorkspaceEnvironmentView job projection", () => {
@@ -307,5 +317,74 @@ describe("WorkspaceEnvironmentView hostPath disclosure", () => {
         const wrapper = await mountView();
 
         expect(wrapper.find('[data-testid="workspace-host-path"]').exists()).toBe(false);
+    });
+});
+
+describe("WorkspaceEnvironmentView runtime release (PLAN-0391)", () => {
+    it("offers the release entry while the runtime holds resources", async () => {
+        const wrapper = await mountView();
+        expect(wrapper.find('[data-testid="workspace-runtime-release"]').exists()).toBe(true);
+    });
+
+    it("hides the release entry when the workspace is unbound", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("docker"),
+            status: "unbound",
+        } as never);
+
+        const wrapper = await mountView();
+
+        expect(wrapper.find('[data-testid="workspace-runtime-release"]').exists()).toBe(false);
+    });
+
+    it("confirms then calls the release API with a non-empty idempotency key", async () => {
+        const wrapper = await mountView();
+        await wrapper.get('[data-testid="workspace-runtime-release"]').trigger("click");
+        expect(wrapper.find('[data-testid="workspace-release-confirm"]').exists()).toBe(true);
+        await wrapper.get('[data-testid="workspace-release-confirm-button"]').trigger("click");
+        await flushPromises();
+
+        expect(mockedApi.releaseWorkspaceRuntime).toHaveBeenCalledTimes(1);
+        const [wsId, key] = mockedApi.releaseWorkspaceRuntime.mock.calls[0];
+        expect(wsId).toBe("workspace-1");
+        expect(typeof key).toBe("string");
+        expect((key as string).length).toBeGreaterThan(0);
+    });
+
+    it("disables release and explains why while an active Job blocks it", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("docker"),
+            runtime: {
+                status: "up",
+                deviceId: "device-1",
+                lastHeartbeatAt: "2026-09-21T00:00:00Z",
+                activeJobCount: 2,
+            },
+        } as never);
+
+        const wrapper = await mountView(),
+            button = wrapper.get('[data-testid="workspace-runtime-release"]');
+        expect(button.attributes("disabled")).toBeDefined();
+        expect(wrapper.get('[data-testid="workspace-runtime-release-status"]').text()).toContain(
+            "2",
+        );
+    });
+
+    it("surfaces the release origin reason from the environment projection", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("docker"),
+            runtime: {
+                status: "unbound",
+                deviceId: "device-1",
+                lastHeartbeatAt: "2026-09-21T00:00:00Z",
+                reason: "USER_RELEASED",
+            },
+        } as never);
+
+        const wrapper = await mountView();
+
+        expect(wrapper.get('[data-testid="workspace-runtime-reason"]').text()).toContain(
+            "已手动释放",
+        );
     });
 });

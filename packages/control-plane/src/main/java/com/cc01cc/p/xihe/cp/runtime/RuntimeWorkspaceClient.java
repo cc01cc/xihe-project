@@ -134,6 +134,51 @@ public class RuntimeWorkspaceClient {
         }
     }
 
+    /**
+     * PLAN-0391: release the Workspace's execution resources over the Runtime
+     * internal channel. Returns backend-neutral facts
+     * ({@code released}/{@code cleaned}/{@code cleanupFailed}); Runtime Problem
+     * {@code code/detail} are preserved so 409 conflicts pass through unchanged.
+     */
+    public record ReleaseResult(Integer httpStatus, Map<String, Object> body,
+                                String problemCode, String problemDetail, boolean unreachable) {}
+
+    public ReleaseResult release(String workspaceId, String releaseOperationId) {
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.setBearerAuth(serviceToken);
+            Map<String, String> body = new LinkedHashMap<>();
+            body.put("releaseOperationId", releaseOperationId);
+            ResponseEntity<Map> response = restTemplate.postForEntity(
+                    runtimeUrl + "/internal/v1/runtime/workspaces/" + workspaceId + "/release",
+                    new HttpEntity<>(body, headers),
+                    Map.class);
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                logger.warn("Runtime release rejected workspaceId={} status={}",
+                        workspaceId, response.getStatusCode());
+                return new ReleaseResult(response.getStatusCode().value(), null,
+                        "RUNTIME_REJECTED", "Runtime rejected the release request", false);
+            }
+            return new ReleaseResult(
+                    response.getStatusCode().value(), response.getBody(), null, null, false);
+        } catch (HttpClientErrorException e) {
+            Map<String, Object> problem = e.getResponseBodyAs(Map.class);
+            String code = problem != null && problem.get("code") instanceof String c
+                    ? c
+                    : "RUNTIME_ERROR";
+            String detail = problem != null && problem.get("detail") instanceof String d
+                    ? d
+                    : e.getMessage();
+            logger.warn("Runtime release problem workspaceId={} status={} code={}",
+                    workspaceId, e.getStatusCode(), code);
+            return new ReleaseResult(e.getStatusCode().value(), null, code, detail, false);
+        } catch (Exception e) {
+            logger.warn("Runtime release failed workspaceId={}: {}", workspaceId, e.getMessage());
+            return new ReleaseResult(null, null, null, null, true);
+        }
+    }
+
     private boolean invokeBool(String op, String path, Map<String, String> body) {
         try {
             HttpHeaders headers = new HttpHeaders();

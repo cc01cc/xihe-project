@@ -39,6 +39,11 @@ pub struct WorkspaceStatus {
     pub spec_hash: Option<String>,
     #[serde(rename = "lastError")]
     pub last_error: Option<String>,
+    /// PLAN-0391 (decision #31): why the workspace was released — `USER_RELEASED`
+    /// / `AUTO_EVICT` / `DESTROYED`. Distinguishes a user release from an idle
+    /// reaper evict (all three write `MaterializationState::Released`).
+    #[serde(rename = "reason", skip_serializing_if = "Option::is_none")]
+    pub release_reason: Option<String>,
 }
 
 impl InstanceState {
@@ -200,6 +205,7 @@ impl WorkspaceRegistry {
                 generation: previous_generation,
                 spec_hash: previous_hash,
                 last_error: None,
+                release_reason: None,
             },
         );
     }
@@ -213,6 +219,7 @@ impl WorkspaceRegistry {
                 generation: (generation != 0).then_some(generation),
                 spec_hash: (!spec_hash.is_empty()).then_some(spec_hash.to_string()),
                 last_error: None,
+                release_reason: None,
             },
         );
     }
@@ -231,11 +238,15 @@ impl WorkspaceRegistry {
                 generation: previous_generation,
                 spec_hash: previous_hash,
                 last_error: Some(error.to_string()),
+                release_reason: None,
             },
         );
     }
 
-    pub(crate) async fn mark_released(&self, ws_id: &str) {
+    /// PLAN-0391 (decision #31): release marker that records the origin
+    /// (`USER_RELEASED` / `AUTO_EVICT` / `DESTROYED`) so the UI can tell a user
+    /// release from an idle reaper evict.
+    pub(crate) async fn mark_released_with_reason(&self, ws_id: &str, reason: Option<&str>) {
         let mut statuses = self.statuses.write().await;
         let previous_generation = statuses.get(ws_id).and_then(|status| status.generation);
         let previous_hash = statuses
@@ -249,6 +260,7 @@ impl WorkspaceRegistry {
                 generation: previous_generation,
                 spec_hash: previous_hash,
                 last_error: None,
+                release_reason: reason.map(|value| value.to_string()),
             },
         );
     }
@@ -273,6 +285,7 @@ impl WorkspaceRegistry {
                 generation: previous_generation,
                 spec_hash: previous_hash,
                 last_error: None,
+                release_reason: None,
             },
         );
     }

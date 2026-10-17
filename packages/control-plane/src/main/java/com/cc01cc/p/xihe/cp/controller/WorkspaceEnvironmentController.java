@@ -5,6 +5,9 @@ import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceExecutionSpec;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceLifecycleOperation;
+import com.cc01cc.p.xihe.cp.operation.JobStateService;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceLifecycleOperationRepository;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeJobClient;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeWorkspaceClient;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeWorkspaceFileClient;
@@ -37,18 +40,24 @@ public class WorkspaceEnvironmentController {
     private final RuntimeHeartbeatState heartbeatState;
     private final RuntimeJobClient runtimeJobClient;
     private final RuntimeWorkspaceClient runtimeWorkspaceClient;
+    private final JobStateService jobStateService;
+    private final WorkspaceLifecycleOperationRepository lifecycleOperations;
 
     public WorkspaceEnvironmentController(
             WorkspaceService workspaceService,
             WorkspaceExecutionSpecService executionSpecService,
             RuntimeHeartbeatState heartbeatState,
             RuntimeJobClient runtimeJobClient,
-            RuntimeWorkspaceClient runtimeWorkspaceClient) {
+            RuntimeWorkspaceClient runtimeWorkspaceClient,
+            JobStateService jobStateService,
+            WorkspaceLifecycleOperationRepository lifecycleOperations) {
         this.workspaceService = workspaceService;
         this.executionSpecService = executionSpecService;
         this.heartbeatState = heartbeatState;
         this.runtimeJobClient = runtimeJobClient;
         this.runtimeWorkspaceClient = runtimeWorkspaceClient;
+        this.jobStateService = jobStateService;
+        this.lifecycleOperations = lifecycleOperations;
     }
 
     @GetMapping("/api/v1/workspaces/{workspaceId}/environment")
@@ -113,6 +122,20 @@ public class WorkspaceEnvironmentController {
         if (workspaceRuntime.containsKey("lastError")) {
             runtimeView.put("lastError", workspaceRuntime.get("lastError"));
         }
+        // PLAN-0391: additive release projection (decision #31). These keys are
+        // whitelisted here on purpose — the runtime sub-object is rebuilt key by
+        // key, so an unlisted field would be silently dropped (PLAN-0346 lesson).
+        runtimeView.put("activeJobCount", jobStateService.activeJobCount(workspaceId));
+        java.util.UUID wsUuid = parseUuid(workspaceId);
+        WorkspaceLifecycleOperation latestRelease = wsUuid == null ? null
+                : lifecycleOperations.findFirstByWorkspaceIdOrderByCreatedAtDesc(wsUuid).orElse(null);
+        runtimeView.put("releaseOperationId",
+                latestRelease == null || latestRelease.getId() == null ? null : latestRelease.getId().toString());
+        Object releaseReason = workspaceRuntime.get("reason");
+        if (releaseReason == null && latestRelease != null && latestRelease.getReason() != null) {
+            releaseReason = latestRelease.getReason();
+        }
+        runtimeView.put("reason", releaseReason);
         response.put("runtime", runtimeView);
         return ResponseEntity.ok(response);
     }
@@ -288,6 +311,17 @@ public class WorkspaceEnvironmentController {
 
     private String valueOrDefault(String value, String fallback) {
         return value == null || value.isBlank() ? fallback : value;
+    }
+
+    private static java.util.UUID parseUuid(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return java.util.UUID.fromString(value);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     public record ExecutionModeRequest(String executionMode) {}

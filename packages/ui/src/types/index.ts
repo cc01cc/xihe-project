@@ -1116,7 +1116,24 @@ export interface WorkspaceEnvironment {
         lastHeartbeatAt: string;
         materializationState?: string;
         lastError?: string;
+        /** PLAN-0391: non-terminal Job count (explains 409 WORKSPACE_BUSY). */
+        activeJobCount?: number;
+        /** PLAN-0391: id of the most recent release operation (or null). */
+        releaseOperationId?: string | null;
+        /** PLAN-0391: release/unavailable reason. */
+        reason?: string | null;
     };
+}
+
+/** PLAN-0391: durable "release execution resources" operation. */
+export interface WorkspaceReleaseOperation {
+    releaseOperationId: string;
+    workspaceId: string;
+    status: "accepted" | "running" | "completed" | "failed" | "interrupted";
+    reason: string | null;
+    errorCode: string | null;
+    createdAt: string | null;
+    endedAt: string | null;
 }
 
 export type WorkspaceEventKind =

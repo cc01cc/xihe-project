@@ -39,6 +39,14 @@ updated: 2026-10-16
 - **工作区生命周期操作锁为进程内存**：`WorkspaceOperationLock` 重启后全清，依赖 Docker `rebuild` 接管；它只串行化 Runtime 内 ensure materialization 与显式删除，不提供跨进程双主防护，单 Runtime v1 场景可接受。空闲回收循环与进程退出清理仍是独立流程。
 - **REST read/list/stat 已走容器 exec**：无 Docker 或容器未启动时这些端点 fail-closed 503（与变更类一致）；binary write 仍 host 直写（JSON 帧 UTF-8 限制，债）。
 
+## PLAN-0391 工作区运行资源释放 — 已知限制（2026-10-17）
+
+实现与真实 host 栈验收见 PLAN-0391 M3 证据（`plans/PLAN-0391-XH-workspace-runtime-disconnect/evidence/m3-acceptance-2026-10-17.md`）。未关闭限制：
+
+- **active-Job 门只覆盖 Job engine 管理的执行（host/MXC）**：Runtime release 的锁内实时复查用 `JobEngine::running_job_ids_for_workspace`（后端无关，`job_engine/mod.rs`）；Docker 容器内的 job 不在 Job engine 表中，故 docker 模式（当前冻结）下 Runtime 侧无法感知在飞的容器 job。CP 侧 durable `hasRunningForWorkspace` 仍会先行拒绝，但两条路径之间无共享锁，docker 模式下存在 check-then-act 残余窗口。
+- **`cleanupFailed` 目前恒为 false**：release 的清理原语（停事件 watcher / 终止 job 进程树 / 清 MCP session）当前不返回失败，`cleanupFailed` 字段为契约预留；若后续清理步骤可能失败，须在 Runtime 上报真实结果。
+- **可重试冲突不消费幂等键**：Runtime 返回 `WORKSPACE_BUSY`/`WORKSPACE_DESTROYING` 时释放操作被 `discard`（不落终态）；客户端应使用**同一 Idempotency-Key 重试**，换个新键会被在飞检查拒绝为 409。
+
 ## PLAN-0354 LLM 摘要 — 适用前提、租约与回退排障（2026-09-19；0355 裁定：默认关）
 
 - **默认关（PLAN-0355 质量门，2026-09-19）**：`context-policy.summaryProvider` 默认 `rule`（LLM 摘要需显式 `llm` 开启）；裁定 reject——失败率 35.2%、延迟 p95 44.4s（阈值 10s）、约束保留 96.97% 低于规则式基线（`plans/archive/20260919/PLAN-0355-XH-quality-cost-gate/evidence/gate-decision.md`）。重开先决：修复 F1（`shrink_failed` 截断摘要丢 `[Constraints]`）并以 p95 ≤10s 的 provider/model 按冻结判据复测。

@@ -85,6 +85,7 @@
 - 用户反馈文本中的 Vue `t()` placeholder 不得包含 `{...}`；UI 测试和封装规则见 `packages/ui/AGENTS.md`。
 - MCP session-id 签名与密钥轮换行为见 DEV-016；轮换后客户端必须重新初始化。
 - Chat 若显式要求 workspace tools 才初始化 MCP；纯 Chat 不因携带 workspaceId 自动发现工具，MCP context 不得跨 Workspace 复用（DEV-013）。
+- 工作区运行资源释放（PLAN-0391）的锁内 active-Job 门只覆盖 host/MXC（Job engine）；docker 模式（冻结）下 Runtime 侧不感知容器 job，且 `cleanupFailed` 暂恒为 false。见 DEV-018。
 
 ## Plan and Release Rules
 

@@ -226,7 +226,9 @@ impl Lifecycle {
     pub async fn complete_destroy(&self, ws_id: &str) {
         let _guard = self.transitions.lock().await;
         self.registry.unregister(ws_id).await;
-        self.registry.mark_released(ws_id).await;
+        self.registry
+            .mark_released_with_reason(ws_id, Some("DESTROYED"))
+            .await;
         info!(workspace_id = %ws_id, "workspace lifecycle: destroy complete (unregistered)");
     }
 
@@ -351,8 +353,25 @@ impl Lifecycle {
     pub async fn evict(&self, ws_id: &str) {
         let _guard = self.transitions.lock().await;
         self.registry.unregister(ws_id).await;
-        self.registry.mark_released(ws_id).await;
+        self.registry
+            .mark_released_with_reason(ws_id, Some("AUTO_EVICT"))
+            .await;
         info!(workspace_id = %ws_id, "workspace lifecycle: evicted (record released)");
+    }
+
+    /// PLAN-0391 (decision #28/#31): user-triggered release of the workspace's
+    /// execution resources. Reuses the direct-attach evict primitive (stop the
+    /// watcher + unregister the in-memory instance + terminate the job process
+    /// tree are done by the caller) and records the release origin
+    /// (`USER_RELEASED`). Docker containers are never stopped/deleted here
+    /// (decision #22).
+    pub async fn release(&self, ws_id: &str, reason: &str) {
+        let _guard = self.transitions.lock().await;
+        self.registry.unregister(ws_id).await;
+        self.registry
+            .mark_released_with_reason(ws_id, Some(reason))
+            .await;
+        info!(workspace_id = %ws_id, reason = %reason, "workspace lifecycle: released");
     }
 
     async fn write_through(&self, ws_id: &str, to: LifecycleState, reason: Option<&str>) {
@@ -612,6 +631,29 @@ mod tests {
         );
         let status = registry.status("ws-1").await.expect("status marker kept");
         assert_eq!(status.state, MaterializationState::Released);
+        assert_eq!(status.release_reason.as_deref(), Some("DESTROYED"));
+    }
+
+    #[tokio::test]
+    async fn release_unregisters_and_records_user_released_reason() {
+        let (registry, lifecycle) = seeded().await;
+        lifecycle.release("ws-1", "USER_RELEASED").await;
+        assert!(
+            registry.get("ws-1").await.is_none(),
+            "release reclaims the in-memory instance"
+        );
+        let status = registry.status("ws-1").await.expect("status marker kept");
+        assert_eq!(status.state, MaterializationState::Released);
+        assert_eq!(status.release_reason.as_deref(), Some("USER_RELEASED"));
+    }
+
+    #[tokio::test]
+    async fn evict_records_auto_evict_reason() {
+        let (registry, lifecycle) = seeded().await;
+        lifecycle.evict("ws-1").await;
+        let status = registry.status("ws-1").await.expect("status marker kept");
+        assert_eq!(status.state, MaterializationState::Released);
+        assert_eq!(status.release_reason.as_deref(), Some("AUTO_EVICT"));
     }
 
     #[tokio::test]

@@ -385,6 +385,25 @@ impl JobEngine {
         self.jobs.lock().expect("job table poisoned").len()
     }
 
+    /// PLAN-0391: backend-agnostic active-job probe for one workspace.
+    ///
+    /// The engine records the owning workspace at start for every backend, so
+    /// this works for host/MXC where the Docker `exec` path does not exist.
+    /// Returned ids are non-terminal jobs still tracked by this Runtime process.
+    pub fn running_job_ids_for_workspace(&self, workspace_id: &str) -> Vec<String> {
+        self.jobs
+            .lock()
+            .expect("job table poisoned")
+            .iter()
+            .filter(|(_, entry)| entry.workspace_id.as_deref() == Some(workspace_id))
+            .filter(|(_, entry)| {
+                let state = entry.state.lock().expect("job state poisoned");
+                !state.status.is_terminal()
+            })
+            .map(|(job_id, _)| job_id.clone())
+            .collect()
+    }
+
     fn get_entry(&self, job_id: &str) -> Option<Arc<JobEntry>> {
         self.jobs
             .lock()

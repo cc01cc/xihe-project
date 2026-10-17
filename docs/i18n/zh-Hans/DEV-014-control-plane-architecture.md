@@ -76,6 +76,7 @@ flowchart LR
 - **附件**：`File` 实体（`sessionId` + `messageId`，`workspaceId` nullable），物理路径 `{attachments-base-path}/{sessionId}/{fileId}`；`POST /api/v1/sessions/{sessionId}/attachments` 批量上传（白名单校验、500MB 上限）；`GET /api/v1/files/{fileId}` 取流（注意 `ChatAttachmentController` 返回的元数据 URL 缺 `/api/v1` 前缀，代码不一致待修，UI 依赖带前缀形式）；orphan 附件 24h 定时清理。
 - **Fork 附件复制（PLAN-0409）**：child bytes 使用新 Session namespace 和新 File row；fork copy 与 direct/Session-wide physical delete 共用 per-File 行锁，cleanup 必须严格验证 child namespace 已不存在。持久 request/recovery 见 V46 与根 fork/action SPEC。
 - **文件**：`WorkspaceFileController` 转发 Runtime REST（含二进制上传）；`GET /api/v1/workspaces/{workspaceId}/environment` 为只读诊断视图。
+- **运行资源释放（PLAN-0391）**：`POST /api/v1/workspaces/{workspaceId}/runtime/release` 由任何有 access 的成员发起（平台 `ADMIN` 复用 environment admin 旁路；非成员 404），`Idempotency-Key` 必填（≤128），回收该 Workspace 的运行资源（watcher + 内存实例 + Job 进程树，**不删除容器**）。durable 操作落 `workspace_lifecycle_operations`（`status` accepted/running/completed/failed/interrupted）。存在 active Job 或在飞释放 → 409 `WORKSPACE_BUSY`；注销窗口 → 409 `WORKSPACE_DESTROYING`；Runtime 不可达 → 502 `RUNTIME_UNAVAILABLE`。`environment` 的 `runtime` 子对象增量 `activeJobCount`/`releaseOperationId`/`reason`（`USER_RELEASED`/`AUTO_EVICT`/`DESTROYED`/`CLEANUP_FAILED`/`RUNTIME_UNAVAILABLE`）。
 - **遥测**：`TelemetryController` 收前端日志（`POST /api/v1/telemetry/logs` 需 JWT；`/anonymous` 限流），写 `telemetry.log`。
 - **审计**：`AuditLogger` 记录 MCP 工具调用与策略决策，持久化到 `audit.log`（脱敏 encoder），内存保留最近 1000 条查询视图。
 

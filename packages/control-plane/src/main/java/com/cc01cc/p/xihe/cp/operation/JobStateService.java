@@ -516,6 +516,16 @@ public class JobStateService {
         return id != null && jobs.existsByWorkspaceIdAndStatusIn(id, ACTIVE);
     }
 
+    /** PLAN-0391: non-terminal Job count for one workspace (explains 409 WORKSPACE_BUSY). */
+    @Transactional(readOnly = true)
+    public int activeJobCount(String workspaceId) {
+        UUID id = parseUuid(workspaceId);
+        if (id == null) {
+            return 0;
+        }
+        return jobs.findByWorkspaceIdAndStatusInOrderByCreatedAtAsc(id, ACTIVE).size();
+    }
+
     /**
      * workspace 销毁时把仍 active 的档案落 orphaned（决策 #4/P1-2）。
      *

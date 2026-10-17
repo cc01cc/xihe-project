@@ -2412,6 +2412,102 @@ async fn delete_workspace_handler(
     }))
 }
 
+/// PLAN-0391: body of the internal release request. `releaseOperationId` is the
+/// CP durable operation id (echoed for correlation; Runtime owns no CP state).
+#[derive(Debug, Deserialize)]
+struct WorkspaceReleaseRequest {
+    #[serde(rename = "releaseOperationId")]
+    #[allow(dead_code)]
+    release_operation_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct WorkspaceReleaseResponse {
+    released: bool,
+    cleaned: bool,
+    #[serde(rename = "cleanupFailed")]
+    cleanup_failed: bool,
+    #[serde(rename = "reason")]
+    reason: String,
+}
+
+/// PLAN-0391 (decisions #28/#30/#31): user-triggered release of a Workspace's
+/// execution resources. Acquires the shared operation lock (busy → 409
+/// `WORKSPACE_BUSY`), re-checks active Job / `Destroying` under the lock,
+/// then reclaims the direct-attach resources: stop the event watcher, terminate
+/// the Job process tree, drop MCP sessions, and unregister the in-memory
+/// instance. Docker containers are never stopped or deleted (decision #22).
+async fn workspace_release_handler(
+    Path(ws_id): Path<String>,
+    State(app): State<Arc<AppState>>,
+    AxumJson(_req): AxumJson<WorkspaceReleaseRequest>,
+) -> Result<(StatusCode, AxumJson<serde_json::Value>), (StatusCode, AxumJson<serde_json::Value>)> {
+    if !xihe_runtime::hydrate::is_safe_workspace_id(&ws_id) {
+        return Err(runtime_problem(RuntimeError::InvalidExecutionSpec {
+            workspace_id: ws_id.clone(),
+            detail: "workspaceId contains invalid route characters".to_string(),
+        }));
+    }
+    // Shared operation lock (decision #30): materialize/delete cannot interleave.
+    let _operation_guard = match app.lifecycle.operation_lock().try_lock(&ws_id) {
+        Ok(guard) => guard,
+        Err(error) => {
+            if let Some(status) = app.registry.status(&ws_id).await
+                && status.state == xihe_runtime::gateway::MaterializationState::Destroying
+            {
+                return Err(runtime_problem(RuntimeError::WorkspaceDestroying {
+                    workspace_id: ws_id.clone(),
+                }));
+            }
+            return Err(runtime_problem(error));
+        }
+    };
+    // Re-check under the lock (the CP-side gate is a cross-process check-then-act).
+    if let Some(status) = app.registry.status(&ws_id).await
+        && status.state == xihe_runtime::gateway::MaterializationState::Destroying
+    {
+        return Err(runtime_problem(RuntimeError::WorkspaceDestroying {
+            workspace_id: ws_id.clone(),
+        }));
+    }
+    // Backend-agnostic active-Job probe: the Job engine records the owning
+    // workspace for every backend (host/MXC), unlike the Docker `exec` path
+    // which only exists for container workspaces (PLAN-0391 wave-3 fix).
+    if !app.job_engine.running_job_ids_for_workspace(&ws_id).is_empty() {
+        return Err(runtime_problem(RuntimeError::WorkspaceBusy {
+            workspace_id: ws_id.clone(),
+        }));
+    }
+    // Reclaim the execution-resource set (decision #28): watcher + Job process
+    // tree + MCP sessions + in-memory instance. No container touches (decision #22).
+    app.workspace_event_watchers.stop(&ws_id).await;
+    let terminated = app.job_engine.terminate_workspace(&ws_id);
+    app.mcp_sessions.cleanup_workspace(&ws_id).await;
+    app.lifecycle.release(&ws_id, "USER_RELEASED").await;
+    tracing::info!(
+        "Workspace runtime released: ws_id={} terminatedJobs={} (WorkspaceStorage preserved, no container touched)",
+        ws_id,
+        terminated
+    );
+    Ok((
+        StatusCode::OK,
+        AxumJson(
+            serde_json::to_value(WorkspaceReleaseResponse {
+                released: true,
+                cleaned: true,
+                cleanup_failed: false,
+                reason: "USER_RELEASED".to_string(),
+            })
+            .map_err(|error| {
+                runtime_problem(RuntimeError::WorkspaceMaterializationFailed {
+                    workspace_id: ws_id.clone(),
+                    detail: format!("serialize release response: {error}"),
+                })
+            })?,
+        ),
+    ))
+}
+
 /// PLAN-0338: Run-checkpoint slice host API (capture / preview / restore / blob / gc).
 ///
 /// The service lives in `xihe_runtime::checkpoint_api` and
@@ -2957,6 +3053,10 @@ fn build_app_router(app_state: &Arc<AppState>) -> Router {
         .route(
             "/internal/v1/runtime/workspaces/{ws_id}/materialize",
             post(workspace_materialize_handler),
+        )
+        .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/release",
+            post(workspace_release_handler),
         )
         .route(
             "/internal/v1/runtime/workspaces/{ws_id}/imports",

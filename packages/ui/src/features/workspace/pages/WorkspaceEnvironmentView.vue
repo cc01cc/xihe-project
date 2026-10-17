@@ -97,6 +97,65 @@ const showPrepare = computed(() => {
     return s === "unbound" || s === "pending" || s === "blocked";
 });
 
+// PLAN-0391: release is offered while the runtime holds resources.
+const releasing = ref(false),
+    releaseError = ref(""),
+    releaseConfirmOpen = ref(false),
+    showRelease = computed(() => {
+        const s = (environment.value?.status ?? "").toLowerCase();
+        return s === "ready" || s === "paused" || s === "stopped";
+    }),
+    activeJobCount = computed(() => environment.value?.runtime?.activeJobCount ?? 0);
+
+function releaseReasonLabel(reason: string | null | undefined): string {
+    switch (reason) {
+        case "USER_RELEASED":
+            return t("workspace.releaseReasonUserReleased");
+        case "AUTO_EVICT":
+            return t("workspace.releaseReasonAutoEvict");
+        case "DESTROYED":
+            return t("workspace.releaseReasonDestroyed");
+        case "CLEANUP_FAILED":
+            return t("workspace.releaseReasonCleanupFailed");
+        case "RUNTIME_UNAVAILABLE":
+            return t("workspace.releaseReasonUnavailable");
+        default:
+            return reason ?? "";
+    }
+}
+
+function newIdempotencyKey(): string {
+    const random = globalThis.crypto?.randomUUID?.();
+    return random ?? `release-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+async function handleRelease() {
+    const id = workspaceId.value;
+    if (!id || releasing.value) return;
+    releasing.value = true;
+    releaseError.value = "";
+    // Flip the button state before the first await (mock/E2E timing).
+    await nextTick();
+    try {
+        await api.releaseWorkspaceRuntime(id, newIdempotencyKey());
+        releaseConfirmOpen.value = false;
+        toast.success(t("workspace.releaseSuccess"));
+        await loadEnvironment();
+    } catch (cause) {
+        const code = cause instanceof ApiError ? cause.problem.code : null;
+        logger.error("Release workspace runtime failed", cause);
+        releaseError.value =
+            code === "WORKSPACE_BUSY"
+                ? t("workspace.releaseBusyError")
+                : cause instanceof ApiError
+                  ? cause.message
+                  : t("workspace.releaseFailed");
+        toast.error(releaseError.value);
+    } finally {
+        releasing.value = false;
+    }
+}
+
 const TERMINAL_JOB_STATUSES: ReadonlySet<string> = new Set([
     "succeeded",
     "cancelled",
@@ -421,6 +480,83 @@ onBeforeUnmount(stopPolling);
                     </button>
                 </div>
 
+                <div
+                    v-if="showRelease"
+                    class="flex flex-wrap items-center justify-between gap-4 rounded-lg border p-5"
+                    data-testid="workspace-release-card"
+                >
+                    <div>
+                        <p class="text-sm font-medium">{{ t("workspace.releaseTitle") }}</p>
+                        <p class="mt-1 max-w-xl text-xs text-muted-foreground">
+                            {{ t("workspace.releaseHint") }}
+                        </p>
+                        <p
+                            v-if="activeJobCount > 0"
+                            class="mt-2 text-xs text-destructive"
+                            data-testid="workspace-runtime-release-status"
+                        >
+                            {{ t("workspace.releaseBusyHint", { count: activeJobCount }) }}
+                        </p>
+                        <p
+                            v-else-if="releaseError"
+                            class="mt-2 text-xs text-destructive"
+                            data-testid="workspace-runtime-release-status"
+                        >
+                            {{ releaseError }}
+                        </p>
+                    </div>
+                    <button
+                        class="px-4 py-2 text-sm rounded border border-destructive/60 text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                        :disabled="releasing || activeJobCount > 0"
+                        data-testid="workspace-runtime-release"
+                        @click="releaseConfirmOpen = true"
+                    >
+                        <LoaderCircle
+                            v-if="releasing"
+                            class="mr-1 inline-block size-3 animate-spin"
+                            aria-hidden="true"
+                        />
+                        {{
+                            releasing
+                                ? t("workspace.releaseReleasing")
+                                : t("workspace.releaseAction")
+                        }}
+                    </button>
+                </div>
+
+                <div
+                    v-if="releaseConfirmOpen"
+                    class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+                    data-testid="workspace-release-confirm"
+                >
+                    <div class="w-full max-w-md rounded-lg border bg-background p-5 shadow-lg">
+                        <p class="text-sm font-medium">{{ t("workspace.releaseConfirmTitle") }}</p>
+                        <p class="mt-2 text-xs text-muted-foreground">
+                            {{ t("workspace.releaseConfirmBody") }}
+                        </p>
+                        <p v-if="releaseError" class="mt-2 text-xs text-destructive">
+                            {{ releaseError }}
+                        </p>
+                        <div class="mt-4 flex justify-end gap-2">
+                            <button
+                                class="px-3 py-1.5 text-sm rounded border hover:bg-muted"
+                                data-testid="workspace-release-cancel"
+                                @click="releaseConfirmOpen = false"
+                            >
+                                {{ t("workspace.cancel") }}
+                            </button>
+                            <button
+                                class="px-3 py-1.5 text-sm rounded bg-destructive text-destructive-foreground hover:opacity-90 disabled:opacity-50"
+                                :disabled="releasing"
+                                data-testid="workspace-release-confirm-button"
+                                @click="handleRelease"
+                            >
+                                {{ t("workspace.releaseConfirmAction") }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="grid gap-5 md:grid-cols-2">
                     <article class="rounded-lg border p-5">
                         <h2 class="font-medium">存储</h2>
@@ -551,6 +687,15 @@ onBeforeUnmount(stopPolling);
                                 <dt class="text-muted-foreground">最近心跳</dt>
                                 <dd class="mt-1 break-all">
                                     {{ environment.runtime.lastHeartbeatAt || "未观测到" }}
+                                </dd>
+                            </div>
+                            <div
+                                v-if="environment.runtime.reason"
+                                data-testid="workspace-runtime-reason"
+                            >
+                                <dt class="text-muted-foreground">释放状态</dt>
+                                <dd class="mt-1">
+                                    {{ releaseReasonLabel(environment.runtime.reason) }}
                                 </dd>
                             </div>
                         </dl>
