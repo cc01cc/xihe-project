@@ -1776,6 +1776,7 @@ async function main() {
             XIHE_RUNTIME_PORT: runtimePort,
             XIHE_CP_URL: `http://127.0.0.1:${cpPort}`,
             XIHE_WORKSPACE_IMAGE: 'xihe/workspace:latest',
+            ...(process.env.CARGO_TARGET_DIR ? { CARGO_TARGET_DIR: process.env.CARGO_TARGET_DIR } : {}),
           },
           healthUrl: `http://127.0.0.1:${runtimePort}/health`,
         })

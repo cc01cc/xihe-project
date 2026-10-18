@@ -379,6 +379,16 @@ function handleDerivedStateRefresh() {
 const guidancePanelRef = ref<InstanceType<typeof GuidancePanel> | null>(null);
 const currentRunId = computed(() => chatStore.getSessionRunId(props.sessionId));
 const currentRunStatus = computed(() => chatStore.getSessionRunState(props.sessionId).status);
+// Keep the last run so its Guidance list remains readable after the run goes terminal;
+// only the input is gated by the active status.
+const lastRunId = ref<string | undefined>(undefined);
+watch(
+    [currentRunId, () => props.sessionId],
+    ([runId]) => {
+        if (runId) lastRunId.value = runId;
+    },
+    { immediate: true },
+);
 
 const streamComponent = ref<InstanceType<typeof SSEStream> | null>(null);
 const inputComponent = ref<InstanceType<typeof InputArea> | null>(null);
@@ -405,6 +415,7 @@ watch(
         followUpQueueBusyItemId.value = null;
         if (previousSessionId && previousSessionId !== sessionId) {
             chatStore.detachLiveSession(previousSessionId);
+            lastRunId.value = undefined;
         }
         previousSessionId = sessionId;
         if (sessionId) {
@@ -424,7 +435,10 @@ watch(selectedBranchId, (branchId, previousBranchId) => {
 
 watch(isStreaming, (streaming, previous) => {
     if (streaming !== previous && props.sessionId) {
-        if (previous && !streaming) void loadSessionMessages(props.sessionId);
+        if (previous && !streaming) {
+            void loadSessionMessages(props.sessionId);
+            guidancePanelRef.value?.refetch();
+        }
         void refreshFollowUpQueue(props.sessionId);
     }
 });
@@ -1000,9 +1014,9 @@ watch(
         </div>
 
         <GuidancePanel
-            v-if="currentRunId"
+            v-if="lastRunId"
             ref="guidancePanelRef"
-            :run-id="currentRunId"
+            :run-id="lastRunId"
             :run-status="currentRunStatus"
         />
 
