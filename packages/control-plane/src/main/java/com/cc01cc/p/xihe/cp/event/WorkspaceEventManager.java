@@ -69,6 +69,7 @@ public class WorkspaceEventManager {
         if (lastEventId < currentSequence) {
             WorkspaceEvent snapshotRequired = new WorkspaceEvent(
                     workspaceId,
+                    workspaceId,
                     currentSequence,
                     "snapshot_required",
                     null,
@@ -103,6 +104,7 @@ public class WorkspaceEventManager {
         WorkspaceChannel channel = channels.computeIfAbsent(workspaceId, ignored -> new WorkspaceChannel());
         long sequence = channel.sequence.incrementAndGet();
         WorkspaceEvent event = new WorkspaceEvent(
+                workspaceId,
                 workspaceId,
                 sequence,
                 kind,

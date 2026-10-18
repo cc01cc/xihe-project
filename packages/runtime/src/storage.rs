@@ -31,15 +31,37 @@ fn strip_unc_prefix(p: PathBuf) -> PathBuf {
     }
 }
 
-/// Resolve `hostRoot + storageRef` to a validated host directory.
+/// Resolve a Workspace's roots to validated host directories (PLAN-0502 seam B).
+///
+/// The single-root model yields exactly one entry; the collection shape keeps
+/// multi-root additive. Fails if any root fails validation.
+pub async fn resolve_hosts(host_root: &str, roots: &[String], ws_id: &str) -> Result<Vec<PathBuf>> {
+    if roots.is_empty() {
+        return Err(RuntimeError::InvalidPath("workspace has no roots".into()));
+    }
+    let mut resolved = Vec::with_capacity(roots.len());
+    for storage_ref in roots {
+        resolved.push(resolve_one(host_root, storage_ref, ws_id).await?);
+    }
+    Ok(resolved)
+}
+
+/// Single-root convenience wrapper over [`resolve_hosts`].
+pub async fn resolve_host_path(host_root: &str, storage_ref: &str, ws_id: &str) -> Result<PathBuf> {
+    let mut hosts = resolve_hosts(host_root, &[storage_ref.to_string()], ws_id).await?;
+    Ok(hosts.remove(0))
+}
+
+/// Resolve `hostRoot + storageRef` to one validated host directory.
 ///
 /// Validation per grill B1/B2/B6:
 /// - B1: strict regex, length, no NUL/colon/slash already covered by regex
-/// - Ownership: `ws_id == storageRef` (per M1a 2.1a)
+/// - Ownership: `ws_id == storageRef` (per M1a 2.1a) — kept this round to hold
+///   zero behavior change; multi-root decoupling is deferred to BL-94
 /// - B2: Windows canonicalize + lowercase prefix check (requires hostRoot exists;
 ///   if joined path not yet exists, canonicalize its parent)
 /// - Returns `STORAGE_BINDING_INVALID` (InvalidPath/PathTraversal/SymlinkEscape) on failure
-pub async fn resolve_host_path(host_root: &str, storage_ref: &str, ws_id: &str) -> Result<PathBuf> {
+async fn resolve_one(host_root: &str, storage_ref: &str, ws_id: &str) -> Result<PathBuf> {
     // B1: strict regex
     if !is_valid_storage_ref(storage_ref) {
         return Err(RuntimeError::InvalidPath(format!(
@@ -131,8 +153,25 @@ pub async fn resolve_host_path(host_root: &str, storage_ref: &str, ws_id: &str) 
     Ok(joined_canonical)
 }
 
+/// Sync collection variant of [`resolve_hosts`] (tests).
+pub fn resolve_hosts_sync(host_root: &str, roots: &[String], ws_id: &str) -> Result<Vec<PathBuf>> {
+    if roots.is_empty() {
+        return Err(RuntimeError::InvalidPath("workspace has no roots".into()));
+    }
+    let mut resolved = Vec::with_capacity(roots.len());
+    for storage_ref in roots {
+        resolved.push(resolve_one_sync(host_root, storage_ref, ws_id)?);
+    }
+    Ok(resolved)
+}
+
 // Sync variant for tests where async not needed and hostRoot is already a TempDir (exists).
 pub fn resolve_host_path_sync(host_root: &str, storage_ref: &str, ws_id: &str) -> Result<PathBuf> {
+    let mut hosts = resolve_hosts_sync(host_root, &[storage_ref.to_string()], ws_id)?;
+    Ok(hosts.remove(0))
+}
+
+fn resolve_one_sync(host_root: &str, storage_ref: &str, ws_id: &str) -> Result<PathBuf> {
     if !is_valid_storage_ref(storage_ref) {
         return Err(RuntimeError::InvalidPath(format!(
             "invalid storageRef {storage_ref:?}: must match {STORAGE_REF_RE}"
@@ -191,6 +230,17 @@ mod tests {
         assert!(!is_valid_storage_ref("has.dot"));
         assert!(!is_valid_storage_ref("../etc"));
         assert!(!is_valid_storage_ref("a\0b"));
+    }
+
+    #[test]
+    fn test_resolve_hosts_collection_shape() {
+        let dir = TempDir::new().unwrap();
+        let host_root = dir.path().to_str().unwrap();
+        let hosts = resolve_hosts_sync(host_root, &["ws_valid123".to_string()], "ws_valid123").unwrap();
+        assert_eq!(hosts.len(), 1, "single-root model yields exactly one host");
+        let single = resolve_host_path_sync(host_root, "ws_valid123", "ws_valid123").unwrap();
+        assert_eq!(hosts[0], single, "wrapper matches the collection element");
+        assert!(resolve_hosts_sync(host_root, &[], "ws_valid123").is_err(), "no roots rejected");
     }
 
     #[test]

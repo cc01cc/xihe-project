@@ -27,7 +27,7 @@ class RuntimeWorkspaceEventControllerTest {
                 new RuntimeWorkspaceEventController.PublishWorkspaceEventRequest(
                         "file_changed", "src/main.ts", "modified", "runtime", null, null);
         when(eventManager.publish("ws-1", "file_changed", "src/main.ts", "modified", "runtime", null, null))
-                .thenReturn(new WorkspaceEvent("ws-1", 7L, "file_changed", "src/main.ts", "modified", "runtime", null, null));
+                .thenReturn(new WorkspaceEvent("ws-1", "ws-1", 7L, "file_changed", "src/main.ts", "modified", "runtime", null, null));
 
         ResponseEntity<?> response = controller.publish("ws-1", request);
 
