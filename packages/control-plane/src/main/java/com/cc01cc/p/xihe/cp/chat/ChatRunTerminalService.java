@@ -143,6 +143,7 @@ public class ChatRunTerminalService {
     private final InboxRepository inboxes;
     private final SseEmitterManager sseEmitters;
     private final FollowUpQueueService followUpQueueService;
+    private final ChatRunGuidanceService chatRunGuidanceService;
     private final ChatRunTransportService transportAttempts;
 
     public ChatRunTerminalService(
@@ -160,6 +161,7 @@ public class ChatRunTerminalService {
             InboxRepository inboxes,
             SseEmitterManager sseEmitters,
             FollowUpQueueService followUpQueueService,
+    ChatRunGuidanceService chatRunGuidanceService,
             ChatRunTransportService transportAttempts) {
         this.dbLockTimeout = dbLockTimeout;
         this.datasourceUrl = datasourceUrl;
@@ -175,6 +177,7 @@ public class ChatRunTerminalService {
         this.inboxes = inboxes;
         this.sseEmitters = sseEmitters;
         this.followUpQueueService = followUpQueueService;
+        this.chatRunGuidanceService = chatRunGuidanceService;
         this.transportAttempts = transportAttempts;
     }
 
@@ -258,6 +261,9 @@ public class ChatRunTerminalService {
         }
 
         followUpQueueService.settleTerminal(sessionId.toString(), runId.toString(), request.status());
+        // PLAN-0528: guidance pending → terminal_expired inside the same terminal
+        // transaction (spec §2 invariant), mirroring the Follow-up settle.
+        chatRunGuidanceService.settleTerminal(runId);
         requestCheckpointAfterCommit(runId.toString());
         // PLAN-0464 T1.2 (review round-1 #1): the run-scope Job收口 trigger is
         // now owned by the Chat terminal path. Both are best-effort after commit (Runtime is remote).

@@ -36,6 +36,12 @@ public interface ChatRunRepository extends JpaRepository<ChatRun, UUID> {
     List<String> ACTIVE_LEASE_STATUSES = List.of(
             "accepted", "queued", "running", "streaming", "awaiting_approval", "dispatching");
 
+    List<String> TERMINAL_STATUSES = List.of(
+            "succeeded", "failed", "partial", "ambiguous", "cancelled");
+
+    @Query("select r.id from ChatRun r where r.status in :statuses")
+    List<UUID> findIdsByStatusIn(@Param("statuses") Collection<String> statuses);
+
     Optional<ChatRun> findByUserIdAndSessionIdAndIdempotencyKey(
             String userId, String sessionId, String idempotencyKey);
 
