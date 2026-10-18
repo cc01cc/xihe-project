@@ -21,7 +21,7 @@ NODE_OPTIONS = "--max-old-space-size=2048"
 [tools]
 node = "24"
 pnpm = "10"
-python = "3.12"
+python = "3.14"
 uv = "latest"
 java = "temurin-25"
 maven = "3.9"
