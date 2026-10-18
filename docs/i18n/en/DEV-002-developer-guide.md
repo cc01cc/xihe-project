@@ -264,6 +264,12 @@ JSONC supports comments and trailing commas; you can directly copy MCP configura
 4. **`mise run dev:host:provider-init -- --provider xiaomi --scope USER --label xh-local --api-key-env XIHE_XIAOMI_API_KEY`** — Create or reuse and verify a local provider connection.
 5. **`mise run test:e2e:host:real -- e2e/real/real-tool-roundtrip.spec.ts --route openai-compat`** — Run one real MiMo host test; requires `XIHE_E2E_REAL_XIAOMI_KEY`.
 
+**Host-stack bootstrap and scripted-path notes (2026-10-18):**
+
+- **`mise run dev:host` does not load `.env.dev`**: CP fails to start without `XIHE_MCP_SESSION_ID_HMAC_SECRET` (no hardcoded fallback). Either use `scripts/dev-host.ps1 -Start` (it generates that secret plus internal tokens) or inject the env explicitly; when invoked without a TTY, that script's `Start-Process` makes the caller hang on inherited handles (the services do start) — for automation, launch each service as a tracked background process and probe readiness on ports 12631/12632/12633.
+- **LLM readiness prerequisite**: without an imported `llm-provider` profile the Agent reports `llmReady=missing_credentials` and `POST /api/v1/chat` returns 503 `LLM_NOT_CONFIGURED`; `POST /api/v1/config/import?layer=instance` accepts **plain JSON only** (strip the line comments from `config.import.local.jsonc`, or just use the CLI above).
+- **Scripted path, three points**: a new session already owns a root branch (`POST /sessions/{id}/branches` is fork semantics requiring `sourceBranchId` + `anchorMessageId` — reuse the root branch instead); `POST /api/v1/chat` requires an active SSE subscription for the session first (otherwise 409 `SSE_SUBSCRIPTION_REQUIRED`); Bearer tokens live only 900s, so keep the `reset-admin` → `login` token in a temp file and refresh it per batch (never in the repo).
+
 The CLI is an operator entry point. It calls CP's authenticated HTTP API for Provider Connections; Agent execution continues to use its own lease/protocol path. The real E2E key is injected directly into the isolated Agent process and does not test a Provider Connection lease.
 
 `--api-key-env` reads a variable already present in the CLI process. An interactive terminal prompts without echo when needed; non-interactive tasks must inject the environment variable. The CLI does not read `.env.local` itself.
