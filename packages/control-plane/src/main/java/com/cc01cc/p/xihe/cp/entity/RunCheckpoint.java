@@ -52,6 +52,13 @@ public class RunCheckpoint {
     @Convert(converter = UuidStringConverter.class)
     private String workspaceId;
 
+    /**
+     * PLAN-0502 seam A: the root this slice belongs to. Single-root model keeps
+     * it equal to {@code workspaceId}; multi-root carries the per-root key.
+     */
+    @Column(name = "root_id", nullable = false, length = 64)
+    private String rootId;
+
     @Column(name = "source_session_id", length = 36)
     @Convert(converter = UuidStringConverter.class)
     private String sourceSessionId;
@@ -128,6 +135,9 @@ public class RunCheckpoint {
     public void setSourceRunId(String sourceRunId) { this.sourceRunId = sourceRunId; }
     public String getWorkspaceId() { return workspaceId; }
     public void setWorkspaceId(String workspaceId) { this.workspaceId = workspaceId; }
+
+    public String getRootId() { return rootId; }
+    public void setRootId(String rootId) { this.rootId = rootId; }
     public String getSourceSessionId() { return sourceSessionId; }
     public void setSourceSessionId(String sourceSessionId) { this.sourceSessionId = sourceSessionId; }
     public String getSliceRef() { return sliceRef; }

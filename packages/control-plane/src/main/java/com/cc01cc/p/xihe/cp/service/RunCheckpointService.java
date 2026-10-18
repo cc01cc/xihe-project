@@ -732,6 +732,7 @@ public class RunCheckpointService {
             row.setId(UUID.randomUUID());
             row.setSourceRunId(runId);
             row.setWorkspaceId(workspaceId);
+            row.setRootId(workspaceId);
             row.setSourceSessionId(run.getSessionId());
             row.setCreatedAt(now);
         }
@@ -774,6 +775,7 @@ public class RunCheckpointService {
             row.setId(UUID.randomUUID());
             row.setSourceRunId(runId);
             row.setWorkspaceId(workspaceId);
+            row.setRootId(workspaceId);
             row.setSourceSessionId(run.getSessionId());
             row.setChangedFiles("[]");
             row.setOpaqueNestedRepos("[]");

@@ -217,6 +217,7 @@ class RunCheckpointControllerTest extends AbstractH2Test {
         row.setSourceRunId(sourceRunId);
         row.setSourceSessionId(sessionId);
         row.setWorkspaceId(workspaceId);
+        row.setRootId(workspaceId);
         row.setSliceRef(sliceRef);
         row.setCapturedAt(Instant.parse("2026-09-15T00:00:00Z"));
         row.setPredecessorRef("refs/xihe/slices/1757900000000-998877");
