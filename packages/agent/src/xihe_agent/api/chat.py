@@ -18,6 +18,7 @@ from xihe_agent.adapters.approval_tool import ApprovalExecutorUnsupportedError, 
 from xihe_agent.adapters.sse_adapter import render_sse
 from xihe_agent.agent_runner import LangGraphRunner
 from xihe_agent.agent_runner.checkpoint_saver import CheckpointStoreError, CpAgentCheckpointSaver
+from xihe_agent.agent_runner.guidance import GuidanceConsumer
 from xihe_agent.agent_runner.langgraph_runner import prune_history_tool_results
 from xihe_agent.api.shared import problem_details, verify_api_token
 from xihe_agent.app_state import (
@@ -570,6 +571,15 @@ async def chat(request: Request):
                     transport_events=transport_events,
                     continuation=continuation,
                     checkpoint_saver=checkpoint_saver,
+                    # PLAN-0529: Guidance consumer for the frozen consumption
+                    # point (model-call pre-injection). Only wired when this
+                    # request carries a durable runId; registry/continuation
+                    # paths without one stay guidance-less by design.
+                    guidance=(
+                        GuidanceConsumer(base_url=CP_URL, service_token=CP_API_TOKEN, run_id=run_id)
+                        if run_id
+                        else None
+                    ),
                 )
 
                 llm_request_started = True

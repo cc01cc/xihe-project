@@ -25,6 +25,7 @@ from xihe_agent.adapters.approval_tool import APPROVAL_EVENT_SINK_KEY, ApprovalT
 from xihe_agent.adapters.sse_adapter import LangGraphEventAdapter
 from xihe_agent.agent_runner.credential_handoff import RunScopedCredentialHandoff
 from xihe_agent.agent_runner.graph_builder import build_react_graph
+from xihe_agent.agent_runner.guidance import GuidanceInjectionModel
 from xihe_agent.agent_runner.tool_adapter import (
     EVENT_STORE_FAILURES_KEY,
     LCToolAdapter,
@@ -280,6 +281,12 @@ class LangGraphRunner(AgentRunner):
 
         credential_handoff = RunScopedCredentialHandoff()
         model = self._model_factory(config.model)
+        # PLAN-0529: wrap the model with Guidance pre-injection when a consumer
+        # is wired (chat dispatch with a runId). The wrapper's invocation moment
+        # IS the frozen consumption point: the previous tool batch fully
+        # resolved and this planning step has not produced anything yet.
+        if config.guidance is not None:
+            model = GuidanceInjectionModel(consumer=config.guidance, inner=model)
         handoff_setter = getattr(model, "set_credential_handoff", None)
         if callable(handoff_setter):
             handoff_setter(credential_handoff)

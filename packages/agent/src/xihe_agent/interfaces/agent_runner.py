@@ -92,6 +92,9 @@ class RunnerConfig:
     # checkpoint and side-effect IDs. These fields are never public client input.
     continuation: dict[str, Any] | None = None
     checkpoint_saver: Any | None = None
+    # PLAN-0529: optional Guidance consumer (agent_runner.guidance.GuidanceConsumer).
+    # Typed as Any to keep interfaces/ free of agent_runner/langchain imports.
+    guidance: Any | None = None
 
 
 class AgentRunner(ABC):
