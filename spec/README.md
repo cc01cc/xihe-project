@@ -121,6 +121,10 @@ PLAN-0429 建立 Agent Run 护栏的跨域总览索引（风险类别、执行�
 
 - [Agent Run 护栏总览](agent/run-guardrails.md)
 
+PLAN-0528 冻结 Run Guidance 的 CP wire/durable 契约（V77 `chat_run_guidance`；route/状态机/字段唯一来源；由 PLAN-0529 消费、PLAN-0530 引用）。已实现并合入 develop；待 PLAN-0530 收口后并入 `session/chat-run-operation.md` 唯一 owner：
+
+- [CP Run Guidance 契约](cp-guidance-contract.md) (PLAN-0528；proposed/partial)
+
 PLAN-0408 建立 parent Session 派生 child terminal Inbox 的独立生命周期规范；不修改 PLAN-0387 的 Session 生命周期规范：
 
 - [派生协作 Inbox 生命周期](session/derived-collaboration-inbox.md)
