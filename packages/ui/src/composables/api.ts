@@ -189,6 +189,84 @@ export interface ApiFollowUpCreateRequest {
     model?: string;
 }
 
+export interface ChatRunGuidanceCreateResult {
+    id: string;
+    runId: string;
+    sessionId: string;
+    sequence: number;
+    status: string;
+    createdAt: string;
+}
+
+export interface ChatRunGuidanceItem {
+    id: string;
+    sequence: number;
+    sourceKind: string;
+    status: string;
+    createdAt: string;
+    consumedAt: string | null;
+    terminalExpiredAt: string | null;
+    authorPrincipalId: string;
+    content: string;
+}
+
+export interface ChatRunGuidanceSnapshot {
+    items: ChatRunGuidanceItem[];
+    latestSequence: number;
+}
+
+function normalizeGuidanceItem(payload: unknown): ChatRunGuidanceItem | null {
+    const record = asRecord(payload);
+    if (!record || typeof record.id !== "string" || typeof record.sequence !== "number") {
+        return null;
+    }
+    return {
+        id: record.id,
+        sequence: record.sequence,
+        sourceKind: typeof record.sourceKind === "string" ? record.sourceKind : "user",
+        status: typeof record.status === "string" ? record.status : "pending",
+        createdAt: typeof record.createdAt === "string" ? record.createdAt : "",
+        consumedAt: typeof record.consumedAt === "string" ? record.consumedAt : null,
+        terminalExpiredAt:
+            typeof record.terminalExpiredAt === "string" ? record.terminalExpiredAt : null,
+        authorPrincipalId:
+            typeof record.authorPrincipalId === "string" ? record.authorPrincipalId : "",
+        content: typeof record.content === "string" ? record.content : "",
+    };
+}
+
+function normalizeGuidanceSnapshot(payload: unknown): ChatRunGuidanceSnapshot {
+    const record = asRecord(payload);
+    const rawItems = record && Array.isArray(record.items) ? record.items : [];
+    const items = rawItems
+        .map((item) => normalizeGuidanceItem(item))
+        .filter((item): item is ChatRunGuidanceItem => item !== null);
+    items.sort((a, b) => a.sequence - b.sequence);
+    return {
+        items,
+        latestSequence:
+            record && typeof record.latestSequence === "number" ? record.latestSequence : 0,
+    };
+}
+
+function normalizeGuidanceCreateResult(
+    payload: unknown,
+    runId: string,
+): ChatRunGuidanceCreateResult {
+    const record = asRecord(payload);
+    if (!record || typeof record.id !== "string") {
+        throw new Error("Invalid guidance create response: missing id");
+    }
+    return {
+        id: record.id,
+        runId: typeof record.runId === "string" ? record.runId : runId,
+        sessionId: typeof record.sessionId === "string" ? record.sessionId : "",
+        sequence: typeof record.sequence === "number" ? record.sequence : 0,
+        status: typeof record.status === "string" ? record.status : "pending",
+        createdAt: typeof record.createdAt === "string" ? record.createdAt : "",
+    };
+}
+
 export interface SessionBranchCreateResponse {
     branchId: string;
     parentBranchId: string;
@@ -1900,6 +1978,23 @@ export const api = {
                 body: JSON.stringify(body),
             },
         );
+    },
+    getChatRunGuidance(runId: string): Promise<ChatRunGuidanceSnapshot> {
+        return request<unknown>(`/chat/runs/${encodeURIComponent(runId)}/guidance`).then(
+            normalizeGuidanceSnapshot,
+        );
+    },
+    async submitChatRunGuidance(
+        runId: string,
+        content: string,
+        idempotencyKey: string,
+    ): Promise<ChatRunGuidanceCreateResult> {
+        const payload = await request<unknown>(`/chat/runs/${encodeURIComponent(runId)}/guidance`, {
+            method: "POST",
+            headers: { "Idempotency-Key": idempotencyKey },
+            body: JSON.stringify({ content }),
+        });
+        return normalizeGuidanceCreateResult(payload, runId);
     },
     getFollowUpQueue(sessionId: string): Promise<ApiFollowUpQueueSnapshot> {
         return request<ApiFollowUpQueueSnapshot>(

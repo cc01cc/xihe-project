@@ -34,6 +34,7 @@ import SessionContextTemplate from "./SessionContextTemplate.vue";
 import ContextSourcesU1 from "./ContextSourcesU1.vue";
 import SessionDerivedStatePanel from "./SessionDerivedStatePanel.vue";
 import FollowUpQueuePanel from "./FollowUpQueuePanel.vue";
+import GuidancePanel from "./GuidancePanel.vue";
 import RevertPreviewDialog from "./RevertPreviewDialog.vue";
 import RevertResultDialog from "./RevertResultDialog.vue";
 import BaseModal from "../../../../components/shared/BaseModal.vue";
@@ -372,7 +373,12 @@ async function refreshDerivedState(sessionId: string) {
 
 function handleDerivedStateRefresh() {
     void refreshDerivedState(props.sessionId);
+    guidancePanelRef.value?.refetch();
 }
+
+const guidancePanelRef = ref<InstanceType<typeof GuidancePanel> | null>(null);
+const currentRunId = computed(() => chatStore.getSessionRunId(props.sessionId));
+const currentRunStatus = computed(() => chatStore.getSessionRunState(props.sessionId).status);
 
 const streamComponent = ref<InstanceType<typeof SSEStream> | null>(null);
 const inputComponent = ref<InstanceType<typeof InputArea> | null>(null);
@@ -786,6 +792,16 @@ function stopStreaming() {
 // the CP for the last run's status and surface one of three honest states.
 const runRecovery = computed(() => chatStore.runRecovery[props.sessionId] ?? null);
 
+watch(
+    runRecovery,
+    (recovery) => {
+        if (recovery && guidancePanelRef.value) {
+            void guidancePanelRef.value.refetch();
+        }
+    },
+    { immediate: true },
+);
+
 function recoverableRunId(): string | null {
     const msgs = chatStore.getMessages(props.sessionId);
     for (let i = msgs.length - 1; i >= 0; i--) {
@@ -982,6 +998,13 @@ watch(
                 </button>
             </div>
         </div>
+
+        <GuidancePanel
+            v-if="currentRunId"
+            ref="guidancePanelRef"
+            :run-id="currentRunId"
+            :run-status="currentRunStatus"
+        />
 
         <FollowUpQueuePanel
             v-if="followUpQueue && followUpQueue.outstandingCount > 0"
