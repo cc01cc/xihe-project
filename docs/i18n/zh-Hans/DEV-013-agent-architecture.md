@@ -156,6 +156,14 @@ PLAN-0509 Run Trace 将耐久 `prompt.admitted` 独立投影为不含消息正�
 - **两级动作**：tier-1——达 2 次随结果追加提示（调用照常）、达 3 次**拒绝该次调用**且 Run 继续（不产生执行副作用，durable 事件对以失败闭合）；tier-2——达 5 次停流并发 `error(code=RUN_NO_PROGRESS, signal=repeat|error|stale)`，经 0492 `{stop, interrupt}` 同管道收敛 `failed`（有内容 `partial`）；`errorDetail` 不携带 signal（触发事实 = `errorCode`）。UI：有助手内容走消息错误框、零内容停止走恢复横幅（`failed` 态：原因 + 接续提示），接管复用普通发送/Follow-up Queue。
 - **边界**：审批等待点重置连续计数（静默重试不计重复）；豁免只免检测不免预算；窗口/签名原文不出进程；检测不替代授权/审批/沙盒/预算、不新增 wire 状态；工具参数 schema 校验失败发生在观测点之前（模型反复发非法参数由 turns 预算兜底）——已知检测盲区，见 PLAN-0493 收尾报告。
 
+**运行中 Guidance 消费（PLAN-0529，2026-10-18）**
+
+- **消费点**：模型调用前置（`GuidanceInjectionModel` 包 `BaseChatModel`）。一次 LLM 调用开始 = 上一批已派发工具全部完成、本轮规划尚未发生 → 即母体契约的「整批已启动工具完成后、下一次规划前」；首批规划同样适用。不 interrupt、不改图拓扑、不写 graph state。
+- **注入形态**：每条等待中的 Guidance → 一条 `HumanMessage`，正文为不可信信封 `[guidance] (source=user, seq=<n>)\n<content>`，按 CP `sequence` 升序（消费端防御性排序）；不进 system prompt。**瞬态**：只进该次调用的 messages 副本，不入 graph `messages`/checkpoint/EventStore，因此 consumed 内容不会随 checkpoint 进入续跑上下文。
+- **读取与确认**：`GET /internal/v1/chat/runs/{runId}/guidance/pending` → 注入后 `POST .../{guidanceId}/consume`（`Idempotency-Key: guidance-<id>`）。三级去重：stream 内 `injected_ids`、CP 幂等、consume 返回 `409 GUIDANCE_ALREADY_TERMINAL_EXPIRED` → 记入并停止重试且不再注入。
+- **失败语义**：CP 读取失败/超时 → fail-open（warn + 零注入，Run 继续）——Guidance 无授权语义，不影响安全；consume 瞬时失败 → 该 id 不记入 injected_ids，下一边界重读，靠 CP 幂等/409 兜底，**绝不重放已完成工具副作用**。
+- **边界**：无 runId 或无 consumer（registry worker、单测）→ 整体禁用、零行为变化；不新增 AgentEvent 类型、无 Guidance SSE（UI 经 CP 快照感知）；不与 Follow-up/续跑共用状态。契约：`spec/agent-guidance-consume-protocol.md`（本仓库）。
+
 | 层 | 事件 |
 |----|------|
 | SSE 协议 `AgentEvent` | `token` / `tool_call` / `tool_result` / `status` / `error` / `done`；工具事件携带 `toolCallId` + `origin`（`local`/`mcp`）供 CP 按通道事实记账，`request_approval` 工具事件抑制、以审批事件为正规记录 |

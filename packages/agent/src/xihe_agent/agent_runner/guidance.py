@@ -48,6 +48,7 @@ class GuidanceConsumer:
         self._headers = {
             "Accept": "application/json",
             "Authorization": f"Bearer {service_token}",
+            "Content-Type": "application/json",
         }
         self.injected_ids: set[str] = set()
 

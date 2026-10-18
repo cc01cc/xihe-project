@@ -5,8 +5,8 @@
 > Profile：`architecture`  
 > Owner：Agent owner  
 > 消费者：CP、Runtime、UI、Security  
-> 来源：PLAN-0387、DEV-013  
-> 更新日期：2026-10-08
+> 来源：PLAN-0387、PLAN-0529、DEV-013  
+> 更新日期：2026-10-18
 
 ## 范围
 
@@ -73,6 +73,14 @@ PLAN-0493 实现。与累计预算（上节）相互独立、可同时生效：�
 6. **不变式**：本节检测 MUST NOT 替代或绕过授权/审批/沙盒/预算门禁；MUST NOT 新增 wire 状态；tier-1 拒绝 MUST NOT 终止 Run；上限 MUST NOT 被非 instance 层扩大。
 
 验证映射：Agent `tests/unit/test_loop_progress_detection.py`、`tests/unit/test_loop_guard_resolution.py`；CP `ConfigServiceTest`（循环键/越权/默认/零值与通配符拒绝）、`ChatIntegrationTest#noProgressConvergesToFailedAndAllowsResume`；host E2E `packages/ui/e2e/real/loop-guard.spec.ts`（`--batch=loop-guard`，含 390×844 复验与执行计数断言）。
+
+## 运行中 Guidance 消费（PLAN-0529）
+
+- **消费点**：模型调用前置。一次 LLM 调用开始即「上一批已派发工具全部完成、本轮规划尚未发生」，是该 Run 的安全消费边界；不 interrupt、不改图拓扑、不写 graph state。
+- **注入**：每条 CP `pending` Guidance 作为一条**带来源信封的 HumanMessage**（`[guidance] (source=user, seq=<n>)`）按 `sequence` 升序追加进该次调用的 messages 副本；**瞬态**（不入 graph `messages`、checkpoint、EventStore），故不会经 checkpoint 进入续跑上下文；不得提升为 system/developer 策略，不得作为授权材料。
+- **确认与去重**：注入后调用 CP consume（幂等键 `guidance-<id>`）；stream 内 `injected_ids` + CP 幂等 + `409 GUIDANCE_ALREADY_TERMINAL_EXPIRED` 停止信号构成三级去重。consume 瞬时失败不记入 → 下一边界重读，绝不重放已完成工具副作用。
+- **失败与禁用**：CP 读取失败 fail-open（零注入、Run 继续，Guidance 无授权语义）；无 runId/consumer 时整体禁用、零行为变化。不新增 AgentEvent 类型；CP durable Guidance 记录归 CP owner（`spec/session/chat-run-operation.md`），本 SPEC 只写 Agent 绑定/消费。
+- 协议冻结件：`plans/PLAN-0529-xh-guidance-agent-consume/spec/agent-guidance-consume-protocol.md`（PLAN 工作包）与本仓库实现对应的 DEV 说明见 DEV-013。
 
 ## 执行边界
 

@@ -61,6 +61,7 @@ async def test_consume_success_records_id_and_sends_idempotency_key() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         seen["path"] = str(request.url.path)
         seen["idem"] = request.headers.get("Idempotency-Key", "")
+        seen["content_type"] = request.headers.get("Content-Type", "")
         seen["body"] = request.read().decode()
         return httpx.Response(200, json={"id": "g1", "status": "consumed"})
 
@@ -69,6 +70,7 @@ async def test_consume_success_records_id_and_sends_idempotency_key() -> None:
     assert "g1" in consumer.injected_ids
     assert seen["path"].endswith("/chat/runs/run-1/guidance/g1/consume")
     assert seen["idem"] == "guidance-g1"
+    assert seen["content_type"] == "application/json"
     assert json.loads(seen["body"]) == {"consumedBy": "agent-runner"}
     await consumer.aclose()
 
