@@ -98,6 +98,19 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_gate(args: argparse.Namespace) -> int:
+    from xihe_agent.evaluation.gate import evaluate_gate
+
+    result = evaluate_gate(
+        report_path=Path(args.report),
+        baseline_path=Path(args.baseline) if args.baseline else None,
+        config_path=Path(args.config or "evaluation/gate-v1.json"),
+        target_commit=args.target_commit,
+    )
+    print(json.dumps(result.model_dump(by_alias=True), indent=2, ensure_ascii=False, sort_keys=True))
+    return result.exit_code
+
+
 def _git_commit() -> str:
     import subprocess
 
@@ -128,6 +141,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--only", help="comma-separated taskId filter")
     run.add_argument("--timeout")
     run.add_argument("--tool-surface", action="store_true", help="enable tool-requiring categories")
+    gate = sub.add_parser("gate", help="quality-regression gate over a report (PLAN-0512)")
+    gate.add_argument("--report", required=True)
+    gate.add_argument("--baseline")
+    gate.add_argument("--config", help="defaults to evaluation/gate-v1.json")
+    gate.add_argument("--target-commit", help="defaults to the current git HEAD")
     return parser
 
 
@@ -139,6 +157,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_validate(args)
     if command == "compare":
         return _cmd_compare(args)
+    if command == "gate":
+        return _cmd_gate(args)
     return _cmd_run(args)
 
 

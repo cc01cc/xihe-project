@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "thresholdSetVersion": "gate-v1",
+  "maxAge": "P14D",
+  "datasetVersion": "v1",
+  "datasetHash": "bec6ae7cecf879ff0f32a8d6bcca290d2186a38fc3be31343ee5f812413bfdd5",
+  "scorerVersion": "v1",
+  "mode": "cp-real",
+  "requiredEvaluatedTaskIds": [
+    "instruction_following.format_and_scope.v1",
+    "grounded_citation.synthetic_source.v1"
+  ],
+  "expectedNotEvaluatedTaskIds": [
+    "tool_authorization.denied_mutation.v1",
+    "failure_budget.no_repeat.v1"
+  ],
+  "expectedNotEvaluatedReasons": ["no_tool_surface"],
+  "thresholds": [
+    {
+      "metricId": "hard-assertion-zero-failure",
+      "type": "zero_failure",
+      "owner": "XH agent owner",
+      "rationale": "v1 只有 2 个被评测类别、样本小；任何 hard assertion 回归即阻断，不设百分比阈值",
+      "source": "plans/archive/PLAN-0511-XH-agent-evaluation-suite/evidence/threshold-candidate.md",
+      "repeatWindow": "0511 r1/r2/r3 三连跑 + 1 候选模型（2026-10-17），判定零波动"
+    },
+    {
+      "metricId": "not-evaluated-not-increased",
+      "type": "not_evaluated_le_baseline",
+      "owner": "XH agent owner",
+      "rationale": "可评测性不得缩水：not_evaluated 数超过基线即为质量门失败",
+      "source": "plans/archive/PLAN-0511-XH-agent-evaluation-suite/evidence/threshold-candidate.md",
+      "repeatWindow": "0511 四批次基线 not_evaluated 恒为 2（2026-10-17）"
+    }
+  ]
+}
