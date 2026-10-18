@@ -114,7 +114,7 @@ PLAN-0387 已建立 Agent/Session proposed 草案；它们只冻结执行、绑�
 - [Agent role/scope 绑定与传播](agent/role-scope-binding.md)
 - [Agent Context 与 Tool 边界](agent/context-tool.md)
 - [Chat Session 生命周期](session/chat-session.md)
-- [ChatRun 与 Operation 生命周期（superseded）](session/chat-run-operation.md)
+- [ChatRun 与 Session Follow-up/Guidance 生命周期](session/chat-run-operation.md)
 - [Runtime MCP Session 生命周期](session/mcp-session.md)
 
 PLAN-0429 建立 Agent Run 护栏的跨域总览索引（风险类别、执行层、canonical owner 与实现状态导航；不复制领域细则、不新建策略裁决点，缺口盘点与 backlog 去向以 XH 台账为准）：

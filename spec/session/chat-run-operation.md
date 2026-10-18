@@ -6,11 +6,11 @@
 >
 > Profile：`lifecycle`
 >
-> Owner：CP ChatRun + Follow-up Queue domains
+> Owner：CP ChatRun + Follow-up Queue + Run Guidance domains
 >
 > 消费者：Agent、Runtime、UI、Audit
-> 来源：PLAN-0387、PLAN-0442、PLAN-0463–0467、DEV-014、DEV-017
-> 更新日期：2026-10-08
+> 来源：PLAN-0387、PLAN-0442、PLAN-0463–0467、PLAN-0528、DEV-014、DEV-017
+> 更新日期：2026-10-18
 
 ## 三类对象
 
@@ -55,6 +55,15 @@ ChatRun 当前可经过 `accepted`、`queued`、`running`、`streaming`、`await
 - admission 前重验附件所有权、branch 可见性与 binding，失败置 `paused`（如 `attachment_unavailable`）而非切换分支或放行。
 - Session 删除意图期间队列变更与普通 Chat 均 MUST 409 `SESSION_DELETING`；CP 启动恢复暂停 admitted-without-child 项并唤醒 queued head（幂等）。
 - PLAN-0442 V1 runtime constraint: deployments using Follow-up MUST run exactly one active CP instance. The after-commit wake is process-local and startup recovery only runs on application startup; this is not cross-instance durable delivery. Multi-instance Follow-up support requires a separately approved design and verification before scaling CP.
+
+## Run Guidance（PLAN-0528）
+
+- Guidance 是 Run-scoped 的 CP durable 记录（V77 `chat_run_guidance`），独立于 Message、Follow-up Queue、Context EventStore 与 Operation audit；同一事实不得在四处重复宣称。来源首版仅 `user`（DB `CHECK source_kind='user'` fail-closed；guard 接入须新迁移 + Security 立项），作者由 CP 从 TenantContext 派生，请求体不得自报来源。
+- 仅活跃 Run（`running`、`streaming`、`awaiting_approval`）接受提交，其余状态 `409 GUIDANCE_RUN_NOT_ACTIVE`；`Idempotency-Key` 必带，同键回放返回原记录。正文 ≤8000 字符，日志/审计只记 id/sequence/status，不记正文原文。
+- 状态机仅 `pending → consumed`（Agent consume 确认，幂等）与 `pending → terminal_expired`（Run 终态事务内收敛，与 Follow-up settle 同位；启动恢复对存量收敛一次性清扫）；两终态互斥且不可回转。terminal 后未消费 Guidance MUST NOT 迁移到续跑新 Run（PLAN-0510 continuation 读不到源 Run pending）。
+- Agent 消费协议（`GET /internal/v1/chat/runs/{runId}/guidance/pending` + `POST .../{guidanceId}/consume`）：consume 幂等；consume 命中 terminal-expired 返回 `409 GUIDANCE_ALREADY_TERMINAL_EXPIRED`，Agent MUST 停止重试且不注入。
+- **无 Guidance 专属 SSE 事件**（裁定候选①）：提交/消费/失效的 UI 可见性一律通过 `GET /api/v1/chat/runs/{runId}/guidance` 快照重读（提交后 + Run 终态事件时）。
+- PLAN-0528 V1 runtime constraint: Guidance 与 Follow-up 同源——deployments using Guidance MUST run exactly one active CP instance；跨实例可靠投递需另行设计验收后方可扩展 CP。
 
 ## 恢复
 

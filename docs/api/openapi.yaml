@@ -771,6 +771,42 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
+  /api/v1/chat/runs/{runId}/guidance:
+    post:
+      operationId: submitChatRunGuidance
+      summary: Submit in-run Guidance (same-Run steering) for an active ChatRun
+      description: |
+        PLAN-0528: Run-scoped user Guidance, separate from Message, Follow-up Queue and EventStore.
+        Author is derived from TenantContext (request body never carries sourceKind; server pins `user`).
+        Requires `Idempotency-Key`; same key replays the original record with `200`.
+        Only active Runs accept guidance (`running|streaming|awaiting_approval`); others get
+        `409 GUIDANCE_RUN_NOT_ACTIVE`. Content is bounded to 8000 chars (`422` otherwise).
+        No SSE events by ruling: clients refetch the snapshot after submit and on run terminal events.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: runId, required: true, schema: { type: string, format: uuid } }
+        - { in: header, name: Idempotency-Key, required: true, schema: { type: string, minLength: 1, maxLength: 128 } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/GuidanceCreateRequest' } } } }
+      responses:
+        '201': { description: Guidance stored, content: { application/json: { schema: { $ref: '#/components/schemas/GuidanceSubmitResult' } } } }
+        '200': { description: Idempotent replay, content: { application/json: { schema: { $ref: '#/components/schemas/GuidanceSubmitResult' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+    get:
+      operationId: getChatRunGuidance
+      summary: Snapshot the run's Guidance records ordered by sequence
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: runId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Guidance snapshot, content: { application/json: { schema: { $ref: '#/components/schemas/GuidanceSnapshot' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /api/v1/chat/sessions/{sessionId}/runs:
     get:
       operationId: listSessionChatRuns
@@ -1318,6 +1354,44 @@ paths:
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
+  /internal/v1/chat/runs/{runId}/guidance/pending:
+    get:
+      operationId: getPendingChatRunGuidance
+      summary: Pending Guidance for the Agent runner at the tool-batch boundary
+      description: |
+        PLAN-0528: service-to-service pending read for the consuming Agent (sequence order).
+        Source Run isolation: a continuation (new ChatRun) never sees the source Run's guidance.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: runId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Pending items
+          content: { application/json: { schema: { $ref: '#/components/schemas/GuidancePendingView' } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /internal/v1/chat/runs/{runId}/guidance/{guidanceId}/consume:
+    post:
+      operationId: consumeChatRunGuidance
+      summary: Acknowledge Guidance as injected into the next planning step
+      description: |
+        PLAN-0528: pending → consumed. Idempotent: repeat consume returns the same consumed record.
+        Consuming a terminal-expired item returns `409 GUIDANCE_ALREADY_TERMINAL_EXPIRED` — the agent
+        must stop retrying and must not inject.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: runId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: guidanceId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: false
+        content: { application/json: { schema: { $ref: '#/components/schemas/GuidanceConsumeRequest' } } }
+      responses:
+        '200':
+          description: Consumed (first or idempotent replay)
+          content: { application/json: { schema: { $ref: '#/components/schemas/GuidanceConsumeResult' } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /api/v1/health:
     get: { operationId: health, responses: { '200': { description: Healthy } } }
   /api/v1/status:
@@ -2642,6 +2716,13 @@ components:
     SessionBranchListResponse: { type: object, additionalProperties: false, required: [sessionId, items], properties: { sessionId: { type: string, format: uuid }, items: { type: array, items: { $ref: '#/components/schemas/SessionBranch' } } } }
     FollowUpCreateRequest: { type: object, additionalProperties: false, required: [content, branchId], properties: { content: { type: string }, attachments: { type: array, items: { type: string, format: uuid } }, branchId: { type: string, format: uuid }, toolMode: { type: string, enum: [none, workspace], default: none }, toolTimeouts: { type: object, additionalProperties: { type: integer, minimum: 1, maximum: 30 } }, provider: { type: string }, model: { type: string } } }
     FollowUpQueueSnapshot: { type: object, additionalProperties: false, required: [sessionId, queueState, outstandingCount, capacityLimit, items], properties: { sessionId: { type: string, format: uuid }, queueState: { type: string, enum: [empty, queued, paused] }, outstandingCount: { type: integer, minimum: 0 }, capacityLimit: { type: integer, const: 5 }, pauseReason: { type: [string, 'null'] }, items: { type: array, items: { $ref: '#/components/schemas/FollowUpItem' } } } }
+    GuidanceCreateRequest: { type: object, additionalProperties: false, required: [content], properties: { content: { type: string, minLength: 1, maxLength: 8000, description: Guidance body markdown. Never carries sourceKind; the server pins `user` (ruling 1A). } } }
+    GuidanceSubmitResult: { type: object, additionalProperties: false, required: [id, runId, sessionId, sequence, status, createdAt], properties: { id: { type: string, format: uuid }, runId: { type: string, format: uuid }, sessionId: { type: string, format: uuid }, sequence: { type: integer, format: int64 }, status: { type: string, const: pending }, createdAt: { type: string, format: date-time } } }
+    GuidanceItem: { type: object, additionalProperties: false, required: [id, sequence, sourceKind, status, createdAt, authorPrincipalId, content], properties: { id: { type: string, format: uuid }, sequence: { type: integer, format: int64 }, sourceKind: { type: string, const: user }, status: { type: string, enum: [pending, consumed, terminal_expired] }, createdAt: { type: string, format: date-time }, consumedAt: { type: [string, 'null'], format: date-time }, terminalExpiredAt: { type: [string, 'null'], format: date-time }, authorPrincipalId: { type: string, format: uuid }, content: { type: string } } }
+    GuidanceSnapshot: { type: object, additionalProperties: false, required: [items, latestSequence], properties: { items: { type: array, items: { $ref: '#/components/schemas/GuidanceItem' } }, latestSequence: { type: integer, format: int64 } } }
+    GuidancePendingView: { type: object, additionalProperties: false, required: [runId, items], properties: { runId: { type: string, format: uuid }, items: { type: array, items: { type: object, additionalProperties: false, required: [id, sequence, sourceKind, content], properties: { id: { type: string, format: uuid }, sequence: { type: integer, format: int64 }, sourceKind: { type: string, const: user }, content: { type: string } } } } } }
+    GuidanceConsumeRequest: { type: object, additionalProperties: false, properties: { consumedBy: { type: string, description: Consumer identity for audit (e.g. agent-runner). } } }
+    GuidanceConsumeResult: { type: object, additionalProperties: false, required: [id, status, consumedAt, firstConsumption], properties: { id: { type: string, format: uuid }, status: { type: string, const: consumed }, consumedAt: { type: string, format: date-time }, firstConsumption: { type: boolean } } }
     FollowUpItem: { type: object, additionalProperties: false, required: [queueItemId, queueSequence, status, content, attachments, branchId, createdAt, updatedAt], properties: { queueItemId: { type: string, format: uuid }, queueSequence: { type: integer, format: int64 }, status: { type: string, enum: [queued, paused, admitted, completed, withdrawn] }, content: { type: [string, 'null'] }, attachments: { type: array, items: { type: object, additionalProperties: false, required: [id, name, type, size], properties: { id: { type: string, format: uuid }, name: { type: string }, type: { type: [string, 'null'] }, size: { type: integer, format: int64 }, url: { type: [string, 'null'] } } } }, branchId: { type: string, format: uuid }, anchorRunId: { type: [string, 'null'], format: uuid }, pauseReason: { type: [string, 'null'] }, childRunId: { type: [string, 'null'], format: uuid }, childMessageId: { type: [string, 'null'], format: uuid }, createdAt: { type: string, format: date-time }, updatedAt: { type: string, format: date-time } } }
     SessionBranch: { type: object, additionalProperties: false, required: [branchId, createdAt], properties: { branchId: { type: string, format: uuid }, parentBranchId: { type: [string, 'null'], format: uuid, description: Branch that owns the fork-point Message/Run; it can be an ancestor of the requested sourceBranchId. }, forkPointMessageId: { type: [string, 'null'], format: uuid }, forkPointRunId: { type: [string, 'null'], format: uuid }, createdAt: { type: string, format: date-time } } }
     SessionBranchCreatedResponse: { type: object, additionalProperties: false, required: [branchId, parentBranchId, forkPointMessageId], properties: { branchId: { type: string, format: uuid }, parentBranchId: { type: string, format: uuid }, forkPointMessageId: { type: string, format: uuid } } }
