@@ -22,6 +22,7 @@ General-purpose Agent tool platform.
 - [DEV-020: E2E Test Strategy](DEV-020-e2e-test-strategy.md)
 - [DEV-021: Integration Test Strategy](DEV-021-integration-test-strategy.md)
 - [DEV-022: Unit Test Strategy](DEV-022-unit-test-strategy.md)
+- [DEV-024: Module Authentication and Key Matrix](DEV-024-authentication-matrix.md)
 - [DEV-030: Documentation Layout and Frontmatter](DEV-030-documentation-layout-and-frontmatter.md)
 - [DEV-031: Sandbox Backend Contract](DEV-031-sandbox-backend-contract.md)
 - [DEV-032: Terminology (Polysemy and Synonyms)](DEV-032-terminology.md)

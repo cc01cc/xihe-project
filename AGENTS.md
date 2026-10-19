@@ -59,7 +59,7 @@
 ## Environment and Secrets
 
 - Bootstrap/deployment env 与运行时业务配置是不同配置面；loader、优先级和覆盖透明度以 DEV-003 与各模块实现为准。
-- `.env*` 入库文件只能放非敏感占位值；真实凭证用受保护的本机/部署注入，不写入 git、脚本或日志。MCP session-id HMAC secret 必需且无硬编码 fallback，见 DEV-016。
+- `.env*` 入库文件只能放非敏感占位值；真实凭证用受保护的本机/部署注入，不写入 git、脚本或日志。模块间认证与密钥解析顺序见 DEV-024；MCP 逻辑入口无会话，见 DEV-016。
 - Config import、dev admin password 和 host/Compose 导入差异见 DEV-002/003；不得因配置未导入而绕过认证或写入明文 secret。
 
 ## Testing
@@ -84,7 +84,7 @@
 [`DEV-018`](docs/i18n/zh-Hans/DEV-018-known-issues.md) 是 XH 当前 Known Issues/技术债入口；其未关闭条目按具体模块 DEV/承接 PLAN 核对，不能仅根据此指南或旧 PLAN 快照推断当前状态。
 
 - 用户反馈文本中的 Vue `t()` placeholder 不得包含 `{...}`；UI 测试和封装规则见 `packages/ui/AGENTS.md`。
-- MCP session-id 签名与密钥轮换行为见 DEV-016；轮换后客户端必须重新初始化。
+- MCP 逻辑入口无协议会话：CP 不签发也不接受 `mcp-session-id`，入站一律 403 `MCP_SESSION_INVALID`（DEV-016/DEV-024）。
 - Chat 若显式要求 workspace tools 才初始化 MCP；纯 Chat 不因携带 workspaceId 自动发现工具，MCP context 不得跨 Workspace 复用（DEV-013）。
 - 工作区运行资源释放（PLAN-0391）的锁内 active-Job 门只覆盖 host/MXC（Job engine）；docker 模式（冻结）下 Runtime 侧不感知容器 job，且 `cleanupFailed` 暂恒为 false。见 DEV-018。
 

@@ -1,6 +1,6 @@
 # XH 身份认证
 
-> 契约状态：`proposed`；实现状态：`partial`；Profile：`security`；Owner：Security/CP；来源：PLAN-0386、PLAN-0526；更新：2026-10-16。
+> 契约状态：`proposed`；实现状态：`partial`；Profile：`security`；Owner：Security/CP；来源：PLAN-0386、PLAN-0526、PLAN-0537；更新：2026-10-19。
 > 消费者：CP API、UI 登录客户端、Agent/Runtime 内部服务客户端
 
 ## 1. 当前实现
@@ -9,6 +9,9 @@
 - 公开 API 使用 Bearer JWT；当前 JWT 携带用户 id、邮箱、平台角色和 Workspace id。
 - 公开 `/api/v1/**` 接受 `USER`/`ADMIN`；内部 `/internal/v1/**` 使用 `INTERNAL_SERVICE` 服务认证。
 - OAuth Authorization Code + PKCE 和 provider access token 与 XH 平台 JWT 分开。
+- 内部服务 token 由单一环境变量解析：`XIHE_AGENT_API_TOKEN` 优先，`XIHE_CP_API_TOKEN` 回退，缺省为 dev 占位；CP（`cp.agent-api-token`）、Agent（`verify_api_token` / `verify_service_token`）与 Runtime（`has_runtime_service_auth`）共用同一顺序。
+- 四条模块间链路（CP↔Agent、Agent↔CP、CP↔Runtime、Runtime↔CP Channel WS）均使用该共享 Bearer token；链路与密钥矩阵以 PLAN-0537 `spec/auth-matrix.md` 与 `DEV-024` 为准。
+- MCP 逻辑入口无协议会话：CP **MUST NOT** 签发或回传 `mcp-session-id`，入站携带该头 **MUST** 返回 403 `MCP_SESSION_INVALID`（PLAN-0537）。
 
 ## 2. 规则
 

@@ -7,7 +7,7 @@ sidebar_group: "开发指南"
 sidebar_order: 16
 status: active
 created: 2026-06-03
-updated: 2026-10-08
+updated: 2026-10-19
 ---
 
 # DEV-016: MCP 三层路由架构
@@ -22,7 +22,7 @@ MCP（Model Context Protocol）请求从 Agent 发出的到工具执行的完整
 2. **Runtime Gateway** — per-workspace 分发
 3. **stdio 会话（PLAN-0347）** — 宿主 `exec attach` 直连容器内 MCP server 进程（无容器内 HTTP bridge；会话 = 状态机 + 预算 + FIFO 单飞）
 
-> **协议版本说明**：当前采用 MCP `Protocol-Version: 2026-07-28`（rmcp 3.1.4，SEP-2567），Runtime 侧按该协议全程**无会话（stateless）**。因此 CP 转发 `tools/list` / `tools/call` 到 Runtime 时必须携带 `Mcp-Method` 与 `Mcp-Name` HTTP 头（见提交 `a9923e3`）；缺失会导致系统工具列表为空、`UNKNOWN_TOOL`。会话态仍存在的是 CP↔Agent 之间的 `mcp-session-id` HMAC 签名（见 §2 与根 `AGENTS.md` Known Issues），二者不冲突。
+> **协议版本说明**：当前采用 MCP `Protocol-Version: 2026-07-28`（rmcp 3.1.4，SEP-2567），Runtime 侧按该协议全程**无会话（stateless）**。因此 CP 转发 `tools/list` / `tools/call` 到 Runtime 时必须携带 `Mcp-Method` 与 `Mcp-Name` HTTP 头（见提交 `a9923e3`）；缺失会导致系统工具列表为空、`UNKNOWN_TOOL`。CP 不签发也不接受 `mcp-session-id`：入站该头一律 403 `MCP_SESSION_INVALID`（PLAN-0537），二者不冲突。
 
 ## 2. 架构图
 
@@ -30,10 +30,10 @@ MCP（Model Context Protocol）请求从 Agent 发出的到工具执行的完整
 %%{init: {'theme': 'neutral'}}%%
 flowchart TD
     subgraph AG["Agent (Python)"]
-        A1["StreamableHTTPConnection (session-id, headers)<br/>POST /api/v1/mcp {jsonrpc, method, params}"]
+        A1["StreamableHTTPConnection (Bearer 头)<br/>POST /api/v1/mcp {jsonrpc, method, params}"]
     end
     subgraph CP["CP McpProxyController (Java)"]
-        C1["1. 验 session-id 签名 + 提取 ws_id"]
+        C1["1. 校验 Bearer 身份 + 解析 workspace claim<br/>携带 mcp-session-id 直接 403"]
         C2["2. tools/list: 合并系统工具 + 各 STDIO server 工具 + 各 remote server 工具<br/>tool_name → server_id 映射 (5min TTL) + sticky 别名表"]
         C3["3. tools/call: 按 tool name 查表路由 (stdio / remote / 系统三路)"]
         C4["4. 命名 sticky: system 裸名优先, 冲突仅新者加 server 前缀<br/>映射落盘永不晋升 (mcp_tool_aliases)"]
@@ -62,7 +62,7 @@ flowchart TD
 %%{init: {'theme': 'neutral'}}%%
 sequenceDiagram
   Agent->>CP: POST /api/v1/mcp (tools/list)
-  CP->>CP: 验 session-id → 读 DB mcpServers
+  CP->>CP: 校验 Bearer + workspace claim → 读 DB mcpServers
   CP->>RT: /mcp (系统 tools/list)
   CP->>RT: /mcp/stdio/{id} (各 STDIO tools/list)
   CP->>RT: /remote-mcp/{ws}/{server}/call listTools (各 remote tools/list, 身份校验不建容器)
@@ -206,68 +206,15 @@ UI 设置页 workspace 标签以 `stdio-servers`（配置 name）∪ 本端点�
 | `packages/control-plane/.../ConfigController.java` | MCP 配置 API（stdio-servers 公开/内部端点 + 混合 mcp-config 拆分） |
 | `packages/ui/src/views/settings/ConfigSettings.vue`（workspace 层 MCP 编辑器 + saveMcpConfig） | MCP 配置 UI（PLAN-0307 T2.17 起归工作区设置条目） |
 
-## 9. 附录：会话签名规则（旧签名规则短文全文并入，M2 正文化）
+## 9. 附录：会话签名的退役（PLAN-0537）
 
-# MCP Session-id Signing Rule
+> 历史章节「MCP Session-id Signing Rule」已于 PLAN-0537 退役。原文要求"session-id 必须 HMAC-SHA256 签名、服务端必须验签、密钥由部署环境注入"，描述的是 PLAN-0308 决策 #34 之前的会话模型。
 
-## 问题
+现状（2026-10-19 起）：
 
-MCP 通信中 session-id 用于标识 workspace 身份。未签名的 session-id（如仅 Base64 编码的 `ws_id:user_id:timestamp`）可被中间人或恶意工具调用篡改，导致跨 workspace 数据泄露。
+- 逻辑 MCP 按 **无会话** 语义服务（协议 `2026-07-28`），CP **不签发、不回传、不转发** `mcp-session-id`。
+- 入站请求携带该头 **一律 403 `MCP_SESSION_INVALID`**，不需要任何签名密钥。
+- 该 HMAC 签名密钥已从代码、配置、脚本与部署模板中移除。
+- Runtime ↔ 上游远程 MCP server 之间的 `mcp-session-id` 不受影响，属另一条边界（见 `packages/runtime/src/remote_mcp.rs`）。
 
-```java
-// ❌ 禁止 — 仅 Base64 编码，无防篡改
-String payload = wsId + ":" + rawSessionId + ":" + timestamp;
-return Base64.getUrlEncoder().withoutPadding().encodeToString(payload.getBytes());
-
-// ✅ 必须 — HMAC-SHA256 签名
-String payload = wsId + ":" + rawSessionId + ":" + timestamp;
-byte[] signature = mac.doFinal(payload.getBytes());
-String sigB64 = Base64.getUrlEncoder().withoutPadding().encodeToString(signature);
-String payloadB64 = Base64.getUrlEncoder().withoutPadding().encodeToString(payload.getBytes());
-return payloadB64 + "." + sigB64;
-```
-
-## 硬约束
-
-### R1: session-id 必须包含 HMAC 签名
-
-```typescript
-// ❌ 禁止
-sessionId: base64(ws_id + ":" + user_id + ":" + timestamp)
-
-// ✅ 必须
-sessionId: base64(payload) + "." + base64(HMAC-SHA256(payload))
-```
-
-### R2: 服务端必须验签
-
-每次收到 session-id 时验证：
-1. 检查格式：`payload.signature` 两部分
-2. 用相同密钥计算 `HMAC-SHA256(payload)` 并与 `signature` 对比
-3. 只有匹配时才信任 session-id 中的 workspace 身份
-
-### R3: 密钥安全
-
-- HMAC 密钥不得硬编码在任何应用代码中
-- CP 必须从 `XIHE_MCP_SESSION_ID_HMAC_SECRET` 读取非空密钥；生产由部署环境/密钥管理服务注入至少 32 个随机字节，各 CP 副本保持相同密钥
-- 开发/测试环境可使用固定占位密钥
-
-已完成：`McpProxyController` 不再含密钥常量；缺失/空值会在 CP 启动时 fail-fast。旧 HMAC key 已暴露在 Git 历史，部署者须在所有 CP 部署注入新随机值并重启；更换 key 会使现存签名 session-id 立即失效（其验签年龄窗口最多 24 小时），MCP 客户端需重新初始化。该轮只完成代码侧外置与步骤记录，未访问或修改任何宿主/部署 secret。
-
-## 验证方法
-
-```bash
-# 扫描：检查是否有仅 Base64 编码的 session-id 实现
-grep -rn "Base64.*encodeToString.*payload" packages/ --include="*.java" | grep -v "Mac\|hmac\|Hmac"
-```
-
-## 审计清单
-
-```
-□ 每个 MCP session-id 签发点使用 HMAC-SHA256 签名
-□ 每个 session-id 验签点检查 HMAC 签名完整性
-□ 无仅 Base64 编码的 session-id 构造逻辑
-□ `XIHE_MCP_SESSION_ID_HMAC_SECRET` 通过环境变量配置，CP 无硬编码 fallback
-□ 生产密钥已轮换、所有 CP 副本保持一致；轮换后客户端重新初始化
-□ 篡改 payload 的请求被拒绝（返回 null 或 403）
-```
+模块间认证的完整链路与密钥矩阵见 [DEV-024 模块认证与密钥矩阵](DEV-024-authentication-matrix.md)。

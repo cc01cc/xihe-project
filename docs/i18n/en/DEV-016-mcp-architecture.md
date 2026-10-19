@@ -20,21 +20,21 @@ MCP (Model Context Protocol) requests from Agent to tool execution pass through 
 2. **Runtime Gateway** — Per-workspace dispatch
 3. **In-container bridge** — STDIO subprocess management
 
-> **Protocol version note**: The current MCP `Protocol-Version: 2026-07-28` (rmcp 3.1.4, SEP-2567) is fully **sessionless (stateless)** on the Runtime side. Therefore CP must carry the `Mcp-Method` and `Mcp-Name` HTTP headers when forwarding `tools/list` / `tools/call` to Runtime (see commit `a9923e3`); omitting them yields an empty system tool list and `UNKNOWN_TOOL`. The sessionful `mcp-session-id` HMAC signing between CP↔Agent (see §2 and root `AGENTS.md` Known Issues) is orthogonal and still applies.
+> **Protocol version note**: The current MCP `Protocol-Version: 2026-07-28` (rmcp 3.1.4, SEP-2567) is fully **sessionless (stateless)** on the Runtime side. Therefore CP must carry the `Mcp-Method` and `Mcp-Name` HTTP headers when forwarding `tools/list` / `tools/call` to Runtime (see commit `a9923e3`); omitting them yields an empty system tool list and `UNKNOWN_TOOL`. CP neither issues nor accepts `mcp-session-id`: any inbound value returns 403 `MCP_SESSION_INVALID` (PLAN-0537). This is orthogonal to the Runtime transport.
 
 ## 2. Architecture Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  Agent (Python)                                             │
-│  StreamableHTTPConnection(session-id, headers)              │
+│  StreamableHTTPConnection(Bearer headers)                   │
 │  └─→ POST /mcp { jsonrpc, method, params }                 │
 └────────────────────────┬────────────────────────────────────┘
                          │
 ┌────────────────────────▼────────────────────────────────────┐
 │  CP McpProxyController (Java)                               │
 │                                                             │
-│  1. Verify session-id signature + extract ws_id             │
+│  1. Verify Bearer + resolve workspace claim (403 on sid)    │
 │  2. tools/list: Merge system tools + STDIO server tools     │
 │     Record tool_name → server_id mapping (5min TTL cache)   │
 │  3. tools/call: Lookup table routing by tool name           │
@@ -82,7 +82,7 @@ MCP (Model Context Protocol) requests from Agent to tool execution pass through 
 
 ```
 Agent → CP /mcp
-  CP: Verify session-id → Read DB mcpServers JSON
+  CP: Verify Bearer + workspace claim → Read DB mcpServers JSON
   CP → Runtime: GET /internal/v1/runtime/workspaces/{workspaceId}/mcp (system tools/list)
   CP → Runtime: POST /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId} (each STDIO tools/list)
   CP: Merge tool lists + Build tool_name → server_id mapping (cached)

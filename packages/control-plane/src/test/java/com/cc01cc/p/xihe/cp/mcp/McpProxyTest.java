@@ -208,7 +208,6 @@ class McpProxyTest {
                 toolTimeoutService,
                 mock(com.cc01cc.p.xihe.cp.credentials.CredentialLeaseService.class)
         );
-        ReflectionTestUtils.setField(controller, "sessionIdHmacSecret", "test-only-key");
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 
         when(policyEngine.loadContext(any(), any(), any())).thenReturn(PolicyContext.EMPTY);
@@ -363,48 +362,8 @@ class McpProxyTest {
         assertEquals("not allowed", decision.getReason());
     }
 
-    @Test
-    void signSessionId_producesValidSignature() {
-        String signed = (String) ReflectionTestUtils.invokeMethod(controller, "signSessionId", "ws-1", "jwt-token");
-        assertNotNull(signed);
-        assertTrue(signed.contains("."), "HMAC-signed session-id must contain '.' separator");
-        String[] parts = signed.split("\\.");
-        assertEquals(2, parts.length);
-        assertFalse(parts[0].isEmpty());
-        assertFalse(parts[1].isEmpty());
-    }
-
-    @Test
-    void signThenVerify_roundTrip_returnsWsId() {
-        String signed = (String) ReflectionTestUtils.invokeMethod(controller, "signSessionId", "ws-42", "auth-token");
-        String wsId = (String) ReflectionTestUtils.invokeMethod(controller, "verifySessionId", signed);
-        assertEquals("ws-42", wsId);
-    }
-
-    @Test
-    void validateSessionIdHmacSecret_rejectsBlankValue() {
-        ReflectionTestUtils.setField(controller, "sessionIdHmacSecret", " ");
-
-        assertThrows(IllegalStateException.class, controller::validateSessionIdHmacSecret);
-    }
-
-    @Test
-    void verifySessionId_rejectsTamperedPayload() throws Exception {
-        String signed = (String) ReflectionTestUtils.invokeMethod(controller, "signSessionId", "ws-1", "token");
-        // Tamper: replace payload with re-encoded "ws-2:token:0" but keep old signature
-        String[] parts = signed.split("\\.");
-        String tamperedPayload = java.util.Base64.getUrlEncoder().withoutPadding()
-            .encodeToString("ws-2:token:0".getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        String tampered = tamperedPayload + "." + parts[1];
-        String wsId = (String) ReflectionTestUtils.invokeMethod(controller, "verifySessionId", tampered);
-        assertNull(wsId, "Tampered session-id must be rejected");
-    }
-
-    @Test
-    void verifySessionId_rejectsInvalidFormat() {
-        String wsId = (String) ReflectionTestUtils.invokeMethod(controller, "verifySessionId", "no-dot-separator");
-        assertNull(wsId);
-    }
+    // PLAN-0537: the logical MCP is stateless; CP no longer signs or verifies
+    // session ids, so the former signSessionId/verifySessionId cases are gone.
 
     // PLAN-242 M2: three-way split — table-backed serverIds take the remote
     // path, unknown ids fall back to the stdio path. No live Runtime here, so
@@ -449,27 +408,27 @@ class McpProxyTest {
         Class<?> accessClass = Class.forName(
                 "com.cc01cc.p.xihe.cp.mcp.McpProxyController$AccessContext");
         var constructor = accessClass.getDeclaredConstructor(
-                String.class, String.class, String.class, String.class, boolean.class);
+                String.class, String.class, String.class, boolean.class);
         constructor.setAccessible(true);
-        return constructor.newInstance(wsId, userId, null, null, false);
+        return constructor.newInstance(wsId, userId, null, false);
     }
 
     private static Object accessContextWithSession(String wsId, String userId, String sessionId) throws Exception {
         Class<?> accessClass = Class.forName(
                 "com.cc01cc.p.xihe.cp.mcp.McpProxyController$AccessContext");
         var constructor = accessClass.getDeclaredConstructor(
-                String.class, String.class, String.class, String.class, boolean.class);
+                String.class, String.class, String.class, boolean.class);
         constructor.setAccessible(true);
-        return constructor.newInstance(wsId, userId, sessionId, null, false);
+        return constructor.newInstance(wsId, userId, sessionId, false);
     }
 
     private static Object internalAccessContext(String wsId, String userId, String sessionId) throws Exception {
         Class<?> accessClass = Class.forName(
                 "com.cc01cc.p.xihe.cp.mcp.McpProxyController$AccessContext");
         var constructor = accessClass.getDeclaredConstructor(
-                String.class, String.class, String.class, String.class, boolean.class);
+                String.class, String.class, String.class, boolean.class);
         constructor.setAccessible(true);
-        return constructor.newInstance(wsId, userId, sessionId, null, true);
+        return constructor.newInstance(wsId, userId, sessionId, true);
     }
 
     // PLAN-242 M2.5 (CP 侧 Fake 门): tools/list 合并 remote 工具并落别名，
@@ -1091,12 +1050,6 @@ class McpProxyTest {
         } finally {
             stub.stop(0);
         }
-    }
-
-    @Test
-    void verifySessionId_rejectsEmptyString() {
-        String wsId = (String) ReflectionTestUtils.invokeMethod(controller, "verifySessionId", "");
-        assertNull(wsId);
     }
 
     // ── PLAN-0308 M1 T1.9：per-call 生产方（run payload + 入站头采纳/剥离） ──────────

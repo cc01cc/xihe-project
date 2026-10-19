@@ -74,6 +74,7 @@ class JobTimeoutClampTest {
     private AgentSpawnExecutionService agentSpawnExecutionService;
     private McpProxyController controller;
     private McpToolTimeoutService toolTimeoutService;
+    private com.cc01cc.p.xihe.cp.mcp.LineageInvocationService lineageInvocationService;
 
     @BeforeEach
     void setUp() {
@@ -95,6 +96,15 @@ class JobTimeoutClampTest {
 
         toolTimeoutService = new McpToolTimeoutService(mcpServerRepository, configService, new ToolTimeoutPolicy());
 
+        // PLAN-0510：handleToolsCall 现在总会调用 reserve()。本类用例关注超时钳制，
+        // 与 lineage 分支无关，故给 lenient 默认桩（legacy 非 lineage Run 的语义）。
+        lineageInvocationService = mock(com.cc01cc.p.xihe.cp.mcp.LineageInvocationService.class);
+        org.mockito.Mockito.lenient()
+                .when(lineageInvocationService.reserve(
+                        any(), any(), any(), any(), any(), any()))
+                .thenReturn(new com.cc01cc.p.xihe.cp.mcp.LineageInvocationService.ReservationDecision(
+                        com.cc01cc.p.xihe.cp.mcp.LineageInvocationService.DecisionKind.NOT_LINEAGED, null));
+
         controller = new McpProxyController(
                 requestRewriter, policyEngine,
                 auditLogger, approvalService, objectMapper, sseEmitterManager, catalogService,
@@ -105,7 +115,7 @@ class JobTimeoutClampTest {
                 new org.springframework.mock.env.MockEnvironment(),
                 agentSpawnExecutionService,
                 mock(com.cc01cc.p.xihe.cp.mcp.McpInvocationService.class),
-                mock(com.cc01cc.p.xihe.cp.mcp.LineageInvocationService.class),
+                lineageInvocationService,
                 toolTimeoutService,
                 mock(com.cc01cc.p.xihe.cp.credentials.CredentialLeaseService.class)
         );
@@ -493,9 +503,9 @@ class JobTimeoutClampTest {
             Class<?> accessClass = Class.forName(
                     "com.cc01cc.p.xihe.cp.mcp.McpProxyController$AccessContext");
             var constructor = accessClass.getDeclaredConstructor(
-                    String.class, String.class, String.class, String.class, boolean.class);
+                    String.class, String.class, String.class, boolean.class);
             constructor.setAccessible(true);
-            return constructor.newInstance(wsId, userId, "app-session-clamp", null, true);
+            return constructor.newInstance(wsId, userId, "app-session-clamp", true);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }

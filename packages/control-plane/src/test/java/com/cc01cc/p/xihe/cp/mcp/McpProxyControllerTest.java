@@ -107,71 +107,8 @@ class McpProxyControllerTest {
         }
     }
 
-    @Test
-    void signSessionId_producesDotSeparatedHmac() {
-        String signed = invokeSignSessionId("ws-1", "jwt-token");
-        assertNotNull(signed);
-        assertTrue(signed.contains("."), "HMAC-signed session-id must contain '.' separator");
-        String[] parts = signed.split("\\.");
-        assertEquals(2, parts.length);
-        assertFalse(parts[0].isEmpty(), "payload must not be empty");
-        assertFalse(parts[1].isEmpty(), "signature must not be empty");
-    }
-
-    @Test
-    void signThenVerify_roundTrip_returnsCorrectWsId() {
-        String signed = invokeSignSessionId("ws-roundtrip", "auth-token");
-        String wsId = invokeVerifySessionId(signed);
-        assertEquals("ws-roundtrip", wsId);
-    }
-
-    @Test
-    void verifySessionId_rejectsTamperedPayload() throws Exception {
-        String signed = invokeSignSessionId("ws-1", "token");
-        String[] parts = signed.split("\\.");
-        // Replace payload with re-encoded "ws-2:token:0" but keep old signature
-        String tamperedPayload = java.util.Base64.getUrlEncoder().withoutPadding()
-            .encodeToString("ws-2:token:0".getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        String tampered = tamperedPayload + "." + parts[1];
-        assertNull(invokeVerifySessionId(tampered), "Tampered payload must be rejected");
-    }
-
-    @Test
-    void verifySessionId_rejectsInvalidFormat() {
-        assertNull(invokeVerifySessionId("no-dot-separator"));
-    }
-
-    @Test
-    void verifySessionId_rejectsEmptyString() {
-        assertNull(invokeVerifySessionId(""));
-    }
-
-    @Test
-    void signSessionId_producesDifferentSignaturesForDifferentWsIds() {
-        String s1 = invokeSignSessionId("ws-a", "token");
-        String s2 = invokeSignSessionId("ws-b", "token");
-        assertNotEquals(s1, s2, "Different ws_id must produce different signatures");
-    }
-
-    private String invokeSignSessionId(String wsId, String rawSessionId) {
-        try {
-            var field = McpProxyController.class.getDeclaredMethod("signSessionId", String.class, String.class);
-            field.setAccessible(true);
-            return (String) field.invoke(controller, wsId, rawSessionId);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    private String invokeVerifySessionId(String signedSessionId) {
-        try {
-            var field = McpProxyController.class.getDeclaredMethod("verifySessionId", String.class);
-            field.setAccessible(true);
-            return (String) field.invoke(controller, signedSessionId);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-    }
+    // PLAN-0537: the logical MCP is stateless; CP no longer signs or verifies
+    // session ids, so the former signSessionId/verifySessionId cases are gone.
 
     // PLAN-242 M2: sticky naming is conflict-only and deterministic.
     @Test

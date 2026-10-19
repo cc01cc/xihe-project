@@ -18,6 +18,7 @@ import litellm
 from langchain_core.messages import AnyMessage
 from loguru import logger
 
+from xihe_agent.service_token import resolve_service_token
 from xihe_agent.adapters.approval_tool import ApprovalAgentTool, ApprovalTool
 from xihe_agent.adapters.mcp_client import MCPClientManager
 from xihe_agent.cancel_registry import RunCancelRegistry
@@ -135,7 +136,7 @@ MCP_URL = f"{CP_URL}/api/v1/mcp"
 AGENT_HOST = get_env("XIHE_AGENT_HOST") or "0.0.0.0"
 AGENT_PORT = get_int_env("XIHE_AGENT_PORT", 12632)
 MCP_RETRY_INTERVAL = 2.0
-CP_API_TOKEN = get_env("XIHE_CP_API_TOKEN") or "dev-token-not-secure"
+CP_API_TOKEN = resolve_service_token()
 
 
 def _parse_recover_session_ids() -> list[str]:

@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 18
 status: active
 created: 2026-09-02
-updated: 2026-10-16
+updated: 2026-10-19
 ---
 
 # DEV-018: Known Issues (Supplement)
@@ -14,6 +14,10 @@ updated: 2026-10-16
 > 面向排障：AGENTS.md 放最关键项，这里收录其余已知问题（环境/Code 两节）。已修复项保留根因供回溯。
 
 本文件收录 AGENTS.md 之外的已知问题，供排查时参考。
+
+## OpenAPI 与 MCP 入口 405 漂移（PLAN-0537 登记，未修复）
+
+`docs/api/openapi.yaml` 的 `mcpStream`（GET）与 `mcpDisconnect`（DELETE）仍声明 `200` / `204`，而代码自 PLAN-0308 决策 #34 起固定返回 405（`MCP_STREAM_NOT_SUPPORTED` / `MCP_SESSION_NOT_SUPPORTED`）。属历史漂移，不影响运行时行为；下次修订 OpenAPI 时一并校正。
 
 ## 全量 host E2E 基线口径（PLAN-0365，2026-09-18）
 

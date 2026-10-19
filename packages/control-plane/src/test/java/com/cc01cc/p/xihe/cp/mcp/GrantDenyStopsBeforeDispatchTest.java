@@ -95,7 +95,6 @@ class GrantDenyStopsBeforeDispatchTest {
                 mock(com.cc01cc.p.xihe.cp.mcp.LineageInvocationService.class),
                 toolTimeoutService,
                 mock(com.cc01cc.p.xihe.cp.credentials.CredentialLeaseService.class));
-        ReflectionTestUtils.setField(controller, "sessionIdHmacSecret", "test-only-key");
 
         runtimeStub = com.sun.net.httpserver.HttpServer.create(
                 new java.net.InetSocketAddress("127.0.0.1", 0), 0);
@@ -168,8 +167,8 @@ class GrantDenyStopsBeforeDispatchTest {
         Class<?> accessClass = Class.forName(
                 "com.cc01cc.p.xihe.cp.mcp.McpProxyController$AccessContext");
         var constructor = accessClass.getDeclaredConstructor(
-                String.class, String.class, String.class, String.class, boolean.class);
+                String.class, String.class, String.class, boolean.class);
         constructor.setAccessible(true);
-        return constructor.newInstance(wsId, userId, sessionId, null, false);
+        return constructor.newInstance(wsId, userId, sessionId, false);
     }
 }

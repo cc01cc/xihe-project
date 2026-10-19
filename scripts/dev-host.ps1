@@ -201,11 +201,6 @@ function Do-Start {
       $env:XIHE_CP_API_TOKEN = [Convert]::ToBase64String($serviceTokenBytes)
     }
     $env:XIHE_AGENT_API_TOKEN = $env:XIHE_CP_API_TOKEN
-    if ([string]::IsNullOrWhiteSpace($env:XIHE_MCP_SESSION_ID_HMAC_SECRET)) {
-      $sessionIdHmacBytes = [byte[]]::new(32)
-      [System.Security.Cryptography.RandomNumberGenerator]::Fill($sessionIdHmacBytes)
-      $env:XIHE_MCP_SESSION_ID_HMAC_SECRET = [Convert]::ToBase64String($sessionIdHmacBytes)
-    }
     $env:XIHE_AGENT_PORT = "12632"
     $env:XIHE_RUNTIME_PORT = "12633"
     $env:XIHE_CP_URL = "http://localhost:12631"

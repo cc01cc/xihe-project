@@ -77,7 +77,6 @@ public class McpProxyController {
 
     private static final Logger logger = LoggerFactory.getLogger(McpProxyController.class);
     private final McpToolTimeoutService toolTimeoutService;
-    private static final String HMAC_ALGORITHM = "HmacSHA256";
     private static final String CP_MCP_SERVER_ID = "__cp__";
     private static final String SPAWN_AGENT_TOOL = ChatSubmissionService.SPAWN_TOOL_NAME;
     /** PLAN-0497 M0 冻结：CP-owned credential delivery tool（face=credential_use）。 */
@@ -89,8 +88,6 @@ public class McpProxyController {
     private static final Set<String> AGENT_EXECUTION_CONTEXT_HEADERS = Set.of(
             "X-Chat-Run-Id", "X-Tool-Call-Id", "X-Mcp-Invocation-Id");
 
-    @Value("${cp.mcp.session-id.hmac-secret}")
-    private String sessionIdHmacSecret;
     private static final String REMOTE_SCOPE = "mcp:tools";
     /** T1.7/T1.9 post-gate approval lifetime: the durable row expires after five minutes. */
     private static final long APPROVAL_REQUEST_TTL_SECONDS = ApprovalService.DEFAULT_GATE_TTL_SECONDS;
@@ -141,12 +138,6 @@ public class McpProxyController {
     @org.springframework.beans.factory.annotation.Value("${xihe.mcp.forward-timeout-s:30}")
     private long forwardTimeoutS;
 
-    @PostConstruct
-    void validateSessionIdHmacSecret() {
-        if (sessionIdHmacSecret == null || sessionIdHmacSecret.isBlank()) {
-            throw new IllegalStateException("XIHE_MCP_SESSION_ID_HMAC_SECRET must be configured");
-        }
-    }
     private final RequestRewriter rewriter;
     private final PolicyEngine policy;
     private final AuditLogger audit;
@@ -165,7 +156,6 @@ public class McpProxyController {
     @Value("${cp.agent-api-token:dev-token-not-secure}")
     private String runtimeServiceToken;
 
-    private final Map<String, McpSessionBinding> mcpSessionBindings = new ConcurrentHashMap<>();
     private final WorkspaceService workspaceService;
     private final SessionService sessionService;
     private final JobStateService jobStateService;
@@ -226,7 +216,7 @@ public class McpProxyController {
         // 入站 per-call 头不在此剥离：它是合法的调用方请求，由 handleToolsCall 校验后采纳。
         headers = stripOutboundPolicyHeaders(headers);
         String method = extractMethod(body);
-        AuthorizationResult authorization = authorize(headers, body, "initialize".equals(method));
+        AuthorizationResult authorization = authorize(headers, body);
         if (!authorization.allowed()) {
             return authorization.failure();
         }
@@ -253,7 +243,7 @@ public class McpProxyController {
      */
     @GetMapping("/api/v1/mcp")
     public ResponseEntity<String> stream(@RequestHeader HttpHeaders headers) {
-        AuthorizationResult authorization = authorize(headers, null, false);
+        AuthorizationResult authorization = authorize(headers, null);
         if (!authorization.allowed()) {
             return authorization.failure();
         }
@@ -266,7 +256,7 @@ public class McpProxyController {
     /** 决策 #34：无会话 ⇒ 没有可终止的协议会话，DELETE 同样明确拒绝。 */
     @DeleteMapping("/api/v1/mcp")
     public ResponseEntity<String> disconnect(@RequestHeader HttpHeaders headers) {
-        AuthorizationResult authorization = authorize(headers, null, false);
+        AuthorizationResult authorization = authorize(headers, null);
         if (!authorization.allowed()) {
             return authorization.failure();
         }
@@ -1996,26 +1986,22 @@ public class McpProxyController {
      * Resolve the request subject before any workspace-scoped MCP operation.
      * User JWTs provide the user and workspace; the internal Agent principal
      * provides neither, so its workspace is resolved to the persisted owner.
-     * A protocol session is accepted only after CP has bound it to that same
-     * user/workspace pair.
+     *
+     * <p>PLAN-0537: the logical MCP is stateless (PLAN-0308 决策 #34) and CP no
+     * longer issues {@code mcp-session-id}. Any inbound value is a protocol
+     * error, so it fails closed before identity resolution instead of being
+     * silently ignored.
      */
-    private AuthorizationResult authorize(
-            HttpHeaders headers, String body, @SuppressWarnings("unused") boolean allowMissingMcpSession) {
-        String gatewaySessionId = headerValue(headers, "mcp-session-id");
-        String signedWorkspaceId = null;
-        if (gatewaySessionId != null) {
-            signedWorkspaceId = verifySessionId(gatewaySessionId);
-            if (signedWorkspaceId == null) {
-                return AuthorizationResult.failure(problem(
-                        HttpStatus.FORBIDDEN, "MCP_SESSION_INVALID", "MCP session is invalid"));
-            }
+    private AuthorizationResult authorize(HttpHeaders headers, String body) {
+        if (headerValue(headers, "mcp-session-id") != null) {
+            return AuthorizationResult.failure(problem(
+                    HttpStatus.FORBIDDEN, "MCP_SESSION_INVALID",
+                    "The logical MCP endpoint is stateless and does not accept mcp-session-id"));
         }
 
         String headerWorkspaceId = headerValue(headers, "X-Workspace-Id");
         String bodyWorkspaceId = bodyValue(body, "workspaceId");
-        if (conflicts(headerWorkspaceId, bodyWorkspaceId)
-                || conflicts(headerWorkspaceId, signedWorkspaceId)
-                || conflicts(bodyWorkspaceId, signedWorkspaceId)) {
+        if (conflicts(headerWorkspaceId, bodyWorkspaceId)) {
             return AuthorizationResult.failure(problem(
                     HttpStatus.FORBIDDEN, "FORBIDDEN", "Workspace context does not match MCP session"));
         }
@@ -2044,7 +2030,7 @@ public class McpProxyController {
         String workspaceId;
         String userId;
         if (internalService) {
-            workspaceId = firstNonBlank(headerWorkspaceId, signedWorkspaceId, bodyWorkspaceId);
+            workspaceId = firstNonBlank(headerWorkspaceId, bodyWorkspaceId);
             if (workspaceId == null) {
                 return AuthorizationResult.failure(problem(
                         HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Workspace context is required"));
@@ -2084,8 +2070,7 @@ public class McpProxyController {
                         HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Authorization required"));
             }
             if (conflicts(tokenWorkspaceId, headerWorkspaceId)
-                    || conflicts(tokenWorkspaceId, bodyWorkspaceId)
-                    || conflicts(tokenWorkspaceId, signedWorkspaceId)) {
+                    || conflicts(tokenWorkspaceId, bodyWorkspaceId)) {
                 return AuthorizationResult.failure(problem(
                         HttpStatus.FORBIDDEN, "FORBIDDEN", "Workspace context does not match user context"));
             }
@@ -2107,26 +2092,8 @@ public class McpProxyController {
                     HttpStatus.NOT_FOUND, "WORKSPACE_NOT_FOUND", "Workspace not found"));
         }
 
-        // MCP 2026-07-28 (SEP-2567) removed protocol sessions; the Runtime
-        // serves that version statelessly and returns no Mcp-Session-Id.
-        // A protocol session therefore becomes an optional binding: when
-        // present it must match the resolved user/workspace pair, but its
-        // absence is never an error.
-        McpSessionBinding binding = gatewaySessionId == null
-                ? null : mcpSessionBindings.get(gatewaySessionId);
-        if (binding != null && (!workspaceId.equals(binding.workspaceId())
-                || !userId.equals(binding.userId()))) {
-            return AuthorizationResult.failure(problem(
-                    HttpStatus.FORBIDDEN, "FORBIDDEN", "MCP session owner does not match request"));
-        }
-        if (binding != null && binding.applicationSessionId() != null
-                && !binding.applicationSessionId().equals(applicationSessionId)) {
-            return AuthorizationResult.failure(problem(
-                    HttpStatus.FORBIDDEN, "FORBIDDEN", "MCP application session does not match request"));
-        }
-
         return AuthorizationResult.success(new AccessContext(
-                workspaceId, userId, applicationSessionId, gatewaySessionId, internalService));
+                workspaceId, userId, applicationSessionId, internalService));
     }
 
     private boolean isInternalService(Authentication authentication) {
@@ -2163,60 +2130,6 @@ public class McpProxyController {
 
     private boolean conflicts(String first, String second) {
         return first != null && second != null && !first.equals(second);
-    }
-
-    private String signSessionId(String wsId, String rawSessionId) {
-        try {
-            long timestamp = Instant.now().getEpochSecond();
-            String payload = wsId + ":" + rawSessionId + ":" + timestamp;
-            Mac mac = Mac.getInstance(HMAC_ALGORITHM);
-            SecretKeySpec key = new SecretKeySpec(sessionIdHmacSecret.getBytes(StandardCharsets.UTF_8), HMAC_ALGORITHM);
-            mac.init(key);
-            byte[] signature = mac.doFinal(payload.getBytes(StandardCharsets.UTF_8));
-            String sigB64 = Base64.getUrlEncoder().withoutPadding().encodeToString(signature);
-            String payloadB64 = Base64.getUrlEncoder().withoutPadding().encodeToString(payload.getBytes(StandardCharsets.UTF_8));
-            return payloadB64 + "." + sigB64;
-        } catch (Exception e) {
-            logger.error("Failed to sign session-id: {}", e.getMessage(), e);
-            throw new IllegalStateException("Unable to sign MCP session id", e);
-        }
-    }
-
-    /** Verify an HMAC-signed session-id and extract ws_id. Returns null on failure. */
-    private String verifySessionId(String signedSessionId) {
-        try {
-            String[] parts = signedSessionId.split("\\.");
-            if (parts.length != 2) {
-                return null;
-            }
-            String payloadB64 = parts[0];
-            String sigB64 = parts[1];
-
-            // Verify signature
-            Mac mac = Mac.getInstance(HMAC_ALGORITHM);
-            SecretKeySpec key = new SecretKeySpec(sessionIdHmacSecret.getBytes(StandardCharsets.UTF_8), HMAC_ALGORITHM);
-            mac.init(key);
-            byte[] expectedSig = mac.doFinal(Base64.getUrlDecoder().decode(payloadB64));
-            String expectedSigB64 = Base64.getUrlEncoder().withoutPadding().encodeToString(expectedSig);
-            if (!MessageDigest.isEqual(expectedSigB64.getBytes(StandardCharsets.US_ASCII), sigB64.getBytes(StandardCharsets.US_ASCII))) {
-                return null;
-            }
-
-            // Parse payload
-            String payload = new String(Base64.getUrlDecoder().decode(payloadB64), StandardCharsets.UTF_8);
-            String[] fields = payload.split(":");
-            if (fields.length < 3) {
-                return null;
-            }
-            long timestamp = Long.parseLong(fields[2]);
-            if (Math.abs(Instant.now().getEpochSecond() - timestamp) > Duration.ofDays(1).getSeconds()) {
-                return null;
-            }
-            return fields[0]; // workspace id
-        } catch (Exception e) {
-            logger.debug("Session-id verification failed: {}", e.getMessage());
-            return null;
-        }
     }
 
     @SuppressWarnings("unchecked")
@@ -2299,17 +2212,11 @@ public class McpProxyController {
     }
 
     private record AccessContext(
-            String workspaceId, String userId, String applicationSessionId, String mcpSessionId,
+            String workspaceId, String userId, String applicationSessionId,
             boolean internalService) {
         String auditSessionId() {
-            if (applicationSessionId != null) {
-                return applicationSessionId;
-            }
-            return mcpSessionId == null ? "mcp-init" : mcpSessionId;
+            return applicationSessionId == null ? "mcp-init" : applicationSessionId;
         }
-    }
-
-    private record McpSessionBinding(String workspaceId, String userId, String applicationSessionId) {
     }
 
     private record AuthorizationResult(AccessContext context, ResponseEntity<String> failure) {

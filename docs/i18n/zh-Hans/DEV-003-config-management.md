@@ -93,7 +93,8 @@ CLI --set KEY=VALUE（最高，启动日志掩码标注）
 | 变量 | 说明 |
 |------|------|
 | `XIHE_CP_PORT` / `XIHE_AGENT_PORT` / `XIHE_RUNTIME_PORT` / `XIHE_UI_PORT` | 四模块端口（12631/12632/12633/12630，PG 12634） |
-| `XIHE_CP_URL` / `XIHE_CP_API_TOKEN` | Agent/Runtime 回连 CP 的地址与 service token |
+| `XIHE_CP_URL` | Agent/Runtime 回连 CP 的地址 |
+| `XIHE_AGENT_API_TOKEN` / `XIHE_CP_API_TOKEN` | 模块间共享 service token（前者优先、后者回退；见 [DEV-024](DEV-024-authentication-matrix.md)） |
 | `XIHE_CP_DATASOURCE_URL` / `XIHE_CP_DATASOURCE_USERNAME` / `XIHE_CP_DATASOURCE_PASSWORD` | CP 数据库连接 |
 | `XIHE_CP_JWT_SECRET` | JWT 签名密钥（仅 CP 自身初始化） |
 | `XIHE_WORKSPACE_HOST_ROOT` | host workspace 根（默认 `A03-xihe/.xihe-workspaces`；由 mise/scripts 注入，非 `.env` 模板项） |
@@ -119,7 +120,7 @@ CLI --set KEY=VALUE（最高，启动日志掩码标注）
 
 | 配置类别 | 归属 | 生效方式 |
 |---------|------|---------|
-| 端口、DB 连接、JWT secret、模块间 URL、service token、Workspace 根 | 启动环境变量 / `.env.dev` | 重启生效 |
+| 端口、DB 连接、JWT secret、模块间 URL、service token（解析顺序见 [DEV-024](DEV-024-authentication-matrix.md)）、Workspace 根 | 启动环境变量 / `.env.dev` | 重启生效 |
 | API key 等凭证 | `provider_connections`（CP 加密表，UI/API 管理，租约下发） | 运行时即时 |
 | 模型、采样参数、context-policy、embedding、rag、agent 行为、user-preference | ConfigService（DB 三层） | 运行时即时（Agent 周期 pull + run 覆盖） |
 | 日志等级 | ConfigService `logging` 域（instance）；启动早期回退 env | 热更（CP logback / Agent reload） |

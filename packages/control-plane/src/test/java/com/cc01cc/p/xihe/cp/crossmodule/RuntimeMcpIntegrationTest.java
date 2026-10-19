@@ -488,9 +488,12 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
         assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
     }
 
-    /** 无法验证的会话 id 仍然拒绝（安全语义不变，即使 CP 自己不再签发）。 */
+    /**
+     * PLAN-0537: the logical MCP is stateless, so any inbound {@code mcp-session-id}
+     * is a protocol error and fails closed without needing a signing key.
+     */
     @Test
-    void mcpRejectsUnverifiableSessionId() {
+    void mcpRejectsAnySessionId() {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setBearerAuth(token);
@@ -501,5 +504,21 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
                 url("/api/v1/mcp"), new HttpEntity<>(TOOLS_LIST_BODY, headers), String.class);
 
         assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        assertTrue(response.getBody().contains("MCP_SESSION_INVALID"));
+    }
+
+    /** PLAN-0537: authorize() runs before the 405, so a session header yields 403 first. */
+    @Test
+    void mcpDeleteWithSessionIdIsForbiddenBeforeThe405() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        headers.set("X-Workspace-Id", wsId);
+        headers.set("mcp-session-id", "any-session");
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                url("/api/v1/mcp"), HttpMethod.DELETE, new HttpEntity<>(headers), String.class);
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        assertTrue(response.getBody().contains("MCP_SESSION_INVALID"));
     }
 }
