@@ -7,6 +7,7 @@ from xihe_agent.config_client import ConfigClient
 from xihe_agent.interfaces.llm import LLMProvider, LLMRequest
 from xihe_agent.llm.base import (
     ENV_PROVIDER_KEY_MAP,
+    PROVIDER_DEFAULTS,
     LLMConfig,
     LLMRouteConfigError,
     MockChatModel,
@@ -90,24 +91,25 @@ class TestLLMConfig:
         assert cfg.max_tokens == 8192
         assert cfg.temperature == 0.3
 
-    def test_model_defaults_from_provider(self, monkeypatch: pytest.MonkeyPatch):
-        """When provider is set but model is not, use provider default model."""
-        monkeypatch.setenv("XIHE_LLM_PROVIDER", "deepseek")
+    @pytest.mark.parametrize("provider", ["deepseek", "openai", "anthropic", "xiaomi"])
+    def test_model_defaults_from_provider(
+        self, monkeypatch: pytest.MonkeyPatch, provider: str
+    ):
+        """When provider is set but model is not, use the provider default model.
+
+        PLAN-0531 decision #8: derive model and base URL from PROVIDER_DEFAULTS
+        (the single product-default definition) instead of restating model ids
+        here. Adding a provider default must not require editing this test.
+        """
+        monkeypatch.setenv("XIHE_LLM_PROVIDER", provider)
         monkeypatch.delenv("XIHE_MODEL", raising=False)
+        monkeypatch.delenv("XIHE_API_BASE", raising=False)
 
         cfg = LLMConfig.from_env()
-        assert cfg.model == "deepseek-chat"
-        assert cfg.api_base == "https://api.deepseek.com/v1"
 
-    def test_xiaomi_in_provider_defaults(self, monkeypatch: pytest.MonkeyPatch):
-        """Xiaomi has defaults in PROVIDER_DEFAULTS."""
-        monkeypatch.setenv("XIHE_LLM_PROVIDER", "xiaomi")
-        monkeypatch.delenv("XIHE_MODEL", raising=False)
-
-        cfg = LLMConfig.from_env()
-        assert cfg.provider == "xiaomi"
-        assert cfg.model == "mimo-v2.5"
-        assert cfg.api_base == "https://api.xiaomimimo.com/v1"
+        assert cfg.provider == provider
+        assert cfg.model == PROVIDER_DEFAULTS[provider]["model"]
+        assert cfg.api_base == PROVIDER_DEFAULTS[provider]["api_base"]
 
     def test_from_config_client_reads_profile_unit(self, monkeypatch: pytest.MonkeyPatch):
         """PLAN-0504: the whole profile unit is the only identity source."""

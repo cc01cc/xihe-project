@@ -597,7 +597,6 @@ export interface ModelConfig {
 export interface ProviderInfo {
     id: string;
     name: string;
-    defaultModel: string;
     defaultBaseUrl: string;
     description?: string;
 }
