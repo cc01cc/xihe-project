@@ -4,6 +4,7 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.ChatRunGuidance;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * PLAN-0528 public Guidance surface for the run's owning user (frozen wire:
@@ -27,9 +29,16 @@ import java.util.Map;
 public class ChatRunGuidanceController {
 
     private final ChatRunGuidanceService service;
+    /**
+     * PLAN-0536: only present under the {@code e2e} profile, so dev and prod
+     * resolve {@code null} and the production path is unchanged.
+     */
+    private final ObjectProvider<E2eGuidanceBarrier> e2eBarrier;
 
-    public ChatRunGuidanceController(ChatRunGuidanceService service) {
+    public ChatRunGuidanceController(ChatRunGuidanceService service,
+                                     ObjectProvider<E2eGuidanceBarrier> e2eBarrier) {
         this.service = service;
+        this.e2eBarrier = e2eBarrier;
     }
 
     public record GuidanceCreateRequest(String content) {
@@ -41,6 +50,13 @@ public class ChatRunGuidanceController {
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @RequestBody GuidanceCreateRequest request) {
         try {
+            E2eGuidanceBarrier barrier = e2eBarrier.getIfAvailable();
+            if (barrier != null) {
+                UUID parsed = parseBarrierRunId(runId);
+                if (parsed != null) {
+                    barrier.passThrough(parsed);
+                }
+            }
             ChatRunGuidanceService.SubmitResult result = service.submit(runId,
                     TenantContext.getUserId(), TenantContext.getWorkspaceId(),
                     idempotencyKey, request == null ? null : request.content());
@@ -67,6 +83,19 @@ public class ChatRunGuidanceController {
             return ResponseEntity.ok(Map.of("items", items, "latestSequence", latestSequence));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
+    /**
+     * Returns the run id for the barrier lookup, or {@code null} when it is not a
+     * UUID. A non-UUID path value must fall through to the production path so the
+     * existing validation owns the response.
+     */
+    private static UUID parseBarrierRunId(String value) {
+        try {
+            return UUID.fromString(value);
+        } catch (RuntimeException invalid) {
+            return null;
         }
     }
 

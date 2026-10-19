@@ -5,6 +5,12 @@ import { logger } from "../../../../lib/logger";
 
 const MAX_GUIDANCE_LENGTH = 8000;
 
+/**
+ * PLAN-0530 spec §3.2/§3.3: success and the frozen `409 GUIDANCE_RUN_NOT_ACTIVE`
+ * both clear the draft; every other failure keeps the user's text.
+ */
+export type GuidanceSubmitOutcome = "ok" | "clear" | "keep";
+
 interface UseGuidanceOptions {
     runId: () => string | undefined;
     runStatus: () => string;
@@ -59,26 +65,26 @@ export function useGuidance(options: UseGuidanceOptions) {
         return t("chat.guidanceErrorNetwork");
     }
 
-    async function submit(content: string): Promise<boolean> {
+    async function submit(content: string): Promise<GuidanceSubmitOutcome> {
         const runId = options.runId();
         if (!runId || !content.trim() || content.length > MAX_GUIDANCE_LENGTH) {
-            return false;
+            return "keep";
         }
         const generation = ++submitGeneration;
         submitting.value = true;
         bannerError.value = null;
         try {
             await api.submitChatRunGuidance(runId, content, crypto.randomUUID());
-            if (generation !== submitGeneration) return false;
+            if (generation !== submitGeneration) return "keep";
             await refetch();
-            return true;
+            return "ok";
         } catch (err) {
-            if (generation !== submitGeneration) return false;
+            if (generation !== submitGeneration) return "keep";
             const message = errorMessageFor(err);
             bannerError.value = message;
             logger.warn("guidance: submit failed", err);
             void refetch();
-            return false;
+            return err instanceof ApiError && err.problem.status === 409 ? "clear" : "keep";
         } finally {
             if (generation === submitGeneration) {
                 submitting.value = false;

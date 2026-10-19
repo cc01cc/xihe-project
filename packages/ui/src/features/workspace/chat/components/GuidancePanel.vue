@@ -62,8 +62,8 @@ function formatTime(iso: string): string {
 
 async function handleSubmit() {
     if (!canSubmit.value) return;
-    const ok = await submit(input.value);
-    if (ok) {
+    const outcome = await submit(input.value);
+    if (outcome === "ok" || outcome === "clear") {
         input.value = "";
     }
     emit("refreshNeeded");
