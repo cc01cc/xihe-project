@@ -155,14 +155,14 @@ test.describe("@host Journey D — context pipeline", () => {
 
         // Pin the session binding to the native route explicitly (chat-availability
         // real uses the same popover flow) so "no silent route switch" has a
-        // concrete before/after: the session must stay on xiaomi/mimo-v2.5 after
+        // concrete before/after: the session must stay on xiaomi/mimo-v2.6-flash after
         // the refusal.
         const trigger = page.getByTestId("model-popover-trigger");
         await expect(trigger).toBeVisible();
         await trigger.click();
         const modelSearch = page.getByTestId("model-popover-search");
-        await modelSearch.fill("mimo-v2.5");
-        await expect(page.getByTestId("model-item-xiaomi/mimo-v2.5")).toBeVisible({
+        await modelSearch.fill("mimo-v2.6-flash");
+        await expect(page.getByTestId("model-item-xiaomi/mimo-v2.6-flash")).toBeVisible({
             timeout: 15000,
         });
         await modelSearch.press("Enter");
@@ -195,7 +195,7 @@ test.describe("@host Journey D — context pipeline", () => {
                 },
                 { timeout: 15000 },
             )
-            .toBe("xiaomi/mimo-v2.5");
+            .toBe("xiaomi/mimo-v2.6-flash");
 
         // Any workspace chat binds the MCP tool surface, so the native route's
         // refusal happens at the provider call — before any tool can run.
@@ -259,7 +259,7 @@ test.describe("@host Journey D — context pipeline", () => {
         expect(
             `${sess.modelProvider ?? ""}/${sess.modelName ?? ""}`,
             "route binding unchanged",
-        ).toBe("xiaomi/mimo-v2.5");
+        ).toBe("xiaomi/mimo-v2.6-flash");
         const branchId = await getRootBranchId(request, sessionId, headers);
         const messagesRes = await request.get(
             `${CP_URL}/api/v1/sessions/${sessionId}/messages?branchId=${branchId}`,

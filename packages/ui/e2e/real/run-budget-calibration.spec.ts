@@ -29,7 +29,7 @@ import {
 //   XIHE_E2E_REAL_XIAOMI_KEY=<key> XIHE_E2E_REAL_ROUTE=openai-compat \
 //     mise run test:e2e:host -- --batch=run-budget-calibration
 const REAL_ROUTE = process.env.XIHE_E2E_REAL_ROUTE ?? "native";
-const MODEL_ID = process.env.XIHE_E2E_REAL_OPENAI_MODEL ?? "mimo-v2.5";
+const MODEL_ID = process.env.XIHE_E2E_REAL_OPENAI_MODEL ?? "mimo-v2.6-flash";
 const TERMINAL = /^(succeeded|failed|partial|cancelled|ambiguous)$/;
 
 // Representative single-turn shapes: short Q&A, medium explanation, code,
