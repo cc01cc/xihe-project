@@ -28,9 +28,9 @@
 // Checked:
 //   1. docker residue   leftover xihe-e2e-* containers/volumes/networks from
 //                       interrupted runs, plus e2e-labelled sandbox containers.
-//   2. port conflicts   listeners inside the e2e block and on the dev ports
-//                       (12630-12634; 12633 in particular blocks `cargo run`
-//                       for the host runtime with a binary lock).
+//   2. port conflicts   listeners inside the e2e block and on every registered
+//                       XH stack slot (PLAN-0533); any stack's runtime port in
+//                       particular blocks `cargo run` for the host runtime.
 //   3. build freshness  control-plane fat jar vs source mtime (the runner
 //                       boots any existing jar without a freshness check),
 //                       runtime debug binary vs source, cargo lock files.
@@ -54,13 +54,38 @@ const E2E_DEFAULT_RANGE = [E2E_BASE_MIN, E2E_BASE_MIN + E2E_BASE_COUNT - 1 + E2E
 // HTTP.sys AURASDK reservation; the runner shifts its block around it, so a
 // listener there is never an e2e conflict (see e2e-host.mjs portBase).
 const OS_EXCLUDED_PORTS = new Set([27339])
-const devPorts = [
-  { port: 12630, name: 'ui', blocking: false },
-  { port: 12631, name: 'cp', blocking: false },
-  { port: 12632, name: 'agent', blocking: false },
-  { port: 12633, name: 'runtime', blocking: true },
-  { port: 12634, name: 'postgres', blocking: false },
-]
+// PLAN-0533: dev ports are stack slots, not one fixed block. Derive them from
+// scripts/stack-run.mjs (which reads the workspace SSOT) so a second stack's
+// ports are reported too; every stack's runtime port is blocking because a
+// running dev runtime holds the cargo binary lock for this checkout.
+function loadStackSlots() {
+  try {
+    const output = execFileSync(process.execPath, [join(projectDir, 'scripts', 'stack-run.mjs'), 'slots-json'], {
+      encoding: 'utf8',
+      timeout: 10_000,
+    })
+    return JSON.parse(output)
+  } catch {
+    return []
+  }
+}
+const stackSlots = loadStackSlots()
+const currentStackId = process.env.XIHE_STACK_ID || 'stack-1'
+const devPorts = stackSlots.length
+  ? stackSlots.flatMap((slot) =>
+      Object.entries(slot.ports).map(([name, port]) => ({
+        port,
+        name: `dev-${slot.stackId}-${name}`,
+        blocking: name === 'runtime',
+      })),
+    )
+  : [
+      { port: 12630, name: 'ui', blocking: false },
+      { port: 12631, name: 'cp', blocking: false },
+      { port: 12632, name: 'agent', blocking: false },
+      { port: 12633, name: 'runtime', blocking: true },
+      { port: 12634, name: 'postgres', blocking: false },
+    ]
 
 let e2eRanges = null
 let portsCustomized = false
@@ -194,7 +219,8 @@ const now = Date.now()
 console.log(`XH host E2E preflight (read-only)  ${new Date(now).toISOString()}`)
 console.log(`project: ${projectDir}`)
 console.log(`e2e port block: ${e2eRanges.map(([a, b]) => `${a}-${b}`).join(', ')}${portsCustomized ? '  (custom)' : '  (27000 + hash(runId)%1500, offsets 0-4 & 10-12)'}`)
-console.log(`dev ports: ${devPorts.map((p) => p.port).join(', ')}`)
+console.log(`dev ports (current ${currentStackId}): ${devPorts.filter((p) => p.name.startsWith(`dev-${currentStackId}-`)).map((p) => p.port).join(', ')}`)
+console.log(`stack slots checked: ${stackSlots.length ? `${stackSlots.length} (runtime ports blocking: ${devPorts.filter((p) => p.blocking).map((p) => p.port).join(', ')})` : 'fallback stack-1 only'}`)
 console.log('')
 
 // ---------------------------------------------------------------- 1. docker
@@ -223,7 +249,7 @@ if (!dockerVersion.ok) {
       if (name.startsWith('xihe-e2e-')) {
         if (ownComposePrefix && name.toLowerCase().startsWith(ownComposePrefix)) ownComposeContainers.push({ name, status })
         else residueContainers.push({ name, status, owner: e2eOwnerOf(name) })
-      } else if (name.startsWith('xihe-workspace-')) {
+      } else if (/^xihe-(workspace|ws-s\d+-ws_)/.test(name)) {
         const label = /xihe\.e2e\.run-id=([^,\s]+)/.exec(labels)
         if (label && ownRunId && label[1] === ownRunId) ownSandboxes.push({ name, status })
         else if (labels.includes('xihe.e2e.run-id=')) e2eSandboxes.push({ name, status, owner: label ? label[1] : '' })

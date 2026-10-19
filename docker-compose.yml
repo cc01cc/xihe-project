@@ -1,3 +1,7 @@
+# PLAN-0533: stable project name. stack-1 keeps `a03-xihe` even when the file is
+# used from a worktree; stack-N sets XIHE_COMPOSE_PROJECT=xihe-stack-N.
+name: ${XIHE_COMPOSE_PROJECT:-a03-xihe}
+
 services:
   postgres:
     image: pgvector/pgvector:pg17

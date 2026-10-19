@@ -690,8 +690,10 @@ impl WorkspaceExecutionRouter {
         Ok(instance)
     }
 
-    fn container_name(workspace_id: &str) -> String {
-        format!("xihe-workspace-ws_{workspace_id}")
+    /// PLAN-0533: delegate to the single implementation in `workspace.rs` so the
+    /// stack prefix cannot drift between the two call sites.
+    pub(crate) fn container_name(workspace_id: &str) -> String {
+        crate::workspace::container_name(workspace_id)
     }
 
     async fn exec_oneshot(

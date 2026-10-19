@@ -133,7 +133,7 @@ CLI 与 UI 并列调用 CP API；Agent 不调用运维 CLI。Provider Key 经 CP
 docker compose up -d --build   # 或 mise run dev:full（CP ready 后按导入语义处理 config.import.local.jsonc，见下）
 ```
 
-启动 postgres + control-plane + agent + runtime（UI 宿主）。端口映射：CP 8080→12631、Agent 8000→12632、Runtime 8001→12633、PG 5432→12634。资源约束 pg 512m / cp 768m / agent 640m / runtime 128m，沙盒 512MB + 2 CPU。
+启动 postgres + control-plane + agent + runtime（UI 宿主）。端口映射（stack-1；多栈见「模式 D」）：CP 8080→12631、Agent 8000→12632、Runtime 8001→12633、PG 5432→12634。资源约束 pg 512m / cp 768m / agent 640m / runtime 128m，沙盒 512MB + 2 CPU。
 
 `dev:full` 导入语义（`scripts/dev-all.sh`）：默认**不自动导入**——`DataSeeder` 为 `admin@xihe.local` 生成随机密码且不打印，脚本无法登录。启动后执行 `mise run reset-admin` 获取密码并手动 `POST /api/v1/config/import?layer=instance`（非密钥八域配置；凭证走 `provider_connections`）；或设置 `XIHE_DEV_ADMIN_PASSWORD`（仅经 OS 环境变量注入，禁止写入脚本/git/日志）显式启用自动导入。
 
@@ -155,6 +155,31 @@ mvn -f packages/control-plane/pom.xml spring-boot:run
 ```
 
 文件级命令见 A03-xihe/AGENTS.md（UI lint/typecheck/test:unit、Agent 单文件 pytest、CP 单类 mvn、Runtime `cargo test --lib`）。
+
+### 模式 D：多栈并行（PLAN-0533）
+
+同一 worktree 可同时跑多套 host 栈。栈身份由 `XIHE_STACK_ID`（`stack-1`..`stack-8`，缺省 `stack-1`）声明；启动器据此派生端口、compose project、PG 库名、沙箱容器前缀与日志/host root/state 三个路径面，模块仍只读派生后的 `XIHE_*_PORT`。
+
+```bash
+# 起第二套栈（stack-2）；stack-1 的端口与路径与单栈时逐项相同
+mise run dev:stack -- --stack 2
+# 等价写法
+XIHE_STACK_ID=stack-2 mise run dev:host
+# 只看某栈会占用哪些端口（不启动）
+node ../scripts/ports.mjs plan xihe --stack 2
+```
+
+| 栈 | UI | CP | Agent | Runtime | PG | compose project |
+|---|---|---|---|---|---|---|
+| stack-1（默认） | 12630 | 12631 | 12632 | 12633 | 12634 | `a03-xihe` |
+| stack-2 | 12640 | 12641 | 12642 | 12643 | 12644 | `xihe-stack-2` |
+| stack-3 / 4 | 12650 / 12660 段 | … | … | … | … | `xihe-stack-3/4` |
+| stack-5..8 | 12700 / 12710 / 12730 / 12740 段 | … | … | … | … | `xihe-stack-5..8` |
+
+- stack-1 路径不变（`.xihe-workspaces` / `logs` / `.xihe-state`）；stack≥2 落在 `.xihe-stacks/<n>/{workspaces,logs,state}`（已 gitignore）。
+- 非法或未登记的 `XIHE_STACK_ID`（如 `stack-9`、`foo`）启动即失败，不回退默认栈。
+- `dev:host:stop` / `dev:reset` 只作用于当前栈的进程、compose project 与沙箱容器（按 `xihe.stack-id` 标签；无标签视为 stack-1）。
+- 建议同时最多 2 套栈（每栈一套 PG + 四个服务）。
 
 ## 4. 全栈调试（自 DEV-005-fullstack 并入）
 

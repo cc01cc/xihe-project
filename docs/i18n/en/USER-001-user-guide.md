@@ -144,6 +144,7 @@ The model selector shows only verified, chat-capable models. ASR/TTS models are 
 | `XIHE_RUNTIME_PORT` | `12633` | Runtime port (host mapping, Docker internal is 8001) |
 | `XIHE_UI_PORT` | `12630` | UI port (overridable by environment variable) |
 | `XIHE_CP_DATASOURCE_URL` | `jdbc:postgresql://localhost:12634/xihe` | Database connection (host mapping, Docker internal is 5432) |
+| `XIHE_STACK_ID` | `stack-1` | Stack slot (`stack-1`..`stack-8`); the table above is stack-1, stack-2 shifts the whole block (ui 12640/12641/…), see DEV-002 "Parallel host stacks" |
 | `XIHE_CP_JWT_SECRET` | — | JWT signing key |
 | `XIHE_LOG_LEVEL` | `info` | Log level |
 

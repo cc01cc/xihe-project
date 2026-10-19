@@ -146,6 +146,7 @@ Provider 可在设置页面的模型配置中管理，选择预设后自动填�
 | `XIHE_RUNTIME_PORT` | `12633` | Runtime 端口（宿主机映射，Docker 内为 8001） |
 | `XIHE_UI_PORT` | `12630` | UI 端口（可通过环境变量覆盖） |
 | `XIHE_CP_DATASOURCE_URL` | `jdbc:postgresql://localhost:12634/xihe` | 数据库连接（宿主机映射，Docker 内为 5432） |
+| `XIHE_STACK_ID` | `stack-1` | 栈槽位（`stack-1`..`stack-8`）；上表是 stack-1 的值，stack-2 起整体换段（ui 12640/12641/…），见 DEV-002「模式 D」 |
 | `XIHE_CP_JWT_SECRET` | — | JWT 签名密钥 |
 | `XIHE_LOG_LEVEL` | `info` | 日志等级 |
 

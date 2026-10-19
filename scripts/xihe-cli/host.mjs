@@ -21,12 +21,14 @@ const toolChecks = [
   { name: 'Docker Engine', command: 'docker', args: ['version', '--format', '{{.Server.Version}}'] },
 ];
 
+// PLAN-0533: env-first so `xihe dev check` follows the stack launcher's env.
+const stackPort = (name, fallback) => Number(process.env[name] || fallback);
 const portChecks = [
-  { name: 'UI', port: 12630, url: 'http://127.0.0.1:12630/' },
-  { name: 'CP', port: 12631, url: 'http://127.0.0.1:12631/actuator/health' },
-  { name: 'Agent', port: 12632, url: 'http://127.0.0.1:12632/internal/v1/agent/health' },
-  { name: 'Runtime', port: 12633, url: 'http://127.0.0.1:12633/ready' },
-  { name: 'PostgreSQL', port: 12634 },
+  { name: 'UI', port: stackPort('XIHE_UI_PORT', 12630), url: `http://127.0.0.1:${stackPort('XIHE_UI_PORT', 12630)}/` },
+  { name: 'CP', port: stackPort('XIHE_CP_PORT', 12631), url: `http://127.0.0.1:${stackPort('XIHE_CP_PORT', 12631)}/actuator/health` },
+  { name: 'Agent', port: stackPort('XIHE_AGENT_PORT', 12632), url: `http://127.0.0.1:${stackPort('XIHE_AGENT_PORT', 12632)}/internal/v1/agent/health` },
+  { name: 'Runtime', port: stackPort('XIHE_RUNTIME_PORT', 12633), url: `http://127.0.0.1:${stackPort('XIHE_RUNTIME_PORT', 12633)}/ready` },
+  { name: 'PostgreSQL', port: stackPort('XIHE_PG_PORT', 12634) },
 ];
 
 function runTool(item, env, spawnSyncImpl) {

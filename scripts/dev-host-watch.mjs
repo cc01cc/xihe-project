@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
-const logsDir = path.join(projectRoot, "logs");
+// PLAN-0533: stack-run.mjs injects the derived env; defaults keep stack-1 unchanged.
+const logsDir = path.resolve(projectRoot, process.env.XIHE_LOG_DIR || "logs");
 const hostLogFile = path.join(logsDir, "host.log");
 const pollIntervalMs = 15_000;
 const startupGraceMs = 120_000;
@@ -15,11 +16,12 @@ if (!fs.existsSync(logsDir)) {
 }
 const logStream = fs.createWriteStream(hostLogFile, { flags: "a" });
 
+const port = (name, fallback) => process.env[name] || fallback;
 const services = [
-  { name: "cp", url: "http://127.0.0.1:12631/actuator/health" },
-  { name: "agent", url: "http://127.0.0.1:12632/internal/v1/agent/health" },
-  { name: "runtime", url: "http://127.0.0.1:12633/ready" },
-  { name: "ui", url: "http://127.0.0.1:12630/" },
+  { name: "cp", url: `http://127.0.0.1:${port("XIHE_CP_PORT", "12631")}/actuator/health` },
+  { name: "agent", url: `http://127.0.0.1:${port("XIHE_AGENT_PORT", "12632")}/internal/v1/agent/health` },
+  { name: "runtime", url: `http://127.0.0.1:${port("XIHE_RUNTIME_PORT", "12633")}/ready` },
+  { name: "ui", url: `http://127.0.0.1:${port("XIHE_UI_PORT", "12630")}/` },
 ];
 
 let stackProcess = null;
@@ -198,16 +200,30 @@ function stopPostgres() {
 }
 
 function stopWorkspaceContainers() {
-  const listed = spawnSync(command, ["ps", "-aq", "--filter", "name=xihe-workspace-ws_"], {
+  // PLAN-0533: only this stack's containers, matched by name prefix + xihe.stack-id
+  // (missing label = legacy stack-1). The previous code referenced an undefined
+  // `command` binding, so shutdown threw before postgres was stopped.
+  const prefix = process.env.XIHE_SANDBOX_CONTAINER_PREFIX || "xihe-workspace-ws_";
+  const currentStack = process.env.XIHE_SANDBOX_STACK_ID || "stack-1";
+  const listed = spawnSync("docker", ["ps", "-a", "--format", "{{.ID}}|{{.Names}}|{{.Label \"xihe.stack-id\"}}"], {
     cwd: projectRoot,
     encoding: "utf8",
   });
-  const containers = (listed.stdout ?? "").split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+  const containers = (listed.stdout ?? "")
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((row) => {
+      const [id, name, label] = row.split("|");
+      return { id, name, stack: label || "stack-1" };
+    })
+    .filter((row) => row.name.startsWith(prefix) && row.stack === currentStack)
+    .map((row) => row.id);
   for (const container of containers) {
-    spawnSync(command, ["rm", "-f", container], { cwd: projectRoot, stdio: "ignore" });
+    spawnSync("docker", ["rm", "-f", container], { cwd: projectRoot, stdio: "ignore" });
   }
   if (containers.length > 0) {
-    lifecycle("workspace_containers_removed", { count: containers.length, storage: "preserved" });
+    lifecycle("workspace_containers_removed", { count: containers.length, storage: "preserved", stack: currentStack });
   }
 }
 

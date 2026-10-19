@@ -31,25 +31,35 @@ if ($Reset -and $DryRun) {
 }
 
 $ProjectRoot = (Resolve-Path "$PSScriptRoot/..").Path
+# PLAN-0533: stack-scoped compose project / database / ports / container prefix.
+$StackJson = & node "$PSScriptRoot/stack-run.mjs" env-json
+if ($LASTEXITCODE -ne 0 -or -not $StackJson) {
+  throw "Cannot resolve XIHE_STACK_ID; see the error above."
+}
+$Stack = $StackJson | ConvertFrom-Json
+$StackId = $Stack.stackId
+$ComposeProject = $Stack.composeProject
+$Database = $Stack.database
+$ContainerPrefix = $Stack.containerPrefix
+$NativePorts = @([int]$Stack.ports.ui, [int]$Stack.ports.cp, [int]$Stack.ports.agent, [int]$Stack.ports.runtime)
 $HostRoot = if ($env:XIHE_WORKSPACE_HOST_ROOT) {
   (Resolve-Path $env:XIHE_WORKSPACE_HOST_ROOT -ErrorAction SilentlyContinue).Path
 } else {
-  Join-Path $ProjectRoot ".xihe-workspaces"
+  Join-Path $ProjectRoot $Stack.hostRoot
 }
+$LogDir = if ($env:XIHE_LOG_DIR) { Join-Path $ProjectRoot $env:XIHE_LOG_DIR } else { Join-Path $ProjectRoot $Stack.logDir }
 $ComposeFile = Join-Path $ProjectRoot "docker-compose.yml"
-$ComposeProject = "a03-xihe"
 $RunId = [guid]::NewGuid().ToString()
 $BackupRoot = Join-Path $env:TEMP "xihe-dev-reset"
 
 function Write-ResetEvent {
   param([string]$Event, [hashtable]$Fields = @{})
 
-  $logDir = Join-Path $ProjectRoot "logs"
-  if (-not (Test-Path -LiteralPath $logDir)) {
-    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+  if (-not (Test-Path -LiteralPath $LogDir)) {
+    New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
   }
-  $payload = @{ timestamp = (Get-Date -Format o); devResetRunId = $RunId; event = $Event } + $Fields
-  Add-Content -LiteralPath (Join-Path $logDir "host.log") -Value ($payload | ConvertTo-Json -Compress) -Encoding utf8
+  $payload = @{ timestamp = (Get-Date -Format o); devResetRunId = $RunId; stackId = $StackId; event = $Event } + $Fields
+  Add-Content -LiteralPath (Join-Path $LogDir "host.log") -Value ($payload | ConvertTo-Json -Compress) -Encoding utf8
 }
 
 function Get-WorkspaceEntries {
@@ -76,12 +86,23 @@ function Get-WorkspaceBytes {
 }
 
 function Get-SandboxContainers {
-  return @(docker ps -aq --filter "name=xihe-workspace-ws_")
+  $rows = @(docker ps -a --format '{{.ID}}|{{.Names}}|{{.Label "xihe.stack-id"}}')
+  $matched = @()
+  foreach ($row in $rows) {
+    if (-not $row) { continue }
+    $parts = $row.Split('|')
+    if ($parts.Count -lt 3) { continue }
+    $id = $parts[0].Trim()
+    $name = $parts[1].Trim()
+    $label = if ($parts[2].Trim()) { $parts[2].Trim() } else { "stack-1" }
+    if ($name.StartsWith($ContainerPrefix) -and $label -eq $StackId) { $matched += $id }
+  }
+  return $matched
 }
 
 function Get-DatabaseCounts {
   $tableQuery = "SELECT COALESCE(to_regclass('public.workspace_execution_specs')::text, ''), COALESCE(to_regclass('public.workspace_assignments')::text, '');"
-  $tableOutput = @(docker compose -p $ComposeProject -f $ComposeFile exec -T postgres psql -U xihe -d xihe -At -F '|' -c $tableQuery 2>$null)
+  $tableOutput = @(docker compose -p $ComposeProject -f $ComposeFile exec -T postgres psql -U xihe -d $Database -At -F '|' -c $tableQuery 2>$null)
   if ($LASTEXITCODE -ne 0 -or $tableOutput.Count -eq 0) {
     return @("database|unavailable")
   }
@@ -91,7 +112,7 @@ function Get-DatabaseCounts {
     return @("database|schema-not-initialized")
   }
   $query = "SELECT 'users', count(*) FROM users UNION ALL SELECT 'workspaces', count(*) FROM workspaces UNION ALL SELECT 'sessions', count(*) FROM sessions UNION ALL SELECT 'messages', count(*) FROM messages UNION ALL SELECT '$specTable', count(*) FROM $specTable;"
-  $output = @(docker compose -p $ComposeProject -f $ComposeFile exec -T postgres psql -U xihe -d xihe -At -F '|' -c $query 2>$null)
+  $output = @(docker compose -p $ComposeProject -f $ComposeFile exec -T postgres psql -U xihe -d $Database -At -F '|' -c $query 2>$null)
   if ($LASTEXITCODE -ne 0) {
     return @("database|unavailable")
   }
@@ -99,15 +120,14 @@ function Get-DatabaseCounts {
 }
 
 function Assert-NativePortsFree {
-  $ports = @(12630, 12631, 12632, 12633)
   $listeners = @(
-    foreach ($port in $ports) {
+    foreach ($port in $NativePorts) {
       Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
     }
   )
   if ($listeners.Count -gt 0) {
     $used = ($listeners | ForEach-Object { "$($_.LocalPort)/$($_.OwningProcess)" }) -join ", "
-    throw "Native Xihe services are still listening ($used). Stop dev:host before -Reset."
+    throw "Native Xihe services of $StackId are still listening ($used). Stop dev:host before -Reset."
   }
 }
 
@@ -138,8 +158,9 @@ function Remove-SandboxContainers {
 function Show-State {
   $entries = @(Get-WorkspaceEntries)
   $containers = @(Get-SandboxContainers)
-  Write-Host "=== Xihe dev reset (runId=$RunId) ===" -ForegroundColor Cyan
+  Write-Host "=== Xihe dev reset (stack=$StackId runId=$RunId) ===" -ForegroundColor Cyan
   Write-Host "project: $ProjectRoot"
+  Write-Host "compose project: $ComposeProject; database: $Database"
   Write-Host "hostRoot: $HostRoot"
   Write-Host "host entries: $($entries.Count); bytes: $(Get-WorkspaceBytes)"
   Write-Host "Sandbox containers: $($containers.Count)"
@@ -163,7 +184,7 @@ function Backup-Database {
   if (-not $container) {
     throw "Xihe PostgreSQL container is not running; cannot create reset backup."
   }
-  docker exec $container pg_dump -U xihe -d xihe -Fc -f "/tmp/xihe-dev-$RunId.dump"
+  docker exec $container pg_dump -U xihe -d $Database -Fc -f "/tmp/xihe-dev-$RunId.dump"
   if ($LASTEXITCODE -ne 0) {
     throw "pg_dump failed; reset aborted."
   }

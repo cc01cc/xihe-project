@@ -206,6 +206,27 @@ mvn spring-boot:run -f packages/control-plane/pom.xml
 
 `.env.dev` file records two database configurations (PostgreSQL is default, H2 is commented out). Uncomment to switch.
 
+#### Parallel host stacks (PLAN-0533)
+
+`XIHE_STACK_ID` (`stack-1`..`stack-8`, default `stack-1`) selects a stack. The launcher derives ports, compose project, PG database, sandbox container prefix and the log/host-root/state dirs; modules only read the derived `XIHE_*_PORT` env.
+
+```bash
+mise run dev:stack -- --stack 2                    # or: XIHE_STACK_ID=stack-2 mise run dev:host
+node ../scripts/ports.mjs plan xihe --stack 2      # show that stack's ports without starting
+```
+
+| Stack | UI | CP | Agent | Runtime | PG | compose project |
+|---|---|---|---|---|---|---|
+| stack-1 (default) | 12630 | 12631 | 12632 | 12633 | 12634 | `a03-xihe` |
+| stack-2 | 12640 | 12641 | 12642 | 12643 | 12644 | `xihe-stack-2` |
+| stack-3 / 4 | 12650 / 12660 blocks | … | … | … | … | `xihe-stack-3/4` |
+| stack-5..8 | 12700 / 12710 / 12730 / 12740 blocks | … | … | … | … | `xihe-stack-5..8` |
+
+- stack-1 keeps the legacy paths (`.xihe-workspaces`, `logs`, `.xihe-state`); stack≥2 uses `.xihe-stacks/<n>/{workspaces,logs,state}` (gitignored).
+- Unregistered ids (`stack-9`, `foo`) fail fast instead of falling back to stack-1.
+- `dev:host:stop` / `dev:reset` only touch the current stack (label `xihe.stack-id`; a missing label means stack-1).
+- Two concurrent stacks at most are recommended.
+
 ### 2.5. Configuration Management (PLAN-042)
 
 #### Architecture Overview
@@ -449,7 +470,7 @@ docker compose ps
 docker compose logs -f control-plane
 ```
 
-Service ports (Docker internal / host mapping):
+Service ports (Docker internal / host mapping, stack-1; see "Parallel host stacks" for stack-2..8):
 - CP: 8080 → 12631
 - Agent: 8000 → 12632
 - Runtime: 8001 → 12633

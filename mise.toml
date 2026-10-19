@@ -74,29 +74,29 @@ alias = "dev"
 # alias = "dev:backend"
 
 [tasks."dev:ui"]
-run = "node ../../scripts/dev-ui-host.mjs --mode dev --host 127.0.0.1 --port 12630 --strictPort"
-description = "Start the UI development server (Windows native)"
+run = "node ../../scripts/stack-run.mjs ui"
+description = "Start the UI development server (Windows native; port from XIHE_STACK_ID)"
 dir = "packages/ui"
 env = { XIHE_ENV = "dev" }
 alias = "dev:ui"
 
 [tasks."dev:agent"]
-run = "uv run python -m xihe_agent.main"
-description = "Start the agent service (Windows native)"
+run = "node ../../scripts/stack-run.mjs agent"
+description = "Start the agent service (Windows native; port from XIHE_STACK_ID)"
 dir = "packages/agent"
 env = { XIHE_ENV = "dev" }
 alias = "dev:agent"
 
 [tasks."dev:cp"]
-run = "mvn spring-boot:run"
-description = "Start the control plane (Windows native)"
+run = "node ../../scripts/stack-run.mjs cp"
+description = "Start the control plane (Windows native; port from XIHE_STACK_ID)"
 dir = "packages/control-plane"
 env = { XIHE_ENV = "dev" }
 alias = "dev:cp"
 
 [tasks."dev:runtime"]
-run = "cargo run --bin xihe-runtime"
-description = "Start the runtime service (Windows native)"
+run = "node ../../scripts/stack-run.mjs runtime"
+description = "Start the runtime service (Windows native; port from XIHE_STACK_ID)"
 dir = "packages/runtime"
 env = { XIHE_ENV = "dev" }
 alias = "dev:runtime"
@@ -291,7 +291,7 @@ dir = "."
 alias = "dev:host:provider-init"
 
 [tasks."dev:host:watch"]
-run = "node scripts/dev-host-watch.mjs"
+run = "node scripts/stack-run.mjs watch"
 description = "Keep the mise-managed native host stack alive and restart it after a service failure"
 alias = "dev:host:watch"
 
@@ -316,38 +316,43 @@ description = "Print resolved host config sources and masked key values"
 alias = "dev:host:check-config"
 
 [tasks."dev:host:start:pg"]
-run = "docker compose up -d --wait postgres"
-description = "Start PostgreSQL container"
+run = "node scripts/stack-run.mjs pg"
+description = "Start PostgreSQL container for the current stack"
 dir = "."
 alias = "dev:host:start:pg"
 
 [tasks."dev:host:start:cp"]
-run = "mvn spring-boot:run"
-description = "Start Control Plane (port 12631)"
+run = "node ../../scripts/stack-run.mjs cp"
+description = "Start Control Plane (port from XIHE_STACK_ID)"
 dir = "packages/control-plane"
 env = { XIHE_ENV = "dev" }
 alias = "dev:host:start:cp"
 
 [tasks."dev:host:start:agent"]
-run = "uv run python -m xihe_agent.main"
-description = "Start Agent (port 12632)"
+run = "node ../../scripts/stack-run.mjs agent"
+description = "Start Agent (port from XIHE_STACK_ID)"
 dir = "packages/agent"
 env = { XIHE_ENV = "dev" }
 alias = "dev:host:start:agent"
 
 [tasks."dev:host:start:runtime"]
-run = "cargo run --bin xihe-runtime"
-description = "Start Runtime (port 12633)"
+run = "node ../../scripts/stack-run.mjs runtime"
+description = "Start Runtime (port from XIHE_STACK_ID)"
 dir = "packages/runtime"
 env = { XIHE_ENV = "dev" }
 alias = "dev:host:start:runtime"
 
 [tasks."dev:host:start:ui"]
-run = "node ../../scripts/dev-ui-host.mjs --mode dev --host 127.0.0.1 --port 12630 --strictPort"
-description = "Start UI dev server (port 12630)"
+run = "node ../../scripts/stack-run.mjs ui"
+description = "Start UI dev server (port from XIHE_STACK_ID)"
 dir = "packages/ui"
 env = { XIHE_ENV = "dev" }
 alias = "dev:host:start:ui"
+
+[tasks."dev:stack"]
+run = "node scripts/stack-run.mjs dev-host"
+description = "Start a named host stack: mise run dev:stack -- --stack 2 (default stack-1)"
+alias = "dev:stack"
 
 # [FROZEN 2026-10-07] docker 构建冻结，见文件头冻结说明（现存镜像可继续被 Runtime 使用）
 # [tasks."image:workspace:build"]

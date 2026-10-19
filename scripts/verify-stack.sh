@@ -5,15 +5,22 @@
 
 set -euo pipefail
 
+STACK_ID="${XIHE_STACK_ID:-stack-1}"
+UI_PORT="${XIHE_UI_PORT:-12630}"
 CP_PORT="${XIHE_CP_PORT:-12631}"
 AGENT_PORT="${XIHE_AGENT_PORT:-12632}"
+RUNTIME_PORT="${XIHE_RUNTIME_PORT:-12633}"
+PG_PORT="${XIHE_PG_PORT:-12634}"
 
-echo "=== Xihe 全栈验证 ==="
+echo "=== Xihe 全栈验证 (stack=$STACK_ID) ==="
+echo "ports: ui=$UI_PORT cp=$CP_PORT agent=$AGENT_PORT runtime=$RUNTIME_PORT pg=$PG_PORT"
 echo ""
 
-# 1. 检查服务状态
+# 1. 检查服务状态（按 xihe.stack-id 标签过滤，避免跨栈误匹配；无标签视为 stack-1）
 echo "--- 1. 服务状态 ---"
-docker ps --format "table {{.Names}}\t{{.Status}}" | grep xihe || echo "❌ 无 xihe 容器运行"
+docker ps -a --format '{{.Names}}\t{{.Status}}\t{{.Label "xihe.stack-id"}}' |
+  awk -F'\t' -v stack="$STACK_ID" '($3 == "" ? "stack-1" : $3) == stack && $1 ~ /^xihe/ { print }' ||
+  echo "❌ 无 xihe 容器运行"
 echo ""
 
 # 2. 获取 token

@@ -83,6 +83,9 @@ data/
 # Runtime workspace storage (generated, not committed)
 .xihe-workspaces/
 
+# PLAN-0533: stack-2..8 derived state/logs/workspaces (per-stack isolation)
+.xihe-stacks/
+
 # Isolated Host E2E runtime state (generated, not committed)
 .tmp/e2e-host/
 

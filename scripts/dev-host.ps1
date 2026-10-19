@@ -3,12 +3,17 @@
 <#
 .SYNOPSIS
   dev:host — Windows native CP/Agent/Runtime/UI + Docker PostgreSQL/Sandbox
-  v1 minimal: postgres via Docker, workspaces under XIHE_WORKSPACE_HOST_ROOT
+
+.DESCRIPTION
+  Stack-aware (PLAN-0533): reads XIHE_STACK_ID (default stack-1) through
+  scripts/stack-run.mjs → workspace SSOT deriveStack(). Ports, compose project,
+  sandbox container prefix and data/log/state dirs all come from that single
+  derivation. stack-1 keeps today's ports and paths unchanged.
 
 .PARAMETER Check  Preflight only
-.PARAMETER Start  Bring up postgres + native services
-.PARAMETER Watch  Start + health loop with auto-restart (foreground, Ctrl+C to stop)
-.PARAMETER Stop   Tear down postgres + native services (keeps host directories)
+.PARAMETER Start  Bring up postgres + native services (delegates to mise run dev:host)
+.PARAMETER Watch  Start + health loop with auto-restart (delegates to mise run dev:host:watch)
+.PARAMETER Stop   Tear down this stack's postgres + native services + sandbox containers
 #>
 param(
   [switch]$Check,
@@ -21,16 +26,33 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = (Resolve-Path "$PSScriptRoot/..").Path
-$HostRoot = if ($env:XIHE_WORKSPACE_HOST_ROOT) { $env:XIHE_WORKSPACE_HOST_ROOT } else { Join-Path $ProjectRoot ".xihe-workspaces" }
-$LogDir = Join-Path $ProjectRoot "logs"
-$PidDir = Join-Path $ProjectRoot ".tmp/dev-host"
+
+# Single source of derived values: <one>/scripts/ports.mjs via stack-run.mjs.
+# Fail-fast on unregistered XIHE_STACK_ID (spec I4) happens inside stack-run.
+$StackJson = & node "$PSScriptRoot/stack-run.mjs" env-json
+if ($LASTEXITCODE -ne 0 -or -not $StackJson) {
+  Write-Host "dev:host: cannot resolve XIHE_STACK_ID (see error above)" -ForegroundColor Red
+  exit 2
+}
+$Stack = $StackJson | ConvertFrom-Json
+$StackId = $Stack.stackId
+$ComposeProject = $Stack.composeProject
+$Database = $Stack.database
+$Prefix = $Stack.containerPrefix
+$NativePorts = @([int]$Stack.ports.ui, [int]$Stack.ports.cp, [int]$Stack.ports.agent, [int]$Stack.ports.runtime)
+$AllPorts = @($NativePorts + @([int]$Stack.ports.postgres))
+
+$HostRoot = if ($env:XIHE_WORKSPACE_HOST_ROOT) { $env:XIHE_WORKSPACE_HOST_ROOT } else { Join-Path $ProjectRoot $Stack.hostRoot }
+$LogDir = if ($env:XIHE_LOG_DIR) { (Resolve-Path $env:XIHE_LOG_DIR -ErrorAction SilentlyContinue).Path } else { Join-Path $ProjectRoot $Stack.logDir }
+if (-not $LogDir) { $LogDir = Join-Path $ProjectRoot $Stack.logDir }
+$PidDir = if ($StackId -eq "stack-1") { Join-Path $ProjectRoot ".tmp/dev-host" } else { Join-Path $ProjectRoot ".tmp/dev-host/$($Stack.index)" }
 $DevHostLog = Join-Path $LogDir "host.log"
 $DevHostRunId = [guid]::NewGuid().ToString()
 $Timestamp = { param($e) Get-Date -Format o }
 
 function Write-DevHostEvent {
   param([string]$Event, [hashtable]$Fields = @{})
-  $payload = @{ timestamp = (& $Timestamp $null); devHostRunId = $DevHostRunId; event = $Event } + $Fields
+  $payload = @{ timestamp = (& $Timestamp $null); devHostRunId = $DevHostRunId; stackId = $StackId; event = $Event } + $Fields
   $json = $payload | ConvertTo-Json -Compress
   Add-Content -Path $DevHostLog -Value $json -Encoding utf8
 }
@@ -41,6 +63,23 @@ function Test-PortFree {
     $l = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $Port)
     $l.Start(); $l.Stop(); return $true
   } catch { return $false }
+}
+
+# Docker Desktop proxies published ports through a path that Get-NetTCPConnection
+# does not always see (observed on 12634), so a bind probe alone under-reports.
+function Test-PortReachable {
+  param([int]$Port)
+  $client = [System.Net.Sockets.TcpClient]::new()
+  try {
+    $task = $client.ConnectAsync("127.0.0.1", $Port)
+    if (-not $task.Wait(300)) { return $false }
+    return $client.Connected
+  } catch { return $false } finally { $client.Dispose() }
+}
+
+function Test-PortInUse {
+  param([int]$Port)
+  return (-not (Test-PortFree -Port $Port)) -or (Test-PortReachable -Port $Port)
 }
 
 function Test-Tool {
@@ -59,25 +98,40 @@ function Send-ToRecycleBin {
     [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin)
 }
 
+# This stack's sandbox containers only: name prefix AND xihe.stack-id label
+# (a missing label is legacy stack-1, B3).
+function Get-StackContainers {
+  $rows = @(docker ps -a --format '{{.ID}}|{{.Names}}|{{.Label "xihe.stack-id"}}')
+  $matched = @()
+  foreach ($row in $rows) {
+    if (-not $row) { continue }
+    $parts = $row.Split('|')
+    if ($parts.Count -lt 3) { continue }
+    $id = $parts[0].Trim()
+    $name = $parts[1].Trim()
+    $label = if ($parts[2].Trim()) { $parts[2].Trim() } else { "stack-1" }
+    if ($name.StartsWith($Prefix) -and $label -eq $StackId) { $matched += $id }
+  }
+  return $matched
+}
+
 function Remove-WorkspaceContainers {
-  $containers = @(docker ps -aq --filter "name=xihe-workspace-ws_")
-  foreach ($container in $containers) {
-    $id = $container.Trim()
+  $containers = @(Get-StackContainers)
+  foreach ($id in $containers) {
     if ($id) {
       docker rm -f $id | Out-Null
       Write-DevHostEvent -Event "container_removed" -Fields @{ containerId = $id; scope = "workspace-sandbox" }
     }
   }
   if ($containers.Count -gt 0) {
-    Write-Host "Removed $($containers.Count) workspace Sandbox container(s); host storage preserved." -ForegroundColor Green
+    Write-Host "Removed $($containers.Count) workspace Sandbox container(s) of $StackId; host storage preserved." -ForegroundColor Green
   }
 }
 
 function Stop-NativeServices {
-  $ports = @(12630, 12631, 12632, 12633)
   $currentProcessId = $PID
   $owners = @(
-    foreach ($port in $ports) {
+    foreach ($port in $NativePorts) {
       Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
         Select-Object -ExpandProperty OwningProcess
     }
@@ -105,7 +159,9 @@ function Ensure-Dirs {
 
 function Do-Check {
   Ensure-Dirs
-  Write-Host "=== dev:host -Check (runId=$DevHostRunId) ===" -ForegroundColor Cyan
+  Write-Host "=== dev:host -Check (stack=$StackId runId=$DevHostRunId) ===" -ForegroundColor Cyan
+  Write-Host "stack: $StackId base=$($Stack.base) compose=$ComposeProject db=$Database" -ForegroundColor DarkGray
+  Write-Host "ports: ui=$($Stack.ports.ui) cp=$($Stack.ports.cp) agent=$($Stack.ports.agent) runtime=$($Stack.ports.runtime) pg=$($Stack.ports.postgres)" -ForegroundColor DarkGray
   Write-DevHostEvent -Event "devhost_run_started" -Fields @{ mode = "check"; hostRootRef = "XIHE_WORKSPACE_HOST_ROOT"; hostRoot = $HostRoot }
 
   $ok = $true
@@ -134,9 +190,9 @@ function Do-Check {
     Write-DevHostEvent -Event "process_failed" -Fields @{ service = "host_root"; errorCode = "STORAGE_UNAVAILABLE"; detail = "$_" }
   }
 
-  # Ports
-  foreach ($p in @(12630,12631,12632,12633,12634)) {
-    if (Test-PortFree -Port $p) { Write-Host "port $p free" -ForegroundColor Green }
+  # Ports (bind probe + TCP reachability: see Test-PortReachable note)
+  foreach ($p in $AllPorts) {
+    if (-not (Test-PortInUse -Port $p)) { Write-Host "port $p free" -ForegroundColor Green }
     else { Write-Host "port $p IN USE" -ForegroundColor Yellow; $ok = $false; Write-DevHostEvent -Event "process_failed" -Fields @{ service = "port"; port = $p; errorCode = "PORT_IN_USE" } }
   }
 
@@ -150,140 +206,23 @@ function Do-Check {
   Write-Host (Test-Tool -Name "docker compose" -Cmd "docker compose version")
 
   Write-DevHostEvent -Event "devhost_run_finished" -Fields @{ mode = "check"; outcome = $(if ($ok) { "ok" } else { "degraded" }) }
-  if ($ok) { Write-Host "`nCheck OK — run pwsh -File scripts/dev-host.ps1 -Start to bring up" -ForegroundColor Cyan }
-  else { Write-Host "`nCheck finished with warnings — fix above before -Start" -ForegroundColor Yellow }
-}
-
-function Do-Start {
-  Ensure-Dirs
-  Write-Host "=== dev:host -Start (runId=$DevHostRunId) ===" -ForegroundColor Cyan
-  Write-DevHostEvent -Event "devhost_run_started" -Fields @{ mode = "start"; hostRoot = $HostRoot }
-
-  # hostRoot
-  $env:XIHE_WORKSPACE_HOST_ROOT = $HostRoot
-  Write-Host "XIHE_WORKSPACE_HOST_ROOT=$HostRoot" -ForegroundColor Green
-
-  # postgres only (dev:host uses Docker PG, not full compose)
-  Push-Location $ProjectRoot
-  try {
-    Write-Host "Starting postgres (docker compose up -d postgres)..." -ForegroundColor Cyan
-    docker compose up -d postgres
-    if ($LASTEXITCODE -ne 0) { throw "docker compose up postgres failed" }
-    Write-DevHostEvent -Event "process_started" -Fields @{ service = "postgres"; outcome = "ok" }
-
-    Write-Host "Waiting for postgres healthy (30s)..." -ForegroundColor Cyan
-    $ready = $false
-    for ($i=1; $i -le 30; $i++) {
-      try {
-        $cid = (docker compose ps -q postgres 2>$null).Trim()
-        if ($cid) {
-          docker exec $cid pg_isready -U xihe -d xihe 2>$null | Out-Null
-          if ($LASTEXITCODE -eq 0) { $ready = $true; break }
-        }
-      } catch {}
-      Start-Sleep -Seconds 1
-    }
-    if (-not $ready) {
-      Write-Host "postgres not healthy after 30s (continuing, CP will retry)" -ForegroundColor Yellow
-      Write-DevHostEvent -Event "process_failed" -Fields @{ service = "postgres"; errorCode = "POSTGRES_NOT_READY" }
-    } else {
-      Write-Host "postgres ready" -ForegroundColor Green
-      Write-DevHostEvent -Event "process_ready" -Fields @{ service = "postgres"; outcome = "ok" }
-    }
-
-    # Start native services as background jobs
-    $env:XIHE_ENV = "dev"
-    $env:XIHE_CP_PORT = "12631"
-    $env:XIHE_CP_DATASOURCE_URL = "jdbc:postgresql://localhost:12634/xihe"
-    if ([string]::IsNullOrWhiteSpace($env:XIHE_CP_API_TOKEN)) {
-      $serviceTokenBytes = [byte[]]::new(32)
-      [System.Security.Cryptography.RandomNumberGenerator]::Fill($serviceTokenBytes)
-      $env:XIHE_CP_API_TOKEN = [Convert]::ToBase64String($serviceTokenBytes)
-    }
-    $env:XIHE_AGENT_API_TOKEN = $env:XIHE_CP_API_TOKEN
-    $env:XIHE_AGENT_PORT = "12632"
-    $env:XIHE_RUNTIME_PORT = "12633"
-    $env:XIHE_CP_URL = "http://localhost:12631"
-
-    Write-Host "`nStarting native services..." -ForegroundColor Cyan
-
-    # CP
-    Write-Host "  Starting Control Plane (port 12631)..." -ForegroundColor White
-    $mvnPath = (Get-Command mvn -ErrorAction SilentlyContinue).Source
-    if ($mvnPath) {
-        Start-Process -FilePath $mvnPath -ArgumentList "spring-boot:run" -WorkingDirectory "$ProjectRoot\packages\control-plane" -WindowStyle Minimized
-    } else {
-        Write-Host "  mvn not found, skipping CP" -ForegroundColor Yellow
-    }
-    Write-DevHostEvent -Event "process_started" -Fields @{ service = "cp"; outcome = "ok" }
-
-    # Runtime
-    Write-Host "  Starting Runtime (port 12633)..." -ForegroundColor White
-    $cargoPath = (Get-Command cargo -ErrorAction SilentlyContinue).Source
-    if ($cargoPath) {
-        Start-Process -FilePath $cargoPath -ArgumentList "run","--bin","xihe-runtime" -WorkingDirectory "$ProjectRoot\packages\runtime" -WindowStyle Minimized
-    } else {
-        Write-Host "  cargo not found, skipping Runtime" -ForegroundColor Yellow
-    }
-    Write-DevHostEvent -Event "process_started" -Fields @{ service = "runtime"; outcome = "ok" }
-
-    # Agent
-    Write-Host "  Starting Agent (port 12632)..." -ForegroundColor White
-    $uvPath = (Get-Command uv -ErrorAction SilentlyContinue).Source
-    if ($uvPath) {
-        Start-Process -FilePath $uvPath -ArgumentList "run","python","-m","xihe_agent.main" -WorkingDirectory "$ProjectRoot\packages\agent" -WindowStyle Minimized
-    } else {
-        Write-Host "  uv not found, skipping Agent" -ForegroundColor Yellow
-    }
-    Write-DevHostEvent -Event "process_started" -Fields @{ service = "agent"; outcome = "ok" }
-
-    # UI
-    Write-Host "  Starting UI (port 12630)..." -ForegroundColor White
-    $vitePath = Join-Path $ProjectRoot "packages\ui\node_modules\.bin\vite.cmd"
-    if (Test-Path $vitePath) {
-        Start-Process -FilePath $vitePath -ArgumentList "--port","12630","--mode","dev" -WorkingDirectory "$ProjectRoot\packages\ui" -WindowStyle Minimized
-    } else {
-        Write-Host "  UI dependencies not installed, skipping UI" -ForegroundColor Yellow
-    }
-    Write-DevHostEvent -Event "process_started" -Fields @{ service = "ui"; outcome = "ok" }
-
-    Write-Host "`nAll services started. Waiting for readiness..." -ForegroundColor Green
-    Start-Sleep -Seconds 10
-
-    # Health checks
-    $services = @(
-      @{ Name = "CP"; Url = "http://localhost:12631/actuator/health" },
-      @{ Name = "Agent"; Url = "http://localhost:12632/internal/v1/agent/health" },
-      @{ Name = "Runtime"; Url = "http://localhost:12633/ready" },
-      @{ Name = "UI"; Url = "http://localhost:12630" }
-    )
-    foreach ($svc in $services) {
-      try {
-        $r = Invoke-WebRequest -Uri $svc.Url -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
-        Write-Host "  $($svc.Name): UP ($($r.StatusCode))" -ForegroundColor Green
-      } catch {
-        Write-Host "  $($svc.Name): DOWN" -ForegroundColor Yellow
-      }
-    }
-
-    Write-Host "`nServices started. Use 'mise run dev:host:watch' for auto-restart." -ForegroundColor Cyan
-    Write-Host "Or stop with 'mise run dev:host:stop'." -ForegroundColor DarkGray
-    Write-DevHostEvent -Event "devhost_run_finished" -Fields @{ mode = "start"; outcome = "ok" }
-  } finally { Pop-Location }
+  if ($ok) { Write-Host "`nCheck OK — run `mise run dev:host` to bring up" -ForegroundColor Cyan }
+  else { Write-Host "`nCheck finished with warnings — fix above before starting" -ForegroundColor Yellow }
 }
 
 function Do-Stop {
   Ensure-Dirs
-  Write-Host "=== dev:host -Stop ===" -ForegroundColor Cyan
+  Write-Host "=== dev:host -Stop (stack=$StackId) ===" -ForegroundColor Cyan
   Write-DevHostEvent -Event "cleanup_started" -Fields @{ scope = "dev-host" }
   Push-Location $ProjectRoot
   try {
     Stop-NativeServices
-    Write-Host "Stopping postgres (docker compose stop postgres)..." -ForegroundColor Cyan
-    docker compose stop postgres 2>$null
+    Write-Host "Stopping postgres (compose project $ComposeProject)..." -ForegroundColor Cyan
+    $env:XIHE_COMPOSE_PROJECT = $ComposeProject
+    docker compose -p $ComposeProject stop postgres 2>$null
     Remove-WorkspaceContainers
     # Do NOT down volumes or remove host directories
-    Write-Host "Postgres stopped (volume pgdata kept, hostRoot kept: $HostRoot)" -ForegroundColor Green
+    Write-Host "Postgres stopped (volume kept, hostRoot kept: $HostRoot)" -ForegroundColor Green
   } finally { Pop-Location }
 
   # Kill any pid files if we ever background native services (v1: none, placeholder)
@@ -301,77 +240,6 @@ function Do-Stop {
   }
   Write-DevHostEvent -Event "cleanup_finished" -Fields @{ scope = "dev-host"; outcome = "ok" }
   Write-Host "dev:host stopped. Host directories preserved: $HostRoot" -ForegroundColor Green
-}
-
-function Test-ServiceHealth {
-  param([string]$Name, [string]$Url)
-  try {
-    $response = Invoke-WebRequest -Uri $Url -TimeoutSec 3 -UseBasicParsing -ErrorAction Stop
-    return $response.StatusCode -lt 400
-  } catch {
-    return $false
-  }
-}
-
-function Start-ServiceProcess {
-  param([string]$Name, [string]$Command, [string]$LogPath)
-  Write-Host "Starting $Name..." -ForegroundColor Cyan
-  $logDir = Split-Path $LogPath -Parent
-  if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Force -Path $logDir | Out-Null }
-  $process = Start-Process -FilePath "pwsh" -ArgumentList "-NoExit", "-Command", "$Command 2>&1 | Tee-Object -FilePath '$LogPath'" -PassThru -WindowStyle Minimized
-  Write-DevHostEvent -Event "process_started" -Fields @{ service = $Name; pid = $process.Id; outcome = "ok" }
-  return $process
-}
-
-function Do-Watch {
-  Ensure-Dirs
-  Write-Host "=== dev:host -Watch (health loop + auto-restart) ===" -ForegroundColor Cyan
-  Write-Host "Press Ctrl+C to stop" -ForegroundColor DarkGray
-  Write-DevHostEvent -Event "devhost_run_started" -Fields @{ mode = "watch"; hostRoot = $HostRoot }
-
-  # Service definitions: Name, HealthUrl, Command, LogPath
-  $services = @(
-    @{ Name = "control-plane"; HealthUrl = "http://localhost:12631/actuator/health"; Command = "cd $ProjectRoot; mise run dev:cp"; LogPath = Join-Path $LogDir "cp.log" },
-    @{ Name = "agent"; HealthUrl = "http://localhost:12632/internal/v1/agent/health"; Command = "cd $ProjectRoot; mise run dev:agent"; LogPath = Join-Path $LogDir "agent.log" },
-    @{ Name = "runtime"; HealthUrl = "http://localhost:12633/ready"; Command = "cd $ProjectRoot; mise run dev:runtime"; LogPath = Join-Path $LogDir "runtime.log" }
-  )
-
-  # Track process PIDs
-  $processes = @{}
-
-  # Initial start
-  foreach ($svc in $services) {
-    $processes[$svc.Name] = Start-ServiceProcess -Name $svc.Name -Command $svc.Command -LogPath $svc.LogPath
-    Start-Sleep -Seconds 2
-  }
-
-  Write-Host "`nAll services started. Monitoring health every 15s..." -ForegroundColor Green
-  Write-DevHostEvent -Event "watch_started" -Fields @{ services = ($services | ForEach-Object { $_.Name }) -join "," }
-
-  # Health loop
-  while ($true) {
-    Start-Sleep -Seconds 15
-    foreach ($svc in $services) {
-      $alive = Test-ServiceHealth -Name $svc.Name -Url $svc.HealthUrl
-      $proc = $processes[$svc.Name]
-      $procAlive = $proc -and -not $proc.HasExited
-
-      if (-not $alive -or -not $procAlive) {
-        $reason = if (-not $procAlive) { "process_exited" } else { "health_check_failed" }
-        Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $($svc.Name) is down ($reason), restarting..." -ForegroundColor Yellow
-        Write-DevHostEvent -Event "auto_restart" -Fields @{ service = $svc.Name; reason = $reason }
-
-        # Kill stale process if still running
-        if ($proc -and -not $proc.HasExited) {
-          try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
-        }
-
-        # Restart
-        $processes[$svc.Name] = Start-ServiceProcess -Name $svc.Name -Command $svc.Command -LogPath $svc.LogPath
-        Start-Sleep -Seconds 3
-      }
-    }
-  }
 }
 
 if ($Check) { Do-Check; exit 0 }

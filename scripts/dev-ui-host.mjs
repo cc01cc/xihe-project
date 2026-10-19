@@ -5,13 +5,19 @@ import { fileURLToPath } from "node:url";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const uiRoot = path.join(projectRoot, "packages", "ui");
-const logsDir = path.join(projectRoot, "logs");
+// PLAN-0533: log dir and port come from the derived stack env; defaults keep stack-1 unchanged.
+const logsDir = path.resolve(projectRoot, process.env.XIHE_LOG_DIR || "logs");
 const logFile = path.join(logsDir, "ui.log");
 
 fs.mkdirSync(logsDir, { recursive: true });
 const logStream = fs.createWriteStream(logFile, { flags: "a" });
 const viteEntry = path.join(uiRoot, "node_modules", "vite", "bin", "vite.js");
-const child = spawn(process.execPath, [viteEntry, ...process.argv.slice(2)], {
+const forwarded = process.argv.slice(2);
+const explicitPort = forwarded.some((arg) => arg === "--port" || arg.startsWith("--port="));
+if (!explicitPort) {
+  forwarded.push("--port", process.env.XIHE_UI_PORT || "12630");
+}
+const child = spawn(process.execPath, [viteEntry, ...forwarded], {
   cwd: uiRoot,
   env: process.env,
   stdio: ["inherit", "pipe", "pipe"],

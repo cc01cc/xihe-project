@@ -16,8 +16,55 @@ use tracing::{info, warn};
 use crate::error::{Result, RuntimeError};
 use crate::sandbox::SecurityProfile;
 
+/// Legacy (stack-1) sandbox container prefix; unchanged by PLAN-0533.
+pub(crate) const CONTAINER_PREFIX_DEFAULT: &str = "xihe-workspace-ws_";
+/// Label carrying the owning stack. Missing label = stack-1 (legacy containers).
+pub(crate) const STACK_LABEL: &str = "xihe.stack-id";
+
+/// Sandbox container prefix for the current stack.
+///
+/// Deployment authority is `XIHE_SANDBOX_CONTAINER_PREFIX`, a derived env the
+/// launcher computes from `XIHE_STACK_ID`. The runtime intentionally does not
+/// read `XIHE_STACK_ID` itself (invariant I6: only `/version` may).
+pub(crate) fn container_prefix_from(lookup: impl Fn(&str) -> Option<String>) -> String {
+    lookup("XIHE_SANDBOX_CONTAINER_PREFIX")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| CONTAINER_PREFIX_DEFAULT.to_string())
+}
+
+/// Stack id used for the container label; defaults to stack-1 for legacy setups.
+pub(crate) fn sandbox_stack_id_from(lookup: impl Fn(&str) -> Option<String>) -> String {
+    lookup("XIHE_SANDBOX_STACK_ID")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "stack-1".to_string())
+}
+
+fn env_lookup(key: &str) -> Option<String> {
+    std::env::var(key).ok()
+}
+
 pub(crate) fn container_name(ws_id: &str) -> String {
-    format!("xihe-workspace-ws_{ws_id}")
+    format!("{}{ws_id}", container_prefix_from(env_lookup))
+}
+
+/// Ownership predicate shared by orphan cleanup: name prefix AND stack label.
+/// A container without the label is legacy stack-1 (B3).
+pub(crate) fn is_stack_container(
+    name: &str,
+    labels: Option<&HashMap<String, String>>,
+    prefix: &str,
+    stack_id: &str,
+) -> bool {
+    if !name.starts_with(&format!("/{prefix}")) {
+        return false;
+    }
+    let labelled = labels
+        .and_then(|map| map.get(STACK_LABEL))
+        .map(String::as_str)
+        .unwrap_or("stack-1");
+    labelled == stack_id
 }
 
 /// Sandbox container resource defaults (legacy profile; env-overridable).
@@ -198,9 +245,14 @@ impl WorkspaceManager {
         // PLAN-0347 T1.5: no published container-runtime port any more; workspace
         // operations and MCP sessions flow through Docker exec, so Docker network
         // reachability is not required (and never worked on native Windows hosts).
-        let labels = std::env::var("XIHE_E2E_RUN_ID")
-            .ok()
-            .map(|run_id| HashMap::from([(String::from("xihe.e2e.run-id"), run_id)]));
+        let mut labels = HashMap::new();
+        if let Ok(run_id) = std::env::var("XIHE_E2E_RUN_ID") {
+            labels.insert(String::from("xihe.e2e.run-id"), run_id);
+        }
+        // PLAN-0533: every container carries its owning stack; legacy containers
+        // without the label are treated as stack-1 on cleanup.
+        labels.insert(STACK_LABEL.to_string(), sandbox_stack_id_from(env_lookup));
+        let labels = Some(labels);
 
         // Sandbox resource limits are deployment-authority env knobs
         // (XIHE_SANDBOX_MEMORY_MB / XIHE_SANDBOX_CPUS / XIHE_SANDBOX_PIDS_LIMIT);
@@ -657,11 +709,14 @@ impl WorkspaceManager {
             .await
             .map_err(|e| RuntimeError::Docker(e.to_string()))?;
 
+        let prefix = container_prefix_from(env_lookup);
+        let current_stack = sandbox_stack_id_from(env_lookup);
+
         for container in containers {
             let is_runtime_owned = container.names.as_ref().is_some_and(|names| {
-                names
-                    .iter()
-                    .any(|name| name.starts_with("/xihe-workspace-ws_"))
+                names.iter().any(|name| {
+                    is_stack_container(name, container.labels.as_ref(), &prefix, &current_stack)
+                })
             });
             let belongs_to_current_run = match std::env::var("XIHE_E2E_RUN_ID") {
                 Ok(run_id) => container
@@ -819,5 +874,76 @@ mod sandbox_resource_limits_tests {
         let oversized_memory =
             SandboxResourceLimits::from_lookup(lookup(&[("XIHE_SANDBOX_MEMORY_MB", "2097152")]));
         assert_eq!(oversized_memory, defaults);
+    }
+
+    #[test]
+    fn stack_prefix_and_label_default_to_legacy_stack_1() {
+        assert_eq!(container_prefix_from(|_| None), CONTAINER_PREFIX_DEFAULT);
+        assert_eq!(sandbox_stack_id_from(|_| None), "stack-1");
+        assert_eq!(
+            container_prefix_from(|_| Some("  ".to_string())),
+            CONTAINER_PREFIX_DEFAULT
+        );
+    }
+
+    #[test]
+    fn stack_prefix_and_label_come_from_derived_env_only() {
+        let prefix = container_prefix_from(|key| {
+            (key == "XIHE_SANDBOX_CONTAINER_PREFIX").then(|| "xihe-ws-s2-ws_".to_string())
+        });
+        assert_eq!(prefix, "xihe-ws-s2-ws_");
+
+        let stack = sandbox_stack_id_from(|key| {
+            (key == "XIHE_SANDBOX_STACK_ID").then(|| "stack-2".to_string())
+        });
+        assert_eq!(stack, "stack-2");
+    }
+
+    #[test]
+    fn ownership_requires_prefix_and_matching_label() {
+        let mut labels = HashMap::new();
+        labels.insert(STACK_LABEL.to_string(), "stack-2".to_string());
+
+        assert!(is_stack_container(
+            "/xihe-ws-s2-ws_ws_1",
+            Some(&labels),
+            "xihe-ws-s2-ws_",
+            "stack-2"
+        ));
+        assert!(!is_stack_container(
+            "/xihe-ws-s2-ws_ws_1",
+            Some(&labels),
+            "xihe-workspace-ws_",
+            "stack-2"
+        ));
+        assert!(!is_stack_container(
+            "/xihe-ws-s2-ws_ws_1",
+            Some(&labels),
+            "xihe-ws-s2-ws_",
+            "stack-1"
+        ));
+
+        // Legacy container without the label belongs to stack-1 only (B3).
+        assert!(is_stack_container(
+            "/xihe-workspace-ws_ws_1",
+            None,
+            CONTAINER_PREFIX_DEFAULT,
+            "stack-1"
+        ));
+        assert!(!is_stack_container(
+            "/xihe-workspace-ws_ws_1",
+            None,
+            CONTAINER_PREFIX_DEFAULT,
+            "stack-2"
+        ));
+    }
+
+    #[test]
+    fn container_name_implementation_is_shared_with_executor() {
+        // Guards against re-introducing a second format! in executor.rs (T3.1).
+        assert_eq!(
+            crate::executor::WorkspaceExecutionRouter::container_name("ws_test"),
+            container_name("ws_test")
+        );
     }
 }

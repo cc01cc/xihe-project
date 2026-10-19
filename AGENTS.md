@@ -19,6 +19,7 @@
 
 - 使用 `mise install` 和 `mise run setup` 安装固定工具链与依赖；前置条件及模块命令见 DEV-002。
 - 日常 host 开发运行 `mise run dev:host`：仅 PostgreSQL 在 Docker 中，CP、Agent、Runtime、UI 由 mise 原生启动；该命令不导入配置或创建 Provider Connection。项目开发/运维命令见 DEV-002 与 `mise run xihe -- --help`。
+- 并行开发（PLAN-0533）：`mise run dev:stack -- --stack 2`（或 `XIHE_STACK_ID=stack-2 mise run dev:host`）起第二套栈；`stack-1` 端口/路径与单栈时逐项相同，stack-2 起使用独立段位、compose project、PG 库与 `.xihe-stacks/<n>/` 路径，详见 DEV-002「模式 D」。非法/未登记 `XIHE_STACK_ID` 启动即失败；`dev:host:stop`/`dev:reset` 只作用于当前栈。
 - **docker 冻结（2026-10-07 用户裁定，2026-10-09 强化）**：XH 的 Docker 构建与服务容器化全部暂缓——只有 PostgreSQL 保留为容器，CP/Agent/Runtime/UI 全部 host。`mise run dev:full` / `dev:backend` / `test:e2e:compose` / `test:e2e` / `image:workspace:build` 已在 `mise.toml` 注释冻结（文件头有冻结说明与解冻条件），禁止误启；日常用 `mise run dev:host`，隔离 E2E 用 `mise run test:e2e:host`。
 - `mise run dev:reset` 默认 dry-run；显式重置前检查备份与数据范围。`reset-admin` 输出临时开发密码，不得写入脚本、源码或日志。
 
