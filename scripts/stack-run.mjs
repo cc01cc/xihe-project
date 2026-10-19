@@ -144,6 +144,23 @@ if (!factory) {
 }
 
 const env = { ...process.env, ...stackEnvDefaults(derived, process.env) };
+
+// The agent's httpx builds URLPatterns from NO_PROXY; a bracketed IPv6 entry such
+// as `[::1]` is parsed as a URL and aborts startup (`Invalid port: ':1]'`).
+// Drop only those malformed entries; keep the rest of the bypass list and the
+// outbound proxies.
+if (target === "agent") {
+  for (const key of ["NO_PROXY", "no_proxy"]) {
+    if (typeof env[key] === "string" && /[[\]]/.test(env[key])) {
+      env[key] = env[key]
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry && !/[[\]]/.test(entry))
+        .join(",");
+    }
+  }
+}
+
 describeTarget(target, derived);
 
 // T3.3: PostgreSQL must belong to this stack's compose project and listen on the
