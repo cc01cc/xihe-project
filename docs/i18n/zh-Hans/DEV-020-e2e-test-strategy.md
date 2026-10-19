@@ -211,6 +211,22 @@ node scripts/e2e-host.mjs --llm-mode=disconnect e2e/real/chat-availability.spec.
 
 `--llm-mode` 只选择受控 fixture 行为：missing 不提供 key，invalid 让 models/chat 返回 401，success 返回至少两个 SSE token，disconnect 在首个 token 后断开。可用 `XIHE_E2E_HEADED=1` 和 `XIHE_E2E_BROWSER_CHANNEL=chrome-beta` 启用 Chrome Beta headed 模式；每轮仍使用独立 DB、host root、端口和 evidence 输出。
 
+### 3.2 E2E-only 时序屏障（PLAN-0536）
+
+需要确定性排列「浏览器请求已到 CP」与「真实状态变更」时，不要在测试里 mock 服务端响应——那证明不了真实状态校验。CP 提供 `@Profile("e2e")` 的 Run-scoped 屏障（`/internal/v1/e2e/guidance-barrier`），仅 host runner 的服务 token 可调用；`dev`/`prod` 不激活该 profile，路由不存在。
+
+```bash
+node scripts/e2e-host-detached.mjs --timeout-min 45 \
+  e2e/real/plan0536-guidance-race.spec.ts --llm-mode=approval --retries=0
+```
+
+约束（实测得出，细则见 `plans/PLAN-0536-xh-guidance-race-error-e2e/spec/e2e-guidance-barrier.md`）：
+
+- 屏障必须挂在 controller、service 事务之外。service 事务内先锁 Session 再锁 Run，与 cancel 路径同序，停在那里会让 cancel 撞锁超时（503），竞态永远构造不出来。
+- 起跑顺序固定为 arm → `state=reached` → 真实状态变更 → release → 生产校验返回原错误码。
+- 超时返回 `503 E2E_GUIDANCE_BARRIER_TIMEOUT` 且不落库；`try/finally` 里无条件 release。
+- 断言 console 时，被测试**故意触发**的 4xx 会带一条浏览器资源错误日志，需精确放行该条，不要整体放宽。
+
 ## 4. 参考
 
 - XH E2E profile、readiness 和实际结果矩阵：维护在 workspace 私有 internal 层（不在本仓库分发）
