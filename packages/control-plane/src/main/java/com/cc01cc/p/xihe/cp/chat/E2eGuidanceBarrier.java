@@ -18,7 +18,7 @@ import java.util.concurrent.TimeoutException;
 
 /**
  * PLAN-0536: E2E-only Guidance barrier. Frozen contract:
- * {@code plans/PLAN-0536-xh-guidance-race-error-e2e/spec/e2e-guidance-barrier.md}.
+ * {@code plans/archive/PLAN-0536-xh-guidance-race-error-e2e/spec/e2e-guidance-barrier.md}.
  *
  * <p>The barrier exists only to make one ordering deterministic: a browser
  * Guidance POST has reached CP, the Run is cancelled through the real endpoint,

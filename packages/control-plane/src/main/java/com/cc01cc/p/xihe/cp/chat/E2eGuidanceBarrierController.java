@@ -27,7 +27,7 @@ import java.util.UUID;
  * this class.
  *
  * <p>Frozen contract:
- * {@code plans/PLAN-0536-xh-guidance-race-error-e2e/spec/e2e-guidance-barrier.md}.
+ * {@code plans/archive/PLAN-0536-xh-guidance-race-error-e2e/spec/e2e-guidance-barrier.md}.
  */
 @RestController
 @Profile("e2e")

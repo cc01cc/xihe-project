@@ -220,7 +220,7 @@ node scripts/e2e-host-detached.mjs --timeout-min 45 \
   e2e/real/plan0536-guidance-race.spec.ts --llm-mode=approval --retries=0
 ```
 
-约束（实测得出，细则见 `plans/PLAN-0536-xh-guidance-race-error-e2e/spec/e2e-guidance-barrier.md`）：
+约束（实测得出，细则见 `plans/archive/PLAN-0536-xh-guidance-race-error-e2e/spec/e2e-guidance-barrier.md`）：
 
 - 屏障必须挂在 controller、service 事务之外。service 事务内先锁 Session 再锁 Run，与 cancel 路径同序，停在那里会让 cancel 撞锁超时（503），竞态永远构造不出来。
 - 起跑顺序固定为 arm → `state=reached` → 真实状态变更 → release → 生产校验返回原错误码。
