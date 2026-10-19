@@ -1,18 +1,9 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { generateE2EPassword } from "./helpers/password";
-import { createWorkspaceSessionWithPrincipal } from "./helpers/agent-principal";
-import {
-    ensureAgentWorkspaceBinding,
-    ensureChatBinding,
-    seedPage,
-    waitForControlPlaneAgentReady,
-} from "./helpers/journey";
-import type { JourneyContext } from "./helpers/journey";
+import { CP_URL, registerAndCreateGuidanceSession } from "./helpers/guidance-session";
 
-const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`,
-    LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
+const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 
 const evidenceDir = path.resolve(process.cwd(), "../../.local/evidence");
 
@@ -25,68 +16,13 @@ async function captureEvidence(page: import("@playwright/test").Page, name: stri
 
 test.describe.configure({ mode: "serial", retries: 0 });
 
+/** PLAN-0530 fixture, shared with the PLAN-0536 race journey via `helpers/guidance-session.ts`. */
 async function registerAndCreateSession(
     page: import("@playwright/test").Page,
     request: APIRequestContext,
-): Promise<{
-    authHeaders: Record<string, string>;
-    sessionId: string;
-    runId: string;
-}> {
-    const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword(),
-        register = await request.post(`${CP_URL}/api/v1/auth/register`, {
-            data: {
-                email: `guidance-ui-e2e-${Date.now()}@test.com`,
-                password,
-                name: "GuidanceUIE2E",
-            },
-        });
-    expect([200, 201], await register.text()).toContain(register.status());
-    const authBody = (await register.json()) as { accessToken: string; workspaceId: string },
-        authHeaders = {
-            Authorization: `Bearer ${authBody.accessToken}`,
-            "Content-Type": "application/json",
-        },
-        me = await request.get(`${CP_URL}/api/v1/auth/me`, { headers: authHeaders });
-    expect(me.status(), await me.text()).toBe(200);
-    const userId = ((await me.json()) as { id: string }).id;
-
-    // Reuse the approval-mode fixture from guidance-consume.spec.ts.
-    const { createApprovalAgent } = await import("./helpers/guidance-approval-agent.ts");
-    const principalId = await createApprovalAgent(request, {
-        userId,
-        workspaceId: authBody.workspaceId,
-        headers: authHeaders,
-    });
-
-    await ensureAgentWorkspaceBinding(authBody.workspaceId);
-    await waitForControlPlaneAgentReady(request, authHeaders);
-    seedPage(page, {
-        authToken: authBody.accessToken,
-        workspaceId: authBody.workspaceId,
-    } as JourneyContext);
-    await page.goto(`/workspace/${authBody.workspaceId}`, { waitUntil: "load" });
-    const sessionId = await createWorkspaceSessionWithPrincipal(page, principalId);
-    await ensureChatBinding(page, sessionId);
-
-    const textarea = page.locator("textarea");
-    await expect(textarea).toBeVisible({ timeout: 20_000 });
-    const sent = page.waitForResponse(
-        (response) =>
-            response.url().endsWith("/api/v1/chat") && response.request().method() === "POST",
-    );
-    await textarea.fill("please delete README.md");
-    await page.getByTestId("chat-send-button").click();
-    const chatResponse = await sent;
-    expect(chatResponse.status(), await chatResponse.text()).toBe(202);
-    const runId = ((await chatResponse.json()) as { runId: string }).runId;
-    expect(runId).toBeTruthy();
-
-    // Wait for the approval modal to confirm the run is in awaiting_approval.
-    const modal = page.locator('[data-testid="modal-content"]');
-    await expect(modal).toBeVisible({ timeout: 60_000 });
-
-    return { authHeaders, sessionId, runId };
+) {
+    const fixture = await registerAndCreateGuidanceSession(page, request);
+    return { authHeaders: fixture.authHeaders, sessionId: fixture.sessionId, runId: fixture.runId };
 }
 
 test("@host Guidance UI entry submits and projects pending status", async ({ page, request }) => {
