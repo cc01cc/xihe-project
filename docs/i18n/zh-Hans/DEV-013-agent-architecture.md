@@ -162,7 +162,7 @@ PLAN-0509 Run Trace 将耐久 `prompt.admitted` 独立投影为不含消息正�
 - **注入形态**：每条等待中的 Guidance → 一条 `HumanMessage`，正文为不可信信封 `[guidance] (source=user, seq=<n>)\n<content>`，按 CP `sequence` 升序（消费端防御性排序）；不进 system prompt。**瞬态**：只进该次调用的 messages 副本，不入 graph `messages`/checkpoint/EventStore，因此 consumed 内容不会随 checkpoint 进入续跑上下文。
 - **读取与确认**：`GET /internal/v1/chat/runs/{runId}/guidance/pending` → 注入后 `POST .../{guidanceId}/consume`（`Idempotency-Key: guidance-<id>`）。三级去重：stream 内 `injected_ids`、CP 幂等、consume 返回 `409 GUIDANCE_ALREADY_TERMINAL_EXPIRED` → 记入并停止重试且不再注入。
 - **失败语义**：CP 读取失败/超时 → fail-open（warn + 零注入，Run 继续）——Guidance 无授权语义，不影响安全；consume 瞬时失败 → 该 id 不记入 injected_ids，下一边界重读，靠 CP 幂等/409 兜底，**绝不重放已完成工具副作用**。
-- **边界**：无 runId 或无 consumer（registry worker、单测）→ 整体禁用、零行为变化；不新增 AgentEvent 类型、无 Guidance SSE（UI 经 CP 快照感知）；不与 Follow-up/续跑共用状态。契约：`spec/agent-guidance-consume-protocol.md`（本仓库）。
+- **边界**：无 runId 或无 consumer（registry worker、单测）→ 整体禁用、零行为变化；不新增 AgentEvent 类型、无 Guidance SSE（UI 经 CP 快照感知）；不与 Follow-up/续跑共用状态。契约：`plans/archive/PLAN-0529-xh-guidance-agent-consume/spec/agent-guidance-consume-protocol.md`（归档 PLAN 工作包）。
 
 | 层 | 事件 |
 |----|------|
