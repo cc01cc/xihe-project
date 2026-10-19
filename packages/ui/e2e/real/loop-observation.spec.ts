@@ -32,7 +32,7 @@ import {
 //   XIHE_E2E_REAL_XIAOMI_KEY=<from .env.local> XIHE_E2E_REAL_ROUTE=openai-compat \
 //     mise run test:e2e:host -- --batch=loop-observation
 const REAL_ROUTE = process.env.XIHE_E2E_REAL_ROUTE ?? "native";
-const MODEL_ID = process.env.XIHE_E2E_REAL_OPENAI_MODEL ?? "mimo-v2.5";
+const MODEL_ID = process.env.XIHE_E2E_REAL_OPENAI_MODEL ?? "mimo-v2.6-flash";
 const TERMINAL = /^(succeeded|failed|partial|cancelled|ambiguous)$/;
 
 const SCENARIOS: Array<{ id: string; prompt: string }> = [
