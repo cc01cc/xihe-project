@@ -8,13 +8,15 @@ import fs from "node:fs";
  * PLAN-0414 V6: real-browser verification of the Context Template editor
  * (settings) and the per-Session binding selector (chat), asserting the API
  * request payload, the reloaded persistence, and the visible result.
- * Screenshots land in the PLAN evidence directory as run artifacts.
+ * Screenshots land in the gitignored per-plan evidence directory as run artifacts.
  */
 
-const EVIDENCE_DIR = path.resolve(
-    import.meta.dirname,
-    "../../../../../plans/PLAN-0414-XH-context-template-and-components/evidence/browser",
-);
+// Resolve from this file's own location (packages/ui/e2e/mock) rather than a
+// fixed `../` climb from the checkout root: a fixed climb counts directory
+// levels, so running this spec inside a Git worktree (one extra level) escaped
+// into `<repo>/.worktrees/plans/...` instead of the checkout's own `.local/`.
+const PACKAGE_ROOT = path.resolve(import.meta.dirname, "../.."),
+    EVIDENCE_DIR = path.resolve(PACKAGE_ROOT, "../../.local/evidence/plan-0414-context-templates");
 
 const TEMPLATE_ID = "11111111-1111-4111-8111-111111111111",
     COMPONENT_ID = "22222222-2222-4222-8222-222222222222";
