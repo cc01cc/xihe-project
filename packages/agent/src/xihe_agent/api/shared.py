@@ -8,13 +8,13 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from loguru import logger
 
-from xihe_agent.app_state import CP_API_TOKEN
+from xihe_agent.service_token import resolve_service_token
 
 
 def verify_api_token(request: Request) -> None:
     auth_header = request.headers.get("Authorization", "")
     token = auth_header.removeprefix("Bearer ") if auth_header.startswith("Bearer ") else None
-    if token != CP_API_TOKEN:
+    if token != resolve_service_token():
         logger.warning("Agent API token mismatch")
         raise HTTPException(status_code=403, detail="Forbidden: invalid API token")
 

@@ -9,7 +9,7 @@ import java.lang.reflect.Field;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest(properties = "cp.mcp.session-id.hmac-secret=test-only-key")
+@SpringBootTest
 @ActiveProfiles("h2")
 class McpForwardTimeoutTest {
 

@@ -493,9 +493,9 @@ class JobTimeoutClampTest {
             Class<?> accessClass = Class.forName(
                     "com.cc01cc.p.xihe.cp.mcp.McpProxyController$AccessContext");
             var constructor = accessClass.getDeclaredConstructor(
-                    String.class, String.class, String.class, String.class, boolean.class);
+                    String.class, String.class, String.class, boolean.class);
             constructor.setAccessible(true);
-            return constructor.newInstance(wsId, userId, "app-session-clamp", null, true);
+            return constructor.newInstance(wsId, userId, "app-session-clamp", true);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }

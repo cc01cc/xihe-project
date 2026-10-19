@@ -58,7 +58,6 @@
 |---|---|---|
 | `XIHE_CP_JWT_SECRET` | 使用出厂默认值 | 设置强随机密钥 |
 | `XIHE_CP_API_TOKEN` / `XIHE_AGENT_API_TOKEN` | 使用 dev token `dev-token-not-secure` | 设置强服务 token |
-| `XIHE_MCP_SESSION_ID_HMAC_SECRET` | 未配置 | 设置 HMAC 密钥 |
 | `XIHE_CP_OAUTH_ENCRYPTION_KEY` | 未配置 | 提供 base64 AES-256 key |
 | `XIHE_CP_OAUTH_ALLOW_DEV_KEY` | 为 `true` | 置 `false` |
 | `XIHE_CP_PROVIDER_CREDENTIALS_KEY` | 未配置 | 提供 base64 AES-256 key |

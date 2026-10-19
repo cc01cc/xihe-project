@@ -30,7 +30,7 @@ sequenceDiagram
 - Agent **MUST** 只连接 CP logical MCP endpoint。
 - CP **MUST** 负责认证、Workspace/session ownership、tool-name routing、policy gate 和 JSON-RPC relay。
 - Runtime MCP v1 **MUST** 按当前 MCP protocol headers 保持 stateless；CP 转发所需 `Mcp-Method`/`Mcp-Name`。
-- CP↔Agent 的 `mcp-session-id` HMAC 与 Runtime stateless transport 是两个不同边界，不得混为一个 session lifecycle。
+- 逻辑 MCP 无协议会话：CP **MUST NOT** 签发或回传 `mcp-session-id`；入站请求携带该头 **MUST** 以 403 `MCP_SESSION_INVALID` fail-closed。Runtime stateless transport 与本条是两个不同边界。
 - stdio 使用 Runtime host `exec attach` 会话；retired bridge、容器内 HTTP、容器端口和 Docker transport 不得进入 backend-neutral contract。
 - remote MCP 由 Runtime host connector 出网；Workspace sandbox 不直接承担 OAuth 或 remote egress。
 

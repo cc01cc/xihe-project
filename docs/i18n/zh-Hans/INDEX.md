@@ -31,6 +31,7 @@ sidebar_order: 0
 - [DEV-017: Session 架构](DEV-017-session-architecture.md)
 - [DEV-018: Known Issues](DEV-018-known-issues.md)
 - [DEV-019: 数据库设计](DEV-019-database-schema.md)
+- [DEV-024: 模块认证与密钥矩阵](DEV-024-authentication-matrix.md)
 
 ### 测试
 

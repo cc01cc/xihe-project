@@ -8,13 +8,14 @@ import litellm
 from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
 
+from xihe_agent.service_token import resolve_service_token
 from xihe_agent.llm.base import fallback_provider_configs
 
 router = APIRouter()
 
 
 def verify_service_token(request: Request) -> None:
-    expected = os.getenv("XIHE_AGENT_API_TOKEN") or os.getenv("XIHE_CP_API_TOKEN", "dev-token-not-secure")
+    expected = resolve_service_token()
     if request.headers.get("Authorization") != f"Bearer {expected}":
         raise HTTPException(status_code=401, detail="Authorization required")
 
