@@ -5,9 +5,17 @@ import path from "node:path";
 import fs from "node:fs";
 
 /**
- * PLAN-0414 V6: real-browser verification of the Context Template editor
- * (settings) and the per-Session binding selector (chat), asserting the API
- * request payload, the reloaded persistence, and the visible result.
+ * PLAN-0414 V6 (binding selector half): real-browser verification that the
+ * per-Session request-template selector pins an explicit template revision —
+ * asserting the PATCH payload, the visible badge, and the rendered screenshot.
+ *
+ * The settings half of the original spec (component insert/reorder, live budget
+ * preview, immutable revision append) asserted a template model that PLAN-0439
+ * (`b74f9a44`) replaced with the API request template editor. No counterpart
+ * survives, and that surface is now covered by `e2e/real/api-request-template.spec.ts`,
+ * `plan0416-context-reliability.spec.ts`, `plan0503-config-catalog.spec.ts` and
+ * `plan0505-delete-impact.spec.ts`, so the stale half was removed rather than
+ * remapped.
  * Screenshots land in the gitignored per-plan evidence directory as run artifacts.
  */
 
@@ -19,7 +27,10 @@ const PACKAGE_ROOT = path.resolve(import.meta.dirname, "../.."),
     EVIDENCE_DIR = path.resolve(PACKAGE_ROOT, "../../.local/evidence/plan-0414-context-templates");
 
 const TEMPLATE_ID = "11111111-1111-4111-8111-111111111111",
-    COMPONENT_ID = "22222222-2222-4222-8222-222222222222";
+    SESSION_ID = "bind-session",
+    CONNECTION_ID = "33333333-3333-4333-8333-333333333333",
+    API_TYPE_ID = "openai-chat-completions",
+    CONNECTION_REVISION = 7;
 
 function template(version: number, name: string) {
     return {
@@ -27,20 +38,10 @@ function template(version: number, name: string) {
         version,
         name,
         description: "e2e template",
-        document: `{{component:${COMPONENT_ID}}}`,
-        components: [
-            {
-                instanceId: COMPONENT_ID,
-                type: "conversation_history",
-                enabled: true,
-                config: {
-                    selection: "recent",
-                    maxTurns: 20,
-                    maxTokens: 8000,
-                    includeCompaction: true,
-                },
-            },
-        ],
+        apiTypeId: API_TYPE_ID,
+        apiTypeVersion: 1,
+        bodySource: '{"model":"e2e"}',
+        status: "published" as const,
     };
 }
 
@@ -58,162 +59,94 @@ test.describe("Context templates (PLAN-0414)", () => {
         await setupMockAuth(page);
     });
 
-    test("settings editor appends an immutable revision and shows a configuration-level preview", async ({
-        page,
-    }) => {
-        // In-memory store: GET serves it, PUT captures + updates it so the reload
-        // proves persistence of the appended revision.
-        let stored: Record<string, string> = {
-            templates: JSON.stringify([template(1, "E2E Template")]),
-        };
-        const puts: Array<Record<string, string>> = [];
-
-        await page.route("**/api/v1/config/**context-templates**", async (route) => {
-            if (route.request().method() === "PUT") {
-                const body = route.request().postDataJSON() as Record<string, string>;
-                puts.push(body);
-                stored = { ...stored, ...body };
-                await route.fulfill({
-                    status: 200,
-                    contentType: "application/json",
-                    body: JSON.stringify({ status: "ok" }),
-                });
-                return;
-            }
-            await route.fulfill({
-                status: 200,
-                contentType: "application/json",
-                body: JSON.stringify({
-                    domain: "context-templates",
-                    entries: stored,
-                    envOverridden: {},
-                }),
-            });
-        });
-
-        await page.goto("/settings/config", { waitUntil: "load" });
-        await page.getByTestId("config-tab-user").click();
-
-        const panel = page.getByTestId("context-templates-panel");
-        await expect(panel).toBeVisible();
-
-        // Persistence: the layer GET feeds the list; v1 renders with its revision badge.
-        await expect(page.getByTestId("context-template-list")).toContainText("E2E Template");
-        await expect(
-            page.getByTestId("context-template-item-11111111-1111-4111-8111-111111111111"),
-        ).toBeVisible();
-        await expect(page.getByTestId("context-template-preview")).toBeVisible();
-        await expect(page.getByTestId("context-template-preview-row-0")).toBeVisible();
-        await expect(page.getByTestId("context-template-preview-status-0")).toHaveText("已解析");
-        await expect(page.getByTestId("context-template-preview-budget")).toContainText(
-            "8000 tokens",
-        );
-        await shoot(page, "01-settings-template-loaded.png");
-
-        // Rename + edit a component's typed config (JSON) — budget sum must update live.
-        await page.getByTestId("context-template-name").fill("E2E Template v2");
-        await page
-            .getByTestId("context-template-component-config-0")
-            .fill('{"selection":"recent","maxTurns":20,"maxTokens":9000,"includeCompaction":true}');
-        await expect(page.getByTestId("context-template-preview-budget")).toContainText(
-            "9000 tokens",
-        );
-
-        // Insert a second component, reorder it to the top, then append a third.
-        await page.getByTestId("context-template-insert-select").selectOption("text");
-        await page.getByTestId("context-template-insert").click();
-        await expect(page.getByTestId("context-template-component-1")).toBeVisible();
-        await page.getByTestId("context-template-component-move-up-1").click();
-        await expect(page.getByTestId("context-template-component-0")).toContainText("文本 text");
-        await expect(page.getByTestId("context-template-component-1")).toContainText("对话历史");
-        await page.getByTestId("context-template-insert-select").selectOption("workspace_tree");
-        await page.getByTestId("context-template-insert").click();
-        await expect(page.getByTestId("context-template-component-2")).toBeVisible();
-        await expect(page.getByTestId("context-template-preview")).toContainText("workspace_tree");
-        await shoot(page, "02-settings-insert-component.png");
-
-        await page.getByTestId("context-template-save").click();
-
-        // Network evidence: v1 retained + v2 appended, order and config persisted.
-        await expect.poll(() => puts.length).toBeGreaterThan(0);
-        const saved = JSON.parse(puts.at(-1)!.templates) as Array<{
-            version: number;
-            name: string;
-            components: Array<{ type: string; config: Record<string, unknown> }>;
-        }>;
-        expect(saved).toHaveLength(2);
-        expect(saved.map((item) => item.version).sort()).toEqual([1, 2]);
-        expect(saved.find((item) => item.version === 2)?.name).toBe("E2E Template v2");
-        const v2 = saved.find((item) => item.version === 2)!;
-        expect(v2.components.map((component) => component.type)).toEqual([
-            "text",
-            "conversation_history",
-            "workspace_tree",
-        ]);
-        const conversation = v2.components.find(
-            (component) => component.type === "conversation_history",
-        )!;
-        expect(conversation.config.maxTokens).toBe(9000);
-
-        // Visible persistence: reload serves the stored map, list shows the new name.
-        await expect(page.getByTestId("context-template-list")).toContainText("E2E Template v2");
-        await expect(page.getByTestId("context-template-revisions")).toContainText("v1");
-        await expect(page.getByTestId("context-template-revisions")).toContainText("v2");
-        await shoot(page, "03-settings-saved-v2.png");
-    });
-
     test("chat binding selector pins the Session to an explicit template revision", async ({
         page,
     }) => {
         await setupMockSessions(page, {
-            sessions: [{ id: "bind-session", title: "Binding session" }],
+            sessions: [{ id: SESSION_ID, title: "Binding session" }],
         });
 
-        let bound: { layer: string; templateId: string; version: number } | null = null;
-        await page.route("**/api/v1/config/**context-templates**", async (route) => {
-            if (route.request().method() === "PUT") {
-                await route.fulfill({
-                    status: 200,
-                    contentType: "application/json",
-                    body: JSON.stringify({}),
-                });
-                return;
-            }
+        // The session must carry a provider connection so the panel can scope
+        // the visible templates to that connection's api type (PLAN-0523 T3.5).
+        await page.route(`**/api/v1/sessions/${SESSION_ID}`, async (route) => {
+            if (route.request().method() !== "GET") return route.fallback();
             await route.fulfill({
                 status: 200,
                 contentType: "application/json",
                 body: JSON.stringify({
-                    domain: "context-templates",
-                    entries: { templates: JSON.stringify([template(1, "User Bound Template")]) },
-                    envOverridden: {},
-                }),
-            });
-        });
-        await page.route("**/api/v1/sessions/bind-session/context-template", async (route) => {
-            const body = route.request().postDataJSON() as {
-                layer: string;
-                templateId: string;
-                version: number;
-            };
-            bound = body;
-            await route.fulfill({
-                status: 200,
-                contentType: "application/json",
-                body: JSON.stringify({
-                    id: "bind-session",
+                    id: SESSION_ID,
                     workspaceId: "workspace-1",
                     title: "Binding session",
                     archived: false,
-                    contextTemplateLayer: body.layer,
-                    contextTemplateId: body.templateId,
-                    contextTemplateVersion: body.version,
+                    providerConnectionId: CONNECTION_ID,
+                    contextTemplateLayer: null,
+                    contextTemplateId: null,
+                    contextTemplateVersion: null,
                 }),
             });
         });
 
-        await page.goto("/workspace/workspace-1/chat/bind-session", { waitUntil: "load" });
+        await page.route("**/api/v1/provider-connections**", async (route) => {
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    connections: [
+                        {
+                            id: CONNECTION_ID,
+                            name: "E2E connection",
+                            apiTypeId: API_TYPE_ID,
+                            apiTypeVersion: 1,
+                            revision: CONNECTION_REVISION,
+                        },
+                    ],
+                }),
+            });
+        });
 
-        // Mobile viewport (390px) renders the workspace files view first and keeps
+        // `listVisibleTemplates` reads instance + user + workspace layers; only
+        // the user layer publishes a template here, so the selector offers
+        // exactly one rebind target.
+        let bound: {
+            layer: string;
+            templateId: string;
+            version: number;
+            connectionRevision: number;
+        } | null = null;
+        await page.route("**/api/v1/config/api-request-templates**", async (route) => {
+            const layer = new URL(route.request().url()).searchParams.get("layer");
+            const entries =
+                layer === "user"
+                    ? { templates: JSON.stringify([template(1, "User Bound Template")]) }
+                    : {};
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ domain: "api-request-templates", entries }),
+            });
+        });
+
+        await page.route(`**/api/v1/sessions/${SESSION_ID}/api-request-template`, async (route) => {
+            bound = route.request().postDataJSON() as typeof bound;
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    id: SESSION_ID,
+                    workspaceId: "workspace-1",
+                    title: "Binding session",
+                    archived: false,
+                    providerConnectionId: CONNECTION_ID,
+                    contextTemplateLayer: bound?.layer,
+                    contextTemplateId: bound?.templateId,
+                    contextTemplateVersion: bound?.version,
+                }),
+            });
+        });
+
+        await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`, { waitUntil: "load" });
+
+        // Mobile viewport renders the workspace files view first and keeps
         // ChatPanel behind the "Open chat" drawer trigger; desktop shows it inline.
         const openChat = page.getByRole("button", { name: "Open chat" });
         if (await openChat.count()) {
@@ -221,18 +154,24 @@ test.describe("Context templates (PLAN-0414)", () => {
         }
 
         const badge = page.getByTestId("session-context-template-current");
-        await expect(page.getByTestId("session-context-template-select")).toBeVisible();
-        // Default resolution lands on the built-in instance template before rebind.
-        await expect(badge).toContainText("内置默认模板");
+        const select = page.getByTestId("session-context-template-select");
+        await expect(select).toBeVisible();
+        // Unbound Session: no revision is pinned yet, so the badge shows the
+        // explicit-rebind requirement instead of a name.
+        await expect(badge).toContainText("需显式重新绑定请求模板");
         await shoot(page, "04-chat-binding-default.png");
 
-        await page
-            .getByTestId("session-context-template-select")
-            .selectOption(`user:${TEMPLATE_ID}:1`);
+        await select.selectOption(`user:${TEMPLATE_ID}:1`);
 
-        // Network evidence: explicit PATCH payload.
+        // Network evidence: PATCH pins layer + template + revision, and carries
+        // the connection revision the CP compares against.
         await expect.poll(() => bound).not.toBeNull();
-        expect(bound).toEqual({ layer: "user", templateId: TEMPLATE_ID, version: 1 });
+        expect(bound).toEqual({
+            layer: "user",
+            templateId: TEMPLATE_ID,
+            version: 1,
+            connectionRevision: CONNECTION_REVISION,
+        });
 
         // Visible result: badge reflects the pinned revision.
         await expect(badge).toContainText("User Bound Template v1");
