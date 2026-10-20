@@ -5,6 +5,7 @@ import warnings
 from datetime import datetime
 from typing import Any, NamedTuple
 
+import httpx2
 import mcp.types as _mcp_types
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
@@ -37,6 +38,29 @@ STATELESS_PROTOCOL_VERSION = "2026-07-28"
 
 DEFAULT_RETRY_INTERVAL = 2.0
 DEFAULT_MAX_RETRIES = 0
+
+
+def _internal_httpx_client_factory(
+    headers: dict[str, str] | None = None,
+    timeout: httpx2.Timeout | None = None,
+    auth: httpx2.Auth | None = None,
+    **kwargs: Any,
+) -> httpx2.AsyncClient:
+    """Build the MCP transport's HTTP client without env-proxy discovery.
+
+    PLAN-0539: fastmcp's default factory creates ``httpx2.AsyncClient`` with
+    ``trust_env=True``, which parses ``NO_PROXY`` while constructing and aborts
+    on a bracketed IPv6 entry (``InvalidURL: Invalid port: ':1]'``). The logical
+    MCP endpoint is always reached over CP on localhost, so env proxies are never
+    wanted on this hop. Provider traffic is unaffected — it has its own clients.
+
+    ``**kwargs`` carries what fastmcp adds on top of the protocol signature
+    (today ``follow_redirects``); the timeout default mirrors the MCP transport's
+    own (30s connect / 300s read) because fastmcp omits ``timeout`` when unset.
+    """
+    if timeout is None:
+        timeout = httpx2.Timeout(30.0, read=300.0)
+    return httpx2.AsyncClient(headers=headers, auth=auth, timeout=timeout, trust_env=False, **kwargs)
 
 
 # Local MCP (CP→Runtime) must return in seconds; a stuck POST is a bug, and the
@@ -596,7 +620,11 @@ class MCPClientManager:
         `timeout` = 传输层读超时兜底：逐调用路径用 3600s（位于授权值之外）；
         发现/初始化路径传 {@link DISCOVERY_READ_TIMEOUT_S}（短界，防持锁挂死）。
         """
-        transport = StreamableHttpTransport(self.cp_url, headers=headers)
+        transport = StreamableHttpTransport(
+            self.cp_url,
+            headers=headers,
+            httpx_client_factory=_internal_httpx_client_factory,
+        )
         return Client(
             transport,
             name=self.server_name,

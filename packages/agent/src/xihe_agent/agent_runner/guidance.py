@@ -44,7 +44,8 @@ class GuidanceConsumer:
                  timeout: float = 30.0) -> None:
         self._base_url = base_url.rstrip("/")
         self._run_id = run_id
-        self._client = httpx.AsyncClient(timeout=timeout)
+        # Internal CP only: never read env proxies (PLAN-0539).
+        self._client = httpx.AsyncClient(timeout=timeout, trust_env=False)
         self._headers = {
             "Accept": "application/json",
             "Authorization": f"Bearer {service_token}",

@@ -1198,7 +1198,8 @@ class CpAgentCheckpointSaver(BaseCheckpointSaver[str]):
         self, method: str, path: str, *, json: Any = None, params: Any = None, allow_not_found: bool = False
     ) -> Any:
         try:
-            with httpx.Client(timeout=20.0, follow_redirects=False) as client:
+            # Internal CP only: never read env proxies (PLAN-0539).
+            with httpx.Client(timeout=20.0, follow_redirects=False, trust_env=False) as client:
                 response = client.request(
                     method, self._base_url + path, headers=self._headers, json=json, params=params
                 )
@@ -1233,7 +1234,8 @@ class CpAgentCheckpointSaver(BaseCheckpointSaver[str]):
         self, method: str, path: str, *, json: Any = None, params: Any = None, allow_not_found: bool = False
     ) -> Any:
         try:
-            async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
+            # Internal CP only: never read env proxies (PLAN-0539).
+            async with httpx.AsyncClient(timeout=20.0, follow_redirects=False, trust_env=False) as client:
                 response = await client.request(
                     method, self._base_url + path, headers=self._headers, json=json, params=params
                 )

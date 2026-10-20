@@ -87,7 +87,9 @@ class ConfigClient:
         revisions: list[str] = []
         degraded: list[str] = []
 
-        async with httpx.AsyncClient() as client:
+        # Internal CP only: never read env proxies (PLAN-0539) — `trust_env`
+        # parses NO_PROXY entries and a malformed one aborts construction.
+        async with httpx.AsyncClient(trust_env=False) as client:
             headers = {"Authorization": f"Bearer {self.api_token}"}
             for domain in CONFIG_DOMAINS:
                 status, data, revision, source = await self._fetch_effective(
@@ -289,7 +291,8 @@ class ConfigClient:
 
     async def redeem_provider_lease(self, payload: dict[str, Any], *, request_id: str | None = None) -> dict[str, Any]:
         """Redeem a short-lived CP credential lease without persisting the key."""
-        async with httpx.AsyncClient() as client:
+        # Internal CP only: never read env proxies (PLAN-0539).
+        async with httpx.AsyncClient(trust_env=False) as client:
             response = await client.post(
                 f"{self.cp_url}/internal/v1/provider-leases/redeem",
                 headers={

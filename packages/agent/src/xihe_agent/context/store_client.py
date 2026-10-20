@@ -16,7 +16,9 @@ class CPContextServiceClient:
     def __init__(self, base_url: str, api_token: str) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_token = api_token
-        self._client = httpx.AsyncClient(timeout=30.0)
+        # Internal CP only: never read env proxies (PLAN-0539) — `trust_env`
+        # parses NO_PROXY entries and a malformed one aborts construction.
+        self._client = httpx.AsyncClient(timeout=30.0, trust_env=False)
 
     async def get_context_snapshot(
         self,
@@ -62,7 +64,8 @@ class CPEventStoreClient(EventStore):
     def __init__(self, base_url: str, api_token: str) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_token = api_token
-        self._client = httpx.AsyncClient(timeout=30.0)
+        # Internal CP only: never read env proxies (PLAN-0539).
+        self._client = httpx.AsyncClient(timeout=30.0, trust_env=False)
 
     async def append(self, event: Event) -> Event:
         url = f"{self._base_url}/internal/v1/context/{event.aggregate_id}/events"
