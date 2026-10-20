@@ -106,6 +106,13 @@ updated: 2026-10-19
 - **审计留存边界（2026-10-06）**：当前领域审计事实随所属 Session/Workspace 生命周期级联删除；删除后独立留存或匿名化不属于当前需求，后置债务登记为 DDL-14。
 - **残余**：会话硬删时 `scope=session` 存活 job 无处置入口（依赖 BL-21 单 job 取消入口）；承接登记 PLAN-0353。
 
+## 宿主注入畸形 `NO_PROXY`（PLAN-0539 代码侧已兜底，2026-10-20）
+
+- **现象**：某些宿主（实测 DeepSeek Harness `0.2.1-rc.2`）向子进程注入 `NO_PROXY=…,::1,[::1]`。httpx 在**构造**客户端时把每个条目解析成 `URLPattern`，方括号写法被读成端口 `':1]'` → `httpx.InvalidURL`。Agent 在 import 期构造 CP 客户端，于是「进程启动即退、端口永不监听」；`pytest` 因 `tests/conftest.py` 收集期 import `main` 而整体不可收集。
+- **代码侧处置**：`xihe_agent/__init__.py` 在任何子模块导入前归一化 `NO_PROXY`/`no_proxy`（只删含方括号的条目，裸 `::1` 保留，结果为空则删变量）；内部 CP 客户端统一 `trust_env=False`；MCP 传输经 `httpx_client_factory` 注入同等客户端。规则边界：**只有含方括号的条目会崩**，裸 `::1` 安全。
+- **残余风险**：宿主注入本身未消失，其他 Python 工具仍会中招。另注意：从父 shell 改 `NO_PROXY` **对 python 子进程无效**（继承型启动会被宿主改写，只有显式传 env 块才生效），排障时不要据此判断「修复无效」。
+- **排障判据**：`curl 127.0.0.1:<agent port>/internal/v1/agent/health` 有响应且 `configRevision` 非空 = 正常；若进程已退出、日志里有 `InvalidURL: Invalid port: ':1]'` 即为本条。
+
 ## 环境 / Docker
 
 - **WSL2 OOM**: 修改 vitest config 前需 `bash ../../scripts/cleanup-wsl-resources.sh`

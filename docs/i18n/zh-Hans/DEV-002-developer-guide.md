@@ -103,7 +103,7 @@ sequenceDiagram
 | `mise run dev:host:watch` | 健康监督 + 故障重启任务组 |
 | `mise run dev:host:stop` | 停 PG；先 Ctrl+C 停原生任务 |
 | `mise run dev:reset` | 默认 dry-run；`-Reset` 后备份重建 dev 数据，workspace 进回收站，不删 device identity |
-| `mise run reset-admin` | 重置 dev `admin@xihe.local` 密码，随机 24 字节 base64url，免重启 |
+| `mise run reset-admin` | 重置 dev `admin@xihe.local` 密码，随机 24 字节 base64url，免重启；多栈下须同时给 `XIHE_CP_DATASOURCE_URL=jdbc:postgresql://localhost:<pg 端口>/<库名>`（脚本默认仍指向 `xihe`，0533 起库名为 `xihe_<n>`） |
 
 命令示例：
 
@@ -257,6 +257,20 @@ curl -sS -X POST "http://localhost:12631/api/v1/chat" \
 | 日志泄露 | `litellm.suppress_debug_info=True` + `log_redact` + `node scripts/scan-log-secrets.mjs`（读取失败即失败） |
 
 Chat SSE 结构化事件与日志字段见 DEV-004 §6.3；UI 传输层见 DEV-010 §4；跨层协议核对（Controller 契约/JWT/`effective` 域键与 env 兜底键/LLM `provider/model` 格式）改一层查一层。
+
+### 一键验证脚本（`scripts/verify-stack.sh`，PLAN-0539）
+
+上面 2.1–2.5 的手工链路可一键跑：
+
+```bash
+XIHE_VERIFY_PASSWORD=<admin 密码> bash scripts/verify-stack.sh
+XIHE_STACK_ID=stack-2 XIHE_VERIFY_PASSWORD=<密码> bash scripts/verify-stack.sh
+```
+
+- **凭据**：`XIHE_VERIFY_EMAIL`（默认 `admin@xihe.local`）+ `XIHE_VERIFY_PASSWORD`（必填，缺失 exit 2）；脚本内无字面密码、token 不回显。密码用 `mise run reset-admin` 生成（多栈记得同上给 `XIHE_CP_DATASOURCE_URL`）。
+- **栈派生**：脚本开头经 `node scripts/stack-run.mjs env-json --stack <id>` 取端口/容器前缀（bash 不能 import ESM；**只设 `XIHE_STACK_ID` 不会改端口**）。
+- **判定与退出码**：A 档（CP health / 登录 / 建 session+分支 / SSE / 模型列表 / Agent health）必过；B 档 `POST /api/v1/chat` 受 provider 凭据、principal 绑定与 API Type 绑定约束。`0`=两档通过、`4`=A 通过但 B 前置缺失（末行给原因码）、`1`=失败、`2`=缺凭据。
+- **agent principal**：建 session 必须带 `agentPrincipalId`；脚本按「显式 `XIHE_VERIFY_AGENT_PRINCIPAL_ID` → workspace 已绑定的第一个 → 自动新建」解析。只有新建后才调 `PUT …/agents/{id}` 绑定——对已有 principal 调该接口会**收窄**它的 workspace cap。
 
 ## 5. 测试入口
 
