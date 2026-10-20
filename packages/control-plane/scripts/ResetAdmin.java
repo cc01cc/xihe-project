@@ -20,6 +20,10 @@ import java.util.UUID;
  *
  * 用法（经 scripts/reset-admin.ps1 包装）：
  *   java ResetAdmin.java [--email admin@xihe.local] [--password <pw>] [--url <jdbcUrl>]
+ *
+ * 目标库解析顺序：--url > XIHE_CP_DATASOURCE_URL > localhost:$XIHE_PG_PORT/$POSTGRES_DB
+ * （默认 12634/xihe_1，与 PLAN-0533 的 `xihe_<n>` 命名一致；启动时会打印实际目标，
+ * 避免在旧库上改密码却以为改的是运行库）。
  */
 public class ResetAdmin {
 
@@ -30,7 +34,7 @@ public class ResetAdmin {
         String email = "admin@xihe.local";
         String password = null;
         String url = System.getenv().getOrDefault(
-                "XIHE_CP_DATASOURCE_URL", "jdbc:postgresql://localhost:12634/xihe");
+                "XIHE_CP_DATASOURCE_URL", defaultJdbcUrl());
         String user = System.getenv().getOrDefault("XIHE_CP_DATASOURCE_USERNAME", "xihe");
         String dbPassword = System.getenv().getOrDefault("XIHE_CP_DATASOURCE_PASSWORD", "");
 
@@ -46,6 +50,8 @@ public class ResetAdmin {
                 }
             }
         }
+
+        System.out.println("[reset-admin] target = " + url);
 
         boolean generated = password == null;
         if (generated) {
@@ -110,5 +116,19 @@ public class ResetAdmin {
             System.exit(2);
         }
         return args[idx];
+    }
+
+    /**
+     * Default target, following PLAN-0533's per-stack database naming (xihe_1, xihe_2, ...).
+     * The pre-0533 default was the single `xihe` database, which silently wrote the admin
+     * password to a database the running services no longer read.
+     */
+    private static String defaultJdbcUrl() {
+        return "jdbc:postgresql://localhost:" + envOr("XIHE_PG_PORT", "12634") + "/" + envOr("POSTGRES_DB", "xihe_1");
+    }
+
+    private static String envOr(String name, String fallback) {
+        String value = System.getenv(name);
+        return value == null || value.isBlank() ? fallback : value;
     }
 }
