@@ -21,7 +21,7 @@ import type { RunTraceEvent, RunTraceResponse } from "../../src/types";
 
 const REAL_ROUTE = process.env.XIHE_E2E_REAL_ROUTE ?? "native";
 const REAL_MODEL =
-    process.env.XIHE_E2E_REAL_MODEL ?? process.env.XIHE_E2E_REAL_OPENAI_MODEL ?? "mimo-v2.5";
+    process.env.XIHE_E2E_REAL_MODEL ?? process.env.XIHE_E2E_REAL_OPENAI_MODEL ?? "mimo-v2.6-flash";
 const REAL_PROVIDER = REAL_ROUTE === "openai-compat" ? "openai" : "xiaomi";
 const REAL_API_TYPE = REAL_ROUTE === "openai-compat" ? "openai-chat-completions" : "mimo-responses";
 const REAL_BASE =

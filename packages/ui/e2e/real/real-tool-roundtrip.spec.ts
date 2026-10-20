@@ -21,7 +21,7 @@ import {
 // `XIHE_OPENAI_API_KEY` only when `XIHE_E2E_REAL_ROUTE=openai-compat`; every
 // other invocation skips this case, so no other spec is affected.
 const REAL_ROUTE = process.env.XIHE_E2E_REAL_ROUTE ?? "native";
-const MODEL_ID = process.env.XIHE_E2E_REAL_OPENAI_MODEL ?? "mimo-v2.5";
+const MODEL_ID = process.env.XIHE_E2E_REAL_OPENAI_MODEL ?? "mimo-v2.6-flash";
 // The isolated host root is derived from the run id (e2e-host.mjs `hostRoot`);
 // XIHE_WORKSPACE_HOST_ROOT is only injected into the runtime process.
 const HOST_ROOT =

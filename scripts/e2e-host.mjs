@@ -1086,8 +1086,8 @@ async function configureFakeLlm() {
     // PLAN-0504: the default identity is the whole profile unit; base URLs no
     // longer travel through config (connection grants / env only).
     const llmProvider = realRoute === 'openai-compat'
-      ? { profile: { providerId: 'openai', connectionKey: 'default', model: 'mimo-v2.5' } }
-      : { profile: { providerId: 'xiaomi', connectionKey: 'default', model: 'mimo-v2.5' } }
+      ? { profile: { providerId: 'openai', connectionKey: 'default', model: 'mimo-v2.6-flash' } }
+      : { profile: { providerId: 'xiaomi', connectionKey: 'default', model: 'mimo-v2.6-flash' } }
     const imported = await fetch(`${cpBaseUrl}/api/v1/config/import`, {
       method: 'POST',
       headers: {

@@ -229,15 +229,15 @@ test.describe("PLAN-247 Chat availability @host", () => {
             const trigger = page.getByTestId("model-popover-trigger");
             await expect(trigger).toBeVisible();
             await trigger.click();
-            await expect(page.getByText("mimo-v2.5", { exact: true }).first()).toBeVisible({
+            await expect(page.getByText("mimo-v2.6-flash", { exact: true }).first()).toBeVisible({
                 timeout: 15000,
             });
             const modelSearch = page.getByTestId("model-popover-search");
-            await modelSearch.fill("mimo-v2.5");
+            await modelSearch.fill("mimo-v2.6-flash");
             // The exact item is the first filter match (plain Enter selects it).
-            // ArrowDown would move highlight to mimo-v2.5-pro; .click() never
+            // ArrowDown would move highlight to a sibling model; .click() never
             // stabilizes because the open popover list re-renders continuously.
-            await expect(page.getByTestId("model-item-xiaomi/mimo-v2.5")).toBeVisible();
+            await expect(page.getByTestId("model-item-xiaomi/mimo-v2.6-flash")).toBeVisible();
             await modelSearch.press("Enter");
 
             const id = await sessionId(request, auth);
@@ -256,7 +256,7 @@ test.describe("PLAN-247 Chat availability @host", () => {
                     },
                     { timeout: 15000 },
                 )
-                .toBe("xiaomi/mimo-v2.5");
+                .toBe("xiaomi/mimo-v2.6-flash");
 
             const text = `real-${Date.now()}`;
             await page.locator("textarea").fill(text);

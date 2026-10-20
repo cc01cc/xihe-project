@@ -103,7 +103,7 @@ When Agent needs to perform high-risk operations, an approval window pops up:
 
 Click the settings icon at the bottom of the sidebar:
 - **Model**: LLM Provider (OpenAI / DeepSeek / Xiaomi MiMo / Anthropic presets + custom), Model, API Key, Base URL
-  - Selecting a preset Provider auto-fills model name and API Base URL
+  - Selecting a preset Provider auto-fills the API Base URL (the model is chosen from the connection catalog)
   - Selecting "Custom" allows manual input of any Provider information
 - **Theme**: dark / light / system
 - **MCP**: MCP Server management
@@ -126,7 +126,7 @@ System has 5 built-in preset Providers, also supports custom OpenAI-compatible P
 | `ollama` | Local Ollama | Ollama service running |
 | `custom` | Any OpenAI-compatible API | API Key (if applicable) |
 
-Providers can be managed in the model configuration on the settings page. Selecting a preset auto-fills model name and Base URL.
+Providers can be managed in the model configuration on the settings page. Selecting a preset auto-fills the Base URL; the model is chosen from the connection catalog.
 
 The model selector shows only verified, chat-capable models. ASR/TTS models are excluded from Chat. Provider credentials belong to the Admin configuration layer; regular users receive status without secrets.
 
@@ -136,9 +136,7 @@ The model selector shows only verified, chat-capable models. ASR/TTS models are 
 |----------|---------|-------------|
 | `XIHE_LLM_PROVIDER` | `deepseek` | LLM provider (deepseek/openai/anthropic/ollama/xiaomi/mock) |
 | `XIHE_DEEPSEEK_API_KEY` | — | DeepSeek API Key |
-| `XIHE_DEEPSEEK_MODEL` | `deepseek-chat` | DeepSeek model |
 | `XIHE_XIAOMI_API_KEY` | — | Xiaomi MiMo API Key |
-| `XIHE_XIAOMI_MODEL` | `mimo-v2-omni` | Xiaomi MiMo model |
 | `XIHE_CP_PORT` | `12631` | CP port (host mapping, Docker internal is 8080) |
 | `XIHE_AGENT_PORT` | `12632` | Agent port (host mapping, Docker internal is 8000) |
 | `XIHE_RUNTIME_PORT` | `12633` | Runtime port (host mapping, Docker internal is 8001) |

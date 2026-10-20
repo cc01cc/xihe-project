@@ -10,7 +10,6 @@ describe("BUILTIN_PROVIDERS", () => {
         const p = BUILTIN_PROVIDERS.find((provider) => provider.id === "openai");
         expect(p).toBeDefined();
         expect(p!.name).toBe("OpenAI");
-        expect(p!.defaultModel).toBe("gpt-4o");
         expect(p!.defaultBaseUrl).toBe("https://api.openai.com/v1");
     });
 
@@ -18,7 +17,6 @@ describe("BUILTIN_PROVIDERS", () => {
         const p = BUILTIN_PROVIDERS.find((provider) => provider.id === "deepseek");
         expect(p).toBeDefined();
         expect(p!.name).toBe("DeepSeek");
-        expect(p!.defaultModel).toBe("deepseek-chat");
         expect(p!.defaultBaseUrl).toBe("https://api.deepseek.com/v1");
     });
 
@@ -26,7 +24,6 @@ describe("BUILTIN_PROVIDERS", () => {
         const p = BUILTIN_PROVIDERS.find((provider) => provider.id === "xiaomi");
         expect(p).toBeDefined();
         expect(p!.name).toBe("小米 MiMo");
-        expect(p!.defaultModel).toBe("mimo-v2.5");
         expect(p!.defaultBaseUrl).toBe("https://api.xiaomimimo.com/v1");
     });
 
@@ -34,7 +31,6 @@ describe("BUILTIN_PROVIDERS", () => {
         const p = BUILTIN_PROVIDERS.find((provider) => provider.id === "anthropic");
         expect(p).toBeDefined();
         expect(p!.name).toBe("Anthropic");
-        expect(p!.defaultModel).toBe("claude-sonnet-4-20250514");
         expect(p!.defaultBaseUrl).toBe("https://api.anthropic.com/v1");
     });
 
@@ -42,11 +38,13 @@ describe("BUILTIN_PROVIDERS", () => {
         for (const p of BUILTIN_PROVIDERS) {
             expect(p.id).toBeTruthy();
             expect(p.name).toBeTruthy();
-            expect(p.defaultModel).toBeTruthy();
             expect(p.defaultBaseUrl).toBeTruthy();
         }
     });
 
+    // PLAN-0531 decision #3: `defaultModel` was removed from ProviderInfo.
+    // The only product-default definition is the Agent's PROVIDER_DEFAULTS;
+    // per Round-2/B-12 no negative "field is absent" test is added here.
     it("no duplicate ids", () => {
         const ids = BUILTIN_PROVIDERS.map((p) => p.id);
         expect(new Set(ids).size).toBe(ids.length);
@@ -88,7 +86,7 @@ describe("getProviderInfo", () => {
         const info = getProviderInfo("deepseek");
         expect(info).toBeDefined();
         expect(info!.id).toBe("deepseek");
-        expect(info!.defaultModel).toBe("deepseek-chat");
+        expect(info!.defaultBaseUrl).toBe("https://api.deepseek.com/v1");
     });
 
     it("returns undefined for unknown ids", () => {

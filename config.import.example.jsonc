@@ -127,7 +127,9 @@
       "deepseek/deepseek-v4-flash": { "inputPerMTok": 0.27, "outputPerMTok": 1.10, "currency": "USD" },
       "openai/gpt-4o":              { "inputPerMTok": 2.50, "outputPerMTok": 10.00, "currency": "USD" },
       "anthropic/claude-sonnet-4":  { "inputPerMTok": 3.00, "outputPerMTok": 15.00, "currency": "USD" },
-      "xiaomi/mimo-v2.5":           { "inputPerMTok": 0.00, "outputPerMTok": 0.00, "currency": "CNY" }
+      // PLAN-0531 决策 #9：默认模型已换代到 mimo-v2.6-flash（mimo-v2.5 于 2026-10-21 10:00 北京时间下线）。
+      // TODO: 小米官方费率待确认，0.00 为占位值，不得据此做成本分析。
+      "xiaomi/mimo-v2.6-flash":     { "inputPerMTok": 0.00, "outputPerMTok": 0.00, "currency": "CNY" }
     }
   },
 

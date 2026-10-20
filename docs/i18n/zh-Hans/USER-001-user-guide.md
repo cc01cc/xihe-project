@@ -130,7 +130,7 @@ UI 内置 4 个预设 Provider（`BUILTIN_PROVIDERS`）；`mock`/`ollama`/自定
 | `ollama` | 本地 Ollama | Ollama 服务运行中 | Agent/Config 层 |
 | `自定义` | 任意 OpenAI-compatible API | API Key（如有） | Agent/Config 层 |
 
-Provider 可在设置页面的模型配置中管理，选择预设后自动填充模型名和 Base URL。
+Provider 可在设置页面的模型配置中管理，选择预设后自动填充 Base URL；模型从连接目录中选择。
 
 模型选择器只显示已验证且支持 chat 的模型；ASR/TTS 等非对话模型不会出现在聊天选项中。provider 凭据属于管理员配置，普通用户只能看到安全状态。
 

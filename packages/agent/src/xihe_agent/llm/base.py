@@ -279,6 +279,14 @@ def fallback_provider_configs() -> dict[str, dict[str, Any]]:
     return registry
 
 
+# PLAN-0531 decision #3: this table is the **single** product-default
+# definition. Two fields, two different lifecycles:
+#   - ``model`` is a product default and is consumed **exclusively** by
+#     :meth:`LLMConfig.from_env` (offline / dev path). :meth:`from_entries`
+#     must never read it — the runtime identity comes from the
+#     ``llm-provider.profile`` unit (PLAN-0504, decision #10).
+#   - ``api_base`` is an env-only fallback consumed by both paths.
+# Adding/renaming a provider default must not require editing any other file.
 PROVIDER_DEFAULTS: dict[str, dict[str, Any]] = {
     "deepseek": {
         "api_base": "https://api.deepseek.com/v1",
@@ -294,7 +302,7 @@ PROVIDER_DEFAULTS: dict[str, dict[str, Any]] = {
     },
     "xiaomi": {
         "api_base": "https://api.xiaomimimo.com/v1",
-        "model": "mimo-v2.5",
+        "model": "mimo-v2.6-flash",
     },
     "dashscope": {
         "api_base": "https://dashscope.aliyuncs.com/compatible-mode/v1",
