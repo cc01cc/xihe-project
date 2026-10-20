@@ -13,6 +13,11 @@ from xihe_agent.llm.api_sender import ApiSender
 
 TYPES = ["openai-chat-completions", "anthropic-messages", "mimo-responses"]
 
+# Client timeout used against the `hold` fixture: it must stay short enough to prove
+# "timeout does not retry", but long enough that the request reaches the fixture
+# before the client gives up (see the comment in test_timeout_and_cancel_never_retry).
+HOLD_CLIENT_TIMEOUT_S = 1.0
+
 
 def body(type_id, stream=True):
     key = "input" if type_id == "mimo-responses" else "messages"
@@ -374,7 +379,14 @@ async def test_timeout_and_cancel_never_retry(type_id):
     for cancel in (False, True):
         received = asyncio.Event()
         async with recorder("", hold=received) as (base, captures):
-            sender = ApiSender(chat_type(type_id, 1), grant(type_id, base), "request-1", 0.2 if not cancel else 3)
+            # The fixture only sets `hold` after it has fully parsed the request, so a
+            # client timeout chosen below that parse window races the local server: the
+            # client aborts first, `received` never fires and the test fails with
+            # TimeoutError while the code under test behaved correctly. Measured on
+            # Windows with a loaded box: 0.2s failed 3/3, this value passes 10/10.
+            sender = ApiSender(
+                chat_type(type_id, 1), grant(type_id, base), "request-1", HOLD_CLIENT_TIMEOUT_S if not cancel else 3
+            )
 
             async def consume():
                 return [
