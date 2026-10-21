@@ -8,13 +8,13 @@
   "mode": "cp-real",
   "requiredEvaluatedTaskIds": [
     "instruction_following.format_and_scope.v1",
-    "grounded_citation.synthetic_source.v1"
-  ],
-  "expectedNotEvaluatedTaskIds": [
-    "tool_authorization.denied_mutation.v1",
+    "grounded_citation.synthetic_source.v1",
     "failure_budget.no_repeat.v1"
   ],
-  "expectedNotEvaluatedReasons": ["no_tool_surface"],
+  "expectedNotEvaluatedTaskIds": [
+    "tool_authorization.denied_mutation.v1"
+  ],
+  "expectedNotEvaluatedReasons": ["no_denial_observability"],
   "thresholds": [
     {
       "metricId": "hard-assertion-zero-failure",

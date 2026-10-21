@@ -84,6 +84,12 @@ public class RunTraceSourceRepository {
             + "e.payload #>> '{call_id}') AND p.created_at <= :asOf) = 1 ELSE TRUE END "
             + "FROM context_events e WHERE e.correlation_id = :runId "
             + "AND e.created_at <= :asOf "
+            // PLAN-0532 M3: `assistant.responded` is a run-outcome marker with no
+            // correlation facts of its own; the terminal outcome is already carried by
+            // chat_run/run.lifecycle. Leaving it unmapped degraded trace completeness to
+            // `partial` for every normally answered run, so it is explicitly excluded
+            // instead of becoming a new event kind.
+            + "AND e.event_type <> 'assistant.responded' "
             + "AND (e.event_type NOT IN ('tool.called', 'tool.result') OR NOT EXISTS ("
             + "SELECT 1 FROM mcp_invocations i WHERE i.run_id = CAST(:runId AS uuid) "
             + "AND i.created_at <= :asOf AND i.started_at <= :asOf "

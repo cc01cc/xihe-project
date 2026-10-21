@@ -224,6 +224,19 @@ class RunTraceSourceRepositoryPostgresIntegrationTest extends AbstractIntegratio
     }
 
     @Test
+    void assistantRespondedMarkerIsExcludedInsteadOfDegradingCompleteness() {
+        Instant occurredAt = Instant.now().minusSeconds(1);
+        insertContextEvent(UUID.randomUUID(), 1, "assistant.responded", occurredAt,
+                "{\"messageId\":\"message-1\"}");
+
+        List<SourceRecord> records = sourceRepository.readContextEvents(
+                runId, Instant.now(), null, 10);
+
+        assertTrue(records.isEmpty(),
+                "assistant.responded is an outcome marker and must not surface as an unknown trace event");
+    }
+
+    @Test
     void contextEventProjectionUsesSafeScalarsAndSuppressesMcpDuplicateRows() throws JsonProcessingException {
         Instant calledAt = Instant.now().minusSeconds(20);
         Instant resultAt = calledAt.plusMillis(250);
