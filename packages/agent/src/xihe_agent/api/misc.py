@@ -22,6 +22,7 @@ from xihe_agent.app_state import (
 )
 from xihe_agent.llm.base import LLMConfig
 from xihe_agent.llm.summarize import summarize_with_llm
+from xihe_agent.version import agent_version, build_commit
 
 router = APIRouter()
 
@@ -206,7 +207,8 @@ async def health():
         "mcpInitialized": mcp_manager.initialized,
         "toolsCount": len(mcp_manager.tools),
         "tools": [t.spec.name for t in mcp_manager.tools],
-        "version": "0.1.0",
+        "version": agent_version(),
+        "commit": build_commit(),
         "framework": "langgraph",
     }
 

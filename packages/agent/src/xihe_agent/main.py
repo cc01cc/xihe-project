@@ -41,6 +41,7 @@ from xihe_agent.llm.token_counter import TokenCounter
 from xihe_agent.registry.registry import WorkerRegistry
 from xihe_agent.security_defaults import enforce_security_defaults
 from xihe_agent.tools import GenerateImageAgentTool, ProviderManager
+from xihe_agent.version import agent_version
 
 
 def get_env(name: str) -> str | None:  # re-exported for compatibility
@@ -316,7 +317,7 @@ async def lifespan(app: FastAPI):
             await poll_task
 
 
-app = FastAPI(title="xihe-agent", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="xihe-agent", version=agent_version(), lifespan=lifespan)
 
 from xihe_agent.api.approval import router as approval_router  # noqa: E402
 from xihe_agent.api.chat import router as chat_router  # noqa: E402
