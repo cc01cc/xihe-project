@@ -1772,6 +1772,24 @@ async function callRuntimeTool<T>(
     return result as T;
 }
 
+export interface VersionModule {
+    version: string | null;
+    commit: string | null;
+    framework?: string | null;
+}
+
+export interface VersionInfo {
+    stackId: string;
+    releaseChannel: "stable" | "beta" | "dev";
+    startedAt: string;
+    commit: string | null;
+    modules: {
+        cp: VersionModule;
+        agent: VersionModule;
+        runtime: VersionModule;
+    };
+}
+
 export const api = {
     login(email: string, password: string) {
         return request<{
@@ -2268,6 +2286,9 @@ export const api = {
     },
     getHealth() {
         return request<{ status: string }>("/health");
+    },
+    getVersionInfo() {
+        return request<VersionInfo>("/version");
     },
     getServiceStatus() {
         return request<{

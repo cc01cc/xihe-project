@@ -3,9 +3,10 @@ import { onMounted, ref, onUnmounted } from "vue";
 import { useI18n } from "vue-i18n";
 import SettingsNav from "../../components/settings/SettingsNav.vue";
 import BackToChatButton from "../../components/settings/BackToChatButton.vue";
-import { api } from "../../composables/api";
+import { api, type VersionInfo } from "../../composables/api";
 
 const { t } = useI18n();
+const uiVersion = import.meta.env.VITE_XIHE_SERVICE_VERSION || "unknown";
 
 interface ServiceStatus {
     name: string;
@@ -25,7 +26,9 @@ const services = ref<ServiceStatus[]>([]),
     overallStatus = ref<string>("loading"),
     lastUpdated = ref<number>(0),
     loading = ref(false),
-    error = ref<string | null>(null);
+    error = ref<string | null>(null),
+    versionInfo = ref<VersionInfo | null>(null),
+    versionError = ref<string | null>(null);
 let timer: ReturnType<typeof setInterval> | null = null;
 
 async function fetchStatus() {
@@ -42,6 +45,33 @@ async function fetchStatus() {
     } finally {
         loading.value = false;
     }
+}
+
+async function fetchVersion() {
+    versionError.value = null;
+    try {
+        versionInfo.value = await api.getVersionInfo();
+    } catch (e) {
+        versionInfo.value = null;
+        versionError.value = e instanceof Error ? e.message : String(e);
+    }
+}
+
+async function refreshAll() {
+    await Promise.all([fetchStatus(), fetchVersion()]);
+}
+
+function formatVersion(version: string | null): string {
+    return version || t("settings.versionNotReported");
+}
+
+function formatCommit(commit: string | null): string {
+    return commit ? commit.slice(0, 12) : t("settings.commitNotInjected");
+}
+
+function formatStartedAt(value: string): string {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
 }
 
 function statusColor(status: string): string {
@@ -71,8 +101,8 @@ function formatTime(ts: number): string {
 }
 
 onMounted(() => {
-    fetchStatus();
-    timer = setInterval(fetchStatus, 15000);
+    refreshAll();
+    timer = setInterval(refreshAll, 15000);
 });
 
 onUnmounted(() => {
@@ -94,10 +124,70 @@ onUnmounted(() => {
             <button
                 class="px-3 py-1.5 text-sm rounded-md border border-border hover:bg-accent transition-colors"
                 :disabled="loading"
-                @click="fetchStatus"
+                @click="refreshAll"
             >
                 {{ t("settings.refresh") }}
             </button>
+        </div>
+
+        <div
+            data-testid="settings-version-card"
+            class="mb-4 rounded-lg border border-border bg-card p-4"
+        >
+            <div class="flex items-center justify-between gap-3">
+                <span class="font-medium">{{ t("settings.versionInfo") }}</span>
+                <span v-if="versionInfo" class="text-xs text-muted-foreground">
+                    {{ versionInfo.stackId }} · {{ versionInfo.releaseChannel }}
+                </span>
+            </div>
+
+            <div v-if="versionInfo" class="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+                <div class="flex items-center gap-2">
+                    <span class="text-muted-foreground">{{ t("settings.moduleCp") }}:</span>
+                    <span>{{ formatVersion(versionInfo.modules.cp.version) }}</span>
+                    <span
+                        class="truncate text-xs text-muted-foreground"
+                        :title="versionInfo.modules.cp.commit || ''"
+                    >
+                        {{ formatCommit(versionInfo.modules.cp.commit) }}
+                    </span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="text-muted-foreground">{{ t("settings.moduleAgent") }}:</span>
+                    <span>{{ formatVersion(versionInfo.modules.agent.version) }}</span>
+                    <span
+                        class="truncate text-xs text-muted-foreground"
+                        :title="versionInfo.modules.agent.commit || ''"
+                    >
+                        {{ formatCommit(versionInfo.modules.agent.commit) }}
+                    </span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="text-muted-foreground">{{ t("settings.moduleRuntime") }}:</span>
+                    <span>{{ formatVersion(versionInfo.modules.runtime.version) }}</span>
+                    <span
+                        class="truncate text-xs text-muted-foreground"
+                        :title="versionInfo.modules.runtime.commit || ''"
+                    >
+                        {{ formatCommit(versionInfo.modules.runtime.commit) }}
+                    </span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="text-muted-foreground">{{ t("settings.moduleUi") }}:</span>
+                    <span>{{ uiVersion }}</span>
+                </div>
+                <div class="flex items-center gap-2 sm:col-span-2">
+                    <span class="text-muted-foreground">{{ t("settings.startedAt") }}:</span>
+                    <span>{{ formatStartedAt(versionInfo.startedAt) }}</span>
+                </div>
+            </div>
+
+            <div v-else-if="versionError" class="mt-2 text-sm text-destructive">
+                {{ t("settings.versionUnavailable") }}
+            </div>
+            <div v-else class="mt-2 text-sm text-muted-foreground">
+                {{ t("common.loading") }}
+            </div>
         </div>
 
         <div v-if="error" class="mb-4 p-3 rounded-md bg-destructive/10 text-destructive text-sm">
