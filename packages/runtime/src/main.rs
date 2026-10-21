@@ -851,18 +851,41 @@ async fn health() -> &'static str {
 /// M2-3.5: readiness probe — grill B double endpoint.
 /// `/health` is always 200 (liveness), `/ready` is 200 only after `ready` flag true.
 async fn ready(State(app): State<Arc<AppState>>) -> impl IntoResponse {
+    let version = env!("CARGO_PKG_VERSION");
+    let commit = build_commit();
     if app.ready.load(Ordering::Relaxed) {
         (
             StatusCode::OK,
-            AxumJson(serde_json::json!({"status":"ready","deviceId": app.device_id})),
+            AxumJson(serde_json::json!({
+                "status": "ready",
+                "deviceId": app.device_id,
+                "version": version,
+                "commit": commit,
+            })),
         )
             .into_response()
     } else {
         (
             StatusCode::SERVICE_UNAVAILABLE,
-            AxumJson(serde_json::json!({"status":"not_ready","deviceId": app.device_id})),
+            AxumJson(serde_json::json!({
+                "status": "not_ready",
+                "deviceId": app.device_id,
+                "version": version,
+                "commit": commit,
+            })),
         )
             .into_response()
+    }
+}
+
+/// PLAN-0534: optional deployment commit. Invalid/missing values stay `None`.
+fn build_commit() -> Option<String> {
+    let raw = std::env::var("XIHE_BUILD_COMMIT").ok()?;
+    let value = raw.trim();
+    if (7..=40).contains(&value.len()) && value.chars().all(|c| c.is_ascii_hexdigit()) {
+        Some(value.to_string())
+    } else {
+        None
     }
 }
 
