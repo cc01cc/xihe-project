@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class HealthMonitorTest {
@@ -26,7 +27,7 @@ class HealthMonitorTest {
         agentAvailable = new AtomicBoolean(true);
         server = HttpServer.create(new InetSocketAddress(0), 0);
         server.createContext("/internal/v1/agent/health", this::serveAgentHealth);
-        server.createContext("/health", this::serveRuntimeHealth);
+        server.createContext("/ready", this::serveRuntimeHealth);
         server.start();
 
         monitor = new HealthMonitor();
@@ -51,7 +52,21 @@ class HealthMonitorTest {
         assertEquals("up", health.liveness());
         assertEquals("ready", health.llmReady());
         assertEquals("rev-1", health.configRevision());
+        assertEquals("0.1.0", health.version());
+        assertEquals("b0c68ddf", health.commit());
+        assertEquals("langgraph", health.framework());
         assertTrue(health.responseMs() >= 0);
+    }
+
+    @Test
+    void pollHealth_cachesRuntimeVersionFromReady() {
+        monitor.pollHealth();
+
+        HealthMonitor.ServiceHealth health = monitor.getRuntimeHealth();
+        assertEquals("up", health.status());
+        assertEquals("0.1.0", health.version());
+        assertEquals("b0c68ddf", health.commit());
+        assertNull(health.framework());
     }
 
     @Test
@@ -65,6 +80,9 @@ class HealthMonitorTest {
         assertEquals("down", health.status());
         assertEquals("ready", health.llmReady());
         assertEquals("rev-1", health.configRevision());
+        assertNull(health.version());
+        assertNull(health.commit());
+        assertNull(health.framework());
     }
 
     private void serveAgentHealth(HttpExchange exchange) throws IOException {
@@ -73,11 +91,11 @@ class HealthMonitorTest {
             exchange.close();
             return;
         }
-        write(exchange, "{\"status\":\"ok\",\"liveness\":\"up\",\"llmReady\":\"ready\",\"configRevision\":\"rev-1\",\"verifiedAt\":\"2026-09-05T13:00:00Z\"}");
+        write(exchange, "{\"status\":\"ok\",\"liveness\":\"up\",\"llmReady\":\"ready\",\"configRevision\":\"rev-1\",\"verifiedAt\":\"2026-09-05T13:00:00Z\",\"version\":\"0.1.0\",\"commit\":\"b0c68ddf\",\"framework\":\"langgraph\"}");
     }
 
     private void serveRuntimeHealth(HttpExchange exchange) throws IOException {
-        write(exchange, "{\"status\":\"ok\",\"liveness\":\"up\"}");
+        write(exchange, "{\"status\":\"ready\",\"deviceId\":\"dev-1\",\"version\":\"0.1.0\",\"commit\":\"b0c68ddf\"}");
     }
 
     private void write(HttpExchange exchange, String body) throws IOException {

@@ -208,6 +208,24 @@
     </dependencies>
     
     <build>
+        <!-- PLAN-0534: pom.properties is the runtime projection of <version>.
+             Filter only this file; all other resources are copied verbatim. -->
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+                <includes>
+                    <include>META-INF/maven/com.cc01cc.p.xihe/control-plane/pom.properties</include>
+                </includes>
+            </resource>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+                <excludes>
+                    <exclude>META-INF/maven/com.cc01cc.p.xihe/control-plane/pom.properties</exclude>
+                </excludes>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>

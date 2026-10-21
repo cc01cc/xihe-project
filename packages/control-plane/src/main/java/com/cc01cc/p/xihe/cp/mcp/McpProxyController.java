@@ -36,6 +36,7 @@ import com.cc01cc.p.xihe.cp.policy.PolicyVerdict;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
+import com.cc01cc.p.xihe.cp.status.BuildVersion;
 import com.cc01cc.p.xihe.cp.policy.SafePolicySummary;
 import com.cc01cc.p.xihe.cp.operation.JobStateService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
@@ -163,6 +164,7 @@ public class McpProxyController {
     private final McpInvocationService mcpInvocationService;
     private final LineageInvocationService lineageInvocationService;
     private final CredentialLeaseService credentialLeaseService;
+    private final BuildVersion buildVersion;
 
     public McpProxyController(
             RequestRewriter rewriter,
@@ -182,7 +184,8 @@ public class McpProxyController {
             McpInvocationService mcpInvocationService,
             LineageInvocationService lineageInvocationService,
             McpToolTimeoutService toolTimeoutService,
-            CredentialLeaseService credentialLeaseService) {
+            CredentialLeaseService credentialLeaseService,
+            BuildVersion buildVersion) {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
@@ -204,6 +207,7 @@ public class McpProxyController {
         this.lineageInvocationService = lineageInvocationService;
         this.toolTimeoutService = toolTimeoutService;
         this.credentialLeaseService = credentialLeaseService;
+        this.buildVersion = buildVersion;
     }
 
     @PostMapping("/api/v1/mcp")
@@ -1952,7 +1956,7 @@ public class McpProxyController {
                 meta.put("io.modelcontextprotocol/protocolVersion", protocolVersion);
             }
             meta.set("io.modelcontextprotocol/clientInfo", objectMapper.valueToTree(
-                Map.of("name", "xihe-cp-gateway", "version", "0.1.0")));
+                Map.of("name", "xihe-cp-gateway", "version", buildVersion.versionOrUnknown())));
             meta.set("io.modelcontextprotocol/clientCapabilities", objectMapper.createObjectNode());
             params.set("_meta", meta);
             request.set("params", params);

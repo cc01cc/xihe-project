@@ -206,7 +206,8 @@ class McpProxyTest {
                 mcpInvocationService,
                 lineageInvocationService,
                 toolTimeoutService,
-                mock(com.cc01cc.p.xihe.cp.credentials.CredentialLeaseService.class)
+                mock(com.cc01cc.p.xihe.cp.credentials.CredentialLeaseService.class),
+                new com.cc01cc.p.xihe.cp.status.BuildVersion()
         );
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 
@@ -218,6 +219,18 @@ class McpProxyTest {
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ALLOW, null, PolicyLayer.BUILTIN, "manual", "auto_allow"));
         when(policyEngine.faceOf(any(PolicyContext.class), anyString()))
                 .thenReturn(new ToolFaceRegistry.Face("read", ToolShape.STRUCTURED));
+    }
+
+    @Test
+    void normalizeRuntimeBody_usesDerivedCpVersionInClientInfo() throws Exception {
+        String normalized = ReflectionTestUtils.invokeMethod(controller, "normalizeRuntimeBody",
+                "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1,\"params\":{}}",
+                "2026-07-28");
+        String expected = new com.cc01cc.p.xihe.cp.status.BuildVersion().version();
+
+        assertEquals(expected, objectMapper.readTree(normalized)
+                .path("params").path("_meta")
+                .path("io.modelcontextprotocol/clientInfo").path("version").asText());
     }
 
     @Test

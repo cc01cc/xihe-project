@@ -47,7 +47,7 @@ public class HealthMonitor {
     @Scheduled(fixedDelay = 10000, initialDelay = 5000)
     public void pollHealth() {
         pollService("agent", agentUrl.replaceAll("/internal/v1/agent/chat$", "") + "/internal/v1/agent/health", agentBreaker);
-        pollService("runtime", runtimeUrl.replaceAll("/internal/v1/runtime/workspaces/.*", "") + "/health", runtimeBreaker);
+        pollService("runtime", runtimeUrl.replaceAll("/internal/v1/runtime/workspaces/.*", "") + "/ready", runtimeBreaker);
     }
 
     private void pollService(String serviceName, String healthUrl, CircuitBreaker breaker) {
@@ -69,6 +69,11 @@ public class HealthMonitor {
         String llmReady = alive ? probe.llmReady() : prev.llmReady();
         String configRevision = alive ? probe.configRevision() : prev.configRevision();
         String verifiedAt = alive ? probe.verifiedAt() : prev.verifiedAt();
+        // Identity must not survive a failed probe: an unreachable module has no
+        // known current version, unlike readiness which stays last-known.
+        String version = alive ? probe.version() : null;
+        String commit = alive ? probe.commit() : null;
+        String framework = alive ? probe.framework() : null;
         ServiceHealth current = new ServiceHealth(
             currentStatus,
             consecutiveFailures,
@@ -76,7 +81,10 @@ public class HealthMonitor {
             probe.liveness(),
             llmReady,
             configRevision,
-            verifiedAt
+            verifiedAt,
+            version,
+            commit,
+            framework
         );
         healthCache.put(serviceName, current);
 
@@ -100,13 +108,13 @@ public class HealthMonitor {
             HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
             long responseMs = Duration.ofNanos(System.nanoTime() - start).toMillis();
             if (resp.statusCode() >= 400) {
-                return new HealthProbe(false, responseMs, "down", "unknown", "", null);
+                return new HealthProbe(false, responseMs, "down", "unknown", "", null, null, null, null);
             }
             return parseProbe(resp.body(), responseMs);
         } catch (Exception e) {
             logger.debug("Health check failed for {}: {}", url, e.getMessage());
             long responseMs = Duration.ofNanos(System.nanoTime() - start).toMillis();
-            return new HealthProbe(false, responseMs, "down", "unknown", "", null);
+            return new HealthProbe(false, responseMs, "down", "unknown", "", null, null, null, null);
         }
     }
 
@@ -120,11 +128,14 @@ public class HealthMonitor {
             }
             String revision = text(root, "configRevision", "");
             String verifiedAt = text(root, "verifiedAt", null);
+            String version = text(root, "version", null);
+            String commit = text(root, "commit", null);
+            String framework = text(root, "framework", null);
             return new HealthProbe(true, responseMs, liveness, llmReady == null ? "unknown" : llmReady,
-                revision, verifiedAt);
+                revision, verifiedAt, version, commit, framework);
         } catch (Exception e) {
             logger.warn("Health response is not valid JSON: {}", e.getMessage());
-            return new HealthProbe(true, responseMs, "up", "unknown", "", null);
+            return new HealthProbe(true, responseMs, "up", "unknown", "", null, null, null, null);
         }
     }
 
@@ -173,7 +184,10 @@ public class HealthMonitor {
         String liveness,
         String llmReady,
         String configRevision,
-        String verifiedAt
+        String verifiedAt,
+        String version,
+        String commit,
+        String framework
     ) {}
 
     public record ServiceHealth(
@@ -183,10 +197,14 @@ public class HealthMonitor {
         String liveness,
         String llmReady,
         String configRevision,
-        String verifiedAt
+        String verifiedAt,
+        String version,
+        String commit,
+        String framework
     ) {
         public ServiceHealth(String status, int consecutiveFailures, long responseMs) {
-            this(status, consecutiveFailures, responseMs, status, "unknown", "", null);
+            this(status, consecutiveFailures, responseMs, status, "unknown", "", null,
+                null, null, null);
         }
     }
 }
