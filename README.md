@@ -83,7 +83,7 @@ The UI chat request and event stream use separate HTTP directions. The Agent cal
 | Data | Relational persistence and vector retrieval | PostgreSQL 17, pgvector |
 | Development | Build and local orchestration | Node.js 24, pnpm 10, Maven 3.9, uv, Docker |
 
-Dependency details are maintained in the [UI manifest](packages/ui/package.json), [Agent project](packages/agent/pyproject.toml), [Control Plane build](packages/control-plane/pom.xml), and [Runtime manifest and lockfile](packages/runtime/Cargo.toml). Tool versions are managed in [mise.toml](mise.toml); the Rust toolchain is pinned in [rust-toolchain.toml](packages/runtime/rust-toolchain.toml), and container builds use `cargo build --locked`.
+Dependency details are maintained in the [UI manifest](packages/ui/package.json), [Agent project](packages/agent/pyproject.toml), [Control Plane build](packages/control-plane/pom.xml), and [Runtime manifest and lockfile](packages/runtime/Cargo.toml). Each module also owns its version in that manifest; `GET /api/v1/version`, Agent health, Runtime `/ready`, and MCP `clientInfo` derive from it, and the bump checklist is in [DEV-002 §7](docs/i18n/en/DEV-002-developer-guide.md). Tool versions are managed in [mise.toml](mise.toml); the Rust toolchain is pinned in [rust-toolchain.toml](packages/runtime/rust-toolchain.toml), and container builds use `cargo build --locked`.
 
 ## 4. Documentation
 

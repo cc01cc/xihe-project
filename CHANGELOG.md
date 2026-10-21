@@ -1,5 +1,12 @@
 # Changelog
 
+## Versioning
+
+The UI, Control Plane, Agent, and Runtime version independently; each manifest is
+the single authority. Add unreleased changes under `[Unreleased]`, then move them
+to a dated `[x.y.z]` section at release time. The bump checklist and the shared
+identity endpoint (`GET /api/v1/version`) are documented in DEV-002 §7.
+
 ## [Unreleased]
 
 ### Added
@@ -160,3 +167,10 @@
 ### Removed
 
 - 删除旧的 `Popover.vue`，模型选择器 Popover 功能由 reka-ui Combobox 替代
+
+## [0.1.0] — 2026-10-21
+
+### Added
+
+- 初始版本基线：四个模块保持 `0.1.0`，建立 manifest 单一派生、`GET /api/v1/version`
+  身份面与 bump 校验；本条目不改变任何模块版本号。

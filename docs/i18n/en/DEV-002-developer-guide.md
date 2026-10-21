@@ -561,7 +561,45 @@ uv run python -m xihe_agent.main
 
 Or add Providers through the settings page: OpenAI, DeepSeek, Xiaomi MiMo, Anthropic presets + custom.
 
-## 7. Related Documents
+## 7. Module Version Bump (PLAN-0534)
+
+The four modules version **independently**. Each manifest is the only authority;
+business code must not contain a version literal.
+
+| Module | Single authority | Runtime projection |
+|---|---|---|
+| UI | `packages/ui/package.json` `version` | Vite `define` → `VITE_XIHE_SERVICE_VERSION` |
+| CP | `packages/control-plane/pom.xml` `<version>` | Maven-filtered `pom.properties` → `GET /api/v1/version` / MCP `clientInfo` |
+| Agent | `packages/agent/pyproject.toml` `version` | `importlib.metadata.version("xihe-agent")` → health / `/version` |
+| Runtime | `packages/runtime/Cargo.toml` `version` | `env!("CARGO_PKG_VERSION")` → `/ready` / `/version` |
+
+### 7.1 Bump checklist
+
+1. Pick the module and semver: in 0.x, breaking/features → minor, fixes/internal → patch (see `spec/version-contract.md` §2).
+2. Change only that module's manifest version. Do not hand-edit the module entry in `uv.lock` / `Cargo.lock` / `pnpm-lock.yaml`.
+3. When needed, refresh locks with the tool: Agent `uv lock`, Runtime `cargo check` (or `cargo update -p xihe-runtime`), UI `pnpm install --lockfile-only`.
+4. Add an entry under `[Unreleased]` in the root `CHANGELOG.md`; when releasing, move it to `## [x.y.z] — YYYY-MM-DD`.
+5. Run `node scripts/check-versions.mjs` (manifest semver, no production version literals, derivation anchors, CHANGELOG structure).
+6. Restart the module and confirm `/internal/v1/agent/health`, Runtime `/ready`, `GET /api/v1/version`, and Settings → Monitoring agree.
+7. Update affected doc references in the same batch. Do not copy a drifting version number into README.
+
+### 7.2 Deployment identity
+
+`GET /api/v1/version` (USER/ADMIN, same as `/api/v1/status`) returns:
+
+- `stackId`: `XIHE_STACK_ID`, default `stack-1`; this is the only module surface allowed to read it.
+- `releaseChannel`: `XIHE_RELEASE_CHANNEL` (`stable|beta|dev`, default `dev`).
+- `startedAt`: CP process start time.
+- `commit` / `modules.*.commit`: `XIHE_BUILD_COMMIT` (7–40 hex chars); `null` when not injected.
+- `modules.cp/agent/runtime`: module versions; an unreachable Agent/Runtime yields `null` for that module while the endpoint still returns 200.
+- **No `modules.ui`**: the UI displays its own `VITE_XIHE_SERVICE_VERSION`.
+
+### 7.3 Known limitation
+
+- When CP runs directly in an IDE that does not delegate resource filtering to Maven, `pom.properties` may still contain the raw `@project.version@` placeholder. `BuildVersion` rejects it and returns `null` with a WARN, so `cp.version` is `null`. Use `mvn spring-boot:run` or a Maven build for a real version.
+- Commits are never fabricated; without build/deploy injection the UI shows “not injected”.
+
+## 8. Related Documents
 
 - [DEV-001 System Architecture](DEV-001-system-architecture.md)
 - [USER-001 User Guide](USER-001-user-guide.md)

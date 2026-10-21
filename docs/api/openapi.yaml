@@ -1402,6 +1402,60 @@ paths:
     get: { operationId: health, responses: { '200': { description: Healthy } } }
   /api/v1/status:
     get: { operationId: serviceStatus, security: [{ bearerAuth: [] }], responses: { '200': { description: Service status } } }
+  /api/v1/version:
+    get:
+      operationId: deploymentVersion
+      summary: Deployment identity and module versions
+      description: |
+        PLAN-0534 identity surface. Reports the stack id, release channel, CP process
+        start time, CP commit, and the cached cp/agent/runtime module versions.
+        `modules.ui` is intentionally absent; the UI displays its own build version.
+        An unreachable Agent or Runtime yields 200 with that module's version/commit null.
+        Auth matches `GET /api/v1/status`.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Version identity snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [stackId, releaseChannel, startedAt, commit, modules]
+                properties:
+                  stackId: { type: string, pattern: '^stack-[1-8]$' }
+                  releaseChannel: { type: string, enum: [stable, beta, dev] }
+                  startedAt: { type: string, format: date-time }
+                  commit: { type: [string, 'null'] }
+                  modules:
+                    type: object
+                    additionalProperties: false
+                    required: [cp, agent, runtime]
+                    properties:
+                      cp:
+                        type: object
+                        additionalProperties: false
+                        required: [version, commit]
+                        properties:
+                          version: { type: [string, 'null'] }
+                          commit: { type: [string, 'null'] }
+                      agent:
+                        type: object
+                        additionalProperties: false
+                        required: [version, commit, framework]
+                        properties:
+                          version: { type: [string, 'null'] }
+                          commit: { type: [string, 'null'] }
+                          framework: { type: [string, 'null'] }
+                      runtime:
+                        type: object
+                        additionalProperties: false
+                        required: [version, commit]
+                        properties:
+                          version: { type: [string, 'null'] }
+                          commit: { type: [string, 'null'] }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
   /api/v1/logs:
     post: { operationId: ingestLogs, security: [{ bearerAuth: [] }], responses: { '200': { description: Accepted } } }
   /api/v1/telemetry/logs:

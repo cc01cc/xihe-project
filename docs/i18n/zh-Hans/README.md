@@ -93,7 +93,7 @@ flowchart LR
 | 数据层 | 持久化与向量检索 | PostgreSQL 17、pgvector |
 | 开发工具 | 构建与本地编排 | Node.js 24、pnpm 10、Maven 3.9、uv、Docker |
 
-库依赖以各包 manifest 为准：`packages/ui/package.json`、`packages/agent/pyproject.toml`、`packages/control-plane/pom.xml`、`packages/runtime/Cargo.toml`。固定工具链见 `mise.toml` 和 `packages/runtime/rust-toolchain.toml`；Runtime 容器构建使用 `cargo build --locked`。
+库依赖以各包 manifest 为准：`packages/ui/package.json`、`packages/agent/pyproject.toml`、`packages/control-plane/pom.xml`、`packages/runtime/Cargo.toml`。四个模块也各自在该 manifest 维护版本号；`GET /api/v1/version`、Agent health、Runtime `/ready`、MCP `clientInfo` 均从该来源派生，bump 清单见 [DEV-002 §7](DEV-002-developer-guide.md)。固定工具链见 `mise.toml` 和 `packages/runtime/rust-toolchain.toml`；Runtime 容器构建使用 `cargo build --locked`。
 
 ## 4. 功能状态
 
