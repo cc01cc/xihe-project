@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 18
 status: active
 created: 2026-09-02
-updated: 2026-10-20
+updated: 2026-10-21
 ---
 
 # DEV-018: Known Issues (Supplement)
@@ -18,6 +18,14 @@ updated: 2026-10-20
 ## OpenAPI 与 MCP 入口 405 漂移（PLAN-0537 登记，未修复）
 
 `docs/api/openapi.yaml` 的 `mcpStream`（GET）与 `mcpDisconnect`（DELETE）仍声明 `200` / `204`，而代码自 PLAN-0308 决策 #34 起固定返回 405（`MCP_STREAM_NOT_SUPPORTED` / `MCP_SESSION_NOT_SUPPORTED`）。属历史漂移，不影响运行时行为；下次修订 OpenAPI 时一并校正。
+
+## LLM 行为断言的确定性缺口（PLAN-0532 登记，2026-10-21；移交 PLAN-0540）
+
+- **现象**：PLAN-0532 的 `failure_budget.no_repeat.v1` 三连跑中 1 次 A2 失败——模型未发起任何工具调用，run 正常 `completed`，没有 `RUN_BUDGET_EXHAUSTED`/`RUN_NO_PROGRESS`。
+- **根因**：该断言同时要求「运行时刹车生效」（确定）与「模型至少尝试一次」（随机）；评测阈值 `runMaxTurns=2` 恰好落在「尝试=2 次 LLM 调用 / 不尝试=1 次」的分叉点，结果二值化。机制本身无缺陷（r2/r3 已真实触发预算码）。
+- **判定**：测试设计缺陷，不是基础设施 flaky；不在 0532 内改 dataset/scorer/report/gate，也不以重试掩盖。
+- **去向**：PLAN-0540（LLM 测试确定性分层：invariant/behavior、N 次统计、脚本化模型、重试语义）。
+- **复现**：stack-2，`xiaomi/mimo-v2.6-flash`，eval workspace 的 `agent-runtime.runMaxTurns=2`；证据见 `plans/PLAN-0532-XH-agent-eval-tool-surface/evidence/baseline-4class.md`。
 
 ## 全量 host E2E 基线口径（PLAN-0365，2026-09-18）
 
