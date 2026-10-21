@@ -39,4 +39,7 @@ class RunFacts(BaseModel):
     budget: dict[str, BudgetDimension] = Field(default_factory=dict)
 
     def is_terminal(self) -> bool:
-        return self.status in {"completed", "failed", "cancelled"}
+        # `partial` is a CP terminal status (run converged with assistant content,
+        # e.g. RUN_BUDGET_EXHAUSTED); treating it as non-terminal mislabels a real
+        # terminal signal as not_evaluated (PLAN-0532 M2 finding).
+        return self.status in {"completed", "failed", "partial", "cancelled", "interrupted"}

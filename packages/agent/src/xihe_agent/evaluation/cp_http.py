@@ -20,7 +20,16 @@ import httpx
 from xihe_agent.evaluation.runner import RunTerminal
 from xihe_agent.evaluation.trace import TraceResponse
 
-_TERMINAL = {"completed", "failed", "cancelled", "succeeded", "error", "ambiguous"}
+_TERMINAL = {
+    "completed",
+    "failed",
+    "partial",
+    "cancelled",
+    "interrupted",
+    "succeeded",
+    "error",
+    "ambiguous",
+}
 
 
 def _norm_status(raw: Any) -> str:
@@ -77,6 +86,9 @@ class HttpCpClient:
         body: dict[str, Any] = {"title": title}
         if self._agent_principal_id:
             body["agentPrincipalId"] = self._agent_principal_id
+        # CP resolves modelProvider/modelName against a verified provider Connection
+        # (the legacy provider/model pair is accepted by the session API but later
+        # rejects chat with API_TYPE_REBIND_REQUIRED; PLAN-0532 M1 finding).
         if self._provider:
             body["modelProvider"] = self._provider
         if self._model:

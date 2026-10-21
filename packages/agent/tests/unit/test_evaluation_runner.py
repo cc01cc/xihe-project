@@ -152,6 +152,35 @@ def test_tool_categories_not_evaluated_without_tool_surface() -> None:
     assert all(t.not_evaluated_reason == "no_tool_surface" for t in tool_reports)
 
 
+def test_tool_authorization_deferred_reason_when_surface_enabled() -> None:
+    """PLAN-0532 D1-C1: the denied-mutation task keeps an explicit reason."""
+
+    class _NoTraceClient(_FakeCpClient):
+        def get_trace(self, run_id: str) -> TraceResponse:
+            raise ValueError("trace unavailable")
+
+        def read_final_output(self, session_id: str, run_id: str) -> str | None:
+            return None
+
+    report = run_dataset(
+        _NoTraceClient({}),
+        load_dataset(),
+        eval_run_id="eval-4",
+        commit="c",
+        dataset_version="v1",
+        dataset_hash="h",
+        tool_surface_enabled=True,
+    )
+    by_id = {t.task_id: t for t in report.tasks}
+    deferred = by_id["tool_authorization.denied_mutation.v1"]
+    assert deferred.status == STATUS_NOT_EVALUATED
+    assert deferred.not_evaluated_reason == "no_denial_observability"
+    # The budget task still executes: its not_evaluated reason comes from the
+    # missing trace, never from the tool-surface skip.
+    budget = by_id["failure_budget.no_repeat.v1"]
+    assert budget.not_evaluated_reason == "missing_trace"
+
+
 def test_budget_dimension_used() -> None:
     dim = BudgetDimension(limit=3, used=3)
     assert dim.used == dim.limit

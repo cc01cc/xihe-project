@@ -25,6 +25,13 @@ from xihe_agent.evaluation.trace import TraceResponse, derive_facts
 # Categories that require workspace tools (host-mode only); others run tool-less.
 WORKSPACE_CATEGORIES = {"tool_authorization", "failure_budget"}
 
+# Categories that stay not_evaluated even when a tool surface exists, with a
+# category-specific reason. PLAN-0532 D1-C1: the denied-mutation task cannot be
+# proven with the current observation surface (a denied agent call already opens
+# an invocation row before the grant gate, and the refusal is audit-log only), so
+# v1 keeps it not_evaluated with an explicit reason instead of pretending it ran.
+DEFERRED_CATEGORIES = {"tool_authorization": "no_denial_observability"}
+
 
 class RunTerminal(BaseModel):
     """Terminal outcome of a ChatRun."""
@@ -103,17 +110,24 @@ def run_dataset(
 
     Tool-requiring categories are reported `not_evaluated(no_tool_surface)` while
     no synthetic tool surface exists, instead of being trivially satisfied by an
-    empty tool set (see review/round-15.md B2).
+    empty tool set (see 0511 review/round-15.md B2). When a tool surface is
+    enabled, categories listed in DEFERRED_CATEGORIES keep their own explicit
+    `not_evaluated` reason (PLAN-0532 D1-C1) instead of being executed.
     """
     task_reports: list[TaskReport] = []
     for task in tasks:
+        reason: str | None = None
         if task.category in WORKSPACE_CATEGORIES and not tool_surface_enabled:
+            reason = "no_tool_surface"
+        elif task.category in DEFERRED_CATEGORIES:
+            reason = DEFERRED_CATEGORIES[task.category]
+        if reason:
             task_reports.append(
                 TaskReport(
                     task_id=task.task_id,
                     category=task.category,
                     status=STATUS_NOT_EVALUATED,
-                    not_evaluated_reason="no_tool_surface",
+                    not_evaluated_reason=reason,
                 )
             )
             continue
