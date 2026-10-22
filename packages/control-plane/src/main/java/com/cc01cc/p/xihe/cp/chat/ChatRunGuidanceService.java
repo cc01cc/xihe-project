@@ -6,7 +6,8 @@ import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.ChatRunGuidance;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.ChatRunGuidanceRepository;
-import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import jakarta.persistence.EntityManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,14 +16,15 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
 /**
  * PLAN-0528: single transition owner for Run-scoped Guidance records.
  *
- * <p>Frozen wire/state contract: {@code spec/cp-guidance-contract.md}. Status
- * changes only go through this service; terminal-expired migration happens in
+ * <p>Frozen wire/state contract: {@code spec/session/chat-run-operation.md}.
+ * Status changes only go through this service; terminal-expired migration happens in
  * the Run terminal transaction (see ChatRunTerminalService) so a crashing CP
  * can never leave a terminal run with pending guidance. Logs never carry the
  * guidance body (untrusted request content).
@@ -80,6 +82,7 @@ public class ChatRunGuidanceService {
         UUID userUuid = parseUuid(userId, "userId");
 
         ChatRun observed = runs.findById(runUuid).orElseThrow(ChatRunGuidanceService::runNotFound);
+        requireRunOwner(observed, userId, workspaceId);
         UUID sessionUuid = UUID.fromString(observed.getSessionId());
 
         ChatRunGuidance replay = guidance.findByRunIdAndIdempotencyKey(runUuid, idempotencyKey).orElse(null);
@@ -146,22 +149,25 @@ public class ChatRunGuidanceService {
         UUID runUuid = parseUuid(runIdValue, "runId");
         UUID guidanceUuid = parseUuid(guidanceIdValue, "guidanceId");
 
-        ChatRunGuidance record = guidance.findByIdAndRunId(guidanceUuid, runUuid)
-                .orElseThrow(ChatRunGuidanceService::runNotFound);
+        dbLockTimeout.apply();
+        int affected = guidance.markConsumedIfPending(guidanceUuid, runUuid, Instant.now());
+        ChatRunGuidance record = guidance.findByIdAndRunId(guidanceUuid, runUuid).orElseThrow(
+                ChatRunGuidanceService::runNotFound);
+        if (affected == 1) {
+            logger.info("[LIFECYCLE] service=cp event=guidance_consumed runId={} guidanceId={} status={} affected={}",
+                    runUuid, record.getId(), record.getStatus(), affected);
+            return new ConsumeResult(record, true);
+        }
+        if (ChatRunGuidance.STATUS_CONSUMED.equals(record.getStatus())) {
+            return new ConsumeResult(record, false);
+        }
         if (ChatRunGuidance.STATUS_TERMINAL_EXPIRED.equals(record.getStatus())) {
             throw new CpApiException(HttpStatus.CONFLICT, ERROR_ALREADY_TERMINAL_EXPIRED,
                     "Guidance expired before consumption; stop retrying and do not inject");
         }
-        dbLockTimeout.apply();
-        ChatRunGuidance locked = guidance.findByIdForUpdate(guidanceUuid).orElseThrow(
-                ChatRunGuidanceService::runNotFound);
-        boolean first = locked.markConsumed();
-        guidance.saveAndFlush(locked);
-        if (first) {
-            logger.info("[LIFECYCLE] service=cp event=guidance_consumed runId={} guidanceId={} status={}",
-                    runUuid, locked.getId(), locked.getStatus());
-        }
-        return new ConsumeResult(locked, first);
+        // pending with zero affected rows is unreachable under READ COMMITTED;
+        // keep the frozen 404 instead of retrying or looping.
+        throw runNotFound();
     }
 
     /**
@@ -169,32 +175,25 @@ public class ChatRunGuidanceService {
      * terminal transaction (same-transaction invariant, spec §2).
      */
     @Transactional
-    public void settleTerminal(UUID runUuid) {
-        List<ChatRunGuidance> pending =
-                guidance.findByRunIdAndStatusOrderBySequenceAsc(runUuid, ChatRunGuidance.STATUS_PENDING);
-        for (ChatRunGuidance record : pending) {
-            record.markTerminalExpired();
+    public int settleTerminal(UUID runUuid) {
+        int expired = guidance.markTerminalExpiredForRun(runUuid, Instant.now());
+        if (expired > 0) {
+            logger.info("[LIFECYCLE] service=cp event=guidance_terminal_expired runId={} affected={}",
+                    runUuid, expired);
         }
-        if (!pending.isEmpty()) {
-            guidance.saveAll(pending);
-            logger.info("[LIFECYCLE] service=cp event=guidance_terminal_expired runId={} expired={}",
-                    runUuid, pending.size());
-        }
+        return expired;
     }
 
     /** One-shot startup sweep: expire guidance left pending on already-terminal runs. */
     @Transactional
     public int recoverPendingOnTerminalRuns() {
-        List<ChatRunGuidance> stale = guidance.findByRunIdInAndStatus(
-                runs.findIdsByStatusIn(ChatRunRepository.TERMINAL_STATUSES),
-                ChatRunGuidance.STATUS_PENDING);
-        for (ChatRunGuidance record : stale) {
-            record.markTerminalExpired();
+        dbLockTimeout.apply();
+        int expired = guidance.markTerminalExpiredForTerminalRuns(
+                ChatRunRepository.TERMINAL_STATUSES, Instant.now());
+        if (expired > 0) {
+            logger.info("[LIFECYCLE] service=cp event=guidance_recovered affected={}", expired);
         }
-        if (!stale.isEmpty()) {
-            guidance.saveAll(stale);
-        }
-        return stale.size();
+        return expired;
     }
 
     private void requireRunActive(ChatRun run) {

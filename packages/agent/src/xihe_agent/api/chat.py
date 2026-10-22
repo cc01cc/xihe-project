@@ -177,6 +177,17 @@ def _rag_config_defaults() -> dict[str, Any]:
     }
 
 
+async def _close_guidance_consumer(consumer: GuidanceConsumer | None) -> None:
+    if consumer is None:
+        return
+    try:
+        await asyncio.shield(consumer.aclose())
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:  # noqa: BLE001 — close failure must not change the Run result
+        logger.warning("guidance consumer close failed: {}", e)
+
+
 @router.post("/internal/v1/agent/chat", dependencies=[Depends(verify_api_token)])
 async def chat(request: Request):
     data = await request.json()
@@ -392,6 +403,7 @@ async def chat(request: Request):
         token_count = 0
         assistant_chars = 0
         event_index = 0
+        guidance_consumer: GuidanceConsumer | None = None
 
         def correlated_data(event_data: dict[str, Any]) -> dict[str, Any]:
             payload = dict(event_data)
@@ -550,6 +562,11 @@ async def chat(request: Request):
                 has_template = True
 
                 loop_thresholds, loop_exempt_tools = _resolve_loop_guard(user_overrides, workspace_overrides)
+                guidance_consumer = GuidanceConsumer(
+                    base_url=CP_URL,
+                    service_token=CP_API_TOKEN,
+                    run_id=run_id,
+                )
                 config = RunnerConfig(
                     model=model_override or request_config.model,
                     system_prompt="" if has_template else instructions,
@@ -572,14 +589,8 @@ async def chat(request: Request):
                     continuation=continuation,
                     checkpoint_saver=checkpoint_saver,
                     # PLAN-0529: Guidance consumer for the frozen consumption
-                    # point (model-call pre-injection). Only wired when this
-                    # request carries a durable runId; registry/continuation
-                    # paths without one stay guidance-less by design.
-                    guidance=(
-                        GuidanceConsumer(base_url=CP_URL, service_token=CP_API_TOKEN, run_id=run_id)
-                        if run_id
-                        else None
-                    ),
+                    # point (model-call pre-injection); PLAN-0543 owns its close.
+                    guidance=guidance_consumer,
                 )
 
                 llm_request_started = True
@@ -780,6 +791,7 @@ async def chat(request: Request):
             # Always drop the cancel handle when the run body ends (terminal,
             # abort, or client disconnect) so later cancels report unknown.
             run_cancel_registry.unregister(run_id)
+            await _close_guidance_consumer(guidance_consumer)
 
         if not terminal_sent:
             terminal_sent = True
