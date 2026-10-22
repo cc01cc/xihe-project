@@ -16,9 +16,9 @@ import java.util.Map;
 
 /**
  * Internal service-Bearer Guidance surface for the Agent runner (frozen wire:
- * spec/cp-guidance-contract.md §4). Pending read + consume acknowledgement;
- * consume-after-terminal-expired is an explicit 409 so the agent stops retrying
- * and does not inject.
+ * spec/session/chat-run-operation.md §Run Guidance). Pending read + consume
+ * acknowledgement; consume-after-terminal-expired is an explicit 409 so the
+ * agent stops retrying and does not inject.
  */
 @RestController
 @RequestMapping("/internal/v1/chat/runs/{runId}/guidance")

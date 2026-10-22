@@ -12,9 +12,12 @@ import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -22,22 +25,27 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * PLAN-0528 wire-level assertions for the public Guidance surface (frozen:
- * spec/cp-guidance-contract.md §3): idempotency replay status, non-active run
- * 409 with frozen code, snapshot ordering and cross-user isolation.
+ * spec/session/chat-run-operation.md §Run Guidance): idempotency replay status,
+ * non-active run 409 with frozen code, snapshot ordering and cross-user isolation.
  */
 class ChatRunGuidanceHttpIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private ChatRunRepository runs;
+
+    @Autowired
+    private ChatRunGuidanceService service;
 
     @Autowired
     private SessionRepository sessions;
@@ -47,6 +55,9 @@ class ChatRunGuidanceHttpIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private WorkspaceRepository workspaceRepository;
+
+    @Value("${cp.agent-api-token:dev-token-not-secure}")
+    private String serviceToken;
 
     private String email;
     private final String password = TestDataFactory.PASSWORD;
@@ -131,6 +142,131 @@ class ChatRunGuidanceHttpIntegrationTest extends AbstractIntegrationTest {
                 entity(bearer(), Map.of("content", "hello"), "idem-409"), String.class);
         assertEquals(409, response.getStatusCode().value());
         assertTrue(response.getBody().contains("GUIDANCE_RUN_NOT_ACTIVE"));
+    }
+
+    /** PLAN-0543 D2/V4: knowing runId and key is not a capability; only the owner replays. */
+    @Test
+    void replayAsNonOwnerReturns403WithoutRecordMetadata() throws Exception {
+        String runId = createRun("running");
+        String content = "prefer the smaller change";
+        ResponseEntity<Map<String, Object>> first = restTemplate.exchange(
+                baseUrl + "/api/v1/chat/runs/" + runId + "/guidance", HttpMethod.POST,
+                entity(bearer(), Map.of("content", content), "idem-owner-only"),
+                new ParameterizedTypeReference<>() { });
+        assertEquals(201, first.getStatusCode().value());
+        String guidanceId = (String) first.getBody().get("id");
+
+        ResponseEntity<String> foreign = restTemplate.exchange(
+                baseUrl + "/api/v1/chat/runs/" + runId + "/guidance", HttpMethod.POST,
+                entity(bearerAsOtherUser(), Map.of("content", content), "idem-owner-only"), String.class);
+
+        assertEquals(403, foreign.getStatusCode().value());
+        assertFalse(foreign.getBody().contains(guidanceId), "no record id may leak");
+        assertFalse(foreign.getBody().contains(content), "no content may leak");
+        for (String field : List.of("runId", "sessionId", "sequence", "createdAt")) {
+            assertFalse(foreign.getBody().contains("\"" + field + "\""),
+                    "no " + field + " metadata may leak");
+        }
+        JsonNode problem = new ObjectMapper().readTree(foreign.getBody());
+        assertEquals(403, problem.path("status").asInt(),
+                "the only status is the HTTP problem status, never the record status");
+    }
+
+    @Test
+    void ownerReplayAfterConsumeReturns200WithStoredStatus() {
+        String runId = createRun("streaming");
+        String token = bearer();
+        String url = baseUrl + "/api/v1/chat/runs/" + runId + "/guidance";
+        ResponseEntity<Map<String, Object>> first = restTemplate.exchange(url, HttpMethod.POST,
+                entity(token, Map.of("content", "once"), "idem-after-consume"),
+                new ParameterizedTypeReference<>() { });
+        String guidanceId = (String) first.getBody().get("id");
+        service.consume(runId, guidanceId);
+
+        ResponseEntity<Map<String, Object>> replay = restTemplate.exchange(url, HttpMethod.POST,
+                entity(token, Map.of("content", "once"), "idem-after-consume"),
+                new ParameterizedTypeReference<>() { });
+
+        assertEquals(200, replay.getStatusCode().value());
+        assertEquals(guidanceId, replay.getBody().get("id"));
+        assertEquals("consumed", replay.getBody().get("status"),
+                "replay returns the stored record instead of resurrecting pending");
+    }
+
+    /** PLAN-0543 T1.4: internal consume is the Agent's only ack surface. */
+    @Test
+    void internalConsumeAcknowledgesOnceReplaysAndRejectsExpired() {
+        String runId = createRun("streaming");
+        String submitUrl = baseUrl + "/api/v1/chat/runs/" + runId + "/guidance";
+
+        ResponseEntity<Map<String, Object>> submitted = restTemplate.exchange(submitUrl, HttpMethod.POST,
+                entity(bearer(), Map.of("content", "consume me"), "idem-internal-1"),
+                new ParameterizedTypeReference<>() { });
+        String guidanceId = (String) submitted.getBody().get("id");
+
+        ResponseEntity<Map<String, Object>> consumed = internalConsume(runId, guidanceId);
+        assertEquals(200, consumed.getStatusCode().value());
+        assertEquals("consumed", consumed.getBody().get("status"));
+        assertEquals(Boolean.TRUE, consumed.getBody().get("firstConsumption"));
+
+        ResponseEntity<Map<String, Object>> replay = internalConsume(runId, guidanceId);
+        assertEquals(200, replay.getStatusCode().value());
+        assertEquals(Boolean.FALSE, replay.getBody().get("firstConsumption"));
+
+        ResponseEntity<Map<String, Object>> pending = restTemplate.exchange(submitUrl, HttpMethod.POST,
+                entity(bearer(), Map.of("content", "will expire"), "idem-internal-2"),
+                new ParameterizedTypeReference<>() { });
+        String pendingId = (String) pending.getBody().get("id");
+        ChatRun run = runs.findById(UUID.fromString(runId)).orElseThrow();
+        run.setStatus("succeeded");
+        run.setTerminalAt(Instant.now());
+        runs.save(run);
+        service.settleTerminal(UUID.fromString(runId));
+
+        ResponseEntity<String> expired = restTemplate.exchange(
+                internalConsumeUrl(runId, pendingId), HttpMethod.POST, internalEntity(), String.class);
+        assertEquals(409, expired.getStatusCode().value());
+        assertTrue(expired.getBody().contains("GUIDANCE_ALREADY_TERMINAL_EXPIRED"));
+    }
+
+    @Test
+    void internalConsumeOnMissingOrCrossRunGuidanceReturns404() {
+        String runId = createRun("running");
+        String otherRunId = createRun("running");
+        ResponseEntity<Map<String, Object>> submitted = restTemplate.exchange(
+                baseUrl + "/api/v1/chat/runs/" + runId + "/guidance", HttpMethod.POST,
+                entity(bearer(), Map.of("content", "cross run"), "idem-internal-404"),
+                new ParameterizedTypeReference<>() { });
+        String guidanceId = (String) submitted.getBody().get("id");
+
+        ResponseEntity<String> missing = restTemplate.exchange(
+                internalConsumeUrl(runId, UUID.randomUUID().toString()), HttpMethod.POST,
+                internalEntity(), String.class);
+        assertEquals(404, missing.getStatusCode().value());
+        assertTrue(missing.getBody().contains("GUIDANCE_RUN_NOT_FOUND"));
+
+        ResponseEntity<String> crossRun = restTemplate.exchange(
+                internalConsumeUrl(otherRunId, guidanceId), HttpMethod.POST,
+                internalEntity(), String.class);
+        assertEquals(404, crossRun.getStatusCode().value());
+        assertTrue(crossRun.getBody().contains("GUIDANCE_RUN_NOT_FOUND"));
+        assertEquals(1, service.pendingForAgent(runId).size(), "the original row stays pending");
+    }
+
+    private String internalConsumeUrl(String runId, String guidanceId) {
+        return baseUrl + "/internal/v1/chat/runs/" + runId + "/guidance/" + guidanceId + "/consume";
+    }
+
+    private ResponseEntity<Map<String, Object>> internalConsume(String runId, String guidanceId) {
+        return restTemplate.exchange(internalConsumeUrl(runId, guidanceId), HttpMethod.POST,
+                internalEntity(), new ParameterizedTypeReference<>() { });
+    }
+
+    private HttpEntity<Void> internalEntity() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(serviceToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        return new HttpEntity<>(headers);
     }
 
     @Test

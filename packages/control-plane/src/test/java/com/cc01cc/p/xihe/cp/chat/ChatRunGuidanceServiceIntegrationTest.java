@@ -18,25 +18,39 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 
 /**
  * PLAN-0528 M4: real CP+PostgreSQL integration for Guidance idempotency,
  * active-state gating, terminal settlement and consume semantics (frozen:
- * spec/cp-guidance-contract.md). No mock store.
+ * spec/session/chat-run-operation.md §Run Guidance). No mock store.
  */
 class ChatRunGuidanceServiceIntegrationTest extends AbstractIntegrationTest {
 
-    @Autowired
+    @MockitoSpyBean
     private ChatRunGuidanceService service;
+
+    @Autowired
+    private ChatRunTerminalService terminalService;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Autowired
     private ChatRunGuidanceRepository guidance;
@@ -152,6 +166,8 @@ class ChatRunGuidanceServiceIntegrationTest extends AbstractIntegrationTest {
         // Simulate a pre-deploy crash window: run settles terminal while guidance stays pending.
         String runId = createRun("running");
         var submitted = service.submit(runId, userId, workspaceId, "idem-r1", "guidance");
+        String activeRunId = createRun("running");
+        var active = service.submit(activeRunId, userId, workspaceId, "idem-r2", "still active");
         ChatRun run = runs.findById(submitted.record().getRunId()).orElseThrow();
         run.setStatus("succeeded");
         run.setTerminalAt(Instant.now());
@@ -159,9 +175,14 @@ class ChatRunGuidanceServiceIntegrationTest extends AbstractIntegrationTest {
 
         int expired = service.recoverPendingOnTerminalRuns();
 
-        assertEquals(1, expired);
+        assertTrue(expired >= 1, "the crash-window row must be expired");
         ChatRunGuidance reloaded = guidance.findById(submitted.record().getId()).orElseThrow();
         assertEquals(ChatRunGuidance.STATUS_TERMINAL_EXPIRED, reloaded.getStatus());
+        assertEquals(ChatRunGuidance.STATUS_PENDING, guidance.findById(
+                        active.record().getId()).orElseThrow().getStatus(),
+                "non-terminal Runs are never swept");
+        assertEquals(0, service.recoverPendingOnTerminalRuns(),
+                "the sweep is idempotent once converged");
     }
 
     @Test
@@ -173,5 +194,67 @@ class ChatRunGuidanceServiceIntegrationTest extends AbstractIntegrationTest {
                 () -> service.submit(runId, userId, workspaceId, "idem-b2", "x".repeat(8001)));
         assertThrows(CpApiException.class,
                 () -> service.submit(runId, userId, workspaceId, " ", "content"));
+    }
+
+    /**
+     * PLAN-0543 T1.5: settlement runs inside the Run terminal transaction. If it
+     * fails after its own update, the whole terminal transaction must roll back —
+     * a committed terminal Run with pending guidance is the forbidden state.
+     */
+    @Test
+    void terminalSettlementFailureRollsBackRunStatusAndGuidanceTogether() {
+        String runId = createRun("running");
+        var submitted = service.submit(runId, userId, workspaceId, "idem-rollback", "guidance");
+        doAnswer(invocation -> {
+            invocation.callRealMethod();
+            throw new IllegalStateException("forced guidance settlement failure");
+        }).when(service).settleTerminal(any(UUID.class));
+
+        assertThrows(IllegalStateException.class, () -> terminalService.terminalize(
+                new ChatRunTerminalService.TerminalRequest(runId, List.of("running"), "succeeded",
+                        "success", null, null, 0, 0,
+                        ChatRunTerminalService.TerminalSource.STREAM, null)));
+
+        assertEquals("running", jdbcTemplate.queryForObject(
+                "SELECT status FROM chat_runs WHERE id = ?", String.class, UUID.fromString(runId)));
+        Map<String, Object> row = jdbcTemplate.queryForMap(
+                "SELECT status, terminal_expired_at FROM chat_run_guidance WHERE id = ?",
+                submitted.record().getId());
+        assertEquals(ChatRunGuidance.STATUS_PENDING, row.get("status"),
+                "the guidance expiry must roll back with the Run terminal status");
+        assertNull(row.get("terminal_expired_at"));
+    }
+
+    /** PLAN-0543 T1.5: bulk updates bypass @PreUpdate, so both timestamps are written explicitly. */
+    @Test
+    void bulkTransitionsWriteUpdatedAtAndStageTimestampsExplicitly() {
+        String runId = createRun("running");
+        var consumed = service.submit(runId, userId, workspaceId, "idem-ts1", "consumed row");
+        service.consume(runId, consumed.record().getId().toString());
+
+        Map<String, Object> consumedRow = jdbcTemplate.queryForMap(
+                "SELECT status, consumed_at, terminal_expired_at, updated_at, created_at "
+                        + "FROM chat_run_guidance WHERE id = ?", consumed.record().getId());
+        assertEquals(ChatRunGuidance.STATUS_CONSUMED, consumedRow.get("status"));
+        assertNotNull(consumedRow.get("consumed_at"));
+        assertNull(consumedRow.get("terminal_expired_at"));
+        assertTrue(!instant(consumedRow, "updated_at").isBefore(instant(consumedRow, "created_at")),
+                "consume must advance updated_at to the consuming instant");
+
+        var expired = service.submit(runId, userId, workspaceId, "idem-ts2", "expired row");
+        assertEquals(1, service.settleTerminal(UUID.fromString(runId)));
+
+        Map<String, Object> expiredRow = jdbcTemplate.queryForMap(
+                "SELECT status, consumed_at, terminal_expired_at, updated_at, created_at "
+                        + "FROM chat_run_guidance WHERE id = ?", expired.record().getId());
+        assertEquals(ChatRunGuidance.STATUS_TERMINAL_EXPIRED, expiredRow.get("status"));
+        assertNull(expiredRow.get("consumed_at"));
+        assertNotNull(expiredRow.get("terminal_expired_at"));
+        assertTrue(!instant(expiredRow, "updated_at").isBefore(instant(expiredRow, "created_at")),
+                "settlement must advance updated_at to the expiry instant");
+    }
+
+    private static Instant instant(Map<String, Object> row, String column) {
+        return ((Timestamp) row.get(column)).toInstant();
     }
 }

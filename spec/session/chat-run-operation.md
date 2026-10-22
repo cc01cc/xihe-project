@@ -98,7 +98,7 @@ ChatRun 当前可经过 `accepted`、`queued`、`running`、`streaming`、`await
 - 校验与作者派生：runId 存在 → Run 属调用者可见 session/workspace → Run 状态 ∈ 允许集合 → 派生 author = 当前用户。
 - 允许提交的 Run 状态集合（冻结）：`running`、`streaming`、`awaiting_approval`。显式排除：`accepted`、`queued`、`cancelling` 与全部终态。
 - 成功 `201`：`{ "id", "runId", "sessionId", "sequence", "status": "pending", "createdAt" }`（不含正文回显）。
-- 幂等重放：同 `(runId, Idempotency-Key)` → `200` 返回原记录（不新建）。
+- 幂等重放：仅 Run 所属 Session 的 user/workspace 可重放；同 `(runId, Idempotency-Key)` → `200` 返回原记录（不新建），`status` 为存储状态 `pending|consumed|terminal_expired`（终态不回转为 pending）。非属主在返回任何记录字段之前 `403`，响应体不得含 `id/runId/sessionId/sequence/status/createdAt/content`。
 - 错误：`404` run 不存在/不可见；`403` 非本工作区/越权；`409 GUIDANCE_RUN_NOT_ACTIVE`；`400` 缺 Idempotency-Key；`422` content 非法。
 
 **`GET /api/v1/chat/runs/{runId}/guidance`**
@@ -116,7 +116,7 @@ ChatRun 当前可经过 `accepted`、`queued`、`running`、`streaming`、`await
 **`POST /internal/v1/chat/runs/{runId}/guidance/{guidanceId}/consume`**
 
 - 语义：`pending → consumed`。请求体：`{ "consumedBy": "agent-runner" }`（预留，便于审计区分消费方）。
-- `200`：`{ "id", "status": "consumed", "consumedAt" }`（首次或重复，幂等）。
+- `200`：`{ "id", "status": "consumed", "consumedAt", "firstConsumption" }`（首次或重复，幂等）。`firstConsumption` 仅在 `pending → consumed` 的胜者上为 `true`，重复 consume 恒为 `false`；并发 consume 由数据库行条件更新裁判，恰好一个请求得到 `true`。
 - `409 GUIDANCE_ALREADY_TERMINAL_EXPIRED`：条目已 terminal_expired；Agent 收到此码 MUST 停止重试且不再注入。
 - `404`：run/guidance 不存在。
 

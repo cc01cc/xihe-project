@@ -21,8 +21,8 @@ import java.util.UUID;
 
 /**
  * PLAN-0528 public Guidance surface for the run's owning user (frozen wire:
- * spec/cp-guidance-contract.md §3). No SSE events by ruling: clients refetch
- * this snapshot after submit and on run terminal events.
+ * spec/session/chat-run-operation.md §Run Guidance). No SSE events by ruling:
+ * clients refetch this snapshot after submit and on run terminal events.
  */
 @RestController
 @RequestMapping("/api/v1/chat/runs/{runId}/guidance")

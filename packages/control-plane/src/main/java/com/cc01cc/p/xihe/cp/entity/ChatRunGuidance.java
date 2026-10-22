@@ -13,11 +13,11 @@ import java.util.UUID;
 /**
  * PLAN-0528: CP-owned durable record for Run-scoped Guidance (in-run Steering).
  *
- * <p>Frozen contract: {@code spec/cp-guidance-contract.md} (PLAN-0528) and the
- * parent contract in PLAN-0468. Separate from Message, Follow-up Queue and the
- * EventStore. {@code sourceKind} is fail-closed to {@code user} at the DB level
- * (CHECK constraint); guard submission requires a new migration plus a
- * Security-track ruling.
+ * <p>Frozen contract: {@code spec/session/chat-run-operation.md} §Run Guidance
+ * (PLAN-0528) and the parent contract in PLAN-0468. Separate from Message,
+ * Follow-up Queue and the EventStore. {@code sourceKind} is fail-closed to
+ * {@code user} at the DB level (CHECK constraint); guard submission requires a
+ * new migration plus a Security-track ruling.
  */
 @Entity
 @Table(name = "chat_run_guidance")
