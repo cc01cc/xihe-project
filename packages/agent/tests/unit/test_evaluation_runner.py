@@ -1,6 +1,8 @@
-"""PLAN-0511 M2: trace-derived facts and runner orchestration tests (offline)."""
+"""PLAN-0511 M2: trace-derived facts and v1 runner orchestration tests (offline)."""
 
 from __future__ import annotations
+
+from pathlib import Path
 
 from xihe_agent.evaluation import (
     BudgetDimension,
@@ -13,6 +15,9 @@ from xihe_agent.evaluation import (
 )
 from xihe_agent.evaluation.report import STATUS_NOT_EVALUATED, STATUS_PASSED
 from xihe_agent.evaluation.runner import tool_mode_for
+
+V1_PATH = Path(__file__).resolve().parents[2] / "evaluation" / "datasets" / "v1.jsonl"
+V1_TASKS = load_dataset(V1_PATH)
 
 
 def _trace(events: list[dict]) -> TraceResponse:
@@ -79,7 +84,7 @@ class _FakeCpClient:
 
     def read_final_output(self, session_id: str, run_id: str) -> str | None:
         # sess-N maps to the Nth task in dataset order
-        tasks = load_dataset()
+        tasks = V1_TASKS
         idx = int(session_id.split("-")[1]) - 1
         return self._outputs.get(tasks[idx].task_id)
 
@@ -90,7 +95,7 @@ def test_tool_mode_mapping() -> None:
 
 
 def test_run_dataset_produces_report() -> None:
-    tasks = load_dataset()
+    tasks = V1_TASKS
     outputs = {
         "instruction_following.format_and_scope.v1": '{"name": "widget", "ok": true}',
         "grounded_citation.synthetic_source.v1": "Freedonia's capital is Veridian. [S1]",
@@ -120,7 +125,7 @@ def test_run_dataset_missing_trace_is_not_evaluated() -> None:
         def get_trace(self, run_id: str) -> TraceResponse:
             raise ValueError("trace unavailable")
 
-    tasks = load_dataset()[:1]
+    tasks = V1_TASKS[:1]
     report = run_dataset(
         _NoTraceClient({}),
         tasks,
@@ -139,7 +144,7 @@ def test_tool_categories_not_evaluated_without_tool_surface() -> None:
 
     report = run_dataset(
         _NoTraceClient({}),
-        load_dataset(),
+        V1_TASKS,
         eval_run_id="eval-3",
         commit="c",
         dataset_version="v1",
@@ -164,7 +169,7 @@ def test_tool_authorization_deferred_reason_when_surface_enabled() -> None:
 
     report = run_dataset(
         _NoTraceClient({}),
-        load_dataset(),
+        V1_TASKS,
         eval_run_id="eval-4",
         commit="c",
         dataset_version="v1",

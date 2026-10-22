@@ -19,7 +19,7 @@ import re
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -49,7 +49,7 @@ class Threshold(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     metric_id: str = Field(alias="metricId")
-    type: Literal["zero_failure", "not_evaluated_le_baseline"]
+    type: str
     owner: str
     rationale: str
     source: str
@@ -257,6 +257,7 @@ def evaluate_gate(
     )
 
     # Required evaluated tasks must be present with a definite outcome.
+    failed_required: list[dict[str, Any]] = []
     for task_id in config.required_evaluated_task_ids:
         task = by_id.get(task_id)
         if task is None:
@@ -269,16 +270,7 @@ def evaluate_gate(
             reason = str(task.get("not_evaluated_reason") or status)
             result.not_evaluated.append(GateNotEvaluated(taskId=task_id, reasonCode=reason))
         elif status == "failed":
-            for assertion in task.get("assertions") or []:
-                if isinstance(assertion, dict) and assertion.get("passed") is False:
-                    result.failures.append(
-                        GateFailure(
-                            taskId=task_id,
-                            assertionId=str(assertion.get("assertion_id")),
-                            metricId="hard-assertion-zero-failure",
-                            errorCode=str(task.get("error_code")) if task.get("error_code") else None,
-                        )
-                    )
+            failed_required.append(task)
         if task.get("run_id"):
             result.diagnostic_refs.append(
                 DiagnosticRef(
@@ -301,9 +293,31 @@ def evaluate_gate(
             if config.expected_not_evaluated_reasons and reason not in config.expected_not_evaluated_reasons:
                 result.not_evaluated.append(GateNotEvaluated(taskId=task_id, reasonCode=reason))
 
-    # Calibrated thresholds (baseline-relative coverage must not shrink).
+    # Calibrated thresholds. Every configured type must be dispatched; a type
+    # added to the config without an implementation must fail closed instead
+    # of being silently skipped.
+    has_zero_failure = False
     for threshold in config.thresholds:
-        if threshold.type == "not_evaluated_le_baseline":
+        if threshold.type == "zero_failure":
+            has_zero_failure = True
+            for task in failed_required:
+                assertion_id = next(
+                    (
+                        str(a.get("assertion_id"))
+                        for a in task.get("assertions") or []
+                        if isinstance(a, dict) and a.get("passed") is False
+                    ),
+                    None,
+                )
+                result.failures.append(
+                    GateFailure(
+                        taskId=str(task.get("task_id")),
+                        assertionId=assertion_id,
+                        metricId=threshold.metric_id,
+                        errorCode=str(task.get("error_code")) if task.get("error_code") else None,
+                    )
+                )
+        elif threshold.type == "not_evaluated_le_baseline":
             if baseline is None:
                 # A baseline-relative threshold without a baseline is an unusable
                 # configuration, not a task-level non-evaluation.
@@ -320,6 +334,14 @@ def evaluate_gate(
                 result.failures.append(
                     GateFailure(taskId="*", metricId=threshold.metric_id, errorCode="coverage_shrunk")
                 )
+        elif threshold.type == "behavior_rate_min":
+            # PLAN-0540 v2-only threshold; a v1 report has no behavior_stats.
+            return gate_error("threshold_type_requires_report_schema_2")
+        else:
+            return gate_error(f"unknown_threshold_type:{threshold.type}")
+
+    if failed_required and not has_zero_failure:
+        return gate_error("zero_failure_threshold_missing")
 
     if result.not_evaluated:
         result.state = STATE_NOT_EVALUATED

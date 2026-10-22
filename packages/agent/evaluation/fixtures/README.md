@@ -55,3 +55,46 @@ node packages/agent/evaluation/fixtures/smoke-mcp-fixture.mjs
 
 - 仅在评测/测试侧使用；不得登记进生产 workspace 配置或 e2e-host 的默认 fixture 集。
 - 端口/路径不得写死宿主绝对路径；评测运行目录（`.local/evaluation/**`）Git-ignored。
+
+## 确定性 lane（PLAN-0540）
+
+`lane-setup.mjs` 把 stack-3 变成可重复的评测环境：启动 fake LLM / OAuth / MCP 三个 fixture，seed CP 的 principal、grant、tool-face、临时 provider connection，切换 instance `llm-provider` 与 workspace `runMaxTurns`，授权 remote MCP，并可直接跑评测 CLI。
+
+```bash
+node packages/agent/evaluation/fixtures/lane-setup.mjs setup
+node packages/agent/evaluation/fixtures/lane-setup.mjs status
+node packages/agent/evaluation/fixtures/lane-setup.mjs run --lane invariant --rounds 3
+node packages/agent/evaluation/fixtures/lane-setup.mjs teardown
+```
+
+`setup` 的临时变更在 `teardown` 时恢复/删除：
+
+| 变更 | teardown 处置 |
+|---|---|
+| provider connection `eval-fake-llm` | 删除 |
+| instance `llm-provider` profile | 恢复原值（原本为空则清空） |
+| workspace `agent-runtime.runMaxTurns` | 恢复原值（默认 25） |
+| eval session/run | 删除 |
+| remote MCP OAuth 授权 | 撤销 |
+| principal 直授 grant / workspace 绑定 | 删除 / 解绑 |
+
+设计保留项（无删除 API）：principal 行（下次 setup 按名字回收复用）、tool-face 行、OAuth server 注册。fixture 进程在 teardown 时停止；`XIHE_DEV_ADMIN_PASSWORD` 只从 env 读取，不落 argv、不打印。
+
+| env | 默认 | 说明 |
+|---|---|---|
+| `XIHE_EVAL_CP_URL` | `http://127.0.0.1:12651` | stack-3 CP |
+| `XIHE_EVAL_ADMIN_EMAIL` | `admin@xihe.local` | 管理员账号 |
+| `XIHE_DEV_ADMIN_PASSWORD` | 必填 | 只从环境读取 |
+| `XIHE_EVAL_LLM_PORT` / `OAUTH` / `MCP` | `12762` / `12763` / `12761` | fixture 端口 |
+| `XIHE_EVAL_LLM_MODEL` | `eval-fake-model` | 脚本模型名 |
+| `XIHE_EVAL_RUN_MAX_TURNS` | `2` | invariant 预算触发值 |
+| `XIHE_EVAL_MCP_BIND` | `0.0.0.0` | CP 只接受 `host.docker.internal` 的明文 HTTP；仍强制 Bearer |
+
+`fake-llm-server.mjs` 按提示词脚本化返回文本或 `always_failing` 调用，只读计数器在 `GET /__eval/state`；`oauth-fixture-server.mjs` 提供 CP remote MCP 绑定所需的最小 OAuth 端点，二者与 MCP fixture 共用 `XIHE_EVAL_MCP_ACCESS_TOKEN`。
+
+fixture 自检（L0，不依赖 stack，成功退出 0）：
+
+```bash
+node packages/agent/evaluation/fixtures/smoke-fake-llm.mjs
+node packages/agent/evaluation/fixtures/smoke-oauth-fixture.mjs
+```

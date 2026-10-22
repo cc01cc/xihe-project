@@ -142,7 +142,7 @@ alias = "test:agent"
 
 [tasks."gate:agent-quality"]
 run = "uv run python -m xihe_agent.evaluation gate"
-description = "PLAN-0512 local quality-regression gate over a PLAN-0511 report; pass --report/--baseline after --"
+description = "Local quality-regression gate (PLAN-0512/0540) over one report per lane; pass --report/--baseline after --"
 dir = "packages/agent"
 alias = "gate:agent-quality"
 

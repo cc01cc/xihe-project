@@ -135,6 +135,7 @@ def test_matrix_fail_on_critical_assertion(tmp_path, config_path):
     assert result.state == STATE_FAIL
     assert result.exit_code == 1
     assert result.failures[0].assertion_id == "A1"
+    assert result.failures[0].metric_id == "hard-assertion-zero-failure"
 
 
 def test_matrix_not_evaluated_when_required_task_degrades(tmp_path, config_path):
@@ -184,6 +185,15 @@ def test_matrix_gate_error_on_missing_report(tmp_path, config_path):
     assert result.error_code == "report_unreadable"
 
 
+def test_matrix_gate_error_on_v2_report_under_v1_config(tmp_path, config_path):
+    report = _report(_full_tasks())
+    report["schema_version"] = 2
+    path = _write(tmp_path / "r.json", report)
+    result = run_gate(path, None, config_path)
+    assert result.state == STATE_GATE_ERROR
+    assert result.error_code == "report_schema_incompatible"
+
+
 def test_matrix_gate_error_on_stale_report(tmp_path, config_path):
     old = datetime.now(UTC) - timedelta(days=30)
     report = _write(tmp_path / "r.json", _report(_full_tasks(), created_at=old))
@@ -215,6 +225,64 @@ def test_shipped_config_is_valid():
     assert config.threshold_set_version == "gate-v1"
     assert parse_duration(config.max_age) > timedelta(0)
     assert all(t.source and t.owner and t.rationale and t.repeat_window for t in config.thresholds)
+
+
+def _config_with(tmp_path: Path, config_path: Path, thresholds) -> Path:
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["thresholds"] = thresholds
+    path = tmp_path / "gate-variant.json"
+    path.write_text(json.dumps(config), encoding="utf-8")
+    return path
+
+
+def _threshold(metric_id: str, type_name: str) -> dict:
+    return {
+        "metricId": metric_id,
+        "type": type_name,
+        "owner": "test",
+        "rationale": "test",
+        "source": "test",
+        "repeatWindow": "test",
+    }
+
+
+def test_unknown_threshold_type_is_gate_error(tmp_path, config_path):
+    variant = _config_with(tmp_path, config_path, [_threshold("mystery", "mystery_type")])
+    report = _write(tmp_path / "r.json", _report(_full_tasks()))
+    result = run_gate(report, None, variant)
+    assert result.state == STATE_GATE_ERROR
+    assert result.error_code == "unknown_threshold_type:mystery_type"
+
+
+def test_behavior_rate_min_on_v1_report_is_gate_error(tmp_path, config_path):
+    variant = _config_with(tmp_path, config_path, [_threshold("behavior_rate_min", "behavior_rate_min")])
+    report = _write(tmp_path / "r.json", _report(_full_tasks()))
+    result = run_gate(report, None, variant)
+    assert result.state == STATE_GATE_ERROR
+    assert result.error_code == "threshold_type_requires_report_schema_2"
+
+
+def test_failed_task_without_zero_failure_threshold_is_gate_error(tmp_path, config_path):
+    variant = _config_with(
+        tmp_path, config_path, [_threshold("not-evaluated-not-increased", "not_evaluated_le_baseline")]
+    )
+    report = _write(tmp_path / "r.json", _report(_full_tasks(failed_assertion=True)))
+    baseline = _write(tmp_path / "b.json", _report(_full_tasks()))
+    result = run_gate(report, baseline, variant)
+    assert result.state == STATE_GATE_ERROR
+    assert result.error_code == "zero_failure_threshold_missing"
+
+
+def test_zero_failure_fails_failed_task_without_assertions(tmp_path, config_path):
+    tasks = _full_tasks()
+    tasks[0]["status"] = "failed"
+    tasks[0]["assertions"] = []
+    report = _write(tmp_path / "r.json", _report(tasks))
+    baseline = _write(tmp_path / "b.json", _report(_full_tasks()))
+    result = run_gate(report, baseline, config_path)
+    assert result.state == STATE_FAIL
+    assert result.failures[0].task_id == EVALUATED[0]
+    assert result.failures[0].assertion_id is None
 
 
 def test_machine_output_uses_camel_case_aliases(tmp_path, config_path):

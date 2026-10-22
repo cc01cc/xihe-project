@@ -1,6 +1,8 @@
-"""PLAN-0511 M2: deterministic evaluator and report/compare tests (offline)."""
+"""PLAN-0511 M2: deterministic evaluator and v1 report/compare tests (offline)."""
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import pytest
 
@@ -17,11 +19,14 @@ from xihe_agent.evaluation.report import (
     STATUS_NOT_EVALUATED,
     STATUS_PASSED,
     build_report,
+    build_report_v2,
 )
+
+V1_PATH = Path(__file__).resolve().parents[2] / "evaluation" / "datasets" / "v1.jsonl"
 
 
 def _task(task_id: str):
-    return next(t for t in load_dataset() if t.task_id == task_id)
+    return next(t for t in load_dataset(V1_PATH) if t.task_id == task_id)
 
 
 # --- per-kind evaluators against the frozen tasks ---------------------------
@@ -175,3 +180,19 @@ def test_compare_reports_rejects_mismatched_dataset() -> None:
     other = base.model_copy(update={"dataset_hash": "hash2"})
     with pytest.raises(ValueError, match="dataset hash mismatch"):
         compare_reports(base, other)
+
+
+def test_compare_reports_rejects_mixed_schema() -> None:
+    base = _report("e1", RunFacts(run_id="r", status="completed", trace_available=True,
+                                  final_output_text='{"name":"a","ok":true}'))
+    candidate = build_report_v2(
+        eval_run_id="e2",
+        commit=base.commit,
+        dataset_version=base.dataset_version,
+        dataset_hash=base.dataset_hash,
+        mode=base.mode,
+        lane="behavior",
+        task_reports=[],
+    )
+    with pytest.raises(ValueError, match="report schema mismatch"):
+        compare_reports(base, candidate)

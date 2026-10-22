@@ -4,7 +4,17 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from xihe_agent.evaluation.report import STATUS_FAILED, STATUS_NOT_EVALUATED, STATUS_PASSED, EvalReport
+from xihe_agent.evaluation.report import (
+    STATUS_FAILED,
+    STATUS_NOT_EVALUATED,
+    STATUS_PASSED,
+    EvalReport,
+    EvalReportV2,
+    TaskReport,
+    TaskReportV2,
+)
+
+ReportLike = EvalReport | EvalReportV2
 
 
 class TaskDelta(BaseModel):
@@ -34,7 +44,11 @@ class ComparisonReport(BaseModel):
     aggregate_delta: dict[str, int] = Field(default_factory=dict)
 
 
-def _assert_comparable(baseline: EvalReport, candidate: EvalReport) -> None:
+def _assert_comparable(baseline: ReportLike, candidate: ReportLike) -> None:
+    if baseline.schema_version != candidate.schema_version:
+        raise ValueError(
+            f"report schema mismatch: {baseline.schema_version} != {candidate.schema_version}"
+        )
     if baseline.dataset_hash != candidate.dataset_hash:
         raise ValueError(f"dataset hash mismatch: {baseline.dataset_hash} != {candidate.dataset_hash}")
     if baseline.dataset_version != candidate.dataset_version:
@@ -47,34 +61,57 @@ def _assert_comparable(baseline: EvalReport, candidate: EvalReport) -> None:
         raise ValueError(f"mode mismatch: {baseline.mode} != {candidate.mode}")
 
 
-def _assertion_status(report: EvalReport, task_id: str) -> dict[str, bool]:
+def _find_task(report: ReportLike, task_id: str) -> TaskReport | TaskReportV2 | None:
     for task in report.tasks:
         if task.task_id == task_id:
-            return {a.assertion_id: a.passed for a in task.assertions}
-    return {}
+            return task
+    return None
 
 
-def _usage_delta(baseline: EvalReport, candidate: EvalReport, task_id: str) -> dict[str, float]:
-    def usage(report: EvalReport) -> dict[str, float]:
-        for task in report.tasks:
-            if task.task_id == task_id:
-                return task.usage
+def _assertion_status(report: ReportLike, task_id: str) -> dict[str, bool]:
+    """Merge assertion outcomes across attempts; any failure marks the assertion failed."""
+    task = _find_task(report, task_id)
+    if task is None:
         return {}
+    if isinstance(task, TaskReportV2):
+        merged: dict[str, bool] = {}
+        for attempt in task.attempts:
+            for assertion in attempt.assertions:
+                merged[assertion.assertion_id] = merged.get(assertion.assertion_id, True) and assertion.passed
+        return merged
+    return {a.assertion_id: a.passed for a in task.assertions}
+
+
+def _usage_delta(baseline: ReportLike, candidate: ReportLike, task_id: str) -> dict[str, float]:
+    def usage(report: ReportLike) -> dict[str, float]:
+        task = _find_task(report, task_id)
+        if task is None:
+            return {}
+        if isinstance(task, TaskReportV2):
+            totals: dict[str, float] = {}
+            for attempt in task.attempts:
+                for key, value in attempt.usage.items():
+                    totals[key] = totals.get(key, 0.0) + value
+            return totals
+        return task.usage
 
     base, cand = usage(baseline), usage(candidate)
     keys = set(base) | set(cand)
     return {k: round(cand.get(k, 0.0) - base.get(k, 0.0), 6) for k in sorted(keys)}
 
 
-def _duration(report: EvalReport, task_id: str) -> int | None:
-    for task in report.tasks:
-        if task.task_id == task_id:
-            return task.duration_ms
-    return None
+def _duration(report: ReportLike, task_id: str) -> int | None:
+    task = _find_task(report, task_id)
+    if task is None:
+        return None
+    if isinstance(task, TaskReportV2):
+        values = [a.duration_ms for a in task.attempts if a.duration_ms is not None]
+        return sum(values) if values else None
+    return task.duration_ms
 
 
-def compare_reports(baseline: EvalReport, candidate: EvalReport) -> ComparisonReport:
-    """Diff two reports; raises ValueError when they are not comparable."""
+def compare_reports(baseline: ReportLike, candidate: ReportLike) -> ComparisonReport:
+    """Diff two same-schema reports; raises ValueError when they are not comparable."""
     _assert_comparable(baseline, candidate)
     base_tasks = {t.task_id: t for t in baseline.tasks}
     cand_tasks = {t.task_id: t for t in candidate.tasks}

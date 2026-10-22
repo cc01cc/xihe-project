@@ -364,11 +364,16 @@ public class McpProxyController {
                             logger.warn("Tool alias touch failed: {}", e.getMessage());
                         }
                     }
-                    if (!mapping.containsKey(issued)) {
-                        mapping.put(issued, server.id());
+                    // The persisted mapping remembers aliases across requests, so
+                    // `mapping.containsKey(issued)` must not gate publication: on
+                    // the second and later tools/list calls the tool would vanish.
+                    if (!seenNames.contains(issued)) {
                         Map<String, Object> published = new HashMap<>(tool);
                         published.put("name", issued);
                         allTools.add(published);
+                    }
+                    if (!mapping.containsKey(issued)) {
+                        mapping.put(issued, server.id());
                     }
                     seenNames.add(issued);
                     seenNames.add(backend);

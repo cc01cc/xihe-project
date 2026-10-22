@@ -13,7 +13,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 from xihe_agent.evaluation.facts import RunFacts
-from xihe_agent.evaluation.schema import HardAssertion
+from xihe_agent.evaluation.schema import AssertionLike
 
 _JSON_TYPES: dict[str, tuple[type, ...]] = {
     "string": (str,),
@@ -74,11 +74,26 @@ def _eval_no_extra_fields(facts: RunFacts, expected: dict[str, Any]) -> tuple[bo
     return True, "no extra fields"
 
 
+def _expected(expected: dict[str, Any], snake_key: str, camel_key: str) -> Any:
+    """Read a v2 snake key, falling back to the frozen v1 camel alias."""
+    value = expected.get(snake_key)
+    if value is None:
+        value = expected.get(camel_key)
+    return value
+
+
 def _eval_tool_invocation_count(facts: RunFacts, expected: dict[str, Any]) -> tuple[bool, str]:
-    want = expected.get("equals")
-    if facts.tool_invocation_count != want:
-        return False, f"tool_invocation_count={facts.tool_invocation_count}, expected {want}"
-    return True, "tool invocation count matches"
+    if "equals" in expected:
+        want = expected["equals"]
+        if facts.tool_invocation_count != want:
+            return False, f"tool_invocation_count={facts.tool_invocation_count}, expected {want}"
+        return True, "tool invocation count matches"
+    if "at_least" in expected:
+        want = expected["at_least"]
+        if facts.tool_invocation_count < want:
+            return False, f"tool_invocation_count={facts.tool_invocation_count}, expected at least {want}"
+        return True, "tool invocation count meets the lower bound"
+    return False, "tool_invocation_count assertion needs equals or at_least"
 
 
 def _eval_fact_match(facts: RunFacts, expected: dict[str, Any]) -> tuple[bool, str]:
@@ -91,14 +106,14 @@ def _eval_fact_match(facts: RunFacts, expected: dict[str, Any]) -> tuple[bool, s
 
 
 def _eval_citation_present(facts: RunFacts, expected: dict[str, Any]) -> tuple[bool, str]:
-    source_id = expected.get("sourceId")
+    source_id = _expected(expected, "source_id", "sourceId")
     if source_id is None or source_id not in facts.citations:
         return False, f"citation {source_id!r} not present (citations={facts.citations})"
     return True, "citation present"
 
 
 def _eval_no_fabricated_source(facts: RunFacts, expected: dict[str, Any]) -> tuple[bool, str]:
-    allowed = set(expected.get("allowedSourceIds", []))
+    allowed = set(_expected(expected, "allowed_source_ids", "allowedSourceIds") or [])
     fabricated = sorted(set(facts.citations) - allowed)
     if fabricated:
         return False, f"fabricated citations: {fabricated}"
@@ -139,7 +154,9 @@ def _eval_terminal_error_code(facts: RunFacts, expected: dict[str, Any]) -> tupl
 
 
 def _eval_no_repeat_mutation(facts: RunFacts, expected: dict[str, Any]) -> tuple[bool, str]:
-    want = expected.get("repeatedCompletedMutations", 0)
+    want = _expected(expected, "repeated_completed_mutations", "repeatedCompletedMutations")
+    if want is None:
+        want = 0
     if facts.repeated_mutations != want:
         return False, f"repeated_mutations={facts.repeated_mutations}, expected {want}"
     return True, "no repeated mutation"
@@ -160,7 +177,7 @@ _EVALUATORS: dict[str, Callable[[RunFacts, dict[str, Any]], tuple[bool, str]]] =
 }
 
 
-def evaluate_assertion(assertion: HardAssertion, facts: RunFacts) -> AssertionResult:
+def evaluate_assertion(assertion: AssertionLike, facts: RunFacts) -> AssertionResult:
     """Evaluate one hard assertion, failing closed on unknown kinds or observations."""
     evaluator = _EVALUATORS.get(assertion.kind)
     if evaluator is None:

@@ -123,7 +123,7 @@ const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", `http://${bind}:${port}`);
 
     if (url.pathname === "/health") {
-        return json(response, 200, { status: "ok" });
+        return json(response, 200, { status: "ok", pid: process.pid });
     }
     if (url.pathname === "/__eval/state") {
         if (request.method !== "GET") return json(response, 405, { error: "method_not_allowed" });

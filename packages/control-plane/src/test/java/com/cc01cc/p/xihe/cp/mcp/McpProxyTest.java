@@ -504,7 +504,17 @@ class McpProxyTest {
                     "modern result must carry resultType, got: " + listResp.getBody());
             assertTrue(listResp.getBody().contains("\"cacheScope\":\"private\""),
                     "modern result must carry cacheScope, got: " + listResp.getBody());
-            org.mockito.Mockito.verify(aliasRepository).save(
+            // PLAN-0540 T3.3 regression: the first merge persists the alias into the
+            // timeout mapping; a later tools/list must keep publishing the remote tool
+            // instead of treating the cached mapping as "already in this response".
+            org.springframework.http.ResponseEntity<String> secondListResp =
+                    (org.springframework.http.ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                            controller, "handleToolsList", TEST_WS_UUID, listBody,
+                            new org.springframework.http.HttpHeaders(), "sess-1", access);
+            assertNotNull(secondListResp);
+            assertTrue(secondListResp.getBody().contains("fake_echo"),
+                    "second tools/list must still publish the remote tool, got: " + secondListResp.getBody());
+            org.mockito.Mockito.verify(aliasRepository, org.mockito.Mockito.atLeastOnce()).save(
                     org.mockito.ArgumentMatchers.argThat(a ->
                             "fake_echo".equals(
                                     ((com.cc01cc.p.xihe.cp.entity.McpToolAlias) a).getIssuedName())));

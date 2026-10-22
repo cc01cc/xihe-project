@@ -1,0 +1,54 @@
+{
+  "schema_version": 2,
+  "threshold_set_version": "gate-v2",
+  "max_age": "P14D",
+  "dataset_version": "v2",
+  "dataset_hash": "125a681979aa553f34e4a5974bb85414d71dbeaddb913e668cfc5d8152334a83",
+  "scorer_version": "v2",
+  "mode": "cp-real",
+  "required_evaluated_task_ids": [
+    "instruction_following.format_and_scope.v1",
+    "grounded_citation.synthetic_source.v1",
+    "failure_budget.no_repeat.v2",
+    "failure_budget.attempt_rate.v2"
+  ],
+  "expected_not_evaluated_task_ids": [
+    "tool_authorization.denied_mutation.v1"
+  ],
+  "expected_not_evaluated_reasons": [
+    "no_denial_observability"
+  ],
+  "thresholds": [
+    {
+      "metric_id": "hard_assertion_zero_failure",
+      "type": "zero_failure",
+      "scope": "invariant",
+      "expected_attempts": 1,
+      "owner": "XH agent owner",
+      "rationale": "invariant 任务由脚本化 provider 驱动、输入确定，任一 attempt 失败即机制回归；不给百分比阈值留缓冲",
+      "source": "plans/PLAN-0540-XH-llm-test-determinism/design.md",
+      "repeat_window": "同 commit invariant lane 3 连跑（2026-10-22）全部 RUN_BUDGET_EXHAUSTED、A1/A2/A3 全过"
+    },
+    {
+      "metric_id": "behavior_rate_min",
+      "type": "behavior_rate_min",
+      "scope": "behavior",
+      "value": 0.8,
+      "min_valid": 3,
+      "expected_attempts": 5,
+      "owner": "XH agent owner",
+      "rationale": "固定 5 次尝试，允许 1 次模型波动（4/5=0.8）；有效样本少于 3 次时比率不可信，判 infra_insufficient 而非假绿",
+      "source": "plans/PLAN-0540-XH-llm-test-determinism/design.md",
+      "repeat_window": "M4 3–5 轮 behavior baseline 校准（2026-10-22）"
+    },
+    {
+      "metric_id": "expected_task_status",
+      "type": "not_evaluated_le_baseline",
+      "scope": "all",
+      "owner": "XH agent owner",
+      "rationale": "预期 not_evaluated 的任务一旦 failed 即质量门失败；候选 not_evaluated 数超过基线视为可评测性缩水",
+      "source": "plans/archive/PLAN-0511-XH-agent-evaluation-suite/evidence/threshold-candidate.md",
+      "repeat_window": "0511 四批次基线 not_evaluated 恒为 1（tool_authorization；2026-10-22 按 v2 清单重算）"
+    }
+  ]
+}

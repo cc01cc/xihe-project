@@ -39,6 +39,7 @@ sidebar_order: 0
 - [DEV-021: 集成测试策略](DEV-021-integration-test-strategy.md)
 - [DEV-022: 单元测试策略](DEV-022-unit-test-strategy.md)
 - [DEV-023: 测试 Mock 策略](DEV-023-test-mock-strategy.md)
+- [DEV-025: Agent 评测套件与 LLM 测试确定性](DEV-025-agent-evaluation.md)
 
 ### 规范
 

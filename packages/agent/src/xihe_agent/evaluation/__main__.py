@@ -1,7 +1,6 @@
-"""CLI for the offline evaluation suite (PLAN-0511).
+"""CLI for the offline evaluation suite (PLAN-0511/0540).
 
-Implemented: `validate` (dataset contract) and `compare` (report diff).
-Not yet implemented: `run` (needs a live local CP + Provider credentials, gate G4).
+`validate`, `run` (one lane per invocation), `compare` and `gate`.
 """
 
 from __future__ import annotations
@@ -14,20 +13,30 @@ from pathlib import Path
 
 from xihe_agent.evaluation import DATASET_VERSION, dataset_sha256, load_dataset
 from xihe_agent.evaluation.compare import compare_reports
-from xihe_agent.evaluation.report import EvalReport
+from xihe_agent.evaluation.report import EvalReport, EvalReportV2
+from xihe_agent.evaluation.schema import EvalTaskV2
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:
-    tasks = load_dataset()
-    print(f"dataset={DATASET_VERSION} tasks={len(tasks)} sha256={dataset_sha256()}")
+    dataset_path = Path(args.dataset) if args.dataset else None
+    tasks = load_dataset(dataset_path)
+    print(f"dataset={DATASET_VERSION} tasks={len(tasks)} sha256={dataset_sha256(dataset_path)}")
     for task in tasks:
-        print(f"  {task.task_id} [{task.category}] assertions={len(task.hard_assertions)}")
+        extra = ""
+        if isinstance(task, EvalTaskV2):
+            extra = f" class={task.assertion_class} attempts={task.attempts}"
+        print(f"  {task.task_id} [{task.category}]{extra} assertions={len(task.hard_assertions)}")
     return 0
 
 
-def _load_report(path: str) -> EvalReport:
+def _load_report(path: str) -> EvalReport | EvalReportV2:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
-    return EvalReport.model_validate(data)
+    version = data.get("schema_version") if isinstance(data, dict) else None
+    if version == 1:
+        return EvalReport.model_validate(data)
+    if version == 2:
+        return EvalReportV2.model_validate(data)
+    raise ValueError(f"unsupported report schema_version={version!r}: {path}")
 
 
 def _cmd_compare(args: argparse.Namespace) -> int:
@@ -42,8 +51,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
     import os
 
     from xihe_agent.evaluation.cp_http import HttpCpClient
-    from xihe_agent.evaluation.loader import DATASET_VERSION, dataset_sha256
-    from xihe_agent.evaluation.runner import run_dataset
+    from xihe_agent.evaluation.loader import dataset_sha256
+    from xihe_agent.evaluation.runner import run_dataset_v2
+    from xihe_agent.evaluation.schema import EvalTaskV2
 
     base_url = args.cp_url or os.environ.get("XIHE_EVAL_CP_URL", "http://127.0.0.1:12631")
     token = args.token or os.environ.get("XIHE_EVAL_TOKEN")
@@ -58,9 +68,13 @@ def _cmd_run(args: argparse.Namespace) -> int:
     tool_surface = bool(args.tool_surface) or os.environ.get("XIHE_EVAL_TOOL_SURFACE") == "1"
 
     dataset_path = Path(args.dataset) if args.dataset else None
-    tasks = [t for t in load_dataset(dataset_path) if not only or t.task_id in only]
+    all_tasks = [t for t in load_dataset(dataset_path) if not only or t.task_id in only]
+    tasks: list[EvalTaskV2] = []
+    for task in all_tasks:
+        if isinstance(task, EvalTaskV2) and task.assertion_class == args.lane:
+            tasks.append(task)
     if not tasks:
-        print("no tasks selected", file=sys.stderr)
+        print(f"no tasks selected for lane {args.lane!r}", file=sys.stderr)
         return 2
 
     eval_run_id = args.output_dir or f".local/evaluation/{int(time.time())}"
@@ -75,18 +89,24 @@ def _cmd_run(args: argparse.Namespace) -> int:
         raw_dir=raw_dir,
     )
     try:
-        report = run_dataset(
+        report = run_dataset_v2(
             client,
             tasks,
+            lane=args.lane,
             eval_run_id=Path(eval_run_id).name,
             commit=commit,
             dataset_version=DATASET_VERSION,
             dataset_hash=dataset_sha256(dataset_path),
+            min_valid_attempts=args.min_valid_attempts,
+            attempts_override=args.attempts,
             provider=provider,
             model=model,
             timeout_s=timeout_s,
             tool_surface_enabled=tool_surface,
         )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     finally:
         client.close()
     out = Path(eval_run_id)
@@ -98,13 +118,55 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_gate(args: argparse.Namespace) -> int:
-    from xihe_agent.evaluation.gate import evaluate_gate
+def _gate_schema_version(path: Path) -> int | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    version = data.get("schema_version") if isinstance(data, dict) else None
+    return version if isinstance(version, int) else None
 
+
+def _cmd_gate(args: argparse.Namespace) -> int:
+    from datetime import UTC, datetime
+
+    from xihe_agent.evaluation.gate import (
+        EXIT_CODES,
+        STATE_GATE_ERROR,
+        GateResult,
+        evaluate_gate,
+    )
+    from xihe_agent.evaluation.gate_v2 import evaluate_gate_v2
+
+    config_path = Path(args.config or "evaluation/gate-v2.json")
+    report_paths = [Path(path) for path in args.report]
+    baseline_path = Path(args.baseline) if args.baseline else None
+    if _gate_schema_version(config_path) == 2:
+        result_v2 = evaluate_gate_v2(
+            report_paths=report_paths,
+            baseline_path=baseline_path,
+            config_path=config_path,
+            target_commit=args.target_commit,
+        )
+        print(
+            json.dumps(
+                result_v2.model_dump(), indent=2, ensure_ascii=False, sort_keys=True
+            )
+        )
+        return result_v2.exit_code
+    if len(report_paths) > 1:
+        rejected = GateResult(
+            state=STATE_GATE_ERROR,
+            exitCode=EXIT_CODES[STATE_GATE_ERROR],
+            evaluatedAt=datetime.now(UTC).isoformat(),
+            errorCode="multiple_reports_require_gate_schema_2",
+        )
+        print(json.dumps(rejected.model_dump(by_alias=True), indent=2, ensure_ascii=False, sort_keys=True))
+        return rejected.exit_code
     result = evaluate_gate(
-        report_path=Path(args.report),
-        baseline_path=Path(args.baseline) if args.baseline else None,
-        config_path=Path(args.config or "evaluation/gate-v1.json"),
+        report_path=report_paths[0],
+        baseline_path=baseline_path,
+        config_path=config_path,
         target_commit=args.target_commit,
     )
     print(json.dumps(result.model_dump(by_alias=True), indent=2, ensure_ascii=False, sort_keys=True))
@@ -125,11 +187,15 @@ def _git_commit() -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m xihe_agent.evaluation")
     sub = parser.add_subparsers(dest="command")
-    sub.add_parser("validate", help="validate the fixed dataset contract")
+    validate = sub.add_parser("validate", help="validate the dataset contract")
+    validate.add_argument("--dataset")
     compare = sub.add_parser("compare", help="diff two evaluation reports")
     compare.add_argument("--baseline", required=True)
     compare.add_argument("--candidate", required=True)
-    run = sub.add_parser("run", help="run the fixed task set against a live local CP")
+    run = sub.add_parser("run", help="run one task lane against a live local CP")
+    run.add_argument("--lane", required=True, choices=["invariant", "behavior"])
+    run.add_argument("--attempts", type=int, help="behavior-lane attempt override")
+    run.add_argument("--min-valid-attempts", type=int, default=3)
     run.add_argument("--dataset")
     run.add_argument("--mode")
     run.add_argument("--output-dir")
@@ -141,10 +207,15 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--only", help="comma-separated taskId filter")
     run.add_argument("--timeout")
     run.add_argument("--tool-surface", action="store_true", help="enable tool-requiring categories")
-    gate = sub.add_parser("gate", help="quality-regression gate over a report (PLAN-0512)")
-    gate.add_argument("--report", required=True)
+    gate = sub.add_parser("gate", help="quality-regression gate over reports (PLAN-0512/0540)")
+    gate.add_argument(
+        "--report",
+        required=True,
+        action="append",
+        help="evaluation report; repeat once per lane for schema 2",
+    )
     gate.add_argument("--baseline")
-    gate.add_argument("--config", help="defaults to evaluation/gate-v1.json")
+    gate.add_argument("--config", help="defaults to evaluation/gate-v2.json")
     gate.add_argument("--target-commit", help="defaults to the current git HEAD")
     return parser
 
