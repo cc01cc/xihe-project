@@ -22,17 +22,17 @@
 
 ## 护栏分类与现状
 
-| 风险/目标 | 执行层 | canonical owner | 实现状态（2026-10-03 M0 实证） | 必须区分 |
+| 风险/目标 | 执行层 | canonical owner | 实现状态（最近更新 2026-10-22） | 必须区分 |
 |---|---|---|---|---|
 | 上下文超窗、历史与工具结果增长 | CP Context + Agent consumer | [Agent Context/Tool](./context-tool.md)、[Session 分支上下文隔离](../session/branch-context-isolation.md)；未来契约归 PLAN-0416（BL-50） | implemented（装配熔断、prune+tombstone、overflow 一次性重试、auto-compaction 均已接线） | 输入窗口预算 ≠ Agent Run 累计预算 |
 | 单次工具超时与输出过大 | CP policy 下发 + Agent 执行 + Runtime Job | [Agent Context/Tool](./context-tool.md)、[Execution Job](../workspace/execution-job.md)、[Sandbox](../workspace/sandbox-backend.md)、[DEV-013](../../docs/i18n/zh-Hans/DEV-013-agent-architecture.md) | implemented（per-call timeout、bounded result、回传中段省略） | per-tool wait/output bound ≠ 轮数或累计预算 |
 | Agent Run 循环持续、语义重复、无进展 | Agent Runner；副作用前仍须过授权/审批/幂等 | [Agent execution](./execution.md)（本文不新建 owner） | partial（PLAN-0492 已接线累计预算：轮数/累计耗时/token 三维度、instance-only 硬上限、`RUN_BUDGET_EXHAUSTED` 结构化上报与 durable 终态；PLAN-0493 已接线语义重复/无进展检测：per-Run 观察窗口 + 级联 2/3/5·3/5·2/5·20 + `RUN_NO_PROGRESS` 结构化上报与 durable 终态，2026-10-13） | `toolCallId` 事件去重与历史消音 ≠ 语义重复执行防护；累计预算 ≠ 单轮/单工具限额；两类触发归因各自独立（`RUN_BUDGET_EXHAUSTED` / `RUN_NO_PROGRESS`） |
 | 取消、失败、partial/ambiguous 与恢复 | CP ChatRun + MCP invocation + Agent stream | [Agent execution](./execution.md)、DEV-014 ChatRun lifecycle | implemented（cancel 全链路、幂等 409、recovery/reconciliation） | Agent 本地 `done` ≠ CP durable 终态；ChatRun 状态恢复 ≠ LangGraph 图状态恢复 |
-| ChatRun 内 LangGraph 图状态 checkpoint/恢复 | Agent Runner + CP-owned 存储 | CP ChatRun terminal semantics（DEV-014；continuation 记录为新 ChatRun，旧终态不回写） | implemented（PLAN-0510，2026-10-17：CP-owned `BaseCheckpointSaver` + 受控续跑（`resume_pending`/`append_user_turn`）+ 已完成工具调用副作用对账；三次中断点真实 Host 验收） | ≠ Workspace Job 进程续跑；≠ 进程 Job 挂起/恢复（已裁定不做，见 backlog BL-24）；≠ 同 Run 内 Steering/Guidance（续跑记录为**新 ChatRun**，见 backlog BL-63 与 `session/chat-run-operation.md`） |
+| ChatRun 内 LangGraph 图状态 checkpoint/恢复 | Agent Runner + CP-owned 存储 | CP ChatRun terminal semantics（DEV-014；continuation 记录为新 ChatRun，旧终态不回写） | implemented（PLAN-0510，2026-10-17：CP-owned `BaseCheckpointSaver` + 受控续跑（`resume_pending`/`append_user_turn`）+ 已完成工具调用副作用对账；三次中断点真实 Host 验收） | ≠ Workspace Job 进程续跑；≠ 进程 Job 挂起/恢复（已裁定不做，见 backlog BL-24）；≠ 同 Run 内 Steering/Guidance（续跑记录为**新 ChatRun**，见 `session/chat-run-operation.md` 与 `agent/execution.md`） |
 | 授权、能力与人工审批 | CP/Security + Runtime capability | [Authorization](../security/authorization.md)、[Approval](../security/approval.md)、[Capability Boundary](../security/capability-boundary.md) | implemented（每个 MCP 工具调用过 gate，含 grant 复用与 user-direct 例外分支） | 模型计划不得扩大权限；允许执行 ≠ 本次操作已获批准 |
 | 进程资源、隔离和清理 | Runtime backend | [Sandbox](../workspace/sandbox-backend.md)、[Execution Job](../workspace/execution-job.md) | partial（job 运行时限配置已交付；Docker 后端能力线后置） | 进程时限、请求等待、job 时限三者分开 |
 | 事件、操作审计与敏感信息 | CP owner-domain history + Agent event adapter | [Audit](../security/audit.md)、[Event Stream](../protocol/event-stream.md) | implemented（owner-domain durable history、allowlisted event fields、paired audit projections） | 审计留痕 ≠ 把敏感原文当普通模型上下文 |
-| 人类停止与运行中接管 | UI → CP → Agent cancel | stop 归 [Agent execution](./execution.md) 与 CP ChatRun terminal semantics（DEV-014）；排队 Follow-up 归 [ChatRun lifecycle](../session/chat-run-operation.md)；steering/Guidance 归 backlog BL-63 | partial（停止已接线；Run 中排队 Follow-up 经显式 Queue 动作入 durable 队列、Run 终态后 admission，队列未清空时普通发送按 409 `FOLLOW_UP_QUEUE_NOT_EMPTY` 拒绝；PLAN-0492 已定义预算耗尽的停止与接管语义：Run 收敛 `failed`、维度随终态可读、接管复用普通发送/队列；运行中纠偏 steering 未实现） | stop ≠ steering；接管复用发送路径 ≠ 恢复旧 Run 图状态 |
+| 人类停止与运行中接管 | UI → CP → Agent cancel | stop 归 [Agent execution](./execution.md) 与 CP ChatRun terminal semantics（DEV-014）；排队 Follow-up 与 Run Guidance 归 [ChatRun lifecycle](../session/chat-run-operation.md)；Guidance 消费绑定归 [Agent execution](./execution.md) | implemented（停止已接线；Run 中排队 Follow-up 经显式 Queue 动作入 durable 队列、Run 终态后 admission，队列未清空时普通发送按 409 `FOLLOW_UP_QUEUE_NOT_EMPTY` 拒绝；Run Guidance 已交付：CP V77 durable、Agent 模型调用前置瞬态注入 + consume、UI 快照投影；PLAN-0492 已定义预算耗尽的停止与接管语义。mid-tool interrupt 后置，Guard 首版不做） | stop ≠ steering；接管复用发送路径 ≠ 恢复旧 Run 图状态 |
 | 显式规划器的步数、进度与重规划预算 | 无生产者（计划工具未落地） | 计划工具目标态见归档 PLAN-0330 `spec/task-plan.md`；生产者缺口 = backlog P0-2 | unimplemented（`taskplan.*` 事件、表与投影为脚手架，无真实生产者与 UI 消费者） | 计划记录 ≠ 执行编排器（TaskPlan 不驱动调度） |
 
 ## 规范条款与不变式
@@ -54,7 +54,7 @@
 | 语义重复/无进展检测 | 已实现（PLAN-0493：观察窗口 + 级联 2/3/5·3/5·2/5·20、豁免只免检测不免预算、`RUN_NO_PROGRESS` 经 {stop, interrupt} 同管道收敛；M0 真实观测校准全部维持默认；host 车道 passed，2026-10-13） | backlog BL-90（实现已落地；PLAN 收尾归档后闭环） |
 | ChatRun 内 LangGraph 图状态 checkpoint/恢复 | 已交付（PLAN-0510，2026-10-17 归档并合入 develop） | backlog BL-91（已闭环；与 ExecutionJob 续跑、BL-24 区分） |
 | 计划执行预算/重规划上限 | 无生产者 → 触发式候选 | 已有登记 P0-2（PLAN-0330 后置），不新建 |
-| 人类接管 | cancel 已接线；follow-up queue 已交付（PLAN-0442，2026-10-06，BL-63 仅关闭该子项）；steering/Guidance 仍归 BL-63；风险动作审批归 approval SPEC | 不新建；预算耗尽/反复失败的处置并入 BL-89 范围 |
+| 人类接管 | cancel 已接线；follow-up queue 已交付（PLAN-0442，2026-10-06）；Run Guidance 已交付（PLAN-0528/0529/0530/0536，2026-10-19；BL-63 于 2026-10-22 闭环）；mid-tool interrupt 后置；风险动作审批归 approval SPEC | 不新建；预算耗尽/反复失败的处置并入 BL-89 范围 |
 
 以上编号以 XH backlog 台账唯一登记点为权威；本文只引用 ID，不复制条目正文。
 
@@ -62,5 +62,6 @@
 
 - 现状矩阵、搜索范围与归档去重证据：PLAN-0429 `evidence/m0-guardrail-matrix.md`。
 - LangGraph 图状态 checkpoint/续跑（本文件第 31、55 行条目）：PLAN-0510 `plans/archive/PLAN-0510-XH-langgraph-checkpoint-resume/`（`spec/checkpoint-resume-contract.md` 与 evidence）。
+- Run Guidance（本文件第 35、57 行条目）：PLAN-0528/0529/0530/0536；CP owner = `session/chat-run-operation.md` §Run Guidance，Agent 消费 = `agent/execution.md` §运行中 Guidance 消费。
 - Agent/Session 域既有事实：PLAN-0387 `evidence/current-state.md`。
 - 本文件与 `spec/README.md` 登记、`agent/execution.md` 导航同批维护；链接可解析性由 PLAN-0429 T3.1 链接检查验收。

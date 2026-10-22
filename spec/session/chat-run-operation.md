@@ -9,8 +9,8 @@
 > Owner：CP ChatRun + Follow-up Queue + Run Guidance domains
 >
 > 消费者：Agent、Runtime、UI、Audit
-> 来源：PLAN-0387、PLAN-0442、PLAN-0463–0467、PLAN-0528、DEV-014、DEV-017
-> 更新日期：2026-10-18
+> 来源：PLAN-0387、PLAN-0442、PLAN-0463–0467、PLAN-0528、PLAN-0529、PLAN-0530、PLAN-0536、DEV-014、DEV-017
+> 更新日期：2026-10-22
 
 ## 三类对象
 
@@ -56,7 +56,9 @@ ChatRun 当前可经过 `accepted`、`queued`、`running`、`streaming`、`await
 - Session 删除意图期间队列变更与普通 Chat 均 MUST 409 `SESSION_DELETING`；CP 启动恢复暂停 admitted-without-child 项并唤醒 queued head（幂等）。
 - PLAN-0442 V1 runtime constraint: deployments using Follow-up MUST run exactly one active CP instance. The after-commit wake is process-local and startup recovery only runs on application startup; this is not cross-instance durable delivery. Multi-instance Follow-up support requires a separately approved design and verification before scaling CP.
 
-## Run Guidance（PLAN-0528）
+## Run Guidance（PLAN-0528/0529/0530/0536）
+
+> 实现状态：`implemented`（CP 0528、Agent 0529、UI 0530、竞态收口 0536；2026-10-19）。
 
 - Guidance 是 Run-scoped 的 CP durable 记录（V77 `chat_run_guidance`），独立于 Message、Follow-up Queue、Context EventStore 与 Operation audit；同一事实不得在四处重复宣称。来源首版仅 `user`（DB `CHECK source_kind='user'` fail-closed；guard 接入须新迁移 + Security 立项），作者由 CP 从 TenantContext 派生，请求体不得自报来源。
 - 仅活跃 Run（`running`、`streaming`、`awaiting_approval`）接受提交，其余状态 `409 GUIDANCE_RUN_NOT_ACTIVE`；`Idempotency-Key` 必带，同键回放返回原记录。正文 ≤8000 字符，日志/审计只记 id/sequence/status，不记正文原文。
@@ -64,6 +66,68 @@ ChatRun 当前可经过 `accepted`、`queued`、`running`、`streaming`、`await
 - Agent 消费协议（`GET /internal/v1/chat/runs/{runId}/guidance/pending` + `POST .../{guidanceId}/consume`）：consume 幂等；consume 命中 terminal-expired 返回 `409 GUIDANCE_ALREADY_TERMINAL_EXPIRED`，Agent MUST 停止重试且不注入。
 - **无 Guidance 专属 SSE 事件**（裁定候选①）：提交/消费/失效的 UI 可见性一律通过 `GET /api/v1/chat/runs/{runId}/guidance` 快照重读（提交后 + Run 终态事件时）。
 - PLAN-0528 V1 runtime constraint: Guidance 与 Follow-up 同源——deployments using Guidance MUST run exactly one active CP instance；跨实例可靠投递需另行设计验收后方可扩展 CP。
+
+### 持久模型（V77）
+
+表 `chat_run_guidance`（Flyway V77，forward-only）：
+
+| 列 | 类型 | 约束/说明 |
+|---|---|---|
+| `id` | `uuid` | PK |
+| `session_id` | `uuid` | NOT NULL，来自 Run（派生，非客户端传入） |
+| `run_id` | `uuid` | NOT NULL，目标 ChatRun |
+| `branch_id` | `uuid` | NOT NULL，来自 Run 的当前 branch（派生；仅作 run-scoped 读取对齐，禁客户端传入） |
+| `source_kind` | `text` | NOT NULL，**`CHECK (source_kind = 'user')`**（fail-closed） |
+| `author_principal_id` | `uuid` | NOT NULL，提交者（=当前认证用户） |
+| `body_markdown` | `text` | NOT NULL，长度 ≤ `8000` 字符（DB CHECK） |
+| `sequence` | `bigint` | NOT NULL，Run 内单调递增（1 起，取 `max(sequence)+1`，行锁内） |
+| `status` | `text` | NOT NULL，`pending` / `consumed` / `terminal_expired` |
+| `idempotency_key` | `text` | NOT NULL（`Idempotency-Key` 头）；`(run_id, idempotency_key)` 唯一 |
+| `created_at` / `updated_at` | `timestamptz` | NOT NULL DEFAULT now() |
+| `consumed_at` | `timestamptz` | NULL（consumed 时写） |
+| `terminal_expired_at` | `timestamptz` | NULL（terminal_expired 时写） |
+
+索引：`(run_id, sequence)` 唯一；`(run_id, status)` 普通（Agent pending 读取）；`(session_id)` 普通。
+
+### 公开路由（`/api/v1`，用户 JWT 鉴权）
+
+**`POST /api/v1/chat/runs/{runId}/guidance`**
+
+- 请求头：`Idempotency-Key`（必填；缺失 400）。
+- 请求体：`{ "content": string }`（**不含 sourceKind**；服务端恒置 `user`）。`content` 空白/超 8000 字符 → 422。
+- 校验与作者派生：runId 存在 → Run 属调用者可见 session/workspace → Run 状态 ∈ 允许集合 → 派生 author = 当前用户。
+- 允许提交的 Run 状态集合（冻结）：`running`、`streaming`、`awaiting_approval`。显式排除：`accepted`、`queued`、`cancelling` 与全部终态。
+- 成功 `201`：`{ "id", "runId", "sessionId", "sequence", "status": "pending", "createdAt" }`（不含正文回显）。
+- 幂等重放：同 `(runId, Idempotency-Key)` → `200` 返回原记录（不新建）。
+- 错误：`404` run 不存在/不可见；`403` 非本工作区/越权；`409 GUIDANCE_RUN_NOT_ACTIVE`；`400` 缺 Idempotency-Key；`422` content 非法。
+
+**`GET /api/v1/chat/runs/{runId}/guidance`**
+
+- 返回该 Run 的 Guidance 快照（按 `sequence` 升序）：`{ "items": [ { "id", "sequence", "sourceKind", "status", "createdAt", "consumedAt", "terminalExpiredAt", "authorPrincipalId", "content" } ], "latestSequence" }`。
+- 越权 → `403`；run 不可见 → `404`。
+
+### 内部路由（服务间，`Authorization: Bearer <service token>`）
+
+**`GET /internal/v1/chat/runs/{runId}/guidance/pending`**
+
+- 返回 `status=pending` 的条目（`sequence` 升序，全部），体：`{ "runId", "items": [ { "id", "sequence", "sourceKind", "content" } ] }`。
+- Agent 侧以 `id` 做注入去重键；`sourceKind` 首版恒 `user`（预留位）。run 不存在 → `404`。
+
+**`POST /internal/v1/chat/runs/{runId}/guidance/{guidanceId}/consume`**
+
+- 语义：`pending → consumed`。请求体：`{ "consumedBy": "agent-runner" }`（预留，便于审计区分消费方）。
+- `200`：`{ "id", "status": "consumed", "consumedAt" }`（首次或重复，幂等）。
+- `409 GUIDANCE_ALREADY_TERMINAL_EXPIRED`：条目已 terminal_expired；Agent 收到此码 MUST 停止重试且不再注入。
+- `404`：run/guidance 不存在。
+
+### 日志与脱敏
+
+- 任何日志只允许 `id/sequence/sourceKind/status/runId`；**禁止记录 `content`（body_markdown）原文**（不可信请求正文）。
+
+### 与相邻机制边界
+
+- 不复用 EventStore/Operation audit；不复用 Follow-up Queue 状态；不新增 SSE 事件类型（候选①）；不改变取消/审批/续跑端点。
+- 续跑（0510）新 Run 读不到源 Run 的 pending Guidance（runId 隔离 + terminal 收敛）；已消费条目**不在**本表迁移。
 
 ## 恢复
 
