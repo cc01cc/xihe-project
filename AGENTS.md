@@ -91,7 +91,7 @@
 
 ## Plan and Release Rules
 
-- 遵循 workspace `plan-mode`/`plan-completion`；PLAN 工作包统一存放在 workspace 根 `plans/`，不在本仓库另设；XH Spec Impact 和 DEV/OpenAPI 同批同步按 `spec/README.md`、DEV-030 执行。PLAN 是目录工作包，不是单文件 `PLAN-XXX.md`。
+- 遵循 workspace `plan-mode`（收尾验收见其 `references/plan-completion/` 分册）；PLAN 工作包统一存放在 workspace 根 `plans/`，不在本仓库另设；XH Spec Impact 和 DEV/OpenAPI 同批同步按 `spec/README.md`、DEV-030 执行。PLAN 是目录工作包，不是单文件 `PLAN-XXX.md`。
 - XH PLAN 隔离实施统一在**本仓库内**建 git worktree（如 `git worktree add .worktrees/<name> -b <branch> develop`）；**禁止**用 Kilo / Agent Manager 的 worktree 模式代劳——两者是不同机制（2026-10-14 用户再次纠正；工作区硬规则见 `../AGENTS.md` §Git 操作约束）。
 - 本指南不授权 package 发布、版本 bump、commit 或 push；任何 release 动作先核对当前项目依据并遵循 workspace permissions。
 
