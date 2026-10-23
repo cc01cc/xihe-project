@@ -1,6 +1,11 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
-import { api, type ApiWorkspace } from "../composables/api";
+import {
+    api,
+    type ApiWorkspace,
+    onAuthTokensRefreshed,
+    registerForceLogout,
+} from "../composables/api";
 import { logger, rotateAnonSessionId, clearAnonSessionId } from "../lib/logger";
 import { useSessionStore } from "./session";
 import { clearWorkspaceChatForUserSwitch } from "../features/workspace/chat/lifecycle";
@@ -9,6 +14,8 @@ import { useAgentStore } from "./agent";
 import { usePolicyStore } from "./policy";
 import { useCheckpointStore } from "./checkpoint";
 import type { User } from "../types";
+// PLAN-0546: SPA-route logout. router/index.ts does not import stores, so this is acyclic.
+import router from "../router";
 
 export const useAuthStore = defineStore("auth", () => {
     // Authentication is the only state worth caching. Server is the canonical
@@ -34,6 +41,7 @@ export const useAuthStore = defineStore("auth", () => {
     }
 
     const token = ref<string | null>(localStorage.getItem("xihe-token")),
+        refreshToken = ref<string | null>(localStorage.getItem("xihe-refresh-token")),
         user = ref<User | null>(readUser()),
         workspace = ref<ApiWorkspace | null>(readWorkspace()),
         loading = ref(false),
@@ -53,12 +61,16 @@ export const useAuthStore = defineStore("auth", () => {
         return Boolean(ownerId && user.value?.id && ownerId === user.value.id);
     });
 
-    function _saveToken(t: string, u: User, ws: ApiWorkspace | null) {
+    function _saveToken(t: string, u: User, ws: ApiWorkspace | null, rt?: string) {
         token.value = t;
         user.value = u;
         workspace.value = ws;
         localStorage.setItem("xihe-token", t);
         localStorage.setItem("xihe-user", JSON.stringify(user.value));
+        if (rt) {
+            refreshToken.value = rt;
+            localStorage.setItem("xihe-refresh-token", rt);
+        }
         if (ws) localStorage.setItem("xihe-workspace", JSON.stringify(ws));
         else localStorage.removeItem("xihe-workspace");
         // New authentication session: rotate the anonymous telemetry session id (PLAN-0527).
@@ -73,7 +85,7 @@ export const useAuthStore = defineStore("auth", () => {
             const ws =
                 res.workspace ??
                 (res.workspaceId ? { id: res.workspaceId, name: "Default Workspace" } : null);
-            _saveToken(res.accessToken, res.user, ws);
+            _saveToken(res.accessToken, res.user, ws, res.refreshToken);
             clearSessionCaches();
             return true;
         } catch (e) {
@@ -94,7 +106,7 @@ export const useAuthStore = defineStore("auth", () => {
             const ws =
                 res.workspace ??
                 (res.workspaceId ? { id: res.workspaceId, name: "Default Workspace" } : null);
-            _saveToken(res.accessToken, res.user, ws);
+            _saveToken(res.accessToken, res.user, ws, res.refreshToken);
             clearSessionCaches();
             return true;
         } catch (e) {
@@ -116,7 +128,7 @@ export const useAuthStore = defineStore("auth", () => {
             const ws =
                 res.workspace ??
                 (res.workspaceId ? { id: res.workspaceId, name: "Default Workspace" } : null);
-            _saveToken(res.accessToken, res.user, ws);
+            _saveToken(res.accessToken, res.user, ws, res.refreshToken);
             clearSessionCaches();
             return true;
         } catch (e) {
@@ -170,10 +182,12 @@ export const useAuthStore = defineStore("auth", () => {
 
     function logout() {
         token.value = null;
+        refreshToken.value = null;
         user.value = null;
         workspace.value = null;
         error.value = null;
         localStorage.removeItem("xihe-token");
+        localStorage.removeItem("xihe-refresh-token");
         localStorage.removeItem("xihe-user");
         localStorage.removeItem("xihe-workspace");
         // Logout: clear the anonymous telemetry session id (PLAN-0527 decision #5).
@@ -206,6 +220,20 @@ export const useAuthStore = defineStore("auth", () => {
     }
 
     const currentWorkspaceId = computed(() => workspace.value?.id ?? null);
+
+    // PLAN-0546: silent refresh (api.ts) writes new tokens to localStorage; keep the
+    // in-memory refs in sync and route via SPA instead of window.location.href.
+    onAuthTokensRefreshed((accessToken) => {
+        token.value = accessToken;
+        refreshToken.value = localStorage.getItem("xihe-refresh-token");
+    });
+    registerForceLogout(() => {
+        logout();
+        router.push({
+            name: "login",
+            query: { redirect: window.location.pathname + window.location.search },
+        });
+    });
 
     return {
         token,

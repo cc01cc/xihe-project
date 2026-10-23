@@ -4,6 +4,7 @@ import {
     ApiError,
     normalizeApprovalRequest,
     normalizeSafePolicySummary,
+    registerForceLogout,
     workspaceJobErrorReason,
 } from "../api";
 
@@ -79,13 +80,15 @@ describe("api.login", () => {
         );
     });
 
-    it("clears token and redirects to login on 401 for protected paths", async () => {
+    it("clears token and invokes the registered logout on 401 without refresh token", async () => {
         localStorage.setItem("xihe-token", "existing-token");
         localStorage.setItem("xihe-user", "{}");
         // @ts-expect-error jsdom allows location.href assignment
         delete window.location;
         // @ts-expect-error redefine for test
-        window.location = { href: "/chat", pathname: "/chat" };
+        window.location = { href: "/chat", pathname: "/chat", search: "" };
+        const logoutSpy = vi.fn();
+        registerForceLogout(logoutSpy);
 
         fetchSpy.mockResolvedValueOnce({
             ok: false,
@@ -94,9 +97,12 @@ describe("api.login", () => {
         } as Response);
 
         await expect(api.getSessions()).rejects.toThrow("Session expired");
+        expect(logoutSpy).toHaveBeenCalledTimes(1);
         expect(localStorage.getItem("xihe-token")).toBeNull();
         expect(localStorage.getItem("xihe-user")).toBeNull();
-        expect(window.location.href).toBe("/login");
+        // SPA route: the api layer never hard-navigates.
+        expect(window.location.href).toBe("/chat");
+        registerForceLogout(() => undefined);
     });
 
     it("does not redirect on 401 when already on public auth pages", async () => {
@@ -142,6 +148,158 @@ describe("api.login", () => {
         expect(localStorage.getItem("xihe-token")).toBe("existing-token");
         expect(localStorage.getItem("xihe-user")).toBe("{}");
         expect(window.location.href).toBe("/settings/credentials");
+    });
+});
+
+describe("silent refresh on 401 (PLAN-0546)", () => {
+    function mockJson(status: number, body: unknown): Response {
+        return {
+            ok: status >= 200 && status < 300,
+            status,
+            json: () => Promise.resolve(body),
+        } as Response;
+    }
+    function mockLocation(pathname: string): void {
+        // @ts-expect-error jsdom allows location.href assignment
+        delete window.location;
+        // @ts-expect-error redefine for test
+        window.location = { href: pathname, pathname, search: "" };
+    }
+
+    it("refreshes once, stores new tokens and replays with the new bearer", async () => {
+        mockLocation("/workspace");
+        localStorage.setItem("xihe-token", "stale-token");
+        localStorage.setItem("xihe-refresh-token", "valid-refresh");
+
+        fetchSpy
+            .mockResolvedValueOnce(mockJson(401, {}))
+            .mockResolvedValueOnce(
+                mockJson(200, { accessToken: "new-access", refreshToken: "new-refresh" }),
+            )
+            .mockResolvedValueOnce(mockJson(200, []));
+        console.log("[specdbg] after set:", localStorage.getItem("xihe-refresh-token"));
+
+        const sessions = await api.getSessions();
+
+        expect(sessions.sessions).toEqual([]);
+        const refreshCall = fetchSpy.mock.calls.find(([p]) => p === "/api/v1/auth/refresh");
+        expect(refreshCall).toBeTruthy();
+        expect((refreshCall as unknown[])[1]).toMatchObject({
+            method: "POST",
+            body: JSON.stringify({ refreshToken: "valid-refresh" }),
+        });
+        expect(localStorage.getItem("xihe-token")).toBe("new-access");
+        expect(localStorage.getItem("xihe-refresh-token")).toBe("new-refresh");
+        const replayCall = fetchSpy.mock.calls.at(-1) as unknown[];
+        const replayHeaders = (replayCall[1] as RequestInit).headers as Record<string, string>;
+        expect(replayHeaders["Authorization"]).toBe("Bearer new-access");
+    });
+
+    it("collapses concurrent 401s into a single refresh request", async () => {
+        localStorage.setItem("xihe-token", "stale-token");
+        localStorage.setItem("xihe-refresh-token", "valid-refresh");
+        mockLocation("/workspace");
+
+        let releaseRefresh: (() => void) | null = null;
+        const gate = new Promise<void>((resolve) => {
+            releaseRefresh = resolve;
+        });
+        let refreshed = false;
+        fetchSpy.mockImplementation((input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.endsWith("/auth/refresh")) {
+                return gate.then(() => {
+                    refreshed = true;
+                    return mockJson(200, {
+                        accessToken: "new-access",
+                        refreshToken: "new-refresh",
+                    });
+                });
+            }
+            // First wave 401s; replays (after refresh resolved) succeed.
+            return refreshed
+                ? Promise.resolve(mockJson(200, { sessions: [] }))
+                : Promise.resolve(mockJson(401, {}));
+        });
+
+        const calls = Promise.all([
+            api.getSessions(),
+            api.getSessions(),
+            api.getSessions(),
+            api.getSessions(),
+            api.getSessions(),
+        ]);
+        setTimeout(() => releaseRefresh?.(), 0);
+        await calls;
+
+        const refreshCalls = fetchSpy.mock.calls.filter(([p]) =>
+            String(p).endsWith("/auth/refresh"),
+        );
+        expect(refreshCalls.length).toBe(1);
+        const replayed = fetchSpy.mock.calls.filter(([p]) => String(p).endsWith("/sessions"));
+        expect(replayed.length).toBe(10);
+    });
+
+    it("clears all three keys and notifies the registered logout on refresh failure", async () => {
+        localStorage.setItem("xihe-token", "stale-token");
+        localStorage.setItem("xihe-user", "{}");
+        localStorage.setItem("xihe-refresh-token", "dead-refresh");
+        mockLocation("/workspace");
+
+        const logoutSpy = vi.fn();
+        registerForceLogout(logoutSpy);
+
+        fetchSpy
+            .mockResolvedValueOnce(mockJson(401, {}))
+            .mockResolvedValueOnce(mockJson(401, { detail: "Invalid or expired refresh token" }));
+
+        await expect(api.getSessions()).rejects.toThrow("Session expired");
+        expect(logoutSpy).toHaveBeenCalledTimes(1);
+        expect(localStorage.getItem("xihe-token")).toBeNull();
+        expect(localStorage.getItem("xihe-user")).toBeNull();
+        expect(localStorage.getItem("xihe-refresh-token")).toBeNull();
+        registerForceLogout(() => undefined);
+    });
+
+    it("logs out without a second refresh when the replayed request is still 401", async () => {
+        localStorage.setItem("xihe-token", "stale-token");
+        localStorage.setItem("xihe-refresh-token", "valid-refresh");
+        mockLocation("/workspace");
+
+        const logoutSpy = vi.fn();
+        registerForceLogout(logoutSpy);
+
+        fetchSpy
+            .mockResolvedValueOnce(mockJson(401, {}))
+            .mockResolvedValueOnce(
+                mockJson(200, { accessToken: "new-access", refreshToken: "new-refresh" }),
+            )
+            .mockResolvedValueOnce(mockJson(401, {}));
+
+        await expect(api.getSessions()).rejects.toThrow("Session expired");
+        expect(logoutSpy).toHaveBeenCalledTimes(1);
+        const refreshCalls = fetchSpy.mock.calls.filter(([p]) =>
+            String(p).endsWith("/auth/refresh"),
+        );
+        expect(refreshCalls.length).toBe(1);
+        registerForceLogout(() => undefined);
+    });
+
+    it("keeps a registered SPA logout path without window.location.href", async () => {
+        localStorage.setItem("xihe-token", "stale-token");
+        localStorage.setItem("xihe-user", "{}");
+        localStorage.setItem("xihe-refresh-token", "dead-refresh");
+        mockLocation("/workspace/chat");
+
+        const logoutSpy = vi.fn();
+        registerForceLogout(logoutSpy);
+
+        fetchSpy.mockResolvedValueOnce(mockJson(401, {})).mockResolvedValueOnce(mockJson(401, {}));
+
+        await expect(api.getSessions()).rejects.toThrow("Session expired");
+        // SPA route: no hard navigation happened (href untouched by api layer).
+        expect(window.location.href).toBe("/workspace/chat");
+        registerForceLogout(() => undefined);
     });
 });
 
