@@ -1626,6 +1626,74 @@ export async function apiErrorFromResponse(res: Response): Promise<never> {
     });
 }
 
+let refreshInFlight: Promise<boolean> | null = null;
+
+/**
+ * PLAN-0546: single-flight silent refresh. Concurrent 401s await the same promise.
+ * The promise never rejects (network errors normalize to false); callers treat false
+ * as "session dead" and go through forceLogout. Tokens are written to localStorage
+ * before resolving so the replayed request's apiAuthHeaders picks up the new token.
+ */
+function ensureRefreshed(): Promise<boolean> {
+    if (refreshInFlight) return refreshInFlight;
+    const attempt = (async () => {
+        try {
+            const rt = localStorage.getItem("xihe-refresh-token");
+            if (!rt) return false;
+            const res = await fetch(endpoint("/auth/refresh"), {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ refreshToken: rt }),
+            });
+            if (!res.ok) return false;
+            const data = (await res.json()) as { accessToken?: string; refreshToken?: string };
+            if (!data.accessToken || !data.refreshToken) return false;
+            localStorage.setItem("xihe-token", data.accessToken);
+            localStorage.setItem("xihe-refresh-token", data.refreshToken);
+            authSyncCallbacks.forEach((cb) => cb(data.accessToken as string));
+            return true;
+        } catch {
+            return false;
+        }
+    })();
+    // .finally() callback always runs in a microtask (after the assignment above), so the
+    // settled promise can never be written back into refreshInFlight.
+    refreshInFlight = attempt;
+    void attempt.finally(() => {
+        refreshInFlight = null;
+    });
+    return attempt;
+}
+
+const authSyncCallbacks = new Set<(accessToken: string) => void>();
+
+/** auth store registers to keep its in-memory token ref in sync after a silent refresh. */
+export function onAuthTokensRefreshed(cb: (accessToken: string) => void): void {
+    authSyncCallbacks.add(cb);
+}
+
+type ForceLogoutFn = () => void;
+let forceLogoutImpl: ForceLogoutFn | null = null;
+
+/** auth store injects the SPA-route logout to avoid an api -> router import cycle. */
+export function registerForceLogout(fn: ForceLogoutFn): void {
+    forceLogoutImpl = fn;
+}
+
+function forceLogout(): void {
+    localStorage.removeItem("xihe-token");
+    localStorage.removeItem("xihe-refresh-token");
+    localStorage.removeItem("xihe-user");
+    if (forceLogoutImpl) {
+        forceLogoutImpl();
+        return;
+    }
+    // Fallback when the auth store has not registered yet (e.g. tests): keep the old
+    // hard-navigation semantics so the session is still visibly terminated.
+    if (!["/login", "/register"].includes(window.location.pathname))
+        window.location.href = "/login";
+}
+
 async function checkedFetch(path: string, options?: RequestInit): Promise<Response> {
     const hasBody = options?.body !== undefined && options.body !== null,
         includeContentType = hasBody && !(options?.body instanceof FormData),
@@ -1643,10 +1711,27 @@ async function checkedFetch(path: string, options?: RequestInit): Promise<Respon
         // not session expiry — it must stay inline in the reveal dialog.
         isStepUpEndpoint = /^\/credentials\/[^/]+\/reveal$/.test(path);
     if (res.status === 401 && !isAuthEndpoint && !isStepUpEndpoint) {
-        localStorage.removeItem("xihe-token");
-        localStorage.removeItem("xihe-user");
-        if (!["/login", "/register"].includes(window.location.pathname))
-            window.location.href = "/login";
+        // PLAN-0546: silent refresh with single-flight, then one replay. Logout only when
+        // the refresh itself fails or the replayed request is still 401 (no second refresh).
+        const refreshed = await ensureRefreshed();
+        if (refreshed) {
+            const replay = await fetch(endpoint(path), {
+                ...options,
+                headers: apiAuthHeaders(options?.headers, includeContentType),
+            });
+            if (replay.status === 401) {
+                forceLogout();
+                throw new ApiError({
+                    status: 401,
+                    code: "AUTHORIZATION_REQUIRED",
+                    detail: "Session expired",
+                    requestId: replay.headers?.get("X-Request-Id") || "unknown",
+                });
+            }
+            if (!replay.ok) return apiErrorFromResponse(replay);
+            return replay;
+        }
+        forceLogout();
         throw new ApiError({
             status: 401,
             code: "AUTHORIZATION_REQUIRED",
@@ -1794,6 +1879,7 @@ export const api = {
     login(email: string, password: string) {
         return request<{
             accessToken: string;
+            refreshToken: string;
             user: { id: string; email: string; workspaceId?: string };
             workspaceId?: string;
             workspace?: ApiWorkspace;
@@ -1811,6 +1897,7 @@ export const api = {
         };
         return request<{
             accessToken: string;
+            refreshToken: string;
             user: { id: string; email: string; workspaceId?: string };
             workspaceId?: string;
             workspace?: ApiWorkspace;
@@ -1826,6 +1913,7 @@ export const api = {
     localLogin() {
         return request<{
             accessToken: string;
+            refreshToken: string;
             user: { id: string; email: string; workspaceId?: string };
             workspaceId?: string;
             workspace?: ApiWorkspace;
