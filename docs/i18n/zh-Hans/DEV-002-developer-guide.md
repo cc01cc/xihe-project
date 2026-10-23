@@ -103,7 +103,7 @@ sequenceDiagram
 | `mise run dev:host:watch` | 健康监督 + 故障重启任务组 |
 | `mise run dev:host:stop` | 停 PG；先 Ctrl+C 停原生任务 |
 | `mise run dev:reset` | 默认 dry-run；`-Reset` 后备份重建 dev 数据，workspace 进回收站，不删 device identity |
-| `mise run reset-admin` | 重置 dev `admin@xihe.local` 密码，随机 24 字节 base64url，免重启；目标库解析顺序 `--url` > `XIHE_CP_DATASOURCE_URL` > `localhost:$XIHE_PG_PORT/$POSTGRES_DB`（默认 `12634/xihe_1`，与 0533 起 `xihe_<n>` 命名一致），运行时会打印实际目标 |
+| `mise run reset-admin` | 重置 dev `admin@xihe.local` 密码，随机 24 字节 base64url，免重启；目标栈解析 `-StackId`/`--stack` 参数 > `XIHE_STACK_ID` env > stack-1 缺省，栈内 DSN 解析顺序 `--url` > `XIHE_CP_DATASOURCE_URL` > `localhost:$XIHE_PG_PORT/$POSTGRES_DB`（缺省 `12634/xihe_1`，与 0533 起 `xihe_<n>` 命名一致），运行时会打印实际目标 |
 
 命令示例：
 
@@ -135,7 +135,7 @@ docker compose up -d --build   # 或 mise run dev:full（CP ready 后按导入�
 
 启动 postgres + control-plane + agent + runtime（UI 宿主）。端口映射（stack-1；多栈见「模式 D」）：CP 8080→12631、Agent 8000→12632、Runtime 8001→12633、PG 5432→12634。资源约束 pg 512m / cp 768m / agent 640m / runtime 128m，沙盒 512MB + 2 CPU。
 
-`dev:full` 导入语义（`scripts/dev-all.sh`）：默认**不自动导入**——`DataSeeder` 为 `admin@xihe.local` 生成随机密码且不打印，脚本无法登录。启动后执行 `mise run reset-admin` 获取密码并手动 `POST /api/v1/config/import?layer=instance`（非密钥八域配置；凭证走 `provider_connections`）；或设置 `XIHE_DEV_ADMIN_PASSWORD`（仅经 OS 环境变量注入，禁止写入脚本/git/日志）显式启用自动导入。
+配置导入（`scripts/dev-host-import-config.mjs`，`mise run dev:host:import-config` 显式触发）：默认**不自动导入**——`DataSeeder` 为 `admin@xihe.local` 生成随机密码且不打印，脚本无法登录。启动后执行 `mise run reset-admin` 获取密码并手动 `POST /api/v1/config/import?layer=instance`（非密钥八域配置；凭证走 `provider_connections`）；或提供 `XIHE_DEV_ADMIN_PASSWORD` 启用自动导入——注入通道（PLAN-0547）：OS 环境变量 > `.env` 文件链（`.env` → `.env.$XIHE_ENV` → `.env.local`，与 CP `DotenvLoader` 同语义；本机受控值写 `.env.local`，禁止写入 git/脚本/日志）。
 
 ### 模式 C：单模块宿主测试
 
@@ -258,17 +258,17 @@ curl -sS -X POST "http://localhost:12631/api/v1/chat" \
 
 Chat SSE 结构化事件与日志字段见 DEV-004 §6.3；UI 传输层见 DEV-010 §4；跨层协议核对（Controller 契约/JWT/`effective` 域键与 env 兜底键/LLM `provider/model` 格式）改一层查一层。
 
-### 一键验证脚本（`scripts/verify-stack.sh`，PLAN-0539）
+### 一键验证脚本（`scripts/verify-stack.mjs`，PLAN-0539 引入 / PLAN-0547 平移 Node）
 
 上面 2.1–2.5 的手工链路可一键跑：
 
 ```bash
-XIHE_VERIFY_PASSWORD=<admin 密码> bash scripts/verify-stack.sh
-XIHE_STACK_ID=stack-2 XIHE_VERIFY_PASSWORD=<密码> bash scripts/verify-stack.sh
+XIHE_VERIFY_PASSWORD=<admin 密码> node scripts/verify-stack.mjs
+node scripts/verify-stack.mjs --stack 2          # --stack 参数优先于 XIHE_STACK_ID env
 ```
 
-- **凭据**：`XIHE_VERIFY_EMAIL`（默认 `admin@xihe.local`）+ `XIHE_VERIFY_PASSWORD`（必填，缺失 exit 2）；脚本内无字面密码、token 不回显。密码用 `mise run reset-admin` 生成（目标库按 `--url` > `XIHE_CP_DATASOURCE_URL` > `XIHE_PG_PORT`/`POSTGRES_DB` 解析，运行时会打印实际目标）。
-- **栈派生**：脚本开头经 `node scripts/stack-run.mjs env-json --stack <id>` 取端口/容器前缀（bash 不能 import ESM；**只设 `XIHE_STACK_ID` 不会改端口**）。
+- **凭据**：`XIHE_VERIFY_EMAIL`（默认 `admin@xihe.local`）+ `XIHE_VERIFY_PASSWORD`（必填，缺失 exit 2；回退 `XIHE_DEV_ADMIN_PASSWORD`——OS env > `.env` 文件链）；脚本内无字面密码、token 不回显。密码用 `mise run reset-admin` 生成（目标栈按 `-StackId` > `XIHE_STACK_ID` 解析，栈内按 `--url` > `XIHE_CP_DATASOURCE_URL` > `XIHE_PG_PORT`/`POSTGRES_DB` 解析，运行时会打印实际目标）。
+- **栈派生**：脚本开头经 `node scripts/stack-run.mjs env-json --stack <id>` 取端口/容器前缀。
 - **判定与退出码**：A 档（CP health / 登录 / 建 session+分支 / SSE / 模型列表 / Agent health）必过；B 档 `POST /api/v1/chat` 受 provider 凭据、principal 绑定与 API Type 绑定约束。`0`=两档通过、`4`=A 通过但 B 前置缺失（末行给原因码）、`1`=失败、`2`=缺凭据。
 - **agent principal**：建 session 必须带 `agentPrincipalId`；脚本按「显式 `XIHE_VERIFY_AGENT_PRINCIPAL_ID` → workspace 已绑定的第一个 → 自动新建」解析。只有新建后才调 `PUT …/agents/{id}` 绑定——对已有 principal 调该接口会**收窄**它的 workspace cap。
 

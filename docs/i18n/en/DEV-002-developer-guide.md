@@ -455,17 +455,17 @@ uv run --with httpx pytest tests/ -v -m integration
 
 UI API integration tests use MSW (Mock Service Worker) to intercept HTTP requests. Handlers are defined in `packages/ui/src/mocks/handlers.ts`, covering auth/session/health check scenarios. MSW does not intercept EventSource (SSE); SSE tests are verified through fetch-based approach.
 
-### 4.7. One-shot stack verification (`scripts/verify-stack.sh`, PLAN-0539)
+### 4.7. One-shot stack verification (`scripts/verify-stack.mjs`, PLAN-0539 / Node since PLAN-0547)
 
 The manual v1 chain (login → session + root branch → SSE → model list → chat) also runs as a single script:
 
 ```bash
-XIHE_VERIFY_PASSWORD=<admin password> bash scripts/verify-stack.sh
-XIHE_STACK_ID=stack-2 XIHE_VERIFY_PASSWORD=<password> bash scripts/verify-stack.sh
+XIHE_VERIFY_PASSWORD=<admin password> node scripts/verify-stack.mjs
+node scripts/verify-stack.mjs --stack 2          # --stack takes precedence over XIHE_STACK_ID
 ```
 
-- **Credentials**: `XIHE_VERIFY_EMAIL` (default `admin@xihe.local`) plus `XIHE_VERIFY_PASSWORD` (required; exits 2 when missing). No literal password lives in the script and the token is never echoed. Generate a password with `mise run reset-admin`; it resolves the target database as `--url` > `XIHE_CP_DATASOURCE_URL` > `localhost:$XIHE_PG_PORT/$POSTGRES_DB` (default `12634/xihe_1`, matching the post-0533 `xihe_<n>` naming) and prints the target it used.
-- **Stack derivation**: the script reads ports and the sandbox prefix from `node scripts/stack-run.mjs env-json --stack <id>`; setting `XIHE_STACK_ID` alone does not change ports (bash cannot import the ESM port SSOT).
+- **Credentials**: `XIHE_VERIFY_EMAIL` (default `admin@xihe.local`) plus `XIHE_VERIFY_PASSWORD` (required; exits 2 when missing; falls back to `XIHE_DEV_ADMIN_PASSWORD` — OS env > `.env` chain). No literal password lives in the script and the token is never echoed. Generate a password with `mise run reset-admin`; it resolves the target stack as `-StackId` > `XIHE_STACK_ID` and the target database as `--url` > `XIHE_CP_DATASOURCE_URL` > `localhost:$XIHE_PG_PORT/$POSTGRES_DB` (default `12634/xihe_1`, matching the post-0533 `xihe_<n>` naming) and prints the target it used.
+- **Stack derivation**: the script reads ports and the sandbox prefix from `node scripts/stack-run.mjs env-json --stack <id>`.
 - **Verdict and exit codes**: tier A (CP health / login / session + branch / SSE / model list / agent health) must pass; tier B (`POST /api/v1/chat`) additionally needs provider credentials, a bound agent principal and an explicit API type binding. `0` = both tiers passed, `4` = tier A passed but tier B precondition missing (reason code on the last line), `1` = failure, `2` = missing credentials.
 - **Agent principal**: creating a session requires `agentPrincipalId`. The script resolves it as explicit `XIHE_VERIFY_AGENT_PRINCIPAL_ID` → first principal already bound to the workspace → newly created one. It only calls `PUT …/agents/{id}` right after creating a principal — that call **narrows** the workspace cap of an existing principal.
 

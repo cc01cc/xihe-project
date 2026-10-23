@@ -13,6 +13,13 @@ const importPath = path.resolve(
 );
 const cpPort = process.env.XIHE_CP_PORT ?? "12631";
 const cpBase = `http://127.0.0.1:${cpPort}`;
+
+// PLAN-0547: fills missing keys from the .env chain before XIHE_DEV_ADMIN_PASSWORD is
+// read. OS env wins (fill-gaps only). Invoked inside main() — the credential constants
+// below are evaluated at top level, so the chain load must happen before any read;
+// runImportHelper-style tests inject their own env and never hit this path.
+import { loadEnvFileChain } from "./lib/env-file.mjs";
+loadEnvFileChain();
 const adminEmail = process.env.XIHE_DEV_ADMIN_EMAIL ?? "admin@xihe.local";
 const adminPassword = process.env.XIHE_DEV_ADMIN_PASSWORD ?? "";
 
@@ -80,13 +87,14 @@ async function assertCpReady() {
 }
 
 async function main() {
+  loadEnvFileChain();
   if (!fs.existsSync(importPath)) {
     console.log("[dev-host:import-config] skip: config.import.local.jsonc 不存在");
     return;
   }
   if (!adminPassword) {
     console.log(
-      "[dev-host:import-config] skip: 未设置 XIHE_DEV_ADMIN_PASSWORD（仅经 OS 环境变量注入）。"
+      "[dev-host:import-config] skip: 未设置 XIHE_DEV_ADMIN_PASSWORD（通道：OS 环境变量 > .env 文件链，见 .env.example）。"
       + " 显式导入请设置后运行 `mise run dev:host:import-config`，或使用 UI Settings。",
     );
     return;
