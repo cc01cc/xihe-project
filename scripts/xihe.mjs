@@ -18,6 +18,7 @@ import {
 } from './xihe-cli/provider.mjs';
 import { checkDevelopmentEnvironment, runConfigImport, runRealTest } from './xihe-cli/host.mjs';
 import { rotateCredentials } from './xihe-cli/credential.mjs';
+import { loadEnvFileChain } from './lib/env-file.mjs';
 
 function splitGlobalJsonFlag(args) {
   const rest = [];
@@ -57,6 +58,10 @@ function helpText() {
 
 export async function runCommand(argv, dependencies = {}) {
   const env = dependencies.env ?? process.env;
+  // PLAN-0547: fill missing keys from the .env chain (.env → .env.$XIHE_ENV → .env.local)
+  // before any consumer reads XIHE_DEV_ADMIN_PASSWORD. OS env and test-injected bags win;
+  // called here (entry) not at module top so unit tests with injected env bags are unaffected.
+  if (!dependencies.env) loadEnvFileChain({ env });
   const fetchImpl = dependencies.fetchImpl ?? fetch;
   const spawnSyncImpl = dependencies.spawnSyncImpl;
   const spawnImpl = dependencies.spawnImpl;

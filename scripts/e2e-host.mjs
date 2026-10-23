@@ -169,6 +169,9 @@ const realRoute = process.env.XIHE_E2E_REAL_ROUTE ?? 'native'
 const fakeMcpAccessToken = randomPassword(24)
 const fakeMcpResumeControlToken = checkpointResumeRequested ? randomPassword(32) : ''
 let e2eAdminPassword = randomPassword(24)
+// PLAN-0547 decision #3: e2e-host deliberately does NOT read the .env chain — its admin
+// password is self-generated per run (or taken from the harness state at :1602) so E2E
+// runs stay hermetic and cannot be influenced by a developer's .env.local.
 
 // PLAN-0465: reuse 模式下按栈 runId 恢复（与 pgProjectName 同批）——DB 名由栈
 // runId 派生，调用方 runId 派生的名字在持久栈上不存在。

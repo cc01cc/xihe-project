@@ -20,7 +20,15 @@ public class DataSeeder implements CommandLineRunner {
     private static final Logger log = LoggerFactory.getLogger(DataSeeder.class);
     private static final int PASSWORD_BYTES = 24;
     private static final SecureRandom RANDOM = new SecureRandom();
-    private static final String ADMIN_PASSWORD = seededPassword();
+    // PLAN-0547: three-tier resolution (OS env > system property > random). The system
+    // property tier makes the DotenvLoader .env chain reachable — DotenvLoader.load runs
+    // first in CpApplication.main(), before this class initializes inside Spring, and
+    // writes .env* file values into system properties (never over OS env).
+    private static final String ADMIN_PASSWORD =
+            resolveSeededPassword(
+                    () -> System.getenv("XIHE_DEV_ADMIN_PASSWORD"),
+                    () -> System.getProperty("XIHE_DEV_ADMIN_PASSWORD"),
+                    DataSeeder::generatePassword);
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -64,8 +72,17 @@ public class DataSeeder implements CommandLineRunner {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
-    private static String seededPassword() {
-        String configured = System.getenv("XIHE_DEV_ADMIN_PASSWORD");
-        return configured == null || configured.isBlank() ? generatePassword() : configured;
+    /**
+     * PLAN-0547: package-visible pure resolver so tests can pin the priority contract
+     * (OS env > system property > random) without touching global state.
+     */
+    static String resolveSeededPassword(java.util.function.Supplier<String> env,
+                                        java.util.function.Supplier<String> property,
+                                        java.util.function.Supplier<String> random) {
+        String configured = env.get();
+        if (configured == null || configured.isBlank()) {
+            configured = property.get();
+        }
+        return configured == null || configured.isBlank() ? random.get() : configured;
     }
 }
