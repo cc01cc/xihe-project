@@ -50,7 +50,7 @@
     "litellmProvider": "xiaomi_mimo",
     "defaultBaseUrl": "https://api.xiaomimimo.com/v1",
     "modelDiscovery": "remote-models",
-    "supportedApiTypes": [{ "apiTypeId": "mimo-responses", "version": 1 }],
+    "supportedApiTypes": [{ "apiTypeId": "mimo-responses", "version": 1 }, { "apiTypeId": "openai-chat-completions", "version": 1 }],
     "defaultApiType": { "apiTypeId": "mimo-responses", "version": 1 },
     "credential": { "type": "api-key", "required": true, "placeholder": "sk-..." },
     "supports": { "customBaseUrl": true, "streaming": true, "tools": false, "vision": false }
