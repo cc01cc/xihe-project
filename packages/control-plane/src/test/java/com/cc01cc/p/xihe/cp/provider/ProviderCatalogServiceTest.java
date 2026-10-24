@@ -30,6 +30,21 @@ class ProviderCatalogServiceTest {
     }
 
     @Test
+    void xiaomiSupportsBothChatCompletionsAndResponsesContracts() {
+        // PLAN-0548 / BL-116: MiMo serves both POST /v1/chat/completions and POST /v1/responses
+        // (probed 2026-10-24; /v1/messages is 404). Default stays mimo-responses.
+        assertEquals(2, catalog.require("xiaomi").path("supportedApiTypes").size());
+        assertEquals("mimo-responses", catalog.defaultApiType("xiaomi").apiTypeId());
+        assertEquals("openai-chat-completions", catalog.supportedPair("xiaomi", "openai-chat-completions", 1)
+                .path("apiTypeId").asText());
+        assertEquals("mimo-responses", catalog.supportedPair("xiaomi", "mimo-responses", 1)
+                .path("apiTypeId").asText());
+        assertEquals("https://api.xiaomimimo.com/v1", catalog.defaultBaseUrl("xiaomi"));
+        assertThrows(IllegalArgumentException.class,
+                () -> catalog.supportedPair("xiaomi", "anthropic-messages", 1));
+    }
+
+    @Test
     void supportedPairOverridesDefaultsWithoutChangingProviderFallback() {
         var definition = (com.fasterxml.jackson.databind.node.ObjectNode) catalog.require("deepseek");
         var type = catalog.defaultApiType("deepseek");
