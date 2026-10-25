@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { ArchiveRestore, CircleAlert, Clock, RotateCcw } from "@lucide/vue";
 import { useAuthStore } from "../../../../stores/auth";
 import { useCheckpointStore } from "../../../../stores/checkpoint";
+import { checkpointReasonKey, checkpointReasonTitle } from "../../checkpoint-reason";
 import type { WorkspaceCheckpointRevertCounts } from "../../../../types";
 
 /**
@@ -40,23 +41,14 @@ const kind = computed<MarkerKind>(() => {
     return current.state;
 });
 
-/** Frozen reason vocabulary of degraded rows / extended reasons, falling back to the raw code. */
+/** Known reasons use localized copy; unknown reasons fall back to a generic label. */
 const unrollableLabel = computed(() => {
     const current = record.value;
     if (!current) return "";
-    const reason = current.unrollableReason;
-    const keys: Record<string, string> = {
-        UNAVAILABLE: "chat.checkpointReasonUnavailable",
-        GIT_UNAVAILABLE: "chat.checkpointReasonGitUnavailable",
-        GIT_TOO_OLD: "chat.checkpointReasonGitTooOld",
-        GIT_FAILED: "chat.checkpointReasonGitFailed",
-        WORKSPACE_UNKNOWN: "chat.checkpointReasonWorkspaceUnknown",
-        EXPIRED: "chat.checkpointReasonExpired",
-    };
     if (current.state === "expired") return t("chat.checkpointReasonExpired");
-    const key = reason ? keys[reason] : undefined;
-    return key ? t(key) : (reason ?? t("chat.checkpointReasonUnavailable"));
+    return t(checkpointReasonKey(current.unrollableReason));
 });
+const unrollableTitle = computed(() => checkpointReasonTitle(record.value?.unrollableReason));
 
 const revertedAt = computed(() => {
     const at = record.value?.revert?.at;
@@ -211,6 +203,7 @@ watch(
         <template v-else-if="kind === 'degraded' || kind === 'expired'">
             <span
                 data-testid="run-checkpoint-unavailable"
+                :title="unrollableTitle"
                 class="inline-flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-foreground"
             >
                 <CircleAlert class="size-3.5 shrink-0" aria-hidden="true" />

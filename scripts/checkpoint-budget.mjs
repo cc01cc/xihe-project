@@ -45,6 +45,7 @@
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import { dirname, join, resolve } from 'node:path'
+import { resolveHostRoot } from './host-root.mjs'
 
 const projectDir = dirname(import.meta.dirname)
 
@@ -64,7 +65,12 @@ function argValue(name) {
 }
 
 const baseUrl = (argValue('base-url') ?? process.env.XIHE_BUDGET_BASE_URL ?? 'http://127.0.0.1:12633').replace(/\/+$/, '')
-const hostRoot = resolve(argValue('host-root') ?? process.env.XIHE_WORKSPACE_HOST_ROOT ?? join(projectDir, '.xihe-workspaces'))
+const hostRootSource = argValue('host-root') ?? process.env.XIHE_WORKSPACE_HOST_ROOT ?? '.xihe-workspaces'
+const hostRootResolved = resolveHostRoot(projectDir, hostRootSource)
+if (!hostRootResolved.value) {
+  throw new Error('--host-root / XIHE_WORKSPACE_HOST_ROOT resolved empty')
+}
+const hostRoot = hostRootResolved.value
 const token = argValue('token') ?? process.env.XIHE_CP_API_TOKEN ?? 'dev-token-not-secure'
 const fileCount = Number(argValue('files') ?? '10000')
 const runCount = Number(argValue('runs') ?? '5')

@@ -6,6 +6,7 @@ import { CircleAlert, FileDiff, LoaderCircle, RefreshCw, X } from "@lucide/vue";
 import { ApiError, api } from "../../../composables/api";
 import { logger } from "../../../lib/logger";
 import { useCheckpointStore } from "../../../stores/checkpoint";
+import { checkpointReasonKey, checkpointReasonTitle } from "../checkpoint-reason";
 import type { CheckpointResult, WorkspaceGitStatus } from "../../../types";
 import RevertPreviewDialog from "../chat/components/RevertPreviewDialog.vue";
 import RevertResultDialog from "../chat/components/RevertResultDialog.vue";
@@ -369,9 +370,11 @@ watch(
                             </p>
                             <p
                                 v-if="checkpoint.unrollableReason"
+                                data-testid="workspace-checkpoint-reason"
+                                :title="checkpointReasonTitle(checkpoint.unrollableReason)"
                                 class="text-[11px] text-destructive"
                             >
-                                {{ checkpoint.unrollableReason }}
+                                {{ t(checkpointReasonKey(checkpoint.unrollableReason)) }}
                             </p>
                             <button
                                 v-if="

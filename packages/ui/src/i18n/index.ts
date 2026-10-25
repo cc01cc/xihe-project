@@ -747,6 +747,8 @@ const messages = {
             checkpointReasonGitTooOld: "git 版本过低",
             checkpointReasonGitFailed: "git 操作失败",
             checkpointReasonWorkspaceUnknown: "工作区不可用",
+            checkpointReasonNestedRepoLimit: "嵌套仓库超出限制",
+            checkpointReasonInvalidRequest: "切片请求无效",
             checkpointReasonExpired: "切片已过期",
             checkpointPreviewTitle: "恢复到该切片",
             checkpointPreviewDescription:
@@ -2395,6 +2397,8 @@ const messages = {
             checkpointReasonGitTooOld: "git version too old",
             checkpointReasonGitFailed: "git operation failed",
             checkpointReasonWorkspaceUnknown: "workspace unavailable",
+            checkpointReasonNestedRepoLimit: "nested repository limit reached",
+            checkpointReasonInvalidRequest: "invalid slice request",
             checkpointReasonExpired: "slice expired",
             checkpointPreviewTitle: "Restore to this slice",
             checkpointPreviewDescription:

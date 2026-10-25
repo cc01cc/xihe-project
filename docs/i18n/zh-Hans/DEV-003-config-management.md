@@ -97,7 +97,7 @@ CLI --set KEY=VALUE（最高，启动日志掩码标注）
 | `XIHE_AGENT_API_TOKEN` / `XIHE_CP_API_TOKEN` | 模块间共享 service token（前者优先、后者回退；见 [DEV-024](DEV-024-authentication-matrix.md)） |
 | `XIHE_CP_DATASOURCE_URL` / `XIHE_CP_DATASOURCE_USERNAME` / `XIHE_CP_DATASOURCE_PASSWORD` | CP 数据库连接 |
 | `XIHE_CP_JWT_SECRET` | JWT 签名密钥（仅 CP 自身初始化） |
-| `XIHE_WORKSPACE_HOST_ROOT` | host workspace 根（默认 `A03-xihe/.xihe-workspaces`；由 mise/scripts 注入，非 `.env` 模板项） |
+| `XIHE_WORKSPACE_HOST_ROOT` | host root：Runtime 进程级存储基目录（managed workspace 的父目录 + shadow 状态根；**不是**每个 workspace 一个根，也不是用户路径白名单）。源值可相对（`.env.dev` 的 `../../.xihe-workspaces` 以 `packages/runtime` 为基准；CLI/stack 描述符以 A03 检出根为基准），launcher 注入 Runtime 的进程值必须为绝对路径；Runtime 对遗留相对值做一次绝对化并告警。默认 `A03-xihe/.xihe-workspaces` |
 | `XIHE_WORKSPACE_MATERIALIZE_TIMEOUT_SECS` | Runtime 物化总时限（秒；默认 600，自取得 per-workspace 锁后计时、排队不计入；超时置 `failed` 并署名，PLAN-0323 M-1） |
 | `XIHE_JOB_TIMEOUT_DEFAULT_SECS` | `job-policy.defaultTimeoutSecs`（job 运行时限默认值，秒；PLAN-0373 决策 #7/#8——装机注入类重合键，env 命中即锁定，UI 显示 env 值且该字段不可改） |
 | `XIHE_JOB_TIMEOUT_MAX_SECS` | `job-policy.maxTimeoutSecs`（job 运行时限硬上限，秒；PLAN-0373 决策 #7/#8——`0`=上限未设不钳制；env 命中即锁定，UI 显示 env 值且该字段不可改） |

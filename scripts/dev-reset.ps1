@@ -42,12 +42,10 @@ $ComposeProject = $Stack.composeProject
 $Database = $Stack.database
 $ContainerPrefix = $Stack.containerPrefix
 $NativePorts = @([int]$Stack.ports.ui, [int]$Stack.ports.cp, [int]$Stack.ports.agent, [int]$Stack.ports.runtime)
-$HostRoot = if ($env:XIHE_WORKSPACE_HOST_ROOT) {
-  (Resolve-Path $env:XIHE_WORKSPACE_HOST_ROOT -ErrorAction SilentlyContinue).Path
-} else {
-  Join-Path $ProjectRoot $Stack.hostRoot
-}
-$LogDir = if ($env:XIHE_LOG_DIR) { Join-Path $ProjectRoot $env:XIHE_LOG_DIR } else { Join-Path $ProjectRoot $Stack.logDir }
+$HostRootSource = if ($env:XIHE_WORKSPACE_HOST_ROOT) { $env:XIHE_WORKSPACE_HOST_ROOT } else { $Stack.hostRoot }
+$HostRoot = if ([System.IO.Path]::IsPathRooted($HostRootSource)) { [System.IO.Path]::GetFullPath($HostRootSource) } else { Join-Path $ProjectRoot $HostRootSource }
+$LogDirSource = if ($env:XIHE_LOG_DIR) { $env:XIHE_LOG_DIR } else { $Stack.logDir }
+$LogDir = if ([System.IO.Path]::IsPathRooted($LogDirSource)) { [System.IO.Path]::GetFullPath($LogDirSource) } else { Join-Path $ProjectRoot $LogDirSource }
 $ComposeFile = Join-Path $ProjectRoot "docker-compose.yml"
 $RunId = [guid]::NewGuid().ToString()
 $BackupRoot = Join-Path $env:TEMP "xihe-dev-reset"

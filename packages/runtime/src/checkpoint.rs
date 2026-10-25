@@ -341,8 +341,9 @@ pub struct ShadowGit {
 
 impl ShadowGit {
     pub fn new(host_root: impl Into<PathBuf>) -> Self {
+        let host_root = absolutize_host_root_lossy(host_root.into());
         Self {
-            host_root: host_root.into(),
+            host_root,
             git_binary: "git".to_string(),
             locks: StdMutex::new(HashMap::new()),
             work_tree_overrides: StdMutex::new(HashMap::new()),
@@ -917,9 +918,20 @@ impl ShadowGit {
         reference_index: Option<&Path>,
     ) -> Result<Vec<String>> {
         let env = self.isolated_env(shadow, work_tree, reference_index);
+        let excludes = format!(
+            "core.excludesFile={}",
+            normalize_path_for_git(&shadow.join("exclude"))
+        );
         let stdout = self
             .run_git_checked(
-                &["ls-files", "--others", "--exclude-standard", "-z"],
+                &[
+                    "-c",
+                    excludes.as_str(),
+                    "ls-files",
+                    "--others",
+                    "--exclude-standard",
+                    "-z",
+                ],
                 &env,
                 Some(work_tree),
                 self.call_timeout,
@@ -1422,16 +1434,13 @@ impl ShadowGit {
         index: Option<&Path>,
     ) -> Vec<(String, String)> {
         let mut env = self.null_config_env();
-        env.push(("GIT_DIR".to_string(), normalize_path_for_git(shadow)));
-        env.push((
-            "GIT_WORK_TREE".to_string(),
-            normalize_path_for_git(work_tree),
-        ));
+        env.push(("GIT_DIR".to_string(), absolute_for_git(shadow)));
+        env.push(("GIT_WORK_TREE".to_string(), absolute_for_git(work_tree)));
         env.push(("GIT_ATTR_NOSYSTEM".to_string(), "1".to_string()));
         env.push(("GIT_OPTIONAL_LOCKS".to_string(), "0".to_string()));
         env.push(("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()));
         if let Some(index) = index {
-            env.push(("GIT_INDEX_FILE".to_string(), normalize_path_for_git(index)));
+            env.push(("GIT_INDEX_FILE".to_string(), absolute_for_git(index)));
         }
         env
     }
@@ -1831,6 +1840,39 @@ fn normalize_path_for_git(path: &Path) -> String {
     stripped.replace('\\', "/")
 }
 
+/// Absolute path for a git env value. `checkpoint.rs` runs git with
+/// `cwd=Some(work_tree)` for some commands, so a relative `GIT_DIR` would be
+/// interpreted against the work tree (BL-118). Keep the invariant local to the
+/// engine so embedders/tests cannot violate it.
+fn absolute_for_git(path: &Path) -> String {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        match std::path::absolute(path) {
+            Ok(absolute) => absolute,
+            Err(_) => path.to_path_buf(),
+        }
+    };
+    normalize_path_for_git(&absolute)
+}
+
+fn absolutize_host_root_lossy(path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        return path;
+    }
+    match std::path::absolute(&path) {
+        Ok(absolute) => {
+            tracing::warn!(
+                raw = %path.display(),
+                resolved = %absolute.display(),
+                "checkpoint host root is relative; resolved against the process working directory"
+            );
+            absolute
+        }
+        Err(_) => path,
+    }
+}
+
 fn null_device() -> &'static str {
     #[cfg(windows)]
     {
@@ -2061,6 +2103,54 @@ mod tests {
         assert!(capability.version.is_none());
         assert!(!capability.detail.is_empty());
         assert_eq!(engine.probe().await, capability);
+    }
+
+    #[test]
+    fn checkpoint_isolated_env_absolutizes_git_paths() {
+        let engine = ShadowGit::new(PathBuf::from(".xihe-workspaces"));
+        let env = engine.isolated_env(
+            Path::new(".xihe-workspaces/.xihe-shadow/ws1.git"),
+            Path::new(".xihe-workspaces/ws1"),
+            Some(Path::new(".xihe-workspaces/.xihe-shadow/ws1.git/index")),
+        );
+        for key in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"] {
+            let value = env
+                .iter()
+                .find(|(name, _)| name == key)
+                .map(|(_, value)| value)
+                .unwrap_or_else(|| panic!("{key} missing from isolated env"));
+            assert!(
+                Path::new(value).is_absolute(),
+                "{key} must be absolute, got {value:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn checkpoint_capture_works_with_relative_host_root() {
+        let cwd = std::env::current_dir().expect("cwd");
+        let temp = TempDir::new_in(&cwd).expect("tempdir in cwd");
+        let relative_root = temp
+            .path()
+            .strip_prefix(&cwd)
+            .expect("tempdir is under cwd")
+            .to_path_buf();
+        let workspace = temp.path().join("ws1");
+        std::fs::create_dir_all(workspace.join("src")).expect("workspace");
+        std::fs::write(workspace.join("src/main.txt"), "hello\n").expect("fixture file");
+
+        let engine = ShadowGit::new(&relative_root);
+        if !require_git(&engine).await {
+            return;
+        }
+        let outcome = engine
+            .capture("ws1", "run-relative-root", "tester", "call-relative", false)
+            .await
+            .expect("capture must work with a relative host root");
+        assert!(
+            outcome.slice_ref.is_some(),
+            "capture must write a slice ref: {outcome:?}"
+        );
     }
 
     #[tokio::test]

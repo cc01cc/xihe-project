@@ -10,6 +10,7 @@
 ## Storage binding
 
 - Logical Workspace identity 是 `workspaceId`；`storageRef` 是经过 CP/Runtime binding 校验的逻辑引用。
+- `XIHE_WORKSPACE_HOST_ROOT` 是进程级 host root（managed 父目录 + shadow 状态根），不是每个 workspace 一个根；源值可相对，注入 Runtime 的进程值必须绝对；`hostRoot/storageRef` 为 managed 内容路径，direct_attach 内容路径来自 `hostPath`。
 - Runtime canonicalizes hostRoot + storageRef，做 case-insensitive prefix、reparse/symlink、ownership 和 TOCTOU 校验；`../`、绝对路径、junction escape、cross-workspace storageRef 必须拒绝。
 - 物理 canonical path 不作为任意 public response；UI 使用 display path/可用性摘要（按权限裁剪）。
 - execution entity destroy/rebuild、pause/stop/evict 不删除 WorkspaceStorage。
@@ -20,6 +21,7 @@
 - ref：`refs/xihe/slices/<capturedAtEpochMs>-<commitHash>`；独立 root commit，无 parent 分支语义。
 - capture：短 capture lock → isolated Git index → write-tree → noChange 或新 slice；restore：preview diff → explicit execute → delete then restore → suspects 复核。
 - nested repo 默认 **L1 文件级展开**（PLAN-0361）：跳过子仓 `.git`，子仓文件作普通 blob 进父切片、可按文件恢复；`opaqueNestedRepos[]` 在 L1 下为空。策略 `flatten`（默认）/`opaque`（旧 gitlink）/`reject`。超过大小/凭据/Runtime 文件排除规则的内容显式 skipped，不静默进入 slice。
+- capture reason 词表：`GIT_UNAVAILABLE/GIT_TOO_OLD/GIT_FAILED/WORKSPACE_UNKNOWN/NESTED_REPO_LIMIT`；CP 仅在 `UNAVAILABLE` outcome 透传为 durable reason，未知/transport 归一 `UNAVAILABLE`；`EXPIRED/TOO_LARGE/MISSING/DEGRADED` 为 gate-only。
 - retention 有 slice count/TTL 上限；cleanup busy、Git unavailable、unknown Workspace、type conflict 显式失败。
 
 ## Migration/round-trip boundary

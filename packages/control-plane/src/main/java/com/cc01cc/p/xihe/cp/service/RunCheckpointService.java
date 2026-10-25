@@ -63,11 +63,18 @@ public class RunCheckpointService {
     public static final String REASON_TOO_LARGE = "TOO_LARGE";
 
     /**
-     * PLAN-0361 B6: Runtime capture-failure reasons that are surfaced verbatim as
-     * the durable {@code unrollableReason} instead of being normalized to
-     * {@link #REASON_UNAVAILABLE}. Unknown/transport reasons still normalize.
+     * Capture reasons that survive into the durable {@code unrollableReason}.
+     * Only {@link RuntimeCheckpointClient.Outcome#UNAVAILABLE} may propagate these;
+     * gate-only reasons ({@link #REASON_EXPIRED}, {@link #REASON_MISSING},
+     * {@link #REASON_DEGRADED}, {@link #REASON_TOO_LARGE}) and unknown/transport
+     * values still normalize to {@link #REASON_UNAVAILABLE}.
      */
-    private static final Set<String> PROPAGATED_CAPTURE_REASONS = Set.of("NESTED_REPO_LIMIT");
+    private static final Set<String> PROPAGATED_CAPTURE_REASONS = Set.of(
+            "GIT_UNAVAILABLE",
+            "GIT_TOO_OLD",
+            "GIT_FAILED",
+            "WORKSPACE_UNKNOWN",
+            "NESTED_REPO_LIMIT");
 
     /** Retention constants: newest N slices + TTL days per workspace. */
     public static final int RETENTION_MAX_RUNS = 50;
@@ -181,12 +188,18 @@ public class RunCheckpointService {
                     persistDegraded(run, REASON_INVALID_REQUEST, result.reason());
                     yield false;
                 }
-                default -> {
+                case UNAVAILABLE -> {
                     String reason = result.reason();
                     String durable = reason != null && PROPAGATED_CAPTURE_REASONS.contains(reason)
                             ? reason
                             : REASON_UNAVAILABLE;
                     persistDegraded(run, durable, reason);
+                    yield false;
+                }
+                default -> {
+                    // Transport/404/unknown outcomes never propagate a capture reason,
+                    // even if a proxy happens to echo an allowlisted token.
+                    persistDegraded(run, REASON_UNAVAILABLE, result.reason());
                     yield false;
                 }
             };

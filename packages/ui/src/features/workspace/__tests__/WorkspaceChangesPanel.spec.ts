@@ -31,6 +31,16 @@ const mockedApi = vi.mocked(api, true),
         messages: {
             en: {
                 common: { cancel: "Cancel", close: "Close" },
+                chat: {
+                    checkpointReasonUnavailable: "Unavailable",
+                    checkpointReasonGitUnavailable: "Git unavailable",
+                    checkpointReasonGitTooOld: "Git too old",
+                    checkpointReasonGitFailed: "Git failed",
+                    checkpointReasonWorkspaceUnknown: "Workspace unknown",
+                    checkpointReasonNestedRepoLimit: "Nested repo limit",
+                    checkpointReasonInvalidRequest: "Invalid request",
+                    checkpointReasonExpired: "Expired",
+                },
                 workspace: {
                     diffTabTimeline: "Slice timeline",
                     diffTabPending: "Pending commit",
@@ -169,7 +179,30 @@ describe("WorkspaceChangesPanel slice timeline", () => {
             .find('[data-testid="workspace-checkpoint-select-checkpoint-a"]')
             .trigger("click");
         expect(wrapper.find('[data-testid="workspace-checkpoint-restore"]').exists()).toBe(false);
-        expect(wrapper.text()).toContain("GIT_UNAVAILABLE");
+        const reason = wrapper.find('[data-testid="workspace-checkpoint-reason"]');
+        expect(reason.text()).toBe("Git unavailable");
+        expect(reason.attributes("title")).toBeUndefined();
+    });
+
+    it("uses a generic label and keeps an unknown reason in title", async () => {
+        mockedApi.listWorkspaceCheckpoints.mockResolvedValueOnce([
+            checkpoint({
+                state: "degraded",
+                sliceRef: null,
+                changedCount: 0,
+                changedFiles: [],
+                unrollableReason: "FUTURE_REASON",
+            }),
+        ]);
+        const wrapper = mountPanel();
+        await settle();
+        await wrapper
+            .find('[data-testid="workspace-checkpoint-select-checkpoint-a"]')
+            .trigger("click");
+        const reason = wrapper.find('[data-testid="workspace-checkpoint-reason"]');
+        expect(reason.text()).toBe("Unavailable");
+        expect(reason.text()).not.toContain("FUTURE_REASON");
+        expect(reason.attributes("title")).toBe("FUTURE_REASON");
     });
 
     it("keeps pending entries on the second tab", async () => {

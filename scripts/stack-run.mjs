@@ -18,6 +18,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { resolveHostRoot } from "./host-root.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDir, "..");
@@ -58,6 +59,23 @@ function resolveStack(args) {
   return deriveStack(normalizeStackArg(raw));
 }
 
+function resolveStackHostRoot(derived, env = process.env) {
+  const source = env.XIHE_WORKSPACE_HOST_ROOT ?? derived.hostRoot;
+  const resolved = resolveHostRoot(projectRoot, source);
+  if (!resolved.value) {
+    console.error(
+      `[stack] ERROR: XIHE_WORKSPACE_HOST_ROOT resolved empty (source=${JSON.stringify(source)}, stack=${derived.stackId})`,
+    );
+    process.exit(2);
+  }
+  if (resolved.wasRelative) {
+    console.error(
+      `[stack] host root: ${JSON.stringify(source)} -> ${resolved.value} (resolved against ${projectRoot})`,
+    );
+  }
+  return resolved.value;
+}
+
 function quoteArg(value) {
   const text = String(value);
   return /[\s"]/u.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
@@ -88,11 +106,11 @@ function launch({ command, args, cwd, env }) {
   });
 }
 
-function describeTarget(target, derived) {
+function describeTarget(target, derived, hostRoot) {
   const ports = derived.ports;
   console.error(
     `[stack] ${derived.stackId} target=${target} ui=${ports.ui} cp=${ports.cp} agent=${ports.agent} runtime=${ports.runtime} pg=${ports.postgres}`
-    + ` compose=${derived.composeProject} db=${derived.database} log=${derived.logDir}`,
+    + ` compose=${derived.composeProject} db=${derived.database} log=${derived.logDir} hostRoot=${hostRoot}`,
   );
 }
 
@@ -128,12 +146,20 @@ try {
 }
 
 if (target === "env-json") {
-  process.stdout.write(`${JSON.stringify(derived, null, 2)}\n`);
+  const hostRootResolved = resolveStackHostRoot(derived);
+  const env = {
+    ...stackEnvDefaults(derived, process.env),
+    XIHE_WORKSPACE_HOST_ROOT: hostRootResolved,
+  };
+  process.stdout.write(`${JSON.stringify({ ...derived, env, hostRootResolved }, null, 2)}\n`);
   process.exit(0);
 }
 
 if (target === "slots-json") {
-  process.stdout.write(`${JSON.stringify(STACK_IDS.map((id) => deriveStack(id)), null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(STACK_IDS.map((id) => {
+    const stack = deriveStack(id);
+    return { ...stack, hostRootResolved: resolveStackHostRoot(stack, {}) };
+  }), null, 2)}\n`);
   process.exit(0);
 }
 
@@ -144,6 +170,8 @@ if (!factory) {
 }
 
 const env = { ...process.env, ...stackEnvDefaults(derived, process.env) };
+const hostRootResolved = resolveStackHostRoot(derived, env);
+env.XIHE_WORKSPACE_HOST_ROOT = hostRootResolved;
 
 // The agent's httpx builds URLPatterns from NO_PROXY; a bracketed IPv6 entry such
 // as `[::1]` is parsed as a URL and aborts startup (`Invalid port: ':1]'`).
@@ -161,7 +189,7 @@ if (target === "agent") {
   }
 }
 
-describeTarget(target, derived);
+describeTarget(target, derived, hostRootResolved);
 
 // T3.3: PostgreSQL must belong to this stack's compose project and listen on the
 // derived port. A stale container from another project on the same port would

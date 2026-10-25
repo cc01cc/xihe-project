@@ -2674,7 +2674,7 @@ components:
          truncated: { type: boolean, description: True when the bounded changedFiles list is incomplete }
          opaqueNestedRepos: { type: array, items: { type: string } }
          state: { type: string, enum: [captured, abnormal-captured, degraded, expired] }
-         unrollableReason: { type: [string, 'null'], enum: [UNAVAILABLE, NESTED_REPO_LIMIT, null] }
+         unrollableReason: { type: [string, 'null'], enum: [UNAVAILABLE, INVALID_REQUEST, GIT_UNAVAILABLE, GIT_TOO_OLD, GIT_FAILED, WORKSPACE_UNKNOWN, NESTED_REPO_LIMIT, null] }
          revert: { $ref: '#/components/schemas/CheckpointRevertBookkeeping' }
     CheckpointRevertPreviewRequest:
        type: object
