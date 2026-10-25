@@ -130,6 +130,8 @@ Status: the current MCP bridge depends on an in-sandbox HTTP service plus a publ
 
 Current backend direction: PLAN-0379 owns `windows-mxc`, reported with `maturity: "experimental"`; `windows-host/unrestricted` is an explicitly user-selected host-execution fallback and does not claim workspace-outside write protection; `docker` remains the stable backend identity, while the Docker volume/guard line is deferred by PLAN-0377/0380. All three share `contractVersion: "v1"`; consumers branch on `available/reason` and execution mode, while platform/provider versions remain diagnostics, not on backend-specific transport names.
 
+`docker` is not retired: it remains the only execution backend for `managed_import`; the service-containerization freeze only affects deployment form and image builds, not workspace backend availability. See USER-001 §2.6 for the user-facing entry (creating direct-attach workspaces, mounting existing directories, MXC vs host capability/risk, and the non-convertibility of managed workspaces).
+
 ## 8. Change Rules
 
 - The contract evolves by adding capabilities, never by introducing backend-name branches; once frozen, changes must be recorded as a supersede entry in the owning PLAN.

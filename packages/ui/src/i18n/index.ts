@@ -291,11 +291,16 @@ const messages = {
             executionModeMxc: "Windows MXC（受限沙盒）",
             executionModeHost: "宿主执行（不受限制）",
             executionModeDocker: "Docker",
+            executionModeFixed: "固定",
+            executionModeManagedHint:
+                "受管工作区由 Runtime 托管存储，只能使用 Docker 执行后端；需要 MXC 或宿主执行时，请新建直挂工作区。",
+            executionModeDirectHint: "仅支持在 MXC 与宿主执行之间切换；Docker 不参与切换。",
+            executionModeLegacy: "历史配置",
             maturityExperimental: "实验性",
             maturityPreview: "预览",
             maturityStable: "稳定",
             managedExecutionUnknown: "托管导入将在创建后由 Runtime 探测后端可用性",
-            dockerPostponed: "Docker 后端当前不可用（后置）",
+            dockerPostponed: "受管工作区固定使用 Docker 执行后端",
             mxcUnavailableGuidance:
                 "MXC 当前不可用。你可以显式切换到不受沙盒限制的宿主执行后继续；系统不会自动切换。",
             switchToHostExecution: "切换到不受沙盒限制的宿主执行",
@@ -1912,11 +1917,17 @@ const messages = {
             executionModeMxc: "Windows MXC (constrained sandbox)",
             executionModeHost: "Host execution (unrestricted)",
             executionModeDocker: "Docker",
+            executionModeFixed: "Fixed",
+            executionModeManagedHint:
+                "Managed workspaces use Runtime-managed storage and always run on the Docker execution backend. Create a direct-attach workspace to use MXC or host execution.",
+            executionModeDirectHint:
+                "Only MXC and host execution can be switched here; Docker does not participate in switching.",
+            executionModeLegacy: "Legacy value",
             maturityExperimental: "Experimental",
             maturityPreview: "Preview",
             maturityStable: "Stable",
             managedExecutionUnknown: "Managed import probes backend availability after creation",
-            dockerPostponed: "The Docker backend is currently unavailable (postponed)",
+            dockerPostponed: "Managed workspaces always use the Docker execution backend",
             mxcUnavailableGuidance:
                 "MXC is currently unavailable. You can explicitly switch to unrestricted host execution to continue; the system never switches automatically.",
             switchToHostExecution: "Switch to unrestricted host execution",

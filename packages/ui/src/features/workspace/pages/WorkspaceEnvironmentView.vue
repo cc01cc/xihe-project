@@ -260,6 +260,24 @@ const disclosedHostPath = computed(() => {
     return canViewRawHostPath.value && typeof path === "string" && path.length > 0 ? path : null;
 });
 
+// PLAN-0551: managed_import is docker-only and direct_attach only switches between
+// MXC and host. The page must never offer a combination CP rejects with 400.
+const DIRECT_ATTACH_EXECUTION_MODES = ["windows-mxc", "windows-host"] as const;
+const currentExecutionMode = computed(() => environment.value?.executionMode ?? "");
+const isDirectAttachStorage = computed(() => environment.value?.storageMode === "direct_attach");
+const managedExecutionModeIsDocker = computed(() => currentExecutionMode.value === "docker");
+const hasLegacyExecutionMode = computed(
+    () =>
+        isDirectAttachStorage.value &&
+        !DIRECT_ATTACH_EXECUTION_MODES.includes(
+            currentExecutionMode.value as (typeof DIRECT_ATTACH_EXECUTION_MODES)[number],
+        ),
+);
+const managedExecutionModeLabel = computed(() => {
+    if (managedExecutionModeIsDocker.value) return t("workspace.executionModeFixed");
+    return t("workspace.executionModeLegacy");
+});
+
 async function loadEnvironment() {
     const id = workspaceId.value;
     if (!id) {
@@ -599,39 +617,62 @@ onBeforeUnmount(stopPolling);
                                     }}
                                 </dd>
                             </div>
-                            <div class="flex items-center justify-between gap-4">
-                                <dt class="text-muted-foreground">执行模式</dt>
-                                <dd>
-                                    <select
-                                        v-model="selectedExecutionMode"
-                                        class="rounded border bg-background px-2 py-1 text-xs"
-                                        :disabled="
-                                            changingExecutionMode ||
-                                            environment.storageMode !== 'direct_attach'
-                                        "
-                                        data-testid="workspace-execution-mode"
-                                        @change="handleExecutionModeChange"
+                            <div class="space-y-1">
+                                <div class="flex items-start justify-between gap-4">
+                                    <dt class="shrink-0 text-muted-foreground">执行模式</dt>
+                                    <dd v-if="isDirectAttachStorage" class="min-w-0 text-right">
+                                        <select
+                                            v-model="selectedExecutionMode"
+                                            class="rounded border bg-background px-2 py-1 text-xs"
+                                            :disabled="changingExecutionMode"
+                                            aria-describedby="workspace-execution-mode-hint"
+                                            data-testid="workspace-execution-mode"
+                                            @change="handleExecutionModeChange"
+                                        >
+                                            <option
+                                                v-if="hasLegacyExecutionMode"
+                                                :value="currentExecutionMode"
+                                                disabled
+                                                data-testid="workspace-execution-mode-legacy"
+                                            >
+                                                {{ currentExecutionMode || "未知" }}（{{
+                                                    t("workspace.executionModeLegacy")
+                                                }}）
+                                            </option>
+                                            <option
+                                                v-for="mode in DIRECT_ATTACH_EXECUTION_MODES"
+                                                :key="mode"
+                                                :value="mode"
+                                            >
+                                                {{ mode }}
+                                            </option>
+                                        </select>
+                                        <p
+                                            id="workspace-execution-mode-hint"
+                                            class="mt-1 text-left text-xs text-muted-foreground"
+                                            data-testid="workspace-execution-mode-hint"
+                                        >
+                                            {{ t("workspace.executionModeDirectHint") }}
+                                        </p>
+                                    </dd>
+                                    <dd
+                                        v-else
+                                        class="min-w-0 text-right"
+                                        data-testid="workspace-execution-mode-fixed"
                                     >
-                                        <option
-                                            value="docker"
-                                            :disabled="environment.storageMode === 'direct_attach'"
+                                        {{ currentExecutionMode || "未知" }}
+                                        <span class="ml-1 text-xs text-muted-foreground">
+                                            {{ managedExecutionModeLabel }}
+                                        </span>
+                                        <p
+                                            id="workspace-execution-mode-hint"
+                                            class="mt-1 text-left text-xs text-muted-foreground"
+                                            data-testid="workspace-execution-mode-hint"
                                         >
-                                            docker
-                                        </option>
-                                        <option
-                                            value="windows-mxc"
-                                            :disabled="environment.storageMode !== 'direct_attach'"
-                                        >
-                                            windows-mxc
-                                        </option>
-                                        <option
-                                            value="windows-host"
-                                            :disabled="environment.storageMode !== 'direct_attach'"
-                                        >
-                                            windows-host
-                                        </option>
-                                    </select>
-                                </dd>
+                                            {{ t("workspace.executionModeManagedHint") }}
+                                        </p>
+                                    </dd>
+                                </div>
                             </div>
                             <div v-if="environment.capability" class="flex justify-between gap-4">
                                 <dt class="text-muted-foreground">能力探测</dt>

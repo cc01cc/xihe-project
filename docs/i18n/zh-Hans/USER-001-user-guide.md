@@ -6,7 +6,7 @@ sidebar_group: "用户指南"
 status: active
 sidebar_order: 1
 created: 2026-05-28
-updated: 2026-09-03
+updated: 2026-10-25
 ---
 
 # 用户指南 — xihe Agent 平台
@@ -113,6 +113,14 @@ Agent 可通过 MCP 反向代理调用 Runtime 工具：
 - **MCP**：MCP Server 管理
 - **Workspace**：工作区管理
 - **知识库**：文档上传、分块、Embedding
+
+### 2.6. 工作区执行后端
+
+- **受管工作区（managed_import）**：新建时默认使用 Docker 执行后端，且不能切换为 MXC 或宿主执行；Docker 不可用时文件读写/列表/状态接口会显式失败（503），不会静默降级。
+- **直挂工作区（direct_attach）**：新建时选择「使用已存在的宿主机目录」，指定目录并选择 MXC 或宿主执行；已有受管工作区不能转换为直挂工作区，也不能切到 MXC/宿主，需要新建直挂工作区并挂载目标目录。
+- **MXC（windows-mxc）**：受限沙盒，成熟度为 experimental，要求目标机器可执行 `wxc-exec.exe`；不可用时创建与切换都会显式失败，不自动降级。
+- **宿主执行（windows-host）**：不受沙盒限制，仅做路径守卫；不保护工作区外写入，必须勾选风险确认，仍受审批与授权约束。
+- **切换**：直挂工作区只允许在 MXC 与宿主执行之间切换；Docker 不参与切换，存储与执行也不解耦。
 
 ## 3. 配置
 
