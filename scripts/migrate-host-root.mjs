@@ -153,6 +153,14 @@ async function walkEntry(path) {
   fail(`unsupported target file type at ${path}`);
 }
 
+async function treeDigest(path) {
+  if (!(await exists(path))) return null;
+  const entries = await walk(path);
+  const hash = createHash("sha256");
+  hash.update(JSON.stringify(entries));
+  return hash.digest("hex");
+}
+
 function readCoreConfig(text) {
   const newline = text.includes("\r\n") ? "\r\n" : "\n";
   const lines = text.split(/\r?\n/);
@@ -311,11 +319,9 @@ async function main() {
   log(`target=${target}`);
   log(`entries=${sourceEntries.length} files=${sourceEntries.filter((e) => e.type === "file").length} shadows=${shadowNames.length} apply=${apply}`);
 
-  const sourceProbe = sourceMap.get(PROBE_NAME);
-  const targetProbeBefore = (await exists(join(target, PROBE_NAME)))
-    ? await walkEntry(join(target, PROBE_NAME))
-    : null;
-  if (targetProbeBefore && sourceProbe && targetProbeBefore.sha256 !== sourceProbe.sha256) {
+  const sourceProbe = await treeDigest(join(source, PROBE_NAME));
+  const targetProbeBefore = await treeDigest(join(target, PROBE_NAME));
+  if (targetProbeBefore && sourceProbe && targetProbeBefore !== sourceProbe) {
     fail(`${PROBE_NAME} differs between source and target; refusing to touch it`);
   }
 
@@ -391,10 +397,8 @@ async function main() {
     }
   }
 
-  const targetProbeAfter = (await exists(join(target, PROBE_NAME)))
-    ? await walkEntry(join(target, PROBE_NAME))
-    : null;
-  if (targetProbeBefore && (!targetProbeAfter || targetProbeAfter.sha256 !== targetProbeBefore.sha256)) {
+  const targetProbeAfter = await treeDigest(join(target, PROBE_NAME));
+  if (targetProbeBefore && (!targetProbeAfter || targetProbeAfter !== targetProbeBefore)) {
     fail(`${PROBE_NAME} changed during migration`);
   }
 
@@ -410,9 +414,9 @@ async function main() {
     configResults,
     refComparisons,
     probe: {
-      source: sourceProbe?.sha256 ?? null,
-      targetBefore: targetProbeBefore?.sha256 ?? null,
-      targetAfter: targetProbeAfter?.sha256 ?? null,
+      source: sourceProbe,
+      targetBefore: targetProbeBefore,
+      targetAfter: targetProbeAfter,
     },
   };
 
