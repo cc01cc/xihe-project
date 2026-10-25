@@ -2,9 +2,10 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { setActivePinia, createPinia } from "pinia";
 import WorkspaceEnvironmentView from "../pages/WorkspaceEnvironmentView.vue";
-import { api } from "../../../composables/api";
+import { api, ApiError } from "../../../composables/api";
 import type * as apiModule from "../../../composables/api";
 import { i18n } from "../../../i18n";
+import { toast } from "vue-sonner";
 
 vi.mock("vue-router", () => ({
     useRoute: () => ({
@@ -12,6 +13,12 @@ vi.mock("vue-router", () => ({
         path: "/workspace/workspace-1/environment",
         query: {},
     }),
+    createRouter: () => ({
+        beforeEach: vi.fn<() => void>(),
+        push: vi.fn<() => void>(),
+        replace: vi.fn<() => void>(),
+    }),
+    createWebHistory: () => ({}),
 }));
 
 vi.mock("vue-sonner", () => ({
@@ -30,6 +37,8 @@ vi.mock("../../../composables/api", async (importOriginal) => {
             getWorkspaceEnvironment: vi.fn<typeof apiModule.api.getWorkspaceEnvironment>(),
             getWorkspaceJobs: vi.fn<typeof apiModule.api.getWorkspaceJobs>(),
             releaseWorkspaceRuntime: vi.fn<typeof apiModule.api.releaseWorkspaceRuntime>(),
+            updateWorkspaceExecutionMode:
+                vi.fn<typeof apiModule.api.updateWorkspaceExecutionMode>(),
         },
     };
 });
@@ -100,6 +109,8 @@ beforeEach(() => {
     setActivePinia(createPinia());
     mockedApi.getWorkspaceEnvironment.mockResolvedValue(environment("docker") as never);
     mockedApi.getWorkspaceJobs.mockResolvedValue([] as never);
+    mockedApi.updateWorkspaceExecutionMode.mockResolvedValue(undefined as never);
+    vi.mocked(toast.error).mockClear();
     mockedApi.releaseWorkspaceRuntime.mockResolvedValue({
         releaseOperationId: "op-1",
         workspaceId: "workspace-1",
@@ -258,6 +269,140 @@ describe("WorkspaceEnvironmentView job-start capability (PLAN-0396)", () => {
         expect(wrapper.get('[data-testid="workspace-job-start-hint"]').text()).not.toContain(
             "无隔离",
         );
+    });
+});
+
+describe("WorkspaceEnvironmentView execution mode entry (PLAN-0551)", () => {
+    it("shows a managed workspace as read-only docker with a reason", async () => {
+        const wrapper = await mountView();
+
+        expect(wrapper.find('[data-testid="workspace-execution-mode"]').exists()).toBe(false);
+        const fixed = wrapper.get('[data-testid="workspace-execution-mode-fixed"]');
+        expect(fixed.text()).toContain("docker");
+        expect(fixed.text()).toContain("固定");
+        expect(wrapper.get('[data-testid="workspace-execution-mode-hint"]').text()).toContain(
+            "只能使用 Docker",
+        );
+        expect(mockedApi.updateWorkspaceExecutionMode).not.toHaveBeenCalled();
+    });
+
+    it("does not disguise a managed legacy non-docker value as docker", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("windows-mxc"),
+            storageMode: "managed_import",
+        } as never);
+
+        const wrapper = await mountView(),
+            fixed = wrapper.get('[data-testid="workspace-execution-mode-fixed"]');
+        expect(fixed.text()).toContain("windows-mxc");
+        expect(fixed.text()).toContain("历史配置");
+        expect(fixed.text()).not.toContain("固定");
+    });
+
+    it("treats a missing storageMode as managed", async () => {
+        const missing = { ...environment("docker") } as Record<string, unknown>;
+        delete missing.storageMode;
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue(missing as never);
+
+        const wrapper = await mountView();
+        expect(wrapper.find('[data-testid="workspace-execution-mode"]').exists()).toBe(false);
+        expect(wrapper.get('[data-testid="workspace-execution-mode-fixed"]').text()).toContain(
+            "docker",
+        );
+        expect(mockedApi.updateWorkspaceExecutionMode).not.toHaveBeenCalled();
+    });
+
+    it("offers only MXC and host for a direct-attach workspace", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("windows-mxc"),
+            storageMode: "direct_attach",
+        } as never);
+
+        const wrapper = await mountView(),
+            select = wrapper.get('[data-testid="workspace-execution-mode"]');
+        expect(select.findAll("option").map((option) => option.attributes("value"))).toEqual([
+            "windows-mxc",
+            "windows-host",
+        ]);
+        expect(wrapper.find('[data-testid="workspace-execution-mode-fixed"]').exists()).toBe(false);
+    });
+
+    it("switches a direct-attach workspace between MXC and host", async () => {
+        mockedApi.getWorkspaceEnvironment
+            .mockResolvedValueOnce({
+                ...environment("windows-mxc"),
+                storageMode: "direct_attach",
+            } as never)
+            .mockResolvedValueOnce({
+                ...environment("windows-host"),
+                storageMode: "direct_attach",
+            } as never);
+
+        const wrapper = await mountView();
+        await wrapper.get('[data-testid="workspace-execution-mode"]').setValue("windows-host");
+        await flushPromises();
+
+        expect(mockedApi.updateWorkspaceExecutionMode).toHaveBeenCalledWith(
+            "workspace-1",
+            "windows-host",
+        );
+        expect(wrapper.get('[data-testid="workspace-execution-mode"]').element).toHaveProperty(
+            "value",
+            "windows-host",
+        );
+    });
+
+    it("shows a legacy direct-attach docker value as a disabled option", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("docker"),
+            storageMode: "direct_attach",
+        } as never);
+
+        const wrapper = await mountView(),
+            select = wrapper.get('[data-testid="workspace-execution-mode"]'),
+            legacy = wrapper.get('[data-testid="workspace-execution-mode-legacy"]');
+        expect(select.findAll("option").map((option) => option.attributes("value"))).toEqual([
+            "docker",
+            "windows-mxc",
+            "windows-host",
+        ]);
+        expect(legacy.attributes("disabled")).toBeDefined();
+        expect(legacy.text()).toContain("历史配置");
+    });
+
+    it("labels an empty direct-attach execution mode as unknown", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("windows-host"),
+            executionMode: "",
+            storageMode: "direct_attach",
+        } as never);
+
+        const wrapper = await mountView();
+        expect(wrapper.get('[data-testid="workspace-execution-mode-legacy"]').text()).toContain(
+            "未知",
+        );
+    });
+
+    it("rolls back and explains when an active job blocks the switch", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("windows-mxc"),
+            storageMode: "direct_attach",
+        } as never);
+        mockedApi.updateWorkspaceExecutionMode.mockRejectedValue(
+            new ApiError({
+                status: 409,
+                code: "WORKSPACE_BUSY",
+                detail: "workspace has running jobs",
+            } as never),
+        );
+
+        const wrapper = await mountView(),
+            select = wrapper.get('[data-testid="workspace-execution-mode"]');
+        await select.setValue("windows-host");
+        await flushPromises();
+
+        expect(select.element).toHaveProperty("value", "windows-mxc");
+        expect(toast.error).toHaveBeenCalledWith("有运行中的 Job，请先停止运行中的 Job 后重试");
     });
 });
 

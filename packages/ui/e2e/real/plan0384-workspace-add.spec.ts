@@ -168,27 +168,28 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
         const mxcStatus = page.locator('[data-testid="workspace-execution-mxc-status"]');
         const mxcCard = page.getByTestId("workspace-execution-mode-mxc");
         let expectedExecutionMode: "windows-mxc" | "windows-host" = "windows-mxc";
-        if (await mxcCard.isDisabled()) {
-            const preflightResponse = await apiRequest.post(
-                `${CP_URL}/api/v1/workspaces/capabilities/preflight`,
-                {
-                    headers: {
-                        Authorization: `Bearer ${sharedAuth}`,
-                        "Content-Type": "application/json",
-                    },
-                    data: {
-                        storageMode: "direct_attach",
-                        hostPath: addDir,
-                        executionMode: "windows-mxc",
-                    },
+        const preflightResponse = await apiRequest.post(
+            `${CP_URL}/api/v1/workspaces/capabilities/preflight`,
+            {
+                headers: {
+                    Authorization: `Bearer ${sharedAuth}`,
+                    "Content-Type": "application/json",
                 },
-            );
-            expect(preflightResponse.ok(), await preflightResponse.text()).toBeTruthy();
-            const mxcPreflight = (await preflightResponse.json()) as {
-                available: boolean;
-                reason?: string;
-            };
-            expect(mxcPreflight.available).toBe(false);
+                data: {
+                    storageMode: "direct_attach",
+                    hostPath: addDir,
+                    executionMode: "windows-mxc",
+                },
+            },
+        );
+        expect(preflightResponse.ok(), await preflightResponse.text()).toBeTruthy();
+        const mxcPreflight = (await preflightResponse.json()) as {
+            available: boolean;
+            reason?: string;
+        };
+        if (mxcPreflight.available) {
+            await expect(mxcCard).toBeEnabled();
+        } else {
             const unavailableReason = String(mxcPreflight.reason ?? "");
             expect(unavailableReason).toMatch(/^[A-Z0-9_]+: .+/);
             await expect(mxcStatus).toContainText(unavailableReason);
@@ -198,8 +199,6 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
             await expect(hostCard).toBeEnabled();
             await hostCard.click();
             await expect(hostCard).toHaveAttribute("aria-pressed", "true");
-        } else {
-            await expect(mxcCard).toBeEnabled();
         }
         const dockerCard = page.locator('[data-testid="workspace-execution-mode-docker"]');
         await expect(dockerCard).toBeDisabled();
