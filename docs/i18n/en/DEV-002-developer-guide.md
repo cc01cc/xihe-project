@@ -6,7 +6,7 @@ sidebar_group: "Developer Guide"
 sidebar_order: 2
 status: active
 created: 2026-05-28
-updated: 2026-09-16
+updated: 2026-10-25
 ---
 
 # Developer Guide — xihe Agent Platform
@@ -273,7 +273,7 @@ curl -X POST http://localhost:12631/api/v1/config/import \
   -d @config.import.local.jsonc
 ```
 
-`mise run dev:host` does **not** import config or create/update Provider Connections. After CP is ready, explicitly run `mise run dev:host:import-config` (or `mise run xihe -- config import <file>`) for non-secret JSONC settings. The one-off `mise run dev:full` Compose script **is frozen (2026-10-07: only PostgreSQL remains in Docker; services run on host) and commented out in mise.toml**; it retains its separate legacy, environment-triggered import behavior for historical reference only.
+`mise run dev:host` does **not** import config or create/update Provider Connections. After CP is ready, explicitly run `mise run dev:host:import-config` (or `mise run xihe -- config import <file>`) for non-secret JSONC settings. The one-off `mise run dev:full` Compose script **is frozen (2026-10-07: only PostgreSQL remains in Docker; services run on host) and commented out in mise.toml**; it retains its separate legacy, environment-triggered import behavior for historical reference only. The freeze covers service containerization and image builds only; workspace execution backends are unchanged: `managed_import` still allows `docker` only, and `direct_attach` still allows `windows-mxc`/`windows-host` (see DEV-031).
 
 JSONC supports comments and trailing commas; you can directly copy MCP configuration snippets from Claude Desktop / Cursor.
 

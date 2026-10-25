@@ -142,6 +142,8 @@ capabilities() -> { available, reason, diagnostics? }
 
 当前 backend 方向：`windows-mxc` 由 PLAN-0379 承接，成熟度通过 `maturity: "experimental"` 报告；`windows-host/unrestricted` 是用户显式选择的宿主执行兜底，不宣称 workspace 外写保护；`docker` 保持稳定 backend identity，但 Docker 卷/guard 线由 PLAN-0377/0380 后置。三者共用 `contractVersion: "v1"`，消费方按 `available/reason` 和 executionMode 分支，platform/provider version 只作 diagnostics，不按 backend 名称拼接传输细节。
 
+`docker` 没有退役：它仍是 `managed_import` 的唯一执行后端；服务容器化冻结只影响服务进程的部署形态与镜像构建，不影响工作区后端的可用性。用户侧入口（新建 direct-attach、挂载已有目录、MXC 与宿主的能力/风险差异、受管工作区不可转换）见 USER-001 §2.6。
+
 ## 8. 变更规则
 
 - 契约向「能力扩展」演进，不回退为后端名分支；冻结后修改须在对应 PLAN 记录 supersede。

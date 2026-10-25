@@ -20,7 +20,7 @@
 - 使用 `mise install` 和 `mise run setup` 安装固定工具链与依赖；前置条件及模块命令见 DEV-002。
 - 日常 host 开发运行 `mise run dev:host`：仅 PostgreSQL 在 Docker 中，CP、Agent、Runtime、UI 由 mise 原生启动；该命令不导入配置或创建 Provider Connection。项目开发/运维命令见 DEV-002 与 `mise run xihe -- --help`。
 - 并行开发（PLAN-0533）：`mise run dev:stack -- --stack 2`（或 `XIHE_STACK_ID=stack-2 mise run dev:host`）起第二套栈；`stack-1` 端口/路径与单栈时逐项相同，stack-2 起使用独立段位、compose project、PG 库与 `.xihe-stacks/<n>/` 路径，详见 DEV-002「模式 D」。非法/未登记 `XIHE_STACK_ID` 启动即失败；`dev:host:stop`/`dev:reset` 只作用于当前栈。
-- **docker 冻结（2026-10-07 用户裁定，2026-10-09 强化）**：XH 的 Docker 构建与服务容器化全部暂缓——只有 PostgreSQL 保留为容器，CP/Agent/Runtime/UI 全部 host。`mise run dev:full` / `dev:backend` / `test:e2e:compose` / `test:e2e` / `image:workspace:build` 已在 `mise.toml` 注释冻结（文件头有冻结说明与解冻条件），禁止误启；日常用 `mise run dev:host`，隔离 E2E 用 `mise run test:e2e:host`。
+- **docker 冻结（2026-10-07 用户裁定，2026-10-09 强化）**：XH 的 Docker 构建与服务容器化全部暂缓——只有 PostgreSQL 保留为容器，CP/Agent/Runtime/UI 全部 host。`mise run dev:full` / `dev:backend` / `test:e2e:compose` / `test:e2e` / `image:workspace:build` 已在 `mise.toml` 注释冻结（文件头有冻结说明与解冻条件），禁止误启；日常用 `mise run dev:host`，隔离 E2E 用 `mise run test:e2e:host`。**冻结范围仅指服务容器化与镜像构建**；**工作区 Docker 执行后端不受冻结影响**：`managed_import` 工作区仍以 `docker` 为唯一执行后端，默认新建工作区继续使用它。
 - `mise run dev:reset` 默认 dry-run；显式重置前检查备份与数据范围。`reset-admin` 输出临时开发密码，不得写入脚本、源码或日志。
 
 ## Commands
@@ -87,7 +87,7 @@
 - 用户反馈文本中的 Vue `t()` placeholder 不得包含 `{...}`；UI 测试和封装规则见 `packages/ui/AGENTS.md`。
 - MCP 逻辑入口无协议会话：CP 不签发也不接受 `mcp-session-id`，入站一律 403 `MCP_SESSION_INVALID`（DEV-016/DEV-024）。
 - Chat 若显式要求 workspace tools 才初始化 MCP；纯 Chat 不因携带 workspaceId 自动发现工具，MCP context 不得跨 Workspace 复用（DEV-013）。
-- 工作区运行资源释放（PLAN-0391）的锁内 active-Job 门只覆盖 host/MXC（Job engine）；docker 模式（冻结）下 Runtime 侧不感知容器 job，且 `cleanupFailed` 暂恒为 false。见 DEV-018。
+- 工作区运行资源释放（PLAN-0391）的锁内 active-Job 门只覆盖 host/MXC（Job engine）；docker 模式（服务容器化冻结；工作区 Docker 后端仍受支持）下 Runtime 侧不感知容器 job，且 `cleanupFailed` 暂恒为 false。见 DEV-018。
 
 ## Plan and Release Rules
 

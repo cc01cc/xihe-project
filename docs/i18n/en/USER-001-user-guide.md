@@ -5,7 +5,7 @@ lang: en
 sidebar_group: "User Guide"
 status: active
 created: 2026-05-28
-updated: 2026-06-15
+updated: 2026-10-25
 ---
 
 # User Guide — xihe Agent Platform
@@ -109,6 +109,14 @@ Click the settings icon at the bottom of the sidebar:
 - **MCP**: MCP Server management
 - **Workspace**: Workspace management
 - **Knowledge Base**: Document upload, chunking, Embedding
+
+### 2.6. Workspace execution backends
+
+- **Managed workspace (`managed_import`)**: new workspaces use the Docker execution backend by default and cannot switch to MXC or host execution. When Docker is unavailable, file read/list/stat calls fail explicitly (503); there is no silent fallback.
+- **Direct-attach workspace (`direct_attach`)**: choose “use an existing host directory”, then pick that directory and either MXC or host execution. An existing managed workspace cannot be converted to direct-attach or switched to MXC/host; create a new direct-attach workspace and mount the target directory.
+- **MXC (`windows-mxc`)**: constrained sandbox with `experimental` maturity; the target machine must provide `wxc-exec.exe`. When unavailable, both creation and switching fail explicitly with no automatic fallback.
+- **Host execution (`windows-host`)**: no sandbox, path guard only; it does not protect writes outside the workspace. The risk acknowledgement is mandatory, and approvals/authorization still apply.
+- **Switching**: direct-attach workspaces switch only between MXC and host execution. Docker never participates, and storage is not decoupled from execution.
 
 ## 3. Configuration
 

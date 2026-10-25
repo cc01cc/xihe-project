@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 18
 status: active
 created: 2026-09-02
-updated: 2026-10-22
+updated: 2026-10-25
 ---
 
 # DEV-018: Known Issues (Supplement)
@@ -55,7 +55,7 @@ updated: 2026-10-22
 
 实现与真实 host 栈验收见 PLAN-0391 M3 证据（`plans/PLAN-0391-XH-workspace-runtime-disconnect/evidence/m3-acceptance-2026-10-17.md`）。未关闭限制：
 
-- **active-Job 门只覆盖 Job engine 管理的执行（host/MXC）**：Runtime release 的锁内实时复查用 `JobEngine::running_job_ids_for_workspace`（后端无关，`job_engine/mod.rs`）；Docker 容器内的 job 不在 Job engine 表中，故 docker 模式（当前冻结）下 Runtime 侧无法感知在飞的容器 job。CP 侧 durable `hasRunningForWorkspace` 仍会先行拒绝，但两条路径之间无共享锁，docker 模式下存在 check-then-act 残余窗口。
+- **active-Job 门只覆盖 Job engine 管理的执行（host/MXC）**：Runtime release 的锁内实时复查用 `JobEngine::running_job_ids_for_workspace`（后端无关，`job_engine/mod.rs`）；Docker 容器内的 job 不在 Job engine 表中，故 docker 模式（服务容器化冻结；工作区 Docker 后端仍受支持）下 Runtime 侧无法感知在飞的容器 job。CP 侧 durable `hasRunningForWorkspace` 仍会先行拒绝，但两条路径之间无共享锁，docker 模式下存在 check-then-act 残余窗口。
 - **`cleanupFailed` 目前恒为 false**：release 的清理原语（停事件 watcher / 终止 job 进程树 / 清 MCP session）当前不返回失败，`cleanupFailed` 字段为契约预留；若后续清理步骤可能失败，须在 Runtime 上报真实结果。
 - **可重试冲突不消费幂等键**：Runtime 返回 `WORKSPACE_BUSY`/`WORKSPACE_DESTROYING` 时释放操作被 `discard`（不落终态）；客户端应使用**同一 Idempotency-Key 重试**，换个新键会被在飞检查拒绝为 409。
 
