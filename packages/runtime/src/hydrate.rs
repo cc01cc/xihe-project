@@ -243,6 +243,19 @@ impl ExecutionSpecClient {
     }
 }
 
+fn read_host_root() -> Option<PathBuf> {
+    match std::env::var("XIHE_WORKSPACE_HOST_ROOT") {
+        Ok(raw) if !raw.trim().is_empty() => match storage::absolutize_host_root(&raw) {
+            Ok(root) => Some(root),
+            Err(detail) => {
+                warn!(%detail, "XIHE_WORKSPACE_HOST_ROOT is invalid; workspace materialization will fail closed");
+                None
+            }
+        },
+        _ => None,
+    }
+}
+
 pub struct WorkspaceEnsurer {
     /// Read-side cache access; every write goes through `lifecycle`
     /// (PLAN-0347 T1.2, invariant I2).
@@ -287,7 +300,7 @@ impl WorkspaceEnsurer {
             lifecycle,
             manager,
             client,
-            host_root,
+            host_root: host_root.map(|root| storage::absolutize_path(&root)),
             default_image: std::env::var("XIHE_WORKSPACE_IMAGE")
                 .unwrap_or_else(|_| DEFAULT_IMAGE.to_string()),
             materialize_timeout,
@@ -312,9 +325,7 @@ impl WorkspaceEnsurer {
     }
 
     pub fn from_env(lifecycle: Arc<Lifecycle>, manager: Arc<Mutex<WorkspaceManager>>) -> Self {
-        let host_root = std::env::var("XIHE_WORKSPACE_HOST_ROOT")
-            .ok()
-            .map(PathBuf::from);
+        let host_root = read_host_root();
         Self::new(
             lifecycle,
             manager,
@@ -329,9 +340,7 @@ impl WorkspaceEnsurer {
         manager: Arc<Mutex<WorkspaceManager>>,
         client: ExecutionSpecClient,
     ) -> Self {
-        let host_root = std::env::var("XIHE_WORKSPACE_HOST_ROOT")
-            .ok()
-            .map(PathBuf::from);
+        let host_root = read_host_root();
         Self::new(lifecycle, manager, client, host_root)
     }
 

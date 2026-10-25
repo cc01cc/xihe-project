@@ -6,7 +6,7 @@ lang: en
 sidebar_group: "Developer Guide"
 status: active
 created: 2026-09-16
-updated: 2026-09-21
+updated: 2026-10-25
 ---
 
 # DEV-032: Terminology (Polysemy and Synonyms)
@@ -52,6 +52,20 @@ updated: 2026-09-21
 | | F1. Length/time-bounded presentation | **`bounded preview`** | verbatim projection | 0426 |
 | | F2. Permission/field-redacted presentation | **`redacted summary`** | security projection | 0426; F1 and F2 may stack, not exclusive |
 
+### 1.1 Workspace storage and checkpoints (2026-10-25)
+
+| Bare token | Sense | **Canonical** | Do not |
+|---|---|---|---|
+| **root** | Runtime process storage base | **host root**; `XIHE_WORKSPACE_HOST_ROOT` is a historical name | bare `root` for one workspace directory |
+| | managed workspace content directory | **workspace path** (`<hostRoot>/<storageRef>`) | call host root a workspace path |
+| | multiple physical roots in one Workspace | **multi-root (BL-94)** | fake it with multiple Workspaces |
+| **storage mode** | XH-owned copy | **`managed_import`** | describe it as opening a user directory in place |
+| | user directory mounted in place | **`direct_attach`** | call it a subdirectory of host root |
+| **reason** | Runtime capture reason | **capture reason** | bare `reason` mixed with gate/durable |
+| | CP `unrollable_reason` value | **durable reason** | treat capture reason as durable |
+| | CP gate verdict reason | **gate reason** (`EXPIRED`/`MISSING`/`DEGRADED`/`TOO_LARGE`) | put gate reasons in the capture allowlist |
+| **absolute path** | configured source value | **source path** (may be relative; launcher resolves) | require absolute paths in config files |
+| | value injected into Runtime | **resolved host root (absolute)** | treat a relative value as a normal contract |
 ## 2. Synonyms → canonical + aliases
 
 ### 2.1 Still live (unstarted / in-flight PLANs use canonical)

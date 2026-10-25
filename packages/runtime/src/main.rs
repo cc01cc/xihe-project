@@ -1618,14 +1618,11 @@ async fn workspace_import_start_handler(
             "workspaceId contains invalid route characters".to_string(),
         )));
     }
-    let host_root = std::env::var("XIHE_WORKSPACE_HOST_ROOT").map_err(|_| {
-        runtime_problem(RuntimeError::InvalidPath(
-            "XIHE_WORKSPACE_HOST_ROOT is not configured".to_string(),
-        ))
-    })?;
+    let host_root = storage::host_root_from_env()
+        .map_err(|detail| runtime_problem(RuntimeError::InvalidPath(detail)))?;
     let status = app
         .imports
-        .start(ws_id, PathBuf::from(host_root), request)
+        .start(ws_id, host_root, request)
         .await
         .map_err(|detail| runtime_problem(RuntimeError::InvalidPath(detail)))?;
     Ok((
@@ -2341,13 +2338,13 @@ async fn create_workspace_handler(
             detail: "storageRef is required; workspacePath is never used as a fallback".to_string(),
         })
     })?;
-    let host_root = std::env::var("XIHE_WORKSPACE_HOST_ROOT").map_err(|_| {
+    let host_root = storage::host_root_from_env().map_err(|detail| {
         runtime_problem(RuntimeError::WorkspaceMaterializationFailed {
             workspace_id: req.ws_id.clone(),
-            detail: "XIHE_WORKSPACE_HOST_ROOT is not configured".to_string(),
+            detail,
         })
     })?;
-    storage::resolve_host_path(&host_root, storage_ref, &req.ws_id)
+    storage::resolve_host_path(&host_root.to_string_lossy(), storage_ref, &req.ws_id)
         .await
         .map_err(runtime_problem)?;
     tracing::info!(
@@ -2496,7 +2493,11 @@ async fn workspace_release_handler(
     // Backend-agnostic active-Job probe: the Job engine records the owning
     // workspace for every backend (host/MXC), unlike the Docker `exec` path
     // which only exists for container workspaces (PLAN-0391 wave-3 fix).
-    if !app.job_engine.running_job_ids_for_workspace(&ws_id).is_empty() {
+    if !app
+        .job_engine
+        .running_job_ids_for_workspace(&ws_id)
+        .is_empty()
+    {
         return Err(runtime_problem(RuntimeError::WorkspaceBusy {
             workspace_id: ws_id.clone(),
         }));
@@ -3019,17 +3020,22 @@ async fn direct_attach_probe_handler(
 }
 
 /// Host root for the Run-checkpoint shadow repositories. Mirrors the hydrate
-/// contract: `XIHE_WORKSPACE_HOST_ROOT` is the only source; the fallback keeps a
-/// misconfigured process from writing to an absolute system path.
+/// contract: `XIHE_WORKSPACE_HOST_ROOT` is the only source; a relative legacy
+/// value is absolutized once, and the fallback keeps a misconfigured process
+/// from writing to an absolute system path.
 fn runtime_checkpoint_host_root() -> PathBuf {
-    std::env::var("XIHE_WORKSPACE_HOST_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
+    match storage::host_root_from_env() {
+        Ok(root) => root,
+        Err(detail) => {
+            let fallback = storage::absolutize_path(std::path::Path::new(".xihe-workspaces"));
             tracing::warn!(
-                "XIHE_WORKSPACE_HOST_ROOT is not configured; Run checkpoints resolve against ./.xihe-workspaces"
+                %detail,
+                resolved = %fallback.display(),
+                "XIHE_WORKSPACE_HOST_ROOT is not configured; Run checkpoints resolve against the process-local .xihe-workspaces"
             );
-            PathBuf::from(".xihe-workspaces")
-        })
+            fallback
+        }
+    }
 }
 
 /// Nested-repository capture policy (PLAN-0361). Default `flatten` (L1): nested

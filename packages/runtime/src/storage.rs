@@ -31,6 +31,56 @@ fn strip_unc_prefix(p: PathBuf) -> PathBuf {
     }
 }
 
+/// Resolve `XIHE_WORKSPACE_HOST_ROOT` to an absolute host base.
+///
+/// The env value is a process-level base directory. A relative value is legacy
+/// (manual `cargo run` from `packages/runtime`) and is made absolute once at the
+/// process boundary; a blank value is treated as unconfigured.
+pub fn host_root_from_env() -> std::result::Result<PathBuf, String> {
+    let raw = std::env::var("XIHE_WORKSPACE_HOST_ROOT")
+        .map_err(|_| "XIHE_WORKSPACE_HOST_ROOT is not configured".to_string())?;
+    absolutize_host_root(&raw)
+}
+
+/// Lexically absolutize a configured host root without requiring it to exist.
+pub fn absolutize_host_root(raw: &str) -> std::result::Result<PathBuf, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("XIHE_WORKSPACE_HOST_ROOT is empty".to_string());
+    }
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    let absolute = std::path::absolute(path).map_err(|error| {
+        format!("XIHE_WORKSPACE_HOST_ROOT {raw:?} could not be absolutized: {error}")
+    })?;
+    tracing::warn!(
+        raw = %raw,
+        resolved = %absolute.display(),
+        "XIHE_WORKSPACE_HOST_ROOT is relative; resolved against the process working directory"
+    );
+    Ok(absolute)
+}
+
+/// Absolutize an already-parsed host root (used by embedders/tests).
+pub fn absolutize_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    match std::path::absolute(path) {
+        Ok(absolute) => {
+            tracing::warn!(
+                raw = %path.display(),
+                resolved = %absolute.display(),
+                "host root is relative; resolved against the process working directory"
+            );
+            absolute
+        }
+        Err(_) => path.to_path_buf(),
+    }
+}
+
 /// Resolve a Workspace's roots to validated host directories (PLAN-0502 seam B).
 ///
 /// The single-root model yields exactly one entry; the collection shape keeps
@@ -236,11 +286,15 @@ mod tests {
     fn test_resolve_hosts_collection_shape() {
         let dir = TempDir::new().unwrap();
         let host_root = dir.path().to_str().unwrap();
-        let hosts = resolve_hosts_sync(host_root, &["ws_valid123".to_string()], "ws_valid123").unwrap();
+        let hosts =
+            resolve_hosts_sync(host_root, &["ws_valid123".to_string()], "ws_valid123").unwrap();
         assert_eq!(hosts.len(), 1, "single-root model yields exactly one host");
         let single = resolve_host_path_sync(host_root, "ws_valid123", "ws_valid123").unwrap();
         assert_eq!(hosts[0], single, "wrapper matches the collection element");
-        assert!(resolve_hosts_sync(host_root, &[], "ws_valid123").is_err(), "no roots rejected");
+        assert!(
+            resolve_hosts_sync(host_root, &[], "ws_valid123").is_err(),
+            "no roots rejected"
+        );
     }
 
     #[test]

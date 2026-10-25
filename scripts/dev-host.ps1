@@ -42,7 +42,8 @@ $Prefix = $Stack.containerPrefix
 $NativePorts = @([int]$Stack.ports.ui, [int]$Stack.ports.cp, [int]$Stack.ports.agent, [int]$Stack.ports.runtime)
 $AllPorts = @($NativePorts + @([int]$Stack.ports.postgres))
 
-$HostRoot = if ($env:XIHE_WORKSPACE_HOST_ROOT) { $env:XIHE_WORKSPACE_HOST_ROOT } else { Join-Path $ProjectRoot $Stack.hostRoot }
+$HostRootSource = if ($env:XIHE_WORKSPACE_HOST_ROOT) { $env:XIHE_WORKSPACE_HOST_ROOT } else { $Stack.hostRoot }
+$HostRoot = if ([System.IO.Path]::IsPathRooted($HostRootSource)) { [System.IO.Path]::GetFullPath($HostRootSource) } else { Join-Path $ProjectRoot $HostRootSource }
 $LogDir = if ($env:XIHE_LOG_DIR) { (Resolve-Path $env:XIHE_LOG_DIR -ErrorAction SilentlyContinue).Path } else { Join-Path $ProjectRoot $Stack.logDir }
 if (-not $LogDir) { $LogDir = Join-Path $ProjectRoot $Stack.logDir }
 $PidDir = if ($StackId -eq "stack-1") { Join-Path $ProjectRoot ".tmp/dev-host" } else { Join-Path $ProjectRoot ".tmp/dev-host/$($Stack.index)" }

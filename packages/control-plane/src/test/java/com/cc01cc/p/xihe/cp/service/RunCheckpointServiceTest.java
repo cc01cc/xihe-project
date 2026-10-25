@@ -270,6 +270,69 @@ class RunCheckpointServiceTest {
     }
 
     @Test
+    void gitUnavailableCaptureDegradesWithItsOwnReason() {
+        assertPropagatedUnavailableReason("GIT_UNAVAILABLE");
+    }
+
+    @Test
+    void gitTooOldCaptureDegradesWithItsOwnReason() {
+        assertPropagatedUnavailableReason("GIT_TOO_OLD");
+    }
+
+    @Test
+    void gitFailedCaptureDegradesWithItsOwnReason() {
+        assertPropagatedUnavailableReason("GIT_FAILED");
+    }
+
+    @Test
+    void workspaceUnknownCaptureDegradesWithItsOwnReason() {
+        assertPropagatedUnavailableReason("WORKSPACE_UNKNOWN");
+    }
+
+    @Test
+    void transportOutcomeDoesNotPropagateAnAllowlistedReason() {
+        when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
+                .thenReturn(Optional.of(runWithStatus("succeeded")));
+        when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
+                .thenReturn(new RuntimeCheckpointClient.CaptureResult(
+                        RuntimeCheckpointClient.Outcome.TRANSPORT, RUN_ID, false, null, null, null,
+                        null, List.of(), List.of(), null, "GIT_FAILED"));
+
+        assertFalse(service.captureCheckpoint(RUN_ID));
+
+        assertEquals(RunCheckpointService.REASON_UNAVAILABLE, rows.get(0).getUnrollableReason());
+    }
+
+    @Test
+    void invalidRequestOutcomeIgnoresAnAllowlistedReason() {
+        when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
+                .thenReturn(Optional.of(runWithStatus("succeeded")));
+        when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
+                .thenReturn(new RuntimeCheckpointClient.CaptureResult(
+                        RuntimeCheckpointClient.Outcome.INVALID_REQUEST, RUN_ID, false, null, null, null,
+                        null, List.of(), List.of(), null, "GIT_FAILED"));
+
+        assertFalse(service.captureCheckpoint(RUN_ID));
+
+        assertEquals(RunCheckpointService.REASON_INVALID_REQUEST, rows.get(0).getUnrollableReason());
+    }
+
+    private void assertPropagatedUnavailableReason(String reason) {
+        when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
+                .thenReturn(Optional.of(runWithStatus("succeeded")));
+        when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
+                .thenReturn(new RuntimeCheckpointClient.CaptureResult(
+                        RuntimeCheckpointClient.Outcome.UNAVAILABLE, RUN_ID, false, null, null, null,
+                        null, List.of(), List.of(), null, reason));
+
+        assertFalse(service.captureCheckpoint(RUN_ID));
+
+        assertEquals(1, rows.size());
+        assertEquals(RunCheckpoint.STATE_DEGRADED, rows.get(0).getState());
+        assertEquals(reason, rows.get(0).getUnrollableReason());
+    }
+
+    @Test
     void transportFailureDegradesInsteadOfThrowing() {        when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
                 .thenReturn(Optional.of(runWithStatus("succeeded")));
         when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))

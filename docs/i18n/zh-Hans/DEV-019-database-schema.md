@@ -367,7 +367,7 @@ erDiagram
 | changed_count | INTEGER | NOT NULL DEFAULT 0 | 完整变更数量，不受 UI 列表截断影响 |
 | opaque_nested_repos | JSONB | NOT NULL DEFAULT '[]' | 不透明 gitlink 路径清单，内容不参与恢复 |
 | state | VARCHAR(24) | NOT NULL CHECK `captured/abnormal-captured/degraded/expired` | 捕获状态；`degraded` 仅表示捕获失败 |
-| unrollable_reason | VARCHAR(64) | nullable | 当前仅 `UNAVAILABLE` |
+| unrollable_reason | VARCHAR(64) | nullable | capture durable reason：`UNAVAILABLE`/`INVALID_REQUEST`/`GIT_UNAVAILABLE`/`GIT_TOO_OLD`/`GIT_FAILED`/`WORKSPACE_UNKNOWN`/`NESTED_REPO_LIMIT`；`EXPIRED`/`TOO_LARGE`/`MISSING`/`DEGRADED` 为 gate-only |
 | revert_state | VARCHAR(16) | NOT NULL DEFAULT 'none' | `none/rolled_back/partial/failed` |
 | revert_ref | TEXT | nullable | 本次恢复目标切片 ref |
 | revert_summary | JSONB | nullable | 脱敏后的计数、逐路径结果、安全原因 |

@@ -6,7 +6,7 @@ lang: zh-Hans
 sidebar_group: "开发指南"
 status: active
 created: 2026-09-16
-updated: 2026-10-14
+updated: 2026-10-25
 ---
 
 # DEV-032: 术语规范（一词多义与多词一义）
@@ -81,6 +81,20 @@ XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账�
 
 不偏离约束与落地入口：workspace internal `xh-backlog-and-debt.md` 的 BL-18「身份与权限模型」（不入库分发）；2026-09-23 G2 已将 BL-18 冻结入 PLAN-0407 承接（执行中，未完成）。
 
+### 1.2 工作区存储与 checkpoint（2026-10-25 增补）
+
+| 裸词 | 义项 | **正名** | 禁止写法 |
+|---|---|---|---|
+| **root** | Runtime 进程的存储基目录 | **host root（宿主存储基目录）**；`XIHE_WORKSPACE_HOST_ROOT` 是历史名 | 裸 `root` 指某个 workspace 的目录 |
+| | managed workspace 内容目录 | **workspace path**（`<hostRoot>/<storageRef>`） | 把 host root 说成 workspace path |
+| | 一个 Workspace 的多个物理根 | **multi-root（多根，BL-94）** | 用“多建几个 Workspace”冒充多根 |
+| **storage mode** | XH 管理的副本 | **`managed_import`** | 说成“用户自选目录就地打开” |
+| | 用户目录就地挂载 | **`direct_attach`** | 说成 host root 的子目录 |
+| **reason** | Runtime capture 返回的原因 | **capture reason** | 裸 `reason` 与 gate/durable 混用 |
+| | CP `unrollable_reason` 持久化值 | **durable reason** | 把 capture reason 直接当 durable |
+| | CP gate（preview/revert/blob/status）判定原因 | **gate reason**（`EXPIRED`/`MISSING`/`DEGRADED`/`TOO_LARGE`） | 把 gate reason 塞进 capture 白名单 |
+| **absolute path** | 配置源值 | **source path**（可相对，由 launcher 解析） | 声称配置文件必须写绝对路径 |
+| | 注入 Runtime 的进程值 | **resolved host root（绝对）** | 把相对值当正常契约 |
 ## 2. 多词一义 → 正名与别名
 
 ### 2.1 仍存活、待统一（未实施/实施中 PLAN 按正名写）

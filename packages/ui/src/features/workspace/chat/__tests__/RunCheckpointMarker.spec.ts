@@ -41,6 +41,8 @@ const i18n = createI18n({
                 checkpointReasonGitTooOld: "Git too old",
                 checkpointReasonGitFailed: "Git failed",
                 checkpointReasonWorkspaceUnknown: "Workspace unknown",
+                checkpointReasonNestedRepoLimit: "Nested repo limit",
+                checkpointReasonInvalidRequest: "Invalid request",
                 checkpointReasonExpired: "Expired",
                 checkpointMarkerUnrollable: "Unavailable",
                 checkpointMarkerNoSnapshot: "No slice",
@@ -133,6 +135,45 @@ describe("RunCheckpointMarker", () => {
                 .attributes("data-checkpoint-kind"),
         ).toBe("degraded");
         expect(wrapper.find('[data-testid="run-checkpoint-revert-entry"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="run-checkpoint-unavailable"]').text()).toContain(
+            "Git unavailable",
+        );
+    });
+
+    it.each([
+        ["GIT_UNAVAILABLE", "Git unavailable"],
+        ["GIT_TOO_OLD", "Git too old"],
+        ["GIT_FAILED", "Git failed"],
+        ["WORKSPACE_UNKNOWN", "Workspace unknown"],
+        ["NESTED_REPO_LIMIT", "Nested repo limit"],
+        ["INVALID_REQUEST", "Invalid request"],
+    ])("maps known checkpoint reason %s", (reason, label) => {
+        useCheckpointStore().mergeEvent({
+            runId: RUN_ID,
+            sessionId: SESSION_ID,
+            state: "degraded",
+            changedCount: 0,
+            unrollableReason: reason,
+        });
+        const wrapper = mountMarker();
+        const badge = wrapper.find('[data-testid="run-checkpoint-unavailable"]');
+        expect(badge.text()).toContain(label);
+        expect(badge.attributes("title")).toBeUndefined();
+    });
+
+    it("falls back to generic copy and exposes the raw code only in title", () => {
+        useCheckpointStore().mergeEvent({
+            runId: RUN_ID,
+            sessionId: SESSION_ID,
+            state: "degraded",
+            changedCount: 0,
+            unrollableReason: "FUTURE_REASON",
+        });
+        const wrapper = mountMarker();
+        const badge = wrapper.find('[data-testid="run-checkpoint-unavailable"]');
+        expect(badge.text()).toContain("Unavailable");
+        expect(badge.text()).not.toContain("FUTURE_REASON");
+        expect(badge.attributes("title")).toBe("FUTURE_REASON");
     });
 
     it("loads the workspace list when context is known", async () => {

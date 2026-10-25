@@ -73,6 +73,7 @@ flowchart LR
 
 不变式：
 
+- `XIHE_WORKSPACE_HOST_ROOT` 是**进程级存储基目录**（managed 路径 = `hostRoot/storageRef`，shadow = `hostRoot/.xihe-shadow`），不是每个 workspace 一个根，也不是用户路径 allowlist；注入 Runtime 的进程值为绝对路径，git 的 `GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE` 恒为绝对路径。
 - 执行实体（容器、exec 会话、job 进程、watcher）**MUST** 可随时销毁重建；重建不得改变 Workspace 逻辑身份。
 - WorkspaceStorage **MUST NOT** 因 ensure/destroy/pause/stop/evict 被删除或清空。
 - Runtime **MUST** 对 direct-attach canonical path 做 allowlist、ownership、case-normalized prefix、symlink/junction/reparse 与 TOCTOU 校验；校验失败 fail-closed。

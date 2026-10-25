@@ -3,6 +3,7 @@ import net from 'node:net';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { resolveHostRoot } from '../host-root.mjs';
 import { CliError } from './provider.mjs';
 
 const PREFLIGHT_REQUEST_TIMEOUT_MS = 1_500;
@@ -102,7 +103,9 @@ export async function checkDevelopmentEnvironment({
     if (result.status !== 'available') failed = true;
   }
 
-  const hostRoot = env.XIHE_WORKSPACE_HOST_ROOT || path.join(projectRoot, '.xihe-workspaces');
+  const hostRootInput = env.XIHE_WORKSPACE_HOST_ROOT || '.xihe-workspaces';
+  const hostRootResolved = resolveHostRoot(projectRoot, hostRootInput);
+  const hostRoot = hostRootResolved.value || path.join(projectRoot, '.xihe-workspaces');
   let hostRootStatus = 'not-created';
   try {
     const stat = fs.statSync(hostRoot);
