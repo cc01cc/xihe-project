@@ -58,7 +58,7 @@ async function mockConfig(page: import("@playwright/test").Page, role: "ADMIN" |
     await page.route("**/api/v1/**", async (route) => {
         await route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
     });
-    await page.route("**/api/v1/config/*/meta**", async (route) => {
+    const handleMeta = async (route: any) => {
         const requestUrl = new URL(route.request().url());
         const domain = requestUrl.pathname.split("/")[4] ?? "";
         const layer = requestUrl.searchParams.get("layer") ?? "instance";
@@ -107,7 +107,7 @@ async function mockConfig(page: import("@playwright/test").Page, role: "ADMIN" |
             contentType: "application/json",
             body: JSON.stringify({ domain, layer, keys }),
         });
-    });
+    };
     await page.route("**/api/v1/config/**", async (route) => {
         const requestUrl = new URL(route.request().url());
         const domain = requestUrl.pathname.split("/").pop() ?? "";
@@ -134,6 +134,7 @@ async function mockConfig(page: import("@playwright/test").Page, role: "ADMIN" |
             }),
         });
     });
+    await page.route("**/api/v1/config/*/meta**", handleMeta);
     await page.route("**/api/v1/provider-connections**", (route) =>
         route.fulfill({
             status: 200,
@@ -225,3 +226,5 @@ test.describe("PLAN-0554 config provenance", () => {
         );
     });
 });
+
+
