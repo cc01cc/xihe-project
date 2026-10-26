@@ -227,7 +227,7 @@ function handleReset(key: string) {
                 :data-testid="`config-field-${domain}-${field.key}`"
                 class="flex min-w-0 items-center gap-2"
             >
-                <div class="min-w-0 w-1/3">
+                <div class="min-w-0 w-1/3 text-muted-foreground">
                     <span class="block text-xs text-muted-foreground truncate">{{
                         field.label
                     }}</span>
