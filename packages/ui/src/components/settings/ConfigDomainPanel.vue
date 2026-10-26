@@ -236,7 +236,10 @@ function handleReset(key: string) {
                         :data-testid="`config-source-${domain}-${field.key}`"
                         class="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] text-muted-foreground"
                     >
-                        <span class="shrink-0 rounded border border-border px-1 py-0.5">
+                        <span
+                            class="shrink-0 rounded border border-border px-1 py-0.5"
+                            :aria-label="sourceText(field.key)"
+                        >
                             {{ sourceText(field.key) }}
                         </span>
                         <span v-if="sourceHint(field.key)" class="min-w-0 truncate">
@@ -250,6 +253,7 @@ function handleReset(key: string) {
                         :data-testid="`config-env-lock-${domain}-${field.key}`"
                         class="min-w-0 flex-1 truncate px-2 py-1 text-sm border rounded bg-muted text-muted-foreground"
                         :title="t('settings.envLockedHint')"
+                        :aria-label="t('settings.configSourceEnv')"
                     >
                         {{ lockedValue(field.key) || t("settings.empty") }}
                     </span>
