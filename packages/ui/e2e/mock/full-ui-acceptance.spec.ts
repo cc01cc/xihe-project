@@ -365,7 +365,7 @@ test.describe("PLAN-269 full UI acceptance: settings and provider", () => {
         await hub.getByRole("button", { name: "删除" }).click();
         await expect(confirmModal).toBeVisible();
         await page.getByTestId("provider-delete-confirm").click();
-        await expect(hub.getByText("尚未连接 Provider")).toBeVisible({ timeout: 10000 });
+        await expect(hub.getByText("尚未新建连接")).toBeVisible({ timeout: 10000 });
     });
 
     test("MCP JSON validation and Data import preview are recoverable", async ({ page }) => {

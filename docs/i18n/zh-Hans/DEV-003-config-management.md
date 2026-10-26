@@ -153,7 +153,7 @@ curl -X PUT "http://localhost:12631/api/v1/config/workspace/rag?workspaceId=$WS"
   -d '{"topK": "8"}'
 ```
 
-**llm-provider 默认身份（PLAN-0504，决策 #2/#4/#11/#12）**：默认身份是整单元 `profile` = `{providerId, connectionKey, model}`（JSON 字符串或对象），按 workspace > user > instance **首存在层**解析、整单元覆盖、不合并字段；写入必须是完整单元（部分 profile 400 `INVALID_REQUEST`）。`profile.providerId` 的写时接受集 = CP provider catalog 全量 id（`provider-catalog/providers.json`，经 `ProviderCatalogService.providerIds()` 派生，`GET /api/v1/provider-catalog` 同源）：catalog 增删 provider 无需改代码；catalog 外值以 `profile.providerId is unsupported` 拒绝。instance 层不校验连接（运行期由消费方 scope 解析）；user/workspace 层要求**本层可见**、同 provider 且 `connectionKey` 匹配的 READY `provider_connections`。legacy 键（`defaultProvider`/`defaultModel`/`*Model`/`*ApiBase`/`baseUrl`）已退役，写入即被 schema 拒绝（400，无兼容映射）。解析到已删/不可用连接时报 `LLM_PROFILE_CONFLICT`（409），不静默降层。配置页默认模型 = 连接选择 + 模型候选（scoped 目录），见 §3b。
+**llm-provider 默认身份（PLAN-0504/0552，决策 #2/#4/#11/#12）**：默认身份是整单元 `profile` = `{providerId, connectionKey, model}`（JSON 字符串或对象），按 workspace > user > instance **首存在层**解析、整单元覆盖、不合并字段；写入必须是完整单元（部分 profile 400 `INVALID_REQUEST`）。`profile.providerId` 的写时接受集 = CP provider catalog 全量 id（`provider-catalog/providers.json`，经 `ProviderCatalogService.providerIds()` 派生，`GET /api/v1/provider-catalog` 同源）：catalog 增删 provider 无需改代码；catalog 外值以 `profile.providerId is unsupported` 拒绝。instance 层不校验连接（运行期由消费方 scope 解析到消费用户的 USER 连接）；**workspace 层只接受本 workspace 的 WORKSPACE 连接，user 层只接受本人的 USER 连接**（PLAN-0552 关闭 workspace→user 隐式回退）。legacy 键（`defaultProvider`/`defaultModel`/`*Model`/`*ApiBase`/`baseUrl`）已退役，写入即被 schema 拒绝（400，无兼容映射）。解析到已删/不可用连接时报 `LLM_PROFILE_CONFLICT`（409），不静默降层。配置页默认模型 = 连接选择 + 模型候选（scoped 目录），见 §3b。
 
 凭证**不写 config 层**（`rejectProviderSecrets` 会以 403 拒绝任何 `*ApiKey`/secret/password/token 类键），统一走 `provider_connections`：
 
@@ -227,8 +227,9 @@ Provider verify 的 ready 只表示 CP 当前 remote `/models` 响应结构有�
 **llm-provider profile（PLAN-0504/0505）**：
 
 - 默认身份为单键 `profile`：整组对象 `{providerId, connectionKey, model}` 的 JSON 字符串；层间不合并字段（workspace → user → instance 首存在层），部分 profile 400，空值 PUT 清除本层以继承。
-- 写校验：`providerId` 必须在 CP catalog；user/workspace 层要求本层可见且 `connectionKey` 匹配的 READY 连接；instance 层免连接校验（运行期由消费方 scope 解析，决策 #11）。
-- 解析到已删/不可用连接 → `409 LLM_PROFILE_CONFLICT`（不静默降层，决策 #12）；全层无 profile 时 Agent 无隐式默认，readiness fail-closed（决策 #10）。
+- 写校验：`providerId` 必须在 CP catalog；**workspace 层只接受本 workspace 的 WORKSPACE 连接，user 层只接受本人的 USER 连接**；instance 层免连接校验（运行期落到消费用户的 USER 连接，决策 #11）。跨 owner 的显式凭据授权由后续计划承接，写校验不再回退。
+- 解析：按 profile 所在层选 owner（workspace → workspace、user → user、instance → 消费用户 USER）；`userId` 为空直接 409；解析到已删/不可用连接 → `409 LLM_PROFILE_CONFLICT`（不静默降层，决策 #12）；全层无 profile 时 Agent 无隐式默认，readiness fail-closed（决策 #10）。
+- 过渡开关：`XIHE_CP_LLM_PROFILE_LEGACY_CONNECTION_FALLBACK`（默认 `false`）仅用于短期回退；置 `true` 恢复旧的 workspace→user 跨层回退，长期路径必须为严格按层解析。
 - **删除级联（PLAN-0505）**：profile 指向的连接被删除时，指向该连接的 profile 行（instance/user/workspace 三层，providerId+connectionKey 匹配）随删除事务一并清除；畸形 profile 行跳过（不计数、不阻断删除），留给属主修复。
 - 配置页以「连接选择 + 模型候选（scoped 目录）」编辑该单元（复用 0503 目录候选与漂移标注：存储连接/模型不可用时标注保留、不自动改写，候选为空可手填）。
 

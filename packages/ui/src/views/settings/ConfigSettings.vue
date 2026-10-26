@@ -799,6 +799,28 @@ async function handleImportFile(event: Event) {
                                         <p class="text-sm text-muted-foreground">
                                             {{ t("settings.providerInstanceGuidance") }}
                                         </p>
+                                        <div class="flex flex-wrap gap-2">
+                                            <button
+                                                data-testid="provider-instance-go-user"
+                                                class="px-3 py-1 text-xs border rounded hover:bg-muted"
+                                                @click="switchTab('user')"
+                                            >
+                                                {{ t("settings.providerInstanceGoUser") }}
+                                            </button>
+                                            <button
+                                                data-testid="provider-instance-go-workspace"
+                                                class="px-3 py-1 text-xs border rounded hover:bg-muted disabled:opacity-50"
+                                                :disabled="!currentWorkspaceId()"
+                                                :title="
+                                                    currentWorkspaceId()
+                                                        ? undefined
+                                                        : t('settings.providerInstanceNoWorkspace')
+                                                "
+                                                @click="switchTab('workspace')"
+                                            >
+                                                {{ t("settings.providerInstanceGoWorkspace") }}
+                                            </button>
+                                        </div>
                                         <div
                                             class="flex gap-2 items-start border-l-2 border-border pl-3 text-xs text-muted-foreground"
                                         >

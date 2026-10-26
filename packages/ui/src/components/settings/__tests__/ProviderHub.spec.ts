@@ -237,6 +237,27 @@ describe("ProviderHub master-detail", () => {
         wrapper.unmount();
     });
 
+    it("derives the form scope from the connection and current page without a scope picker", async () => {
+        const wrapper = mount(ProviderHub, {
+            props: { scope: "WORKSPACE", workspaceId: "workspace-a" },
+        });
+        await flushPromises();
+        const row = wrapper.findAll('[data-testid="provider-connection-example"]')[0]!;
+        await row
+            .findAll("button")
+            .find((button) => button.text() === i18n.global.t("settings.providerHub.manage"))!
+            .trigger("click");
+        const modal = wrapper.get('[data-testid="provider-connection-modal"]');
+        // A USER connection edited from the workspace tab keeps its own scope.
+        expect(modal.text()).toContain(
+            i18n.global.t("settings.providerHub.formScopeHint", {
+                scope: i18n.global.t("settings.providerHub.scopeUser"),
+            }),
+        );
+        expect(modal.findAll('input[type="radio"][name="provider-scope"]')).toHaveLength(0);
+        wrapper.unmount();
+    });
+
     it("keeps row-level deletion contract and falls back after deleting the selected connection", async () => {
         vi.mocked(getDeleteImpact).mockResolvedValue({
             connectionId: user.id,

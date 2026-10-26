@@ -174,6 +174,15 @@ public class ConfigService {
     @Autowired
     private EmbeddingProfileService embeddingProfiles;
 
+    /**
+     * PLAN-0552: transition switch. Default false = strict per-layer profile
+     * connection resolution; true restores the legacy workspace->user fallback
+     * for a short rollback window only.
+     */
+    @org.springframework.beans.factory.annotation.Value(
+            "${cp.llm.profile-legacy-connection-fallback:false}")
+    private boolean legacyConnectionFallback;
+
     // PLAN-0505 review D-2: transaction-scope advisory lock serializing config
     // read-modify-write (putLayerInternal) against cascade cleanup
     // (cleanupProfiles) for the same layer/domain/scope.
@@ -672,7 +681,7 @@ public class ConfigService {
                 if (!supported.contains(profile.providerId())) {
                     errors.add("profile.providerId is unsupported: " + profile.providerId());
                 } else if (requiresReadyConnection(layer)
-                        && !hasReadyProfileConnection(profile, userId, workspaceId)) {
+                        && !hasReadyProfileConnection(profile, layer, userId, workspaceId)) {
                     // PLAN-0307 T2.24 (review P1-5): provider readiness is grounded
                     // in provider_connections, not config keys (decision #21/#37).
                     errors.add("No ready provider connection for profile: "
@@ -702,7 +711,33 @@ public class ConfigService {
         return "user".equals(layer) || "workspace".equals(layer);
     }
 
-    private boolean hasReadyProfileConnection(LlmProfile profile, UUID userId, UUID workspaceId) {
+    /**
+     * PLAN-0552: strict mode resolves the ready connection only inside the
+     * profile's own layer owner. Workspace profiles never borrow user
+     * connections, user profiles never borrow workspace connections, and
+     * instance profiles are validated at run time (no layer connection).
+     * The transition switch restores the legacy workspace->user fallback.
+     */
+    private boolean hasReadyProfileConnection(LlmProfile profile, String layer,
+                                              UUID userId, UUID workspaceId) {
+        if (legacyConnectionFallback) {
+            return legacyReadyProfileConnection(profile, userId, workspaceId);
+        }
+        if ("workspace".equals(layer)) {
+            return workspaceId != null && providerConnectionService.findReadyByKey(
+                    ProviderConnection.OWNER_WORKSPACE, workspaceId.toString(),
+                    profile.providerId(), profile.connectionKey()).isPresent();
+        }
+        if ("user".equals(layer)) {
+            return userId != null && providerConnectionService.findReadyByKey(
+                    ProviderConnection.OWNER_USER, userId.toString(),
+                    profile.providerId(), profile.connectionKey()).isPresent();
+        }
+        return false;
+    }
+
+    /** Legacy (PLAN-0307) workspace-first then user fallback; rollback only. */
+    private boolean legacyReadyProfileConnection(LlmProfile profile, UUID userId, UUID workspaceId) {
         if (workspaceId != null && providerConnectionService.findReadyByKey(
                 ProviderConnection.OWNER_WORKSPACE, workspaceId.toString(),
                 profile.providerId(), profile.connectionKey()).isPresent()) {
@@ -805,10 +840,11 @@ public class ConfigService {
 
     /**
      * Resolve the effective profile to a concrete usable connection in the
-     * consumer scope (decision #11/#12): the same-key workspace connection wins
-     * when usable, otherwise the same-key user connection. A profile that
-     * cannot be resolved fails with LLM_PROFILE_CONFLICT instead of silently
-     * falling back to a lower layer.
+     * profile's own layer (decision #4, 2026-10-26): workspace -> workspace,
+     * user -> user, instance -> the consuming user's USER connection. A profile
+     * that cannot be resolved fails with LLM_PROFILE_CONFLICT instead of
+     * silently falling back to another owner. The transition switch restores
+     * the legacy workspace->user fallback.
      */
     public ResolvedLlmProfile resolveLlmProfile(UUID userId, UUID workspaceId) {
         EffectiveLlmProfile effective = effectiveLlmProfile(userId, workspaceId);
@@ -816,15 +852,9 @@ public class ConfigService {
             return null;
         }
         LlmProfile profile = effective.profile();
-        ProviderConnection connection = workspaceId == null ? null
-                : providerConnectionService.findReadyByKey(
-                        ProviderConnection.OWNER_WORKSPACE, workspaceId.toString(),
-                        profile.providerId(), profile.connectionKey()).orElse(null);
-        if (connection == null && userId != null) {
-            connection = providerConnectionService.findReadyByKey(
-                    ProviderConnection.OWNER_USER, userId.toString(),
-                    profile.providerId(), profile.connectionKey()).orElse(null);
-        }
+        ProviderConnection connection = legacyConnectionFallback
+                ? legacyResolveConnection(profile, userId, workspaceId)
+                : strictResolveConnection(profile, effective.profileScope(), userId, workspaceId);
         if (connection == null) {
             throw new CpApiException(org.springframework.http.HttpStatus.CONFLICT,
                     "LLM_PROFILE_CONFLICT",
@@ -834,6 +864,35 @@ public class ConfigService {
                 profile.providerId(), profile.connectionKey(), profile.model(),
                 connection.getId().toString(), connection.getOwnerType(), connection.getOwnerId(),
                 connection.getRevision(), effective.profileScope());
+    }
+
+    private ProviderConnection strictResolveConnection(LlmProfile profile, String profileScope,
+                                                       UUID userId, UUID workspaceId) {
+        if ("workspace".equals(profileScope)) {
+            return workspaceId == null ? null : providerConnectionService.findReadyByKey(
+                    ProviderConnection.OWNER_WORKSPACE, workspaceId.toString(),
+                    profile.providerId(), profile.connectionKey()).orElse(null);
+        }
+        if ("user".equals(profileScope) || "instance".equals(profileScope)) {
+            return userId == null ? null : providerConnectionService.findReadyByKey(
+                    ProviderConnection.OWNER_USER, userId.toString(),
+                    profile.providerId(), profile.connectionKey()).orElse(null);
+        }
+        return null;
+    }
+
+    private ProviderConnection legacyResolveConnection(LlmProfile profile, UUID userId,
+                                                       UUID workspaceId) {
+        ProviderConnection connection = workspaceId == null ? null
+                : providerConnectionService.findReadyByKey(
+                        ProviderConnection.OWNER_WORKSPACE, workspaceId.toString(),
+                        profile.providerId(), profile.connectionKey()).orElse(null);
+        if (connection == null && userId != null) {
+            connection = providerConnectionService.findReadyByKey(
+                    ProviderConnection.OWNER_USER, userId.toString(),
+                    profile.providerId(), profile.connectionKey()).orElse(null);
+        }
+        return connection;
     }
 
     public static class ConfigOwnershipException extends IllegalArgumentException {

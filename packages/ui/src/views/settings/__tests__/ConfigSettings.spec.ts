@@ -6,6 +6,17 @@ import { i18n } from "../../../i18n";
 import { CONFIG_DOMAINS, INSTANCE_DOMAINS, LAYER_DOMAINS } from "../../../stores/config";
 
 vi.mock("vue-router", () => ({
+    // PLAN-0546 made stores/auth import the router; the affected spec needs the
+    // factory exports even though it only renders the settings view.
+    createRouter: () => ({
+        push: vi.fn<(location: unknown) => Promise<void>>(),
+        replace: vi.fn<(location: unknown) => Promise<void>>(),
+        beforeEach: vi.fn(),
+        afterEach: vi.fn(),
+        isReady: () => Promise.resolve(),
+        currentRoute: { value: {} },
+    }),
+    createWebHistory: () => ({}),
     useRoute: () =>
         ({
             name: "settings-config",
@@ -285,6 +296,39 @@ describe("ConfigSettings 模型提供方分区 (PLAN-0523 T3.1)", () => {
         const partition = wrapper.find('[data-testid="provider-partition"]');
         expect(partition.text()).toContain("实例层不管理连接");
         expect(wrapper.find("provider-hub-stub").exists()).toBe(false);
+        wrapper.unmount();
+    });
+
+    it("实例层提供前往用户/工作区的入口", async () => {
+        const wrapper = await mountView();
+        const goUser = wrapper.find('[data-testid="provider-instance-go-user"]');
+        const goWorkspace = wrapper.find('[data-testid="provider-instance-go-workspace"]');
+        expect(goUser.exists()).toBe(true);
+        expect(goWorkspace.exists()).toBe(true);
+        expect(goWorkspace.attributes("disabled")).toBeUndefined();
+
+        await goUser.trigger("click");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="config-tab-user"]').classes()).toContain(
+            "border-primary",
+        );
+
+        await wrapper.find('[data-testid="config-tab-instance"]').trigger("click");
+        await flushPromises();
+        await wrapper.find('[data-testid="provider-instance-go-workspace"]').trigger("click");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="config-tab-workspace"]').classes()).toContain(
+            "border-primary",
+        );
+        wrapper.unmount();
+    });
+
+    it("未选择工作区时禁用工作区入口", async () => {
+        localStorage.removeItem("xihe-workspace");
+        const wrapper = await mountView();
+        const goWorkspace = wrapper.find('[data-testid="provider-instance-go-workspace"]');
+        expect(goWorkspace.exists()).toBe(true);
+        expect(goWorkspace.attributes("disabled")).toBeDefined();
         wrapper.unmount();
     });
 

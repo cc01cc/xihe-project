@@ -596,7 +596,7 @@ function formatVerifiedAt(value?: string | null): string {
 function resetForm(provider: ProviderDefinition, connection?: ProviderConnection) {
     selectedProvider.value = provider;
     editingConnection.value = connection ?? null;
-    formScope.value = connection?.scope === "WORKSPACE" ? "WORKSPACE" : props.scope;
+    formScope.value = connection?.scope ?? props.scope;
     form.label =
         connection?.label ??
         t("settings.providerHub.connectionNameFallback", { name: provider.displayName });
@@ -1988,47 +1988,16 @@ onMounted(() => {
                             :placeholder="selectedProvider.defaultBaseUrl || 'https://...'"
                         />
                     </label>
-                    <div class="mt-4">
-                        <span class="mb-1.5 block text-xs font-semibold">{{
-                            t("settings.providerHub.fieldScope")
-                        }}</span>
-                        <div class="grid grid-cols-2 gap-2">
-                            <label
-                                v-for="option in [
-                                    {
-                                        value: 'USER',
-                                        title: t('settings.providerHub.scopeUserTitle'),
-                                        desc: t('settings.providerHub.scopeUserDesc'),
-                                    },
-                                    {
-                                        value: 'WORKSPACE',
-                                        title: t('settings.providerHub.scopeWorkspaceTitle'),
-                                        desc: t('settings.providerHub.scopeWorkspaceDesc'),
-                                    },
-                                ] as const"
-                                :key="option.value"
-                                class="cursor-pointer"
-                            >
-                                <input
-                                    v-model="formScope"
-                                    type="radio"
-                                    name="provider-scope"
-                                    :value="option.value"
-                                    class="peer sr-only"
-                                />
-                                <span
-                                    class="block h-full rounded-md border p-3 transition-colors peer-checked:border-primary peer-checked:bg-primary/5"
-                                >
-                                    <strong class="block text-xs font-semibold">{{
-                                        option.title
-                                    }}</strong>
-                                    <span class="text-[11px] text-muted-foreground">{{
-                                        option.desc
-                                    }}</span>
-                                </span>
-                            </label>
-                        </div>
-                    </div>
+                    <p class="mt-4 text-xs text-muted-foreground">
+                        {{
+                            t("settings.providerHub.formScopeHint", {
+                                scope:
+                                    formScope === "WORKSPACE"
+                                        ? t("settings.providerHub.scopeWorkspace")
+                                        : t("settings.providerHub.scopeUser"),
+                            })
+                        }}
+                    </p>
                     <label class="mt-4 block">
                         <span class="mb-1.5 block text-xs font-semibold">{{
                             t("settings.providerHub.fieldDiscovery")

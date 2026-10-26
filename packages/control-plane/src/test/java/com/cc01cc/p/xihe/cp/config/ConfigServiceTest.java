@@ -8,6 +8,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 import com.cc01cc.p.xihe.cp.entity.ConfigAuditEntity;
+import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.repository.ConfigAuditRepository;
 import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
@@ -421,6 +422,25 @@ class ConfigServiceTest {
             + connectionKey + "\",\"model\":\"" + model + "\"}";
     }
 
+    /** Insert a profile row without validation (simulates pre-0552 data). */
+    private void saveRawProfile(String layer, UUID userId, UUID workspaceId, String value) {
+        ConfigEntity entity = new ConfigEntity();
+        entity.setLayer(layer);
+        entity.setUserId(userId);
+        entity.setWorkspaceId(workspaceId);
+        entity.setDomain("llm-provider");
+        entity.setConfigKey("profile");
+        entity.setConfigValue(value);
+        entity.setUpdatedBy("test");
+        repo.save(entity);
+    }
+
+    private void setLegacyFallback(boolean enabled) {
+        Object target = org.springframework.test.util.AopTestUtils.getUltimateTargetObject(configService);
+        org.springframework.test.util.ReflectionTestUtils.setField(
+            target, "legacyConnectionFallback", enabled);
+    }
+
     @Test
     void putLayer_llmProfileRejectsPartialProfile() {
         // A missing field fails schema validation first (400 INVALID_REQUEST).
@@ -600,7 +620,7 @@ class ConfigServiceTest {
     }
 
     @Test
-    void resolveLlmProfile_workspaceConnectionWinsThenUser() {
+    void resolveLlmProfile_userProfileUsesOnlyUserConnection() {
         saveConnection("USER", userA.toString(), "deepseek", "default", true, "READY");
         saveConnection("WORKSPACE", wsA.toString(), "deepseek", "default", true, "READY");
         configService.putLayer("user", "llm-provider",
@@ -609,12 +629,114 @@ class ConfigServiceTest {
 
         ConfigService.ResolvedLlmProfile resolved =
             configService.resolveLlmProfile(userA, wsA);
-        assertEquals("WORKSPACE", resolved.connectionOwnerType());
-        assertEquals(wsA.toString(), resolved.connectionOwnerId());
-
-        resolved = configService.resolveLlmProfile(userA, null);
         assertEquals("USER", resolved.connectionOwnerType());
         assertEquals(userA.toString(), resolved.connectionOwnerId());
+    }
+
+    @Test
+    void resolveLlmProfile_workspaceProfileUsesWorkspaceConnection() {
+        saveConnection("USER", userA.toString(), "deepseek", "default", true, "READY");
+        saveConnection("WORKSPACE", wsA.toString(), "deepseek", "default", true, "READY");
+        configService.putLayer("workspace", "llm-provider",
+            Map.of("profile", profile("deepseek", "default", "deepseek-chat")),
+            "user", null, wsA);
+
+        ConfigService.ResolvedLlmProfile resolved =
+            configService.resolveLlmProfile(userA, wsA);
+        assertEquals("WORKSPACE", resolved.connectionOwnerType());
+        assertEquals(wsA.toString(), resolved.connectionOwnerId());
+        assertEquals("workspace", resolved.profileScope());
+    }
+
+    @Test
+    void resolveLlmProfile_userProfileDoesNotBorrowWorkspaceConnection() {
+        saveConnection("WORKSPACE", wsA.toString(), "deepseek", "default", true, "READY");
+        // Existing row from before strict validation: user profile + only a
+        // workspace connection must fail instead of silently borrowing it.
+        saveRawProfile("user", userA, null, profile("deepseek", "default", "deepseek-chat"));
+
+        CpApiException error = assertThrows(CpApiException.class, () ->
+            configService.resolveLlmProfile(userA, wsA));
+
+        assertEquals("LLM_PROFILE_CONFLICT", error.getCode());
+    }
+
+    @Test
+    void resolveLlmProfile_instanceProfileUsesConsumingUserConnection() {
+        saveConnection("USER", userA.toString(), "deepseek", "default", true, "READY");
+        saveConnection("WORKSPACE", wsA.toString(), "deepseek", "default", true, "READY");
+        configService.putLayer("instance", "llm-provider",
+            Map.of("profile", profile("deepseek", "default", "deepseek-chat")),
+            "admin", null, null);
+
+        ConfigService.ResolvedLlmProfile resolved =
+            configService.resolveLlmProfile(userA, wsA);
+        assertEquals("USER", resolved.connectionOwnerType());
+        assertEquals(userA.toString(), resolved.connectionOwnerId());
+        assertEquals("instance", resolved.profileScope());
+
+        // No consuming user -> no owner to resolve; never borrow workspace.
+        CpApiException error = assertThrows(CpApiException.class, () ->
+            configService.resolveLlmProfile(null, wsA));
+        assertEquals("LLM_PROFILE_CONFLICT", error.getCode());
+    }
+
+    @Test
+    void resolveLlmProfile_legacyFallbackRestoresWorkspaceThenUser() {
+        saveConnection("WORKSPACE", wsA.toString(), "deepseek", "default", true, "READY");
+        saveRawProfile("user", userA, null, profile("deepseek", "default", "deepseek-chat"));
+        setLegacyFallback(true);
+        try {
+            ConfigService.ResolvedLlmProfile resolved =
+                configService.resolveLlmProfile(userA, wsA);
+            assertEquals("WORKSPACE", resolved.connectionOwnerType());
+        } finally {
+            setLegacyFallback(false);
+        }
+    }
+
+    @Test
+    void putLayer_llmProfileUserLayerRejectedWhenOnlyWorkspaceConnection() {
+        saveConnection("WORKSPACE", wsA.toString(), "deepseek", "default", true, "READY");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("user", "llm-provider",
+                Map.of("profile", profile("deepseek", "default", "deepseek-chat")),
+                "user", userA, null));
+
+        assertTrue(error.getMessage().contains(
+            "No ready provider connection for profile: deepseek/default"));
+    }
+
+    @Test
+    void putLayer_llmProfileWorkspaceLayerRejectedWhenOnlyUserConnection() {
+        saveConnection("USER", userA.toString(), "deepseek", "default", true, "READY");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("workspace", "llm-provider",
+                Map.of("profile", profile("deepseek", "default", "deepseek-chat")),
+                "user", null, wsA));
+
+        assertTrue(error.getMessage().contains(
+            "No ready provider connection for profile: deepseek/default"));
+    }
+
+    @Test
+    void putLayer_llmProfileLegacyFallbackAllowsWorkspaceToUseUserConnectionWhenEnabled() {
+        // Legacy validation allowed a workspace profile to be accepted by a
+        // ready user connection (workspaceId present, userId = actor). Strict
+        // mode rejects it; the transition switch restores the old behavior.
+        saveConnection("USER", userA.toString(), "deepseek", "default", true, "READY");
+        setLegacyFallback(true);
+        try {
+            configService.putLayer("workspace", "llm-provider",
+                Map.of("profile", profile("deepseek", "default", "deepseek-chat")),
+                "user", userA, wsA);
+            assertEquals(profile("deepseek", "default", "deepseek-chat"),
+                configService.layerEntries("workspace", "llm-provider", null, wsA).get("profile"));
+        } finally {
+            setLegacyFallback(false);
+        }
     }
 
     @Test

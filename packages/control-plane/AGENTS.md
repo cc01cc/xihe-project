@@ -54,6 +54,7 @@ Compiler、Checkstyle 和架构规则用途互补。PMD 候选已实际试跑，
 - Context read/replay 的 events 使用显式read DTO，不直接返回Entity；对象payload与nullable键及整批错误见OpenAPI `ContextEventReadView`。replay原事务成功提交后映射，响应映射失败不新增projection回滚。定向真实CP+PG→实际Python客户端测试为 `ContextEventReadContractIntegrationTest`，通过非敏感property `xihe.context.python` 或 `PLAN0470_AGENT_PYTHON` 指定已准备的Python3.12/httpx环境；不自动安装或skip依赖。
 - Route、OpenAPI、调用方 inventory、SSE/AgentEvent、Flyway durable record 必须在同一变更波次同步；以 [`inventory.md`](../../docs/api/inventory.md) 为清单，不复制完整规范。
 - Provider 连接与请求模板（PLAN-0438/0439）：连接一个 API Type、模型身份 `connectionId+modelId`、`connectionKey` 逻辑槽 overlay；类型变更走 revision CAS + impact 预览；`api-request-templates` 域发布修订不可变；Chat-only 对 `operation=chat` fail-closed。Embedding profile 与 RAG 代理（PLAN-0485）按请求解析 owner/profile。契约细节见 [`DEV-014 §8g/8h`](../../docs/i18n/zh-Hans/DEV-014-control-plane-architecture.md) 与 [`DEV-003 §3b`](../../docs/i18n/zh-Hans/DEV-003-config-management.md)。
+- llm-provider profile（PLAN-0552）：解析按 profile 所在层选 owner（workspace→workspace、user→user、instance→消费用户 USER），无隐式 workspace→user 回退；`userId` 为空直接 409。过渡开关 `cp.llm.profile-legacy-connection-fallback`（默认 false）只用于短期回退。
 - 审批、checkpoint、revert 的当前契约以 [`DEV-014-control-plane-architecture.md`](../../docs/i18n/zh-Hans/DEV-014-control-plane-architecture.md)、[`DEV-015-runtime-architecture.md`](../../docs/i18n/zh-Hans/DEV-015-runtime-architecture.md) 与 inventory 为准；本文件只列边界，禁止在此重复完整字段/状态机规格。
 
 ## 实现边界
