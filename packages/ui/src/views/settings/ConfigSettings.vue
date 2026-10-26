@@ -777,6 +777,13 @@ async function handleImportFile(event: Event) {
                         </div>
                     </div>
 
+                    <div
+                        v-if="activeTab === 'workspace'"
+                        data-testid="config-workspace-transition"
+                        class="mb-2 rounded border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
+                    >
+                        {{ t("settings.workspaceTransitionNote") }}
+                    </div>
                     <template v-for="domain in visibleDomains" :key="domain">
                         <!-- PLAN-0523 T3.1: llm-provider 合并为单一「模型提供方」分区
                              （spec/ui-surfaces.md S1/S3）；旧 ProfilePanel / 层全局参数表单

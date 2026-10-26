@@ -98,12 +98,14 @@ function sourceHint(key: string): string {
     const item = props.meta?.[key];
     if (!item) return "";
     if (item.locked) return t("settings.configSourceEnv");
+    if (props.layer === "instance") {
+        return item.overridable
+            ? t("settings.configSourceOverridable")
+            : t("settings.configSourceInstanceOnly");
+    }
     if (item.source === "none") return t("settings.configSourceNone");
     if (props.layer && item.source !== props.layer) {
         return t("settings.configSourceInherited", { source: sourceText(key) });
-    }
-    if (props.layer === "instance" && !item.overridable) {
-        return t("settings.configSourceInstanceOnly");
     }
     if (!item.writable) return t("settings.configSourceReadonly");
     return "";

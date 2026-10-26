@@ -1250,6 +1250,7 @@ const messages = {
             fieldCompactionDefaults: "压缩默认值（JSON）",
             fieldCompactionModels: "模型窗口表（JSON）",
             envLockedHint: "该键被环境变量覆盖：执行端使用 env 生效值，此处不可修改",
+            workspaceTransitionNote: "过渡：0560 将把 Workspace Settings 移入 workspace，本页签届时移除。",
             configSourceTitle: "生效来源",
             configSourceEnv: "env 锁定",
             configSourceWorkspace: "workspace",
@@ -2968,6 +2969,7 @@ const messages = {
             fieldCompactionModels: "Model Windows (JSON)",
             envLockedHint:
                 "This key is overridden by an environment variable: the runtime uses the env value and it cannot be edited here",
+            workspaceTransitionNote: "Transitional: PLAN-0560 moves Workspace Settings into the workspace; this tab will be removed then.",
             configSourceTitle: "Effective source",
             configSourceEnv: "Env locked",
             configSourceWorkspace: "Workspace",

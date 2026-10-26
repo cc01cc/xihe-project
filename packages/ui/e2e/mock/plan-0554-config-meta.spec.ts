@@ -165,6 +165,7 @@ test.describe("PLAN-0554 config provenance", () => {
         await openRag(page);
 
         await expect(page.getByTestId("config-source-rag-chunkSize")).toContainText("instance");
+        await expect(page.getByTestId("config-source-rag-chunkSize")).toContainText("可被覆盖");
         await expect(page.getByTestId("config-source-rag-topK")).toContainText("code default");
         await expect(page.getByTestId("config-source-rag-minScore")).toContainText("env 锁定");
         await expect(page.getByTestId("config-env-lock-rag-minScore")).toBeVisible();
@@ -191,6 +192,7 @@ test.describe("PLAN-0554 config provenance", () => {
         await page.getByTestId("config-tab-workspace").click();
         await openRag(page);
 
+        await expect(page.getByTestId("config-workspace-transition")).toBeVisible();
         await expect(page.getByTestId("config-source-rag-chunkSize")).toContainText("workspace");
         await expect(page.getByTestId("config-source-rag-chunkOverlap")).toContainText(
             "继承自 instance",
