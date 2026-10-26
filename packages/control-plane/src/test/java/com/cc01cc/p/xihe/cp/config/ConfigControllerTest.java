@@ -24,12 +24,15 @@ class ConfigControllerTest extends AbstractH2Test {
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
 
+    @Autowired
+    private ConfigService configService;
+
     @Test
     void getConfig_returnsMergedConfig() {
         HttpHeaders headers = authHeaders(userToken());
 
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/api/v1/config/logging"), HttpMethod.GET,
+            url("/api/v1/config/rag"), HttpMethod.GET,
             new HttpEntity<>(headers), Map.class);
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
@@ -114,14 +117,15 @@ class ConfigControllerTest extends AbstractH2Test {
         HttpHeaders adminHeaders = authHeaders(adminToken());
         ResponseEntity<Map> put = restTemplate.exchange(
             url("/api/v1/config/instance/agent-runtime"), HttpMethod.PUT,
-            new HttpEntity<>(Map.of("instructions", "baseline prompt"), adminHeaders), Map.class);
+            new HttpEntity<>(Map.of("runMaxTurns", "25", "instructions", "baseline prompt"), adminHeaders), Map.class);
         assertEquals(HttpStatus.OK, put.getStatusCode());
 
         ResponseEntity<Map> userRead = restTemplate.exchange(
             url("/api/v1/config/agent-runtime"), HttpMethod.GET,
             new HttpEntity<>(authHeaders(userToken())), Map.class);
         assertEquals(HttpStatus.OK, userRead.getStatusCode());
-        assertEquals("****", userRead.getBody().get("instructions"));
+        assertEquals("****", userRead.getBody().get("runMaxTurns"));
+        assertFalse(userRead.getBody().containsKey("instructions"));
 
         ResponseEntity<Map> adminRead = restTemplate.exchange(
             url("/api/v1/config/agent-runtime"), HttpMethod.GET,
@@ -163,8 +167,13 @@ class ConfigControllerTest extends AbstractH2Test {
         ResponseEntity<Map> instanceView = restTemplate.exchange(
             url("/api/v1/config/llm-provider?layer=instance"), HttpMethod.GET,
             new HttpEntity<>(authHeaders(token)), Map.class);
-        assertEquals(HttpStatus.OK, instanceView.getStatusCode());
-        assertEquals("inst-prov", instanceView.getBody().get("imageProvider"));
+        assertEquals(HttpStatus.FORBIDDEN, instanceView.getStatusCode());
+
+        ResponseEntity<Map> adminInstanceView = restTemplate.exchange(
+            url("/api/v1/config/llm-provider?layer=instance"), HttpMethod.GET,
+            new HttpEntity<>(authHeaders(adminToken())), Map.class);
+        assertEquals(HttpStatus.OK, adminInstanceView.getStatusCode());
+        assertEquals("inst-prov", adminInstanceView.getBody().get("imageProvider"));
     }
 
     @Test
@@ -388,6 +397,148 @@ class ConfigControllerTest extends AbstractH2Test {
             url("/api/v1/workspaces/" + workspaceId + "/mcp-config"), HttpMethod.PUT,
             new HttpEntity<>(putBody, headers), Map.class);
         assertEquals(HttpStatus.BAD_REQUEST, put.getStatusCode());
+    }
+
+    @Test
+    void getConfig_nonAdminHidesInstanceOnlyAgentRuntimeKeys() {
+        restTemplate.exchange(
+            url("/api/v1/config/instance/agent-runtime"), HttpMethod.PUT,
+            new HttpEntity<>(Map.of(
+                "runMaxTurns", "25",
+                "runMaxTurnsCeiling", "100",
+                "instructions", "instance-only instructions"), authHeaders(adminToken())), Map.class);
+
+        ResponseEntity<Map> resp = restTemplate.exchange(
+            url("/api/v1/config/agent-runtime"), HttpMethod.GET,
+            new HttpEntity<>(authHeaders(userToken())), Map.class);
+
+        assertEquals(HttpStatus.OK, resp.getStatusCode());
+        assertTrue(resp.getBody().containsKey("runMaxTurns"));
+        assertFalse(resp.getBody().containsKey("runMaxTurnsCeiling"));
+        assertFalse(resp.getBody().containsKey("instructions"));
+        assertEquals("****", resp.getBody().get("runMaxTurns"));
+    }
+
+    @Test
+    void getConfig_nonAdminCannotReadInstanceOnlyDomains() {
+        String token = userToken();
+        for (String domain : List.of("pricing", "logging")) {
+            ResponseEntity<Map> resp = restTemplate.exchange(
+                url("/api/v1/config/" + domain), HttpMethod.GET,
+                new HttpEntity<>(authHeaders(token)), Map.class);
+            assertEquals(HttpStatus.FORBIDDEN, resp.getStatusCode(), domain);
+        }
+    }
+
+    @Test
+    void getConfigMeta_instanceRequiresAdmin() {
+        String token = userToken();
+        ResponseEntity<Map> userResp = restTemplate.exchange(
+            url("/api/v1/config/logging/meta?layer=instance"), HttpMethod.GET,
+            new HttpEntity<>(authHeaders(token)), Map.class);
+        assertEquals(HttpStatus.FORBIDDEN, userResp.getStatusCode());
+
+        ResponseEntity<Map> adminResp = restTemplate.exchange(
+            url("/api/v1/config/logging/meta?layer=instance"), HttpMethod.GET,
+            new HttpEntity<>(authHeaders(adminToken())), Map.class);
+        assertEquals(HttpStatus.OK, adminResp.getStatusCode());
+        List<Map<String, Object>> keys = (List<Map<String, Object>>) adminResp.getBody().get("keys");
+        Map<String, Object> levelCp = keys.stream()
+            .filter(item -> "levelCp".equals(item.get("key"))).findFirst().orElseThrow();
+        assertEquals("code", levelCp.get("source"));
+        assertEquals(true, levelCp.get("instanceEligible"));
+        assertEquals(false, levelCp.get("overridable"));
+    }
+
+    @Test
+    void getConfigMeta_userFiltersInstanceOnlyKeys() {
+        restTemplate.exchange(
+            url("/api/v1/config/instance/agent-runtime"), HttpMethod.PUT,
+            new HttpEntity<>(Map.of(
+                "runMaxTurns", "25",
+                "runMaxTurnsCeiling", "100",
+                "instructions", "instance-only instructions"), authHeaders(adminToken())), Map.class);
+
+        ResponseEntity<Map> resp = restTemplate.exchange(
+            url("/api/v1/config/agent-runtime/meta?layer=user"), HttpMethod.GET,
+            new HttpEntity<>(authHeaders(userToken())), Map.class);
+
+        assertEquals(HttpStatus.OK, resp.getStatusCode());
+        List<Map<String, Object>> keys = (List<Map<String, Object>>) resp.getBody().get("keys");
+        assertTrue(keys.stream().noneMatch(item -> "instructions".equals(item.get("key"))));
+        assertTrue(keys.stream().noneMatch(item -> "runMaxTurnsCeiling".equals(item.get("key"))));
+        Map<String, Object> runMaxTurns = keys.stream()
+            .filter(item -> "runMaxTurns".equals(item.get("key"))).findFirst().orElseThrow();
+        assertEquals("instance", runMaxTurns.get("source"));
+        assertEquals(true, runMaxTurns.get("writable"));
+        assertEquals(false, runMaxTurns.get("instanceEligible"));
+    }
+
+    @Test
+    void getConfigMeta_rejectsServiceOnlyAndNonWritableDomains() {
+        ResponseEntity<Map> pricing = restTemplate.exchange(
+            url("/api/v1/config/pricing/meta?layer=instance"), HttpMethod.GET,
+            new HttpEntity<>(authHeaders(adminToken())), Map.class);
+        assertEquals(HttpStatus.BAD_REQUEST, pricing.getStatusCode());
+        assertEquals("INVALID_DOMAIN", pricing.getBody().get("code"));
+
+        ResponseEntity<Map> logging = restTemplate.exchange(
+            url("/api/v1/config/logging/meta?layer=user"), HttpMethod.GET,
+            new HttpEntity<>(authHeaders(userToken())), Map.class);
+        assertEquals(HttpStatus.FORBIDDEN, logging.getStatusCode());
+    }
+
+    @Test
+    void deleteInstanceConfig_removesRow() {
+        restTemplate.exchange(
+            url("/api/v1/config/instance/logging"), HttpMethod.PUT,
+            new HttpEntity<>(Map.of("logLevel", "WARN"), authHeaders(adminToken())), Map.class);
+
+        ResponseEntity<Map> deleted = restTemplate.exchange(
+            url("/api/v1/config/instance/logging/logLevel"), HttpMethod.DELETE,
+            new HttpEntity<>(authHeaders(adminToken())), Map.class);
+        assertEquals(HttpStatus.OK, deleted.getStatusCode());
+
+        ResponseEntity<Map> layer = restTemplate.exchange(
+            url("/api/v1/config/logging?layer=instance"), HttpMethod.GET,
+            new HttpEntity<>(authHeaders(adminToken())), Map.class);
+        assertEquals(HttpStatus.OK, layer.getStatusCode());
+        assertFalse(layer.getBody().containsKey("logLevel"));
+
+        ResponseEntity<Map> deletedAgain = restTemplate.exchange(
+            url("/api/v1/config/instance/logging/logLevel"), HttpMethod.DELETE,
+            new HttpEntity<>(authHeaders(adminToken())), Map.class);
+        assertEquals(HttpStatus.OK, deletedAgain.getStatusCode());
+    }
+
+    @Test
+    void envLockedKey_rejectsPutAndDelete() throws Exception {
+        EnvOverlayRegistry original = swapEnvOverlay(
+            new EnvOverlayRegistry(key -> "XIHE_JOB_TIMEOUT_DEFAULT_SECS".equals(key) ? "7200" : null));
+        try {
+            ResponseEntity<Map> put = restTemplate.exchange(
+                url("/api/v1/config/instance/job-policy"), HttpMethod.PUT,
+                new HttpEntity<>(Map.of("defaultTimeoutSecs", "3600"), authHeaders(adminToken())), Map.class);
+            assertEquals(HttpStatus.CONFLICT, put.getStatusCode());
+            assertEquals("CONFIG_ENV_LOCKED", put.getBody().get("code"));
+
+            ResponseEntity<Map> delete = restTemplate.exchange(
+                url("/api/v1/config/instance/job-policy/defaultTimeoutSecs"), HttpMethod.DELETE,
+                new HttpEntity<>(authHeaders(adminToken())), Map.class);
+            assertEquals(HttpStatus.CONFLICT, delete.getStatusCode());
+            assertEquals("CONFIG_ENV_LOCKED", delete.getBody().get("code"));
+        } finally {
+            swapEnvOverlay(original);
+        }
+    }
+
+    private EnvOverlayRegistry swapEnvOverlay(EnvOverlayRegistry overlay) throws Exception {
+        ConfigService target = org.springframework.test.util.AopTestUtils.getTargetObject(configService);
+        java.lang.reflect.Field field = ConfigService.class.getDeclaredField("envOverlay");
+        field.setAccessible(true);
+        EnvOverlayRegistry old = (EnvOverlayRegistry) field.get(target);
+        field.set(target, overlay);
+        return old;
     }
 
     private HttpHeaders authHeaders(String token) {

@@ -8,6 +8,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -147,6 +148,20 @@ public class ConfigController {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Context templates require an explicit config layer");
         }
+        if (!isAdmin()) {
+            if ("instance".equals(layer) && !ConfigService.isExplicitOnlyDomain(domain)) {
+                return ProblemDetailsHandler.problemResponse(
+                        HttpStatus.FORBIDDEN, "FORBIDDEN", "Instance config is not readable by this user");
+            }
+            if (layer != null && !ConfigService.isLayerWritable(layer, domain)) {
+                return ProblemDetailsHandler.problemResponse(
+                        HttpStatus.FORBIDDEN, "FORBIDDEN", "Configuration layer is not readable");
+            }
+            if (layer == null && !ConfigService.isReadableByNonAdmin(domain)) {
+                return ProblemDetailsHandler.problemResponse(
+                        HttpStatus.FORBIDDEN, "FORBIDDEN", "Configuration domain is not readable");
+            }
+        }
         UUID userId = currentUserId();
         if ("agent-templates".equals(domain) && "instance".equals(layer) && !isAdmin()) {
             return ProblemDetailsHandler.problemResponse(
@@ -182,6 +197,9 @@ public class ConfigController {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.FORBIDDEN, "FORBIDDEN", "Configuration layer is not readable");
         }
+        if (!isAdmin()) {
+            raw = filterNonAdminEntries(domain, raw);
+        }
 
         Map<String, Object> shaped = new LinkedHashMap<>();
         boolean hideAll = !isAdmin() && ADMIN_ONLY_READ_DOMAINS.contains(domain);
@@ -200,6 +218,10 @@ public class ConfigController {
             // be able to render the lock state.
             Map<String, String> envOverridden = new LinkedHashMap<>();
             for (Map.Entry<String, String> e : configService.envOverridden(domain).entrySet()) {
+                if (!isAdmin() && (!ConfigService.isReadableByNonAdmin(domain)
+                        || ConfigService.isInstanceOnlyKey(domain, e.getKey()))) {
+                    continue;
+                }
                 envOverridden.put(e.getKey(), hideAll ? "****" : maskIfNotAdmin(e.getKey(), e.getValue()));
             }
             Map<String, Object> body = new LinkedHashMap<>();
@@ -209,6 +231,71 @@ public class ConfigController {
             return ResponseEntity.ok(body);
         }
         return ResponseEntity.ok(shaped);
+    }
+
+    private static Map<String, String> filterNonAdminEntries(String domain, Map<String, String> entries) {
+        Map<String, String> filtered = new LinkedHashMap<>();
+        if (!ConfigService.isReadableByNonAdmin(domain)) {
+            return filtered;
+        }
+        for (Map.Entry<String, String> entry : entries.entrySet()) {
+            if (!ConfigService.isInstanceOnlyKey(domain, entry.getKey())) {
+                filtered.put(entry.getKey(), entry.getValue());
+            }
+        }
+        return filtered;
+    }
+
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @GetMapping("/api/v1/config/{domain}/meta")
+    public ResponseEntity<Map<String, Object>> getConfigMeta(
+            @PathVariable String domain,
+            @RequestParam("layer") String layer,
+            @RequestParam(value = "workspaceId", required = false) String queryWorkspaceId,
+            @RequestHeader(value = "X-Workspace-Id", required = false) String headerWorkspaceId) {
+        if (!ConfigService.UI_DOMAINS.contains(domain)) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_DOMAIN", "Config domain has no UI metadata");
+        }
+        if (!Set.of("instance", "user", "workspace").contains(layer)) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_LAYER", "Unknown config layer");
+        }
+        if ("instance".equals(layer) && !isAdmin()) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.FORBIDDEN, "FORBIDDEN", "Instance config metadata is not readable by this user");
+        }
+        if (!"instance".equals(layer) && !ConfigService.isLayerWritable(layer, domain)) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.FORBIDDEN, "FORBIDDEN", "Configuration layer is not readable");
+        }
+
+        UUID userId = currentUserId();
+        UUID workspaceId = null;
+        if ("user".equals(layer) && userId == null) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "User context is required");
+        }
+        if ("workspace".equals(layer)) {
+            String wsId = currentWorkspaceId(headerWorkspaceId, queryWorkspaceId);
+            if (wsId == null || wsId.isBlank()) {
+                return ProblemDetailsHandler.problemResponse(
+                        HttpStatus.BAD_REQUEST, "INVALID_LAYER_CONTEXT", "Workspace context is required");
+            }
+            if (userId == null) {
+                return ProblemDetailsHandler.problemResponse(
+                        HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "User context is required");
+            }
+            workspaceService.requireAccessibleWorkspace(wsId, userId.toString());
+            workspaceId = parseUuid(wsId);
+        }
+
+        List<ConfigService.ConfigKeyMeta> keys = configService.meta(layer, domain, userId, workspaceId);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("domain", domain);
+        body.put("layer", layer);
+        body.put("keys", keys);
+        return ResponseEntity.ok(body);
     }
 
     private Map<String, String> readLayer(String domain, String layer, UUID userId, UUID workspaceId) {
@@ -246,6 +333,37 @@ public class ConfigController {
             @PathVariable String domain,
             @RequestBody Map<String, String> body) {
         return writeLayer("instance", domain, body, "admin", null, null);
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @DeleteMapping("/api/v1/config/instance/{domain}/{key}")
+    public ResponseEntity<Map<String, Object>> deleteInstanceConfig(
+            @PathVariable String domain,
+            @PathVariable String key) {
+        if (!ConfigService.DOMAINS.contains(domain)) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_DOMAIN", "Unknown config domain");
+        }
+        if (key == null || key.isBlank()) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Config key is required");
+        }
+        if (configService.envOverriddenKeys(domain).contains(key)) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.CONFLICT, "CONFIG_ENV_LOCKED", "Env-locked config key cannot be deleted");
+        }
+        try {
+            configService.deleteKey("instance", domain, key, "admin", null, null);
+            return ResponseEntity.ok(Map.of("status", "ok"));
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        } catch (ConfigService.ConfigAccessException e) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.FORBIDDEN, "FORBIDDEN", "Configuration delete is not allowed");
+        } catch (IllegalArgumentException e) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", e.getMessage());
+        }
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
+import type { ConfigKeyMeta } from "../../stores/config";
 
 const { t } = useI18n();
 
@@ -39,6 +40,10 @@ const props = defineProps<{
     envLocked?: Record<string, string>;
     /** PLAN-0503: optional directory-freshness line (revision / verifiedAt). */
     note?: string;
+    /** PLAN-0554: per-key provenance for this layer/domain. */
+    meta?: Record<string, ConfigKeyMeta>;
+    /** PLAN-0554: current layer, used for inheritance wording. */
+    layer?: "instance" | "user" | "workspace";
 }>();
 
 const emit = defineEmits<{
@@ -61,7 +66,47 @@ function toggle() {
 }
 
 function isLocked(key: string): boolean {
-    return !!props.envLocked && key in props.envLocked;
+    return (!!props.envLocked && key in props.envLocked) || !!props.meta?.[key]?.locked;
+}
+
+/** PLAN-0554: server-judged writability; absent meta keeps the legacy behaviour. */
+function isWritable(key: string): boolean {
+    const item = props.meta?.[key];
+    return !item || item.writable;
+}
+
+function sourceText(key: string): string {
+    switch (props.meta?.[key]?.source) {
+        case "env":
+            return t("settings.configSourceEnv");
+        case "workspace":
+            return t("settings.configSourceWorkspace");
+        case "user":
+            return t("settings.configSourceUser");
+        case "instance":
+            return t("settings.configSourceInstance");
+        case "code":
+            return t("settings.configSourceCode");
+        case "none":
+            return t("settings.configSourceNone");
+        default:
+            return "";
+    }
+}
+
+function sourceHint(key: string): string {
+    const item = props.meta?.[key];
+    if (!item) return "";
+    if (item.locked) return t("settings.configSourceEnv");
+    if (item.source === "none") return t("settings.configSourceNone");
+    if (props.layer && item.source !== props.layer) {
+        return t("settings.configSourceInherited", { source: sourceText(key) });
+    }
+    if (props.layer === "instance" && !item.overridable) {
+        return t("settings.configSourceInstanceOnly");
+    }
+    if (!item.writable) return t("settings.configSourceReadonly");
+    return "";
 }
 
 function lockedValue(key: string): string {
@@ -127,7 +172,8 @@ function handleSave() {
     const invalid = props.schema.filter((field) => {
         if (field.type !== "number" || field.max === undefined) return false;
         const raw = editing.value[field.key];
-        if (raw === undefined || raw === "" || isLocked(field.key)) return false;
+        if (raw === undefined || raw === "" || isLocked(field.key) || !isWritable(field.key))
+            return false;
         const num = Number(raw);
         return !Number.isInteger(num) || num < 1 || num > field.max;
     });
@@ -137,7 +183,9 @@ function handleSave() {
     }
     validationError.value = "";
     const body = Object.fromEntries(
-        Object.entries(editing.value).filter(([key, value]) => value !== "" && !isLocked(key)),
+        Object.entries(editing.value).filter(
+            ([key, value]) => value !== "" && !isLocked(key) && isWritable(key),
+        ),
     );
     emit("save", body);
 }
@@ -177,7 +225,23 @@ function handleReset(key: string) {
                 :data-testid="`config-field-${domain}-${field.key}`"
                 class="flex min-w-0 items-center gap-2"
             >
-                <span class="text-xs text-muted-foreground w-1/3 truncate">{{ field.label }}</span>
+                <div class="min-w-0 w-1/3">
+                    <span class="block text-xs text-muted-foreground truncate">{{
+                        field.label
+                    }}</span>
+                    <span
+                        v-if="meta?.[field.key]"
+                        :data-testid="`config-source-${domain}-${field.key}`"
+                        class="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] text-muted-foreground"
+                    >
+                        <span class="shrink-0 rounded border border-border px-1 py-0.5">
+                            {{ sourceText(field.key) }}
+                        </span>
+                        <span v-if="sourceHint(field.key)" class="min-w-0 truncate">
+                            {{ sourceHint(field.key) }}
+                        </span>
+                    </span>
+                </div>
 
                 <template v-if="isLocked(field.key)">
                     <span
@@ -199,6 +263,7 @@ function handleReset(key: string) {
                         v-if="field.allowCustom && customMode[field.key]"
                         v-model="editing[field.key]"
                         :data-testid="`config-custom-${domain}-${field.key}`"
+                        :disabled="!isWritable(field.key)"
                         class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
                         :placeholder="t('settings.customPlaceholder')"
                     />
@@ -206,6 +271,7 @@ function handleReset(key: string) {
                         v-else
                         :value="editing[field.key]"
                         :data-testid="`config-select-${domain}-${field.key}`"
+                        :disabled="!isWritable(field.key)"
                         class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
                         @change="onSelectChange(field, ($event.target as HTMLSelectElement).value)"
                     >
@@ -232,6 +298,7 @@ function handleReset(key: string) {
                     v-else-if="!readonly && (field.type === 'json' || field.type === 'textarea')"
                     v-model="editing[field.key]"
                     rows="3"
+                    :disabled="!isWritable(field.key)"
                     class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
                     :class="field.type === 'json' ? 'font-mono' : ''"
                     :placeholder="field.type === 'json' ? 'JSON' : ''"
@@ -240,6 +307,7 @@ function handleReset(key: string) {
                 <input
                     v-else-if="!readonly"
                     v-model="editing[field.key]"
+                    :disabled="!isWritable(field.key)"
                     class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
                     :type="
                         field.type === 'password'
@@ -290,7 +358,7 @@ function handleReset(key: string) {
                 </button>
 
                 <button
-                    v-if="admin && !readonly && !isLocked(field.key)"
+                    v-if="admin && !readonly && !isLocked(field.key) && isWritable(field.key)"
                     class="text-xs text-muted-foreground hover:text-foreground px-1"
                     :title="t('settings.resetToDefault')"
                     @click="handleReset(field.key)"
@@ -303,7 +371,10 @@ function handleReset(key: string) {
             </p>
             <div v-if="!readonly" class="flex justify-end pt-1">
                 <button
-                    class="px-3 py-1 text-xs bg-primary text-primary-foreground rounded hover:opacity-90"
+                    class="px-3 py-1 text-xs bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50"
+                    :disabled="
+                        !schema.some((field) => isWritable(field.key) && !isLocked(field.key))
+                    "
                     @click="handleSave"
                 >
                     {{ t("common.save") }}

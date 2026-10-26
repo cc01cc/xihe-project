@@ -10,6 +10,20 @@ import { parseLlmProfileValue } from "../services/llmProviderProfile";
 
 export type ConfigLayer = "instance" | "workspace" | "user";
 
+export type ConfigSource = "env" | "workspace" | "user" | "instance" | "code" | "none";
+
+/** PLAN-0554: per-key provenance returned by GET /config/{domain}/meta. */
+export interface ConfigKeyMeta {
+    key: string;
+    source: ConfigSource;
+    locked: boolean;
+    writable: boolean;
+    reason: string | null;
+    instanceEligible: boolean;
+    defaultPresent: boolean;
+    overridable: boolean;
+}
+
 /** PLAN-0307 target domain set (decision #37). Instance layer only. */
 export const INSTANCE_DOMAINS = [
     "llm-provider",
@@ -95,6 +109,12 @@ export const useConfigStore = defineStore("config", () => {
     const layerLoading = ref(false);
     /** domain -> key -> env-effective value when an env overlay wins (decision #22). */
     const envOverridden = ref<Record<string, Record<string, string>>>({});
+    /** PLAN-0554: layer -> domain -> key -> provenance metadata. */
+    const layerMeta = ref<Record<ConfigLayer, Record<string, Record<string, ConfigKeyMeta>>>>({
+        instance: {},
+        workspace: {},
+        user: {},
+    });
 
     const modelCache = useLocalStorage<ModelCache>(MODEL_CACHE_KEY, { models: {}, providers: {} }),
         sessionModels = useLocalStorage<Record<string, SessionModelBinding>>(
@@ -202,24 +222,36 @@ export const useConfigStore = defineStore("config", () => {
             const domains = LAYER_DOMAINS[layer];
             const results = await Promise.all(
                 domains.map(async (domain) => {
-                    const body = await request<{
-                        domain: string;
-                        entries: Record<string, string>;
-                        envOverridden?: Record<string, string>;
-                    }>(`/config/${domain}?layer=${layer}&includeMeta=true${workspaceQuery}`);
-                    return { domain, body };
+                    const [body, metaBody] = await Promise.all([
+                        request<{
+                            domain: string;
+                            entries: Record<string, string>;
+                            envOverridden?: Record<string, string>;
+                        }>(`/config/${domain}?layer=${layer}&includeMeta=true${workspaceQuery}`),
+                        request<{ keys?: ConfigKeyMeta[] }>(
+                            `/config/${domain}/meta?layer=${layer}${workspaceQuery}`,
+                        ),
+                    ]);
+                    return { domain, body, metaBody };
                 }),
             );
             const nextLayer: Record<string, Record<string, string>> = {
                 ...layerConfig.value[layer],
             };
             const nextEnv: Record<string, Record<string, string>> = { ...envOverridden.value };
-            for (const { domain, body } of results) {
+            const nextMeta: Record<string, Record<string, ConfigKeyMeta>> = {
+                ...layerMeta.value[layer],
+            };
+            for (const { domain, body, metaBody } of results) {
                 nextLayer[domain] = body.entries ?? {};
                 nextEnv[domain] = body.envOverridden ?? {};
+                nextMeta[domain] = Object.fromEntries(
+                    (metaBody.keys ?? []).map((item) => [item.key, item]),
+                );
             }
             layerConfig.value = { ...layerConfig.value, [layer]: nextLayer };
             envOverridden.value = nextEnv;
+            layerMeta.value = { ...layerMeta.value, [layer]: nextMeta };
         } catch (e) {
             error.value = e instanceof Error ? e.message : "Failed to load layer config";
             throw e;
@@ -242,6 +274,13 @@ export const useConfigStore = defineStore("config", () => {
         await request(`/config/${layer}/${domain}${workspaceQuery}`, {
             method: "PUT",
             body: JSON.stringify(body),
+        });
+    }
+
+    /** PLAN-0554: clear one instance-layer default (falls back to code default). */
+    async function deleteInstanceKey(domain: string, key: string): Promise<void> {
+        await request(`/config/instance/${domain}/${encodeURIComponent(key)}`, {
+            method: "DELETE",
         });
     }
 
@@ -361,6 +400,7 @@ export const useConfigStore = defineStore("config", () => {
         modelError.value = null;
         layerConfig.value = { instance: {}, workspace: {}, user: {} };
         envOverridden.value = {};
+        layerMeta.value = { instance: {}, workspace: {}, user: {} };
         providerConnections.value = [];
         providerConnectionsLoaded.value = false;
     }
@@ -391,6 +431,7 @@ export const useConfigStore = defineStore("config", () => {
         layerConfig,
         layerLoading,
         envOverridden,
+        layerMeta,
         modelError,
         modelCache,
         modelFavorites,
@@ -402,6 +443,7 @@ export const useConfigStore = defineStore("config", () => {
         loadAllDomains,
         loadLayerDomains,
         putLayerConfig,
+        deleteInstanceKey,
         exportConfig,
         importConfig,
         getActiveModel,
