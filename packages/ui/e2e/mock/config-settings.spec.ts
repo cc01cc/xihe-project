@@ -74,6 +74,30 @@ test.describe("Config Settings (three layers)", () => {
                 body: JSON.stringify(body),
             });
         });
+        await page.route("**/api/v1/config/*/meta**", async (route: any) => {
+            const url = new URL(route.request().url()),
+                domain = url.pathname.split("/")[4] ?? "",
+                layer = url.searchParams.get("layer") ?? "instance",
+                entries = CONFIG_DOMAINS[domain] ?? {};
+            const keys = Object.keys(entries).map((key) => {
+                const locked = domain === "embedding" && key === "model";
+                return {
+                    key,
+                    source: locked ? "env" : layer,
+                    locked,
+                    writable: !locked,
+                    reason: locked ? "ENV_LOCKED" : null,
+                    instanceEligible: true,
+                    defaultPresent: false,
+                    overridable: true,
+                };
+            });
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ domain, layer, keys }),
+            });
+        });
         await page.route("**/api/v1/events**", (route: any) =>
             route.fulfill({
                 status: 200,
@@ -183,19 +207,16 @@ test.describe("Config Settings (three layers)", () => {
         await expect(page.getByTestId("config-field-agent-runtime-instructions")).toHaveCount(0);
     });
 
-    test("env-locked field shows the env-effective value and drops the input", async ({ page }) => {
+    test("env-locked embedding model shows the env source and stays read-only", async ({ page }) => {
         await mockConfigAPIs(page);
         await page.goto("/settings/config", { waitUntil: "load" });
 
         await page.getByTestId("config-tab-workspace").click();
-        await page.getByTestId("config-domain-embedding").locator("button").first().click();
-        const lock = page.getByTestId("config-env-lock-embedding-model");
-        await expect(lock).toBeVisible();
-        await expect(lock).toHaveText("env-embedding-model");
-        await expect(page.getByTestId("config-field-embedding-model").locator("input")).toHaveCount(
-            0,
-        );
-        await expectPlatformScreenshot(page, "config-env-lock.png");
+        await expect(page.getByTestId("embedding-settings")).toBeVisible();
+        const source = page.getByTestId("config-source-summary-embedding");
+        await expect(source).toBeVisible();
+        await expect(source).toContainText("embedding.model");
+        await expect(source).toContainText("env 锁定");
     });
 
     test("saving a value goes through the layer endpoint", async ({ page }) => {
