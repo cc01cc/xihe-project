@@ -355,6 +355,7 @@ class ProviderConnectionServiceTest {
         connection.setLabel("Personal");
         connection.setEnabled(true);
         connection.setStatus(ProviderConnection.STATUS_READY);
+        connection.setRevision(7L);
         java.util.UUID oldCredentialId = java.util.UUID.randomUUID();
         connection.setCredentialId(oldCredentialId);
         when(repository.findById(connection.getId())).thenReturn(Optional.of(connection));
@@ -367,6 +368,8 @@ class ProviderConnectionServiceTest {
 
         assertNotEquals(oldCredentialId, updated.getCredentialId());
         assertNotNull(updated.getCredentialId());
+        assertEquals(8L, updated.getRevision());
+        assertEquals(ProviderConnection.STATUS_VERIFYING, updated.getStatus());
     }
 
     @Test

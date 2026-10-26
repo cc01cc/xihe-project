@@ -6,6 +6,7 @@ import { Button } from "../../ui/button";
 import { Badge } from "../../ui/badge";
 import CredentialCreateDialog from "./CredentialCreateDialog.vue";
 import CredentialDetailDialog from "./CredentialDetailDialog.vue";
+import CredentialLinkDialog from "./CredentialLinkDialog.vue";
 import CredentialReplaceDialog from "./CredentialReplaceDialog.vue";
 import CredentialRevealDialog from "./CredentialRevealDialog.vue";
 import { useCredentialsStore } from "../../../stores/credentials";
@@ -15,7 +16,7 @@ const { t } = useI18n(),
     store = useCredentialsStore();
 
 const createOpen = ref(false),
-    activeDialog = ref<"detail" | "replace" | "reveal" | null>(null),
+    activeDialog = ref<"detail" | "replace" | "reveal" | "link" | null>(null),
     selectedId = ref<string | null>(null),
     reloading = ref(false);
 
@@ -30,6 +31,11 @@ function selectRow(credential: CredentialSummary) {
 
 function closeDialogs() {
     activeDialog.value = null;
+}
+
+function openLink(credential: CredentialSummary) {
+    selectedId.value = credential.id;
+    activeDialog.value = "link";
 }
 
 /** PLAN-0498: bind/unbind keeps the detail dialog open — refresh the list only.
@@ -122,10 +128,14 @@ onMounted(() => {
                 {{ t("credentials.empty") }}
             </div>
             <ul v-else data-testid="credentials-list" class="divide-y divide-border">
-                <li v-for="credential in store.credentials" :key="credential.id">
+                <li
+                    v-for="credential in store.credentials"
+                    :key="credential.id"
+                    class="flex items-start gap-2 px-4 py-3 hover:bg-muted/50"
+                >
                     <button
                         type="button"
-                        class="w-full px-4 py-3 text-left transition-colors hover:bg-muted/50"
+                        class="min-w-0 flex-1 text-left"
                         :data-testid="`credentials-row-${credential.id}`"
                         @click="selectRow(credential)"
                     >
@@ -177,6 +187,16 @@ onMounted(() => {
                             }}</span>
                         </div>
                     </button>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        class="shrink-0"
+                        :data-testid="`credentials-link-action-${credential.id}`"
+                        @click="openLink(credential)"
+                    >
+                        {{ t("credentials.linkAction") }}
+                    </Button>
                 </li>
             </ul>
         </section>
@@ -202,6 +222,13 @@ onMounted(() => {
             :credential-id="selectedId ?? ''"
             :label="selected?.label ?? ''"
             @close="activeDialog = selected ? 'detail' : null"
+        />
+        <CredentialLinkDialog
+            :open="activeDialog === 'link'"
+            :credential-id="selectedId ?? ''"
+            :credential-label="selected?.label"
+            @close="activeDialog = null"
+            @linked="refreshAfterChange"
         />
     </div>
 </template>
