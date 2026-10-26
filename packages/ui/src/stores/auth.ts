@@ -216,6 +216,9 @@ export const useAuthStore = defineStore("auth", () => {
         workspace.value = null;
         const selected = await api.getWorkspace(workspaceId);
         workspace.value = selected;
+        // PLAN-0555 R8: the connection list is workspace-scoped; without this
+        // the composer keeps showing the previous workspace's connections.
+        useConfigStore().invalidateProviderConnections();
         return selected;
     }
 

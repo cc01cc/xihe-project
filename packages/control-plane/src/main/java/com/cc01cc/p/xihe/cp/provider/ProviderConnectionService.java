@@ -177,8 +177,16 @@ public class ProviderConnectionService {
                 scope, ownerId, input.providerId(), connectionKey).isPresent()) {
             throw new KeyConflictException("A connection already exists for this provider, key and scope");
         }
+        String label = requireLabel(input.label());
+        // Validate data fields before the uniqueness pre-check so an invalid
+        // request still reports its field error rather than a conflict.
+        String modelDiscovery = requireModelDiscovery(
+                input.modelDiscovery() == null || input.modelDiscovery().isBlank()
+                ? pair.path("modelDiscovery").asText("remote-models")
+                : input.modelDiscovery());
+        requireUniqueLabel(scope, ownerId, input.providerId(), label, null);
         UUID linkedCredentialId = resolveCredentialLink(apiKey, credentialId, userId,
-                TenantContext.getWorkspaceId(), requireLabel(input.label()));
+                TenantContext.getWorkspaceId(), label);
 
         ProviderConnection connection = new ProviderConnection();
         connection.setId(UUID.randomUUID());
@@ -188,17 +196,14 @@ public class ProviderConnectionService {
         connection.setConnectionKey(connectionKey);
         connection.setApiTypeId(defaultType.apiTypeId());
         connection.setApiTypeVersion(defaultType.version());
-        connection.setLabel(requireLabel(input.label()));
+        connection.setLabel(label);
         connection.setBaseUrl(baseUrl);
         connection.setCredentialId(linkedCredentialId);
         connection.setEnabled(true);
         connection.setStatus(ProviderConnection.STATUS_VERIFYING);
-        connection.setModelDiscovery(requireModelDiscovery(
-                input.modelDiscovery() == null || input.modelDiscovery().isBlank()
-                ? pair.path("modelDiscovery").asText("remote-models")
-                : input.modelDiscovery()));
+        connection.setModelDiscovery(modelDiscovery);
         connection.setManualModels(serializeModels(input.manualModels()));
-        ProviderConnection saved = repository.save(connection);
+        ProviderConnection saved = repository.saveAndFlush(connection);
         audit(saved, "CREATED", null, saved.getStatus());
         return saved;
     }
@@ -213,7 +218,10 @@ public class ProviderConnectionService {
             throw new KeyImmutableException("Connection key cannot be changed");
         }
         if (input.label() != null) {
-            connection.setLabel(requireLabel(input.label()));
+            String label = requireLabel(input.label());
+            requireUniqueLabel(connection.getOwnerType(), connection.getOwnerId(),
+                    connection.getProviderId(), label, connection.getId());
+            connection.setLabel(label);
         }
         if (input.baseUrl() != null) {
             String baseUrl = normalizeBaseUrl(input.baseUrl(), catalog.supportedPair(
@@ -668,10 +676,38 @@ public class ProviderConnectionService {
     }
 
     private String requireLabel(String value) {
-        if (value == null || value.isBlank() || value.length() > 128) {
-            throw new IllegalArgumentException("Connection label is required");
+        String normalized = value == null ? "" : value.trim();
+        if (normalized.isEmpty()) {
+            throw new LabelInvalidException("Connection label is required");
         }
-        return value.trim();
+        if (normalized.length() > 128) {
+            throw new LabelInvalidException("Connection label must be at most 128 characters");
+        }
+        return normalized;
+    }
+
+    /**
+     * PLAN-0555: display names are unique per owner + provider, case-insensitively.
+     * The database index is the authority; this pre-check gives a stable 409 on the
+     * common path and keeps the error inside the request transaction.
+     */
+    private void requireUniqueLabel(String ownerType, String ownerId, String providerId,
+                                    String label, UUID excludeId) {
+        String normalized = normalizeLabelKey(label);
+        for (ProviderConnection existing : repository.findByOwnerTypeAndOwnerIdAndProviderId(
+                ownerType, ownerId, providerId)) {
+            if (excludeId != null && excludeId.equals(existing.getId())) {
+                continue;
+            }
+            if (normalizeLabelKey(existing.getLabel()).equals(normalized)) {
+                throw new LabelConflictException(
+                        "A connection with this label already exists for this provider and scope");
+            }
+        }
+    }
+
+    private static String normalizeLabelKey(String value) {
+        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
     }
 
     private String requireUserId() {
@@ -765,6 +801,16 @@ public class ProviderConnectionService {
 
     public static final class KeyInvalidException extends IllegalArgumentException {
         public KeyInvalidException(String message) { super(message); }
+    }
+
+    /** PLAN-0555: label validation failure (empty or too long). */
+    public static final class LabelInvalidException extends IllegalArgumentException {
+        public LabelInvalidException(String message) { super(message); }
+    }
+
+    /** PLAN-0555: duplicate display name inside one owner + provider. */
+    public static final class LabelConflictException extends IllegalStateException {
+        public LabelConflictException(String message) { super(message); }
     }
 
     public static final class KeyConflictException extends IllegalStateException {

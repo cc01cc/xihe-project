@@ -17,6 +17,12 @@ const i18n = createI18n({
         en: {
             chat: {
                 modelSelectorPlaceholder: "Select Model",
+                modelSegmentLabel: "Model",
+                providerSegmentLabel: "Provider",
+                connectionSegmentLabel: "Connection",
+                connectionLoading: "Loading connection…",
+                connectionUnavailable: "Connection is not visible or failed to load",
+                connectionNotRecorded: "No connection recorded",
                 noProvidersConfigured: "Configure a Provider first",
                 providersNoModels: "No models available",
                 searchModels: "Search models...",
@@ -111,6 +117,53 @@ function stubSessionResponse(record: { id: string; title?: string }) {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
     };
+}
+
+function connectionFixture(
+    id: string,
+    providerId: string,
+    label: string,
+    connectionKey: string,
+    scope: "USER" | "WORKSPACE" = "USER",
+    revision = 1,
+): connectionApi.ProviderConnectionListResponse["connections"][number] {
+    return {
+        id,
+        providerId,
+        connectionKey,
+        apiTypeId: "openai-chat-completions",
+        apiTypeVersion: 1,
+        operation: "chat",
+        label,
+        scope,
+        enabled: true,
+        status: "READY",
+        revision,
+        hasKey: true,
+        modelDiscovery: "manual",
+        manualModels: [],
+    };
+}
+
+function readyCacheForConnection(connectionId: string, providerId: string, model: string) {
+    return {
+        models: { [connectionId]: [model] },
+        providers: {
+            [connectionId]: {
+                providerId,
+                connectionId,
+                connectionRevision: 1,
+                status: "ready" as const,
+                models: [{ name: model, capabilities: { chat: true } }],
+            },
+        },
+    };
+}
+
+function mockConnections(connections: connectionApi.ProviderConnectionListResponse["connections"]) {
+    vi.spyOn(connectionApi, "listProviderConnections").mockImplementation(async () => ({
+        connections,
+    }));
 }
 
 async function createSessionInStore(id: string, title: string) {
@@ -231,8 +284,10 @@ describe("ModelPopover", () => {
         vi.spyOn(configStore, "fetchModels").mockResolvedValue(undefined);
 
         const wrapper = mountPopover();
+        await flushPromises();
         expect(wrapper.text()).toContain("gpt-4o");
         expect(wrapper.text()).toContain("OpenAI");
+        expect(wrapper.text()).toContain("default");
         wrapper.unmount();
     });
 
@@ -358,17 +413,21 @@ describe("ModelPopover", () => {
                 "connection-a": {
                     ...catalog,
                     connectionId: "connection-a",
-                    displayName: "Personal",
+                    displayName: "OpenAI",
                     connectionRevision: 1,
                 },
                 "connection-b": {
                     ...catalog,
                     connectionId: "connection-b",
-                    displayName: "Workspace",
+                    displayName: "OpenAI",
                     connectionRevision: 2,
                 },
             },
         };
+        mockConnections([
+            connectionFixture("connection-a", "openai", "Personal", "default"),
+            connectionFixture("connection-b", "openai", "Workspace", "openai-compat", "USER", 2),
+        ]);
         configStore.setSessionModel("mp-3", "openai", "vendor/model", "connection-a", 1);
         configStore.toggleFavorite("openai", "vendor/model");
         vi.spyOn(configStore, "fetchModels").mockResolvedValue(undefined);
@@ -380,7 +439,8 @@ describe("ModelPopover", () => {
             connectionRevision: 2,
         });
         const wrapper = mountPopover();
-        expect(wrapper.text()).toContain("vendor/model · OpenAI");
+        await flushPromises();
+        expect(wrapper.text()).toContain("vendor/model · OpenAI · Personal");
         await openContent(wrapper);
         expect(
             document.body.querySelectorAll('[data-model-key="connection-a/vendor/model"]'),
@@ -416,6 +476,90 @@ describe("ModelPopover", () => {
             connectionRevision: 2,
         });
         expect(configStore.modelFavorites).toEqual([{ provider: "openai", model: "vendor/model" }]);
+        wrapper.unmount();
+    });
+
+    it("uses the session connection when the local binding cache is gone", async () => {
+        await createSessionInStore("mp-session", "Session authority");
+        const configStore = useConfigStore(),
+            sessionStore = useSessionStore();
+        configStore.modelCache = readyModelCache({ openai: ["gpt-4o"] });
+        sessionStore.sessions = sessionStore.sessions.map((item) =>
+            item.id === "mp-session"
+                ? {
+                      ...item,
+                      modelProvider: "openai",
+                      modelName: "gpt-4o",
+                      providerConnectionId: "connection-session",
+                  }
+                : item,
+        );
+        mockConnections([
+            connectionFixture("connection-session", "openai", "Work account", "default"),
+        ]);
+        vi.spyOn(configStore, "fetchModels").mockResolvedValue(undefined);
+
+        const wrapper = mountPopover();
+        await flushPromises();
+        expect(wrapper.text()).toContain("gpt-4o · OpenAI · Work account");
+        wrapper.unmount();
+    });
+
+    it("falls back to connectionKey when a legacy label is blank", async () => {
+        await createSessionInStore("mp-blank", "Blank label");
+        const configStore = useConfigStore();
+        configStore.modelCache = readyCacheForConnection("connection-blank", "openai", "gpt-4o");
+        configStore.setSessionModel("mp-blank", "openai", "gpt-4o", "connection-blank", 1);
+        mockConnections([connectionFixture("connection-blank", "openai", "   ", "openai-compat")]);
+        vi.spyOn(configStore, "fetchModels").mockResolvedValue(undefined);
+
+        const wrapper = mountPopover();
+        await flushPromises();
+        expect(wrapper.text()).toContain("gpt-4o · OpenAI · openai-compat");
+        wrapper.unmount();
+    });
+
+    it("shows a loading segment instead of an em dash while connections load", async () => {
+        await createSessionInStore("mp-loading", "Loading");
+        const configStore = useConfigStore();
+        configStore.modelCache = readyCacheForConnection("connection-loading", "openai", "gpt-4o");
+        configStore.setSessionModel("mp-loading", "openai", "gpt-4o", "connection-loading", 1);
+        vi.spyOn(connectionApi, "listProviderConnections").mockImplementation(
+            () => new Promise(() => {}),
+        );
+        vi.spyOn(configStore, "fetchModels").mockResolvedValue(undefined);
+
+        const wrapper = mountPopover();
+        expect(wrapper.get('[data-testid="model-trigger-segment-connection"]').text()).toBe("…");
+        wrapper.unmount();
+    });
+
+    it("shows an em dash when no connection is recorded", async () => {
+        await createSessionInStore("mp-none", "No connection");
+        const configStore = useConfigStore();
+        configStore.modelCache = readyModelCache({ openai: ["gpt-4o"] });
+        configStore.setSessionModel("mp-none", "openai", "gpt-4o");
+        vi.spyOn(configStore, "fetchModels").mockResolvedValue(undefined);
+
+        const wrapper = mountPopover();
+        expect(wrapper.get('[data-testid="model-trigger-segment-connection"]').text()).toBe("—");
+        wrapper.unmount();
+    });
+
+    it("disambiguates a cross-scope duplicate label with the connection key", async () => {
+        await createSessionInStore("mp-dup", "Duplicate label");
+        const configStore = useConfigStore();
+        configStore.modelCache = readyCacheForConnection("connection-user", "openai", "gpt-4o");
+        configStore.setSessionModel("mp-dup", "openai", "gpt-4o", "connection-user", 1);
+        mockConnections([
+            connectionFixture("connection-user", "openai", "Shared", "default", "USER"),
+            connectionFixture("connection-ws", "openai", "Shared", "openai-compat", "WORKSPACE"),
+        ]);
+        vi.spyOn(configStore, "fetchModels").mockResolvedValue(undefined);
+
+        const wrapper = mountPopover();
+        await flushPromises();
+        expect(wrapper.text()).toContain("Shared · default");
         wrapper.unmount();
     });
 

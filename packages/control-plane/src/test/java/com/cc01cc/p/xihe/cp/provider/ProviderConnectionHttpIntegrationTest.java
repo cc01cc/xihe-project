@@ -184,8 +184,8 @@ class ProviderConnectionHttpIntegrationTest extends AbstractIntegrationTest {
     void concurrentDuplicateReachesPgConstraintAndGlobalAdvice() throws Exception {
         long before = repository.count();
         try (var executor = Executors.newFixedThreadPool(2)) {
-            var first = executor.submit(() -> send("POST", "", createBody("racing", "")));
-            var second = executor.submit(() -> send("POST", "", createBody("racing", "")));
+            var first = executor.submit(() -> send("POST", "", createBody("racing", "", "Racing A")));
+            var second = executor.submit(() -> send("POST", "", createBody("racing", "", "Racing B")));
             var responses = List.of(first.get(30, TimeUnit.SECONDS), second.get(30, TimeUnit.SECONDS));
             assertEquals(List.of(201, 409), responses.stream().map(HttpResponse::statusCode).sorted().toList());
             assertProblem(responses.stream().filter(r -> r.statusCode() == 409).findFirst().orElseThrow(),
@@ -228,6 +228,70 @@ class ProviderConnectionHttpIntegrationTest extends AbstractIntegrationTest {
         assertEquals("22001", ((java.sql.SQLException) failure.getMostSpecificCause()).getSQLState());
     }
 
+    @Test
+    void duplicateLabelReturns409WithFieldAndNoMutation() throws Exception {
+        long before = repository.count();
+        assertEquals(201, send("POST", "", createBody("first", "", "Shared name")).statusCode());
+
+        var conflict = send("POST", "", createBody("second", "", " shared NAME "));
+
+        assertProblem(conflict, 409, "PROVIDER_CONNECTION_LABEL_CONFLICT");
+        assertEquals("label", mapper.readTree(conflict.body()).path("field").asText());
+        assertEquals(before + 1, repository.count());
+    }
+
+    @Test
+    void blankAndOverlongLabelsAreRejected() throws Exception {
+        var created = send("POST", "", createBody("primary", ""));
+        assertEquals(201, created.statusCode());
+        String path = "/" + mapper.readTree(created.body()).path("id").asText();
+
+        assertProblem(send("PATCH", path, "{\"label\":\"   \"}"),
+                400, "PROVIDER_CONNECTION_INVALID");
+        assertProblem(send("PATCH", path, "{\"label\":\"" + "x".repeat(129) + "\"}"),
+                400, "PROVIDER_CONNECTION_INVALID");
+        assertEquals("HTTP connection",
+                repository.findById(UUID.fromString(mapper.readTree(created.body()).path("id").asText()))
+                        .orElseThrow().getLabel());
+    }
+
+    @Test
+    void labelUniqueIndexIsMappedToConflictNotServerError() throws Exception {
+        String ownerId = "label-index-owner-" + UUID.randomUUID();
+        com.cc01cc.p.xihe.cp.entity.ProviderConnection first = scopedConnection(ownerId, "idx-a", "Indexed");
+        repository.saveAndFlush(first);
+        com.cc01cc.p.xihe.cp.entity.ProviderConnection duplicate =
+                scopedConnection(ownerId, "idx-b", " indexed ");
+
+        DataIntegrityViolationException failure = assertThrows(DataIntegrityViolationException.class,
+                () -> repository.saveAndFlush(duplicate));
+        assertTrue(hasConstraint(failure, "uq_provider_connections_owner_provider_label"));
+
+        var request = org.mockito.Mockito.mock(jakarta.servlet.http.HttpServletRequest.class);
+        var response = advice.integrityViolation(failure, request);
+        assertEquals(409, response.getStatusCode().value());
+        assertEquals("PROVIDER_CONNECTION_LABEL_CONFLICT", response.getBody().get("code"));
+        assertEquals("label", response.getBody().get("field"));
+    }
+
+    private com.cc01cc.p.xihe.cp.entity.ProviderConnection scopedConnection(
+            String ownerId, String key, String label) {
+        var connection = new com.cc01cc.p.xihe.cp.entity.ProviderConnection();
+        connection.setId(UUID.randomUUID());
+        connection.setOwnerType("USER");
+        connection.setOwnerId(ownerId);
+        connection.setProviderId("custom-openai-compatible");
+        connection.setConnectionKey(key);
+        connection.setApiTypeId("openai-chat-completions");
+        connection.setApiTypeVersion(1);
+        connection.setLabel(label);
+        connection.setBaseUrl("https://provider.invalid/v1");
+        connection.setModelDiscovery("manual");
+        connection.setEnabled(true);
+        connection.setStatus(com.cc01cc.p.xihe.cp.entity.ProviderConnection.STATUS_UNVERIFIED);
+        return connection;
+    }
+
     private boolean hasConstraint(Throwable failure, String name) {
         for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
             if (cause instanceof org.hibernate.exception.ConstraintViolationException constraint
@@ -254,10 +318,14 @@ class ProviderConnectionHttpIntegrationTest extends AbstractIntegrationTest {
     }
 
     private String createBody(String key, String extra) {
+        return createBody(key, extra, "HTTP connection");
+    }
+
+    private String createBody(String key, String extra, String label) {
         return """
-                {"providerId":"custom-openai-compatible","label":"HTTP connection",
+                {"providerId":"custom-openai-compatible","label":"%s",
                  "scope":"USER","apiKey":"isolated-test-only","baseUrl":"https://provider.invalid/v1",
                  "modelDiscovery":"manual","manualModels":["manual-model"],"connectionKey":"%s"%s}
-                """.formatted(key, extra);
+                """.formatted(label, key, extra);
     }
 }

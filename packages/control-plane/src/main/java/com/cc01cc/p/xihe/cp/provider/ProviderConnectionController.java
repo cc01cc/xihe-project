@@ -59,6 +59,16 @@ public class ProviderConnectionController {
             logger.warn("Provider connection create rejected errorCode={}", e.getMessage());
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.CONFLICT, "PROVIDER_CONNECTION_KEY_CONFLICT", e.getMessage());
+        } catch (ProviderConnectionService.LabelConflictException e) {
+            logger.warn("Provider connection create rejected errorCode={}", e.getMessage());
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.CONFLICT, "PROVIDER_CONNECTION_LABEL_CONFLICT", e.getMessage(),
+                    Map.of("field", "label"));
+        } catch (ProviderConnectionService.LabelInvalidException e) {
+            logger.warn("Provider connection create rejected errorCode={}", e.getMessage());
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "PROVIDER_CONNECTION_INVALID", e.getMessage(),
+                    Map.of("field", "label"));
         } catch (IllegalArgumentException e) {
             if (e instanceof com.cc01cc.p.xihe.cp.config.CpApiException domainFailure) {
                 throw domainFailure;
@@ -94,6 +104,18 @@ public class ProviderConnectionController {
                     connectionId, e.getMessage());
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.CONFLICT, "PROVIDER_CONNECTION_KEY_IMMUTABLE", e.getMessage());
+        } catch (ProviderConnectionService.LabelConflictException e) {
+            logger.warn("Provider connection update rejected connectionId={} errorCode={}",
+                    connectionId, e.getMessage());
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.CONFLICT, "PROVIDER_CONNECTION_LABEL_CONFLICT", e.getMessage(),
+                    Map.of("field", "label"));
+        } catch (ProviderConnectionService.LabelInvalidException e) {
+            logger.warn("Provider connection update rejected connectionId={} errorCode={}",
+                    connectionId, e.getMessage());
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "PROVIDER_CONNECTION_INVALID", e.getMessage(),
+                    Map.of("field", "label"));
         } catch (IllegalArgumentException e) {
             if (e instanceof com.cc01cc.p.xihe.cp.config.CpApiException domainFailure) {
                 throw domainFailure;

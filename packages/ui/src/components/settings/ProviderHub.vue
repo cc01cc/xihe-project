@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { logger } from "../../lib/logger";
-import { request } from "../../composables/api";
+import { ApiError, request } from "../../composables/api";
 import type { ProviderCatalog, CatalogModel, ModelPricing } from "../../types/provider";
 import { parseLlmProfileValue } from "../../services/llmProviderProfile";
 import { Search } from "@lucide/vue";
@@ -733,6 +733,22 @@ async function save() {
     const pair = formType.value;
     if (!pair) return;
     const existing = editingConnection.value;
+    const label = form.label.trim();
+    if (!label) {
+        toast.error(t("settings.providerHub.toastLabelRequired"));
+        return;
+    }
+    if (label.length > 128) {
+        toast.error(t("settings.providerHub.toastLabelTooLong"));
+        return;
+    }
+    const duplicateLabel = connections.value.some(
+        (item) =>
+            item.id !== existing?.id &&
+            item.providerId === provider.id &&
+            item.scope === formScope.value &&
+            item.label.trim().toLowerCase() === label.toLowerCase(),
+    );
     const changedType =
         existing &&
         (existing.apiTypeId !== pair.apiTypeId || existing.apiTypeVersion !== pair.version);
@@ -757,12 +773,15 @@ async function save() {
         toast.error(t("settings.providerHub.toastKeyInvalid"));
         return;
     }
+    // PLAN-0555: warn early but let the server's unique index decide; the 409
+    // below is the authoritative answer (another writer may race).
+    if (duplicateLabel) toast.warning(t("settings.providerHub.toastLabelDuplicate"));
 
     saving.value = true;
     try {
         const input: ProviderConnectionInput = {
             providerId: provider.id,
-            label: form.label.trim(),
+            label,
             scope: formScope.value,
             connectionKey,
             apiTypeId: pair.apiTypeId,
@@ -806,9 +825,16 @@ async function save() {
         closeForm();
     } catch (cause: unknown) {
         logger.warn("Provider Hub save failed", cause);
-        toast.error(
-            cause instanceof Error ? cause.message : t("settings.providerHub.toastSaveFailed"),
-        );
+        const problem = cause instanceof ApiError ? cause.problem : undefined;
+        if (problem?.code === "PROVIDER_CONNECTION_LABEL_CONFLICT") {
+            toast.error(t("settings.providerHub.toastLabelConflict"));
+        } else if (problem?.code === "PROVIDER_CONNECTION_INVALID" && problem.field === "label") {
+            toast.error(t("settings.providerHub.toastLabelInvalid"));
+        } else {
+            toast.error(
+                cause instanceof Error ? cause.message : t("settings.providerHub.toastSaveFailed"),
+            );
+        }
     } finally {
         saving.value = false;
     }
@@ -962,7 +988,9 @@ onMounted(() => {
                 data-testid="provider-needs-key-banner"
                 class="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
             >
-                {{ t("settings.providerHub.needsKeyBanner", { count: needsKeyConnections.length }) }}
+                {{
+                    t("settings.providerHub.needsKeyBanner", { count: needsKeyConnections.length })
+                }}
             </div>
 
             <section
@@ -1947,6 +1975,7 @@ onMounted(() => {
                         }}</span>
                         <input
                             v-model="form.label"
+                            data-testid="provider-connection-form-label"
                             class="w-full rounded-md border bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30"
                             required
                             maxlength="128"

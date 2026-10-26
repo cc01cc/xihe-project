@@ -182,6 +182,8 @@ curl -X POST "http://localhost:12631/api/v1/config/import?layer=instance" \
 
 **XH CLI 与 Provider Connection**：`provider add/update/list/verify` 经 CP 认证 API 管理连接，密钥由 CP 写入凭据域并只把 `credential_id` 存到连接（PLAN-0553）。`dev init` 需要显式 provider/scope；无连接时创建，有连接时复用并 verify，不自动换 key。通过 `--api-key-env <NAME>` 指定当前进程环境变量，或在交互终端输入无回显密钥；CLI 不自行读取 `.env.local`，非交互任务必须由调用方安全注入变量。禁止把 key 值放在命令参数或 JSONC 中。
 
+**连接显示名（`label`，PLAN-0555）**：`label` 是显示名而非身份；写入口先 `trim`，要求 1-128 字符，并在 `(owner_type, owner_id, provider_id)` 内大小写不敏感唯一（V79 函数索引）。重名返回 409 `PROVIDER_CONNECTION_LABEL_CONFLICT`（`field=label`）；CLI 对该码给出可读提示，不再误报 `OPERATION_OUTCOME_UNKNOWN`。UI 的 composer 三段标签按「服务端会话 → 本地 binding → llm-provider profile」解析连接段，`label` 缺失时回退 `connectionKey`。
+
 ```bash
 mise run xihe -- provider add xiaomi --scope USER --label xh-local --api-key-env XIHE_XIAOMI_API_KEY
 mise run xihe -- provider update <connection-id> --api-key-env XIHE_XIAOMI_API_KEY

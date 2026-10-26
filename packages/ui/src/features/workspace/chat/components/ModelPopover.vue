@@ -26,6 +26,8 @@ import { logger } from "../../../../lib/logger";
 import { toast } from "vue-sonner";
 import { getProviderInfo } from "../../../../types/provider";
 import type { ProviderConnection } from "../../../../types/providerConnection";
+import { parseLlmProfileValue } from "../../../../services/llmProviderProfile";
+import { resolveModelDisplay } from "../modelDisplay";
 import {
     listVisibleTemplates,
     templateKey,
@@ -65,6 +67,31 @@ const currentBinding = computed(() => {
     return configStore.getEffectiveModel(sessionId);
 });
 
+const currentSession = computed(() => {
+    const sessionId = sessionStore.currentSessionId;
+    if (!sessionId) return undefined;
+    return sessionStore.sessions.find((item) => item.id === sessionId);
+});
+
+const profileDefault = computed(() =>
+    parseLlmProfileValue(configStore.mergedConfig["llm-provider"]?.profile),
+);
+
+// PLAN-0555: the server Session is authoritative for a bound run, so the label
+// resolves Session -> local binding -> profile without changing dispatch.
+const modelDisplay = computed(() =>
+    resolveModelDisplay({
+        session: currentSession.value,
+        binding: currentBinding.value,
+        profile: profileDefault.value,
+        catalogs: configStore.modelCache.providers,
+        connections: connections.value,
+        connectionsLoaded: configStore.providerConnectionsLoaded,
+        connectionsError: configStore.providerConnectionsError,
+        fallbackProviderName: (providerId) => getProviderInfo(providerId)?.name,
+    }),
+);
+
 const currentValue = computed(() => {
     const binding = currentBinding.value;
     // Scoped bindings key options by connectionId; legacy provider-keyed
@@ -73,11 +100,17 @@ const currentValue = computed(() => {
 });
 
 const triggerLabel = computed(() => {
-    const binding = currentBinding.value;
-    if (!binding) return t("chat.modelSelectorPlaceholder");
-    const info = getProviderInfo(binding.provider),
-        providerName = info?.name ?? binding.provider;
-    return `${binding.model} · ${providerName}`;
+    const display = modelDisplay.value;
+    if (!display.hasBinding) return t("chat.modelSelectorPlaceholder");
+    return `${display.model} · ${display.providerName} · ${display.connectionDisplay}`;
+});
+
+const connectionTooltip = computed(() => {
+    const display = modelDisplay.value;
+    if (display.state === "loading") return t("chat.connectionLoading");
+    if (display.state === "unavailable") return t("chat.connectionUnavailable");
+    if (display.state === "not-recorded") return t("chat.connectionNotRecorded");
+    return display.connectionDisplay;
 });
 
 const hasProviders = computed(() => {
@@ -124,14 +157,20 @@ const providerGroups = computed(() => {
             const filtered = q
                 ? modelIds.filter((model) => matchModel(provider, model, q))
                 : modelIds;
+            const connection = connections.value.find((item) => item.id === catalogKey),
+                providerName = catalog.displayName ?? info?.name ?? provider,
+                // PLAN-0555: the group header follows the trigger's label-first rule;
+                // the connection key stays visible as a chip for disambiguation.
+                connectionLabel = (connection?.label ?? "").trim(),
+                connectionDisplay =
+                    connectionLabel || connection?.connectionKey || catalogKey || null;
             return {
                 provider,
                 catalogKey,
-                name:
-                    (catalog.displayName ?? info?.name ?? provider) +
-                    " · " +
-                    (connections.value.find((item) => item.id === catalogKey)?.connectionKey ??
-                        catalogKey),
+                providerName,
+                connectionDisplay,
+                connectionKey: connection?.connectionKey ?? null,
+                name: [providerName, connectionDisplay].filter(Boolean).join(" · "),
                 connectionId: catalogKey,
                 connectionRevision: catalog.connectionRevision,
                 models: filtered,
@@ -149,7 +188,12 @@ const filteredFavorites = computed(() => {
                 (group) =>
                     group.provider === favorite.provider && group.models.includes(favorite.model),
             )
-            .map((group) => ({ ...favorite, connectionId: group.connectionId })),
+            .map((group) => ({
+                ...favorite,
+                connectionId: group.connectionId,
+                providerName: group.providerName,
+                connectionDisplay: group.connectionDisplay,
+            })),
     );
 });
 
@@ -329,8 +373,17 @@ onMounted(() => {
         <div class="w-full max-w-md space-y-4 rounded-lg border bg-background p-5 shadow-xl">
             <p class="text-sm">{{ t("settings.apiRequest.switchConfirm") }}</p>
             <p class="text-xs text-muted-foreground">
-                {{ pendingSwitch.connection.connectionKey }} · {{ pendingSwitch.model }} ·
-                {{ pendingSwitch.connection.apiTypeId }}@{{
+                {{ pendingSwitch.model }} ·
+                {{
+                    configStore.modelCache.providers?.[pendingSwitch.connection.id]?.displayName ??
+                    getProviderInfo(pendingSwitch.provider)?.name ??
+                    pendingSwitch.provider
+                }}
+                ·
+                {{
+                    pendingSwitch.connection.label.trim() || pendingSwitch.connection.connectionKey
+                }}
+                · {{ pendingSwitch.connection.apiTypeId }}@{{
                     pendingSwitch.connection.apiTypeVersion
                 }}
             </p>
@@ -372,16 +425,43 @@ onMounted(() => {
         :model-value="currentValue"
         v-model:open="open"
         ignore-filter
-        class="relative inline-block"
+        class="relative inline-block min-w-0 max-w-full"
     >
         <ComboboxAnchor as-child>
             <ComboboxTrigger as-child>
                 <button
                     data-testid="model-popover-trigger"
-                    class="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-dashed bg-muted/30 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors max-w-[240px] truncate"
+                    class="inline-flex min-w-0 max-w-full items-center gap-1 rounded-md border border-dashed bg-muted/30 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground sm:max-w-[420px]"
+                    :aria-label="triggerLabel"
                 >
                     <Cpu class="size-3 shrink-0" aria-hidden="true" />
-                    <span class="truncate">{{ triggerLabel }}</span>
+                    <template v-if="modelDisplay.hasBinding">
+                        <span
+                            data-testid="model-trigger-segment-model"
+                            class="model-seg relative min-w-[44px] max-w-[160px] flex-[1.4]"
+                            :data-tooltip="modelDisplay.model ?? ''"
+                        >
+                            <span class="block truncate">{{ modelDisplay.model }}</span>
+                        </span>
+                        <span class="shrink-0 opacity-60" aria-hidden="true"> · </span>
+                        <span
+                            data-testid="model-trigger-segment-provider"
+                            class="model-seg relative min-w-[34px] max-w-[80px] flex-[0.8]"
+                            :data-tooltip="modelDisplay.providerName ?? ''"
+                        >
+                            <span class="block truncate">{{ modelDisplay.providerName }}</span>
+                        </span>
+                        <span class="shrink-0 opacity-60" aria-hidden="true"> · </span>
+                        <span
+                            data-testid="model-trigger-segment-connection"
+                            class="model-seg model-seg-end relative min-w-[44px] max-w-[128px] flex-[1.2]"
+                            :data-tooltip="connectionTooltip"
+                        >
+                            <span class="block truncate">{{ modelDisplay.connectionDisplay }}</span>
+                        </span>
+                    </template>
+
+                    <span v-else class="truncate">{{ triggerLabel }}</span>
                     <ChevronUp class="size-3 shrink-0 opacity-50" aria-hidden="true" />
                 </button>
             </ComboboxTrigger>
@@ -459,15 +539,17 @@ onMounted(() => {
                                 v-for="fav in filteredFavorites"
                                 :key="`fav-${fav.connectionId}-${fav.model}`"
                                 :value="`${fav.connectionId}/${fav.model}`"
-                                :text-value="`${fav.model} ${getProviderInfo(fav.provider)?.name ?? fav.provider}`"
+                                :text-value="`${fav.model} ${fav.providerName} ${fav.connectionDisplay ?? ''}`"
                                 :data-testid="`model-item-${fav.provider}/${fav.model}`"
                                 :data-model-key="`${fav.connectionId}/${fav.model}`"
                                 class="w-full flex items-center justify-between px-2 py-1 text-xs rounded hover:bg-accent data-[highlighted]:bg-accent data-[state=checked]:bg-accent outline-none cursor-pointer"
                                 @select="handleSelect"
                             >
                                 <span class="truncate"
-                                    >{{ fav.model }} ·
-                                    {{ getProviderInfo(fav.provider)?.name ?? fav.provider }}</span
+                                    >{{ fav.model }} · {{ fav.providerName
+                                    }}<template v-if="fav.connectionDisplay">
+                                        · {{ fav.connectionDisplay }}</template
+                                    ></span
                                 >
                                 <button
                                     class="size-5 flex items-center justify-center shrink-0 rounded hover:bg-background"
@@ -516,7 +598,12 @@ onMounted(() => {
                                                     class="size-3"
                                                     aria-hidden="true"
                                                 />
-                                                <span>{{ group.name }}</span>
+                                                <span class="truncate">{{ group.name }}</span>
+                                                <code
+                                                    v-if="group.connectionKey"
+                                                    class="shrink-0 rounded bg-muted px-1 py-0.5 text-[10px] font-normal opacity-80"
+                                                    >{{ group.connectionKey }}</code
+                                                >
                                                 <span class="text-[10px] opacity-60 ml-auto">{{
                                                     group.models.length
                                                 }}</span>
@@ -578,3 +665,40 @@ onMounted(() => {
         </ComboboxPortal>
     </ComboboxRoot>
 </template>
+
+<style scoped>
+.model-seg::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 0;
+    z-index: 50;
+    display: none;
+    width: max-content;
+    max-width: 280px;
+    border-radius: 6px;
+    background: var(--foreground);
+    color: var(--background);
+    padding: 4px 8px;
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+    box-shadow: 0 10px 30px rgb(0 0 0 / 0.12);
+    pointer-events: none;
+}
+.model-seg-end::after {
+    left: auto;
+    right: 0;
+}
+.model-seg:hover::after,
+.model-seg:focus-within::after {
+    display: block;
+}
+/* Touch devices have no hover; the expanded picker carries the full text. */
+@media (hover: none) {
+    .model-seg::after {
+        display: none !important;
+    }
+}
+</style>
