@@ -58,6 +58,7 @@ L1 与 L2–L5 是两套独立机制；L6/L7 是外部边界，不属平台认�
 - **不落日志**：任何 token 不得进入普通日志、审计 payload 或文档示例。
 - **MCP 入口无会话**：`/api/v1/mcp` 接受 `USER`/`ADMIN`/`INTERNAL_SERVICE`；携带 `mcp-session-id` 一律 403 `MCP_SESSION_INVALID`。
 - **Runtime 边界分离**：L4/L5 的 `Authorization` 是 CP↔Runtime 服务认证；L6 的 `mcp-session-id` 是 Runtime 与上游 MCP server 的会话，同名不同义。
+- **登录限流（PLAN-0558）**：`POST /api/v1/auth/login` 按账号 + 客户端 IP 双维度失败计数，达到阈值返回 429 `AUTH_RATE_LIMITED` + `Retry-After`；未知账号同形并执行 dummy BCrypt；`X-Forwarded-For` 默认忽略，仅 `cp.auth.login.trusted-proxies` 命中的来源才解析；本地模式与 `/refresh` 豁免，`/register` 按 IP 限流且默认豁免回环。
 
 ## 5. 排障入口
 

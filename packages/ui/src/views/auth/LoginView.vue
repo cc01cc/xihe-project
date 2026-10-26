@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useAuthStore } from "../../stores/auth";
 import { useConfigStore } from "../../stores/config";
@@ -15,22 +15,41 @@ const { t } = useI18n(),
 const email = ref(""),
     password = ref(""),
     errorMsg = ref<string | null>(null),
-    loading = ref(false);
+    phase = ref<"idle" | "submitting" | "entering">("idle"),
+    busy = computed(() => phase.value !== "idle");
+
+function rateLimitMessage(): string | null {
+    if (auth.lastError?.code !== "AUTH_RATE_LIMITED") return null;
+    const seconds = auth.lastError.retryAfterSeconds;
+    return seconds ? t("login.rateLimitedSeconds", { seconds }) : t("login.rateLimited");
+}
 
 async function handleSubmit() {
-    if (!email.value || !password.value) return;
-    loading.value = true;
+    if (phase.value !== "idle" || !email.value || !password.value) return;
+    phase.value = "submitting";
     errorMsg.value = null;
     const ok = await auth.login(email.value, password.value);
-    loading.value = false;
-    if (ok) {
-        config.loadAllDomains().catch(() => {
-            // 后端不可用时使用本地持久化配置；错误已在 store 中记录
-        });
-        const redirect = (route.query.redirect as string) || "/workspace";
-        router.push(redirect);
-    } else {
-        errorMsg.value = auth.error;
+    if (!ok) {
+        errorMsg.value = rateLimitMessage() ?? auth.error;
+        phase.value = "idle";
+        return;
+    }
+    // Keep the form locked through the route transition: the old code cleared
+    // `loading` before the un-awaited push, which reopened the submit window.
+    phase.value = "entering";
+    config.loadAllDomains().catch(() => {
+        // 后端不可用时使用本地持久化配置；错误已在 store 中记录
+    });
+    const redirect = (route.query.redirect as string) || "/workspace";
+    try {
+        const failure = await router.push(redirect);
+        if (failure) {
+            phase.value = "idle";
+            errorMsg.value = t("login.navigationFailed");
+        }
+    } catch {
+        phase.value = "idle";
+        errorMsg.value = t("login.navigationFailed");
     }
 }
 </script>
@@ -44,7 +63,7 @@ async function handleSubmit() {
                 <p class="text-sm text-muted-foreground mt-1">{{ t("login.hint") }}</p>
             </div>
 
-            <form class="space-y-4" @submit.prevent="handleSubmit">
+            <form class="space-y-4" :aria-busy="busy" @submit.prevent="handleSubmit">
                 <div>
                     <label class="block text-sm font-medium mb-1" for="email">{{
                         t("login.username")
@@ -55,7 +74,8 @@ async function handleSubmit() {
                         type="text"
                         name="email"
                         autocomplete="email"
-                        class="w-full px-3 py-2 rounded-md border bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+                        :disabled="busy"
+                        class="w-full px-3 py-2 rounded-md border bg-background focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-60"
                     />
                 </div>
                 <div>
@@ -68,20 +88,27 @@ async function handleSubmit() {
                         type="password"
                         name="password"
                         autocomplete="current-password"
-                        class="w-full px-3 py-2 rounded-md border bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+                        :disabled="busy"
+                        class="w-full px-3 py-2 rounded-md border bg-background focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-60"
                     />
                 </div>
                 <button
                     type="submit"
                     class="w-full py-2 px-4 rounded-md font-medium text-primary-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     :class="
-                        email && password && !loading
+                        email && password && !busy
                             ? 'bg-primary hover:bg-primary/90'
                             : 'bg-muted-foreground/30 text-muted-foreground'
                     "
-                    :disabled="!email || !password || loading"
+                    :disabled="!email || !password || busy"
                 >
-                    {{ loading ? t("login.loggingIn") : t("login.login") }}
+                    {{
+                        phase === "submitting"
+                            ? t("login.loggingIn")
+                            : phase === "entering"
+                              ? t("login.entering")
+                              : t("login.login")
+                    }}
                 </button>
 
                 <p v-if="errorMsg" class="text-sm text-destructive text-center">{{ errorMsg }}</p>

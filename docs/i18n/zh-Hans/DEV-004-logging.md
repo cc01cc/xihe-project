@@ -191,6 +191,7 @@ CP 的 `AuditLogger` 记录所有 MCP 工具调用和策略决策：
 - 控制台输出通过 `XIHE_CP_AUDIT_LOG_TO_CONSOLE` 控制
 - **持久化**：通过 logback `AUDIT` logger 写入 `{XIHE_LOG_DIR}/audit.log`（日轮转，30d / 1GB / 100MB，JSONL，经脱敏 encoder），重启后可复盘
 - 内存 `recentRecords` 仅保留最近 1000 条作为查询视图
+- PLAN-0558 认证审计：`login_failed` 写 AUDIT JSONL；`login_locked`/`login_unlocked` 另写 durable `audit_logs`。字段仅掩码邮箱、IP、reason 与 requestId，不含密码、哈希或 token。
 
 ## 6. 日志安全（脱敏 / 关联 ID / 泄露扫描）
 

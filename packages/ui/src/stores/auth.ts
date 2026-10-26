@@ -45,7 +45,8 @@ export const useAuthStore = defineStore("auth", () => {
         user = ref<User | null>(readUser()),
         workspace = ref<ApiWorkspace | null>(readWorkspace()),
         loading = ref(false),
-        error = ref<string | null>(null);
+        error = ref<string | null>(null),
+        lastError = ref<{ code: string; retryAfterSeconds?: number } | null>(null);
 
     const isAuthenticated = computed(() => !!token.value),
         userName = computed(() => user.value?.name ?? user.value?.email ?? "User"),
@@ -80,6 +81,7 @@ export const useAuthStore = defineStore("auth", () => {
     async function login(email: string, password: string) {
         loading.value = true;
         error.value = null;
+        lastError.value = null;
         try {
             const res = await api.login(email, password);
             const ws =
@@ -92,6 +94,7 @@ export const useAuthStore = defineStore("auth", () => {
             const msg = e instanceof Error ? e.message : "Login failed";
             logger.error("Login failed: " + msg);
             error.value = msg;
+            lastError.value = errorDetails(e);
             return false;
         } finally {
             loading.value = false;
@@ -101,6 +104,7 @@ export const useAuthStore = defineStore("auth", () => {
     async function register(email: string, password: string, name: string) {
         loading.value = true;
         error.value = null;
+        lastError.value = null;
         try {
             const res = await api.register(email, password, name);
             const ws =
@@ -113,16 +117,31 @@ export const useAuthStore = defineStore("auth", () => {
             const msg = e instanceof Error ? e.message : "Registration failed";
             logger.error("Registration failed: " + msg);
             error.value = msg;
+            lastError.value = errorDetails(e);
             return false;
         } finally {
             loading.value = false;
         }
     }
 
+    /** PLAN-0558: keep the stable Problem code and Retry-After for localized UI copy. */
+    function errorDetails(
+        errorValue: unknown,
+    ): { code: string; retryAfterSeconds?: number } | null {
+        const problem = (errorValue as { problem?: { code?: string } } | null)?.problem;
+        if (!problem?.code) return null;
+        return {
+            code: problem.code,
+            retryAfterSeconds: (errorValue as { retryAfterSeconds?: number } | null)
+                ?.retryAfterSeconds,
+        };
+    }
+
     /** PLAN-0526: passwordless re-entry for the single local user (loopback-only gate on CP). */
     async function localLogin(): Promise<boolean> {
         loading.value = true;
         error.value = null;
+        lastError.value = null;
         try {
             const res = await api.localLogin();
             const ws =
@@ -186,6 +205,7 @@ export const useAuthStore = defineStore("auth", () => {
         user.value = null;
         workspace.value = null;
         error.value = null;
+        lastError.value = null;
         localStorage.removeItem("xihe-token");
         localStorage.removeItem("xihe-refresh-token");
         localStorage.removeItem("xihe-user");
@@ -244,6 +264,7 @@ export const useAuthStore = defineStore("auth", () => {
         workspace,
         loading,
         error,
+        lastError,
         isAuthenticated,
         userName,
         isAdmin,

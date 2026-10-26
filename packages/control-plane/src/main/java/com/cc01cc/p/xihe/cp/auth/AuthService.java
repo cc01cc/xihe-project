@@ -31,6 +31,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
     private final GrantDefaultService grantDefaultService;
+    private final String dummyPasswordHash;
 
     public AuthService(UserRepository userRepository, PasswordEncoder passwordEncoder,
                        JwtTokenProvider jwtTokenProvider, GrantDefaultService grantDefaultService) {
@@ -38,6 +39,9 @@ public class AuthService {
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenProvider = jwtTokenProvider;
         this.grantDefaultService = grantDefaultService;
+        // PLAN-0558: unknown accounts must cost one BCrypt verification too, so
+        // response timing cannot distinguish "no such user" from a wrong password.
+        this.dummyPasswordHash = passwordEncoder.encode(UUID.randomUUID().toString());
     }
 
     /** Creates the user row and its default grants; returns the persisted user. */
@@ -66,20 +70,29 @@ public class AuthService {
         user = userRepository.save(user);
         grantDefaultService.ensureUserDefault(user);
 
-        logger.info("User registered: id={} email={} role={}", user.getId(), user.getEmail(), user.getRole());
+        logger.info("User registered: id={} email={} role={}", user.getId(),
+                AuthLog.maskEmail(user.getEmail()), user.getRole());
         return user;
     }
 
-    /** Verifies credentials; returns the authenticated user without side effects. */
+    /**
+     * Verifies credentials; returns the authenticated user without side effects.
+     * PLAN-0558: unknown accounts still perform one BCrypt match (dummy hash),
+     * and the failure type is credential-only so callers can count it for lockout
+     * without catching workspace/token failures by mistake.
+     */
     public User authenticate(LoginRequest request) {
-        User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new IllegalArgumentException("Invalid email or password"));
-
-        if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
-            throw new IllegalArgumentException("Invalid email or password");
+        User user = userRepository.findByEmail(request.getEmail()).orElse(null);
+        if (user == null) {
+            passwordEncoder.matches(request.getPassword(), dummyPasswordHash);
+            throw new InvalidCredentialsException("Invalid email or password");
         }
 
-        logger.info("User logged in: id={} email={}", user.getId(), user.getEmail());
+        if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
+            throw new InvalidCredentialsException("Invalid email or password");
+        }
+
+        logger.info("User logged in: id={} email={}", user.getId(), AuthLog.maskEmail(user.getEmail()));
         return user;
     }
 
@@ -146,7 +159,8 @@ public class AuthService {
     public void resetPassword(User user, String rawPassword) {
         user.setPasswordHash(passwordEncoder.encode(rawPassword));
         userRepository.save(user);
-        logger.info("Local-mode password reset: id={} email={}", user.getId(), user.getEmail());
+        logger.info("Local-mode password reset: id={} email={}", user.getId(),
+                AuthLog.maskEmail(user.getEmail()));
     }
 
     /**

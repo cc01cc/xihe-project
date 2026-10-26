@@ -34,3 +34,16 @@ DEV-032 提出 `human/agent/service/system` 四类 principal，以及独立的 A
 - 本地模式 **MUST NOT** 改变既有 JWT/授权模型（仍走 `/api/v1/**` 的 `hasAnyRole` 与 grants）；`users.password_hash` 保持 `NOT NULL`，自动密码为真实存储值。
 - `bootstrap-status` **MUST** 恒定 200 且只暴露 `initialized`/`localMode` 两个布尔，不参与 I1 门禁。
 - 开启 `XIHE_LOCAL_MODE` 时 CP **MUST** 绑定回环地址，且 `XIHE_ENV=prod` 下 **MUST** 拒绝启动。
+
+## 5 登录暴力破解防护（PLAN-0558）
+
+- `POST /api/v1/auth/login` **MUST** 在凭证校验前按「规范化账号（trim + lowercase）」与「解析后的客户端 IP」双维度做失败计数；达到阈值 **MUST** 返回 429 `AUTH_RATE_LIMITED` 与整数 `Retry-After`，并 **MUST NOT** 执行密码哈希。
+- 未知账号 **MUST** 与存在账号使用同一计数、同一 429/401 形态和同一 detail；未知账号 **MUST** 执行一次 dummy BCrypt，避免时序枚举。
+- 默认阈值：账号 5 次失败 / 900 秒窗口 / 900 秒锁定；IP 20 次 / 900 秒 / 900 秒；全局 BCrypt 并发默认 4。全部由 `cp.auth.login.*` 部署 env 覆盖；0 表示关闭对应维度。
+- 计数状态 **MUST** 为 CP 进程内有界表；表满 **MUST NOT** 淘汰锁定或失败中的记录。v1 为单实例语义：多 CP 实例各自计数，重启清空计数与锁定。
+- `X-Forwarded-For` **MUST** 默认忽略；仅当 socket `remoteAddr` 命中 `cp.auth.login.trusted-proxies`（IP/CIDR）时，按右向左取第一个非可信 IP；IPv6 默认按 /64 聚合。反代 **MUST** 覆盖而非追加客户端提供的 XFF。
+- 锁定 **MUST NOT** 撤销既有 access/refresh token；`/refresh` v1 不限流。账号锁定 **MUST** 自动过期；本地模式（`XIHE_LOCAL_MODE` 生效）下 `/login`、`/local-login`、`/local-password-reset` 不受登录锁定影响。
+- `/register` **MUST** 按客户端 IP 做请求限流（默认 30 次 / 3600 秒），并默认豁免回环地址（`cp.auth.login.register.exempt-loopback=true`），避免 host E2E 自锁。
+- 失败 **MUST** 写 AUDIT JSONL；锁定/解锁 **MUST** 写 durable `audit_logs`，仅含掩码邮箱、IP、reason 与 requestId，**MUST NOT** 含密码、哈希或 token。
+
+- 部署 env：`XIHE_CP_AUTH_LOGIN_ACCOUNT_{MAX_FAILURES,WINDOW_SECONDS,LOCK_SECONDS}`、`XIHE_CP_AUTH_LOGIN_ACCOUNT_MAX_CONCURRENT`、`XIHE_CP_AUTH_LOGIN_IP_{MAX_FAILURES,WINDOW_SECONDS,LOCK_SECONDS}`、`XIHE_CP_AUTH_LOGIN_GLOBAL_MAX_CONCURRENT`、`XIHE_CP_AUTH_LOGIN_MAX_TRACKED_KEYS`、`XIHE_CP_AUTH_LOGIN_CLEANUP_INTERVAL_MS`、`XIHE_CP_AUTH_TRUSTED_PROXIES`、`XIHE_CP_AUTH_LOGIN_IPV6_PREFIX_LENGTH`、`XIHE_CP_AUTH_LOGIN_REGISTER_{MAX_ATTEMPTS,WINDOW_SECONDS,LOCK_SECONDS}`、`XIHE_CP_AUTH_LOGIN_REGISTER_EXEMPT_LOOPBACK`。默认值以 `application.properties` 为准。
