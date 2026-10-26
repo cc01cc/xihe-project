@@ -388,18 +388,26 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
     }
 
     @Test
-    void mcpToolsListHandlesRuntimeErrorGracefully() {
+    // PLAN-0557/BL-109: a failed system catalog is not a partial success. The logical
+    // MCP surface fails closed instead of silently dropping every system tool.
+    void mcpToolsListFailsClosedWhenRuntimeErrors() {
         String runtimePath = "/internal/v1/runtime/workspaces/" + wsId + "/mcp";
         initializeMcpWithoutSessions();
         wireMock.stubFor(post(urlEqualTo(runtimePath))
                 .withRequestBody(containing("\"method\":\"tools/list\""))
                 .willReturn(aResponse().withStatus(500)));
 
-        ResponseEntity<String> response = restTemplate.postForEntity(
-                url("/api/v1/mcp"), mcpEntity(TOOLS_LIST_BODY), String.class);
+        org.springframework.web.client.HttpServerErrorException error =
+                org.junit.jupiter.api.Assertions.assertThrows(
+                        org.springframework.web.client.HttpServerErrorException.class,
+                        () -> restTemplate.postForEntity(
+                                url("/api/v1/mcp"), mcpEntity(TOOLS_LIST_BODY), String.class));
 
-        assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertTrue(response.getBody().contains("\"tools\""));
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, error.getStatusCode());
+        String body = error.getResponseBodyAsString();
+        assertTrue(body.contains("\"code\":\"RUNTIME_UNAVAILABLE\""));
+        assertTrue(body.contains("\"reason\":\"upstream_error\""));
+        assertFalse(body.contains("UNKNOWN_TOOL"));
 
         wireMock.verify(postRequestedFor(urlEqualTo(runtimePath))
                 .withRequestBody(containing("\"method\":\"tools/list\"")));
