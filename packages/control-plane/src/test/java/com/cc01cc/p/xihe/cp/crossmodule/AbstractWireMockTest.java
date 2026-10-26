@@ -37,6 +37,12 @@ public abstract class AbstractWireMockTest {
     private int cpPort;
 
     @Autowired
+    void initChatBindingCredentialService(
+            com.cc01cc.p.xihe.cp.credentials.CredentialService credentialService) {
+        com.cc01cc.p.xihe.cp.chat.ChatBindingTestSupport.setCredentialService(credentialService);
+    }
+
+    @Autowired
     protected ObjectMapper objectMapper;
 
     protected RestTemplate restTemplate;

@@ -20,6 +20,12 @@ public abstract class AbstractH2Test {
     @LocalServerPort
     protected int port;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    void initChatBindingCredentialService(
+            com.cc01cc.p.xihe.cp.credentials.CredentialService credentialService) {
+        com.cc01cc.p.xihe.cp.chat.ChatBindingTestSupport.setCredentialService(credentialService);
+    }
+
     protected RestTemplate restTemplate;
     public String baseUrl;
 

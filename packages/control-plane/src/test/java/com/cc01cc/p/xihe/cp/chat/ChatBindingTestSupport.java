@@ -20,6 +20,13 @@ public final class ChatBindingTestSupport {
     private ChatBindingTestSupport() {
     }
 
+    private static com.cc01cc.p.xihe.cp.credentials.CredentialService credentialService;
+
+    public static void setCredentialService(
+            com.cc01cc.p.xihe.cp.credentials.CredentialService service) {
+        credentialService = service;
+    }
+
     /**
      * A READY chat connection whose non-manual discovery accepts any model, so
      * fixtures do not have to register every model name they assert on.
@@ -45,6 +52,16 @@ public final class ChatBindingTestSupport {
         connection.setEnabled(true);
         connection.setStatus(ProviderConnection.STATUS_READY);
         connection.setRevision(1L);
+        if (credentialService != null) {
+            connection.setCredentialId(credentialService.create(
+                    new com.cc01cc.p.xihe.cp.credentials.CredentialService.CreateRequest(
+                            ownerType, ownerId, "chat fixture " + connectionKey,
+                            com.cc01cc.p.xihe.cp.entity.Credential.KIND_TOKEN,
+                            com.cc01cc.p.xihe.cp.entity.Credential.TIER_LEASE,
+                            com.cc01cc.p.xihe.cp.credentials.CredentialService.SecretPayload
+                                    .ofToken("fixture-token")),
+                    ownerId).getId());
+        }
         return connections.saveAndFlush(connection);
     }
 
