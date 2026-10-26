@@ -518,6 +518,16 @@ paths:
       security: [{ bearerAuth: [] }]
       responses:
         '200': { description: MCP JSON-RPC response }
+        '400':
+          description: 'UNKNOWN_TOOL — the system tool catalog was fetched successfully but the requested name is absent (audit action unknown_tool).'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        '503':
+          description: 'RUNTIME_UNAVAILABLE — Runtime unreachable, timed out, rejected the service credential, or returned an unusable catalog. Problem Details carries dependency=runtime, reason (unreachable|timeout|auth_failed|upstream_error) and retryable; audit action dependency_unavailable.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
         '403':
           description: MCP_SESSION_INVALID — the logical MCP endpoint is stateless and does not accept mcp-session-id (PLAN-0537)
           content:
@@ -1179,7 +1189,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProviderModelCatalog' }
         '401': { $ref: '#/components/responses/Problem' }
-        '502': { $ref: '#/components/responses/Problem' }
+        '503': { description: 'AGENT_UNAVAILABLE — Agent unreachable, timed out, rejected the service credential, or returned an unusable body. Problem Details carries dependency=agent, reason (unreachable|timeout|auth_failed|upstream_error) and retryable.', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/api-input-types:
     get:
       operationId: listApiInputTypes
@@ -4071,6 +4081,8 @@ components:
         provider: { type: string }
         model: { type: string }
         retryable: { type: boolean }
+        dependency: { type: string, description: 'PLAN-0557: unavailable dependency (runtime|agent) on MCP/models proxy failures.' }
+        reason: { type: string, description: 'PLAN-0557: frozen dependency failure reason (unreachable|timeout|auth_failed|upstream_error).' }
         outcome: { type: string, enum: [success, error, partial, ambiguous] }
     JobOutputChunk:
       type: object

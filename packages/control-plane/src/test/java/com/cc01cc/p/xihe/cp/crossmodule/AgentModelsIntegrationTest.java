@@ -8,6 +8,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -67,7 +68,26 @@ class AgentModelsIntegrationTest extends AbstractWireMockTest {
                 restTemplate.exchange(url("/api/v1/models"), HttpMethod.GET,
                         entityWithAuth(null, token), String.class));
 
-        assertEquals(HttpStatus.BAD_GATEWAY, ex.getStatusCode());
+        // PLAN-0557/BL-109: dependency failures are 503 with a stable code and diagnostics.
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, ex.getStatusCode());
+        assertTrue(ex.getResponseBodyAsString().contains("\"code\":\"AGENT_UNAVAILABLE\""));
+        assertTrue(ex.getResponseBodyAsString().contains("\"dependency\":\"agent\""));
+        assertTrue(ex.getResponseBodyAsString().contains("\"reason\":\"upstream_error\""));
+        assertTrue(ex.getResponseBodyAsString().contains("\"retryable\":true"));
+    }
+
+    @Test
+    void modelListAgentAuthFailureIsNotRetryable() {
+        wireMock.stubFor(get(urlEqualTo("/internal/v1/agent/models"))
+                .willReturn(aResponse().withStatus(401)));
+
+        HttpServerErrorException ex = assertThrows(HttpServerErrorException.class, () ->
+                restTemplate.exchange(url("/api/v1/models"), HttpMethod.GET,
+                        entityWithAuth(null, token), String.class));
+
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, ex.getStatusCode());
+        assertTrue(ex.getResponseBodyAsString().contains("\"reason\":\"auth_failed\""));
+        assertTrue(ex.getResponseBodyAsString().contains("\"retryable\":false"));
     }
 
     @Test

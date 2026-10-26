@@ -181,7 +181,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             fileTree.value = await fetchDirectoryTree("");
             loadedWorkspaceId.value = currentWorkspaceId;
         } catch (e) {
-            treeError.value = (e as Error).message;
+            // PLAN-0557/BL-109: route load failures through the stable-code mapping so a
+            // dependency outage is not rendered as the raw upstream detail.
+            treeError.value = humanizeFileError(e, "加载文件树失败");
         } finally {
             // PLAN-0365 (root cause C): refresh requests that arrive while a load is
             // in flight are counted by refreshAfterMutation; drain them here instead
@@ -195,7 +197,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
                     fileTree.value = await fetchDirectoryTree("");
                     loadedWorkspaceId.value = workspaceId.value;
                 } catch (e) {
-                    treeError.value = (e as Error).message;
+                    treeError.value = humanizeFileError(e, "加载文件树失败");
                 } finally {
                     loading.value = false;
                 }
