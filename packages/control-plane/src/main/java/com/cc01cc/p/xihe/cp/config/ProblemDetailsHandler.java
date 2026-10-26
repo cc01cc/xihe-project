@@ -105,11 +105,27 @@ public class ProblemDetailsHandler {
     public ResponseEntity<Map<String, Object>> integrityViolation(
             DataIntegrityViolationException exception, HttpServletRequest request) {
         for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
-            if (cause instanceof org.hibernate.exception.ConstraintViolationException constraint
-                    && "uq_provider_connections_owner_provider_key".equals(constraint.getConstraintName())) {
-                logger.warn("Provider connection key conflict at {}", request.getRequestURI());
-                return problem(HttpStatus.CONFLICT, "PROVIDER_CONNECTION_KEY_CONFLICT",
-                        "A connection already exists for this provider, key and scope", request);
+            if (cause instanceof org.hibernate.exception.ConstraintViolationException constraint) {
+                String constraintName = constraint.getConstraintName();
+                if ("uq_provider_connections_owner_provider_key".equals(constraintName)) {
+                    logger.warn("Provider connection key conflict at {}", request.getRequestURI());
+                    return problem(HttpStatus.CONFLICT, "PROVIDER_CONNECTION_KEY_CONFLICT",
+                            "A connection already exists for this provider, key and scope", request);
+                }
+                // PLAN-0555: the label index is a second, independent uniqueness
+                // rule; without this branch a concurrent conflict degrades to 500.
+                if ("uq_provider_connections_owner_provider_label".equals(constraintName)) {
+                    logger.warn("Provider connection label conflict at {}", request.getRequestURI());
+                    ResponseEntity<Map<String, Object>> response = problem(
+                            HttpStatus.CONFLICT, "PROVIDER_CONNECTION_LABEL_CONFLICT",
+                            "A connection with this label already exists for this provider and scope",
+                            request);
+                    Map<String, Object> body = response.getBody();
+                    if (body != null) {
+                        body.put("field", "label");
+                    }
+                    return response;
+                }
             }
         }
         logger.error("Unhandled database integrity failure at {}", request.getRequestURI(), exception);

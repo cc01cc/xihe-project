@@ -51,6 +51,10 @@ class ProviderConnectionServiceTest {
 
     @org.junit.jupiter.api.BeforeEach
     void wireLockedConnectionDelegation() {
+        org.mockito.Mockito.lenient().when(repository.save(any(ProviderConnection.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        org.mockito.Mockito.lenient().when(repository.saveAndFlush(any(ProviderConnection.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
         org.mockito.Mockito.lenient().when(requestTemplates.lockConnection(anyString())).thenAnswer(
                 invocation -> repository.findById(UUID.fromString(invocation.getArgument(0))).orElseThrow());
         org.mockito.Mockito.lenient().when(credentialService.create(any(), anyString()))
@@ -83,7 +87,7 @@ class ProviderConnectionServiceTest {
                 new ProviderCatalogService.ApiTypeRef("openai-chat-completions", 1, "chat"));
         when(repository.findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
                 "USER", "user-1", "deepseek", "default")).thenReturn(Optional.empty());
-        when(repository.save(any(ProviderConnection.class)))
+        when(repository.saveAndFlush(any(ProviderConnection.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         ProviderConnection connection = service.create(new ProviderConnectionService.ConnectionInput(
@@ -212,6 +216,128 @@ class ProviderConnectionServiceTest {
     }
 
     @Test
+    void createRejectsDuplicateLabelIgnoringCaseAndWhitespace() {
+        TenantContext.setUserId("user-1");
+        stubCatalogForCreate();
+        when(repository.findByOwnerTypeAndOwnerIdAndProviderId(
+                "USER", "user-1", "deepseek"))
+                .thenReturn(List.of(connection("user-1", "deepseek", "Primary account")));
+
+        ProviderConnectionService.LabelConflictException error = assertThrows(
+                ProviderConnectionService.LabelConflictException.class,
+                () -> service.create(new ProviderConnectionService.ConnectionInput(
+                        "deepseek", "  primary ACCOUNT ", "USER", "sk-test-key", null, null,
+                        List.of(), null, "second")));
+
+        assertTrue(error.getMessage().contains("already exists"));
+    }
+
+    @Test
+    void createRejectsBlankAndOverlongLabels() {
+        TenantContext.setUserId("user-1");
+        stubCatalogForCreate();
+
+        assertThrows(ProviderConnectionService.LabelInvalidException.class,
+                () -> service.create(new ProviderConnectionService.ConnectionInput(
+                        "deepseek", "   ", "USER", "sk-test-key", null, null, List.of(), null,
+                        "blank")));
+        assertThrows(ProviderConnectionService.LabelInvalidException.class,
+                () -> service.create(new ProviderConnectionService.ConnectionInput(
+                        "deepseek", "x".repeat(129), "USER", "sk-test-key", null, null,
+                        List.of(), null, "long")));
+    }
+
+    @Test
+    void createTrimsSurroundingWhitespaceFromLabel() {
+        TenantContext.setUserId("user-1");
+        stubCatalogForCreate();
+        when(repository.saveAndFlush(any(ProviderConnection.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        ProviderConnection created = service.create(new ProviderConnectionService.ConnectionInput(
+                "deepseek", "  Trimmed  ", "USER", "sk-test-key", null, null, List.of(), null,
+                "trimmed"));
+
+        assertEquals("Trimmed", created.getLabel());
+    }
+
+    @Test
+    void updateAllowsCaseOnlyChangeToOwnLabel() {
+        TenantContext.setUserId("user-1");
+        ProviderConnection connection = connection("user-1", "deepseek", "Primary");
+        when(repository.findById(connection.getId())).thenReturn(Optional.of(connection));
+        when(repository.findByOwnerTypeAndOwnerIdAndProviderId(
+                "USER", "user-1", "deepseek")).thenReturn(List.of(connection));
+        when(repository.save(any(ProviderConnection.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        ProviderConnection updated = service.update(connection.getId().toString(),
+                new ProviderConnectionService.ConnectionInput(
+                        "deepseek", " PRIMARY ", null, null, null, null, null, null, null));
+
+        assertEquals("PRIMARY", updated.getLabel());
+    }
+
+    @Test
+    void updateRejectsSiblingLabel() {
+        TenantContext.setUserId("user-1");
+        ProviderConnection target = connection("user-1", "deepseek", "Primary");
+        ProviderConnection sibling = connection("user-1", "deepseek", "Sibling");
+        when(repository.findById(target.getId())).thenReturn(Optional.of(target));
+        when(repository.findByOwnerTypeAndOwnerIdAndProviderId(
+                "USER", "user-1", "deepseek")).thenReturn(List.of(target, sibling));
+
+        assertThrows(ProviderConnectionService.LabelConflictException.class,
+                () -> service.update(target.getId().toString(),
+                        new ProviderConnectionService.ConnectionInput(
+                                "deepseek", " sibling ", null, null, null, null, null, null, null)));
+    }
+
+    @Test
+    void updateTrimsSurroundingWhitespaceFromLabel() {
+        TenantContext.setUserId("user-1");
+        ProviderConnection connection = connection("user-1", "deepseek", "Primary");
+        when(repository.findById(connection.getId())).thenReturn(Optional.of(connection));
+        when(repository.findByOwnerTypeAndOwnerIdAndProviderId(
+                "USER", "user-1", "deepseek")).thenReturn(List.of(connection));
+        when(repository.save(any(ProviderConnection.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        ProviderConnection updated = service.update(connection.getId().toString(),
+                new ProviderConnectionService.ConnectionInput(
+                        "deepseek", "  Renamed  ", null, null, null, null, null, null, null));
+
+        assertEquals("Renamed", updated.getLabel());
+    }
+
+    private void stubCatalogForCreate() {
+        ObjectNode definition = new ObjectMapper().createObjectNode();
+        definition.put("id", "deepseek");
+        definition.put("defaultBaseUrl", "https://api.deepseek.com/v1");
+        definition.putObject("credential").put("required", true);
+        when(catalog.require("deepseek")).thenReturn(definition);
+        when(catalog.supportedPair("deepseek", "openai-chat-completions", 1)).thenReturn(definition);
+        when(catalog.requiresCredential("deepseek")).thenReturn(true);
+        when(catalog.defaultApiType("deepseek")).thenReturn(
+                new ProviderCatalogService.ApiTypeRef("openai-chat-completions", 1, "chat"));
+    }
+
+    private ProviderConnection connection(String ownerId, String providerId, String label) {
+        ProviderConnection connection = new ProviderConnection();
+        connection.setId(UUID.randomUUID());
+        connection.setOwnerType("USER");
+        connection.setOwnerId(ownerId);
+        connection.setProviderId(providerId);
+        connection.setConnectionKey("conn-" + UUID.randomUUID());
+        connection.setApiTypeId("openai-chat-completions");
+        connection.setApiTypeVersion(1);
+        connection.setLabel(label);
+        connection.setEnabled(true);
+        connection.setStatus(ProviderConnection.STATUS_READY);
+        return connection;
+    }
+
+    @Test
     void updateRejectsConnectionKeyRename() {
         TenantContext.setUserId("user-1");
         ProviderConnection connection = new ProviderConnection();
@@ -328,7 +454,7 @@ class ProviderConnectionServiceTest {
                 new ProviderCatalogService.ApiTypeRef("openai-chat-completions", 1, "chat"));
         when(repository.findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
                 "WORKSPACE", "workspace-1", "deepseek", "default")).thenReturn(Optional.empty());
-        when(repository.save(any(ProviderConnection.class)))
+        when(repository.saveAndFlush(any(ProviderConnection.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         ProviderConnection connection = service.create(new ProviderConnectionService.ConnectionInput(
@@ -383,7 +509,7 @@ class ProviderConnectionServiceTest {
         ProviderConnectionService pairService = new ProviderConnectionService(
                 repository, auditRepository, leaseRepository, realCatalog, apiTypes, credentialService,
                 credentialAccess, mapper, requestTemplates, configService);
-        when(repository.save(any(ProviderConnection.class)))
+        when(repository.saveAndFlush(any(ProviderConnection.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         ProviderConnection created = pairService.create(new ProviderConnectionService.ConnectionInput(

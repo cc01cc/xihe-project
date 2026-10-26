@@ -1272,10 +1272,14 @@ paths:
         '201':
           description: Connection saved in verifying state
           content: { application/json: { schema: { $ref: '#/components/schemas/ProviderConnection' } } }
-        '400': { $ref: '#/components/responses/Problem' }
+        '400':
+          description: 'PROVIDER_CONNECTION_INVALID / PROVIDER_CONNECTION_KEY_INVALID / PROVIDER_API_TYPE_UNSUPPORTED. PLAN-0555: label errors carry field=label; the label is trimmed and limited to 128 characters.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
-        '409': { $ref: '#/components/responses/Problem' }
+        '409':
+          description: 'PROVIDER_CONNECTION_KEY_CONFLICT, or PROVIDER_CONNECTION_LABEL_CONFLICT (field=label) when another connection for the same owner and provider already uses the label (case-insensitive, trimmed).'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
   /api/v1/provider-connections/{connectionId}:
     parameters: [{ in: path, name: connectionId, required: true, schema: { type: string, format: uuid } }]
     patch:
@@ -1289,10 +1293,14 @@ paths:
         '200':
           description: Updated connection
           content: { application/json: { schema: { $ref: '#/components/schemas/ProviderConnection' } } }
-        '400': { $ref: '#/components/responses/Problem' }
+        '400':
+          description: 'PROVIDER_CONNECTION_INVALID / PROVIDER_CONNECTION_KEY_INVALID / PROVIDER_API_TYPE_UNSUPPORTED. PLAN-0555: label errors carry field=label; the label is trimmed and limited to 128 characters.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
-        '409': { $ref: '#/components/responses/Problem' }
+        '409':
+          description: 'PROVIDER_CONNECTION_KEY_IMMUTABLE, CONNECTION_REVISION_CHANGED, or PROVIDER_CONNECTION_LABEL_CONFLICT (field=label; label uniqueness is per owner + provider, case-insensitive and trimmed).'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
     delete:
       operationId: deleteProviderConnection
       summary: Disable and remove a provider connection
