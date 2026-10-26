@@ -17,6 +17,10 @@
 
 [env]
 NODE_OPTIONS = "--max-old-space-size=2048"
+# Keep uv's cache on the same volume as the project so hardlinks work on
+# Windows (NTFS hardlinks cannot cross volumes). See one/AGENTS.md and
+# .agents/skills/windows/SKILL.md §硬链接不能跨卷.
+UV_CACHE_DIR = "H:/zeolib/uv-cache"
 
 [tools]
 node = "24"
