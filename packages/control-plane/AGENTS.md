@@ -55,6 +55,7 @@ Compiler、Checkstyle 和架构规则用途互补。PMD 候选已实际试跑，
 - Route、OpenAPI、调用方 inventory、SSE/AgentEvent、Flyway durable record 必须在同一变更波次同步；以 [`inventory.md`](../../docs/api/inventory.md) 为清单，不复制完整规范。
 - Provider 连接与请求模板（PLAN-0438/0439）：连接一个 API Type、模型身份 `connectionId+modelId`、`connectionKey` 逻辑槽 overlay；类型变更走 revision CAS + impact 预览；`api-request-templates` 域发布修订不可变；Chat-only 对 `operation=chat` fail-closed。Embedding profile 与 RAG 代理（PLAN-0485）按请求解析 owner/profile。契约细节见 [`DEV-014 §8g/8h`](../../docs/i18n/zh-Hans/DEV-014-control-plane-architecture.md) 与 [`DEV-003 §3b`](../../docs/i18n/zh-Hans/DEV-003-config-management.md)。
 - llm-provider profile（PLAN-0552）：解析按 profile 所在层选 owner（workspace→workspace、user→user、instance→消费用户 USER），无隐式 workspace→user 回退；`userId` 为空直接 409。过渡开关 `cp.llm.profile-legacy-connection-fallback`（默认 false）只用于短期回退。
+- Provider 凭据（PLAN-0553）：`provider_connections` 只存 `credential_id`，无 ciphertext/encryption_key_version；key 由 `credentials` 域解密，link 与 use 分别受 `credential_use`/`credential_manage` 约束；连接引用的凭据删除返回 409 `CREDENTIAL_IN_USE`。
 - 审批、checkpoint、revert 的当前契约以 [`DEV-014-control-plane-architecture.md`](../../docs/i18n/zh-Hans/DEV-014-control-plane-architecture.md)、[`DEV-015-runtime-architecture.md`](../../docs/i18n/zh-Hans/DEV-015-runtime-architecture.md) 与 inventory 为准；本文件只列边界，禁止在此重复完整字段/状态机规格。
 
 ## 实现边界

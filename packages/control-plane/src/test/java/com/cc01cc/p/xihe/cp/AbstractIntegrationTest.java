@@ -43,6 +43,12 @@ public abstract class AbstractIntegrationTest {
     @LocalServerPort
     protected int port;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    void initChatBindingCredentialService(
+            com.cc01cc.p.xihe.cp.credentials.CredentialService credentialService) {
+        com.cc01cc.p.xihe.cp.chat.ChatBindingTestSupport.setCredentialService(credentialService);
+    }
+
     protected String baseUrl;
 
     protected RestTemplate restTemplate;
