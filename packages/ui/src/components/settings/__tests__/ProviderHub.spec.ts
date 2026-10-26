@@ -11,7 +11,8 @@ import {
     updateProviderConnection,
     verifyProviderConnection,
 } from "../../../services/providerConnectionService";
-import { request } from "../../../composables/api";
+import { ApiError, request } from "../../../composables/api";
+import { toast } from "vue-sonner";
 import { listVisibleTemplates, readTemplateConfig } from "../../../services/apiRequestTemplates";
 import { i18n } from "../../../i18n";
 
@@ -50,7 +51,10 @@ vi.mock("../../../services/providerConnectionService", () => ({
     getDeleteImpact:
         vi.fn<typeof import("../../../services/providerConnectionService").getDeleteImpact>(),
 }));
-vi.mock("../../../composables/api", () => ({ request: vi.fn<typeof request>() }));
+vi.mock("../../../composables/api", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../../../composables/api")>()),
+    request: vi.fn<typeof request>(),
+}));
 vi.mock("../../../lib/logger", () => ({ logger: { warn: vi.fn<(...args: unknown[]) => void>() } }));
 vi.mock("vue-sonner", () => ({
     toast: {
@@ -780,6 +784,95 @@ describe("ProviderHub 就地默认与每模型配置 (PLAN-0523 T3.2/T3.3)", () 
         await wrapper.get('[data-testid="provider-model-mimo-asr"] button').trigger("click");
         const detail = wrapper.get('[data-testid="provider-model-detail-mimo-asr"]');
         expect(detail.text()).toContain(i18n.global.t("settings.providerHub.unknown"));
+        wrapper.unmount();
+    });
+});
+
+describe("ProviderHub label rules (PLAN-0555)", () => {
+    async function openManageForm(wrapper: Awaited<ReturnType<typeof mountHub>>) {
+        const row = wrapper.findAll('[data-testid="provider-connection-example"]')[0]!;
+        await row
+            .findAll("button")
+            .find((button) => button.text() === i18n.global.t("settings.providerHub.manage"))!
+            .trigger("click");
+        return wrapper.get('[data-testid="provider-connection-modal"]');
+    }
+
+    it("blocks an empty label before calling the API", async () => {
+        const wrapper = await mountHub(),
+            modal = await openManageForm(wrapper);
+        await modal.get('[data-testid="provider-connection-form-label"]').setValue("   ");
+        await modal.get("form").trigger("submit");
+        await flushPromises();
+
+        expect(toast.error).toHaveBeenCalledWith(
+            i18n.global.t("settings.providerHub.toastLabelRequired"),
+        );
+        expect(updateProviderConnection).not.toHaveBeenCalled();
+        wrapper.unmount();
+    });
+
+    it("blocks a label longer than 128 characters before calling the API", async () => {
+        const wrapper = await mountHub(),
+            modal = await openManageForm(wrapper);
+        await modal.get('[data-testid="provider-connection-form-label"]').setValue("x".repeat(129));
+        await modal.get("form").trigger("submit");
+        await flushPromises();
+
+        expect(toast.error).toHaveBeenCalledWith(
+            i18n.global.t("settings.providerHub.toastLabelTooLong"),
+        );
+        expect(updateProviderConnection).not.toHaveBeenCalled();
+        wrapper.unmount();
+    });
+
+    it("warns on a case-insensitive sibling label but still submits", async () => {
+        const sibling: ProviderConnection = {
+            ...user,
+            id: "user-connection-2",
+            connectionKey: "secondary",
+            label: "Second connection",
+        };
+        vi.mocked(listProviderConnections).mockResolvedValue({ connections: [user, sibling] });
+        const wrapper = await mountHub(),
+            modal = await openManageForm(wrapper);
+        await modal
+            .get('[data-testid="provider-connection-form-label"]')
+            .setValue("second CONNECTION");
+        await modal.get("form").trigger("submit");
+        await flushPromises();
+
+        expect(toast.warning).toHaveBeenCalledWith(
+            i18n.global.t("settings.providerHub.toastLabelDuplicate"),
+        );
+        expect(updateProviderConnection).toHaveBeenCalledWith(
+            user.id,
+            expect.objectContaining({ label: "second CONNECTION" }),
+        );
+        wrapper.unmount();
+    });
+
+    it("maps the 409 label conflict to a localized message and keeps the dialog", async () => {
+        vi.mocked(updateProviderConnection).mockRejectedValue(
+            new ApiError({
+                status: 409,
+                code: "PROVIDER_CONNECTION_LABEL_CONFLICT",
+                requestId: "test-request",
+                field: "label",
+            }),
+        );
+        const wrapper = await mountHub(),
+            modal = await openManageForm(wrapper);
+        await modal
+            .get('[data-testid="provider-connection-form-label"]')
+            .setValue("Duplicate name");
+        await modal.get("form").trigger("submit");
+        await flushPromises();
+
+        expect(toast.error).toHaveBeenCalledWith(
+            i18n.global.t("settings.providerHub.toastLabelConflict"),
+        );
+        expect(wrapper.find('[data-testid="provider-connection-modal"]').exists()).toBe(true);
         wrapper.unmount();
     });
 });

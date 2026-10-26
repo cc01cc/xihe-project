@@ -412,6 +412,13 @@ export async function addProvider({ apiBase, fetchImpl, env, options, positional
       try { matches = findMatchingConnections(await listConnections({ apiBase, fetchImpl, token }), providerId, scope); } catch { /* preserve unknown outcome */ }
       throw new CliError('OPERATION_OUTCOME_UNKNOWN', 'Create response was lost; inspect provider list before retrying.', { matches: matches.map((item) => item.id) });
     }
+    if (error.code === 'PROVIDER_CONNECTION_LABEL_CONFLICT') {
+      throw new CliError(
+        'PROVIDER_CONNECTION_LABEL_CONFLICT',
+        'Another connection for this provider already uses this label; choose a different --label.',
+        { field: 'label' },
+      );
+    }
     if (error.status === 400 || error.code === 'PROVIDER_CONNECTION_INVALID') {
       throw new CliError('PROVIDER_CONNECTION_CREATE_REJECTED', 'CP rejected connection creation; check provider list and use provider update only with its explicit ID.');
     }
@@ -460,10 +467,20 @@ export async function updateProvider({ apiBase, fetchImpl, env, options, positio
     });
     updated = safeConnection(response);
   } catch (error) {
-    if (error.code === 'PROVIDER_CONNECTION_INVALID') {
-      let current;
-      try { current = (await listConnections({ apiBase, fetchImpl, token })).find((item) => item.id === id); } catch { /* preserve unknown outcome */ }
-      throw new CliError('OPERATION_OUTCOME_UNKNOWN', 'CP accepted the update but returned an invalid connection view; inspect the connection before retrying.', { connection: current ?? { id } });
+    if (error.code === 'PROVIDER_CONNECTION_LABEL_CONFLICT') {
+      throw new CliError(
+        'PROVIDER_CONNECTION_LABEL_CONFLICT',
+        'Another connection for this provider already uses this label; choose a different --label.',
+        { field: 'label' },
+      );
+    }
+    // PLAN-0555: a 400 here is a rejected request (for example an invalid
+    // label), not "CP accepted the update but returned an invalid view".
+    if (error.status === 400 || error.code === 'PROVIDER_CONNECTION_INVALID') {
+      throw new CliError(
+        'PROVIDER_CONNECTION_UPDATE_REJECTED',
+        'CP rejected the connection update; no change was applied. Check the field values and retry.',
+      );
     }
     if (error.code === 'OPERATION_OUTCOME_UNKNOWN') {
       let current;

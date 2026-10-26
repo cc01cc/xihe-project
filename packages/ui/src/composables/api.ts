@@ -89,6 +89,8 @@ export interface ProblemDetails {
     code: string;
     detail?: string;
     requestId: string;
+    /** PLAN-0555: field-level validation/conflict target (for example `label`). */
+    field?: string;
     runId?: string;
     provider?: string;
     model?: string;

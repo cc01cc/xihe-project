@@ -106,16 +106,25 @@ export const useConfigStore = defineStore("config", () => {
         // PLAN-0523 T3.5: single-source provider connection list; consumers
         // subscribe here instead of issuing their own listProviderConnections.
         providerConnections = ref<ProviderConnection[]>([]),
-        providerConnectionsLoaded = ref(false);
+        providerConnectionsLoaded = ref(false),
+        providerConnectionsError = ref(false);
     let providerConnectionsInflight: Promise<void> | null = null;
 
     async function loadProviderConnections(options?: { force?: boolean }): Promise<void> {
         if (providerConnectionsLoaded.value && !options?.force) return;
         if (providerConnectionsInflight) return providerConnectionsInflight;
         providerConnectionsInflight = (async () => {
-            const list = await listProviderConnections();
-            providerConnections.value = list.connections ?? [];
-            providerConnectionsLoaded.value = true;
+            try {
+                const list = await listProviderConnections();
+                providerConnections.value = list.connections ?? [];
+                providerConnectionsLoaded.value = true;
+                providerConnectionsError.value = false;
+            } catch (cause) {
+                // PLAN-0555: the composer must distinguish "not loaded" from
+                // "load failed" so it does not claim "no connection recorded".
+                providerConnectionsError.value = true;
+                throw cause;
+            }
         })();
         try {
             await providerConnectionsInflight;
@@ -127,6 +136,7 @@ export const useConfigStore = defineStore("config", () => {
     /** Mutation hook: create/update/delete/verify must invalidate before reload. */
     function invalidateProviderConnections() {
         providerConnectionsLoaded.value = false;
+        providerConnectionsError.value = false;
     }
 
     function findProviderForModel(modelId: string): string | undefined {
@@ -363,6 +373,7 @@ export const useConfigStore = defineStore("config", () => {
         envOverridden.value = {};
         providerConnections.value = [];
         providerConnectionsLoaded.value = false;
+        providerConnectionsError.value = false;
     }
 
     async function fetchModels() {
@@ -396,6 +407,7 @@ export const useConfigStore = defineStore("config", () => {
         modelFavorites,
         providerConnections,
         providerConnectionsLoaded,
+        providerConnectionsError,
         loadProviderConnections,
         invalidateProviderConnections,
         fetchDomain,
