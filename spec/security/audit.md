@@ -9,7 +9,7 @@ Audit 记录 action、principal 摘要、resource/workspace、operation/request 
 
 ## 2. 当前边界
 
-CP `AuditLogger` 写入专用 AUDIT JSONL logger，并保留有界的 recent-memory view。当前尚未实现 DB/ELK durability；该差距必须显式保留，不能暗示已经持久化。
+CP `AuditLogger` 写入专用 AUDIT JSONL logger，并保留有界的 recent-memory view；`recordDurableChange` 与 PLAN-0558 的登录锁定/解锁事件同时写入 `audit_logs`。集中式 ELK/日志采集尚未实现，该差距必须显式保留，不能暗示已经接入外部审计平台。
 
 ## 3. 规则
 

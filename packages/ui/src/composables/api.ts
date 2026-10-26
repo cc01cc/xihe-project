@@ -1392,9 +1392,14 @@ function normalizeWorkspace(value: unknown): ApiWorkspace | undefined {
 }
 
 export class ApiError extends Error {
-    constructor(public readonly problem: ProblemDetails) {
+    public readonly problem: ProblemDetails;
+    public readonly retryAfterSeconds?: number;
+
+    constructor(problem: ProblemDetails, retryAfterSeconds?: number) {
         super(problem.detail || problem.code || `API error ${problem.status}`);
         this.name = "ApiError";
+        this.problem = problem;
+        this.retryAfterSeconds = retryAfterSeconds;
     }
 }
 
@@ -1613,19 +1618,27 @@ export async function apiErrorFromResponse(res: Response): Promise<never> {
     } catch {
         /* non-JSON upstream error */
     }
-    throw new ApiError({
-        type: problem.type,
-        title: problem.title,
-        status: problem.status ?? res.status,
-        code: problem.code ?? "API_ERROR",
-        detail: problem.detail || `API error ${problem.status ?? res.status}`,
-        requestId: problem.requestId || res.headers?.get("X-Request-Id") || "unknown",
-        runId: problem.runId,
-        provider: problem.provider,
-        model: problem.model,
-        retryable: problem.retryable,
-        outcome: problem.outcome,
-    });
+    const retryAfterHeader = res.headers?.get?.("Retry-After");
+    const retryAfterSeconds =
+        retryAfterHeader && /^[0-9]+$/.test(retryAfterHeader)
+            ? Number(retryAfterHeader)
+            : undefined;
+    throw new ApiError(
+        {
+            type: problem.type,
+            title: problem.title,
+            status: problem.status ?? res.status,
+            code: problem.code ?? "API_ERROR",
+            detail: problem.detail || `API error ${problem.status ?? res.status}`,
+            requestId: problem.requestId || res.headers?.get("X-Request-Id") || "unknown",
+            runId: problem.runId,
+            provider: problem.provider,
+            model: problem.model,
+            retryable: problem.retryable,
+            outcome: problem.outcome,
+        },
+        retryAfterSeconds,
+    );
 }
 
 let refreshInFlight: Promise<boolean> | null = null;

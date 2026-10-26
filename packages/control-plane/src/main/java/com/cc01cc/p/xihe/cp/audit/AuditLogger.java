@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import java.time.Instant;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
@@ -23,6 +24,8 @@ public class AuditLogger {
     private static final Logger logger = LoggerFactory.getLogger(AuditLogger.class);
     private static final Logger auditLog = LoggerFactory.getLogger("AUDIT");
     private static final int MAX_RECENT_RECORDS = 1000;
+    private static final Set<String> DURABLE_AUTH_ACTIONS = Set.of("login_locked", "login_unlocked");
+    private static final Pattern REQUEST_ID = Pattern.compile("[A-Za-z0-9._:-]{1,128}");
     private static final Pattern BEARER = Pattern.compile("(?i)(Bearer\\s+)[^\\s,;]+");
     private static final Pattern SENSITIVE_ASSIGNMENT = Pattern.compile(
         "(?i)(authorization|cookie|access[_-]?token|refresh[_-]?token|api[_-]?key|secret|password|arguments?|raw[_-]?arguments?)"
@@ -181,10 +184,60 @@ public class AuditLogger {
         }
     }
 
+    /**
+     * PLAN-0558: authentication audit. Every counted failure is written to the
+     * AUDIT JSONL stream; only lock/unlock transitions are persisted to
+     * audit_logs so an unauthenticated attacker cannot fill the DB pool.
+     * Callers must pass already-masked email/IP; no credential material is allowed.
+     */
+    public void recordAuthEvent(String action, String maskedEmail, String ip, String requestId,
+            String reason, String userId) {
+        String safeRequestId = requestId != null && REQUEST_ID.matcher(requestId).matches()
+                ? requestId : "invalid";
+        String detail = "email=" + safeAuditValue(maskedEmail)
+                + " ip=" + safeAuditValue(ip)
+                + " reason=" + safeAuditValue(reason)
+                + " requestId=" + safeRequestId;
+        auditLog.info("action={} | actor={} | resourceType=auth | detail={}",
+                action, userId, detail);
+        if (logToConsole) {
+            logger.info("[AUDIT] action={} | actor={} | resourceType=auth | detail={}",
+                    action, userId, detail);
+        }
+        if (!DURABLE_AUTH_ACTIONS.contains(action)) {
+            return;
+        }
+        if (auditLogRepository == null) {
+            logger.warn("Durable audit repository is not configured; auth action {} kept in JSONL only",
+                    action);
+            return;
+        }
+        try {
+            AuditLog entry = new AuditLog(action, "auth");
+            entry.setUserId(userId);
+            entry.setDetails(detail);
+            auditLogRepository.save(entry);
+        } catch (RuntimeException e) {
+            // Auth audit must never turn a login attempt into an outage.
+            logger.error("Failed to persist auth audit action={} requestId={}",
+                    action, safeRequestId, e);
+        }
+    }
+
+    private static String safeAuditValue(String value) {
+        if (value == null) {
+            return "unknown";
+        }
+        String trimmed = value.trim();
+        if (trimmed.isEmpty()) {
+            return "unknown";
+        }
+        return trimmed.length() > 200 ? trimmed.substring(0, 200) : trimmed;
+    }
+
     /** Persists sensitive state changes in the existing audit_logs stream. */
     public void recordDurableChange(String actorUserId, String workspaceId, String action,
-            String resourceType, String resourceId, String detail) {
-        if (auditLogRepository == null) {
+            String resourceType, String resourceId, String detail) {        if (auditLogRepository == null) {
             throw new IllegalStateException("Durable audit repository is not configured");
         }
         String safeDetail = sanitize(detail);

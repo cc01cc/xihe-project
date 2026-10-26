@@ -66,6 +66,30 @@ public class ProblemDetailsHandler {
         return response;
     }
 
+    /**
+     * PLAN-0558: same Problem Details shape plus explicit response headers
+     * (for example {@code Retry-After} and {@code Cache-Control} on 429).
+     */
+    public static ResponseEntity<Map<String, Object>> problemResponse(
+            HttpStatus status, String code, String detail,
+            Map<String, String> headers, Map<String, Object> extra) {
+        ResponseEntity<Map<String, Object>> base = problemResponse(status, code, detail);
+        Map<String, Object> body = base.getBody();
+        if (body != null && extra != null && !extra.isEmpty()) {
+            body.putAll(extra);
+        }
+        ResponseEntity.BodyBuilder builder = ResponseEntity.status(status)
+                .contentType(MediaType.parseMediaType("application/problem+json"));
+        String requestId = base.getHeaders().getFirst("X-Request-Id");
+        if (requestId != null) {
+            builder.header("X-Request-Id", requestId);
+        }
+        if (headers != null) {
+            headers.forEach((name, value) -> builder.header(name, value));
+        }
+        return builder.body(body);
+    }
+
     @ExceptionHandler({IllegalArgumentException.class, HttpMessageNotReadableException.class,
             MethodArgumentNotValidException.class})
     public ResponseEntity<Map<String, Object>> badRequest(Exception exception, HttpServletRequest request) {
