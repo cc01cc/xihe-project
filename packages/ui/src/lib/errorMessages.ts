@@ -4,9 +4,14 @@ export function humanizeErrorCode(code: string | undefined | null, detail?: stri
     switch (key) {
         case "RUNTIME_ERROR":
         case "RUNTIME_UNAVAILABLE":
+            return "工作区运行时未就绪（Runtime 不可达），请确认服务已启动后重试；若持续失败请联系管理员";
         case "MCP_STREAM_UNAVAILABLE":
         case "MCP_DISCONNECT_UNAVAILABLE":
             return "沙盒未就绪，请启动 Docker 后重试（Runtime 不可达）";
+        case "UNKNOWN_TOOL":
+            return "工具不存在或未启用，请刷新工作区后重试";
+        case "AGENT_UNAVAILABLE":
+            return "Agent 服务暂不可达，请稍后重试";
         case "PATH_TRAVERSAL":
         case "FORBIDDEN":
             return "路径不合法：仅允许工作区相对路径";

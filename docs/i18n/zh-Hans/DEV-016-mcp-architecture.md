@@ -87,7 +87,25 @@ sequenceDiagram
   CP-->>Agent: 透传结果
 ```
 
-### 3.3. 关联头与执行域记账（PLAN-0463 冻结契约）
+### 3.3. 失败分类（PLAN-0557 / BL-109）
+
+CP 不得把**上游依赖故障**伪装成「未知工具」。`tools/list` 与 `tools/call` 的错误口径：
+
+| 场景 | HTTP | code | 诊断字段 |
+|---|---|---|---|
+| 系统工具目录已成功拉取、名字确实缺席 | 400 | `UNKNOWN_TOOL` | 无（审计 `unknown_tool`） |
+| Runtime 连接失败/DNS 拒绝 | 503 | `RUNTIME_UNAVAILABLE` | `dependency=runtime`、`reason=unreachable`、`retryable=true` |
+| Runtime 读超时或上游 408/504 | 503 | `RUNTIME_UNAVAILABLE` | `reason=timeout`、`retryable=true` |
+| CP 服务凭据被 Runtime 拒绝（401/403） | 503 | `RUNTIME_UNAVAILABLE` | `reason=auth_failed`、`retryable=false` |
+| 其它上游非 2xx / 响应不可解析 | 503 | `RUNTIME_UNAVAILABLE` | `reason=upstream_error` |
+| 调用方自身未认证/无权限/待审批 | 现有 4xx | 不变 | — |
+
+- `reason` 枚举冻结为 `unreachable|timeout|auth_failed|upstream_error`；依赖故障审计 action 为 `dependency_unavailable`，与 `unknown_tool` 分账。
+- 系统目录不可达时 `tools/list` **整体 503**，不返回只含 CP-owned 工具的残缺 200；CP-owned `spawn_agent`/`acquire_credential` 的 `tools/call` 仍由 CP 本地派发。
+- `ModelsProxyController` 同口径：上游故障返回 503 `AGENT_UNAVAILABLE` + `dependency=agent`，descriptor 组装异常不再报 Agent 不可用。
+- detail 为固定文案，不含内部 URL、端口、token 或上游原始 body。
+
+### 3.4. 关联头与执行域记账（PLAN-0463 冻结契约）
 
 一次 `tools/call` 的跨服务关联 header（完整契约见
 `plans/PLAN-0463-xh-mcp-execution-domain/evidence/wire-contract.md`）：
