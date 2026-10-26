@@ -48,6 +48,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import javax.crypto.Mac;
@@ -98,6 +99,9 @@ public class McpProxyController {
      * normal fail-closed tool-error path instead of registering a waiter.
      */
     private static final int APPROVAL_REJECTED_JSONRPC_CODE = -32004;
+    /** PLAN-0557: frozen diagnostic vocabulary for dependency failures. */
+    private static final Set<String> DEPENDENCY_REASONS =
+            Set.of("unreachable", "timeout", "auth_failed", "upstream_error");
     /** Safe wire code of an immediate answerer rejection (Agent audit/log correlation). */
     private static final String APPROVAL_REJECTED_CODE = "APPROVAL_REJECTED";
     /**
@@ -284,7 +288,16 @@ public class McpProxyController {
         Map<String, String> mapping = toolTimeoutService.mappingFor(wsId);
 
         try {
-            List<Map<String, Object>> allTools = new ArrayList<>(populateSystemTools(wsId, headers, access));
+            // PLAN-0557/BL-109: an unreachable Runtime is not an empty catalog. Fail closed
+            // instead of returning a partial 200 that silently drops every system tool.
+            SystemToolSurface surface = populateSystemTools(wsId, headers, access);
+            if (surface.failure() != null) {
+                DependencyFailure failure = surface.failure();
+                audit.record(sessionId, "tools/list", "dependency_unavailable",
+                        failure.dependency() + ":" + failure.reason());
+                return dependencyProblem(failure);
+            }
+            List<Map<String, Object>> allTools = new ArrayList<>(surface.tools());
             mapping = toolTimeoutService.mappingFor(wsId);
 
             // 2. Call each STDIO server's tools/list
@@ -441,7 +454,14 @@ public class McpProxyController {
         }
     }
 
-    private List<Map<String, Object>> populateSystemTools(
+    /**
+     * PLAN-0557/BL-109: load the system tool catalog without masking dependency failures.
+     *
+     * <p>A non-2xx upstream response, an unparsable body or a transport failure is a
+     * {@link DependencyFailure}, never an empty catalog: callers must fail closed instead of
+     * reporting {@code UNKNOWN_TOOL}. An empty {@code tools} array is a valid catalog.
+     */
+    private SystemToolSurface populateSystemTools(
             String wsId, HttpHeaders headers, AccessContext access) {
         Map<String, String> mapping = toolTimeoutService.mappingForUpdate(wsId);
         List<Map<String, Object>> result = new ArrayList<>();
@@ -456,16 +476,23 @@ public class McpProxyController {
         ResponseEntity<String> sysResp = forwardToRuntime(
                 wsId, null, listBody, headers, access.auditSessionId(), access);
         if (!sysResp.getStatusCode().is2xxSuccessful()) {
-            logger.warn("System tools/list failed: wsId={} status={}", wsId, sysResp.getStatusCode());
-            return result;
+            DependencyFailure failure = dependencyFailureFromResponse(sysResp);
+            int evicted = evictSystemMappings(mapping);
+            logger.warn("System tools/list failed: wsId={} status={} reason={} evicted={}",
+                    wsId, sysResp.getStatusCode().value(), failure.reason(), evicted);
+            return new SystemToolSurface(result, failure);
         }
         List<Map<String, Object>> sysTools = extractToolsFromResponse(sysResp.getBody());
-        if (sysTools == null || sysTools.isEmpty()) {
-            String bodyPreview = sysResp.getBody() == null ? "null"
-                    : sysResp.getBody().substring(0, Math.min(500, sysResp.getBody().length()));
-            logger.warn("System tools/list returned no tools: wsId={} status={} body={}",
-                    wsId, sysResp.getStatusCode(), bodyPreview);
-            return result;
+        if (sysTools == null) {
+            int evicted = evictSystemMappings(mapping);
+            logger.warn("System tools/list returned an unparsable body: wsId={} status={} evicted={}",
+                    wsId, sysResp.getStatusCode().value(), evicted);
+            return new SystemToolSurface(result,
+                    dependencyFailure("runtime", "upstream_error", true));
+        }
+        if (sysTools.isEmpty()) {
+            logger.warn("System tools/list returned no tools: wsId={} status={}",
+                    wsId, sysResp.getStatusCode().value());
         }
         for (Map<String, Object> tool : sysTools) {
             String name = (String) tool.get("name");
@@ -476,7 +503,78 @@ public class McpProxyController {
                 result.add(tool);
             }
         }
-        return result;
+        return new SystemToolSurface(result, null);
+    }
+
+    /** PLAN-0557: drop stale routing entries so a failed refresh cannot keep dispatching. */
+    private static int evictSystemMappings(Map<String, String> mapping) {
+        int removed = 0;
+        for (Iterator<Map.Entry<String, String>> it = mapping.entrySet().iterator(); it.hasNext(); ) {
+            if ("__system__".equals(it.next().getValue())) {
+                it.remove();
+                removed++;
+            }
+        }
+        return removed;
+    }
+
+    /**
+     * PLAN-0557: classify a non-2xx system catalog response. A CP problem body from
+     * {@link #forwardToRuntime} already carries the precise reason; anything else is an
+     * upstream status.
+     */
+    private DependencyFailure dependencyFailureFromResponse(ResponseEntity<String> response) {
+        if (response.getStatusCode() == HttpStatus.SERVICE_UNAVAILABLE && response.getBody() != null) {
+            try {
+                JsonNode body = objectMapper.readTree(response.getBody());
+                String reason = body.path("reason").asText("");
+                if ("RUNTIME_UNAVAILABLE".equals(body.path("code").asText())
+                        && DEPENDENCY_REASONS.contains(reason)) {
+                    return dependencyFailure("runtime", reason, body.path("retryable").asBoolean(true));
+                }
+            } catch (JsonProcessingException e) {
+                logger.debug("Unable to inspect dependency problem body: {}", e.getMessage());
+            }
+        }
+        return classifyUpstreamStatus("runtime", response.getStatusCode().value());
+    }
+
+    private static DependencyFailure classifyUpstreamStatus(String dependency, int status) {
+        if (status == 401 || status == 403) {
+            return dependencyFailure(dependency, "auth_failed", false);
+        }
+        if (status == 408 || status == 504) {
+            return dependencyFailure(dependency, "timeout", true);
+        }
+        return dependencyFailure(dependency, "upstream_error", status >= 500);
+    }
+
+    /** PLAN-0557: transport failures are unreachable/timeout; never a caller error. */
+    private static DependencyFailure classifyTransportFailure(String dependency, Exception error) {
+        boolean timeout = error instanceof HttpTimeoutException;
+        return dependencyFailure(dependency, timeout ? "timeout" : "unreachable", true);
+    }
+
+    private static DependencyFailure dependencyFailure(String dependency, String reason, boolean retryable) {
+        boolean runtime = "runtime".equals(dependency);
+        return new DependencyFailure(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                runtime ? "RUNTIME_UNAVAILABLE" : "AGENT_UNAVAILABLE",
+                dependency,
+                reason,
+                retryable,
+                dependencyDetail(dependency, reason));
+    }
+
+    private static String dependencyDetail(String dependency, String reason) {
+        return switch (reason) {
+            case "timeout" -> ("runtime".equals(dependency) ? "Workspace runtime" : "Agent service")
+                    + " did not respond in time; retry shortly";
+            case "auth_failed" -> "Internal service credential was rejected by the " + dependency
+                    + "; contact the administrator";
+            default -> ("runtime".equals(dependency) ? "Workspace runtime" : "Agent service")
+                    + " is unavailable; retry after the service starts";
+        };
     }
 
     private static Map<String, Object> spawnAgentToolDefinition() {
@@ -530,9 +628,12 @@ public class McpProxyController {
 
         Map<String, String> mapping = toolTimeoutService.mappingFor(wsId);
         String serverId = mapping.get(toolName);
+        SystemToolSurface refreshed = null;
 
         if (serverId == null) {
-            populateSystemTools(wsId, headers, access);
+            // PLAN-0557/BL-109: remember why the refresh failed. A dependency outage must
+            // never be reported as an unknown tool.
+            refreshed = populateSystemTools(wsId, headers, access);
             mapping = toolTimeoutService.mappingFor(wsId);
             serverId = mapping.get(toolName);
         }
@@ -552,7 +653,15 @@ public class McpProxyController {
         }
 
         if (serverId == null) {
-            return problem(HttpStatus.BAD_REQUEST, "UNKNOWN_TOOL", "Requested tool is unavailable");
+            if (refreshed != null && refreshed.failure() != null) {
+                DependencyFailure failure = refreshed.failure();
+                audit.record(sessionId, toolName, "dependency_unavailable",
+                        failure.dependency() + ":" + failure.reason());
+                return dependencyProblem(failure);
+            }
+            audit.record(sessionId, toolName, "unknown_tool", "not present after catalog refresh");
+            return problem(HttpStatus.BAD_REQUEST, "UNKNOWN_TOOL",
+                    "Requested tool is not available in this workspace");
         }
         // PLAN-0463 T1.2/T1.3 (gate order): the agent-source invocation must exist
         // BEFORE grant context validation, so the new ChatRun+invocation verdict
@@ -1362,10 +1471,14 @@ public class McpProxyController {
             return new ResponseEntity<>(responseBody, responseHeaders, HttpStatus.valueOf(response.statusCode()));
 
         } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             // A transport failure after dispatch cannot prove whether the tool ran.
             finishMcpDispatchAttempt(dispatch, 502, "MCP_FORWARD_UNKNOWN", null);
+            DependencyFailure failure = classifyTransportFailure("runtime", e);
             if (forwardWait != null) {
-                boolean timeout = e instanceof java.net.http.HttpTimeoutException;
+                boolean timeout = "timeout".equals(failure.reason());
                 logger.error(
                         "[LIFECYCLE] service=cp event={} layer=cp_forward tool={} toolCallId={} runId={}"
                                 + " effectiveSeconds={} source={} valueOrigin={} overriddenValue={} origin={} error={}",
@@ -1376,9 +1489,10 @@ public class McpProxyController {
                         forwardWait.overriddenValue() == null ? "-" : forwardWait.overriddenValue(),
                         timeout ? "self" : "unknown", e.getMessage());
             }
-            logger.error("MCP forward failed: wsId={} serverId={} method={}", wsId, serverId, extractMethod(body), e);
-            audit.record(sessionId, extractMethod(body), "error", e.getMessage());
-            return problem(HttpStatus.BAD_GATEWAY, "RUNTIME_UNAVAILABLE", "Runtime MCP request failed");
+            logger.error("MCP forward failed: wsId={} serverId={} method={} reason={}",
+                    wsId, serverId, extractMethod(body), failure.reason(), e);
+            audit.record(sessionId, extractMethod(body), "error", failure.reason());
+            return dependencyProblem(failure);
         }
     }
 
@@ -2228,6 +2342,16 @@ public class McpProxyController {
         }
     }
 
+    /** PLAN-0557: dependency outage facts carried into a Problem Details response. */
+    private record DependencyFailure(
+            HttpStatus status, String code, String dependency, String reason,
+            boolean retryable, String detail) {
+    }
+
+    /** PLAN-0557: either a usable catalog or the reason it could not be loaded. */
+    private record SystemToolSurface(List<Map<String, Object>> tools, DependencyFailure failure) {
+    }
+
     private record AuthorizationResult(AccessContext context, ResponseEntity<String> failure) {
         static AuthorizationResult success(AccessContext context) {
             return new AuthorizationResult(context, null);
@@ -2243,6 +2367,19 @@ public class McpProxyController {
     }
 
     private ResponseEntity<String> problem(HttpStatus status, String code, String detail) {
+        return problem(status, code, detail, Map.of());
+    }
+
+    private ResponseEntity<String> dependencyProblem(DependencyFailure failure) {
+        Map<String, Object> extra = new LinkedHashMap<>();
+        extra.put("dependency", failure.dependency());
+        extra.put("reason", failure.reason());
+        extra.put("retryable", failure.retryable());
+        return problem(failure.status(), failure.code(), failure.detail(), extra);
+    }
+
+    private ResponseEntity<String> problem(
+            HttpStatus status, String code, String detail, Map<String, Object> extra) {
         String requestId = MDC.get(RequestIdFilter.MDC_KEY);
         if (requestId == null || requestId.isBlank()) {
             requestId = UUID.randomUUID().toString();
@@ -2253,6 +2390,16 @@ public class McpProxyController {
         problem.put("status", status.value());
         problem.put("code", code);
         problem.put("detail", detail == null ? "Request failed" : detail);
+        for (Map.Entry<String, Object> entry : extra.entrySet()) {
+            Object value = entry.getValue();
+            if (value instanceof Boolean bool) {
+                problem.put(entry.getKey(), bool);
+            } else if (value instanceof Integer number) {
+                problem.put(entry.getKey(), number);
+            } else {
+                problem.put(entry.getKey(), String.valueOf(value));
+            }
+        }
         problem.put("requestId", requestId);
         String body;
         try {

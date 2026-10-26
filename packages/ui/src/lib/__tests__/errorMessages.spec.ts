@@ -2,9 +2,18 @@ import { describe, expect, it } from "vitest";
 import { chatErrorToastText, humanizeErrorCode } from "../errorMessages";
 
 describe("humanizeErrorCode", () => {
-    it("maps runtime unavailable to human copy", () => {
-        expect(humanizeErrorCode("RUNTIME_ERROR")).toContain("沙盒未就绪");
+    it("maps runtime unavailable to human copy without assuming Docker", () => {
+        const runtimeCopy = humanizeErrorCode("RUNTIME_UNAVAILABLE");
+        expect(runtimeCopy).toContain("运行时未就绪");
+        expect(runtimeCopy).not.toContain("Docker");
+        expect(humanizeErrorCode("RUNTIME_ERROR")).toContain("运行时未就绪");
         expect(humanizeErrorCode("MCP_STREAM_UNAVAILABLE")).toContain("Docker");
+    });
+
+    it("separates an unknown tool from dependency unavailability", () => {
+        expect(humanizeErrorCode("UNKNOWN_TOOL")).toContain("工具不存在");
+        expect(humanizeErrorCode("UNKNOWN_TOOL")).not.toContain("运行时");
+        expect(humanizeErrorCode("AGENT_UNAVAILABLE")).toContain("Agent");
     });
 
     it("maps approval terminal states", () => {
@@ -15,7 +24,7 @@ describe("humanizeErrorCode", () => {
     it("keeps unknown codes visible", () => {
         expect(humanizeErrorCode("SOMETHING", "boom")).toContain("SOMETHING");
         expect(chatErrorToastText("RUNTIME_ERROR")).toContain("RUNTIME_ERROR");
-        expect(chatErrorToastText("RUNTIME_ERROR")).toContain("沙盒");
+        expect(chatErrorToastText("RUNTIME_ERROR")).toContain("运行时");
     });
 
     it("maps Workspace Job execution codes to stable UI copy", () => {

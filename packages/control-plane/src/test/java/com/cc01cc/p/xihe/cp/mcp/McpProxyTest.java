@@ -92,8 +92,10 @@ class McpProxyTest {
     @SuppressWarnings("unchecked")
     void toolsListPublishesCpOwnedSpawnOnlyToInternalAgentClient() throws Exception {
         Object internal = internalAccessContext(TEST_WS_UUID, "user-1", null);
-        var internalTools = (java.util.List<Map<String, Object>>) ReflectionTestUtils.invokeMethod(
+        Object internalSurface = ReflectionTestUtils.invokeMethod(
                 controller, "populateSystemTools", TEST_WS_UUID, new HttpHeaders(), internal);
+        var internalTools = (java.util.List<Map<String, Object>>)
+                ReflectionTestUtils.invokeMethod(internalSurface, "tools");
         Map<String, Object> spawnTool = internalTools.stream()
                 .filter(tool -> "spawn_agent".equals(tool.get("name")))
                 .findFirst().orElseThrow();
@@ -105,8 +107,10 @@ class McpProxyTest {
         assertEquals(Boolean.FALSE, schema.get("additionalProperties"));
 
         Object user = accessContext(TEST_WS_UUID, "user-1");
-        var userTools = (java.util.List<Map<String, Object>>) ReflectionTestUtils.invokeMethod(
+        Object userSurface = ReflectionTestUtils.invokeMethod(
                 controller, "populateSystemTools", TEST_WS_UUID, new HttpHeaders(), user);
+        var userTools = (java.util.List<Map<String, Object>>)
+                ReflectionTestUtils.invokeMethod(userSurface, "tools");
         assertTrue(userTools.stream().noneMatch(tool -> "spawn_agent".equals(tool.get("name"))));
     }
 
@@ -454,6 +458,16 @@ class McpProxyTest {
 
         com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
                 new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        // PLAN-0557: tools/list now fails closed when the system catalog is unreachable,
+        // so this merge test must serve a valid (empty) system catalog.
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange -> {
+            byte[] bytes = "{\"jsonrpc\":\"2.0\",\"result\":{\"tools\":[]},\"id\":1}"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
         stub.createContext("/internal/v1/runtime/remote-mcp/" + TEST_WS_UUID + "/"
                 + java.util.UUID.nameUUIDFromBytes("deepwiki".getBytes()) + "/call", exchange -> {
             String req = new String(exchange.getRequestBody().readAllBytes(),
@@ -1497,6 +1511,143 @@ class McpProxyTest {
         } finally {
             stub.stop(0);
         }
+    }
+
+    // PLAN-0557/BL-109: dependency failures must never surface as UNKNOWN_TOOL.
+    @Test
+    void handleToolsCall_runtimeUnreachable_returnsDependencyUnavailableNotUnknownTool() throws Exception {
+        ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://127.0.0.1:1");
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"id\":31,"
+                + "\"params\":{\"name\":\"list_directory\",\"arguments\":{\"path\":\".\"}}}";
+
+        ResponseEntity<String> response = callTool(body);
+
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, response.getStatusCode());
+        JsonNode problem = objectMapper.readTree(response.getBody());
+        assertEquals("RUNTIME_UNAVAILABLE", problem.path("code").asText());
+        assertEquals("runtime", problem.path("dependency").asText());
+        assertEquals("unreachable", problem.path("reason").asText());
+        assertTrue(problem.path("retryable").asBoolean());
+        assertFalse(response.getBody().contains("UNKNOWN_TOOL"));
+        verify(auditLogger).record(eq("sess-1"), eq("list_directory"),
+                eq("dependency_unavailable"), eq("runtime:unreachable"));
+    }
+
+    @Test
+    void handleToolsCall_catalogSucceedsButToolMissing_returnsUnknownTool() throws Exception {
+        var stub = stubRuntime("{\"jsonrpc\":\"2.0\",\"result\":{\"tools\":[{\"name\":\"read_file\"}]},\"id\":1}");
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"id\":32,"
+                    + "\"params\":{\"name\":\"ghost_tool\",\"arguments\":{}}}";
+
+            ResponseEntity<String> response = callTool(body);
+
+            assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+            JsonNode problem = objectMapper.readTree(response.getBody());
+            assertEquals("UNKNOWN_TOOL", problem.path("code").asText());
+            assertFalse(problem.has("dependency"));
+            verify(auditLogger).record(eq("sess-1"), eq("ghost_tool"),
+                    eq("unknown_tool"), anyString());
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsList_runtimeUnreachable_returnsDependencyUnavailable() throws Exception {
+        ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://127.0.0.1:1");
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":33,\"params\":{}}";
+
+        ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                controller, "handleToolsList", TEST_WS_UUID, body, new HttpHeaders(), "sess-1",
+                internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
+
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, response.getStatusCode());
+        JsonNode problem = objectMapper.readTree(response.getBody());
+        assertEquals("RUNTIME_UNAVAILABLE", problem.path("code").asText());
+        assertEquals("unreachable", problem.path("reason").asText());
+        verify(auditLogger).record(eq("sess-1"), eq("tools/list"),
+                eq("dependency_unavailable"), eq("runtime:unreachable"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsList_upstreamAuthFailure_isNotRetryable() throws Exception {
+        var stub = stubRuntimeStatus(401, "{\"error\":\"unauthorized\"}");
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":34,\"params\":{}}";
+
+            ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsList", TEST_WS_UUID, body, new HttpHeaders(), "sess-1",
+                    internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
+
+            assertEquals(HttpStatus.SERVICE_UNAVAILABLE, response.getStatusCode());
+            JsonNode problem = objectMapper.readTree(response.getBody());
+            assertEquals("RUNTIME_UNAVAILABLE", problem.path("code").asText());
+            assertEquals("auth_failed", problem.path("reason").asText());
+            assertFalse(problem.path("retryable").asBoolean());
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsList_upstreamTimeout_isRetryable() throws Exception {
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange -> {
+            try {
+                release.await(5, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            byte[] payload = "{}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+        stub.start();
+        ReflectionTestUtils.setField(controller, "forwardTimeoutS", 1L);
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":35,\"params\":{}}";
+
+            ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsList", TEST_WS_UUID, body, new HttpHeaders(), "sess-1",
+                    internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
+
+            assertEquals(HttpStatus.SERVICE_UNAVAILABLE, response.getStatusCode());
+            JsonNode problem = objectMapper.readTree(response.getBody());
+            assertEquals("RUNTIME_UNAVAILABLE", problem.path("code").asText());
+            assertEquals("timeout", problem.path("reason").asText());
+            assertTrue(problem.path("retryable").asBoolean());
+        } finally {
+            release.countDown();
+            stub.stop(0);
+            ReflectionTestUtils.setField(controller, "forwardTimeoutS", 30L);
+        }
+    }
+
+    private com.sun.net.httpserver.HttpServer stubRuntimeStatus(int status, String responseJson)
+            throws java.io.IOException {
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange -> {
+            byte[] response = responseJson.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(status, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        stub.start();
+        return stub;
     }
 
     private com.sun.net.httpserver.HttpServer stubRuntime(String responseJson) throws java.io.IOException {
