@@ -38,8 +38,6 @@ import static org.mockito.Mockito.verify;
 
 /** Real HTTP, Boot request mapper, advice and isolated pg17 from AbstractIntegrationTest. */
 @TestPropertySource(properties = {
-        "cp.provider-credentials.encryption-key=",
-        "cp.provider-credentials.allow-dev-key=true",
         "cp.oauth.encryption-key=",
         "cp.oauth.allow-dev-key=true"
 })

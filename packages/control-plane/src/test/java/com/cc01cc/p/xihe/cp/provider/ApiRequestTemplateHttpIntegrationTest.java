@@ -33,7 +33,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Real HTTP mapper/security/service/PG tests; no production data or provider network. */
 @TestPropertySource(properties = {
-        "cp.provider-credentials.encryption-key=", "cp.provider-credentials.allow-dev-key=true",
         "cp.oauth.encryption-key=", "cp.oauth.allow-dev-key=true"
 })
 class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
