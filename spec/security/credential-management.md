@@ -7,7 +7,7 @@
 ## 1. 范围与边界
 
 - 凭据管理域（credential manager）承载 owner 级独立凭据对象：登记、加密存储、生命周期与密钥轮换。
-- 本域对象独立于 provider connections 与 MCP OAuth：后两者保持现状，不迁移、不改写；本文件不 supersede `spec/protocol/provider-api-types.md` 的 Credential Boundary（其作用域=provider 连接与 MCP OAuth 的凭据），仅建立交叉引用。
+- 本域对象与 provider connections 的关系（PLAN-0553 supersede）：`provider_connections` 不再保存 `credential_ciphertext`，只保存 owner-neutral 的 `credential_id` 引用；provider lease/verify/export 经本域解密，link 与 use 分别受 `credential_use`/`credential_manage` 约束。MCP OAuth 仍保持独立、不迁移。本文件继续与 `spec/protocol/provider-api-types.md` 的 Credential Boundary 交叉引用，但连接侧边界已由 PLAN-0553 更新。
 - owner 两级：`WORKSPACE > USER`（`owner_type` 值域 `USER` / `WORKSPACE`；不含 `SYSTEM`）。
 - v1 形态：`kind` 仅 `token` 与 `key_pair`；`delivery_tier` 仅 `lease` 与 `reveal`（单通道语义）；`broker` 为预留枚举值——**MUST** 在写入层被拒绝。
 

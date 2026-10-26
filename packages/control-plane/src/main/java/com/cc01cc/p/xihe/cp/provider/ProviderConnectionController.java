@@ -211,12 +211,13 @@ public class ProviderConnectionController {
             JsonNode operation,
             Long expectedRevision,
             Map<String, Object> connectionDefaultTemplateRef,
-            Boolean confirmedTypeChange) {
+            Boolean confirmedTypeChange,
+            String credentialId) {
         public ConnectionRequest(String providerId, String label, String scope, String apiKey, String baseUrl,
                                   String modelDiscovery, List<String> manualModels, Boolean enabled,
                                   JsonNode connectionKey, JsonNode apiTypeId, JsonNode apiTypeVersion, JsonNode operation) {
             this(providerId, label, scope, apiKey, baseUrl, modelDiscovery, manualModels, enabled,
-                    connectionKey, apiTypeId, apiTypeVersion, operation, null, null, null);
+                    connectionKey, apiTypeId, apiTypeVersion, operation, null, null, null, null);
         }
 
         String typeId() {
@@ -241,7 +242,7 @@ public class ProviderConnectionController {
             }
             return new ProviderConnectionService.ConnectionInput(
                     providerId, label, scope, apiKey, baseUrl, modelDiscovery, manualModels,
-                    enabled, key);
+                    enabled, key, credentialId);
         }
     }
 }

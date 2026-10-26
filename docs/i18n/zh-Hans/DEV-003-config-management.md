@@ -15,7 +15,7 @@ updated: 2026-10-12
 >
 > PLAN-0389 配置 proposed SPEC：[`spec/configuration/env-effective.md`](../../../spec/configuration/env-effective.md)。本文仍是 ConfigService/Config schema 的当前事实源；Runtime env/CLI 与 CP DB effective 分属不同进程边界。
 >
-> 现行模型（PLAN-0307 已落地）：**三层 `instance / user / workspace`**（作用域书写统一从大到小；解析链 `workspace > user > instance > 代码默认`）+ 凭证 **BYOK**（`provider_connections` 加密表，两级 `WORKSPACE > USER`；`SYSTEM` 归属已退役，见 PLAN-0364 M2）+ **env 覆盖锁定**（env 为最高部署权威，UI 显示 env 生效值并禁用该项）。端点以 `docs/api/openapi.yaml` 为准；认证、principal、授权和审计的冻结契约见根级 `spec/security/`（当前为 proposed）。
+> 现行模型（PLAN-0307/PLAN-0553 已落地）：**三层 `instance / user / workspace`**（作用域书写统一从大到小；解析链 `workspace > user > instance > 代码默认`）+ 凭证 **BYOK**（凭据域 `credentials` 为 SSOT；`provider_connections.credential_id` 只做 owner-neutral 引用；两级 `USER/WORKSPACE`；`SYSTEM` 归属已退役，见 PLAN-0364 M2）+ **env 覆盖锁定**（env 为最高部署权威，UI 显示 env 生效值并禁用该项）。端点以 `docs/api/openapi.yaml` 为准；认证、principal、授权和审计的冻结契约见根级 `spec/security/`（当前为 proposed）。
 
 ## 1. 三层所有权与十一域
 
@@ -121,7 +121,7 @@ CLI --set KEY=VALUE（最高，启动日志掩码标注）
 | 配置类别 | 归属 | 生效方式 |
 |---------|------|---------|
 | 端口、DB 连接、JWT secret、模块间 URL、service token（解析顺序见 [DEV-024](DEV-024-authentication-matrix.md)）、Workspace 根 | 启动环境变量 / `.env.dev` | 重启生效 |
-| API key 等凭证 | `provider_connections`（CP 加密表，UI/API 管理，租约下发） | 运行时即时 |
+| API key 等凭证 | `credentials`（凭据域 SSOT；连接只存 `credential_id`；租约下发） | 运行时即时 |
 | 模型、采样参数、context-policy、embedding、rag、agent 行为、user-preference | ConfigService（DB 三层） | 运行时即时（Agent 周期 pull + run 覆盖） |
 | 日志等级 | ConfigService `logging` 域（instance）；启动早期回退 env | 热更（CP logback / Agent reload） |
 | Agent env 兜底键 | Agent 进程 env | 仅无租约/CP 不可达时 |
@@ -155,7 +155,7 @@ curl -X PUT "http://localhost:12631/api/v1/config/workspace/rag?workspaceId=$WS"
 
 **llm-provider 默认身份（PLAN-0504/0552，决策 #2/#4/#11/#12）**：默认身份是整单元 `profile` = `{providerId, connectionKey, model}`（JSON 字符串或对象），按 workspace > user > instance **首存在层**解析、整单元覆盖、不合并字段；写入必须是完整单元（部分 profile 400 `INVALID_REQUEST`）。`profile.providerId` 的写时接受集 = CP provider catalog 全量 id（`provider-catalog/providers.json`，经 `ProviderCatalogService.providerIds()` 派生，`GET /api/v1/provider-catalog` 同源）：catalog 增删 provider 无需改代码；catalog 外值以 `profile.providerId is unsupported` 拒绝。instance 层不校验连接（运行期由消费方 scope 解析到消费用户的 USER 连接）；**workspace 层只接受本 workspace 的 WORKSPACE 连接，user 层只接受本人的 USER 连接**（PLAN-0552 关闭 workspace→user 隐式回退）。legacy 键（`defaultProvider`/`defaultModel`/`*Model`/`*ApiBase`/`baseUrl`）已退役，写入即被 schema 拒绝（400，无兼容映射）。解析到已删/不可用连接时报 `LLM_PROFILE_CONFLICT`（409），不静默降层。配置页默认模型 = 连接选择 + 模型候选（scoped 目录），见 §3b。
 
-凭证**不写 config 层**（`rejectProviderSecrets` 会以 403 拒绝任何 `*ApiKey`/secret/password/token 类键），统一走 `provider_connections`：
+凭证**不写 config 层**（`rejectProviderSecrets` 会以 403 拒绝任何 `*ApiKey`/secret/password/token 类键），统一走凭据域：`credentials` 保存加密密钥，`provider_connections.credential_id` 只做引用（PLAN-0553 硬切后连接不再有密文列）：
 
 `isProviderSecretKey` 对通用 `token` 键名匹配必须排除 `maxTokens`：它是 `llm-provider` 的数值配置，不是凭证；`ConfigServiceTest.importJsonc_acceptsNumericValues` 覆盖该行为。
 
@@ -180,7 +180,7 @@ curl -X POST "http://localhost:12631/api/v1/config/import?layer=instance" \
 
 `mise run dev:full` 是独立的一次性 Compose 脚本，仍保留其原有显式环境变量触发导入的行为；不要把它的启动语义套用到日常 `dev:host`。
 
-**XH CLI 与 Provider Connection**：`provider add/update/list/verify` 经 CP 认证 API 管理连接，密钥由 CP 加密存入 `provider_connections`。`dev init` 需要显式 provider/scope；无连接时创建，有连接时复用并 verify，不自动换 key。通过 `--api-key-env <NAME>` 指定当前进程环境变量，或在交互终端输入无回显密钥；CLI 不自行读取 `.env.local`，非交互任务必须由调用方安全注入变量。禁止把 key 值放在命令参数或 JSONC 中。
+**XH CLI 与 Provider Connection**：`provider add/update/list/verify` 经 CP 认证 API 管理连接，密钥由 CP 写入凭据域并只把 `credential_id` 存到连接（PLAN-0553）。`dev init` 需要显式 provider/scope；无连接时创建，有连接时复用并 verify，不自动换 key。通过 `--api-key-env <NAME>` 指定当前进程环境变量，或在交互终端输入无回显密钥；CLI 不自行读取 `.env.local`，非交互任务必须由调用方安全注入变量。禁止把 key 值放在命令参数或 JSONC 中。
 
 ```bash
 mise run xihe -- provider add xiaomi --scope USER --label xh-local --api-key-env XIHE_XIAOMI_API_KEY
@@ -257,4 +257,4 @@ Agent 启动和周期 refresh 使用同一 atomic runtime snapshot。模型目�
 
 **路由与工具能力错误（PLAN-0364 M3）**：`LLM_TOOL_ROUTE_UNSUPPORTED` = 所选路由不支持工具参数（native `xiaomi_mimo` 等无工具元数据；litellm 抛 `UnsupportedParamsError` 后映射，需改用 OpenAI 兼容连接）；`LLM_BASE_URL_MISSING` = `openai` / `custom_openai` / `openai_like` 路由缺 `baseUrl`（Agent 侧 fail-fast，禁止回落到 OpenAI 默认端点）。`LLM_REQUEST_REJECTED` = 提供方 4xx 拒绝请求（消息形态/参数不被接受，如 `content` 传空串数组），不可重试；三者已在 UI `errorMessages` 登记。
 
-凭证只归 `provider_connections`（加密存储 + 租约）：USER 可读取脱敏配置与安全 provider 状态，但不能写入 `llm-provider` 凭证键；ConfigAudit 对 provider 凭证只保存 `present/missing` 和不可逆 fingerprint。ADMIN 配置 GET 的 raw-read 例外仅限配置 API 响应本身，不得扩展到 health、catalog、日志、trace 或截图证据。
+凭证只归凭据域（`credentials` 加密存储 + 租约；`provider_connections` 只存 `credential_id`）：USER 可读取脱敏配置与安全 provider 状态，但不能写入 `llm-provider` 凭证键；ConfigAudit 对 provider 凭证只保存 `present/missing` 和不可逆 fingerprint。ADMIN 配置 GET 的 raw-read 例外仅限配置 API 响应本身，不得扩展到 health、catalog、日志、trace 或截图证据。

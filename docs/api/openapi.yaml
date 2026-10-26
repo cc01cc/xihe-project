@@ -3460,6 +3460,7 @@ components:
           ownerId: { type: string, readOnly: true }
           baseUrl: { type: [string, 'null'], format: uri }
           hasKey: { type: boolean, readOnly: true }
+          credentialId: { type: [string, 'null'], format: uuid, readOnly: true, description: 'PLAN-0553: owner-neutral credential reference; null means no key.' }
           maskedKey: { type: [string, 'null'], readOnly: true, description: 'Always null; ordinary reads never derive a credential suffix.' }
           modelDiscovery: { type: string, enum: [remote-models, litellm-catalog, curated, manual] }
           manualModels: { type: array, items: { type: string } }
@@ -3478,7 +3479,8 @@ components:
          label: { type: string, minLength: 1, maxLength: 128 }
          connectionKey: { type: string, minLength: 1, maxLength: 64, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$' }
          scope: { type: string, enum: [USER, WORKSPACE], default: USER, description: 'Scope is still authorization-checked by CP; clients cannot create SYSTEM connections.' }
-         apiKey: { type: [string, 'null'], minLength: 1, writeOnly: true }
+         apiKey: { type: [string, 'null'], minLength: 1, writeOnly: true, description: 'Quick-creates a USER lease-tier token credential and links it; mutually exclusive with credentialId.' }
+         credentialId: { type: [string, 'null'], format: uuid, description: 'Links an existing credential the caller may use; mutually exclusive with apiKey.' }
          baseUrl: { type: [string, 'null'], format: uri }
          modelDiscovery: { type: [string, 'null'], enum: [remote-models, litellm-catalog, curated, manual] }
          manualModels: { type: array, items: { type: string }, maxItems: 256 }
@@ -3500,7 +3502,8 @@ components:
          connectionDefaultTemplateRef: { $ref: '#/components/schemas/ApiRequestTemplateRef' }
          label: { type: string, minLength: 1, maxLength: 128 }
          connectionKey: { type: [string, 'null'], minLength: 1, maxLength: 64, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$', description: 'Omitted preserves the key; null is rejected with PROVIDER_CONNECTION_KEY_INVALID; a different key is rejected with PROVIDER_CONNECTION_KEY_IMMUTABLE.' }
-         apiKey: { type: [string, 'null'], minLength: 1, writeOnly: true }
+         apiKey: { type: [string, 'null'], minLength: 1, writeOnly: true, description: 'Quick-creates a new USER lease-tier token credential and rebinds it; mutually exclusive with credentialId.' }
+         credentialId: { type: [string, 'null'], format: uuid, description: 'Rebinds the connection to an existing credential the caller may use; mutually exclusive with apiKey.' }
          baseUrl: { type: [string, 'null'], format: uri }
          enabled: { type: boolean }
          modelDiscovery: { type: [string, 'null'], enum: [remote-models, litellm-catalog, curated, manual] }

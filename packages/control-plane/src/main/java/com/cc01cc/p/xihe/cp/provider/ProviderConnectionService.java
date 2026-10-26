@@ -44,7 +44,8 @@ public class ProviderConnectionService {
     private final com.cc01cc.p.xihe.cp.repository.ProviderCredentialLeaseRepository leaseRepository;
     private final ProviderCatalogService catalog;
     private final ApiInputTypeService apiTypes;
-    private final EnvelopeEncryptionService encryption;
+    private final com.cc01cc.p.xihe.cp.credentials.CredentialService credentialService;
+    private final ProviderCredentialAccess credentialAccess;
     private final ObjectMapper objectMapper;
     private final com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService requestTemplates;
     // ConfigService field-injects ProviderConnectionService, so a constructor
@@ -60,7 +61,8 @@ public class ProviderConnectionService {
             com.cc01cc.p.xihe.cp.repository.ProviderCredentialLeaseRepository leaseRepository,
             ProviderCatalogService catalog,
             ApiInputTypeService apiTypes,
-            @Qualifier("providerCredentialEncryption") EnvelopeEncryptionService encryption,
+            com.cc01cc.p.xihe.cp.credentials.CredentialService credentialService,
+            ProviderCredentialAccess credentialAccess,
             ObjectMapper objectMapper,
             com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService requestTemplates,
             org.springframework.beans.factory.ObjectProvider<com.cc01cc.p.xihe.cp.config.ConfigService> configService) {
@@ -69,7 +71,8 @@ public class ProviderConnectionService {
         this.leaseRepository = leaseRepository;
         this.catalog = catalog;
         this.apiTypes = apiTypes;
-        this.encryption = encryption;
+        this.credentialService = credentialService;
+        this.credentialAccess = credentialAccess;
         this.objectMapper = objectMapper;
         this.requestTemplates = requestTemplates;
         this.configService = configService;
@@ -117,7 +120,7 @@ public class ProviderConnectionService {
                         connection.getStatus(), connection.isEnabled(), connection.getConnectionKey(),
                         connection.getApiTypeId(), connection.getApiTypeVersion(),
                         connection.getModelDiscovery(), connection.getManualModels(),
-                        includeSecrets ? decryptCredential(connection) : null))
+                        includeSecrets ? decryptForExport(connection) : null))
                 .toList();
     }
 
@@ -163,13 +166,19 @@ public class ProviderConnectionService {
         String baseUrl = normalizeBaseUrl(input.baseUrl(), pair);
         validateBaseUrl(baseUrl, defaultType.apiTypeId(), defaultType.version());
         String apiKey = blankToNull(input.apiKey());
-        if (catalog.requiresCredential(input.providerId()) && apiKey == null) {
+        String credentialId = blankToNull(input.credentialId());
+        if (apiKey != null && credentialId != null) {
+            throw new IllegalArgumentException("apiKey and credentialId are mutually exclusive");
+        }
+        if (catalog.requiresCredential(input.providerId()) && apiKey == null && credentialId == null) {
             throw new IllegalArgumentException("Provider requires an API key");
         }
         if (repository.findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
                 scope, ownerId, input.providerId(), connectionKey).isPresent()) {
             throw new KeyConflictException("A connection already exists for this provider, key and scope");
         }
+        UUID linkedCredentialId = resolveCredentialLink(apiKey, credentialId, userId,
+                TenantContext.getWorkspaceId(), requireLabel(input.label()));
 
         ProviderConnection connection = new ProviderConnection();
         connection.setId(UUID.randomUUID());
@@ -181,8 +190,7 @@ public class ProviderConnectionService {
         connection.setApiTypeVersion(defaultType.version());
         connection.setLabel(requireLabel(input.label()));
         connection.setBaseUrl(baseUrl);
-        connection.setCredentialCiphertext(encryptCredential(connection, apiKey));
-        connection.setEncryptionKeyVersion(encryption.currentVersion());
+        connection.setCredentialId(linkedCredentialId);
         connection.setEnabled(true);
         connection.setStatus(ProviderConnection.STATUS_VERIFYING);
         connection.setModelDiscovery(requireModelDiscovery(
@@ -220,9 +228,26 @@ public class ProviderConnectionService {
             connection.setManualModels(serializeModels(input.manualModels()));
         }
         String apiKey = blankToNull(input.apiKey());
+        String credentialId = blankToNull(input.credentialId());
+        if (apiKey != null && credentialId != null) {
+            throw new IllegalArgumentException("apiKey and credentialId are mutually exclusive");
+        }
+        if (credentialId != null) {
+            UUID linked = requireCredentialId(credentialId);
+            credentialAccess.requireUsable(linked, requireUserId(), TenantContext.getWorkspaceId());
+            connection.setCredentialId(linked);
+        }
         if (apiKey != null) {
-            connection.setCredentialCiphertext(encryptCredential(connection, apiKey));
-            connection.setEncryptionKeyVersion(encryption.currentVersion());
+            UUID linked = credentialService.create(
+                    new com.cc01cc.p.xihe.cp.credentials.CredentialService.CreateRequest(
+                            com.cc01cc.p.xihe.cp.entity.Credential.OWNER_USER,
+                            requireUserId(),
+                            connection.getLabel(),
+                            com.cc01cc.p.xihe.cp.entity.Credential.KIND_TOKEN,
+                            com.cc01cc.p.xihe.cp.entity.Credential.TIER_LEASE,
+                            com.cc01cc.p.xihe.cp.credentials.CredentialService.SecretPayload.ofToken(apiKey)),
+                    requireUserId()).getId();
+            connection.setCredentialId(linked);
         }
         if (input.hasChanges()) {
             connection.setRevision(connection.getRevision() + 1);
@@ -257,7 +282,8 @@ public class ProviderConnectionService {
             return markReady(connection, previousStatus);
         }
 
-        String apiKey = decryptCredential(connection);
+        String apiKey = credentialAccess.decryptForUse(
+                connection.getCredentialId(), requireUserId(), TenantContext.getWorkspaceId());
         String baseUrl = connection.getBaseUrl();
         if (baseUrl == null || baseUrl.isBlank()) {
             return markVerificationFailure(connection, "LLM_PROVIDER_BASE_URL_MISSING", previousStatus);
@@ -551,23 +577,45 @@ public class ProviderConnectionService {
         }
     }
 
-    private String encryptCredential(ProviderConnection connection, String apiKey) {
-        if (apiKey == null || apiKey.isBlank()) {
-            return null;
+    /**
+     * PLAN-0553 decision #10: a connection can link an existing credential
+     * (owner/use/manage checked by the credential domain) or quick-create a
+     * USER lease-tier token from the dialog's apiKey. It never stores a secret.
+     */
+    private UUID resolveCredentialLink(String apiKey, String credentialId,
+                                       String userId, String workspaceId, String label) {
+        if (apiKey != null) {
+            return credentialService.create(
+                    new com.cc01cc.p.xihe.cp.credentials.CredentialService.CreateRequest(
+                            com.cc01cc.p.xihe.cp.entity.Credential.OWNER_USER,
+                            userId,
+                            label,
+                            com.cc01cc.p.xihe.cp.entity.Credential.KIND_TOKEN,
+                            com.cc01cc.p.xihe.cp.entity.Credential.TIER_LEASE,
+                            com.cc01cc.p.xihe.cp.credentials.CredentialService.SecretPayload.ofToken(apiKey)),
+                    userId).getId();
         }
-        return encryption.encrypt(apiKey, aad(connection));
+        if (credentialId != null) {
+            UUID linked = requireCredentialId(credentialId);
+            credentialAccess.requireUsable(linked, userId, workspaceId);
+            return linked;
+        }
+        return null;
     }
 
-    private String decryptCredential(ProviderConnection connection) {
-        if (connection.getCredentialCiphertext() == null || connection.getCredentialCiphertext().isBlank()) {
-            return null;
+    private UUID requireCredentialId(String value) {
+        try {
+            return UUID.fromString(value.trim());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("credentialId must be a UUID", e);
         }
-        return encryption.decrypt(connection.getCredentialCiphertext(), aad(connection));
     }
 
-    private String aad(ProviderConnection connection) {
-        return connection.getProviderId() + "|" + connection.getOwnerType() + "|"
-                + connection.getOwnerId() + "|" + connection.getId();
+    private String decryptForExport(ProviderConnection connection) {
+        if (connection.getCredentialId() == null) {
+            return null;
+        }
+        return credentialAccess.decryptForDelivery(connection.getCredentialId());
     }
 
     private ProviderConnection markReady(ProviderConnection connection, String previousStatus) {
@@ -602,8 +650,7 @@ public class ProviderConnectionService {
         entry.setChangedBy(changedBy == null || changedBy.isBlank() ? "internal-service" : changedBy);
         entry.setFromStatus(fromStatus);
         entry.setToStatus(toStatus);
-        entry.setCredentialPresent(connection.getCredentialCiphertext() != null
-                && !connection.getCredentialCiphertext().isBlank());
+        entry.setCredentialPresent(credentialAccess.isUsable(connection.getCredentialId()));
         entry.setCredentialLast4(null);
         entry.setConnectionRevision(connection.getRevision());
         auditRepository.save(entry);
@@ -641,15 +688,15 @@ public class ProviderConnectionService {
 
     private ProviderConnectionView toView(ProviderConnection connection) {
         String operation = apiTypes.operation(connection.getApiTypeId(), connection.getApiTypeVersion());
-        boolean hasKey = connection.getCredentialCiphertext() != null
-                && !connection.getCredentialCiphertext().isBlank();
+        boolean hasKey = credentialAccess.isUsable(connection.getCredentialId());
         return new ProviderConnectionView(
                 connection.getId().toString(), connection.getProviderId(), connection.getLabel(),
                 connection.getOwnerType(), connection.getOwnerId(), connection.getBaseUrl(),
                 connection.getConnectionKey(), connection.getApiTypeId(), connection.getApiTypeVersion(),
                 operation, hasKey, null, connection.isEnabled(), connection.getStatus(),
                 connection.getLastVerifiedAt(), connection.getLastErrorCode(), connection.getRevision(),
-                connection.getModelDiscovery(), readManualModels(connection));
+                connection.getModelDiscovery(), readManualModels(connection),
+                connection.getCredentialId() == null ? null : connection.getCredentialId().toString());
     }
 
     private List<String> readManualModels(ProviderConnection connection) {
@@ -679,9 +726,17 @@ public class ProviderConnectionService {
             String modelDiscovery,
             List<String> manualModels,
             Boolean enabled,
-            String connectionKey) {
+            String connectionKey,
+            String credentialId) {
+        public ConnectionInput(String providerId, String label, String scope, String apiKey,
+                               String baseUrl, String modelDiscovery, List<String> manualModels,
+                               Boolean enabled, String connectionKey) {
+            this(providerId, label, scope, apiKey, baseUrl, modelDiscovery, manualModels,
+                    enabled, connectionKey, null);
+        }
+
         public boolean hasChanges() {
-            return label != null || apiKey != null || baseUrl != null
+            return label != null || apiKey != null || credentialId != null || baseUrl != null
                     || modelDiscovery != null || manualModels != null || enabled != null;
         }
     }
@@ -705,7 +760,8 @@ public class ProviderConnectionService {
             String lastErrorCode,
             long revision,
             String modelDiscovery,
-            List<String> manualModels) {}
+            List<String> manualModels,
+            String credentialId) {}
 
     public static final class KeyInvalidException extends IllegalArgumentException {
         public KeyInvalidException(String message) { super(message); }

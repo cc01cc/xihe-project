@@ -20,6 +20,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -36,20 +37,29 @@ class ProviderConnectionServiceTest {
     private final ProviderCredentialLeaseRepository leaseRepository = mock(ProviderCredentialLeaseRepository.class);
     private final ProviderCatalogService catalog = mock(ProviderCatalogService.class);
     private final ApiInputTypeService apiTypes = new ApiInputTypeService(new ObjectMapper());
-    private final EnvelopeEncryptionService encryption = new EnvelopeEncryptionService(new byte[32]);
+    private final com.cc01cc.p.xihe.cp.credentials.CredentialService credentialService =
+            mock(com.cc01cc.p.xihe.cp.credentials.CredentialService.class);
+    private final ProviderCredentialAccess credentialAccess = mock(ProviderCredentialAccess.class);
     private final com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService requestTemplates =
             mock(com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService.class);
     @SuppressWarnings("unchecked")
     private final org.springframework.beans.factory.ObjectProvider<com.cc01cc.p.xihe.cp.config.ConfigService> configService =
             mock(org.springframework.beans.factory.ObjectProvider.class);
     private final ProviderConnectionService service = new ProviderConnectionService(
-            repository, auditRepository, leaseRepository, catalog, apiTypes, encryption, new ObjectMapper(),
-            requestTemplates, configService);
+            repository, auditRepository, leaseRepository, catalog, apiTypes, credentialService,
+            credentialAccess, new ObjectMapper(), requestTemplates, configService);
 
     @org.junit.jupiter.api.BeforeEach
     void wireLockedConnectionDelegation() {
         org.mockito.Mockito.lenient().when(requestTemplates.lockConnection(anyString())).thenAnswer(
                 invocation -> repository.findById(UUID.fromString(invocation.getArgument(0))).orElseThrow());
+        org.mockito.Mockito.lenient().when(credentialService.create(any(), anyString()))
+                .thenAnswer(invocation -> {
+                    com.cc01cc.p.xihe.cp.entity.Credential credential =
+                            new com.cc01cc.p.xihe.cp.entity.Credential();
+                    credential.setId(UUID.randomUUID());
+                    return credential;
+                });
     }
 
     @AfterEach
@@ -86,10 +96,8 @@ class ProviderConnectionServiceTest {
         assertEquals("openai-chat-completions", connection.getApiTypeId());
         assertEquals(1, connection.getApiTypeVersion());
         assertEquals(ProviderConnection.STATUS_VERIFYING, connection.getStatus());
-        assertTrue(connection.getCredentialCiphertext().startsWith("v1:"));
-        assertNotEquals("sk-test-key", connection.getCredentialCiphertext());
-        assertEquals("sk-test-key", encryption.decrypt(
-                connection.getCredentialCiphertext(), "deepseek|USER|user-1|" + connection.getId()));
+        assertNotNull(connection.getCredentialId());
+        verify(credentialService).create(any(), anyString());
     }
 
     @Test
@@ -239,8 +247,9 @@ class ProviderConnectionServiceTest {
         connection.setApiTypeId("openai-chat-completions");
         connection.setApiTypeVersion(1);
         connection.setLabel("Personal");
-        connection.setCredentialCiphertext("v1:ciphertext");
-        connection.setEncryptionKeyVersion(encryption.currentVersion());
+        java.util.UUID credentialId = java.util.UUID.randomUUID();
+        connection.setCredentialId(credentialId);
+        when(credentialAccess.isUsable(credentialId)).thenReturn(true);
 
         ProviderConnectionService.ProviderConnectionView view = service.view(connection);
 
@@ -331,9 +340,9 @@ class ProviderConnectionServiceTest {
     }
 
     @Test
-    void updateRefreshesEncryptionKeyVersionWhenCredentialChanges() {
-        // PLAN-0307 T2.24 (review P1-7): re-encryption must stamp the active key
-        // version instead of keeping the stale one.
+    void updateRefreshesCredentialReferenceWhenCredentialChanges() {
+        // PLAN-0553 #10: a new key creates a new credential and rebinds the
+        // connection; the connection never stores ciphertext itself.
         TenantContext.setUserId("user-1");
         ProviderConnection connection = new ProviderConnection();
         connection.setId(java.util.UUID.randomUUID());
@@ -346,7 +355,8 @@ class ProviderConnectionServiceTest {
         connection.setLabel("Personal");
         connection.setEnabled(true);
         connection.setStatus(ProviderConnection.STATUS_READY);
-        connection.setEncryptionKeyVersion("v0-stale");
+        java.util.UUID oldCredentialId = java.util.UUID.randomUUID();
+        connection.setCredentialId(oldCredentialId);
         when(repository.findById(connection.getId())).thenReturn(Optional.of(connection));
         when(repository.save(any(ProviderConnection.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
@@ -355,8 +365,8 @@ class ProviderConnectionServiceTest {
                 new ProviderConnectionService.ConnectionInput(
                         "deepseek", null, null, "sk-new-key", null, null, null, null, null));
 
-        assertNotEquals("v0-stale", updated.getEncryptionKeyVersion());
-        assertEquals(encryption.currentVersion(), updated.getEncryptionKeyVersion());
+        assertNotEquals(oldCredentialId, updated.getCredentialId());
+        assertNotNull(updated.getCredentialId());
     }
 
     @Test
@@ -368,8 +378,9 @@ class ProviderConnectionServiceTest {
         pair.put("defaultBaseUrl", "https://pair.example/v1");
         pair.put("modelDiscovery", "manual");
         ProviderConnectionService pairService = new ProviderConnectionService(
-                repository, auditRepository, leaseRepository, realCatalog, apiTypes, encryption, mapper,
-                requestTemplates, configService);        when(repository.save(any(ProviderConnection.class)))
+                repository, auditRepository, leaseRepository, realCatalog, apiTypes, credentialService,
+                credentialAccess, mapper, requestTemplates, configService);
+        when(repository.save(any(ProviderConnection.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         ProviderConnection created = pairService.create(new ProviderConnectionService.ConnectionInput(

@@ -57,11 +57,8 @@ public class ProviderConnection {
     @Column(name = "base_url", length = 2048)
     private String baseUrl;
 
-    @Column(name = "credential_ciphertext", columnDefinition = "TEXT")
-    private String credentialCiphertext;
-
-    @Column(name = "encryption_key_version", nullable = false, length = 32)
-    private String encryptionKeyVersion;
+    @Column(name = "credential_id", columnDefinition = "uuid")
+    private UUID credentialId;
 
     @Column(nullable = false)
     private boolean enabled = true;
@@ -132,10 +129,8 @@ public class ProviderConnection {
     public void setLabel(String label) { this.label = label; }
     public String getBaseUrl() { return baseUrl; }
     public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
-    public String getCredentialCiphertext() { return credentialCiphertext; }
-    public void setCredentialCiphertext(String credentialCiphertext) { this.credentialCiphertext = credentialCiphertext; }
-    public String getEncryptionKeyVersion() { return encryptionKeyVersion; }
-    public void setEncryptionKeyVersion(String encryptionKeyVersion) { this.encryptionKeyVersion = encryptionKeyVersion; }
+    public UUID getCredentialId() { return credentialId; }
+    public void setCredentialId(UUID credentialId) { this.credentialId = credentialId; }
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
     public String getStatus() { return status; }

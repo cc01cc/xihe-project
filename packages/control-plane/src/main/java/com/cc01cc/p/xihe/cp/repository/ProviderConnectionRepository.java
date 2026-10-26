@@ -21,4 +21,8 @@ public interface ProviderConnectionRepository extends JpaRepository<ProviderConn
 
     Optional<ProviderConnection> findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
             String ownerType, String ownerId, String providerId, String connectionKey);
+
+    List<ProviderConnection> findByCredentialId(UUID credentialId);
+
+    long countByCredentialId(UUID credentialId);
 }

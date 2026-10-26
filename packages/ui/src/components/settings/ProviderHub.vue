@@ -512,6 +512,13 @@ const connectedProviderIds = computed(
     () => new Set(connections.value.map((connection) => connection.providerId)),
 );
 
+const needsKeyConnections = computed(() =>
+    connections.value.filter((connection) => {
+        const provider = providers.value.find((item) => item.id === connection.providerId);
+        return !connection.hasKey && provider?.credential.required !== false;
+    }),
+);
+
 function providerName(providerId: string): string {
     return (
         providers.value.find((provider) => provider.id === providerId)?.displayName ?? providerId
@@ -948,6 +955,14 @@ onMounted(() => {
                 >
                     {{ t("settings.providerHub.connect") }}
                 </button>
+            </div>
+
+            <div
+                v-if="needsKeyConnections.length > 0"
+                data-testid="provider-needs-key-banner"
+                class="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+            >
+                {{ t("settings.providerHub.needsKeyBanner", { count: needsKeyConnections.length }) }}
             </div>
 
             <section

@@ -45,7 +45,6 @@ public final class ChatBindingTestSupport {
         connection.setEnabled(true);
         connection.setStatus(ProviderConnection.STATUS_READY);
         connection.setRevision(1L);
-        connection.setEncryptionKeyVersion("v1");
         return connections.saveAndFlush(connection);
     }
 

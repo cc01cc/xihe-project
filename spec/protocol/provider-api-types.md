@@ -21,8 +21,9 @@
 ## Credential Boundary
 
 - Credentials are encrypted at rest and write-only on ordinary Connection APIs. Presence/status may be returned, but no suffix or derived credential fragment is returned or written to new audits.
+- PLAN-0553: `provider_connections.credential_id` is an owner-neutral reference into the credential domain; the connection row has no ciphertext. Provider lease/verify/export read the token only through the credential domain, gated by `credential_use` (owner match or explicit grant) and fail-closed when the reference is missing or unusable.
 - One-use internal leases may return a credential only to authorized Agent request memory. Opaque leases and decrypted grants are not logged or forwarded to the browser.
-- Scope note (PLAN-0495): this section governs provider connection and MCP OAuth credentials only. The standalone credential manager (`spec/security/credential-management.md`) defines its own object/lifecycle/rotation contract without superseding this section; cross-reference only.
+- Scope note (PLAN-0495, updated by PLAN-0553): the standalone credential manager (`spec/security/credential-management.md`) is now the SSOT for connection keys; MCP OAuth remains separate.
 
 ## Phase Ownership
 

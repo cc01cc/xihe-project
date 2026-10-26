@@ -9,9 +9,11 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 import com.cc01cc.p.xihe.cp.entity.ConfigAuditEntity;
 import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
+import com.cc01cc.p.xihe.cp.entity.Credential;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.repository.ConfigAuditRepository;
 import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
+import com.cc01cc.p.xihe.cp.repository.CredentialRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 
 import java.util.List;
@@ -44,8 +46,15 @@ class ConfigServiceTest {
     private ProviderConnectionRepository providerConnections;
 
     @Autowired
-    @org.springframework.beans.factory.annotation.Qualifier("providerCredentialEncryption")
+    private CredentialRepository credentials;
+
+    @Autowired
+    @org.springframework.beans.factory.annotation.Qualifier("credentialEncryption")
     private com.cc01cc.p.xihe.cp.crypto.EnvelopeEncryptionService credentialEncryption;
+
+    @Autowired
+    @org.springframework.beans.factory.annotation.Qualifier("providerCredentialEncryption")
+    private com.cc01cc.p.xihe.cp.crypto.EnvelopeEncryptionService legacyProviderEncryption;
 
     private final UUID userA = UUID.randomUUID();
     private final UUID userB = UUID.randomUUID();
@@ -57,6 +66,7 @@ class ConfigServiceTest {
         auditRepo.deleteAll();
         repo.deleteAll();
         providerConnections.deleteAll();
+        credentials.deleteAll();
     }
 
     @Test
@@ -408,7 +418,6 @@ class ConfigServiceTest {
         connection.setLabel("test-connection");
         connection.setEnabled(enabled);
         connection.setStatus(status);
-        connection.setEncryptionKeyVersion("v1");
         providerConnections.save(connection);
     }
 
@@ -833,7 +842,23 @@ class ConfigServiceTest {
     void exportJsonc_includesConnectionMetadataAndHonorsIncludeSecrets() {
         UUID id = UUID.randomUUID();
         String ownerId = userA.toString();
-        String aad = "deepseek|USER|" + ownerId + "|" + id;
+        Credential credential = new Credential();
+        UUID credentialId = UUID.randomUUID();
+        credential.setId(credentialId);
+        credential.setOwnerType(Credential.OWNER_USER);
+        credential.setOwnerId(ownerId);
+        credential.setLabel("Personal");
+        credential.setKind(Credential.KIND_TOKEN);
+        credential.setDeliveryTier(Credential.TIER_LEASE);
+        credential.setStatus(Credential.STATUS_ACTIVE);
+        credential.setKeyVersion(credentialEncryption.currentVersion());
+        credential.setFingerprint("fingerprint");
+        credential.setSecretCiphertext(credentialEncryption.encrypt(
+                "{\"token\":\"sk-export-secret\"}",
+                com.cc01cc.p.xihe.cp.credentials.CredentialAad.format(credentialId.toString(),
+                        Credential.OWNER_USER, ownerId)));
+        credentials.save(credential);
+
         ProviderConnection connection = new ProviderConnection();
         connection.setId(id);
         connection.setOwnerType("USER");
@@ -847,8 +872,7 @@ class ConfigServiceTest {
         connection.setStatus("READY");
         connection.setModelDiscovery("manual");
         connection.setManualModels("[\"deepseek-chat\"]");
-        connection.setEncryptionKeyVersion("v1");
-        connection.setCredentialCiphertext(credentialEncryption.encrypt("sk-export-secret", aad));
+        connection.setCredentialId(credentialId);
         providerConnections.save(connection);
 
         String withSecrets = configService.exportJsonc("instance", null, null, true);

@@ -67,6 +67,7 @@ export interface ProviderConnection {
     modelDiscovery: ProviderDefinition["modelDiscovery"];
     manualModels: string[];
     hasKey: boolean;
+    credentialId?: string | null;
     maskedKey?: string | null;
     enabled: boolean;
     status: ProviderConnectionStatus;
@@ -81,6 +82,7 @@ export interface ProviderConnectionInput {
     scope: ProviderScope;
     connectionKey: string;
     apiKey?: string;
+    credentialId?: string;
     baseUrl?: string;
     modelDiscovery?: ProviderDefinition["modelDiscovery"];
     manualModels?: string[];

@@ -5,6 +5,7 @@ import com.cc01cc.p.xihe.cp.context.entity.ContextEvent;
 import com.cc01cc.p.xihe.cp.context.service.ContextService;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
+import com.cc01cc.p.xihe.cp.entity.Credential;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
@@ -52,6 +53,9 @@ class AgentSummarizeIntegrationTest extends AbstractWireMockTest {
 
     @Autowired
     private ConfigService configService;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.credentials.CredentialService credentialService;
 
     @BeforeEach
     void setUp() {
@@ -154,10 +158,17 @@ class AgentSummarizeIntegrationTest extends AbstractWireMockTest {
                     created.setApiTypeVersion(1);
                     created.setLabel("test connection");
                     created.setBaseUrl("http://localhost:1");
-                    created.setEncryptionKeyVersion("v1");
                     created.setStatus(ProviderConnection.STATUS_READY);
                     created.setEnabled(true);
                     created.setRevision(1L);
+                    Credential credential = credentialService.create(
+                            new com.cc01cc.p.xihe.cp.credentials.CredentialService.CreateRequest(
+                                    Credential.OWNER_USER, USER_ID, "summary key",
+                                    Credential.KIND_TOKEN, Credential.TIER_LEASE,
+                                    com.cc01cc.p.xihe.cp.credentials.CredentialService.SecretPayload
+                                            .ofToken("test-token")),
+                            USER_ID);
+                    created.setCredentialId(credential.getId());
                     return providerConnectionRepository.save(created);
                 });
 

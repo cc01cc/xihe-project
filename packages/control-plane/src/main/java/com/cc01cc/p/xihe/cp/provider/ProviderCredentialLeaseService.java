@@ -41,7 +41,7 @@ public class ProviderCredentialLeaseService {
     private final ProviderCatalogService catalog;
     private final ApiInputTypeService apiTypes;
     private final ObjectMapper objectMapper;
-    private final EnvelopeEncryptionService encryption;
+    private final ProviderCredentialAccess credentialAccess;
     private final SecureRandom random = new SecureRandom();
 
     public ProviderCredentialLeaseService(
@@ -51,14 +51,14 @@ public class ProviderCredentialLeaseService {
             ProviderCatalogService catalog,
             ApiInputTypeService apiTypes,
             ObjectMapper objectMapper,
-            @Qualifier("providerCredentialEncryption") EnvelopeEncryptionService encryption) {
+            ProviderCredentialAccess credentialAccess) {
         this.repository = repository;
         this.connectionRepository = connectionRepository;
         this.connectionService = connectionService;
         this.catalog = catalog;
         this.apiTypes = apiTypes;
         this.objectMapper = objectMapper;
-        this.encryption = encryption;
+        this.credentialAccess = credentialAccess;
     }
 
     @Transactional
@@ -110,6 +110,7 @@ public class ProviderCredentialLeaseService {
                     "STALE_PROVIDER_CONNECTION", "Provider connection revision is stale");
         }
         connectionService.requireUsableForOwner(providerConnectionId, userId, workspaceId);
+        credentialAccess.requireUsable(connection.getCredentialId(), userId, workspaceId);
         // PLAN-0485 round-4 item 4: the connection's API Type operation governs
         // lease validation instead of the presence of a runId. Chat admission
         // keeps its explicit chat gate; a Run-bound embedding lease (0416) and
@@ -178,11 +179,9 @@ public class ProviderCredentialLeaseService {
         }
         lease.setRedeemedAt(now);
         repository.save(lease);
-        String apiKey = connection.getCredentialCiphertext() == null
+        String apiKey = connection.getCredentialId() == null
                 ? null
-                : encryption.decrypt(connection.getCredentialCiphertext(),
-                connection.getProviderId() + "|" + connection.getOwnerType() + "|"
-                        + connection.getOwnerId() + "|" + connection.getId());
+                : credentialAccess.decryptForDelivery(connection.getCredentialId());
         String routeProvider = catalog.require(connection.getProviderId())
                 .path("litellmProvider").asText(connection.getProviderId());
         List<String> manualModels = parseManualModels(connection.getManualModels());

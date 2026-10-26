@@ -32,7 +32,8 @@ class RunEmbeddingLeaseRedemptionTest {
         var types = mock(ApiInputTypeService.class);
         var json = new ObjectMapper();
         var service = new ProviderCredentialLeaseService(repository, mock(ProviderConnectionRepository.class),
-                mock(ProviderConnectionService.class), catalog, types, json, mock(EnvelopeEncryptionService.class));
+                mock(ProviderConnectionService.class), catalog, types, json,
+                mock(ProviderCredentialAccess.class));
         ReflectionTestUtils.setField(service, "requestTemplates", templates);
         var connection = new ProviderConnection();
         connection.setId(UUID.randomUUID());

@@ -4,7 +4,6 @@ import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
-import com.cc01cc.p.xihe.cp.crypto.EnvelopeEncryptionService;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,7 +23,6 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
@@ -34,7 +32,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -50,8 +47,6 @@ class ProviderConnectionHttpIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired private ObjectMapper mapper;
     @Autowired private ProviderConnectionRepository repository;
-    @MockitoSpyBean(name = "providerCredentialEncryption")
-    private EnvelopeEncryptionService encryption;
     @MockitoSpyBean private ProviderCatalogService catalog;
     @MockitoSpyBean private ProblemDetailsHandler advice;
 
@@ -189,13 +184,6 @@ class ProviderConnectionHttpIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void concurrentDuplicateReachesPgConstraintAndGlobalAdvice() throws Exception {
-        CyclicBarrier beforeSaves = new CyclicBarrier(2);
-        // create calls this concrete method after the duplicate precheck and before repository.save.
-        // Repository and transaction proxies remain untouched; encrypt/currentVersion stay real.
-        doAnswer(invocation -> {
-            beforeSaves.await(10, TimeUnit.SECONDS);
-            return invocation.callRealMethod();
-        }).when(encryption).currentVersion();
         long before = repository.count();
         try (var executor = Executors.newFixedThreadPool(2)) {
             var first = executor.submit(() -> send("POST", "", createBody("racing", "")));
@@ -205,7 +193,6 @@ class ProviderConnectionHttpIntegrationTest extends AbstractIntegrationTest {
             assertProblem(responses.stream().filter(r -> r.statusCode() == 409).findFirst().orElseThrow(),
                     409, "PROVIDER_CONNECTION_KEY_CONFLICT");
         }
-        verify(encryption, times(2)).currentVersion();
         assertEquals(before + 1, repository.count());
         var failure = ArgumentCaptor.forClass(DataIntegrityViolationException.class);
         verify(advice).integrityViolation(failure.capture(), any());
@@ -228,7 +215,6 @@ class ProviderConnectionHttpIntegrationTest extends AbstractIntegrationTest {
         invalid.setLabel("Integrity");
         invalid.setBaseUrl("https://provider.invalid/v1");
         invalid.setModelDiscovery("x".repeat(33));
-        invalid.setEncryptionKeyVersion("v1");
         invalid.setEnabled(true);
         invalid.setStatus(com.cc01cc.p.xihe.cp.entity.ProviderConnection.STATUS_UNVERIFIED);
 

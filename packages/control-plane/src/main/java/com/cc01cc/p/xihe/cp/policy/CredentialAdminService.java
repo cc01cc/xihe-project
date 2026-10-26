@@ -5,10 +5,12 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.credentials.CredentialService;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.Credential;
+import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.CredentialEventRepository;
 import com.cc01cc.p.xihe.cp.repository.CredentialRepository;
+import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -52,6 +54,7 @@ public class CredentialAdminService {
     private final AuthService authService;
     private final CredentialRepository credentialRepository;
     private final CredentialEventRepository credentialEventRepository;
+    private final ProviderConnectionRepository providerConnectionRepository;
 
     public CredentialAdminService(CredentialService credentialService,
             GrantIntersectionEvaluator evaluator,
@@ -60,7 +63,8 @@ public class CredentialAdminService {
             WorkspaceService workspaceService,
             AuthService authService,
             CredentialRepository credentialRepository,
-            CredentialEventRepository credentialEventRepository) {
+            CredentialEventRepository credentialEventRepository,
+            ProviderConnectionRepository providerConnectionRepository) {
         this.credentialService = credentialService;
         this.evaluator = evaluator;
         this.grantRepository = grantRepository;
@@ -69,6 +73,7 @@ public class CredentialAdminService {
         this.authService = authService;
         this.credentialRepository = credentialRepository;
         this.credentialEventRepository = credentialEventRepository;
+        this.providerConnectionRepository = providerConnectionRepository;
     }
 
     public record CredentialSummary(String id, String label, String kind, String deliveryTier,
@@ -128,6 +133,11 @@ public class CredentialAdminService {
         UUID actorId = requireUser(actorUserId);
         requireManageConcrete(actorId, credentialId);
         List<ReferenceEntry> references = references(credentialId);
+        if (references.stream().anyMatch(reference ->
+                "provider_connection".equals(reference.source()))) {
+            throw new CpApiException(HttpStatus.CONFLICT, "CREDENTIAL_IN_USE",
+                    "Credential is referenced by a provider connection and cannot be deleted");
+        }
         Credential deleted = credentialService.delete(credentialId, actorId.toString());
         return new DeleteReport(deleted.getId().toString(), references);
     }
@@ -186,6 +196,10 @@ public class CredentialAdminService {
                             atom.actionClass(), atom.resource()));
                 }
             }
+        }
+        for (ProviderConnection connection : providerConnectionRepository.findByCredentialId(credentialId)) {
+            entries.add(new ReferenceEntry("provider_connection", "provider_connection",
+                    connection.getId().toString(), ToolFaceRegistry.ACTION_CREDENTIAL_USE, target));
         }
         return entries;
     }
