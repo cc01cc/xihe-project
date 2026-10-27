@@ -89,7 +89,7 @@ describe("api.login", () => {
         delete window.location;
         // @ts-expect-error redefine for test
         window.location = { href: "/chat", pathname: "/chat", search: "" };
-        const logoutSpy = vi.fn();
+        const logoutSpy = vi.fn<() => void>();
         registerForceLogout(logoutSpy);
 
         fetchSpy.mockResolvedValueOnce({
@@ -248,7 +248,7 @@ describe("silent refresh on 401 (PLAN-0546)", () => {
         localStorage.setItem("xihe-refresh-token", "dead-refresh");
         mockLocation("/workspace");
 
-        const logoutSpy = vi.fn();
+        const logoutSpy = vi.fn<() => void>();
         registerForceLogout(logoutSpy);
 
         fetchSpy
@@ -268,7 +268,7 @@ describe("silent refresh on 401 (PLAN-0546)", () => {
         localStorage.setItem("xihe-refresh-token", "valid-refresh");
         mockLocation("/workspace");
 
-        const logoutSpy = vi.fn();
+        const logoutSpy = vi.fn<() => void>();
         registerForceLogout(logoutSpy);
 
         fetchSpy
@@ -293,7 +293,7 @@ describe("silent refresh on 401 (PLAN-0546)", () => {
         localStorage.setItem("xihe-refresh-token", "dead-refresh");
         mockLocation("/workspace/chat");
 
-        const logoutSpy = vi.fn();
+        const logoutSpy = vi.fn<() => void>();
         registerForceLogout(logoutSpy);
 
         fetchSpy.mockResolvedValueOnce(mockJson(401, {})).mockResolvedValueOnce(mockJson(401, {}));

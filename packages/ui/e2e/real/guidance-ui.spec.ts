@@ -29,7 +29,7 @@ test("@host Guidance UI entry submits and projects pending status", async ({ pag
     test.skip(LLM_MODE !== "approval", "requires deterministic approval tool-call fixture");
     test.setTimeout(180_000);
 
-    const { authHeaders, sessionId, runId } = await registerAndCreateSession(page, request);
+    const { authHeaders, runId } = await registerAndCreateSession(page, request);
 
     // The GuidancePanel should now be visible (run is awaiting_approval).
     const panel = page.locator('[data-testid="guidance-panel"]');

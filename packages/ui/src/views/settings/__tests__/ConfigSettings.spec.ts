@@ -11,8 +11,8 @@ vi.mock("vue-router", () => ({
     createRouter: () => ({
         push: vi.fn<(location: unknown) => Promise<void>>(),
         replace: vi.fn<(location: unknown) => Promise<void>>(),
-        beforeEach: vi.fn(),
-        afterEach: vi.fn(),
+        beforeEach: vi.fn<() => void>(),
+        afterEach: vi.fn<() => void>(),
         isReady: () => Promise.resolve(),
         currentRoute: { value: {} },
     }),
