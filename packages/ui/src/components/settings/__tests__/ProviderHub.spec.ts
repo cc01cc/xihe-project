@@ -812,15 +812,29 @@ describe("ProviderHub label rules (PLAN-0555)", () => {
         wrapper.unmount();
     });
 
-    it("blocks a label longer than 128 characters before calling the API", async () => {
+    it("blocks a label longer than 40 characters before calling the API", async () => {
         const wrapper = await mountHub(),
             modal = await openManageForm(wrapper);
-        await modal.get('[data-testid="provider-connection-form-label"]').setValue("x".repeat(129));
+        await modal.get('[data-testid="provider-connection-form-label"]').setValue("x".repeat(41));
         await modal.get("form").trigger("submit");
         await flushPromises();
 
         expect(toast.error).toHaveBeenCalledWith(
             i18n.global.t("settings.providerHub.toastLabelTooLong"),
+        );
+        expect(updateProviderConnection).not.toHaveBeenCalled();
+        wrapper.unmount();
+    });
+
+    it("blocks control characters before calling the API", async () => {
+        const wrapper = await mountHub(),
+            modal = await openManageForm(wrapper);
+        await modal.get('[data-testid="provider-connection-form-label"]').setValue("bad\tname");
+        await modal.get("form").trigger("submit");
+        await flushPromises();
+
+        expect(toast.error).toHaveBeenCalledWith(
+            i18n.global.t("settings.providerHub.toastLabelControl"),
         );
         expect(updateProviderConnection).not.toHaveBeenCalled();
         wrapper.unmount();
