@@ -605,7 +605,10 @@ describe("ModelPopover", () => {
         wrapper.unmount();
     });
 
-    it('navigates to settings when "Configure a Provider" clicked', async () => {
+    it('navigates to workspace settings when "Configure a Provider" clicked', async () => {
+        // PLAN-0560 T3.4：工作区内「去配置」直达当前工作区设置页的配置区块。
+        const WS_ID = "66666666-6666-4666-8666-666666666666";
+        sessionStorage.setItem("xihe-workspace", JSON.stringify({ id: WS_ID, name: "Workspace" }));
         const configStore = useConfigStore();
         configStore.modelCache = { models: {} };
         vi.spyOn(configStore, "fetchModels").mockResolvedValue(undefined);
@@ -617,7 +620,7 @@ describe("ModelPopover", () => {
         expect(settingsLink).toBeTruthy();
         settingsLink!.click();
         await flushPromises();
-        expect(pushSpy).toHaveBeenCalledWith("/settings/config");
+        expect(pushSpy).toHaveBeenCalledWith(`/workspace/${WS_ID}/settings?tab=config`);
         wrapper.unmount();
     });
 });

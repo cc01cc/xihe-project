@@ -10,6 +10,7 @@ import type {
     WorkspaceStorageMode,
 } from "../../../types";
 import { logger } from "../../../lib/logger";
+import { writeTabWorkspace } from "../../../lib/workspaceContext";
 import { toast } from "vue-sonner";
 import Dialog from "../../../components/ui/dialog/Dialog.vue";
 import DialogContent from "../../../components/ui/dialog/DialogContent.vue";
@@ -341,7 +342,7 @@ async function handleCreate() {
             idempotencyKey: idempotencyKey.value,
         });
         auth.workspace = ws;
-        localStorage.setItem("xihe-workspace", JSON.stringify(ws));
+        writeTabWorkspace(ws);
         toast.success(t("workspace.createdToast"));
         emit("created", ws.id);
         emit("close");

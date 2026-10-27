@@ -373,9 +373,9 @@ test.describe("PLAN-269 full UI acceptance: settings and provider", () => {
         await setupMockSessions(page, { sessions: [{ id: "session-1", title: "Session 1" }] });
         await mockSettingsApis(page);
 
-        await page.goto("/settings/config");
-        // PLAN-0307 T2.17: MCP config lives in the workspace layer entry.
-        await page.getByTestId("config-tab-workspace").click();
+        // PLAN-0560: MCP config lives on the workspace settings MCP tab.
+        await page.goto("/workspace/workspace-1/settings?tab=mcp");
+        await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
         const mcp = page.getByTestId("mcp-config-textarea");
         await mcp.fill("{invalid");
         await page.getByRole("button", { name: "保存" }).last().click();

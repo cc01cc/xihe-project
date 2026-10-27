@@ -743,6 +743,7 @@ async function save() {
         return;
     }
     // PLAN-0563: C0/C1 controls plus Unicode line/paragraph separators.
+    // oxlint-disable-next-line no-control-regex -- 有意匹配控制字符（PLAN-0563 校验）
     if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(label)) {
         toast.error(t("settings.providerHub.toastLabelControl"));
         return;

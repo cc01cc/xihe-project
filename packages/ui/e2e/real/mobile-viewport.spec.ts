@@ -73,11 +73,11 @@ test.describe("Mobile Viewport (390x844)", () => {
             },
             { token: authToken, workspaceId: authWorkspaceId },
         );
-        await page.goto("/settings/config", { waitUntil: "load" });
-        await expect(page.locator('[data-testid="settings-config-heading"]')).toBeVisible({
+        // PLAN-0560: workspace MCP section lives on the workspace settings MCP tab.
+        await page.goto(`/workspace/${authWorkspaceId}/settings?tab=mcp`, { waitUntil: "load" });
+        await expect(page.locator('[data-testid="workspace-settings-page"]')).toBeVisible({
             timeout: 10000,
         });
-        await page.getByTestId("config-tab-workspace").click();
         await page
             .locator('[data-testid="mcp-config-textarea"]')
             .waitFor({ state: "visible", timeout: 10000 });

@@ -21,6 +21,7 @@ type Template = {
 const props = defineProps<{
     entries: Record<string, string>;
     saving?: boolean;
+    readonly?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -316,6 +317,7 @@ function cancelRoleEdit() {
             {{ t("settings.agentTemplateConfigInvalid") }}
         </p>
         <form
+            v-if="!readonly"
             class="space-y-3 rounded-md border p-3"
             data-testid="agent-template-form"
             @submit.prevent="saveTemplate"
@@ -438,7 +440,7 @@ function cancelRoleEdit() {
                         {{ template.model || t("settings.notSet") }}
                     </p>
                 </div>
-                <div class="flex gap-2">
+                <div v-if="!readonly" class="flex gap-2">
                     <button
                         type="button"
                         class="text-xs underline"
@@ -471,6 +473,7 @@ function cancelRoleEdit() {
         </div>
 
         <form
+            v-if="!readonly"
             class="space-y-2 rounded-md border p-3"
             data-testid="agent-role-form"
             @submit.prevent="saveRole"
@@ -557,48 +560,49 @@ function cancelRoleEdit() {
             >
                 {{ t("common.cancel") }}
             </button>
-            <ul class="space-y-1 text-xs">
-                <li
-                    v-for="role in roles"
-                    :key="role.id"
-                    class="flex items-center justify-between gap-2"
-                    :data-testid="`agent-role-${role.id}`"
-                >
-                    <span
-                        >{{ role.name }} ·
-                        {{
-                            role.permissions
-                                .map((item) => `${item.actionClass}:${item.resource ?? "*"}`)
-                                .join(", ") || t("settings.agentRoleNoPermissions")
-                        }}</span
-                    >
-                    <span class="flex gap-2">
-                        <button
-                            type="button"
-                            class="underline disabled:opacity-40"
-                            :disabled="saving || !!pendingPayload"
-                            :data-testid="`agent-role-edit-${role.id}`"
-                            @click="editRole(role)"
-                        >
-                            {{ t("settings.agentTemplateEdit") }}
-                        </button>
-                        <button
-                            type="button"
-                            class="text-destructive underline disabled:opacity-40"
-                            :disabled="
-                                malformedConfig ||
-                                saving ||
-                                templates.some((template) => template.roleId === role.id)
-                            "
-                            :data-testid="`agent-role-delete-${role.id}`"
-                            @click="deleteRole(role)"
-                        >
-                            {{ t("common.delete") }}
-                        </button>
-                    </span>
-                </li>
-            </ul>
         </form>
+
+        <ul class="space-y-1 text-xs">
+            <li
+                v-for="role in roles"
+                :key="role.id"
+                class="flex items-center justify-between gap-2"
+                :data-testid="`agent-role-${role.id}`"
+            >
+                <span
+                    >{{ role.name }} ·
+                    {{
+                        role.permissions
+                            .map((item) => `${item.actionClass}:${item.resource ?? "*"}`)
+                            .join(", ") || t("settings.agentRoleNoPermissions")
+                    }}</span
+                >
+                <span v-if="!readonly" class="flex gap-2">
+                    <button
+                        type="button"
+                        class="underline disabled:opacity-40"
+                        :disabled="saving || !!pendingPayload"
+                        :data-testid="`agent-role-edit-${role.id}`"
+                        @click="editRole(role)"
+                    >
+                        {{ t("settings.agentTemplateEdit") }}
+                    </button>
+                    <button
+                        type="button"
+                        class="text-destructive underline disabled:opacity-40"
+                        :disabled="
+                            malformedConfig ||
+                            saving ||
+                            templates.some((template) => template.roleId === role.id)
+                        "
+                        :data-testid="`agent-role-delete-${role.id}`"
+                        @click="deleteRole(role)"
+                    >
+                        {{ t("common.delete") }}
+                    </button>
+                </span>
+            </li>
+        </ul>
 
         <p v-if="error" role="alert" class="text-sm text-destructive">{{ error }}</p>
         <p

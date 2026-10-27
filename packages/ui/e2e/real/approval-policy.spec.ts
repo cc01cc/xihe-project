@@ -105,7 +105,8 @@ test("@host PLAN-0337 Workspace approval mode is set in Settings and survives a 
     // Instance 层不得出现该域：审批模式只有 workspace 一个配置面（PLAN-0337）。
     await expect(page.getByTestId("config-domain-approval-policy")).toHaveCount(0);
 
-    await page.getByTestId("config-tab-workspace").click();
+    // PLAN-0560: the workspace override lives on the workspace settings page.
+    await page.goto(`/workspace/${auth.workspaceId}/settings?tab=config`, { waitUntil: "load" });
     const domain = page.getByTestId("config-domain-approval-policy");
     await expect(domain).toBeVisible();
     await domain.locator("button").first().click();
@@ -130,8 +131,7 @@ test("@host PLAN-0337 Workspace approval mode is set in Settings and survives a 
     await expect.poll(() => resolvedApprovalMode(request, auth), { timeout: 10000 }).toBe("auto");
 
     // 刷新后仍生效（页面从 DB 读回，而不是前端缓存）。
-    await page.reload({ waitUntil: "load" });
-    await page.getByTestId("config-tab-workspace").click();
+    await page.goto(`/workspace/${auth.workspaceId}/settings?tab=config`, { waitUntil: "load" });
     await page.getByTestId("config-domain-approval-policy").locator("button").first().click();
     await expect(
         page.getByTestId("config-field-approval-policy-mode").locator("select"),

@@ -65,9 +65,11 @@ test.describe("Workspace management dialogs (PLAN-262 M2)", () => {
     test("empty state offers creation; managed create posts storage and execution mode", async ({
         page,
     }) => {
-        // No workspace in storage -> empty state (PLAN-262 decision 11)
+        // No workspace in storage -> empty state (PLAN-262 decision 11).
+        // setupMockAuth seeds per-tab sessionStorage too (PLAN-0560), so clear both.
         await page.addInitScript(() => {
             localStorage.removeItem("xihe-workspace");
+            sessionStorage.removeItem("xihe-workspace");
         });
         await page.goto("/workspace/new");
         await expect(page.getByText("暂无工作区")).toBeVisible();
@@ -91,28 +93,29 @@ test.describe("Workspace management dialogs (PLAN-262 M2)", () => {
         expect(createPayload?.hostPath).toBeUndefined();
     });
 
-    test("settings dialog saves rename and enforces exact-name delete guard", async ({ page }) => {
+    test("workspace settings page saves rename and enforces exact-name delete guard", async ({
+        page,
+    }) => {
         await page.goto("/workspace/workspace-1");
-        // Toolbar settings entry
+        // PLAN-0560: toolbar settings entry routes to the workspace settings page.
         await page.getByTestId("workspace-toolbar-settings").click();
-        const dialog = page.getByTestId("workspace-settings-dialog");
-        await expect(dialog).toBeVisible();
+        await expect(page).toHaveURL(/\/workspace\/workspace-1\/settings/);
+        await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
 
-        await dialog.locator("#ws-settings-name").fill("Renamed Workspace");
-        await dialog.getByRole("button", { name: "保存" }).click();
-        await expect(page.getByText("Workspace updated")).toBeVisible();
+        await page.getByTestId("ws-settings-name-input").fill("Renamed Workspace");
+        await page.getByTestId("ws-settings-save").click();
+        await expect(page.getByText("工作区已更新")).toBeVisible();
 
         // Delete flow: wrong name first, then exact name
-        await page.getByTestId("workspace-toolbar-settings").click();
-        await dialog.getByRole("button", { name: "删除…" }).click();
+        await page.getByTestId("ws-settings-delete").click();
         const confirm = page.getByTestId("workspace-delete-confirm");
         await expect(confirm).toBeVisible();
-        await confirm.locator("#ws-delete-confirm").fill("Wrong Name");
-        await confirm.getByRole("button", { name: "确认删除" }).click();
+        await confirm.locator("#ws-delete-confirm-input").fill("Wrong Name");
+        await confirm.getByTestId("ws-delete-confirm-btn").click();
         await expect(confirm.getByText("请输入完整的工作区名称以确认")).toBeVisible();
 
-        await confirm.locator("#ws-delete-confirm").fill("Renamed Workspace");
-        await confirm.getByRole("button", { name: "确认删除" }).click();
+        await confirm.locator("#ws-delete-confirm-input").fill("Renamed Workspace");
+        await confirm.getByTestId("ws-delete-confirm-btn").click();
         await expect(page).toHaveURL(/\/workspace$/);
     });
 });

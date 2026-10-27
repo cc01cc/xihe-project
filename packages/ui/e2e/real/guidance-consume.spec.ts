@@ -1,11 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { randomUUID } from "node:crypto";
+import { expect, test, type APIRequestContext } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
 import { createWorkspaceSessionWithPrincipal } from "./helpers/agent-principal";
 import {
     ensureAgentWorkspaceBinding,
-    ensureChatBinding,
     seedPage,
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
@@ -13,51 +12,6 @@ import type { JourneyContext } from "./helpers/journey";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`,
     LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
-
-// Java UUID.nameUUIDFromBytes (v3/MD5), matching CP's builtin request template id.
-function nameUuidFromBytes(name: string): string {
-    const bytes = Buffer.from(createHash("md5").update(name, "utf8").digest());
-    bytes[6] = ((bytes[6] & 0x0F) | 0x30) as number;
-    bytes[8] = ((bytes[8] & 0x3F) | 0x80) as number;
-    const hex = bytes.toString("hex");
-    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
-async function bindBuiltinRequestTemplate(
-    request: APIRequestContext,
-    sessionId: string,
-    headers: Record<string, string>,
-): Promise<void> {
-    const sessionResponse = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}`, {
-        headers,
-    });
-    expect(sessionResponse.status(), await sessionResponse.text()).toBe(200);
-    const session = (await sessionResponse.json()) as { providerConnectionId?: string };
-    expect(
-        session.providerConnectionId,
-        "Session must be Provider-bound by ensureChatBinding",
-    ).toBeTruthy();
-    const listResponse = await request.get(`${CP_URL}/api/v1/provider-connections`, { headers });
-    expect(listResponse.status(), await listResponse.text()).toBe(200);
-    const list = (await listResponse.json()) as {
-            connections: Array<{ id: string; revision: number }>;
-        },
-        connection = list.connections.find((item) => item.id === session.providerConnectionId);
-    expect(connection, "bound connection must appear in provider list").toBeTruthy();
-    const binding = await request.patch(
-        `${CP_URL}/api/v1/sessions/${sessionId}/api-request-template`,
-        {
-            headers,
-            data: {
-                layer: "instance",
-                templateId: nameUuidFromBytes("api-request-templates:openai-chat-completions@1"),
-                version: 1,
-                connectionRevision: connection!.revision,
-            },
-        },
-    );
-    expect(binding.status(), await binding.text()).toBe(200);
-}
 
 test.describe.configure({ mode: "serial", retries: 0 });
 
@@ -205,8 +159,8 @@ test("@host guidance is consumed after an approved tool batch", async ({ page, r
         workspaceId: authBody.workspaceId,
     } as JourneyContext);
     await page.goto(`/workspace/${authBody.workspaceId}`, { waitUntil: "load" });
-    const sessionId = await createWorkspaceSessionWithPrincipal(page, principalId),
-        textarea = page.locator("textarea");
+    await createWorkspaceSessionWithPrincipal(page, principalId);
+    const textarea = page.locator("textarea");
     await expect(textarea).toBeVisible({ timeout: 20_000 });
     const sent = page.waitForResponse(
         (response) =>

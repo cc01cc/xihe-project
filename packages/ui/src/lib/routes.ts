@@ -9,3 +9,7 @@ export function workspaceChatPath(workspaceId: string, sessionId: string): strin
 export function workspaceScheduledTasksPath(workspaceId: string): string {
     return `${workspacePath(workspaceId)}/scheduled-tasks`;
 }
+
+export function workspaceSettingsPath(workspaceId: string): string {
+    return `${workspacePath(workspaceId)}/settings`;
+}

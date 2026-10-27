@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useWorkspaceStore } from "../stores/workspace";
@@ -13,13 +13,19 @@ import {
     FileDiff,
     FolderOpen,
     FolderTree,
+    MoreHorizontal,
     PanelLeft,
     Plus,
     RefreshCw,
     Settings2,
     Upload,
 } from "@lucide/vue";
-import { workspaceChatPath, workspaceScheduledTasksPath } from "../../../lib/routes";
+import {
+    workspaceChatPath,
+    workspacePath,
+    workspaceScheduledTasksPath,
+    workspaceSettingsPath,
+} from "../../../lib/routes";
 
 const props = defineProps<{
     workspaceId: string;
@@ -33,7 +39,6 @@ const props = defineProps<{
 const emit = defineEmits<{
     upload: [];
     importSource: [];
-    settings: [];
     agents: [];
     addWorkspace: [];
     files: [];
@@ -84,6 +89,25 @@ function openScheduledTasks() {
     if (id) router.push(workspaceScheduledTasksPath(id));
 }
 
+function openSettings() {
+    const id = props.workspaceId || auth.currentWorkspaceId;
+    if (id) router.push(workspaceSettingsPath(id));
+}
+
+// PLAN-0560 T3.7：移动端工具条收敛为 ＋ 新建对话 + ⋯ 溢出菜单。
+const overflowOpen = ref(false);
+
+function newChat() {
+    const id = props.workspaceId || auth.currentWorkspaceId;
+    overflowOpen.value = false;
+    if (id) router.push({ path: workspacePath(id), query: { newChat: "1" } });
+}
+
+function overflowNav(navigate: () => void) {
+    overflowOpen.value = false;
+    navigate();
+}
+
 function switchSession(id: string) {
     sessionStore.selectSession(id);
     router.push(workspaceChatPath(props.workspaceId, id));
@@ -103,32 +127,89 @@ function switchSession(id: string) {
         </button>
         <button
             type="button"
-            data-testid="workspace-toolbar-agents-mobile"
+            data-testid="workspace-toolbar-new-chat-mobile"
             class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors md:hidden"
-            :title="t('workspace.agentManagement')"
-            :aria-label="t('workspace.agentManagement')"
-            @click="emit('agents')"
+            :title="t('sidebar.newChat')"
+            :aria-label="t('sidebar.newChat')"
+            @click="newChat"
         >
-            <Bot class="size-3.5" aria-hidden="true" />
+            <Plus class="size-3.5" />
         </button>
-        <button
-            data-testid="workspace-toolbar-changes-mobile"
-            class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors md:hidden"
-            :title="t('workspace.panelChanges')"
-            :aria-label="t('workspace.panelChanges')"
-            @click="emit('toggleChanges')"
-        >
-            <FileDiff class="size-3.5" />
-        </button>
-        <button
-            data-testid="workspace-toolbar-monitor-mobile"
-            class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors md:hidden"
-            :title="t('workspace.panelMonitor')"
-            :aria-label="t('workspace.panelMonitor')"
-            @click="emit('toggleMonitor')"
-        >
-            <Activity class="size-3.5" />
-        </button>
+        <div class="relative md:hidden">
+            <button
+                type="button"
+                data-testid="workspace-toolbar-more-mobile"
+                class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors"
+                :title="t('workspace.toolbarMore')"
+                :aria-label="t('workspace.toolbarMore')"
+                :aria-expanded="overflowOpen"
+                @click="overflowOpen = !overflowOpen"
+            >
+                <MoreHorizontal class="size-3.5" />
+            </button>
+            <div
+                v-if="overflowOpen"
+                class="absolute right-0 top-full mt-1 z-50 w-44 rounded-md border bg-popover p-1 shadow-md text-sm"
+                data-testid="workspace-toolbar-more-menu"
+            >
+                <button
+                    type="button"
+                    class="w-full rounded px-2 py-1.5 text-left hover:bg-accent"
+                    data-testid="workspace-toolbar-more-agents"
+                    @click="overflowNav(() => emit('agents'))"
+                >
+                    {{ t("workspace.agentManagement") }}
+                </button>
+                <button
+                    type="button"
+                    class="w-full rounded px-2 py-1.5 text-left hover:bg-accent"
+                    data-testid="workspace-toolbar-more-changes"
+                    @click="overflowNav(() => emit('toggleChanges'))"
+                >
+                    {{ t("workspace.panelChanges") }}
+                </button>
+                <button
+                    type="button"
+                    class="w-full rounded px-2 py-1.5 text-left hover:bg-accent"
+                    data-testid="workspace-toolbar-more-monitor"
+                    @click="overflowNav(() => emit('toggleMonitor'))"
+                >
+                    {{ t("workspace.panelMonitor") }}
+                </button>
+                <button
+                    type="button"
+                    class="w-full rounded px-2 py-1.5 text-left hover:bg-accent"
+                    data-testid="workspace-toolbar-more-environment"
+                    @click="overflowNav(openEnvironment)"
+                >
+                    {{ t("workspace.environmentState") }}
+                </button>
+                <button
+                    type="button"
+                    class="w-full rounded px-2 py-1.5 text-left hover:bg-accent"
+                    data-testid="workspace-toolbar-more-scheduled"
+                    @click="overflowNav(openScheduledTasks)"
+                >
+                    {{ t("workspace.scheduledTasks.nav") }}
+                </button>
+                <button
+                    type="button"
+                    class="w-full rounded px-2 py-1.5 text-left hover:bg-accent"
+                    data-testid="workspace-toolbar-more-settings"
+                    @click="overflowNav(openSettings)"
+                >
+                    {{ t("workspace.settingsTitle") }}
+                </button>
+                <button
+                    type="button"
+                    class="w-full rounded px-2 py-1.5 text-left hover:bg-accent"
+                    data-testid="workspace-toolbar-more-add-workspace"
+                    @click="overflowNav(() => emit('addWorkspace'))"
+                >
+                    {{ t("workspace.addWorkspace") }}
+                </button>
+            </div>
+        </div>
         <div
             class="flex min-w-0 items-center gap-1 pr-12 text-xs text-muted-foreground flex-1"
             :title="props.workspaceId"
@@ -258,7 +339,7 @@ function switchSession(id: string) {
                 data-testid="workspace-toolbar-settings"
                 class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors"
                 title="Workspace settings"
-                @click="emit('settings')"
+                @click="openSettings"
             >
                 <Settings2 class="size-3.5" />
             </button>

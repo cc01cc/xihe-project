@@ -20,6 +20,7 @@ import {
 } from "reka-ui";
 import { useConfigStore } from "../../../../stores/config";
 import { useSessionStore } from "../../../../stores/session";
+import { useAuthStore } from "../../../../stores/auth";
 import { ChevronDown, ChevronRight, ChevronUp, Cpu, Star, StarOff } from "@lucide/vue";
 import { ApiError } from "../../../../composables/api";
 import { logger } from "../../../../lib/logger";
@@ -28,6 +29,7 @@ import { getProviderInfo } from "../../../../types/provider";
 import type { ProviderConnection } from "../../../../types/providerConnection";
 import { parseLlmProfileValue } from "../../../../services/llmProviderProfile";
 import { resolveModelDisplay } from "../modelDisplay";
+import { workspaceSettingsPath } from "../../../../lib/routes";
 import {
     listVisibleTemplates,
     templateKey,
@@ -37,7 +39,8 @@ import {
 const { t } = useI18n();
 const router = useRouter(),
     configStore = useConfigStore(),
-    sessionStore = useSessionStore();
+    sessionStore = useSessionStore(),
+    auth = useAuthStore();
 
 const open = ref(false),
     searchTerm = ref(""),
@@ -346,7 +349,9 @@ function toggleFav(provider: string, model: string) {
 
 function goToSettings() {
     open.value = false;
-    router.push("/settings/config");
+    // PLAN-0560 T3.4：工作区内「去配置」直达该工作区的设置页（配置区块）。
+    const workspaceId = auth.currentWorkspaceId;
+    if (workspaceId) router.push(workspaceSettingsPath(workspaceId) + "?tab=config");
 }
 
 function handleSelect(event: { detail: { value?: string } }) {

@@ -127,8 +127,12 @@ function lockedValue(key: string): string {
     const envValue = props.envLocked?.[key] ?? "";
     // PLAN-0556: an admin lock shows the pinned instance value on the instance
     // layer; other layers only know the lock, not the value (the lock table
-    // never stores values).
-    const adminValue = !envValue && isAdminLocked(key) ? (props.entries?.[key] ?? "") : "";
+    // never stores values). Non-instance layers must not pass their own layer
+    // entry off as the locked value (PLAN-0560 T2.5).
+    const adminValue =
+        !envValue && props.layer === "instance" && isAdminLocked(key)
+            ? (props.entries?.[key] ?? "")
+            : "";
     const value = envValue || adminValue;
     if (value && isPasswordKey(key)) {
         return value.length > 8 ? `${value.substring(0, 3)}****${value.slice(-4)}` : "****";
