@@ -351,4 +351,3 @@ describe("workspace store external Workspace events (PLAN-0350)", () => {
         });
     });
 });
-

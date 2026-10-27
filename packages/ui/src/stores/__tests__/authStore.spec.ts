@@ -146,4 +146,3 @@ describe("useAuthStore", () => {
         expect(store.userName).toBe("no-name@test.com");
     });
 });
-
