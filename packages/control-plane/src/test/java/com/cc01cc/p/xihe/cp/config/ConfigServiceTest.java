@@ -1244,4 +1244,89 @@ class ConfigServiceTest {
 
         assertTrue(error.getMessage().contains("Schema validation failed"));
     }
+
+    @Test
+    void meta_userExcludesInstanceOnlyKeysAndLoggingIsNotOverridable() {
+        configService.putLayer("instance", "agent-runtime",
+            Map.of("runMaxTurns", "25", "runMaxTurnsCeiling", "100", "instructions", "x"),
+            "admin", null, null);
+        configService.putLayer("instance", "logging", Map.of("logLevel", "INFO"), "admin", null, null);
+
+        List<ConfigService.ConfigKeyMeta> runtime = configService.meta("user", "agent-runtime", userA, null);
+        assertTrue(runtime.stream().noneMatch(item -> "instructions".equals(item.key())));
+        assertTrue(runtime.stream().noneMatch(item -> "runMaxTurnsCeiling".equals(item.key())));
+        ConfigService.ConfigKeyMeta turns = runtime.stream()
+            .filter(item -> "runMaxTurns".equals(item.key())).findFirst().orElseThrow();
+        assertEquals("instance", turns.source());
+        assertTrue(turns.writable());
+        assertFalse(turns.instanceEligible());
+
+        ConfigService.ConfigKeyMeta logLevel = configService.meta("instance", "logging", null, null).stream()
+            .filter(item -> "logLevel".equals(item.key())).findFirst().orElseThrow();
+        assertTrue(logLevel.instanceEligible());
+        assertFalse(logLevel.overridable());
+    }
+
+    @Test
+    void meta_explicitTemplateWithoutRowIsNone() {
+        ConfigEntity row = new ConfigEntity();
+        row.setLayer("user");
+        row.setUserId(userA);
+        row.setDomain("agent-templates");
+        row.setConfigKey("templates");
+        row.setConfigValue("[]");
+        row.setUpdatedBy("tester");
+        repo.save(row);
+
+        ConfigService.ConfigKeyMeta templates = configService.meta("user", "agent-templates", userA, null).stream()
+            .filter(item -> "templates".equals(item.key())).findFirst().orElseThrow();
+        assertEquals("user", templates.source());
+        assertFalse(templates.defaultPresent());
+        assertFalse(templates.instanceEligible());
+        assertTrue(templates.writable());
+
+        ConfigService.ConfigKeyMeta missing = configService.meta("workspace", "agent-templates", null, wsA).stream()
+            .filter(item -> "templates".equals(item.key())).findFirst().orElse(null);
+        assertNull(missing);
+    }
+
+    @Test
+    void meta_instanceDedicatedDomainIsNotEligible() {
+        ConfigEntity row = new ConfigEntity();
+        row.setLayer("instance");
+        row.setDomain("llm-provider");
+        row.setConfigKey("profile");
+        row.setConfigValue("{\"providerId\":\"openai\"}");
+        row.setUpdatedBy("tester");
+        repo.save(row);
+
+        ConfigService.ConfigKeyMeta profile = configService.meta("instance", "llm-provider", null, null).stream()
+            .filter(item -> "profile".equals(item.key())).findFirst().orElseThrow();
+        assertFalse(profile.instanceEligible());
+        assertTrue(profile.overridable());
+        assertEquals("instance", profile.source());
+    }
+
+    @Test
+    void import_skipsEnvLockedKeys() {
+        Object originalOverlay = org.springframework.test.util.ReflectionTestUtils
+            .getField(configService, "envOverlay");
+        Map<String, String> env = Map.of("XIHE_JOB_TIMEOUT_DEFAULT_SECS", "7200");
+        org.springframework.test.util.ReflectionTestUtils.setField(
+            configService, "envOverlay", new EnvOverlayRegistry(env::get));
+        try {
+            ConfigService.ImportReport report = configService.importJsonc(
+                "{\"job-policy\":{\"defaultTimeoutSecs\":7200,\"maxTimeoutSecs\":3600}}",
+                "instance", null, null);
+            assertEquals(1, report.skipped());
+            assertEquals(1, report.imported());
+            assertTrue(report.warnings().stream().anyMatch(item -> item.contains("env-locked")));
+            Map<String, String> entries = configService.layerEntries("instance", "job-policy", null, null);
+            assertNull(entries.get("defaultTimeoutSecs"));
+            assertEquals("3600", entries.get("maxTimeoutSecs"));
+        } finally {
+            org.springframework.test.util.ReflectionTestUtils.setField(
+                configService, "envOverlay", originalOverlay);
+        }
+    }
 }

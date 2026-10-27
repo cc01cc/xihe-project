@@ -6,6 +6,7 @@ import { useConfigStore, LAYER_DOMAINS, type ConfigLayer } from "../../stores/co
 import ConfigDomainPanel, {
     type DomainField,
 } from "../../components/settings/ConfigDomainPanel.vue";
+import ConfigSourceSummary from "../../components/settings/ConfigSourceSummary.vue";
 import AgentTemplatesPanel from "../../components/settings/AgentTemplatesPanel.vue";
 import ContextTemplatesPanel from "../../components/settings/ContextTemplatesPanel.vue";
 import EmbeddingSettingsPanel from "../../components/settings/EmbeddingSettingsPanel.vue";
@@ -617,12 +618,16 @@ async function handleSave(domain: string, body: Record<string, string>) {
 
 async function handleReset(domain: string, key: string) {
     try {
-        await configStore.putLayerConfig(
-            activeTab.value,
-            domain,
-            { [key]: "" },
-            currentWorkspaceId(),
-        );
+        if (activeTab.value === "instance") {
+            await configStore.deleteInstanceKey(domain, key);
+        } else {
+            await configStore.putLayerConfig(
+                activeTab.value,
+                domain,
+                { [key]: "" },
+                currentWorkspaceId(),
+            );
+        }
         await reloadActiveLayer();
         toast.success(`${key} ${t("common.reset")}`);
     } catch (e) {
@@ -772,6 +777,13 @@ async function handleImportFile(event: Event) {
                         </div>
                     </div>
 
+                    <div
+                        v-if="activeTab === 'workspace'"
+                        data-testid="config-workspace-transition"
+                        class="mb-2 rounded border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
+                    >
+                        {{ t("settings.workspaceTransitionNote") }}
+                    </div>
                     <template v-for="domain in visibleDomains" :key="domain">
                         <!-- PLAN-0523 T3.1: llm-provider 合并为单一「模型提供方」分区
                              （spec/ui-surfaces.md S1/S3）；旧 ProfilePanel / 层全局参数表单
@@ -833,30 +845,58 @@ async function handleImportFile(event: Event) {
                                         :workspace-id="currentWorkspaceId() || undefined"
                                         :scope="activeTab === 'user' ? 'USER' : 'WORKSPACE'"
                                     />
+                                    <ConfigSourceSummary
+                                        v-if="activeTab !== 'instance'"
+                                        domain="llm-provider"
+                                        :layer="activeTab"
+                                        :meta="
+                                            configStore.layerMeta[activeTab]['llm-provider'] || {}
+                                        "
+                                    />
                                 </div>
                             </div>
                         </template>
-                        <AgentTemplatesPanel
-                            v-else-if="domain === 'agent-templates'"
-                            :entries="configStore.layerConfig[activeTab][domain] || {}"
-                            :saving="savingDomains[domain] || false"
-                            @save="handleSave(domain, $event)"
-                        />
-                        <ContextTemplatesPanel
-                            :key="`${activeTab}:${currentWorkspaceId()}`"
-                            v-else-if="domain === 'api-request-templates'"
-                            :entries="configStore.layerConfig[activeTab][domain] || {}"
-                            :saving="savingDomains[domain] || false"
-                            :layer="activeTab"
-                            :workspace-id="currentWorkspaceId() || undefined"
-                            @save="handleSave(domain, $event)"
-                        />
-                        <EmbeddingSettingsPanel
-                            v-else-if="domain === 'embedding' && activeTab !== 'instance'"
-                            :layer="activeTab === 'user' ? 'user' : 'workspace'"
-                            :workspace-id="currentWorkspaceId() || undefined"
-                            :saving="savingDomains[domain] || false"
-                        />
+                        <template v-else-if="domain === 'agent-templates'">
+                            <AgentTemplatesPanel
+                                :entries="configStore.layerConfig[activeTab][domain] || {}"
+                                :saving="savingDomains[domain] || false"
+                                @save="handleSave(domain, $event)"
+                            />
+                            <ConfigSourceSummary
+                                domain="agent-templates"
+                                :layer="activeTab"
+                                :meta="configStore.layerMeta[activeTab]['agent-templates'] || {}"
+                            />
+                        </template>
+                        <template v-else-if="domain === 'api-request-templates'">
+                            <ContextTemplatesPanel
+                                :key="`${activeTab}:${currentWorkspaceId()}`"
+                                :entries="configStore.layerConfig[activeTab][domain] || {}"
+                                :saving="savingDomains[domain] || false"
+                                :layer="activeTab"
+                                :workspace-id="currentWorkspaceId() || undefined"
+                                @save="handleSave(domain, $event)"
+                            />
+                            <ConfigSourceSummary
+                                domain="api-request-templates"
+                                :layer="activeTab"
+                                :meta="
+                                    configStore.layerMeta[activeTab]['api-request-templates'] || {}
+                                "
+                            />
+                        </template>
+                        <template v-else-if="domain === 'embedding' && activeTab !== 'instance'">
+                            <EmbeddingSettingsPanel
+                                :layer="activeTab === 'user' ? 'user' : 'workspace'"
+                                :workspace-id="currentWorkspaceId() || undefined"
+                                :saving="savingDomains[domain] || false"
+                            />
+                            <ConfigSourceSummary
+                                domain="embedding"
+                                :layer="activeTab"
+                                :meta="configStore.layerMeta[activeTab]['embedding'] || {}"
+                            />
+                        </template>
                         <ConfigDomainPanel
                             v-else
                             :domain="domain"
@@ -866,6 +906,8 @@ async function handleImportFile(event: Event) {
                             :summary="generateSummary(domain)"
                             :schema="schemaFor(domain)"
                             :env-locked="envLockedFor(domain)"
+                            :meta="configStore.layerMeta[activeTab][domain] || {}"
+                            :layer="activeTab"
                             @save="handleSave(domain, $event)"
                             @reset="handleReset(domain, $event)"
                         />

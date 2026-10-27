@@ -73,3 +73,5 @@ Compiler、Checkstyle 和架构规则用途互补。PMD 候选已实际试跑，
 优先执行受影响测试、checkstyle 与契约测试；完整测试仅按波次/里程碑执行。新增 API、SSE、Flyway 或认证边界需要同步测试与文档 inventory。允许修改本包源码、测试与本包构建配置；新增依赖、协议/架构变更和生产操作须先获批准。
 
 父级指南：[`A03-xihe/AGENTS.md`](../../AGENTS.md)。
+
+- 配置元数据（PLAN-0554）：per-key source/locked/writable/instanceEligible 由 ConfigService.meta 统一计算；UI 不复制规则；非 ADMIN layer=instance 403（explicit-only 模板域只读例外）；env 锁定键 PUT/DELETE 返回 409 CONFIG_ENV_LOCKED，导入跳过并 warning。

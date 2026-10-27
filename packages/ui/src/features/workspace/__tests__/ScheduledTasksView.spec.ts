@@ -10,6 +10,15 @@ import { i18n } from "../../../i18n";
 import type { ScheduledTask } from "../../../types";
 
 vi.mock("vue-router", () => ({
+    createRouter: () => ({
+        push: vi.fn(),
+        replace: vi.fn(),
+        beforeEach: vi.fn(),
+        afterEach: vi.fn(),
+        isReady: () => Promise.resolve(),
+        currentRoute: { value: {} },
+    }),
+    createWebHistory: () => ({}),
     useRoute: () => ({
         params: { workspaceId: "ws-1" },
         path: "/workspace/ws-1/scheduled-tasks",

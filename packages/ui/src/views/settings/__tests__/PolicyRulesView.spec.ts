@@ -8,6 +8,15 @@ import type * as apiModule from "../../../composables/api";
 import type { PolicyRuleView } from "../../../types";
 
 vi.mock("vue-router", () => ({
+    createRouter: () => ({
+        push: vi.fn(),
+        replace: vi.fn(),
+        beforeEach: vi.fn(),
+        afterEach: vi.fn(),
+        isReady: () => Promise.resolve(),
+        currentRoute: { value: {} },
+    }),
+    createWebHistory: () => ({}),
     useRoute: () =>
         ({
             name: "settings-policy",

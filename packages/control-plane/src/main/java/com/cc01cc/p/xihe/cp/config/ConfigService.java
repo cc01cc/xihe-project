@@ -67,6 +67,26 @@ public class ConfigService {
         "agent-runtime", "agent-profile", "user-preference", "logging",
           "approval-policy", "agent-templates", "context-templates", "api-request-templates", "pricing", "job-policy");
 
+    /**
+     * PLAN-0554: the 12 domains exposed by the settings UI. The legacy
+     * {@code context-templates} and operations-only {@code pricing} domains
+     * remain readable by their owners but are not part of the config-page
+     * metadata contract.
+     */
+    public static final Set<String> UI_DOMAINS = Set.of(
+        "llm-provider", "context-policy", "embedding", "rag", "agent-runtime",
+        "agent-profile", "user-preference", "logging", "approval-policy",
+        "agent-templates", "api-request-templates", "job-policy");
+
+    /** Explicit-layer domains: no effective merge and no cross-layer fallback. */
+    private static final Set<String> EXPLICIT_ONLY_DOMAINS = Set.of(
+        "agent-templates", "context-templates", "api-request-templates");
+
+    /** Whole-unit domains edited by dedicated panels, not the generic Instance rows. */
+    private static final Set<String> INSTANCE_DEDICATED_DOMAINS = Set.of(
+        "llm-provider", "embedding", "agent-templates", "context-templates",
+        "api-request-templates", "pricing");
+
     private static final Set<String> USER_WRITABLE_DOMAINS = Set.of(
         "llm-provider", "context-policy", "embedding", "rag",
           "agent-runtime", "agent-profile", "user-preference", "agent-templates", "context-templates");
@@ -92,6 +112,33 @@ public class ConfigService {
      * instance-level operations concern (bill rates), not user/workspace tunable.
      */
     private static final Set<String> INSTANCE_ONLY_DOMAINS = Set.of("pricing");
+
+    /** PLAN-0554: explicit-layer template domains keep their read-only builtin access. */
+    public static boolean isExplicitOnlyDomain(String domain) {
+        return EXPLICIT_ONLY_DOMAINS.contains(domain);
+    }
+
+    /** PLAN-0554: layer writability used by both meta and non-admin read filtering. */
+    public static boolean isLayerWritable(String layer, String domain) {
+        return switch (layer) {
+            case "instance" -> true;
+            case "user" -> USER_WRITABLE_DOMAINS.contains(domain) || isExplicitOnlyDomain(domain);
+            case "workspace" -> WORKSPACE_WRITABLE_DOMAINS.contains(domain) || isExplicitOnlyDomain(domain);
+            default -> false;
+        };
+    }
+
+    /** PLAN-0554: instance-only keys must not be exposed in user/workspace views. */
+    public static boolean isInstanceOnlyKey(String domain, String key) {
+        return INSTANCE_ONLY_KEYS.getOrDefault(domain, Set.of()).contains(key);
+    }
+
+    /** PLAN-0554 R10: domains a non-admin can read at all (user/workspace writable). */
+    public static boolean isReadableByNonAdmin(String domain) {
+        return USER_WRITABLE_DOMAINS.contains(domain)
+            || WORKSPACE_WRITABLE_DOMAINS.contains(domain)
+            || isExplicitOnlyDomain(domain);
+    }
 
     /**
      * Decision #24: resolved/effective include code defaults so the UI and the
@@ -191,6 +238,11 @@ public class ConfigService {
 
     public record EffectiveConfig(String domain, String revision, String source,
                                   Map<String, String> entries) {}
+
+    /** PLAN-0554: per-key read-only provenance for the config UI. */
+    public record ConfigKeyMeta(String key, String source, boolean locked, boolean writable,
+                                String reason, boolean instanceEligible, boolean defaultPresent,
+                                boolean overridable) {}
 
     static String stripJsoncComments(String jsonc) {
         String[] lines = jsonc.split("\n", -1);
@@ -326,6 +378,116 @@ public class ConfigService {
         return new EffectiveConfig(domain, revisionOf(rows), source, merged);
     }
 
+    /**
+     * PLAN-0554: per-key provenance for one layer. The result is computed from
+     * the same rows/env/defaults used by {@link #effective}; nothing is cached.
+     * User/workspace meta never exposes instance-only keys.
+     */
+    public List<ConfigKeyMeta> meta(String layer, String domain, UUID userId, UUID workspaceId) {
+        boolean instanceLayer = "instance".equals(layer);
+        boolean userLayer = "user".equals(layer);
+        boolean workspaceLayer = "workspace".equals(layer);
+        boolean explicitOnly = EXPLICIT_ONLY_DOMAINS.contains(domain);
+
+        Map<String, String> instance = rowsToMap(rowsForLayer("instance", domain, null, null));
+        Map<String, String> user = userLayer || workspaceLayer
+            ? rowsToMap(rowsForLayer("user", domain, userId, null))
+            : Map.of();
+        Map<String, String> workspace = workspaceLayer
+            ? rowsToMap(rowsForLayer("workspace", domain, null, workspaceId))
+            : Map.of();
+        Map<String, String> env = envOverlay.activeOverrides(domain);
+        Map<String, String> defaults = CODE_DEFAULTS.getOrDefault(domain, Map.of());
+
+        java.util.Set<String> keys = new java.util.TreeSet<>();
+        if (explicitOnly) {
+            if (instanceLayer) {
+                keys.addAll(instance.keySet());
+            } else if (userLayer) {
+                keys.addAll(user.keySet());
+            } else if (workspaceLayer) {
+                keys.addAll(workspace.keySet());
+            }
+        } else if (instanceLayer) {
+            keys.addAll(instance.keySet());
+            keys.addAll(defaults.keySet());
+        } else if (userLayer) {
+            keys.addAll(user.keySet());
+            keys.addAll(instance.keySet());
+            keys.addAll(defaults.keySet());
+        } else if (workspaceLayer) {
+            keys.addAll(workspace.keySet());
+            keys.addAll(user.keySet());
+            keys.addAll(instance.keySet());
+            keys.addAll(defaults.keySet());
+        }
+        keys.addAll(env.keySet());
+
+        List<ConfigKeyMeta> result = new ArrayList<>(keys.size());
+        for (String key : keys) {
+            if (!instanceLayer && isInstanceOnlyKey(domain, key)) {
+                continue;
+            }
+            boolean locked = env.containsKey(key);
+            String source = locked ? "env"
+                : explicitOnly ? explicitSource(layer, key, instance, user, workspace)
+                : sourceFor(layer, key, instance, user, workspace, defaults);
+            boolean domainWritable = isLayerWritable(layer, domain);
+            boolean instanceOnly = !instanceLayer && isInstanceOnlyKey(domain, key);
+            boolean writable = domainWritable && !locked && !instanceOnly;
+            String reason = locked ? "ENV_LOCKED"
+                : !domainWritable ? "LAYER_NOT_WRITABLE"
+                : instanceOnly ? "INSTANCE_ONLY" : null;
+            boolean eligible = instanceLayer && !INSTANCE_DEDICATED_DOMAINS.contains(domain);
+            boolean overridable = instanceLayer
+                && !isInstanceOnlyKey(domain, key)
+                && !INSTANCE_ONLY_DOMAINS.contains(domain)
+                && (USER_WRITABLE_DOMAINS.contains(domain) || WORKSPACE_WRITABLE_DOMAINS.contains(domain));
+            result.add(new ConfigKeyMeta(key, source, locked, writable, reason, eligible,
+                defaults.containsKey(key), overridable));
+        }
+        return result;
+    }
+
+    private static Map<String, String> rowsToMap(List<ConfigEntity> rows) {
+        Map<String, String> result = new LinkedHashMap<>();
+        for (ConfigEntity row : rows) {
+            result.put(row.getConfigKey(), row.getConfigValue());
+        }
+        return result;
+    }
+
+    private static String explicitSource(String layer, String key,
+                                         Map<String, String> instance,
+                                         Map<String, String> user,
+                                         Map<String, String> workspace) {
+        return switch (layer) {
+            case "instance" -> instance.containsKey(key) ? "instance" : "none";
+            case "user" -> user.containsKey(key) ? "user" : "none";
+            case "workspace" -> workspace.containsKey(key) ? "workspace" : "none";
+            default -> "none";
+        };
+    }
+
+    private static String sourceFor(String layer, String key,
+                                    Map<String, String> instance,
+                                    Map<String, String> user,
+                                    Map<String, String> workspace,
+                                    Map<String, String> defaults) {
+        return switch (layer) {
+            case "instance" -> instance.containsKey(key) ? "instance"
+                : defaults.containsKey(key) ? "code" : "none";
+            case "user" -> user.containsKey(key) ? "user"
+                : instance.containsKey(key) ? "instance"
+                : defaults.containsKey(key) ? "code" : "none";
+            case "workspace" -> workspace.containsKey(key) ? "workspace"
+                : user.containsKey(key) ? "user"
+                : instance.containsKey(key) ? "instance"
+                : defaults.containsKey(key) ? "code" : "none";
+            default -> "none";
+        };
+    }
+
     private static void rejectEffectiveAgentTemplates(String domain) {
         if ("agent-templates".equals(domain)) {
             throw new ConfigAccessException("Agent templates must be read from one explicit config layer");
@@ -378,6 +540,21 @@ public class ConfigService {
     @Transactional
     public void putLayer(String layer, String domain, Map<String, String> entries,
                          String changedBy, UUID userId, UUID workspaceId) {
+        Set<String> envLocked = envOverriddenKeys(domain);
+        if (!envLocked.isEmpty()) {
+            List<String> lockedKeys = new ArrayList<>();
+            for (String key : entries.keySet()) {
+                if (envLocked.contains(key)) {
+                    lockedKeys.add(key);
+                }
+            }
+            if (!lockedKeys.isEmpty()) {
+                lockedKeys.sort(String::compareTo);
+                throw new CpApiException(org.springframework.http.HttpStatus.CONFLICT,
+                    "CONFIG_ENV_LOCKED",
+                    "Env-locked config keys cannot be written: " + String.join(", ", lockedKeys));
+            }
+        }
         if ("api-request-templates".equals(domain)) {
             apiRequestTemplates.getObject().putLayer(layer, entries, changedBy, userId, workspaceId);
             return;
@@ -1189,8 +1366,20 @@ public class ConfigService {
             }
             if (domainNode.isObject()) {
                 Map<String, String> entries = configEntries(domainNode);
-                putLayer(layer, domain, entries, changedBy, userId, workspaceId);
-                imported += entries.size();
+                int before = entries.size();
+                Set<String> envLocked = envOverriddenKeys(domain);
+                if (!envLocked.isEmpty()) {
+                    entries.keySet().removeIf(envLocked::contains);
+                }
+                int removed = before - entries.size();
+                if (removed > 0) {
+                    skipped += removed;
+                    warnings.add(domain + ": " + removed + " env-locked key(s) skipped");
+                }
+                if (!entries.isEmpty()) {
+                    putLayer(layer, domain, entries, changedBy, userId, workspaceId);
+                    imported += entries.size();
+                }
             }
         }
         return new ImportReport(imported, skipped, warnings);

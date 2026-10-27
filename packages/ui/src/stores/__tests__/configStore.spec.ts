@@ -385,10 +385,19 @@ describe("useConfigStore", () => {
             await store.loadLayerDomains("workspace", "ws-1");
 
             // Workspace includes approval-policy, agent-templates, context-templates, and job-policy.
-            expect(calls).toHaveLength(9);
-            for (const call of calls) {
+            // Each domain now issues a config read plus a PLAN-0554 meta read.
+            const domainCalls = calls.filter((call) => !call.url.includes("/meta"));
+            const metaCalls = calls.filter((call) => call.url.includes("/meta"));
+            expect(domainCalls).toHaveLength(9);
+            expect(metaCalls).toHaveLength(9);
+            for (const call of domainCalls) {
                 expect(call.url).toContain("layer=workspace");
                 expect(call.url).toContain("includeMeta=true");
+                expect(call.url).toContain("workspaceId=ws-1");
+            }
+            for (const call of metaCalls) {
+                expect(call.url).toContain("layer=workspace");
+                expect(call.url).not.toContain("includeMeta=true");
                 expect(call.url).toContain("workspaceId=ws-1");
             }
             expect(Object.keys(store.layerConfig.workspace)).toHaveLength(9);
@@ -423,7 +432,10 @@ describe("useConfigStore", () => {
 
             await store.loadLayerDomains("user");
 
-            expect(calls).toHaveLength(9);
+            const domainCalls = calls.filter((call) => !call.url.includes("/meta"));
+            const metaCalls = calls.filter((call) => call.url.includes("/meta"));
+            expect(domainCalls).toHaveLength(9);
+            expect(metaCalls).toHaveLength(9);
             for (const call of calls) {
                 expect(call.url).toContain("layer=user");
                 expect(call.url).not.toContain("workspaceId=");

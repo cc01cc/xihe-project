@@ -33,6 +33,15 @@ const { pushSpy } = vi.hoisted(() => ({
 }));
 
 vi.mock("vue-router", () => ({
+    createRouter: () => ({
+        push: vi.fn(),
+        replace: vi.fn(),
+        beforeEach: vi.fn(),
+        afterEach: vi.fn(),
+        isReady: () => Promise.resolve(),
+        currentRoute: { value: {} },
+    }),
+    createWebHistory: () => ({}),
     useRouter: () => ({ push: pushSpy }),
     useRoute: () => ({ params: {} }),
 }));
