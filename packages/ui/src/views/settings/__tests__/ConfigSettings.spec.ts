@@ -5,6 +5,11 @@ import type { RouteLocationNormalizedLoaded } from "vue-router";
 import { i18n } from "../../../i18n";
 import { CONFIG_DOMAINS, INSTANCE_DOMAINS, LAYER_DOMAINS } from "../../../stores/config";
 
+const routerSpies = vi.hoisted(() => ({
+    push: vi.fn<(location: unknown) => Promise<void>>(),
+    replace: vi.fn<(location: unknown) => Promise<void>>(),
+}));
+
 vi.mock("vue-router", () => ({
     // PLAN-0546 made stores/auth import the router; the affected spec needs the
     // factory exports even though it only renders the settings view.
@@ -29,10 +34,7 @@ vi.mock("vue-router", () => ({
             redirectedFrom: undefined,
             meta: {},
         }) as RouteLocationNormalizedLoaded,
-    useRouter: () => ({
-        push: vi.fn<(location: unknown) => Promise<void>>(),
-        replace: vi.fn<(location: unknown) => Promise<void>>(),
-    }),
+    useRouter: () => routerSpies,
     RouterLink: { template: "<a><slot /></a>" },
 }));
 
@@ -76,7 +78,7 @@ async function mountView() {
         wrapper = mount(ConfigSettings, {
             global: {
                 plugins: [i18n],
-                stubs: { ProviderHub: true, McpStdioServerList: true },
+                stubs: { ProviderHub: true },
             },
         });
     await flushPromises();
@@ -145,12 +147,8 @@ describe("ConfigSettings job-policy (PLAN-0373)", () => {
         expect(maxRow.find("input").exists()).toBe(true);
     });
 
-    it("shows job-policy on the workspace tab and hides it from the user tab", async () => {
+    it("hides job-policy from the user tab (workspace layer moved out by PLAN-0560)", async () => {
         const wrapper = await mountView();
-
-        await wrapper.find('[data-testid="config-tab-workspace"]').trigger("click");
-        await flushPromises();
-        expect(wrapper.find('[data-testid="config-domain-job-policy"]').exists()).toBe(true);
 
         await wrapper.find('[data-testid="config-tab-user"]').trigger("click");
         await flushPromises();
@@ -259,16 +257,16 @@ describe("ConfigSettings API request templates (PLAN-0439 rename of PLAN-0414)",
 });
 
 describe("ConfigSettings 模型提供方分区 (PLAN-0523 T3.1)", () => {
-    it("层 tab 顺序为 实例 → 个人 → 工作区（批注④，管理员）", async () => {
+    it("层 tab 顺序为 实例 → 个人（PLAN-0560 移除工作区页签，管理员）", async () => {
         const wrapper = await mountView();
         const tabs = wrapper
             .findAll("[data-testid^='config-tab-']")
             .map((tab) => tab.attributes("data-testid"));
-        expect(tabs).toEqual(["config-tab-instance", "config-tab-user", "config-tab-workspace"]);
+        expect(tabs).toEqual(["config-tab-instance", "config-tab-user"]);
         wrapper.unmount();
     });
 
-    it("层 tab 顺序为 个人 → 工作区（非管理员不渲染实例层）", async () => {
+    it("层 tab 只剩个人（非管理员不渲染实例层）", async () => {
         localStorage.setItem(
             "xihe-user",
             JSON.stringify({ id: "u1", email: "user@xihe.local", role: "USER" }),
@@ -277,7 +275,7 @@ describe("ConfigSettings 模型提供方分区 (PLAN-0523 T3.1)", () => {
         const tabs = wrapper
             .findAll("[data-testid^='config-tab-']")
             .map((tab) => tab.attributes("data-testid"));
-        expect(tabs).toEqual(["config-tab-user", "config-tab-workspace"]);
+        expect(tabs).toEqual(["config-tab-user"]);
         wrapper.unmount();
     });
 
@@ -300,7 +298,7 @@ describe("ConfigSettings 模型提供方分区 (PLAN-0523 T3.1)", () => {
         wrapper.unmount();
     });
 
-    it("实例层提供前往用户/工作区的入口", async () => {
+    it("实例层提供前往用户/工作区的入口（PLAN-0560：工作区走路由跳转）", async () => {
         const wrapper = await mountView();
         const goUser = wrapper.find('[data-testid="provider-instance-go-user"]');
         const goWorkspace = wrapper.find('[data-testid="provider-instance-go-workspace"]');
@@ -318,9 +316,7 @@ describe("ConfigSettings 模型提供方分区 (PLAN-0523 T3.1)", () => {
         await flushPromises();
         await wrapper.find('[data-testid="provider-instance-go-workspace"]').trigger("click");
         await flushPromises();
-        expect(wrapper.find('[data-testid="config-tab-workspace"]').classes()).toContain(
-            "border-primary",
-        );
+        expect(routerSpies.push).toHaveBeenCalledWith(`/workspace/${WORKSPACE_ID}/settings`);
         wrapper.unmount();
     });
 
@@ -340,6 +336,34 @@ describe("ConfigSettings 模型提供方分区 (PLAN-0523 T3.1)", () => {
         const partition = wrapper.find('[data-testid="provider-partition"]');
         expect(partition.exists()).toBe(true);
         expect(partition.find("provider-hub-stub").exists()).toBe(true);
+        wrapper.unmount();
+    });
+});
+
+describe("ConfigSettings 工作区迁移提示 (PLAN-0560)", () => {
+    it("渲染迁移提示，按钮路由到当前工作区设置页", async () => {
+        const wrapper = await mountView();
+
+        const notice = wrapper.find('[data-testid="config-workspace-moved"]');
+        expect(notice.exists()).toBe(true);
+        const go = wrapper.find('[data-testid="config-go-workspace-settings"]');
+        expect(go.exists()).toBe(true);
+        expect(go.attributes("disabled")).toBeUndefined();
+        await go.trigger("click");
+        expect(routerSpies.push).toHaveBeenCalledWith(`/workspace/${WORKSPACE_ID}/settings`);
+        wrapper.unmount();
+    });
+
+    it("无工作区上下文时禁用前往按钮", async () => {
+        localStorage.removeItem("xihe-workspace");
+        sessionStorage.clear();
+        const wrapper = await mountView();
+
+        const go = wrapper.find('[data-testid="config-go-workspace-settings"]');
+        expect(go.exists()).toBe(true);
+        expect(go.attributes("disabled")).toBeDefined();
+        await go.trigger("click");
+        expect(routerSpies.push).not.toHaveBeenCalled();
         wrapper.unmount();
     });
 });
@@ -412,7 +436,7 @@ describe("ConfigSettings agent-runtime run budget (PLAN-0492)", () => {
         ).toBe(false);
     });
 
-    it("hides the ceiling keys from the user and workspace tabs", async () => {
+    it("hides the ceiling keys from the user tab", async () => {
         const wrapper = await mountView();
 
         await wrapper.find('[data-testid="config-tab-user"]').trigger("click");
@@ -425,20 +449,7 @@ describe("ConfigSettings agent-runtime run budget (PLAN-0492)", () => {
         expect(
             wrapper.find('[data-testid="config-field-agent-runtime-runMaxTurnsCeiling"]').exists(),
         ).toBe(false);
-
-        await wrapper.find('[data-testid="config-tab-workspace"]').trigger("click");
-        await flushPromises();
-        const wsPanel = wrapper.find('[data-testid="config-domain-agent-runtime"]');
-        await wsPanel.find("button").trigger("click");
-        expect(
-            wrapper
-                .find('[data-testid="config-field-agent-runtime-runMaxElapsedSeconds"]')
-                .exists(),
-        ).toBe(true);
-        expect(
-            wrapper
-                .find('[data-testid="config-field-agent-runtime-runMaxElapsedSecondsCeiling"]')
-                .exists(),
-        ).toBe(false);
+        // PLAN-0560：workspace 层上限隐藏由 WorkspaceSettingsView.spec.ts 覆盖。
+        wrapper.unmount();
     });
 });

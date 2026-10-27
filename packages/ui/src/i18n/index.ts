@@ -807,6 +807,21 @@ const messages = {
             checkpointRevertDone: "恢复完成",
             checkpointRevertPartial: "恢复完成，但有未完成项",
             checkpointRevertFailed: "恢复执行失败",
+            settingsKicker: "工作区",
+            settingsTitle: "工作区设置",
+            settingsDesc:
+                "本工作区的常规信息、配置与 MCP。配置优先级：workspace > user > instance > code default；env 与管理员锁定始终优先且只读。",
+            settingsTabGeneral: "常规",
+            settingsTabConfig: "配置",
+            settingsTabMcp: "MCP",
+            settingsGeneralTitle: "基本信息",
+            settingsName: "名称",
+            settingsDescription: "描述",
+            settingsId: "工作区 ID",
+            settingsStorageRef: "物理目录",
+            settingsExecutionMode: "执行后端",
+            settingsConfigNote:
+                "workspace 层覆盖 user / instance；env 锁定与管理员锁定只读，生效值以来源徽标为准。",
         },
         settings: {
             title: "设置",
@@ -821,7 +836,6 @@ const messages = {
             tabAdmin: "管理员",
             tabUser: "用户",
             tabInstance: "实例",
-            tabWorkspace: "工作区",
             providerPartitionKicker: "模型提供方",
             providerPartitionTitle: "LLM 连接与默认身份",
             providerPartitionDesc:
@@ -1252,8 +1266,10 @@ const messages = {
             fieldCompactionDefaults: "压缩默认值（JSON）",
             fieldCompactionModels: "模型窗口表（JSON）",
             envLockedHint: "该键被环境变量覆盖：执行端使用 env 生效值，此处不可修改",
-            workspaceTransitionNote:
-                "过渡：0560 将把 Workspace Settings 移入 workspace，本页签届时移除。",
+            workspaceConfigMovedNotice:
+                "工作区级配置（连接、审批策略、任务策略、MCP 等）已移至各工作区的设置页。",
+            workspaceConfigMovedGo: "前往当前工作区设置",
+            workspaceConfigMovedNoWorkspace: "当前没有工作区上下文，无法前往工作区设置",
             configSourceTitle: "生效来源",
             configSourceEnv: "env 锁定",
             configSourceWorkspace: "workspace",
@@ -1302,7 +1318,6 @@ const messages = {
             adminLockedBadge: "由管理员锁定",
             adminLockValueAtInstance: "值由实例层锁定",
             adminLockReason: "由管理员锁定：{reason}",
-            workspaceRequired: "当前没有工作区上下文，无法编辑工作区配置",
             importExport: "导入 / 导出（实例层）",
             exportConfig: "导出配置",
             exportIncludeSecrets: "包含明文密钥",
@@ -2551,6 +2566,21 @@ const messages = {
             checkpointRevertDone: "Restore completed",
             checkpointRevertPartial: "Restore completed with unfinished items",
             checkpointRevertFailed: "Restore execution failed",
+            settingsKicker: "Workspace",
+            settingsTitle: "Workspace Settings",
+            settingsDesc:
+                "General info, config, and MCP for this workspace. Priority: workspace > user > instance > code default; env and admin locks always win and are read-only.",
+            settingsTabGeneral: "General",
+            settingsTabConfig: "Config",
+            settingsTabMcp: "MCP",
+            settingsGeneralTitle: "General",
+            settingsName: "Name",
+            settingsDescription: "Description",
+            settingsId: "Workspace ID",
+            settingsStorageRef: "Storage path",
+            settingsExecutionMode: "Execution backend",
+            settingsConfigNote:
+                "The workspace layer overrides user / instance; env-locked and admin-locked keys are read-only — see the source badges for effective values.",
         },
         settings: {
             title: "Settings",
@@ -2565,7 +2595,6 @@ const messages = {
             tabAdmin: "Admin",
             tabUser: "User",
             tabInstance: "Instance",
-            tabWorkspace: "Workspace",
             providerPartitionKicker: "Model Providers",
             providerPartitionTitle: "LLM Connections & Default Identity",
             providerPartitionDesc:
@@ -3021,8 +3050,11 @@ const messages = {
             fieldCompactionModels: "Model Windows (JSON)",
             envLockedHint:
                 "This key is overridden by an environment variable: the runtime uses the env value and it cannot be edited here",
-            workspaceTransitionNote:
-                "Transitional: PLAN-0560 moves Workspace Settings into the workspace; this tab will be removed then.",
+            workspaceConfigMovedNotice:
+                "Workspace-level config (connections, approval policy, job policy, MCP, etc.) has moved to each workspace's settings page.",
+            workspaceConfigMovedGo: "Open current workspace settings",
+            workspaceConfigMovedNoWorkspace:
+                "No workspace context is available; cannot open workspace settings",
             configSourceTitle: "Effective source",
             configSourceEnv: "Env locked",
             configSourceWorkspace: "Workspace",
@@ -3075,8 +3107,6 @@ const messages = {
             adminLockedBadge: "Admin locked",
             adminLockValueAtInstance: "Value pinned at the instance layer",
             adminLockReason: "Admin locked: {reason}",
-            workspaceRequired:
-                "No workspace context is available; workspace config cannot be edited",
             importExport: "Import / Export (instance layer)",
             exportConfig: "Export Config",
             exportIncludeSecrets: "Include plaintext secrets",
