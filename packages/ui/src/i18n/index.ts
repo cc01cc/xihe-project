@@ -938,10 +938,11 @@ const messages = {
                 confirmTypeChange: "确认协议变更及覆盖清理",
                 fieldLabel: "连接名称",
                 toastLabelRequired: "请输入连接名称",
-                toastLabelTooLong: "连接名称不能超过 128 个字符",
+                toastLabelTooLong: "连接名称不能超过 40 个字符",
                 toastLabelDuplicate: "同一 Provider 已有同名连接，保存会因重名失败",
                 toastLabelConflict: "同一 Provider 下已存在同名连接，请换一个名称",
-                toastLabelInvalid: "连接名称不合法：请填写 1-128 个字符",
+                toastLabelControl: "连接名称不能包含换行、制表等控制字符",
+                toastLabelInvalid: "连接名称不合法：请填写 1-40 个字符且不含控制字符",
                 fieldKey: "连接标识",
                 keyHint: "小写字母、数字和连字符；同一 Provider/作用域内不可重复。保存后不可修改。",
                 fieldApiKey: "API key",
@@ -2652,12 +2653,14 @@ const messages = {
                 confirmTypeChange: "Confirm protocol change and override cleanup",
                 fieldLabel: "Connection name",
                 toastLabelRequired: "Enter a connection name",
-                toastLabelTooLong: "Connection name must be at most 128 characters",
+                toastLabelTooLong: "Connection name must be at most 40 characters",
                 toastLabelDuplicate:
                     "Another connection for this provider already uses this name; saving will fail",
                 toastLabelConflict:
                     "A connection with this name already exists for this provider; choose another name",
-                toastLabelInvalid: "Connection name must be 1-128 characters",
+                toastLabelControl: "Connection name must not contain control characters",
+                toastLabelInvalid:
+                    "Connection name must be 1-40 characters without control characters",
                 fieldKey: "Connection key",
                 keyHint:
                     "Lowercase letters, digits, and hyphens; unique per Provider/scope. Cannot be changed after saving.",

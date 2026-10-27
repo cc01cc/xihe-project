@@ -1291,7 +1291,7 @@ paths:
           description: Connection saved in verifying state
           content: { application/json: { schema: { $ref: '#/components/schemas/ProviderConnection' } } }
         '400':
-          description: 'PROVIDER_CONNECTION_INVALID / PROVIDER_CONNECTION_KEY_INVALID / PROVIDER_API_TYPE_UNSUPPORTED. PLAN-0555: label errors carry field=label; the label is trimmed and limited to 128 characters.'
+          description: 'PROVIDER_CONNECTION_INVALID / PROVIDER_CONNECTION_KEY_INVALID / PROVIDER_API_TYPE_UNSUPPORTED. PLAN-0555/0563: label errors carry field=label; the label is trimmed, limited to 40 code points, and must not contain control characters.'
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
@@ -1312,7 +1312,7 @@ paths:
           description: Updated connection
           content: { application/json: { schema: { $ref: '#/components/schemas/ProviderConnection' } } }
         '400':
-          description: 'PROVIDER_CONNECTION_INVALID / PROVIDER_CONNECTION_KEY_INVALID / PROVIDER_API_TYPE_UNSUPPORTED. PLAN-0555: label errors carry field=label; the label is trimmed and limited to 128 characters.'
+          description: 'PROVIDER_CONNECTION_INVALID / PROVIDER_CONNECTION_KEY_INVALID / PROVIDER_API_TYPE_UNSUPPORTED. PLAN-0555/0563: label errors carry field=label; the label is trimmed, limited to 40 code points, and must not contain control characters.'
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }

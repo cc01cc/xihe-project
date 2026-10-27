@@ -738,8 +738,13 @@ async function save() {
         toast.error(t("settings.providerHub.toastLabelRequired"));
         return;
     }
-    if (label.length > 128) {
+    if ([...label].length > 40) {
         toast.error(t("settings.providerHub.toastLabelTooLong"));
+        return;
+    }
+    // PLAN-0563: C0/C1 controls plus Unicode line/paragraph separators.
+    if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(label)) {
+        toast.error(t("settings.providerHub.toastLabelControl"));
         return;
     }
     const duplicateLabel = connections.value.some(
@@ -1978,7 +1983,7 @@ onMounted(() => {
                             data-testid="provider-connection-form-label"
                             class="w-full rounded-md border bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30"
                             required
-                            maxlength="128"
+                            maxlength="40"
                         />
                     </label>
                     <label class="mt-4 block">

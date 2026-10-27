@@ -248,7 +248,11 @@ class ProviderConnectionHttpIntegrationTest extends AbstractIntegrationTest {
 
         assertProblem(send("PATCH", path, "{\"label\":\"   \"}"),
                 400, "PROVIDER_CONNECTION_INVALID");
-        assertProblem(send("PATCH", path, "{\"label\":\"" + "x".repeat(129) + "\"}"),
+        assertProblem(send("PATCH", path, "{\"label\":\"" + "x".repeat(41) + "\"}"),
+                400, "PROVIDER_CONNECTION_INVALID");
+        assertProblem(send("PATCH", path, "{\"label\":\"bad\\tlabel\"}"),
+                400, "PROVIDER_CONNECTION_INVALID");
+        assertProblem(send("PATCH", path, "{\"label\":\"bad\u2028label\"}"),
                 400, "PROVIDER_CONNECTION_INVALID");
         assertEquals("HTTP connection",
                 repository.findById(UUID.fromString(mapper.readTree(created.body()).path("id").asText()))
