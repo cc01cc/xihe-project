@@ -66,7 +66,16 @@ function toggle() {
 }
 
 function isLocked(key: string): boolean {
-    return (!!props.envLocked && key in props.envLocked) || !!props.meta?.[key]?.locked;
+    return (
+        (!!props.envLocked && key in props.envLocked) ||
+        !!props.meta?.[key]?.locked ||
+        !!props.meta?.[key]?.adminLocked
+    );
+}
+
+/** PLAN-0556: administrator lock (distinct from the deployment env overlay). */
+function isAdminLocked(key: string): boolean {
+    return !!props.meta?.[key]?.adminLocked && !props.meta?.[key]?.locked;
 }
 
 /** PLAN-0554: server-judged writability; absent meta keeps the legacy behaviour. */
@@ -98,6 +107,9 @@ function sourceHint(key: string): string {
     const item = props.meta?.[key];
     if (!item) return "";
     if (item.locked) return t("settings.configSourceEnv");
+    if (item.adminLocked) {
+        return t("settings.adminLockReason", { reason: item.lockReason ?? "" });
+    }
     if (props.layer === "instance") {
         return item.overridable
             ? t("settings.configSourceOverridable")
@@ -112,7 +124,12 @@ function sourceHint(key: string): string {
 }
 
 function lockedValue(key: string): string {
-    const value = props.envLocked?.[key] ?? "";
+    const envValue = props.envLocked?.[key] ?? "";
+    // PLAN-0556: an admin lock shows the pinned instance value on the instance
+    // layer; other layers only know the lock, not the value (the lock table
+    // never stores values).
+    const adminValue = !envValue && isAdminLocked(key) ? (props.entries?.[key] ?? "") : "";
+    const value = envValue || adminValue;
     if (value && isPasswordKey(key)) {
         return value.length > 8 ? `${value.substring(0, 3)}****${value.slice(-4)}` : "****";
     }
@@ -255,12 +272,35 @@ function handleReset(key: string) {
                         :title="t('settings.envLockedHint')"
                         :aria-label="t('settings.configSourceEnv')"
                     >
-                        {{ lockedValue(field.key) || t("settings.empty") }}
+                        {{
+                            lockedValue(field.key) ||
+                            (isAdminLocked(field.key)
+                                ? t("settings.adminLockValueAtInstance")
+                                : t("settings.empty"))
+                        }}
                     </span>
                     <span
-                        class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border border-amber-500/60 text-amber-600"
-                        :title="t('settings.envLockedHint')"
-                        >env</span
+                        class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border"
+                        :class="
+                            isAdminLocked(field.key)
+                                ? 'border-rose-500/60 text-rose-600'
+                                : 'border-amber-500/60 text-amber-600'
+                        "
+                        :title="
+                            isAdminLocked(field.key)
+                                ? t('settings.adminLockReason', {
+                                      reason: meta?.[field.key]?.lockReason ?? '',
+                                  })
+                                : t('settings.envLockedHint')
+                        "
+                        :data-testid="
+                            isAdminLocked(field.key)
+                                ? `config-admin-lock-${domain}-${field.key}`
+                                : `config-env-lock-chip-${domain}-${field.key}`
+                        "
+                        >{{
+                            isAdminLocked(field.key) ? t("settings.adminLockedBadge") : "env"
+                        }}</span
                     >
                 </template>
 

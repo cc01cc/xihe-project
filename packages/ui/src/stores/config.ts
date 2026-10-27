@@ -22,6 +22,9 @@ export interface ConfigKeyMeta {
     instanceEligible: boolean;
     defaultPresent: boolean;
     overridable: boolean;
+    /** PLAN-0556: administrator lock; the instance value is pinned above workspace/user. */
+    adminLocked?: boolean;
+    lockReason?: string | null;
 }
 
 /** PLAN-0307 target domain set (decision #37). Instance layer only. */

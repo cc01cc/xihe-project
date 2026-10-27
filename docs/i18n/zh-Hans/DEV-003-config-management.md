@@ -250,6 +250,19 @@ Provider verify 的 ready 只表示 CP 当前 remote `/models` 响应结构有�
 - env 重合键 `embedding.model ← XIHE_EMBEDDING_MODEL` 仍按决策 #22 显式呈现（命中即 instance 钉死）。
 - `GET /api/v1/config/embedding/effective` 为只读解析（含 CP 下发的 `contract{modelId,dimension}`），缺失/冲突不报 5xx 而是返回 `code`；`POST /api/v1/config/embedding/test` 经 Agent 一次性租约探测，响应脱敏（无凭据/向量）。
 
+## 3c. 管理员配置锁定（PLAN-0556）
+
+- **入口**：独立 ADMIN 页面 `/settings/config-locks`（设置导航仅 ADMIN 可见；非 ADMIN 直链渲染 403，接口 403 且不返回键名）。普通配置页只读显示「由管理员锁定：原因」，不出现锁定开关。
+- **优先级**：`env > 管理员锁定 > workspace > user > instance > code default`；env 最高且不可在页面解除。job-policy 的 `defaultTimeoutSecs`/`maxTimeoutSecs` 是 env 映射键，因此不可锁。
+- **值落点（A2）**：锁记录（`config_locks`）只存 `domain/config_key/mode/reason/updated_by/updated_at`；强制值写 instance 层既有 `config` 行，锁表不存值。锁定必须带值（可用已有 instance 值）；本页是该键锁定值的唯一写入口。
+- **可锁边界**：schema 标量键 ∧ 域可被 user/workspace 覆盖 ∧ 非 instance-only ∧ 非 env 映射 ∧ 非整单元域（`llm-provider`/`embedding`/模板域/`pricing`）∧ 非凭据键。其余在目录返回 `INSTANCE_ONLY`/`ENV_LOCKED`/`WHOLE_UNIT`/`SECRET_KEY`/`NOT_OVERRIDABLE`/`NO_SCHEMA` 且不给开关。
+- **写保护**：锁定键在 instance/user/workspace 的 `PUT`、instance `DELETE` 与导入均被拒（`409 CONFIG_KEY_LOCKED`，detail 带键名与原因；导入改为跳过 + warning）。锁定端点内部写值绕过该守卫，其余校验（env/scope/schema/凭据/instructions）不变。
+- **生效面**：`resolve`/`effective` 在 env 之后、workspace 之前取 instance 锁值；`overrides` 对 user/workspace 剔除锁定键，保证 Agent 收到的覆盖不与 CP 生效值冲突。
+- **解锁**：默认保留 instance 值（成为普通默认值）；`clearValue=true` 同时删除该行以恢复继承。无锁时重复解锁返回 200（幂等）。
+- **并发**：唯一约束 `(domain, config_key)` + `pg_advisory_xact_lock('lock:domain:key')`；写请求带 `revision`（锁行 updated_at 毫秒，无锁为 0），不匹配返回 `409 CONFIG_LOCK_CONFLICT`，页面提示刷新。
+- **审计**：复用 `audit_logs`，`action=config_lock_set|config_lock_updated|config_lock_cleared`、`resourceType=config_lock`、`resourceId=锁 id`，detail 为 `actor/domain/key/mode/reason`，**不含配置值**；`reason` 会展示给能看到该键的用户，禁止写入凭据。
+- **非目标**：按 workspace/user 定向锁（需先有成员模型）、锁模板/预设、锁定键的批量导入导出、审计查询页、env 解锁。
+
 ## 4. Agent readiness 与模型目录
 
 配置同步成功只表示 CP/Agent 配置来源可达，不表示 provider 可以实际调用。Agent 将 HTTP liveness、配置同步和 `llmReady` 分开暴露：

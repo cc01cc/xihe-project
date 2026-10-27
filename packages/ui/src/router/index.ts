@@ -73,6 +73,11 @@ const router = createRouter({
                     redirect: { name: "settings-config" },
                 },
                 {
+                    path: "config-locks",
+                    name: "settings-config-locks",
+                    component: () => import("../views/settings/ConfigLocksView.vue"),
+                },
+                {
                     path: "tool-faces",
                     name: "settings-tool-faces",
                     component: () => import("../views/settings/ToolFacesView.vue"),
