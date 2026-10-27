@@ -467,7 +467,7 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
                 baseUrl + "/api/v1/chat/approvals/" + requestId + "/decision",
                 HttpMethod.POST, new HttpEntity<>(Map.of("approved", true), headers), Map.class);
 
-        assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
         assertEquals("pending", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow().getState());
     }
 
