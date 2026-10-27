@@ -82,8 +82,18 @@ public final class TenantContext {
      * request context instead of letting a query/header silently override it.
      */
     public static void requireWorkspaceMatches(String value) {
-        String normalized = normalizeWorkspaceId(value);
-        if (normalized != null && !normalized.equalsIgnoreCase(currentWorkspaceId.get())) {
+        if (value == null || value.isBlank()) {
+            return;
+        }
+        String normalized;
+        try {
+            normalized = UUID.fromString(value.trim()).toString();
+        } catch (IllegalArgumentException e) {
+            // Let the caller keep its own malformed-id error shape (e.g.
+            // INVALID_REQUEST vs INVALID_WORKSPACE_ID for the tenant header).
+            return;
+        }
+        if (!normalized.equalsIgnoreCase(currentWorkspaceId.get())) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "WORKSPACE_FORBIDDEN",
                     "Workspace access denied");
         }

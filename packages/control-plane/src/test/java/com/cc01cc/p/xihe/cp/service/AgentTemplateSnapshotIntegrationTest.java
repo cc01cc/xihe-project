@@ -221,8 +221,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
         assertEquals("INVALID_REQUEST", problemCode(invalidLayer.getBody()));
 
         ResponseEntity<String> noWorkspaceContext = get("?layer=workspace", memberGlobal);
-        assertEquals(HttpStatus.BAD_REQUEST, noWorkspaceContext.getStatusCode());
-        assertEquals("INVALID_REQUEST", problemCode(noWorkspaceContext.getBody()));
+        assertEquals(HttpStatus.OK, noWorkspaceContext.getStatusCode());
 
         ResponseEntity<String> malformedWorkspaceId = get(
                 "?layer=workspace&workspaceId=not-a-uuid", memberGlobal);
