@@ -78,6 +78,8 @@ describe("ConfigDomainPanel admin lock", () => {
             "由管理员锁定",
         );
         expect(wrapper.text()).toContain("由管理员锁定：统一分块");
+        // The pinned instance value is rendered read-only, not as an input.
+        expect(wrapper.text()).toContain("4096");
         expect(wrapper.find("input").exists()).toBe(false);
     });
 

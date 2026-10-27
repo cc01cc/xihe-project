@@ -124,7 +124,12 @@ function sourceHint(key: string): string {
 }
 
 function lockedValue(key: string): string {
-    const value = props.envLocked?.[key] ?? "";
+    const envValue = props.envLocked?.[key] ?? "";
+    // PLAN-0556: an admin lock shows the pinned instance value on the instance
+    // layer; other layers only know the lock, not the value (the lock table
+    // never stores values).
+    const adminValue = !envValue && isAdminLocked(key) ? (props.entries?.[key] ?? "") : "";
+    const value = envValue || adminValue;
     if (value && isPasswordKey(key)) {
         return value.length > 8 ? `${value.substring(0, 3)}****${value.slice(-4)}` : "****";
     }
@@ -267,7 +272,12 @@ function handleReset(key: string) {
                         :title="t('settings.envLockedHint')"
                         :aria-label="t('settings.configSourceEnv')"
                     >
-                        {{ lockedValue(field.key) || t("settings.empty") }}
+                        {{
+                            lockedValue(field.key) ||
+                            (isAdminLocked(field.key)
+                                ? t("settings.adminLockValueAtInstance")
+                                : t("settings.empty"))
+                        }}
                     </span>
                     <span
                         class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border"

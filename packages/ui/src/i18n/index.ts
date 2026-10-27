@@ -1300,6 +1300,7 @@ const messages = {
             configLockReasonNOT_OVERRIDABLE: "不可被覆盖",
             configLockReasonNO_SCHEMA: "无 schema",
             adminLockedBadge: "由管理员锁定",
+            adminLockValueAtInstance: "值由实例层锁定",
             adminLockReason: "由管理员锁定：{reason}",
             workspaceRequired: "当前没有工作区上下文，无法编辑工作区配置",
             importExport: "导入 / 导出（实例层）",
@@ -3072,6 +3073,7 @@ const messages = {
             configLockReasonNOT_OVERRIDABLE: "Not overridable",
             configLockReasonNO_SCHEMA: "No schema",
             adminLockedBadge: "Admin locked",
+            adminLockValueAtInstance: "Value pinned at the instance layer",
             adminLockReason: "Admin locked: {reason}",
             workspaceRequired:
                 "No workspace context is available; workspace config cannot be edited",
