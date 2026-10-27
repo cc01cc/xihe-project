@@ -30,6 +30,7 @@ This English companion records the current route map and Workspace/Chat UI owner
 | `/workspace/:workspaceId` | `WorkspaceView` | Workspace files and the selected Workspace Chat, when a Session is selected. |
 | `/workspace/:workspaceId/chat/:sessionId` | `WorkspaceView` | Selects a Session belonging to the Workspace and displays Chat. |
 | `/workspace/:workspaceId/environment` | `WorkspaceEnvironmentView` | Workspace execution environment. |
+| `/workspace/:workspaceId/settings` | `WorkspaceSettingsView` (PLAN-0560) | General (OWNER rename/delete) / Config (workspace-layer domains) / MCP sections; `?tab=config\|mcp` deep links. |
 
 There is no standalone `/chat` route. Workspace routes share `AppLayout`; a Session ID does not replace a Workspace ID.
 

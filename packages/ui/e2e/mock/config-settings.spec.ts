@@ -46,6 +46,14 @@ test.describe("Config Settings (three layers)", () => {
                 body: JSON.stringify({}),
             });
         });
+        // PLAN-0560: workspace settings page resolves the workspace context first.
+        await page.route("**/api/v1/workspaces/ws-1", (route: any) =>
+            route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ id: "ws-1", name: "Mock Workspace" }),
+            }),
+        );
         await page.route("**/api/v1/config/**", async (route: any) => {
             const url = new URL(route.request().url()),
                 domain = url.pathname.split("/").pop() ?? "";
@@ -112,7 +120,8 @@ test.describe("Config Settings (three layers)", () => {
         await page.goto("/settings/config", { waitUntil: "load" });
 
         await expect(page.getByTestId("config-tab-instance")).toBeVisible();
-        await expect(page.getByTestId("config-tab-workspace")).toBeVisible();
+        // PLAN-0560: the workspace layer moved to each workspace's settings page.
+        await expect(page.getByTestId("config-tab-workspace")).toHaveCount(0);
         await expect(page.getByTestId("config-tab-user")).toBeVisible();
         await expect(page.getByTestId("config-import-export")).toBeVisible();
         await expect(page.getByTestId("config-domain-logging")).toBeVisible();
@@ -128,17 +137,22 @@ test.describe("Config Settings (three layers)", () => {
         await expect(page.getByTestId("config-field-agent-runtime-instructions")).toBeVisible();
     });
 
-    test("workspace tab shows six domains and the MCP section", async ({ page }) => {
+    test("workspace settings config tab shows workspace-scoped domains; MCP lives on its own tab", async ({
+        page,
+    }) => {
         await mockConfigAPIs(page);
-        await page.goto("/settings/config", { waitUntil: "load" });
+        await page.goto("/workspace/ws-1/settings?tab=config", { waitUntil: "load" });
 
-        await page.getByTestId("config-tab-workspace").click();
+        await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
         await expect(page.getByTestId("config-domain-agent-runtime")).toBeVisible();
         await expect(page.getByTestId("config-domain-agent-profile")).toHaveCount(0);
         await expect(page.getByTestId("config-domain-user-preference")).toHaveCount(0);
         await expect(page.getByTestId("config-domain-logging")).toHaveCount(0);
-        await expect(page.getByTestId("mcp-config-textarea")).toBeVisible();
         await expectPlatformScreenshot(page, "config-workspace-tab.png");
+
+        await page.getByTestId("ws-settings-tab-mcp").click();
+        await expect(page.getByTestId("mcp-config-textarea")).toBeVisible();
+        await expectPlatformScreenshot(page, "config-workspace-mcp-tab.png");
     });
 
     test("approval-policy is instance-writable, workspace-overridable and user-hidden", async ({
@@ -156,7 +170,9 @@ test.describe("Config Settings (three layers)", () => {
             .locator("select");
         await expect(instanceSelect).toHaveValue("manual");
 
-        await page.getByTestId("config-tab-workspace").click();
+        // PLAN-0560: workspace override lives on the workspace settings page.
+        await page.goto("/workspace/ws-1/settings?tab=config", { waitUntil: "load" });
+        await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
         const domain = page.getByTestId("config-domain-approval-policy");
         await expect(domain).toBeVisible();
         await domain.locator("button").first().click();
@@ -166,15 +182,15 @@ test.describe("Config Settings (three layers)", () => {
         await expect(modeSelect.locator("option")).toHaveCount(2);
 
         // user 层仍不可写（显式例外）
+        await page.goto("/settings/config", { waitUntil: "load" });
         await page.getByTestId("config-tab-user").click();
         await expect(page.getByTestId("config-domain-approval-policy")).toHaveCount(0);
     });
 
     test("saving the approval mode goes through the workspace endpoint", async ({ page }) => {
         await mockConfigAPIs(page);
-        await page.goto("/settings/config", { waitUntil: "load" });
+        await page.goto("/workspace/ws-1/settings?tab=config", { waitUntil: "load" });
 
-        await page.getByTestId("config-tab-workspace").click();
         await page.getByTestId("config-domain-approval-policy").locator("button").first().click();
         await page
             .getByTestId("config-field-approval-policy-mode")
@@ -211,9 +227,8 @@ test.describe("Config Settings (three layers)", () => {
         page,
     }) => {
         await mockConfigAPIs(page);
-        await page.goto("/settings/config", { waitUntil: "load" });
+        await page.goto("/workspace/ws-1/settings?tab=config", { waitUntil: "load" });
 
-        await page.getByTestId("config-tab-workspace").click();
         await expect(page.getByTestId("embedding-settings")).toBeVisible();
         const source = page.getByTestId("config-source-summary-embedding");
         await expect(source).toBeVisible();

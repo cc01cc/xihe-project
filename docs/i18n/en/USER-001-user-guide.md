@@ -110,6 +110,8 @@ Click the settings icon at the bottom of the sidebar:
 - **Workspace**: Workspace management
 - **Knowledge Base**: Document upload, chunking, Embedding
 
+**Workspace settings (PLAN-0560)**: every workspace has its own settings page (toolbar gear or `/workspace/:workspaceId/settings`) with General / Config / MCP sections — General lets an OWNER rename or delete the workspace; Config manages this workspace's connections, approval policy, job policy, etc. (overriding user and instance defaults); MCP manages this workspace's MCP servers. The global settings page keeps only the instance and personal layers and links to the workspace settings page.
+
 ### 2.6. Workspace execution backends
 
 - **Managed workspace (`managed_import`)**: new workspaces use the Docker execution backend by default and cannot switch to MXC or host execution. When Docker is unavailable, file read/list/stat calls fail explicitly (503); there is no silent fallback.

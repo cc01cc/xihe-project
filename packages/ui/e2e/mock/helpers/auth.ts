@@ -70,6 +70,18 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
             "xihe-workspace",
             JSON.stringify({ id: "workspace-1", name: "Mock Workspace", ownerId: "user-1" }),
         );
+        // PLAN-0559 per-tab context is authoritative; migrateLegacyWorkspace drops
+        // role fields, so seed sessionStorage directly with the post-login shape
+        // (PLAN-0560 workspace settings rely on workspaceRole).
+        sessionStorage.setItem(
+            "xihe-workspace",
+            JSON.stringify({
+                id: "workspace-1",
+                name: "Mock Workspace",
+                workspaceRole: "OWNER",
+                ownerId: "user-1",
+            }),
+        );
     });
 
     if (options.sse) {

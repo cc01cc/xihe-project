@@ -67,6 +67,14 @@ test.describe("Provider protocol groups (PLAN-0364 M4)", () => {
         await page.route("**/api/v1/**", (route) =>
             route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
         );
+        // PLAN-0560: workspace settings page resolves the workspace context first.
+        await page.route("**/api/v1/workspaces/ws-1", (route) =>
+            route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ id: "ws-1", name: "Mock Workspace" }),
+            }),
+        );
         await page.route("**/api/v1/config/**", (route) =>
             route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
         );
@@ -96,8 +104,9 @@ test.describe("Provider protocol groups (PLAN-0364 M4)", () => {
     test("groups by protocol family, shows supports read-only, and drops unimplemented discovery modes", async ({
         page,
     }) => {
-        await page.goto("/settings/config", { waitUntil: "load" });
-        await page.getByTestId("config-tab-workspace").click();
+        await page.goto("/workspace/ws-1/settings?tab=config", { waitUntil: "load" });
+        // PLAN-0560: workspace-layer ProviderHub lives on the workspace settings page.
+        await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
         await expect(page.getByTestId("provider-hub")).toBeVisible();
 
         await page.getByTestId("provider-hub-connect").click();

@@ -6,9 +6,11 @@ import { toast } from "vue-sonner";
 import { LoaderCircle } from "@lucide/vue";
 import { useAuthStore } from "../../../stores/auth";
 import { useConfigStore } from "../../../stores/config";
+import { useSessionStore } from "../../../stores/session";
 import { api, ApiError } from "../../../composables/api";
 import { logger } from "../../../lib/logger";
 import { clearTabWorkspace, writeTabWorkspace } from "../../../lib/workspaceContext";
+import { workspacePath } from "../../../lib/routes";
 import ConfigLayerPanels from "../../../components/settings/ConfigLayerPanels.vue";
 import WorkspaceMcpPanel from "../components/WorkspaceMcpPanel.vue";
 import Input from "../../../components/ui/input/Input.vue";
@@ -29,6 +31,7 @@ const route = useRoute(),
     router = useRouter(),
     auth = useAuthStore(),
     configStore = useConfigStore(),
+    sessionStore = useSessionStore(),
     { t } = useI18n();
 
 const workspaceId = computed(() => String(route.params.workspaceId ?? "").trim());
@@ -64,6 +67,25 @@ function switchTab(tab: SettingsTab) {
     if (activeTab.value === tab) return;
     activeTab.value = tab;
     if (tab === "config") void loadConfig();
+}
+
+// T3.7 头部动作组：新建对话复用 ?newChat=1 语义（Sidebar.startNewChat 同口径）。
+function newChat() {
+    if (!workspaceId.value) return;
+    void router.push({ path: workspacePath(workspaceId.value), query: { newChat: "1" } });
+}
+
+function goEnvironment() {
+    if (!workspaceId.value) return;
+    void router.push({
+        name: "workspace-environment",
+        params: { workspaceId: workspaceId.value },
+    });
+}
+
+function goBackToWorkspace() {
+    if (!workspaceId.value) return;
+    void router.push(workspacePath(workspaceId.value));
 }
 
 async function loadWorkspace() {
@@ -153,6 +175,7 @@ async function handleDelete() {
         clearTabWorkspace();
         confirmDeleteOpen.value = false;
         toast.success(t("workspace.settingsDeleted", { name: ws.name }));
+        sessionStore.resetForUserSwitch();
         await router.replace({ name: "workspace-home" });
     } catch (cause) {
         const message =
@@ -186,6 +209,28 @@ onMounted(() => {
             <p class="text-sm text-muted-foreground mb-4 max-w-3xl">
                 {{ t("workspace.settingsDesc") }}
             </p>
+
+            <div class="flex flex-wrap items-center gap-2 mb-4" data-testid="ws-settings-actions">
+                <Button size="sm" data-testid="ws-settings-new-chat" @click="newChat">
+                    {{ t("sidebar.newChat") }}
+                </Button>
+                <Button
+                    variant="outline"
+                    size="sm"
+                    data-testid="ws-settings-environment"
+                    @click="goEnvironment"
+                >
+                    {{ t("workspace.settingsGoEnvironment") }}
+                </Button>
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    data-testid="ws-settings-back"
+                    @click="goBackToWorkspace"
+                >
+                    {{ t("workspace.settingsBack") }}
+                </Button>
+            </div>
 
             <div
                 v-if="loadError"

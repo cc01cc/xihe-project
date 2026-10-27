@@ -58,6 +58,18 @@ async function mockConfig(page: import("@playwright/test").Page, role: "ADMIN" |
     await page.route("**/api/v1/**", async (route) => {
         await route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
     });
+    // PLAN-0560: workspace settings page resolves the workspace context first.
+    await page.route("**/api/v1/workspaces/workspace-1", (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                id: "workspace-1",
+                name: "Mock Workspace",
+                ownerId: "user-1",
+            }),
+        }),
+    );
     const handleMeta = async (route: any) => {
         const requestUrl = new URL(route.request().url());
         const domain = requestUrl.pathname.split("/")[4] ?? "";
@@ -187,26 +199,27 @@ test.describe("PLAN-0554 config provenance", () => {
         await expect(page.getByTestId("config-source-rag-minScore")).toContainText("env 锁定");
     });
 
-    test("workspace tab shows workspace override and instance inheritance", async ({ page }) => {
+    test("workspace settings config tab shows workspace override and instance inheritance", async ({
+        page,
+    }) => {
         await mockConfig(page, "ADMIN");
-        await page.goto("/settings/config", { waitUntil: "load" });
-        await page.getByTestId("config-tab-workspace").click();
+        await page.goto("/workspace/workspace-1/settings?tab=config", { waitUntil: "load" });
+        await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
         await openRag(page);
 
-        await expect(page.getByTestId("config-workspace-transition")).toBeVisible();
         await expect(page.getByTestId("config-source-rag-chunkSize")).toContainText("workspace");
         await expect(page.getByTestId("config-source-rag-chunkOverlap")).toContainText(
             "继承自 instance",
         );
     });
 
-    test("ordinary user has no instance tab or policy entry", async ({ page }) => {
+    test("ordinary user has no instance tab", async ({ page }) => {
         await mockConfig(page, "USER");
         await page.goto("/settings/config", { waitUntil: "load" });
 
         await expect(page.getByTestId("config-tab-instance")).toHaveCount(0);
         await expect(page.getByTestId("config-tab-user")).toBeVisible();
-        await expect(page.getByTestId("config-tab-workspace")).toBeVisible();
+        await expect(page.getByTestId("config-tab-workspace")).toHaveCount(0);
         await expect(page.locator("nav").getByText("Policy", { exact: false })).toHaveCount(0);
         await expect(page.getByTestId("config-domain-logging")).toHaveCount(0);
     });

@@ -296,3 +296,30 @@ describe("WorkspaceSettingsView 权限一致性 (PLAN-0560 T3.6)", () => {
         wrapper.unmount();
     });
 });
+
+describe("WorkspaceSettingsView 错误回退 (PLAN-0560 T4.1)", () => {
+    it("redirects to workspace-home on WORKSPACE_FORBIDDEN", async () => {
+        // fixture 缓存短路会让 selectWorkspace 直接命中；清空后强制走真实请求。
+        localStorage.removeItem("xihe-workspace");
+        sessionStorage.clear();
+        vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+            const url = typeof input === "string" ? input : input.url;
+            if (url.includes(`/api/v1/workspaces/${WORKSPACE_ID}`)) {
+                return Promise.resolve(
+                    new Response(
+                        JSON.stringify({
+                            code: "WORKSPACE_FORBIDDEN",
+                            status: 403,
+                            detail: "not a member",
+                        }),
+                        { status: 403 },
+                    ),
+                );
+            }
+            return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
+        });
+        await mountView();
+
+        expect(routerSpies.replace).toHaveBeenCalledWith({ name: "workspace-home" });
+    });
+});

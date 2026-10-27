@@ -395,10 +395,9 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         ).toBe(false);
         expect(snapshot.count).toBe(snapshot.servers.length);
 
-        // UI：设置页 workspace 标签 → 三行徽章（可用 / 失败+原因 / 无记录）
+        // UI：工作区设置页 MCP 标签（PLAN-0560）→ 三行徽章（可用 / 失败+原因 / 无记录）
         seedPage(page, sharedAuth, sharedWs);
-        await page.goto("/settings/config", { waitUntil: "load" });
-        await page.getByTestId("config-tab-workspace").click();
+        await page.goto(`/workspace/${sharedWs}/settings?tab=mcp`, { waitUntil: "load" });
         const panel = page.locator('[data-testid="mcp-servers-panel"]');
         await expect(panel).toBeVisible({ timeout: 20000 });
         const rows = panel.locator('[data-testid="mcp-server-row"]');

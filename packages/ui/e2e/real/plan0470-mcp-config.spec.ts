@@ -74,14 +74,13 @@ test.describe("@host PLAN-0470 MCP configuration UI consumer", () => {
             { token: refreshedAuth.accessToken, workspaceId: refreshedAuth.workspaceId },
         );
 
-        await page.goto("/settings/config", { waitUntil: "load" });
-        await expect(page.getByTestId("settings-config-heading")).toBeVisible({ timeout: 15000 });
+        // PLAN-0560: MCP config lives on the workspace settings MCP tab.
         const loadConfigResponse = page.waitForResponse(
             (response) =>
                 response.url().includes(`/api/v1/workspaces/${workspace.id}/mcp-config`) &&
                 response.request().method() === "GET",
         );
-        await page.getByTestId("config-tab-workspace").click();
+        await page.goto(`/workspace/${workspace.id}/settings?tab=mcp`, { waitUntil: "load" });
         expect((await loadConfigResponse).status()).toBe(200);
         const editor = page.getByTestId("mcp-config-textarea");
         await expect(editor).toBeVisible({ timeout: 15000 });
@@ -123,13 +122,12 @@ test.describe("@host PLAN-0470 MCP configuration UI consumer", () => {
         expect(body.mcpServers[serverName]).toEqual({ command: "node", args: ["--version"] });
 
         await page.reload({ waitUntil: "load" });
-        await expect(page.getByTestId("settings-config-heading")).toBeVisible();
         const reloadedConfigResponse = page.waitForResponse(
             (response) =>
                 response.url().includes(`/api/v1/workspaces/${workspace.id}/mcp-config`) &&
                 response.request().method() === "GET",
         );
-        await page.getByTestId("config-tab-workspace").click();
+        await page.goto(`/workspace/${workspace.id}/settings?tab=mcp`, { waitUntil: "load" });
         expect((await reloadedConfigResponse).status()).toBe(200);
         const reloadedEditor = page.getByTestId("mcp-config-textarea");
         await expect(reloadedEditor).toBeVisible();

@@ -137,8 +137,8 @@ test.describe("Cross-Module — Full Chain Chat", () => {
             { token: auth.accessToken, workspaceId: auth.workspaceId },
         );
 
-        await page.goto("/settings/config");
-        await page.getByTestId("config-tab-workspace").click();
+        // PLAN-0560: MCP config lives on the workspace settings MCP tab.
+        await page.goto(`/workspace/${auth.workspaceId}/settings?tab=mcp`);
         await expect(page.locator("text=MCP 服务").first()).toBeVisible({ timeout: 10000 });
         await expect(page.locator('[data-testid="mcp-config-textarea"]')).toBeVisible();
 
@@ -189,9 +189,8 @@ test.describe("Cross-Module — Full Chain Chat", () => {
         const body = await getResp.json();
         expect(body).toHaveProperty("mcpServers");
 
-        // Verify it appears in the UI
-        await page.goto("/settings/config");
-        await page.getByTestId("config-tab-workspace").click();
+        // Verify it appears in the UI (PLAN-0560: workspace settings MCP tab)
+        await page.goto(`/workspace/${auth.workspaceId}/settings?tab=mcp`);
         await expect(page.locator("text=MCP 服务").first()).toBeVisible({ timeout: 10000 });
         const textarea = page.locator('[data-testid="mcp-config-textarea"]');
         await expect(textarea).toBeVisible();
