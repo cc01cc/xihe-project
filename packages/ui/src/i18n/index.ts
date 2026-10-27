@@ -822,6 +822,22 @@ const messages = {
             settingsExecutionMode: "执行后端",
             settingsConfigNote:
                 "workspace 层覆盖 user / instance；env 锁定与管理员锁定只读，生效值以来源徽标为准。",
+            settingsLoadFailed: "加载工作区失败",
+            settingsRetry: "重试",
+            settingsSaveFailed: "保存工作区失败",
+            settingsUpdated: "工作区已更新",
+            settingsGoEnvironment: "环境状态",
+            settingsDeleteTitle: "删除工作区…",
+            settingsDeleteConfirmTitle: "删除工作区？",
+            settingsDeleteConfirmDesc: "「{name}」将被逻辑删除。",
+            settingsDeleteNameMismatch: "请输入完整的工作区名称以确认删除",
+            settingsDeleteInputLabel: "输入工作区名称以确认",
+            settingsDeleteConfirmBtn: "确认删除",
+            settingsDeleteFailed: "删除工作区失败",
+            settingsDeleted: "工作区「{name}」已删除，物理目录保留在宿主机。",
+            settingsDeleteImpactRuntime: "Runtime Sandbox 容器将被停止并移除",
+            settingsDeleteImpactStorage: "WorkspaceStorage 物理目录保留在宿主机，可手动备份",
+            settingsDeleteImpactSessions: "会话与消息随工作区一并失效",
         },
         settings: {
             title: "设置",
@@ -2581,6 +2597,25 @@ const messages = {
             settingsExecutionMode: "Execution backend",
             settingsConfigNote:
                 "The workspace layer overrides user / instance; env-locked and admin-locked keys are read-only — see the source badges for effective values.",
+            settingsLoadFailed: "Failed to load the workspace",
+            settingsRetry: "Retry",
+            settingsSaveFailed: "Failed to save the workspace",
+            settingsUpdated: "Workspace updated",
+            settingsGoEnvironment: "Environment",
+            settingsDeleteTitle: "Delete workspace…",
+            settingsDeleteConfirmTitle: "Delete workspace?",
+            settingsDeleteConfirmDesc: "「{name}」will be logically deleted.",
+            settingsDeleteNameMismatch: "Type the full workspace name to confirm deletion",
+            settingsDeleteInputLabel: "Type the workspace name to confirm",
+            settingsDeleteConfirmBtn: "Delete",
+            settingsDeleteFailed: "Failed to delete the workspace",
+            settingsDeleted:
+                "Workspace 「{name}」 deleted. The storage directory is preserved on the host.",
+            settingsDeleteImpactRuntime:
+                "The Runtime Sandbox container will be stopped and removed",
+            settingsDeleteImpactStorage:
+                "The WorkspaceStorage directory is preserved on the host for manual backup",
+            settingsDeleteImpactSessions: "Sessions and messages become invalid with the workspace",
         },
         settings: {
             title: "Settings",

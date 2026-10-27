@@ -19,6 +19,7 @@ const props = defineProps<{
     saving: boolean;
     layer: ConfigLayer;
     workspaceId?: string;
+    readonly?: boolean;
 }>();
 const emit = defineEmits<{ save: [entries: Record<string, string>] }>();
 const { t } = useI18n();
@@ -202,6 +203,7 @@ async function save(publish: boolean) {
                 </option>
             </select>
             <button
+                v-if="!readonly"
                 type="button"
                 data-testid="api-request-new"
                 class="rounded-md border px-3 py-1 text-xs"
@@ -266,15 +268,21 @@ async function save(publish: boolean) {
                     }}<input
                         v-model="selected.name"
                         data-testid="api-request-name"
-                        class="mt-1 block w-full rounded-md border bg-background px-3 py-2 text-sm"
+                        class="mt-1 block w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-60"
+                        :disabled="readonly"
                 /></label>
                 <label class="block text-xs"
                     >{{ t("settings.apiRequest.description")
                     }}<input
                         v-model="selected.description"
-                        class="mt-1 block w-full rounded-md border bg-background px-3 py-2 text-sm"
+                        class="mt-1 block w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-60"
+                        :disabled="readonly"
                 /></label>
-                <div class="flex flex-wrap gap-1" :aria-label="t('settings.apiRequest.variables')">
+                <div
+                    v-if="!readonly"
+                    class="flex flex-wrap gap-1"
+                    :aria-label="t('settings.apiRequest.variables')"
+                >
                     <button
                         v-for="name in palette"
                         :key="name"
@@ -292,7 +300,8 @@ async function save(publish: boolean) {
                         v-model="selected.bodySource"
                         data-testid="api-request-body-source"
                         spellcheck="false"
-                        class="mt-1 min-h-80 w-full rounded-md border bg-background p-3 font-mono text-xs leading-6"
+                        class="mt-1 min-h-80 w-full rounded-md border bg-background p-3 font-mono text-xs leading-6 disabled:opacity-60"
+                        :disabled="readonly"
                     />
                 </label>
                 <ul
@@ -305,7 +314,7 @@ async function save(publish: boolean) {
                     </li>
                 </ul>
                 <p class="text-xs text-muted-foreground">{{ t("settings.apiRequest.rawHelp") }}</p>
-                <div class="flex gap-2">
+                <div v-if="!readonly" class="flex gap-2">
                     <button
                         type="button"
                         data-testid="api-request-save-draft"

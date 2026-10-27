@@ -460,6 +460,7 @@ async function handleReset(domain: string, key: string) {
             <AgentTemplatesPanel
                 :entries="configStore.layerConfig[layer][domain] || {}"
                 :saving="savingDomains[domain] || false"
+                :readonly="readonly"
                 @save="handleSave(domain, $event)"
             />
             <ConfigSourceSummary
@@ -475,6 +476,7 @@ async function handleReset(domain: string, key: string) {
                 :saving="savingDomains[domain] || false"
                 :layer="layer"
                 :workspace-id="workspaceId"
+                :readonly="readonly"
                 @save="handleSave(domain, $event)"
             />
             <ConfigSourceSummary
@@ -488,6 +490,7 @@ async function handleReset(domain: string, key: string) {
                 :layer="layer === 'user' ? 'user' : 'workspace'"
                 :workspace-id="workspaceId"
                 :saving="savingDomains[domain] || false"
+                :readonly="readonly"
             />
             <ConfigSourceSummary
                 domain="embedding"

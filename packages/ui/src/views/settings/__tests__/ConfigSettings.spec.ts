@@ -453,3 +453,24 @@ describe("ConfigSettings agent-runtime run budget (PLAN-0492)", () => {
         wrapper.unmount();
     });
 });
+
+describe("ConfigSettings 导入导出回归 (PLAN-0560 T1.5)", () => {
+    it("instance 层保留导入导出区块，导出发出 instance 层请求", async () => {
+        const wrapper = await mountView();
+
+        const section = wrapper.find('[data-testid="config-import-export"]');
+        expect(section.exists()).toBe(true);
+        await wrapper.find('[data-testid="config-export-button"]').trigger("click");
+        await flushPromises();
+        const request = vi.mocked(fetch).mock.calls.find(([input, init]) => {
+            const url = typeof input === "string" ? input : input.url;
+            return (
+                url.includes("/api/v1/config/export") &&
+                url.includes("layer=instance") &&
+                (!init || !init.method || init.method === "GET")
+            );
+        });
+        expect(request).toBeTruthy();
+        wrapper.unmount();
+    });
+});

@@ -19,6 +19,7 @@ const props = defineProps<{
     layer: "user" | "workspace";
     workspaceId?: string;
     saving?: boolean;
+    readonly?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -155,7 +156,8 @@ onMounted(load);
                     <select
                         v-model="selectedConnectionId"
                         data-testid="embedding-connection-select"
-                        class="w-full border rounded px-2 py-1.5 text-sm bg-background"
+                        class="w-full border rounded px-2 py-1.5 text-sm bg-background disabled:opacity-60"
+                        :disabled="readonly"
                     >
                         <option value="">
                             {{ t("settings.embeddingConnectionNone") }}
@@ -199,6 +201,7 @@ onMounted(load);
 
                 <div class="flex flex-wrap gap-2">
                     <button
+                        v-if="!readonly"
                         data-testid="embedding-save"
                         class="px-3 py-1.5 text-sm border rounded hover:bg-muted disabled:opacity-50"
                         :disabled="saving || !selectedConnection"
@@ -207,6 +210,7 @@ onMounted(load);
                         {{ t("common.save") }}
                     </button>
                     <button
+                        v-if="!readonly"
                         data-testid="embedding-clear"
                         class="px-3 py-1.5 text-sm border rounded hover:bg-muted"
                         :disabled="!effective?.profile"

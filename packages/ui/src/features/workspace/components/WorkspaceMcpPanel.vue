@@ -8,9 +8,13 @@ import { logger } from "../../../lib/logger";
 
 // PLAN-0560 T2.8: MCP 区块从全局设置 Workspace tab 迁入工作区设置页；data-testid
 // （mcp-*、remote-mcp-*）保持不变以免既有 E2E 失效。
-const props = defineProps<{
-    workspaceId: string;
-}>();
+const props = withDefaults(
+    defineProps<{
+        workspaceId: string;
+        readonly?: boolean;
+    }>(),
+    { readonly: false },
+);
 
 const { t } = useI18n();
 
@@ -231,12 +235,13 @@ onMounted(async () => {
                 <textarea
                     v-model="mcpJson"
                     data-testid="mcp-config-textarea"
-                    class="w-full h-48 px-4 py-3 rounded-lg border bg-background font-mono text-sm resize-y"
+                    class="w-full h-48 px-4 py-3 rounded-lg border bg-background font-mono text-sm resize-y disabled:opacity-60"
+                    :disabled="readonly"
                 />
                 <p v-if="mcpError" class="text-xs text-destructive">
                     {{ mcpError }}
                 </p>
-                <div class="flex gap-2">
+                <div v-if="!readonly" class="flex gap-2">
                     <button
                         class="px-3 py-1 text-xs bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50"
                         :disabled="mcpSaving"
@@ -269,6 +274,7 @@ onMounted(async () => {
                                 }}
                             </span>
                             <button
+                                v-if="!readonly"
                                 class="px-3 py-1 text-xs border rounded hover:bg-muted disabled:opacity-50"
                                 :disabled="oauthStatusFor(server.id) === 'authorizing'"
                                 @click="authorizeRemoteServer(server)"
