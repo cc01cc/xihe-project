@@ -10,7 +10,10 @@ import DialogTitle from "../../ui/dialog/DialogTitle.vue";
 import DialogDescription from "../../ui/dialog/DialogDescription.vue";
 import DialogFooter from "../../ui/dialog/DialogFooter.vue";
 import { Button } from "../../ui/button";
-import { listProviderConnections, updateProviderConnection } from "../../../services/providerConnectionService";
+import {
+    listProviderConnections,
+    updateProviderConnection,
+} from "../../../services/providerConnectionService";
 import type { ProviderConnection } from "../../../types/providerConnection";
 
 const props = withDefaults(
@@ -123,10 +126,7 @@ async function link(connection: ProviderConnection) {
                         >
                             {{ t("credentials.linkCurrent") }}
                         </span>
-                        <span
-                            v-else-if="connection.credentialId"
-                            class="text-xs text-amber-700"
-                        >
+                        <span v-else-if="connection.credentialId" class="text-xs text-amber-700">
                             {{ t("credentials.linkOther") }}
                         </span>
                         <Button

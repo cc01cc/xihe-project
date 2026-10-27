@@ -17,8 +17,8 @@ const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`,
 // Java UUID.nameUUIDFromBytes (v3/MD5), matching CP's builtin request template id.
 function nameUuidFromBytes(name: string): string {
     const bytes = Buffer.from(createHash("md5").update(name, "utf8").digest());
-    bytes[6] = ((bytes[6] & 0x0F) | 0x30) as number;
-    bytes[8] = ((bytes[8] & 0x3F) | 0x80) as number;
+    bytes[6] = ((bytes[6] & 0x0f) | 0x30) as number;
+    bytes[8] = ((bytes[8] & 0x3f) | 0x80) as number;
     const hex = bytes.toString("hex");
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }

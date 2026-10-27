@@ -207,7 +207,9 @@ test.describe("Config Settings (three layers)", () => {
         await expect(page.getByTestId("config-field-agent-runtime-instructions")).toHaveCount(0);
     });
 
-    test("env-locked embedding model shows the env source and stays read-only", async ({ page }) => {
+    test("env-locked embedding model shows the env source and stays read-only", async ({
+        page,
+    }) => {
         await mockConfigAPIs(page);
         await page.goto("/settings/config", { waitUntil: "load" });
 

@@ -560,7 +560,12 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
 
         const fileName = `s1-write-${NONCE}.md`,
             content = `S1-SLICE-${NONCE}-written-by-l1`;
-        const runId = await startRun(page, request, ctx.headers, `XIHE-E2E-WRITE ${fileName} ${content}`);
+        const runId = await startRun(
+            page,
+            request,
+            ctx.headers,
+            `XIHE-E2E-WRITE ${fileName} ${content}`,
+        );
         await approveCard(page);
         await awaitHostFile(path.join(hostDir, fileName), content);
         expect(await awaitRunTerminal(request, ctx.headers, runId)).toBe("succeeded");
@@ -641,7 +646,12 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
         writeFileSync(path.join(hostDir, nodeRel), nodeOriginal);
 
         const content = `S2-RUN-${NONCE}`,
-            runId = await startRun(page, request, ctx.headers, `XIHE-E2E-WRITE ${runRel} ${content}`);
+            runId = await startRun(
+                page,
+                request,
+                ctx.headers,
+                `XIHE-E2E-WRITE ${runRel} ${content}`,
+            );
         await approveCard(page);
         await awaitHostFile(path.join(hostDir, runRel), content);
         expect(await awaitRunTerminal(request, ctx.headers, runId)).toBe("succeeded");
@@ -825,7 +835,12 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
 
         const fileName = `s3-run-${NONCE}.txt`,
             content = `S3-RUN-${NONCE}`;
-        const runId = await startRun(page, request, ctx.headers, `XIHE-E2E-WRITE ${fileName} ${content}`);
+        const runId = await startRun(
+            page,
+            request,
+            ctx.headers,
+            `XIHE-E2E-WRITE ${fileName} ${content}`,
+        );
         await approveCard(page);
         await awaitHostFile(path.join(hostDir, fileName), content);
         expect(await awaitRunTerminal(request, ctx.headers, runId)).toBe("succeeded");
@@ -939,7 +954,12 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
 
         const fileName = `s4-shell-${NONCE}.txt`,
             content = `S4-SHELL-${NONCE}`;
-        const runId = await startRun(page, request, ctx.headers, `XIHE-E2E-EXEC echo ${content} > ${fileName}`);
+        const runId = await startRun(
+            page,
+            request,
+            ctx.headers,
+            `XIHE-E2E-EXEC echo ${content} > ${fileName}`,
+        );
         await approveCard(page);
         await awaitHostFile(path.join(hostDir, fileName), content);
         expect(await awaitRunTerminal(request, ctx.headers, runId)).toBe("succeeded");

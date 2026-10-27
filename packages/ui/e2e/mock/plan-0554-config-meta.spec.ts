@@ -226,5 +226,3 @@ test.describe("PLAN-0554 config provenance", () => {
         );
     });
 });
-
-
