@@ -194,7 +194,14 @@ function refreshAfterDispose() {
     void load(true);
 }
 
+function requireWrite(): boolean {
+    if (auth.canWriteWorkspace) return true;
+    toast.error(t("workspace.viewerReadOnly"));
+    return false;
+}
+
 async function handleRerun(task: ScheduledTask) {
+    if (!requireWrite()) return;
     if (store.mutatingTaskId) return;
     disposeError.value = "";
     try {
@@ -209,6 +216,7 @@ async function handleRerun(task: ScheduledTask) {
 }
 
 async function handleRemove() {
+    if (!requireWrite()) return;
     const task = removeTarget.value;
     if (!task || store.mutatingTaskId) return;
     disposeError.value = "";
@@ -229,6 +237,7 @@ async function handleRemove() {
 }
 
 async function handleCancel() {
+    if (!requireWrite()) return;
     const task = cancelTarget.value;
     if (!task || store.mutatingTaskId) return;
     disposeError.value = "";
@@ -245,7 +254,7 @@ async function handleCancel() {
 }
 
 function openCreate() {
-    if (!workspaceId.value) return;
+    if (!requireWrite() || !workspaceId.value) return;
     showCreateDialog.value = true;
 }
 </script>
@@ -275,7 +284,12 @@ function openCreate() {
                         <RefreshCw class="mr-1 size-3.5" aria-hidden="true" />
                         {{ t("workspace.scheduledTasks.refresh") }}
                     </Button>
-                    <Button size="sm" data-testid="scheduled-tasks-create" @click="openCreate">
+                    <Button
+                        v-if="auth.canWriteWorkspace"
+                        size="sm"
+                        data-testid="scheduled-tasks-create"
+                        @click="openCreate"
+                    >
                         <Plus class="mr-1 size-3.5" aria-hidden="true" />
                         {{ t("workspace.scheduledTasks.create") }}
                     </Button>
@@ -361,6 +375,7 @@ function openCreate() {
                 <Button
                     class="mt-4"
                     size="sm"
+                    v-if="auth.canWriteWorkspace"
                     data-testid="scheduled-tasks-empty-create"
                     @click="openCreate"
                 >

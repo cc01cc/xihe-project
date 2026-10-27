@@ -115,13 +115,14 @@ public class ConfigController {
     }
 
     private static String currentWorkspaceId(String headerWorkspaceId, String queryWorkspaceId) {
-        if (headerWorkspaceId != null && !headerWorkspaceId.isBlank()) {
-            return headerWorkspaceId;
-        }
-        if (queryWorkspaceId != null && !queryWorkspaceId.isBlank()) {
-            return queryWorkspaceId;
-        }
-        return TenantContext.getWorkspaceId();
+        // PLAN-0559: an explicit workspace id may only name the effective
+        // request workspace; it must not override the tenant context.
+        String explicit = headerWorkspaceId != null && !headerWorkspaceId.isBlank()
+                ? headerWorkspaceId
+                : queryWorkspaceId;
+        TenantContext.requireWorkspaceMatches(explicit);
+        String normalized = TenantContext.normalizeWorkspaceId(explicit);
+        return normalized != null ? normalized : TenantContext.getWorkspaceId();
     }
 
     // ------------------------------------------------------------------

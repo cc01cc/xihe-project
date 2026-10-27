@@ -3,6 +3,14 @@
 This inventory is the implementation baseline for PLAN-222 + PLAN-230. It records the
 current canonical routes after the targeted WorkspaceExecutionSpec migration and the PLAN-230 Chat SSE lifecycle freeze.
 
+## Workspace context (PLAN-0559)
+
+- Workspace-scoped user requests carry `X-Workspace-Id: <uuid>`. The header is authoritative; a missing header falls back to the legacy access-token claim, then the caller's default workspace.
+- New access tokens are user-level (no `workspace_id` claim). `POST /api/v1/auth/refresh` accepts an optional `X-Workspace-Id` only to echo `workspaceId`; it never rebinds the token.
+- Error contract: `400 INVALID_WORKSPACE_ID`, `403 WORKSPACE_FORBIDDEN` (non-member/deleted workspace or non-OWNER lifecycle), `403 WORKSPACE_READ_ONLY` (VIEWER write).
+- Roles: OWNER (read/write/manage), EDITOR (read/write), VIEWER (read-only); legacy `ADMIN`/`MEMBER` rows project as EDITOR.
+- `/api/v1/auth/**`, `/api/v1/health`, `/actuator/**`, `/internal/v1/**` do not use the header for tenant resolution.
+
 ## HTTP Routes
 
 | Module | Current source route | Target route | Auth | Caller/consumer |

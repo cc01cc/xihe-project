@@ -33,19 +33,35 @@ public class JwtTokenProvider {
         this.refreshTokenValidity = refreshTokenValiditySeconds * 1000L;
     }
 
+    /**
+     * PLAN-0559: production access tokens are user-level. The workspace is
+     * resolved per request from {@code X-Workspace-Id} (or the legacy claim /
+     * default workspace during the transition), so a token can never pin a
+     * browser tab to one workspace.
+     */
+    public String createAccessToken(String userId, String email, String role) {
+        return createAccessToken(userId, email, role, null);
+    }
+
+    /**
+     * Legacy/test-only overload. Passing a workspaceId keeps the old
+     * {@code workspace_id} claim so PLAN-0559 can exercise the transition and
+     * older client shapes; production code must call the three-argument form.
+     */
     public String createAccessToken(String userId, String email, String role, String workspaceId) {
         Date now = new Date();
         Date expiry = new Date(now.getTime() + accessTokenValidity);
 
-        return Jwts.builder()
+        io.jsonwebtoken.JwtBuilder builder = Jwts.builder()
                 .subject(userId)
                 .claim("email", email)
                 .claim("role", role)
-                .claim("workspace_id", workspaceId)
                 .issuedAt(now)
-                .expiration(expiry)
-                .signWith(accessKey)
-                .compact();
+                .expiration(expiry);
+        if (workspaceId != null && !workspaceId.isBlank()) {
+            builder.claim("workspace_id", workspaceId);
+        }
+        return builder.signWith(accessKey).compact();
     }
 
     public String createRefreshToken(String userId) {

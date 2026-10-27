@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
     api,
+    apiAuthHeaders,
     ApiError,
     normalizeApprovalRequest,
     normalizeSafePolicySummary,
@@ -20,6 +21,7 @@ const TEST_PASSWORD = `ui-test-${globalThis.crypto.randomUUID()}`,
 
 beforeEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
     fetchSpy = vi.spyOn(globalThis, "fetch");
 });
 
@@ -1920,5 +1922,48 @@ describe("api audit entries (PLAN-0466 T2.1)", () => {
         const detail = await api.getAuditEntry("chat_run", RUN_ID);
 
         expect(detail).toBe("not-an-object");
+    });
+});
+
+describe("workspace header (PLAN-0559)", () => {
+    it("adds the tab workspace when no explicit header is given", () => {
+        sessionStorage.setItem("xihe-workspace", JSON.stringify({ id: WORKSPACE_ID }));
+        expect(apiAuthHeaders()["X-Workspace-Id"]).toBe(WORKSPACE_ID);
+        expect(apiAuthHeaders({ "X-Workspace-Id": "explicit-workspace" })["X-Workspace-Id"]).toBe(
+            "explicit-workspace",
+        );
+    });
+
+    it("sends the tab workspace on refresh and keeps the tab key", async () => {
+        sessionStorage.setItem("xihe-workspace", JSON.stringify({ id: WORKSPACE_ID }));
+        localStorage.setItem("xihe-token", "stale-token");
+        localStorage.setItem("xihe-refresh-token", "valid-refresh");
+        fetchSpy
+            .mockResolvedValueOnce({
+                ok: false,
+                status: 401,
+                json: () => Promise.resolve({}),
+            } as Response)
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: () =>
+                    Promise.resolve({ accessToken: "new-access", refreshToken: "new-refresh" }),
+            } as Response)
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: () => Promise.resolve({ sessions: [] }),
+            } as Response);
+
+        await api.getSessions();
+
+        const refreshCall = fetchSpy.mock.calls.find(([path]) => path === "/api/v1/auth/refresh");
+        const refreshHeaders = (refreshCall as unknown[])[1] as RequestInit;
+        expect((refreshHeaders.headers as Record<string, string>)["X-Workspace-Id"]).toBe(
+            WORKSPACE_ID,
+        );
+        expect(JSON.parse(sessionStorage.getItem("xihe-workspace") ?? "{}").id).toBe(WORKSPACE_ID);
+        expect(localStorage.getItem("xihe-workspace")).toBeNull();
     });
 });

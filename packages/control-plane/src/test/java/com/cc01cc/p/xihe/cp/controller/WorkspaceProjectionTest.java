@@ -14,7 +14,7 @@ class WorkspaceProjectionTest {
     void ordinaryMemberDoesNotReceiveRawHostPath() {
         Workspace workspace = workspace();
 
-        Map<String, Object> view = WorkspaceController.toMap(workspace, "member-1", false);
+        Map<String, Object> view = WorkspaceController.toMap(workspace, "member-1", false, "EDITOR");
 
         assertNull(view.get("hostPath"));
     }
@@ -23,8 +23,8 @@ class WorkspaceProjectionTest {
     void ownerAndAdminMayReceiveCanonicalHostPath() {
         Workspace workspace = workspace();
 
-        assertEquals("C:/work/repo", WorkspaceController.toMap(workspace, "owner-1", false).get("hostPath"));
-        assertEquals("C:/work/repo", WorkspaceController.toMap(workspace, "member-1", true).get("hostPath"));
+        assertEquals("C:/work/repo", WorkspaceController.toMap(workspace, "owner-1", false, "OWNER").get("hostPath"));
+        assertEquals("C:/work/repo", WorkspaceController.toMap(workspace, "member-1", true, "EDITOR").get("hostPath"));
         assertNull(WorkspaceEnvironmentController.visibleHostPath(workspace, "member-1", false));
         assertEquals("C:/work/repo", WorkspaceEnvironmentController.visibleHostPath(workspace, "owner-1", false));
     }

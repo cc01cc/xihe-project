@@ -47,6 +47,7 @@ public class AgentTemplateController {
                     "AUTHORIZATION_REQUIRED", "Authentication required");
         }
         String resolvedWorkspaceId = workspaceId == null || workspaceId.isBlank() ? null : workspaceId;
+        TenantContext.requireWorkspaceMatches(resolvedWorkspaceId);
         if ("workspace".equals(layer) && resolvedWorkspaceId == null) {
             resolvedWorkspaceId = TenantContext.getWorkspaceId();
         }

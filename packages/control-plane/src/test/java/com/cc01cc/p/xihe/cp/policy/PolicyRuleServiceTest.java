@@ -97,10 +97,10 @@ class PolicyRuleServiceTest {
     }
 
     @Test
-    void workspaceLayerCreateRequiresWorkspaceOwnerOrAdmin() {
+    void workspaceLayerCreateRequiresWorkspaceEditorOrOwner() {
         when(repository.save(any(PolicyRuleEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        TenantContext.setWorkspaceRole("MEMBER");
+        TenantContext.setWorkspaceRole("VIEWER");
         CpApiException error = assertThrows(CpApiException.class,
                 () -> service.create("workspace", "u1", "ws1", false, input("read", "*", "allow", false)));
         assertEquals(HttpStatus.FORBIDDEN, error.getStatus());

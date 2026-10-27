@@ -202,14 +202,14 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
         ResponseEntity<String> nonMember = get(
                 "?layer=workspace&workspaceId=" + workspaceId, outsiderGlobal);
         assertEquals(HttpStatus.FORBIDDEN, nonMember.getStatusCode());
-        assertEquals("WORKSPACE_ACCESS_DENIED", problemCode(nonMember.getBody()));
+        assertEquals("WORKSPACE_FORBIDDEN", problemCode(nonMember.getBody()));
         assertNoTemplateContent(nonMember.getBody());
         assertNoSecretKeys(nonMember.getBody());
 
         ResponseEntity<String> missingWorkspace = get(
                 "?layer=workspace&workspaceId=" + UUID.randomUUID(), memberGlobal);
-        assertEquals(HttpStatus.NOT_FOUND, missingWorkspace.getStatusCode());
-        assertEquals("WORKSPACE_NOT_FOUND", problemCode(missingWorkspace.getBody()));
+        assertEquals(HttpStatus.FORBIDDEN, missingWorkspace.getStatusCode());
+        assertEquals("WORKSPACE_FORBIDDEN", problemCode(missingWorkspace.getBody()));
         assertNoSecretKeys(missingWorkspace.getBody());
 
         ResponseEntity<String> missingLayer = get("", memberGlobal);
@@ -221,8 +221,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
         assertEquals("INVALID_REQUEST", problemCode(invalidLayer.getBody()));
 
         ResponseEntity<String> noWorkspaceContext = get("?layer=workspace", memberGlobal);
-        assertEquals(HttpStatus.BAD_REQUEST, noWorkspaceContext.getStatusCode());
-        assertEquals("INVALID_REQUEST", problemCode(noWorkspaceContext.getBody()));
+        assertEquals(HttpStatus.OK, noWorkspaceContext.getStatusCode());
 
         ResponseEntity<String> malformedWorkspaceId = get(
                 "?layer=workspace&workspaceId=not-a-uuid", memberGlobal);

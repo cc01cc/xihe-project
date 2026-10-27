@@ -86,6 +86,7 @@ async function mountView() {
 beforeEach(() => {
     setActivePinia(createPinia());
     localStorage.clear();
+    sessionStorage.clear();
     vi.clearAllMocks();
     localStorage.setItem("xihe-token", "test-token");
     localStorage.setItem(

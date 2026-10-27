@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.audit;
 
+import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.AuditLog;
 import com.cc01cc.p.xihe.cp.repository.AuditLogRepository;
 import org.slf4j.Logger;
@@ -48,6 +49,26 @@ public class AuditLogger {
     }
 
     public void record(String sessionId, String toolName, String action, String detail) {
+        record(sessionId, toolName, action, detail,
+                TenantContext.getWorkspaceId(), TenantContext.getUserId());
+    }
+
+    /**
+     * PLAN-0559: workspace-scoped callers may pass the workspace explicitly.
+     */
+    public void record(String sessionId, String toolName, String action, String detail,
+                       String workspaceId) {
+        record(sessionId, toolName, action, detail, workspaceId, TenantContext.getUserId());
+    }
+
+    /**
+     * PLAN-0559: keep the workspace and actor dimensions on the JSONL
+     * tool/policy audit trail. The durable audit_logs rows already carry
+     * workspace_id/user_id; this overload covers the file appender without
+     * changing the DB schema.
+     */
+    public void record(String sessionId, String toolName, String action, String detail,
+                       String workspaceId, String actorId) {
         String safeDetail = sanitize(detail);
         AuditRecord record = new AuditRecord(
             sessionId,
@@ -66,7 +87,9 @@ public class AuditLogger {
             : safeDetail;
         // Persistent audit trail (file appender, survives restarts)
         auditLog.info(
-            "session={} | tool={} | action={} | detail={}",
+            "workspace={} | actor={} | session={} | tool={} | action={} | detail={}",
+            workspaceId == null ? "unknown" : workspaceId,
+            actorId == null ? "unknown" : actorId,
             sessionId,
             toolName,
             action,

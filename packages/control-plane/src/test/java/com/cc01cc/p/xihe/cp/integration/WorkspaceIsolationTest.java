@@ -11,9 +11,13 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.context.WebApplicationContext;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
+import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
@@ -32,10 +36,14 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
@@ -51,6 +59,9 @@ class WorkspaceIsolationTest {
 
     @Autowired
     private WorkspaceService workspaceService;
+
+    @Autowired
+    private JwtTokenProvider jwtTokenProvider;
 
     @Autowired
     private WorkspaceRepository workspaceRepository;
@@ -136,11 +147,11 @@ class WorkspaceIsolationTest {
         assertNull(TenantContext.getWorkspaceRole());
 
         TenantContext.setWorkspaceId(ws2.getId().toString());
-        TenantContext.setWorkspaceRole(WorkspaceRole.MEMBER.name());
+        TenantContext.setWorkspaceRole(WorkspaceRole.EDITOR.name());
 
         assertAll("ws-2 context",
             () -> assertEquals(ws2.getId().toString(), TenantContext.getWorkspaceId()),
-            () -> assertEquals(WorkspaceRole.MEMBER.name(), TenantContext.getWorkspaceRole())
+            () -> assertEquals(WorkspaceRole.EDITOR.name(), TenantContext.getWorkspaceRole())
         );
 
         TenantContext.clear();
@@ -156,7 +167,7 @@ class WorkspaceIsolationTest {
 
         // user-a is a member of ws-2 (added in setUp) but not the owner.
         String roleAInWs2 = workspaceService.resolveWorkspaceRole(ws2.getId().toString(), userA.getId().toString());
-        assertEquals(WorkspaceRole.MEMBER.name(), roleAInWs2);
+        assertEquals(WorkspaceRole.EDITOR.name(), roleAInWs2);
 
         // user-b is not a member of ws-1.
         assertNull(workspaceService.resolveWorkspaceRole(ws1.getId().toString(), userB.getId().toString()));
@@ -182,10 +193,13 @@ class WorkspaceIsolationTest {
     void registeredUserTokenHasDefaultWorkspace() throws Exception {
         String suffix = UUID.randomUUID().toString().substring(0, 8);
         String email = "token-null-ws-" + suffix + "@test.com";
-        String token = registerAndExtractToken(email, TestDataFactory.PASSWORD, "Token Test");
-        assertNotNull(token);
-        assertTrue(TestDataFactory.tokenProvider().validateToken(token));
-        assertNotNull(TestDataFactory.tokenProvider().getWorkspaceIdFromToken(token));
+        AuthResponse response = registerAndExtractAuth(email, TestDataFactory.PASSWORD, "Token Test");
+        assertNotNull(response.getAccessToken());
+        assertTrue(TestDataFactory.tokenProvider().validateToken(response.getAccessToken()));
+        // PLAN-0559: new access tokens are user-level; the response still seeds
+        // the default workspace for first entry.
+        assertNull(TestDataFactory.tokenProvider().getWorkspaceIdFromToken(response.getAccessToken()));
+        assertNotNull(response.getWorkspaceId());
     }
 
     @Test
@@ -203,6 +217,65 @@ class WorkspaceIsolationTest {
         assertTrue(matched.isEmpty(), "ws-2 query must not return sessions from ws-1");
     }
 
+    @Test
+    void workspaceHeaderDrivesIsolationAndRoleMatrix() throws Exception {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        String ownerEmail = "matrix-owner-" + suffix + "@test.com";
+        String memberEmail = "matrix-member-" + suffix + "@test.com";
+        AuthResponse owner = registerAndExtractAuth(ownerEmail, TestDataFactory.PASSWORD, "Matrix Owner");
+        AuthResponse member = registerAndExtractAuth(memberEmail, TestDataFactory.PASSWORD, "Matrix Member");
+        String ownerWorkspace = owner.getWorkspaceId();
+        String memberId = jwtTokenProvider.getUserIdFromToken(member.getAccessToken());
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(memberId, null,
+                        List.of(new SimpleGrantedAuthority("ROLE_USER"))));
+
+        // A user with no membership cannot enter another workspace via the header.
+        mockMvc.perform(get("/api/v1/sessions")
+                        .header("Authorization", "Bearer " + member.getAccessToken())
+                        .header("X-Workspace-Id", ownerWorkspace))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("WORKSPACE_FORBIDDEN"));
+
+        // VIEWER can read but not write.
+        workspaceUserRepository.save(new WorkspaceUser(ownerWorkspace, memberId, WorkspaceRole.VIEWER));
+        mockMvc.perform(get("/api/v1/sessions")
+                        .header("Authorization", "Bearer " + member.getAccessToken())
+                        .header("X-Workspace-Id", ownerWorkspace))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/workspaces/" + ownerWorkspace + "/imports")
+                        .header("Authorization", "Bearer " + member.getAccessToken())
+                        .header("X-Workspace-Id", ownerWorkspace)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("WORKSPACE_READ_ONLY"));
+
+        // EDITOR can write content but cannot manage workspace lifecycle.
+        workspaceUserRepository.save(new WorkspaceUser(ownerWorkspace, memberId, WorkspaceRole.EDITOR));
+        int editorWriteStatus = mockMvc.perform(post("/api/v1/workspaces/" + ownerWorkspace + "/imports")
+                        .header("Authorization", "Bearer " + member.getAccessToken())
+                        .header("X-Workspace-Id", ownerWorkspace)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andReturn().getResponse().getStatus();
+        assertNotEquals(403, editorWriteStatus, "EDITOR should pass the workspace write gate");
+        mockMvc.perform(patch("/api/v1/workspaces/" + ownerWorkspace)
+                        .header("Authorization", "Bearer " + member.getAccessToken())
+                        .header("X-Workspace-Id", ownerWorkspace)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Editor Rename\"}"))
+                .andExpect(status().isForbidden());
+
+        // OWNER can manage the workspace.
+        mockMvc.perform(patch("/api/v1/workspaces/" + ownerWorkspace)
+                        .header("Authorization", "Bearer " + owner.getAccessToken())
+                        .header("X-Workspace-Id", ownerWorkspace)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Owner Rename\"}"))
+                .andExpect(status().isOk());
+    }
+
     private void registerUser(String email, String password, String name) throws Exception {
         RegisterRequest request = new RegisterRequest(email, password, name);
         mockMvc.perform(post("/api/v1/auth/register")
@@ -211,7 +284,7 @@ class WorkspaceIsolationTest {
                 .andExpect(status().isCreated());
     }
 
-    private String registerAndExtractToken(String email, String password, String name) throws Exception {
+    private AuthResponse registerAndExtractAuth(String email, String password, String name) throws Exception {
         RegisterRequest request = new RegisterRequest(email, password, name);
         String json = mockMvc.perform(post("/api/v1/auth/register")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -220,6 +293,6 @@ class WorkspaceIsolationTest {
                 .andReturn()
                 .getResponse()
                 .getContentAsString();
-        return objectMapper.readValue(json, AuthResponse.class).getAccessToken();
+        return objectMapper.readValue(json, AuthResponse.class);
     }
 }

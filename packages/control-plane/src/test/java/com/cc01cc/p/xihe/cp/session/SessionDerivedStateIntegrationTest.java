@@ -177,7 +177,7 @@ class SessionDerivedStateIntegrationTest extends AbstractIntegrationTest {
                 baseUrl + "/api/v1/sessions/" + parent.getId() + "/derived-state",
                 HttpMethod.GET, bearer(serviceToken), Map.class);
 
-        assertEquals(HttpStatus.NOT_FOUND, notWorkspaceMember.getStatusCode());
+        assertEquals(HttpStatus.FORBIDDEN, notWorkspaceMember.getStatusCode());
         assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
         assertEquals(HttpStatus.NOT_FOUND, invalidId.getStatusCode());
         assertEquals(HttpStatus.UNAUTHORIZED, unauthenticated.getStatusCode());

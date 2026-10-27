@@ -13,6 +13,14 @@ status: active
 
 This English companion records the current route map and Workspace/Chat UI ownership. The zh-Hans DEV-010 remains the detailed UI architecture reference.
 
+## 0.1 Workspace context (PLAN-0559)
+
+- The workspace lives in the URL + sessionStorage; localStorage keeps only token/user.
+- Each workspace-scoped request carries X-Workspace-Id; switching clears workspace-scoped caches and discards stale responses.
+- Roles: OWNER/EDITOR/VIEWER. VIEWER write affordances are hidden; CP remains authoritative with 403.
+- Cross-tab logout uses BroadcastChannel + storage fallback; workspace switches are not broadcast.
+
+
 ## 1. Routing
 
 | Route | View | Behavior |

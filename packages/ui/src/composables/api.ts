@@ -79,6 +79,7 @@ import type {
     ScheduledTaskDisposeResult,
     ScheduledTaskListPage,
 } from "../types";
+import { clearTabWorkspace, readTabWorkspaceId } from "../lib/workspaceContext";
 
 const API_BASE = "/api/v1";
 
@@ -109,6 +110,8 @@ export interface ApiWorkspace {
     storageMode?: WorkspaceStorageMode;
     hostPath?: string | null;
     executionMode?: WorkspaceExecutionMode;
+    workspaceRole?: "OWNER" | "EDITOR" | "VIEWER" | null;
+    canWrite?: boolean;
     createdAt?: string;
     updatedAt?: string;
 }
@@ -1386,6 +1389,10 @@ function normalizeWorkspace(value: unknown): ApiWorkspace | undefined {
         ] as const)
             ? record.executionMode
             : undefined,
+        workspaceRole: isEnumValue(record.workspaceRole, ["OWNER", "EDITOR", "VIEWER"] as const)
+            ? record.workspaceRole
+            : null,
+        canWrite: typeof record.canWrite === "boolean" ? record.canWrite : undefined,
         createdAt: typeof record.createdAt === "string" ? record.createdAt : undefined,
         updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : undefined,
     };
@@ -1607,6 +1614,15 @@ export function apiAuthHeaders(
     else Object.assign(result, headers ?? {});
     const token = localStorage.getItem("xihe-token");
     if (token) result.Authorization = `Bearer ${token}`;
+    // PLAN-0559: every workspace-scoped request carries the tab workspace. An
+    // explicit caller header wins (case-insensitive) over this default.
+    const hasWorkspaceHeader = Object.keys(result).some(
+        (key) => key.toLowerCase() === "x-workspace-id",
+    );
+    if (!hasWorkspaceHeader) {
+        const workspaceId = readTabWorkspaceId();
+        if (workspaceId) result["X-Workspace-Id"] = workspaceId;
+    }
     if (includeContentType && !result["Content-Type"]) result["Content-Type"] = "application/json";
     return result;
 }
@@ -1655,9 +1671,13 @@ function ensureRefreshed(): Promise<boolean> {
         try {
             const rt = localStorage.getItem("xihe-refresh-token");
             if (!rt) return false;
+            const workspaceId = readTabWorkspaceId();
             const res = await fetch(endpoint("/auth/refresh"), {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: {
+                    "Content-Type": "application/json",
+                    ...(workspaceId ? { "X-Workspace-Id": workspaceId } : {}),
+                },
                 body: JSON.stringify({ refreshToken: rt }),
             });
             if (!res.ok) return false;
@@ -1699,6 +1719,7 @@ function forceLogout(): void {
     localStorage.removeItem("xihe-token");
     localStorage.removeItem("xihe-refresh-token");
     localStorage.removeItem("xihe-user");
+    clearTabWorkspace();
     if (forceLogoutImpl) {
         forceLogoutImpl();
         return;

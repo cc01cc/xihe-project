@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { FileText } from "@lucide/vue";
 import { useWorkspaceStore } from "../stores/workspace";
+import { useAuthStore } from "../../../stores/auth";
 import type { OpenFile } from "../../../types";
 import EditorTabBar from "./EditorTabBar.vue";
 import MdEditor from "./MdEditor.vue";
@@ -13,6 +14,8 @@ import DiffViewer from "./DiffViewer.vue";
 import UnknownFileNotice from "./UnknownFileNotice.vue";
 
 const ws = useWorkspaceStore();
+const authStore = useAuthStore();
+const canWrite = computed(() => authStore.canWriteWorkspace);
 const { t } = useI18n();
 const diffMode = ref(false);
 
@@ -71,6 +74,7 @@ function handleContentUpdate(content: string) {
 }
 
 function handleSave() {
+    if (!canWrite.value) return;
     const f = activeFile.value;
     if (f) ws.saveFile(f.path);
 }
@@ -148,7 +152,7 @@ function handleLoadFullContent() {
                 <span class="text-xs text-muted-foreground">{{ activeFile.path }}</span>
                 <button
                     class="px-2 py-0.5 text-xs rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-30"
-                    :disabled="!activeFile.modified"
+                    :disabled="!activeFile.modified || !canWrite"
                     @click="handleSave"
                 >
                     {{ activeFile.modified ? "保存" : "已保存" }}
@@ -170,6 +174,7 @@ function handleLoadFullContent() {
             <div class="flex-1 overflow-hidden">
                 <MdEditor
                     :model-value="activeFile.content"
+                    :readonly="!canWrite"
                     @update:model-value="handleContentUpdate"
                 />
             </div>
@@ -188,7 +193,7 @@ function handleLoadFullContent() {
                     </button>
                     <button
                         class="px-2 py-0.5 text-xs rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-30"
-                        :disabled="!activeFile.modified"
+                        :disabled="!activeFile.modified || !canWrite"
                         @click="handleSave"
                     >
                         {{ activeFile.modified ? "保存" : "已保存" }}
@@ -219,6 +224,7 @@ function handleLoadFullContent() {
                 <CodeEditor
                     :model-value="activeFile.content"
                     :language="activeFile.language"
+                    :readonly="!canWrite"
                     @update:model-value="handleContentUpdate"
                 />
             </div>

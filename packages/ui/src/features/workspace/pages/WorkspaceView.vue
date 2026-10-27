@@ -159,20 +159,29 @@ const workspaceEvents = useWorkspaceSSE(workspaceId, {
     onEvent: (event) => ws.applyWorkspaceEvent(event),
 });
 
+let workspaceLoadSequence = 0;
+
 async function selectSessionForWorkspace() {
-    if (!workspaceId.value) return null;
+    const targetWorkspaceId = workspaceId.value;
+    if (!targetWorkspaceId) return null;
+    const sequence = ++workspaceLoadSequence;
     try {
-        await auth.selectWorkspace(workspaceId.value);
+        await auth.selectWorkspace(targetWorkspaceId);
+        if (sequence !== workspaceLoadSequence) return null;
         await sessionStore.loadSessions();
+        if (sequence !== workspaceLoadSequence) return null;
         let existing = sessionStore.sessions.find(
             (session) =>
-                session.workspaceId === workspaceId.value &&
+                session.workspaceId === targetWorkspaceId &&
                 (routeSessionId.value ? session.id === routeSessionId.value : true),
         );
         if (!existing && routeSessionId.value) {
             const loaded = await sessionStore.loadSession(routeSessionId.value);
-            if (loaded.workspaceId === workspaceId.value) existing = loaded;
+            if (sequence === workspaceLoadSequence && loaded.workspaceId === targetWorkspaceId) {
+                existing = loaded;
+            }
         }
+        if (sequence !== workspaceLoadSequence) return null;
         if (existing) {
             sessionStore.selectSession(existing.id);
             return existing.id;
@@ -180,6 +189,17 @@ async function selectSessionForWorkspace() {
         sessionStore.clearCurrentSession();
         return null;
     } catch (cause) {
+        if (sequence !== workspaceLoadSequence) return null;
+        const code = cause instanceof ApiError ? cause.problem.code : "";
+        if (
+            routeWorkspaceId.value === targetWorkspaceId &&
+            (code === "WORKSPACE_FORBIDDEN" || code === "WORKSPACE_NOT_FOUND")
+        ) {
+            // Stale/deleted tab workspace: clear it so the home route can
+            // bootstrap the default workspace without a redirect loop.
+            await router.replace({ name: "workspace-home" });
+            return null;
+        }
         const message = cause instanceof ApiError ? cause.message : "Failed to load workspace";
         logger.error("Load workspace failed", cause);
         toast.error(message);
@@ -275,6 +295,10 @@ watch(
 );
 
 function handleUpload() {
+    if (!auth.canWriteWorkspace) {
+        toast.error(t("workspace.viewerReadOnly"));
+        return;
+    }
     ws.openImportDialog();
 }
 
@@ -379,9 +403,20 @@ watch([workspaceId, routeSessionId], () => {
                         class="h-9 shrink-0 border-b px-3 flex items-center gap-2 text-xs text-muted-foreground bg-muted/5"
                         :title="`workspace=${workspaceId}`"
                     >
-                        <span class="font-medium text-foreground/80">{{
-                            auth.workspace?.name ?? t("workspace.chatHeader")
-                        }}</span>
+                        <span
+                            class="font-medium text-foreground/80"
+                            :data-workspace-id="auth.workspace?.id"
+                            :data-role="auth.workspaceRole"
+                            :data-can-write="String(auth.canWriteWorkspace)"
+                            >{{ auth.workspace?.name ?? t("workspace.chatHeader") }}</span
+                        >
+                        <span
+                            v-if="!auth.canWriteWorkspace"
+                            data-testid="workspace-viewer-badge"
+                            class="rounded border border-amber-500/40 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-300"
+                        >
+                            {{ t("workspace.viewerReadOnly") }}
+                        </span>
                         <span class="text-muted-foreground/60">{{
                             t("workspace.chatHeader")
                         }}</span>

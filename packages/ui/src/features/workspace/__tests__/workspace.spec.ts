@@ -40,6 +40,7 @@ vi.mock("../../../stores/session", () => ({
 vi.mock("../../../stores/auth", () => ({
     useAuthStore: () => ({
         currentWorkspaceId: "ws-test",
+        canWriteWorkspace: true,
     }),
 }));
 

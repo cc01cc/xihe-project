@@ -1,5 +1,11 @@
 import { createRouter, createWebHistory } from "vue-router";
 import { api } from "../composables/api";
+import {
+    migrateLegacyWorkspace,
+    readTabWorkspaceId,
+    writeTabWorkspace,
+    writeTabWorkspaceId,
+} from "../lib/workspaceContext";
 
 const router = createRouter({
     history: createWebHistory(),
@@ -140,6 +146,7 @@ async function resolveBootstrap(): Promise<{ initialized: boolean; localMode: bo
 }
 
 router.beforeEach(async (to) => {
+    migrateLegacyWorkspace();
     const token = localStorage.getItem("xihe-token"),
         requiresAuth = to.matched.some((r) => r.meta?.requiresAuth);
 
@@ -154,12 +161,12 @@ router.beforeEach(async (to) => {
                 localStorage.setItem("xihe-token", res.accessToken);
                 localStorage.setItem("xihe-user", JSON.stringify(res.user));
                 if (res.workspace) {
-                    localStorage.setItem("xihe-workspace", JSON.stringify(res.workspace));
+                    writeTabWorkspace(res.workspace);
                 } else if (res.workspaceId) {
-                    localStorage.setItem(
-                        "xihe-workspace",
-                        JSON.stringify({ id: res.workspaceId, name: "Default Workspace" }),
-                    );
+                    writeTabWorkspace({
+                        id: res.workspaceId,
+                        name: "Default Workspace",
+                    });
                 }
                 return true;
             } catch {
@@ -172,6 +179,21 @@ router.beforeEach(async (to) => {
         token
     ) {
         return { path: "/workspace" };
+    }
+
+    if (token) {
+        const routeWorkspaceId =
+            typeof to.params.workspaceId === "string" ? to.params.workspaceId : "";
+        if (routeWorkspaceId) {
+            // Set the tab workspace before child components issue their first
+            // request; WorkspaceView then validates access with CP.
+            writeTabWorkspaceId(routeWorkspaceId);
+        } else if (to.name === "workspace-home") {
+            const tabWorkspaceId = readTabWorkspaceId();
+            if (tabWorkspaceId) {
+                return { path: `/workspace/${tabWorkspaceId}`, query: to.query };
+            }
+        }
     }
 
     return true;

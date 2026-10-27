@@ -65,6 +65,13 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         return workspaceId.value;
     }
 
+    /** PLAN-0559: VIEWER is read-only; CP remains authoritative. */
+    function ensureWritable(): boolean {
+        if (authStore.canWriteWorkspace) return true;
+        treeError.value = "当前工作区为只读（VIEWER），无法修改内容";
+        return false;
+    }
+
     const fileTree = ref<FileNode[]>([]),
         expandedPaths = ref<Set<string>>(new Set()),
         loading = ref(false),
@@ -318,6 +325,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
 
     async function saveFile(path: string) {
+        if (!ensureWritable()) return;
         const file = openFiles.value.get(path);
         if (!file || !file.modified) return;
         try {
@@ -379,6 +387,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
 
     async function deleteNode(path: string): Promise<boolean> {
+        if (!ensureWritable()) return false;
         try {
             await api.deleteFile(path, requireWorkspaceId());
             closeFile(path);
@@ -394,6 +403,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
 
     async function createFile(parentDir: string, name: string): Promise<boolean> {
+        if (!ensureWritable()) return false;
         const fullPath = parentDir ? `${parentDir}/${name}` : name;
         try {
             await api.writeFile(fullPath, "", requireWorkspaceId());
@@ -555,6 +565,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
 
     function openImportDialog() {
+        if (!ensureWritable()) return;
         showImportDialog.value = true;
     }
     function closeImportDialog() {
@@ -563,6 +574,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
 
     function addToUploadQueue(files: File[]) {
+        if (!ensureWritable()) return;
         for (const file of files) {
             uploadQueue.value.push({
                 file,
@@ -626,6 +638,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
 
     async function executeUpload(targetDir: string, splitPreference?: boolean) {
+        if (!ensureWritable()) return;
         for (const item of uploadQueue.value) {
             if (item.status === "cancelled") continue;
             if (item.size > MAX_WORKSPACE_FILE_BYTES) {

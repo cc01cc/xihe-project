@@ -460,17 +460,17 @@ class ProviderConnectionServiceTest {
     }
 
     @Test
-    void createRejectsWorkspaceScopeWithoutWorkspaceAdminRole() {
+    void createRejectsWorkspaceScopeAsViewer() {
         TenantContext.setUserId("user-1");
         TenantContext.setWorkspaceId("workspace-1");
-        TenantContext.setWorkspaceRole("MEMBER");
+        TenantContext.setWorkspaceRole("VIEWER");
 
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
                 service.create(new ProviderConnectionService.ConnectionInput(
                         "deepseek", "Workspace DeepSeek", "WORKSPACE", "sk-test-key", null, null, List.of(), null,
                         "default")));
 
-        assertEquals("Workspace administrator permission is required", error.getMessage());
+        assertEquals("Workspace editor permission is required", error.getMessage());
     }
 
     @Test
