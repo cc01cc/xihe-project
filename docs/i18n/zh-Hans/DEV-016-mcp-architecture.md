@@ -7,7 +7,7 @@ sidebar_group: "开发指南"
 sidebar_order: 16
 status: active
 created: 2026-06-03
-updated: 2026-10-19
+updated: 2026-10-27
 ---
 
 # DEV-016: MCP 三层路由架构
@@ -16,7 +16,7 @@ updated: 2026-10-19
 
 ## 0.1 工作区上下文（PLAN-0559）
 
-- 用户面 MCP 由 X-Workspace-Id 解析有效工作区；VIEWER 的 	ools/call 返回 403 WORKSPACE_READ_ONLY，initialize/	ools/list/esources/read 放行。
+- 用户面 MCP 由 X-Workspace-Id 解析有效工作区；VIEWER 可执行只读 `tools/call`（`read_file` / `read_file_range` / `list_directory` / `get_file_info` / `glob` / `grep` / `watch_directory` / `extract_pdf_text`）；写类 `tools/call` 返回 `403 WORKSPACE_READ_ONLY`；`initialize`/`tools/list`/`resources/read` 放行。
 - service 面仍由 InternalTokenFilter + 显式 X-Workspace-Id + session owner 校验。
 - 共享工作区 v1 无文件/目录锁；以 fork/branch、先声明再改、checkpoint、避免 workspace 级 revert 协作。
 
