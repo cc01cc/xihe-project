@@ -146,6 +146,7 @@ updated: 2026-10-25
 - **现象**：`e2e/mock/full-ui-acceptance.spec.ts` 的 ProviderHub-creates 用例在 develop 基线（e42d95c0）即红：点击 provider 卡片后 `provider-connection-modal`（连接表单）不出现，15s 超时。同轮 sidebar、message-search（PLAN-0401 evidence 已登记同族）、workspace-file、PDF、FileEditor 共 6 个红点。0505 的双端对照实证见 `plans/PLAN-0505-*/evidence/reports/plan0505-baseline-mock.log`。
 - **影响**：mock lane 对 ProviderHub 表单类流程（创建/类型变更 UI 流）失去回归能力；0505 删除流的浏览器证据由 real lane `plan-0505-delete-impact.spec.ts` 承载（真实链路一次通过），不受影响。
 - **修复方向**：独立小批次修 mock 夹具（route mock 与组件接线的对齐），修好后补删除流桌面/移动断言。真实链路回归不可因此省略（0505 复跑曾靠 real lane 逮住单测漏掉的对话框回归）。
+- **PLAN-0560 复核（2026-10-27）**：develop `3516901b` 与 `plan-0560` worktree 双侧仍红，与 0505 同根（picker→connection form 打开链路），同族新增 `e2e/mock/provider-protocol-groups.spec.ts:104`（discovery select 选项缺失，同为 picker 表单链路）。另发现独立根因一例：`workspace-management.spec.ts:65` empty-state——router 守卫对 `/workspace/new` 执行 `writeTabWorkspaceId("new")`，而 helper 对任意 id 的 `GET /api/v1/workspaces/*` 一律返回 Mock Workspace，导致空态分支永不可达。三例均已在两侧复跑归因（`one/plans/PLAN-0560-*/evidence/m4-wave.md`）。全量 mock lane 并行 run 在两侧都大面积环境性 flaky（分支 17F / develop ≥25F，失败集互相重叠且含大量非 ProviderHub spec），逐 spec 串行为准。
 
 ## PLAN-0505 审查次生回归 — 状态机守卫须双侧验证（已修复，供回溯）
 
