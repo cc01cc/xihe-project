@@ -1,5 +1,9 @@
 package com.cc01cc.p.xihe.cp.config;
 
+import org.springframework.http.HttpStatus;
+
+import java.util.UUID;
+
 public final class TenantContext {
 
     private static final ThreadLocal<String> currentUserId = new ThreadLocal<>();
@@ -54,6 +58,35 @@ public final class TenantContext {
         currentWorkspacePath.remove();
         currentUserRole.remove();
         currentWorkspaceRole.remove();
+    }
+
+    /**
+     * PLAN-0559: normalize an explicit workspace id from a header/query value.
+     * Blank means "not provided"; malformed values are a client error, never a
+     * 500 from {@link UUID#fromString(String)}.
+     */
+    public static String normalizeWorkspaceId(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value.trim()).toString();
+        } catch (IllegalArgumentException e) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_WORKSPACE_ID",
+                    "X-Workspace-Id must be a UUID");
+        }
+    }
+
+    /**
+     * PLAN-0559: reject explicit workspace ids that do not match the effective
+     * request context instead of letting a query/header silently override it.
+     */
+    public static void requireWorkspaceMatches(String value) {
+        String normalized = normalizeWorkspaceId(value);
+        if (normalized != null && !normalized.equalsIgnoreCase(currentWorkspaceId.get())) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "WORKSPACE_FORBIDDEN",
+                    "Workspace access denied");
+        }
     }
 
     private TenantContext() {}

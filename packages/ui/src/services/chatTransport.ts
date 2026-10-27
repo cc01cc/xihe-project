@@ -1,5 +1,6 @@
 import { fetchEventSource, type EventSourceMessage } from "@microsoft/fetch-event-source";
 import { logger } from "@/lib/logger";
+import { clearTabWorkspace } from "@/lib/workspaceContext";
 import { ApiError, apiAuthHeaders, apiErrorFromResponse } from "@/composables/api";
 
 export interface ChatTransportOptions {
@@ -308,7 +309,9 @@ class ChatTransportImpl {
 
     private handleUnauthorized(): void {
         localStorage.removeItem("xihe-token");
+        localStorage.removeItem("xihe-refresh-token");
         localStorage.removeItem("xihe-user");
+        clearTabWorkspace();
         window.location.href = "/login";
     }
 }

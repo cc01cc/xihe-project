@@ -10,6 +10,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
+import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 
 import java.util.Map;
 import java.util.List;
@@ -26,6 +27,14 @@ class ConfigControllerTest extends AbstractH2Test {
 
     @Autowired
     private ConfigService configService;
+
+    @Autowired
+    private WorkspaceService workspaceService;
+
+    private String workspaceIdFor(String token) {
+        String userId = jwtTokenProvider.getUserIdFromToken(token);
+        return workspaceService.findCurrentWorkspace(userId).orElseThrow().getId().toString();
+    }
 
     @Test
     void getConfig_returnsMergedConfig() {
@@ -137,7 +146,7 @@ class ConfigControllerTest extends AbstractH2Test {
     @Test
     void workspaceLayer_resolvesOverUserAndInstance() {
         String token = userToken();
-        String workspaceId = jwtTokenProvider.getWorkspaceIdFromToken(token);
+        String workspaceId = workspaceIdFor(token);
         assertNotNull(workspaceId);
 
         HttpHeaders headers = authHeaders(token);
@@ -301,7 +310,7 @@ class ConfigControllerTest extends AbstractH2Test {
     @Test
     void stdioServers_putGetAndGenerationConflict() {
         String token = userToken();
-        String workspaceId = jwtTokenProvider.getWorkspaceIdFromToken(token);
+        String workspaceId = workspaceIdFor(token);
         HttpHeaders headers = authHeaders(token);
         headers.setContentType(MediaType.APPLICATION_JSON);
 
@@ -337,7 +346,7 @@ class ConfigControllerTest extends AbstractH2Test {
     @Test
     void stdioServers_internalEndpointReturnsArray() {
         String token = userToken();
-        String workspaceId = jwtTokenProvider.getWorkspaceIdFromToken(token);
+        String workspaceId = workspaceIdFor(token);
         HttpHeaders headers = authHeaders(token);
         headers.setContentType(MediaType.APPLICATION_JSON);
         Map<String, Object> putBody = Map.of(
@@ -363,7 +372,7 @@ class ConfigControllerTest extends AbstractH2Test {
     @Test
     void mcpConfig_splitsAndMergesStdioAndRemote() {
         String token = userToken();
-        String workspaceId = jwtTokenProvider.getWorkspaceIdFromToken(token);
+        String workspaceId = workspaceIdFor(token);
         HttpHeaders headers = authHeaders(token);
         headers.setContentType(MediaType.APPLICATION_JSON);
 
@@ -387,7 +396,7 @@ class ConfigControllerTest extends AbstractH2Test {
     @Test
     void mcpConfig_ambiguousEntry_returns400() {
         String token = userToken();
-        String workspaceId = jwtTokenProvider.getWorkspaceIdFromToken(token);
+        String workspaceId = workspaceIdFor(token);
         HttpHeaders headers = authHeaders(token);
         headers.setContentType(MediaType.APPLICATION_JSON);
 

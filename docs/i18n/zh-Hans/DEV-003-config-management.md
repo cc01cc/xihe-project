@@ -17,6 +17,12 @@ updated: 2026-10-12
 >
 > 现行模型（PLAN-0307/PLAN-0553 已落地）：**三层 `instance / user / workspace`**（作用域书写统一从大到小；解析链 `workspace > user > instance > 代码默认`）+ 凭证 **BYOK**（凭据域 `credentials` 为 SSOT；`provider_connections.credential_id` 只做 owner-neutral 引用；两级 `USER/WORKSPACE`；`SYSTEM` 归属已退役，见 PLAN-0364 M2）+ **env 覆盖锁定**（env 为最高部署权威，UI 显示 env 生效值并禁用该项）。端点以 `docs/api/openapi.yaml` 为准；认证、principal、授权和审计的冻结契约见根级 `spec/security/`（当前为 proposed）。
 
+## 0.1 workspaceId 约束（PLAN-0559）
+
+- 请求显式携带的 workspaceId（header/query）必须等于当前有效工作区，否则 403 WORKSPACE_FORBIDDEN。
+- 未显式提供时使用有效工作区；配置层级、合并顺序与来源徽标不变（PLAN-0554）。
+
+
 ## 1. 三层所有权与十一域
 
 ConfigService 按三层作用域 × 领域（Domain）组织配置；域集合为 `instance(14)`、`user(10)`、`workspace(10)`。`approval-policy`（PLAN-0364 决策 #9）与 `job-policy`（PLAN-0373 决策 #1）为**双显式例外**：instance 层可写默认、workspace 可覆盖、user 层不可写；由此 **`instance ⊇ user` 与 `instance ⊇ workspace` 恢复成立**，而 `workspace ⊄ user`、`user ⊄ workspace` 仍成立：

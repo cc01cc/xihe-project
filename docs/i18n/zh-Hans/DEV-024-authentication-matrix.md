@@ -7,7 +7,7 @@ sidebar_group: "开发指南"
 sidebar_order: 24
 status: active
 created: 2026-10-19
-updated: 2026-10-19
+updated: 2026-10-27
 ---
 
 # DEV-024: 模块认证与密钥矩阵
@@ -25,6 +25,15 @@ XH 有**两套**认证，不要混用：
 - **对内**：一把**共享静态 token**（`XIHE_AGENT_API_TOKEN`，回退 `XIHE_CP_API_TOKEN`），四个服务方向全部用它。
 
 此外 MCP 逻辑入口**没有协议会话**：CP 不签发也不接受 `mcp-session-id`。
+
+### 1.1 工作区上下文（PLAN-0559）
+
+- access token 是**用户级**的：新 token 不含 `workspace_id`；工作区由逐请求 `X-Workspace-Id` 决定。
+- 解析优先级：`X-Workspace-Id` → 旧 token claim（过渡）→ 用户默认工作区；header 存在时绝不回落 claim。
+- 逐请求校验 active + membership；角色矩阵 OWNER（读写+管理）/ EDITOR（读写）/ VIEWER（只读）。legacy `ADMIN`/`MEMBER` 映射为 EDITOR。
+- 失败：非法 header `400 INVALID_WORKSPACE_ID`；非成员/已删 `403 WORKSPACE_FORBIDDEN`；VIEWER 写 `403 WORKSPACE_READ_ONLY`。
+- refresh 不重绑工作区；可选 `X-Workspace-Id` 只回填响应 `workspaceId`。
+- v1 无文件/目录锁；共享工作区以 fork/branch、先声明再改、checkpoint、避免 workspace 级 revert 协作。
 
 ## 2. 认证链路
 

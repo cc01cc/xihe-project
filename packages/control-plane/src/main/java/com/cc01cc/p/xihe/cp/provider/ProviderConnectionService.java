@@ -4,6 +4,7 @@ import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnectionAudit;
 import com.cc01cc.p.xihe.cp.entity.ProviderCredentialLease;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.crypto.EnvelopeEncryptionService;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionAuditRepository;
@@ -452,7 +453,7 @@ public class ProviderConnectionService {
         if (ProviderConnection.OWNER_WORKSPACE.equals(connection.getOwnerType())) {
             String role = TenantContext.getWorkspaceRole();
             if (!connection.getOwnerId().equals(TenantContext.getWorkspaceId())
-                    || !("OWNER".equals(role) || "ADMIN".equals(role)
+                    || !(WorkspaceRole.canWrite(role)
                     || "ADMIN".equals(TenantContext.getUserRole()))) {
                 throw new IllegalArgumentException("Workspace provider connection is not writable");
             }
@@ -507,9 +508,9 @@ public class ProviderConnectionService {
         if (ProviderConnection.OWNER_WORKSPACE.equals(scope)) {
             String workspaceId = TenantContext.getWorkspaceId();
             String role = TenantContext.getWorkspaceRole();
-            if (workspaceId == null || !("OWNER".equals(role) || "ADMIN".equals(role)
+            if (workspaceId == null || !(WorkspaceRole.canWrite(role)
                     || "ADMIN".equals(TenantContext.getUserRole()))) {
-                throw new IllegalArgumentException("Workspace administrator permission is required");
+                throw new IllegalArgumentException("Workspace editor permission is required");
             }
             return workspaceId;
         }

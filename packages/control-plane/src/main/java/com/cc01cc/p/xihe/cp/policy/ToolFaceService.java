@@ -4,6 +4,7 @@ import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.ToolFaceEntity;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.repository.ToolFaceRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -167,6 +168,6 @@ public class ToolFaceService {
 
     private static boolean workspaceManager() {
         String role = TenantContext.getWorkspaceRole();
-        return "OWNER".equals(role) || "ADMIN".equals(role) || "ADMIN".equals(TenantContext.getUserRole());
+        return WorkspaceRole.canManage(role) || "ADMIN".equals(TenantContext.getUserRole());
     }
 }

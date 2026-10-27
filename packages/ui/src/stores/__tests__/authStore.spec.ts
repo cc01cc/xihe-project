@@ -10,6 +10,8 @@ vi.mock("../../composables/api", () => ({
     api: {
         login: vi.fn<typeof apiModule.login>(),
         register: vi.fn<typeof apiModule.register>(),
+        getWorkspace: vi.fn<typeof apiModule.api.getWorkspace>(),
+        getCurrentWorkspace: vi.fn<typeof apiModule.api.getCurrentWorkspace>(),
     },
     onAuthTokensRefreshed: vi.fn<(cb: (accessToken: string) => void) => void>(),
     registerForceLogout: vi.fn<(fn: () => void) => void>(),
@@ -24,6 +26,7 @@ const mockUser: User = { id: "u1", email: "test@test.com", name: "Test" },
 beforeEach(() => {
     setActivePinia(createPinia());
     localStorage.clear();
+    sessionStorage.clear();
 });
 
 describe("useAuthStore", () => {
@@ -161,5 +164,71 @@ describe("useAuthStore", () => {
         const store = useAuthStore();
         store.$patch({ user: { id: "u2", email: "no-name@test.com" } as User });
         expect(store.userName).toBe("no-name@test.com");
+    });
+
+    it("login stores the workspace in sessionStorage, never localStorage", async () => {
+        const { api } = await import("../../composables/api");
+        vi.mocked(api.login).mockResolvedValue({
+            accessToken: "tab-token",
+            user: mockUser,
+            workspaceId: WORKSPACE_ID,
+        });
+        const store = useAuthStore();
+        await store.login("tab@test.com", "pass");
+
+        expect(JSON.parse(sessionStorage.getItem("xihe-workspace") ?? "{}").id).toBe(WORKSPACE_ID);
+        expect(localStorage.getItem("xihe-workspace")).toBeNull();
+    });
+
+    it("migrates the legacy localStorage workspace once", () => {
+        localStorage.setItem(
+            "xihe-workspace",
+            JSON.stringify({ id: WORKSPACE_ID, name: "Legacy" }),
+        );
+        const store = useAuthStore();
+        expect(store.workspace?.id).toBe(WORKSPACE_ID);
+        expect(sessionStorage.getItem("xihe-workspace")).toContain(WORKSPACE_ID);
+        expect(localStorage.getItem("xihe-workspace")).toBeNull();
+    });
+
+    it("selectWorkspace writes the tab key and ignores a stale response", async () => {
+        const { api } = await import("../../composables/api");
+        const wsA = { id: WORKSPACE_ID, name: "A" };
+        const wsB = { id: "55555555-5555-4555-8555-555555555555", name: "B" };
+        vi.mocked(api.getWorkspace).mockImplementation(async (id: string) => {
+            if (id === wsA.id) {
+                await new Promise((resolve) => setTimeout(resolve, 10));
+                return wsA;
+            }
+            return wsB;
+        });
+        const store = useAuthStore();
+        const first = store.selectWorkspace(wsA.id);
+        const second = store.selectWorkspace(wsB.id);
+        await Promise.all([first, second]);
+        expect(store.workspace?.id).toBe(wsB.id);
+        expect(JSON.parse(sessionStorage.getItem("xihe-workspace") ?? "{}").id).toBe(wsB.id);
+    });
+
+    it("computes viewer read-only and editor write roles", () => {
+        const store = useAuthStore();
+        store.$patch({ workspace: { id: WORKSPACE_ID, name: "ws", workspaceRole: "VIEWER" } });
+        expect(store.canWriteWorkspace).toBe(false);
+        expect(store.canManageWorkspace).toBe(false);
+
+        store.$patch({ workspace: { id: WORKSPACE_ID, name: "ws", workspaceRole: "EDITOR" } });
+        expect(store.canWriteWorkspace).toBe(true);
+        expect(store.canManageWorkspace).toBe(false);
+
+        store.$patch({ workspace: { id: WORKSPACE_ID, name: "ws", workspaceRole: "OWNER" } });
+        expect(store.canWriteWorkspace).toBe(true);
+        expect(store.canManageWorkspace).toBe(true);
+    });
+
+    it("logout clears the tab workspace key", () => {
+        const store = useAuthStore();
+        sessionStorage.setItem("xihe-workspace", JSON.stringify({ id: WORKSPACE_ID }));
+        store.logout();
+        expect(sessionStorage.getItem("xihe-workspace")).toBeNull();
     });
 });

@@ -14,6 +14,13 @@ updated: 2026-10-19
 
 > 本文保留 MCP 实现说明；CP/Runtime/Agent 的冻结通信边界见根级 `spec/protocol/mcp.md`，wire 字段以 OpenAPI/inventory 和 MCP 实现为准。
 
+## 0.1 工作区上下文（PLAN-0559）
+
+- 用户面 MCP 由 X-Workspace-Id 解析有效工作区；VIEWER 的 	ools/call 返回 403 WORKSPACE_READ_ONLY，initialize/	ools/list/esources/read 放行。
+- service 面仍由 InternalTokenFilter + 显式 X-Workspace-Id + session owner 校验。
+- 共享工作区 v1 无文件/目录锁；以 fork/branch、先声明再改、checkpoint、避免 workspace 级 revert 协作。
+
+
 ## 1. 概述
 
 MCP（Model Context Protocol）请求从 Agent 发出的到工具执行的完整路径经过路由：

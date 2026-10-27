@@ -7,6 +7,14 @@ import {
     registerForceLogout,
 } from "../composables/api";
 import { logger, rotateAnonSessionId, clearAnonSessionId } from "../lib/logger";
+import {
+    clearTabWorkspace,
+    migrateLegacyWorkspace,
+    readTabWorkspace,
+    readTabWorkspaceId,
+    writeTabWorkspace,
+} from "../lib/workspaceContext";
+import { broadcastLogout, onRemoteLogout } from "../services/authChannel";
 import { useSessionStore } from "./session";
 import { clearWorkspaceChatForUserSwitch } from "../features/workspace/chat/lifecycle";
 import { useConfigStore } from "./config";
@@ -31,13 +39,10 @@ export const useAuthStore = defineStore("auth", () => {
         }
     }
     function readWorkspace(): ApiWorkspace | null {
-        try {
-            const raw = localStorage.getItem("xihe-workspace");
-            return raw ? JSON.parse(raw) : null;
-        } catch {
-            logger.warn("Failed to parse saved workspace from localStorage");
-            return null;
-        }
+        // PLAN-0559: the workspace is a per-tab selection. Migrate the old
+        // localStorage value once, then only ever read sessionStorage.
+        migrateLegacyWorkspace();
+        return readTabWorkspace() as ApiWorkspace | null;
     }
 
     const token = ref<string | null>(localStorage.getItem("xihe-token")),
@@ -52,14 +57,31 @@ export const useAuthStore = defineStore("auth", () => {
         userName = computed(() => user.value?.name ?? user.value?.email ?? "User"),
         isAdmin = computed(() => user.value?.role === "ADMIN");
     /**
-     * PLAN-0328 decision #56: tool classification is limited to workspace OWNER / instance ADMIN.
-     * The client only uses this to decide whether to offer the affordance — the CP enforces the
-     * rule and returns 403, which stays visible to the user. Fails closed when ownership is unknown.
+     * PLAN-0559 role matrix. Legacy responses without `workspaceRole` fall back
+     * to owner/EDITOR inference so an old CP build does not hide every write
+     * control; the server still enforces the role.
+     */
+    const workspaceRole = computed<"OWNER" | "EDITOR" | "VIEWER">(() => {
+        const explicit = workspace.value?.workspaceRole;
+        if (explicit === "OWNER" || explicit === "EDITOR" || explicit === "VIEWER") {
+            return explicit;
+        }
+        const ownerId = workspace.value?.ownerId;
+        return ownerId && user.value?.id && ownerId === user.value.id ? "OWNER" : "EDITOR";
+    });
+    const canWriteWorkspace = computed(
+        () => workspace.value?.canWrite ?? workspaceRole.value !== "VIEWER",
+    );
+    const canManageWorkspace = computed(() => workspaceRole.value === "OWNER");
+
+    /**
+     * PLAN-0328 decision #56 / PLAN-0559: workspace OWNER (or instance ADMIN) may
+     * classify tools. The client only decides whether to offer the affordance;
+     * CP remains authoritative and returns 403 otherwise.
      */
     const canClassifyTools = computed(() => {
         if (user.value?.role === "ADMIN") return true;
-        const ownerId = workspace.value?.ownerId;
-        return Boolean(ownerId && user.value?.id && ownerId === user.value.id);
+        return canManageWorkspace.value;
     });
 
     function _saveToken(t: string, u: User, ws: ApiWorkspace | null, rt?: string) {
@@ -72,8 +94,8 @@ export const useAuthStore = defineStore("auth", () => {
             refreshToken.value = rt;
             localStorage.setItem("xihe-refresh-token", rt);
         }
-        if (ws) localStorage.setItem("xihe-workspace", JSON.stringify(ws));
-        else localStorage.removeItem("xihe-workspace");
+        if (ws) writeTabWorkspace(ws);
+        else clearTabWorkspace();
         // New authentication session: rotate the anonymous telemetry session id (PLAN-0527).
         rotateAnonSessionId();
     }
@@ -199,7 +221,7 @@ export const useAuthStore = defineStore("auth", () => {
         }
     }
 
-    function logout() {
+    function clearAuthState() {
         token.value = null;
         refreshToken.value = null;
         user.value = null;
@@ -210,36 +232,85 @@ export const useAuthStore = defineStore("auth", () => {
         localStorage.removeItem("xihe-refresh-token");
         localStorage.removeItem("xihe-user");
         localStorage.removeItem("xihe-workspace");
+        clearTabWorkspace();
         // Logout: clear the anonymous telemetry session id (PLAN-0527 decision #5).
         clearAnonSessionId();
         clearSessionCaches();
     }
 
-    /**
-     * Fetches the current workspace once so `ownerId` is available for owner-only affordances
-     * (the login response carries only the workspace id). Failures are non-fatal: the server
-     * remains the authority and unauthorized writes surface as 403.
-     */
-    async function hydrateWorkspace(): Promise<void> {
-        if (!token.value || workspace.value?.ownerId) return;
-        try {
-            const current = await api.getCurrentWorkspace();
-            workspace.value = current;
-            localStorage.setItem("xihe-workspace", JSON.stringify(current));
-        } catch (cause) {
-            logger.warn("Failed to hydrate current workspace", cause);
+    function logout() {
+        clearAuthState();
+        broadcastLogout();
+    }
+
+    function handleRemoteLogout() {
+        clearAuthState();
+        if (!["/login", "/register"].includes(window.location.pathname)) {
+            router.push({ name: "login" });
         }
     }
 
+    onRemoteLogout(handleRemoteLogout);
+
+    /**
+     * Fetches the workspace for this tab. The URL/sessionStorage workspace is
+     * authoritative; `/workspaces/current` is only the bootstrap default.
+     */
+    async function hydrateWorkspace(): Promise<void> {
+        if (!token.value) return;
+        const tabWorkspaceId = readTabWorkspaceId();
+        if (tabWorkspaceId && workspace.value?.id === tabWorkspaceId && workspace.value.ownerId) {
+            return;
+        }
+        try {
+            const current = tabWorkspaceId
+                ? await api.getWorkspace(tabWorkspaceId)
+                : await api.getCurrentWorkspace();
+            workspace.value = current;
+            writeTabWorkspace(current);
+        } catch (cause) {
+            logger.warn("Failed to hydrate current workspace", cause);
+            if (tabWorkspaceId) {
+                // Stale/deleted tab workspace: do not keep retrying it.
+                clearTabWorkspace();
+                workspace.value = null;
+            }
+        }
+    }
+
+    let selectSequence = 0;
+
     async function selectWorkspace(workspaceId: string): Promise<ApiWorkspace> {
-        if (workspace.value?.id === workspaceId) return workspace.value;
-        workspace.value = null;
-        const selected = await api.getWorkspace(workspaceId);
-        workspace.value = selected;
-        // PLAN-0555 R8: the connection list is workspace-scoped; without this
-        // the composer keeps showing the previous workspace's connections.
-        useConfigStore().invalidateProviderConnections();
-        return selected;
+        const sequence = ++selectSequence;
+        if (
+            workspace.value?.id === workspaceId &&
+            (workspace.value.name || workspace.value.workspaceRole)
+        ) {
+            return workspace.value;
+        }
+        const previousId = workspace.value?.id;
+        try {
+            const selected = await api.getWorkspace(workspaceId);
+            if (sequence !== selectSequence) {
+                // A newer switch won; never let a late response overwrite it.
+                return selected;
+            }
+            workspace.value = selected;
+            writeTabWorkspace(selected);
+            if (previousId !== selected.id) {
+                clearSessionCaches();
+            }
+            // PLAN-0555 R8: the connection list is workspace-scoped; without this
+            // the composer keeps showing the previous workspace's connections.
+            useConfigStore().invalidateProviderConnections();
+            return selected;
+        } catch (cause) {
+            if (sequence === selectSequence) {
+                workspace.value = null;
+                clearTabWorkspace();
+            }
+            throw cause;
+        }
     }
 
     const currentWorkspaceId = computed(() => workspace.value?.id ?? null);
@@ -269,6 +340,9 @@ export const useAuthStore = defineStore("auth", () => {
         userName,
         isAdmin,
         canClassifyTools,
+        workspaceRole,
+        canWriteWorkspace,
+        canManageWorkspace,
         currentWorkspaceId,
         login,
         register,

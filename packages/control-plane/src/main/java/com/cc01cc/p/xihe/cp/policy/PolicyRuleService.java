@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.policy;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.PolicyRuleEntity;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.repository.PolicyRuleRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -119,9 +120,9 @@ public class PolicyRuleService {
             return;
         }
         String role = TenantContext.getWorkspaceRole();
-        if (!("OWNER".equals(role) || "ADMIN".equals(role) || "ADMIN".equals(TenantContext.getUserRole()))) {
+        if (!(WorkspaceRole.canWrite(role) || "ADMIN".equals(TenantContext.getUserRole()))) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
-                    "workspace-layer rules require workspace OWNER or ADMIN");
+                    "workspace-layer rules require workspace EDITOR or OWNER");
         }
     }
 

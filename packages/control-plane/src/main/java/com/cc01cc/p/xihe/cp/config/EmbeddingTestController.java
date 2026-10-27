@@ -83,6 +83,8 @@ public class EmbeddingTestController {
                     "Authentication is required");
         }
         UUID userId = UUID.fromString(userIdValue);
+        TenantContext.requireWorkspaceMatches(headerWorkspaceId);
+        TenantContext.requireWorkspaceMatches(queryWorkspaceId);
         String wsValue = headerWorkspaceId != null && !headerWorkspaceId.isBlank()
                 ? headerWorkspaceId
                 : queryWorkspaceId != null && !queryWorkspaceId.isBlank()
@@ -133,6 +135,7 @@ public class EmbeddingTestController {
                     "Authentication is required");
         }
         UUID userId = UUID.fromString(userIdValue);
+        TenantContext.requireWorkspaceMatches(headerWorkspaceId);
         String wsValue = headerWorkspaceId != null && !headerWorkspaceId.isBlank()
                 ? headerWorkspaceId
                 : TenantContext.getWorkspaceId();

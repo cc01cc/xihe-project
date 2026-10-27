@@ -87,7 +87,7 @@ function seedIdentity(options: { admin?: boolean; workspaceOwner?: boolean } = {
             ...(options.admin ? { role: "ADMIN" } : {}),
         }),
     );
-    localStorage.setItem(
+    sessionStorage.setItem(
         "xihe-workspace",
         JSON.stringify({
             id: WORKSPACE_ID,
@@ -107,6 +107,7 @@ async function mountView() {
 beforeEach(() => {
     setActivePinia(createPinia());
     localStorage.clear();
+    sessionStorage.clear();
     vi.clearAllMocks();
     vi.mocked(api.listPolicyToolFaces).mockResolvedValue([builtinFace, unclassifiedFace]);
 });

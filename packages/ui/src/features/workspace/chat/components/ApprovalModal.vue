@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { getActivePinia } from "pinia";
 import BaseModal from "../../../../components/shared/BaseModal.vue";
 import { ApiError, api } from "../../../../composables/api";
+import { useAuthStore } from "../../../../stores/auth";
 import { logger } from "../../../../lib/logger";
 import type {
     ApprovalDecisionEnvelope,
@@ -37,6 +39,8 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const authStore = getActivePinia() ? useAuthStore() : null;
+const canWriteWorkspace = computed(() => authStore?.canWriteWorkspace ?? true);
 
 const saveConfirming = ref(false),
     savedLayer = ref<"workspace" | "user">("workspace"),
@@ -115,7 +119,9 @@ const shapeWarning = computed(() => {
     return "";
 });
 
-const canSubmit = computed(() => Boolean(props.approval) && !props.busy && !submitted.value);
+const canSubmit = computed(
+    () => Boolean(props.approval) && !props.busy && !submitted.value && canWriteWorkspace.value,
+);
 const isStructuredPolicy = computed(() => props.approval?.policy?.shape === "structured");
 /** O-face: the tool has no registered action class, so reuse rules cannot be granted. */
 const isUnclassifiedPolicy = computed(() => props.approval?.policy?.actionClass === "unclassified");

@@ -42,6 +42,7 @@ import com.cc01cc.p.xihe.cp.operation.JobStateService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.credentials.CredentialLeaseService;
 import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.logging.RequestIdFilter;
 
 import java.net.URI;
@@ -154,6 +155,14 @@ public class McpProxyController {
     private final ToolTimeoutPolicy toolTimeoutPolicy;
     private final org.springframework.core.env.Environment environment;
     private final Map<String, AtomicLong> toolGenerations = new ConcurrentHashMap<>();
+
+    /**
+     * PLAN-0559: VIEWER may call read-only tools (file tree, previews) but not
+     * mutating tools. Keep this list aligned with the runtime read-only set.
+     */
+    private static final Set<String> VIEWER_READ_ONLY_TOOLS = Set.of(
+            "read_file", "read_file_range", "list_directory", "get_file_info",
+            "glob", "grep", "watch_directory", "extract_pdf_text");
 
     @Value("${cp.mcp.runtime-url:http://localhost:12633}")
     private String runtimeBaseUrl;
@@ -2187,17 +2196,20 @@ public class McpProxyController {
             }
         } else {
             userId = TenantContext.getUserId();
-            String tokenWorkspaceId = TenantContext.getWorkspaceId();
-            if (userId == null || tokenWorkspaceId == null) {
+            // PLAN-0559: the tenant comes from the request context resolved by
+            // TenantContextInterceptor (header → legacy claim → default), not
+            // from a workspace claim on the user-level access token.
+            String effectiveWorkspaceId = TenantContext.getWorkspaceId();
+            if (userId == null || effectiveWorkspaceId == null) {
                 return AuthorizationResult.failure(problem(
                         HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Authorization required"));
             }
-            if (conflicts(tokenWorkspaceId, headerWorkspaceId)
-                    || conflicts(tokenWorkspaceId, bodyWorkspaceId)) {
+            if (conflicts(effectiveWorkspaceId, headerWorkspaceId)
+                    || conflicts(effectiveWorkspaceId, bodyWorkspaceId)) {
                 return AuthorizationResult.failure(problem(
                         HttpStatus.FORBIDDEN, "FORBIDDEN", "Workspace context does not match user context"));
             }
-            workspaceId = tokenWorkspaceId;
+            workspaceId = effectiveWorkspaceId;
             if (claimedUserId != null && !claimedUserId.equals(userId)) {
                 return AuthorizationResult.failure(problem(
                         HttpStatus.FORBIDDEN, "FORBIDDEN", "User context does not match authenticated user"));
@@ -2207,6 +2219,12 @@ public class McpProxyController {
                     return AuthorizationResult.failure(problem(
                             HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found"));
                 }
+            }
+            if ("tools/call".equals(extractMethod(body))
+                    && !WorkspaceRole.canWrite(TenantContext.getWorkspaceRole())
+                    && !VIEWER_READ_ONLY_TOOLS.contains(extractToolName(body))) {
+                return AuthorizationResult.failure(problem(
+                        HttpStatus.FORBIDDEN, "WORKSPACE_READ_ONLY", "Viewer cannot call this tool"));
             }
         }
 

@@ -31,6 +31,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.UUID;
@@ -58,6 +59,9 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @Autowired
+    private WorkspaceService workspaceService;
+
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
         registry.add("cp.mcp.runtime-url", () -> "http://localhost:" + wireMock.port());
@@ -77,7 +81,8 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
     void setUp() {
         super.setUp();
         token = registerAndLogin();
-        wsId = jwtTokenProvider.getWorkspaceIdFromToken(token);
+        String userId = jwtTokenProvider.getUserIdFromToken(token);
+        wsId = workspaceService.findCurrentWorkspace(userId).orElseThrow().getId().toString();
     }
 
     private HttpEntity<String> mcpEntity(String body) {
@@ -488,7 +493,7 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setBearerAuth(token);
-        headers.set("X-Workspace-Id", "other-workspace");
+        headers.set("X-Workspace-Id", java.util.UUID.randomUUID().toString());
 
         ResponseEntity<String> response = restTemplate.postForEntity(
                 url("/api/v1/mcp"), new HttpEntity<>(INITIALIZE_BODY, headers), String.class);

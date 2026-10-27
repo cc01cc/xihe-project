@@ -23,6 +23,14 @@ updated: 2026-10-10
 
 这些 SPEC 不复制 OpenAPI/SSE schema，也不替代 feature PLAN 的具体页面流程。
 
+## 0.1 工作区上下文（PLAN-0559）
+
+- 工作区放 URL + sessionStorage；localStorage 只保留 token/user。
+- 每个 workspace-scoped 请求带 X-Workspace-Id；切工作区清 workspace-scoped 缓存并丢弃旧响应。
+- 角色 OWNER/EDITOR/VIEWER；VIEWER 隐藏写入口，服务端仍以 403 为准。
+- 跨标签登出用 BroadcastChannel + storage 兜底；不广播工作区切换。
+
+
 ## 1. 路由与布局
 
 `packages/ui/src/router/index.ts`：

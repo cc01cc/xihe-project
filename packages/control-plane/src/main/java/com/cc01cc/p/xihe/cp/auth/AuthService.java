@@ -110,7 +110,7 @@ public class AuthService {
     /** Pure token issuance for a caller-resolved workspace; no Workspace reads. */
     public AuthResponse issueTokens(User user, String workspaceId) {
         String accessToken = jwtTokenProvider.createAccessToken(
-                user.getId().toString(), user.getEmail(), user.getRole().name(), workspaceId);
+                user.getId().toString(), user.getEmail(), user.getRole().name());
         String refreshToken = jwtTokenProvider.createRefreshToken(user.getId().toString());
 
         return new AuthResponse(accessToken, refreshToken, 900,

@@ -652,6 +652,10 @@ async function submitMessage(input: {
     branchId: string;
 }) {
     const { content, attachments, agentPrincipalId, branchId } = input;
+    if (!authStore.canWriteWorkspace) {
+        toast.error(t("workspace.viewerReadOnly"));
+        return;
+    }
     const id = props.sessionId;
 
     const fileIds = attachments

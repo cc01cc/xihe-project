@@ -6,6 +6,7 @@ import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.provider.ApiInputTypeService;
 import com.cc01cc.p.xihe.cp.provider.ApiRequestValidator;
 import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
@@ -100,11 +101,11 @@ public class ApiRequestTemplateService {
                 }
                 workspaces.getObject().requireAccessibleWorkspace(workspace.toString(), actor);
                 if (write) {
-                    // Reuse the workspace owner/admin mutation gate.
+                    // PLAN-0559: workspace-layer writes require EDITOR or OWNER.
                     String role = TenantContext.getWorkspaceRole();
                     if (!admin() && !(workspace.toString().equals(TenantContext.getWorkspaceId())
-                            && ("OWNER".equals(role) || "ADMIN".equals(role)))) {
-                        throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Workspace owner/admin required");
+                            && WorkspaceRole.canWrite(role))) {
+                        throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Workspace editor permission required");
                     }
                 }
             }

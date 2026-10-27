@@ -12,6 +12,13 @@ updated: 2026-09-19
 
 # DEV-016: MCP Three-Layer Routing Architecture
 
+## 0.1 Workspace context (PLAN-0559)
+
+- User-facing MCP resolves the workspace from X-Workspace-Id; VIEWER 	ools/call returns 403 WORKSPACE_READ_ONLY, while initialize/	ools/list/esources/read are allowed.
+- The service path still uses InternalTokenFilter + explicit X-Workspace-Id + session-owner checks.
+- Shared workspaces have no file/directory locks in v1; use fork/branch, declare-before-edit, checkpoints, and avoid workspace-wide revert.
+
+
 ## 1. Overview
 
 MCP (Model Context Protocol) requests from Agent to tool execution pass through three routing layers:

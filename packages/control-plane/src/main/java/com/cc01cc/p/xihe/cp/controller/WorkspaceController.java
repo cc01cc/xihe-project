@@ -4,6 +4,7 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -56,7 +57,7 @@ public class WorkspaceController {
                     HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Authentication required");
         }
         return ResponseEntity.ok(workspaceService.getWorkspacesByUser(userId).stream()
-                .map(workspace -> toMap(workspace, userId, isAdmin())).toList());
+                .map(workspace -> toMap(workspace, userId, isAdmin(), roleFor(workspace, userId))).toList());
     }
 
     @GetMapping("/{workspaceId}")
@@ -94,7 +95,7 @@ public class WorkspaceController {
             // toView already returns a ResponseEntity. Nesting it as the body
             // serializes `{body, headers, statusCode}` and hides workspace.id
             // from the UI response.
-            return ResponseEntity.status(HttpStatus.CREATED).body(toMap(workspace, userId, isAdmin()));
+            return ResponseEntity.status(HttpStatus.CREATED).body(toMap(workspace, userId, isAdmin(), WorkspaceRole.OWNER.name()));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -129,10 +130,14 @@ public class WorkspaceController {
     }
 
     private ResponseEntity<Map<String, Object>> toView(Workspace workspace, String userId, boolean admin) {
-        return ResponseEntity.ok(toMap(workspace, userId, admin));
+        return ResponseEntity.ok(toMap(workspace, userId, admin, roleFor(workspace, userId)));
     }
 
-    static Map<String, Object> toMap(Workspace workspace, String userId, boolean admin) {
+    private String roleFor(Workspace workspace, String userId) {
+        return workspaceService.resolveWorkspaceRole(workspace.getId().toString(), userId);
+    }
+
+    static Map<String, Object> toMap(Workspace workspace, String userId, boolean admin, String workspaceRole) {
         Map<String, Object> view = new LinkedHashMap<>();
         view.put("id", workspace.getId());
         view.put("name", workspace.getName());
@@ -145,6 +150,8 @@ public class WorkspaceController {
                 ? workspace.getHostPath() : null);
         view.put("executionMode", workspace.getExecutionMode());
         view.put("generation", workspace.getGeneration());
+        view.put("workspaceRole", workspaceRole);
+        view.put("canWrite", WorkspaceRole.canWrite(workspaceRole));
         view.put("createdAt", workspace.getCreatedAt() == null ? null : workspace.getCreatedAt().toString());
         view.put("updatedAt", workspace.getUpdatedAt() == null ? null : workspace.getUpdatedAt().toString());
         return view;

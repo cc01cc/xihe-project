@@ -7,7 +7,7 @@ sidebar_group: "Developer Guide"
 sidebar_order: 24
 status: active
 created: 2026-10-19
-updated: 2026-10-19
+updated: 2026-10-27
 ---
 
 # DEV-024: Module Authentication and Key Matrix
@@ -25,6 +25,15 @@ XH uses **two** authentication mechanisms. Do not mix them:
 - **Internal**: one **shared static token** (`XIHE_AGENT_API_TOKEN`, falling back to `XIHE_CP_API_TOKEN`) used in all four service directions.
 
 The MCP logical endpoint has **no protocol session**: CP neither issues nor accepts `mcp-session-id`.
+
+### 1.1 Workspace context (PLAN-0559)
+
+- Access tokens are **user-level**: new tokens carry no `workspace_id`; the workspace comes from `X-Workspace-Id` on each request.
+- Resolution: `X-Workspace-Id` -> legacy token claim (transition) -> caller default workspace. A present header never falls back to the claim.
+- Every request checks active + membership. Roles: OWNER (read/write/manage), EDITOR (read/write), VIEWER (read-only); legacy `ADMIN`/`MEMBER` map to EDITOR.
+- Errors: malformed header `400 INVALID_WORKSPACE_ID`; non-member/deleted `403 WORKSPACE_FORBIDDEN`; VIEWER write `403 WORKSPACE_READ_ONLY`.
+- Refresh never rebinds a workspace; the optional `X-Workspace-Id` only echoes `workspaceId`.
+- v1 has no file/directory locks; shared workspaces rely on fork/branch, declare-before-edit, checkpoints, and avoiding workspace-wide revert.
 
 ## 2. Authentication paths
 

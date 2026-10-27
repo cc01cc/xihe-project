@@ -12,10 +12,12 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
+import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 
@@ -142,11 +144,21 @@ public class AuthController {
     }
 
     @PostMapping("/refresh")
-    public ResponseEntity<?> refresh(@Valid @RequestBody RefreshRequest request) {
+    public ResponseEntity<?> refresh(@Valid @RequestBody RefreshRequest request,
+                                     @RequestHeader(value = "X-Workspace-Id", required = false) String workspaceHeader) {
         try {
             User user = authService.verifyRefresh(request.getRefreshToken());
-            AuthResponse response = withDefaultWorkspace(user);
-            return ResponseEntity.ok(response);
+            // PLAN-0559: the access token is user-level; the optional header only
+            // backfills the response workspaceId for clients that still read it.
+            String workspaceId = workspaceHeader == null || workspaceHeader.isBlank()
+                    ? workspaceService.getOrCreateDefaultWorkspace(user.getId().toString()).getId().toString()
+                    : workspaceService.requireContextWorkspace(
+                            TenantContext.normalizeWorkspaceId(workspaceHeader), user.getId().toString());
+            return ResponseEntity.ok(authService.issueTokens(user, workspaceId));
+        } catch (CpApiException e) {
+            // CpApiException extends IllegalArgumentException; preserve 400/403
+            // instead of rewriting them into a 401 below.
+            throw e;
         } catch (IllegalArgumentException e) {
             logger.warn("Token refresh failed: {}", e.getMessage());
             return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_FAILED", "Invalid or expired refresh token");

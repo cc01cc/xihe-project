@@ -140,6 +140,7 @@ describe("DataControlsView snapshot retention (PLAN-0328 M3)", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         localStorage.clear();
+        sessionStorage.clear();
         localStorage.setItem("xihe-token", "test-token");
         localStorage.setItem(
             "xihe-workspace",

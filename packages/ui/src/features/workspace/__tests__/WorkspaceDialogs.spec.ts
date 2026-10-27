@@ -44,6 +44,7 @@ vi.mock("../../../stores/auth", () => ({
             workspaceMock.value = v;
         },
         currentWorkspaceId: workspaceMock.value?.id ?? null,
+        canWriteWorkspace: true,
     }),
 }));
 

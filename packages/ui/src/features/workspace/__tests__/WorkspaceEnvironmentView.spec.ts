@@ -64,7 +64,7 @@ function environment(executionMode: "docker" | "windows-mxc" | "windows-host") {
 
 function setPrincipal(user: { id: string; role?: string }, ownerId: string) {
     localStorage.setItem("xihe-user", JSON.stringify(user));
-    localStorage.setItem(
+    sessionStorage.setItem(
         "xihe-workspace",
         JSON.stringify({ id: "workspace-1", name: "Workspace", ownerId }),
     );
@@ -105,6 +105,7 @@ async function mountView(): Promise<VueWrapper> {
 
 beforeEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
     localStorage.setItem("xihe-token", "mock-token");
     setActivePinia(createPinia());
     mockedApi.getWorkspaceEnvironment.mockResolvedValue(environment("docker") as never);

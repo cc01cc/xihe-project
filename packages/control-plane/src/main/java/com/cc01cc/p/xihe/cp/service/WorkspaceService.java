@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
@@ -217,6 +218,23 @@ public class WorkspaceService {
         return workspace;
     }
 
+    /**
+     * PLAN-0559: request-context workspace access. Unlike
+     * {@link #requireAccessibleWorkspace(String, String)} this hides existence
+     * behind the same 403 the tenant header contract uses.
+     */
+    @Transactional(readOnly = true)
+    public String requireContextWorkspace(String workspaceId, String userId) {
+        String normalized = TenantContext.normalizeWorkspaceId(workspaceId);
+        if (normalized == null || !isWorkspaceMember(normalized, userId)) {
+            throw new CpApiException(
+                    org.springframework.http.HttpStatus.FORBIDDEN,
+                    "WORKSPACE_FORBIDDEN",
+                    "Workspace access denied");
+        }
+        return normalized;
+    }
+
     @Transactional(readOnly = true)
     public boolean isWorkspaceMember(String workspaceId, String userId) {
         return workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId)).isPresent()
@@ -251,7 +269,7 @@ public class WorkspaceService {
         }
         return workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId), UUID.fromString(userId))
                 .map(WorkspaceUser::getRole)
-                .map(Enum::name)
+                .map(WorkspaceRole::canonicalName)
                 .orElse(null);
     }
 
