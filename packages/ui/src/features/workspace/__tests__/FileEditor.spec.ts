@@ -7,6 +7,15 @@ import { i18n } from "../../../i18n";
 import type { editor } from "monaco-editor";
 
 vi.mock("vue-router", () => ({
+    createRouter: () => ({
+        push: vi.fn(),
+        replace: vi.fn(),
+        beforeEach: vi.fn(),
+        afterEach: vi.fn(),
+        isReady: () => Promise.resolve(),
+        currentRoute: { value: {} },
+    }),
+    createWebHistory: () => ({}),
     useRoute: () => ({ query: {} }),
     useRouter: () => ({
         push: vi.fn<Router["push"]>(),

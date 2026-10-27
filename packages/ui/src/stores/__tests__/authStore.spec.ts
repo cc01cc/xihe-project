@@ -11,6 +11,8 @@ vi.mock("../../composables/api", () => ({
         login: vi.fn<typeof apiModule.login>(),
         register: vi.fn<typeof apiModule.register>(),
     },
+    onAuthTokensRefreshed: vi.fn(),
+    registerForceLogout: vi.fn(),
 }));
 
 const mockUser: User = { id: "u1", email: "test@test.com", name: "Test" },
@@ -144,3 +146,4 @@ describe("useAuthStore", () => {
         expect(store.userName).toBe("no-name@test.com");
     });
 });
+

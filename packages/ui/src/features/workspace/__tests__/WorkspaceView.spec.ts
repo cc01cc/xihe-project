@@ -11,6 +11,15 @@ import { api } from "../../../composables/api";
 import type * as apiModule from "../../../composables/api";
 
 vi.mock("vue-router", () => ({
+    createRouter: () => ({
+        push: vi.fn(),
+        replace: vi.fn(),
+        beforeEach: vi.fn(),
+        afterEach: vi.fn(),
+        isReady: () => Promise.resolve(),
+        currentRoute: { value: {} },
+    }),
+    createWebHistory: () => ({}),
     useRoute: () => ({
         params: { workspaceId: "workspace-1" },
         path: "/workspace/workspace-1",

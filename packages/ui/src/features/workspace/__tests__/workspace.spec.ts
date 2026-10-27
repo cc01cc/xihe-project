@@ -121,7 +121,7 @@ describe("workspace store deleteNode (B-2 failure semantics)", () => {
         const store = useWorkspaceStore(),
             result = await store.deleteNode("x.txt");
         expect(result).toBe(false);
-        expect(store.treeError).toContain("沙盒未就绪");
+        expect(store.treeError).toContain("工作区运行时未就绪");
     });
 });
 
@@ -351,3 +351,4 @@ describe("workspace store external Workspace events (PLAN-0350)", () => {
         });
     });
 });
+
