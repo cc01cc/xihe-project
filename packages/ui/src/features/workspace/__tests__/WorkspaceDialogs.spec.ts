@@ -6,7 +6,6 @@ import { api, ApiError } from "../../../composables/api";
 import type * as apiModule from "../../../composables/api";
 import type { WorkspaceDirectAttachExecutionMode } from "../../../types";
 import WorkspaceCreateDialog from "../components/WorkspaceCreateDialog.vue";
-import WorkspaceSettingsDialog from "../components/WorkspaceSettingsDialog.vue";
 import { i18n } from "../../../i18n";
 
 vi.mock("../../../composables/api", async (importOriginal) => {
@@ -295,95 +294,5 @@ describe("WorkspaceCreateDialog (PLAN-0384)", () => {
             '[data-testid="workspace-execution-next"]',
         ) as HTMLButtonElement;
         expect(next.disabled).toBe(true);
-    });
-});
-
-describe("WorkspaceSettingsDialog (M2)", () => {
-    let wrappers: VueWrapper[] = [];
-    beforeEach(() => {
-        vi.clearAllMocks();
-        workspaceMock.value = { id: "ws-1", name: "Dev Workspace" };
-    });
-    afterEach(() => {
-        wrappers.forEach((w) => w.unmount());
-        wrappers = [];
-        document.body.innerHTML = "";
-    });
-
-    async function setInput(wrapper: VueWrapper, id: string, value: string) {
-        const input = wrapper.find(`#${id}`);
-        expect(input.exists()).toBe(true);
-        await input.setValue(value);
-    }
-
-    async function setBodyInput(id: string, value: string) {
-        // AlertDialog content is teleported outside the wrapper tree; use native events.
-        // Portal mount can be rAF-deferred under jsdom, so poll instead of single nextTick.
-        await vi.waitFor(() => {
-            expect(document.body.querySelector(`#${id}`)).toBeTruthy();
-        });
-        const input = document.body.querySelector(`#${id}`) as HTMLInputElement | null;
-        input!.value = value;
-        input!.dispatchEvent(new Event("input", { bubbles: true }));
-        await nextTick();
-    }
-
-    it("saves rename via updateWorkspace", async () => {
-        mockedApi.updateWorkspace.mockResolvedValue({ id: "ws-1", name: "Renamed" });
-        const wrapper = mount(WorkspaceSettingsDialog, {
-            props: { open: true },
-            attachTo: document.body,
-        });
-        wrappers.push(wrapper);
-
-        await setInput(wrapper, "ws-settings-name", "Renamed");
-        const saveBtn = wrapper.findAll("button").find((b) => b.text().trim() === "保存")!;
-        await saveBtn.trigger("click");
-        await nextTick();
-        await new Promise((r) => setTimeout(r, 0));
-
-        expect(mockedApi.updateWorkspace).toHaveBeenCalledWith(
-            "ws-1",
-            expect.objectContaining({ name: "Renamed" }),
-        );
-        expect(toast.success).toHaveBeenCalled();
-    });
-
-    it("requires exact workspace name before deleting", async () => {
-        const wrapper = mount(WorkspaceSettingsDialog, {
-            props: { open: true },
-            attachTo: document.body,
-        });
-        wrappers.push(wrapper);
-
-        const delBtn = wrapper.findAll("button").find((b) => b.text().trim() === "删除…")!;
-        await delBtn.trigger("click");
-        await nextTick();
-
-        // wrong name first: dialog must stay open and show the guard error
-        await setBodyInput("ws-delete-confirm", "Wrong Name");
-        await nextTick();
-        const confirmBtn = document.body.querySelector(
-            '[data-testid="workspace-delete-confirm-btn"]',
-        ) as HTMLButtonElement | null;
-        expect(confirmBtn).toBeTruthy();
-        confirmBtn!.click();
-        await nextTick();
-        await new Promise((r) => setTimeout(r, 0));
-
-        expect(mockedApi.deleteWorkspace).not.toHaveBeenCalled();
-        // guard keeps the dialog open (regression: AlertDialogAction auto-close)
-        expect(document.body.querySelector("#ws-delete-confirm")).toBeTruthy();
-
-        // exact name
-        await setBodyInput("ws-delete-confirm", "Dev Workspace");
-        await nextTick();
-        mockedApi.deleteWorkspace.mockResolvedValue(undefined);
-        (confirmBtn as HTMLButtonElement).click();
-        await nextTick();
-        await new Promise((r) => setTimeout(r, 0));
-
-        expect(mockedApi.deleteWorkspace).toHaveBeenCalledWith("ws-1");
-        expect(toast.success).toHaveBeenCalled();
     });
 });

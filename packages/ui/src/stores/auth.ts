@@ -231,7 +231,6 @@ export const useAuthStore = defineStore("auth", () => {
         localStorage.removeItem("xihe-token");
         localStorage.removeItem("xihe-refresh-token");
         localStorage.removeItem("xihe-user");
-        localStorage.removeItem("xihe-workspace");
         clearTabWorkspace();
         // Logout: clear the anonymous telemetry session id (PLAN-0527 decision #5).
         clearAnonSessionId();

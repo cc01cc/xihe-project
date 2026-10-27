@@ -14,7 +14,6 @@ import { FolderTree, X } from "@lucide/vue";
 import { useMediaQuery } from "@vueuse/core";
 import WorkspaceToolbar from "../components/WorkspaceToolbar.vue";
 import WorkspaceCreateDialog from "../components/WorkspaceCreateDialog.vue";
-import WorkspaceSettingsDialog from "../components/WorkspaceSettingsDialog.vue";
 import WorkspaceAgentManagementDialog from "../components/WorkspaceAgentManagementDialog.vue";
 import MobileWorkspaceSheet from "../components/MobileWorkspaceSheet.vue";
 import MobileChatSheet from "../components/MobileChatSheet.vue";
@@ -66,7 +65,6 @@ const routeWorkspaceId = computed(() => {
 });
 
 const showCreateDialog = ref(false),
-    showSettingsDialog = ref(false),
     showAgentManagementDialog = ref(false);
 const showSourceImportDialog = ref(false),
     showMobileFiles = ref(false),
@@ -127,11 +125,6 @@ function handleToggleMonitor() {
 
 function handleWorkspaceCreated(id: string) {
     router.push(`/workspace/${id}`);
-}
-
-function handleWorkspaceDeleted() {
-    sessionStore.resetForUserSwitch();
-    router.push("/workspace");
 }
 
 const routeSessionId = computed(() => (route.params.sessionId as string | undefined) ?? "");
@@ -382,7 +375,6 @@ watch([workspaceId, routeSessionId], () => {
                 "
                 @upload="handleUpload"
                 @import-source="showSourceImportDialog = true"
-                @settings="showSettingsDialog = true"
                 @agents="showAgentManagementDialog = true"
                 @add-workspace="showCreateDialog = true"
                 @files="showMobileFiles = true"
@@ -545,11 +537,6 @@ watch([workspaceId, routeSessionId], () => {
             "
         />
 
-        <WorkspaceSettingsDialog
-            :open="showSettingsDialog"
-            @close="showSettingsDialog = false"
-            @deleted="handleWorkspaceDeleted"
-        />
         <WorkspaceAgentManagementDialog
             :open="showAgentManagementDialog"
             :workspace-id="workspaceId"

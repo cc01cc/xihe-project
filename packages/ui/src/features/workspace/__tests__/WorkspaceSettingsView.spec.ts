@@ -63,8 +63,19 @@ function mockConfigFetch() {
 
 function mockConfigFetchResponse(input: RequestInfo | URL): Promise<Response> {
     const url = typeof input === "string" ? input : input.url,
-        parsed = new URL(url, "http://localhost"),
-        layer = parsed.searchParams.get("layer");
+        parsed = new URL(url, "http://localhost");
+    if (parsed.pathname.includes("/api/v1/workspaces/")) {
+        if ((input as Request).method === "DELETE") {
+            return Promise.resolve(new Response(null, { status: 204 }));
+        }
+        return Promise.resolve(
+            new Response(
+                JSON.stringify({ id: WORKSPACE_ID, name: "Workspace", workspaceRole: "OWNER" }),
+                { status: 200 },
+            ),
+        );
+    }
+    const layer = parsed.searchParams.get("layer");
     if (!layer) {
         return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
     }
@@ -75,9 +86,10 @@ function mockConfigFetchResponse(input: RequestInfo | URL): Promise<Response> {
     );
 }
 
-async function mountView() {
+async function mountView(options: { attachTo?: boolean } = {}) {
     const { default: WorkspaceSettingsView } = await import("../pages/WorkspaceSettingsView.vue"),
         wrapper = mount(WorkspaceSettingsView, {
+            ...(options.attachTo ? { attachTo: document.body } : {}),
             global: {
                 plugins: [i18n],
                 stubs: { ProviderHub: true, McpStdioServerList: true },
@@ -184,5 +196,103 @@ describe("WorkspaceSettingsView (PLAN-0560)", () => {
     it("keeps workspace-layer domains out of user-only lists (sanity)", () => {
         expect(LAYER_DOMAINS.workspace).toContain("job-policy");
         expect(LAYER_DOMAINS.workspace).toContain("llm-provider");
+    });
+});
+
+describe("WorkspaceSettingsView OWNER 编辑与删除 (PLAN-0560 T2.6/T3.3 迁移)", () => {
+    async function mountOwner() {
+        // migrateLegacyWorkspace 会把 localStorage 旧键归一化为 {id,name}，
+        // 角色必须直写 per-tab sessionStorage 才能进入 OWNER 分支。
+        localStorage.removeItem("xihe-workspace");
+        sessionStorage.setItem(
+            "xihe-workspace",
+            JSON.stringify({
+                id: WORKSPACE_ID,
+                name: "Workspace",
+                workspaceRole: "OWNER",
+                ownerId: "u1",
+            }),
+        );
+        return await mountView({ attachTo: true });
+    }
+
+    async function setBodyInput(id: string, value: string) {
+        // AlertDialog content is teleported outside the wrapper tree; use native events.
+        // Portal mount can be rAF-deferred under jsdom, so poll instead of single nextTick.
+        await vi.waitFor(() => {
+            expect(document.body.querySelector(`#${id}`)).toBeTruthy();
+        });
+        const input = document.body.querySelector(`#${id}`) as HTMLInputElement | null;
+        input!.value = value;
+        input!.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+
+    it("saves rename via updateWorkspace", async () => {
+        const wrapper = await mountOwner();
+
+        await wrapper.find('[data-testid="ws-settings-name-input"]').setValue("Renamed");
+        await wrapper.find('[data-testid="ws-settings-save"]').trigger("click");
+        await flushPromises();
+
+        const request = vi.mocked(fetch).mock.calls.find(([input, init]) => {
+            const url = typeof input === "string" ? input : input.url;
+            return url.includes(`/api/v1/workspaces/${WORKSPACE_ID}`) && init?.method === "PATCH";
+        });
+        expect(request).toBeTruthy();
+        expect(JSON.parse(String(request?.[1]?.body))).toEqual(
+            expect.objectContaining({ name: "Renamed" }),
+        );
+        wrapper.unmount();
+    });
+
+    it("requires exact workspace name before deleting", async () => {
+        const wrapper = await mountOwner();
+
+        await wrapper.find('[data-testid="ws-settings-delete"]').trigger("click");
+        await setBodyInput("ws-delete-confirm-input", "Wrong Name");
+        const confirmBtn = () =>
+            document.body.querySelector(
+                '[data-testid="ws-delete-confirm-btn"]',
+            ) as HTMLButtonElement | null;
+        await vi.waitFor(() => expect(confirmBtn()).toBeTruthy());
+        confirmBtn()!.click();
+        await flushPromises();
+
+        const deleteCalls = () =>
+            vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "DELETE");
+        expect(deleteCalls().length).toBe(0);
+        // guard keeps the dialog open (regression: AlertDialogAction auto-close)
+        expect(document.body.querySelector("#ws-delete-confirm-input")).toBeTruthy();
+
+        await setBodyInput("ws-delete-confirm-input", "Workspace");
+        confirmBtn()!.click();
+        await flushPromises();
+
+        expect(deleteCalls().length).toBe(1);
+        expect(routerSpies.replace).toHaveBeenCalledWith({ name: "workspace-home" });
+        wrapper.unmount();
+    });
+});
+
+describe("WorkspaceSettingsView 权限一致性 (PLAN-0560 T3.6)", () => {
+    it("hides general mutations for VIEWER", async () => {
+        localStorage.removeItem("xihe-workspace");
+        sessionStorage.setItem(
+            "xihe-workspace",
+            JSON.stringify({
+                id: WORKSPACE_ID,
+                name: "Workspace",
+                workspaceRole: "VIEWER",
+                ownerId: "someone-else",
+            }),
+        );
+        const wrapper = await mountView();
+
+        expect(wrapper.find('[data-testid="ws-settings-edit"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="ws-settings-delete"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="ws-settings-save"]').exists()).toBe(false);
+        // 头部动作组仍可用（新建对话/环境状态/返回工作区均为只读导航动作）。
+        expect(wrapper.find('[data-testid="ws-settings-new-chat"]').exists()).toBe(true);
+        wrapper.unmount();
     });
 });
