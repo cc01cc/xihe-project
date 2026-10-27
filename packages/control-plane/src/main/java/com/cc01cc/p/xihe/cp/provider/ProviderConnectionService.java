@@ -38,6 +38,8 @@ public class ProviderConnectionService {
             Pattern.compile("[a-z0-9]+(?:-[a-z0-9]+)*");
     private static final java.util.Set<String> MODEL_DISCOVERY_VALUES =
             java.util.Set.of("remote-models", "litellm-catalog", "curated", "manual");
+    /** PLAN-0563: display names are short, single-line labels. */
+    private static final int LABEL_MAX_CODE_POINTS = 40;
 
     private final ProviderConnectionRepository repository;
     private final ProviderConnectionAuditRepository auditRepository;
@@ -680,10 +682,20 @@ public class ProviderConnectionService {
         if (normalized.isEmpty()) {
             throw new LabelInvalidException("Connection label is required");
         }
-        if (normalized.length() > 128) {
-            throw new LabelInvalidException("Connection label must be at most 128 characters");
+        if (normalized.codePointCount(0, normalized.length()) > LABEL_MAX_CODE_POINTS) {
+            throw new LabelInvalidException("Connection label must be at most 40 characters");
+        }
+        if (containsControlCharacter(normalized)) {
+            throw new LabelInvalidException(
+                    "Connection label must not contain control characters");
         }
         return normalized;
+    }
+
+    /** C0/C1 controls plus Unicode line/paragraph separators. */
+    private static boolean containsControlCharacter(String value) {
+        return value.codePoints().anyMatch(codePoint ->
+                Character.isISOControl(codePoint) || codePoint == 0x2028 || codePoint == 0x2029);
     }
 
     /**

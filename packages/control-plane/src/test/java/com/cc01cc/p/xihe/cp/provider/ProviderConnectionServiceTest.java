@@ -243,7 +243,7 @@ class ProviderConnectionServiceTest {
                         "blank")));
         assertThrows(ProviderConnectionService.LabelInvalidException.class,
                 () -> service.create(new ProviderConnectionService.ConnectionInput(
-                        "deepseek", "x".repeat(129), "USER", "sk-test-key", null, null,
+                        "deepseek", "x".repeat(41), "USER", "sk-test-key", null, null,
                         List.of(), null, "long")));
     }
 
@@ -308,6 +308,41 @@ class ProviderConnectionServiceTest {
                         "deepseek", "  Renamed  ", null, null, null, null, null, null, null));
 
         assertEquals("Renamed", updated.getLabel());
+    }
+
+    @Test
+    void createAcceptsFortyCodePoints() {
+        TenantContext.setUserId("user-1");
+        stubCatalogForCreate();
+        when(repository.saveAndFlush(any(ProviderConnection.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        ProviderConnection cjk = service.create(new ProviderConnectionService.ConnectionInput(
+                "deepseek", "字".repeat(40), "USER", "sk-test-key", null, null, List.of(), null,
+                "forty-cjk"));
+        ProviderConnection emoji = service.create(new ProviderConnectionService.ConnectionInput(
+                "deepseek", "😀".repeat(40), "USER", "sk-test-key", null, null, List.of(), null,
+                "forty-emoji"));
+
+        assertEquals("字".repeat(40), cjk.getLabel());
+        assertEquals(40, emoji.getLabel().codePointCount(0, emoji.getLabel().length()));
+    }
+
+    @Test
+    void createRejectsControlCharacters() {
+        TenantContext.setUserId("user-1");
+        stubCatalogForCreate();
+
+        java.util.List<String> labels = List.of(
+                "line\nbreak", "tab\tname", "del\u007f", "line\u2028break");
+        for (int i = 0; i < labels.size(); i++) {
+            String label = labels.get(i),
+                key = "control-" + i;
+            assertThrows(ProviderConnectionService.LabelInvalidException.class,
+                    () -> service.create(new ProviderConnectionService.ConnectionInput(
+                            "deepseek", label, "USER", "sk-test-key", null, null, List.of(), null,
+                            key)));
+        }
     }
 
     private void stubCatalogForCreate() {
