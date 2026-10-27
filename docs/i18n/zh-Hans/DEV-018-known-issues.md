@@ -141,6 +141,12 @@ updated: 2026-10-25
 - **Runtime per-request exec 延迟（PLAN-235）**: Workspace 操作经 Docker exec 单次往返，M0 spike 手工实测均值约 136ms（不可复现锚点，仅供参考）；高频批量操作若不可接受，以纯性能优化另行评估 HTTP 通道，不改变 operation core。
 - **Runtime 后台 job 状态文件（PLAN-235）**: job 状态存于容器 `/tmp/xihe-jobs/<jobId>/`，容器重建即自然孤儿化；查询旧 jobId 返回 not found 属设计内行为，非数据丢失。
 
+## host 车道全矩阵基建阻断（PLAN-0560 补跑发现，2026-10-28 登记；未修，需立项）
+
+- **现象**：`mock-full` 批次（host 隔离栈全矩阵）在 develop `3516901b` 后代与 `plan-0560` worktree 两侧都无法整跑：① `cargo run` 包裹的 `xihe-runtime.exe` 在就绪 ~2min 后**无 panic、无 Windows 事件/Defender 记录**地 exit 1（runtime 自身日志干净截断），此后 CP→runtime 全链 502/503 连锁失败；② PLAN-0559 引入的 `AUTH_RATE_LIMITED` 注册限流被全矩阵注册量击穿（34 次 429；未设 `X-Forwarded-For` 的 spec 共享同一 IP 桶）。实测 21P/35F/1 flaky/56S。
+- **影响**：host 车道自 PLAN-0559 限流上线后失去整跑能力；mock lane 与单测不受影响。PLAN-0560 复跑记录见 `one/plans/PLAN-0560-*/evidence/m5-host-e2e.md`（含 teardown 零残留与日志位置）。
+- **修复方向**：runtime 静默退出需独立根因（复现最小化：`mock-full` 前段 mcp-init 直连工具调用期）；限流需 e2e 豁免口径（隔离栈 env 关闭或按 token 豁免）或全矩阵 spec 统一 XFF 注入。修好后重跑 `mock-full`（恢复 41P/0F 基线口径）+ `real-full`。
+
 ## Mock E2E ProviderHub 夹具债务（PLAN-0505 审查发现，2026-10-15 登记；未修，需立项）
 
 - **现象**：`e2e/mock/full-ui-acceptance.spec.ts` 的 ProviderHub-creates 用例在 develop 基线（e42d95c0）即红：点击 provider 卡片后 `provider-connection-modal`（连接表单）不出现，15s 超时。同轮 sidebar、message-search（PLAN-0401 evidence 已登记同族）、workspace-file、PDF、FileEditor 共 6 个红点。0505 的双端对照实证见 `plans/PLAN-0505-*/evidence/reports/plan0505-baseline-mock.log`。
