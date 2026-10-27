@@ -142,6 +142,10 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration and
   idempotency, and skips only the browser SSE gate.
 - Errors use `application/problem+json` with `type`, `title`, `status`,
   `code`, `detail`, and `requestId`.
+- Login throttling (PLAN-0558): `POST /auth/login` and `POST /auth/register`
+  return 429 `AUTH_RATE_LIMITED` with an integer `Retry-After` header and
+  `Cache-Control: no-store`. Unknown accounts share the same response shape;
+  counters are per CP process (single-instance v1).
 - No query-string tokens, `X-Api-Token`, old path aliases, or field fallbacks.
 
 ## Policy Tool-Face Contract (PLAN-0328)

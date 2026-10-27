@@ -178,6 +178,7 @@ CP's `AuditLogger` records all MCP tool calls and policy decisions:
 - Console output controlled by `XIHE_CP_AUDIT_LOG_TO_CONSOLE`
 - **Persistence**: written to `{XIHE_LOG_DIR}/audit.log` via the logback `AUDIT` logger (daily rotation, 30d / 1GB / 100MB, JSONL, redacted encoder); replayable after restarts
 - In-memory `recentRecords` keeps only the latest 1000 entries as a query view
+- PLAN-0558 auth audit: `login_failed` goes to the AUDIT JSONL stream; `login_locked`/`login_unlocked` also persist to `audit_logs`. Fields are masked email, IP, reason, and requestId only — never a password, hash, or token.
 
 ## 6. Log Security (Redaction / Correlation IDs / Leak Scan)
 

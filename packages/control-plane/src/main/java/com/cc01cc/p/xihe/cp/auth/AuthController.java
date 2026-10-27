@@ -47,14 +47,20 @@ public class AuthController {
     private final AuthService authService;
     private final WorkspaceService workspaceService;
     private final LocalModeService localModeService;
+    private final LoginAttemptService loginAttemptService;
+    private final ClientIpResolver clientIpResolver;
     private final TransactionTemplate transactionTemplate;
 
     public AuthController(AuthService authService, WorkspaceService workspaceService,
                           LocalModeService localModeService,
+                          LoginAttemptService loginAttemptService,
+                          ClientIpResolver clientIpResolver,
                           PlatformTransactionManager transactionManager) {
         this.authService = authService;
         this.workspaceService = workspaceService;
         this.localModeService = localModeService;
+        this.loginAttemptService = loginAttemptService;
+        this.clientIpResolver = clientIpResolver;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
@@ -70,6 +76,11 @@ public class AuthController {
     @PostMapping("/register")
     public ResponseEntity<?> register(@Valid @RequestBody RegisterRequest request,
                                       HttpServletRequest httpRequest) {
+        try {
+            loginAttemptService.checkAndRecordRegister(clientIpResolver.resolve(httpRequest));
+        } catch (LoginThrottledException e) {
+            return rateLimited(e);
+        }
         // PLAN-0526: local mode may omit the password (server generates an
         // unmemorized strong one); elsewhere the password stays mandatory (400).
         if (isBlank(request.getPassword())) {
@@ -85,6 +96,8 @@ public class AuthController {
                 return withDefaultWorkspace(user);
             });
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
+        } catch (CpApiException e) {
+            throw e;
         } catch (IllegalArgumentException e) {
             logger.warn("Registration failed: {}", e.getMessage());
             return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Registration failed");
@@ -92,14 +105,39 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> login(@Valid @RequestBody LoginRequest request) {
+    public ResponseEntity<?> login(@Valid @RequestBody LoginRequest request,
+                                   HttpServletRequest httpRequest) {
+        String ip = clientIpResolver.resolve(httpRequest);
+        LoginAttemptService.Lease lease = null;
+        boolean throttled = !localModeService.enabled();
         try {
-            User user = authService.authenticate(request);
-            AuthResponse response = withDefaultWorkspace(user);
-            return ResponseEntity.ok(response);
-        } catch (IllegalArgumentException e) {
-            logger.warn("Login failed for {}: {}", request.getEmail(), e.getMessage());
+            if (throttled) {
+                lease = loginAttemptService.beginLogin(request.getEmail(), ip);
+                if (!loginAttemptService.tryAcquireBcryptSlot()) {
+                    throw new LoginThrottledException(1);
+                }
+            }
+            try {
+                User user = authService.authenticate(request);
+                loginAttemptService.recordSuccess(lease);
+                return ResponseEntity.ok(withDefaultWorkspace(user));
+            } finally {
+                if (throttled) {
+                    loginAttemptService.releaseBcryptSlot();
+                }
+            }
+        } catch (LoginThrottledException e) {
+            return rateLimited(e);
+        } catch (InvalidCredentialsException e) {
+            loginAttemptService.recordCredentialFailure(lease);
+            logger.warn("Login failed for {}: invalid credentials", AuthLog.maskEmail(request.getEmail()));
             return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_FAILED", "Invalid credentials");
+        } catch (CpApiException e) {
+            // Preserve domain statuses (for example USER_NOT_FOUND/429) instead of
+            // collapsing them into 401 through the generic branch.
+            throw e;
+        } finally {
+            loginAttemptService.release(lease);
         }
     }
 
@@ -141,6 +179,15 @@ public class AuthController {
         String userId = authentication.getName();
         UserResponse response = authService.getCurrentUser(userId);
         return ResponseEntity.ok(response);
+    }
+
+    /** PLAN-0558: one 429 shape for account, IP, and concurrency throttles. */
+    private static ResponseEntity<Map<String, Object>> rateLimited(LoginThrottledException exception) {
+        return ProblemDetailsHandler.problemResponse(HttpStatus.TOO_MANY_REQUESTS,
+                "AUTH_RATE_LIMITED", "Too many login attempts; retry later",
+                Map.of("Retry-After", Integer.toString(exception.getRetryAfterSeconds()),
+                        "Cache-Control", "no-store"),
+                null);
     }
 
     /** Entry-level default-Workspace bootstrap shared by register/login/refresh. */

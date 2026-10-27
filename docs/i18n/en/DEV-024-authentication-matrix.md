@@ -58,6 +58,7 @@ L1 and L2–L5 are independent mechanisms; L6/L7 are external boundaries, not pl
 - **Never logged**: no token may appear in ordinary logs, audit payloads, or documentation examples.
 - **Sessionless MCP**: `/api/v1/mcp` accepts `USER`/`ADMIN`/`INTERNAL_SERVICE`; any `mcp-session-id` returns 403 `MCP_SESSION_INVALID`.
 - **Separate Runtime boundaries**: the `Authorization` header in L4/L5 is CP↔Runtime service auth; `mcp-session-id` in L6 is a Runtime ↔ upstream MCP session — same name, different meaning.
+- **Login throttling (PLAN-0558)**: `POST /api/v1/auth/login` counts credential failures per account and per client IP, returning 429 `AUTH_RATE_LIMITED` + `Retry-After` at the threshold. Unknown accounts share the same shape and run a dummy BCrypt. `X-Forwarded-For` is ignored unless the source is covered by `cp.auth.login.trusted-proxies`; local mode and `/refresh` are exempt, while `/register` is IP-limited with loopback exempt by default.
 
 ## 5. Troubleshooting
 

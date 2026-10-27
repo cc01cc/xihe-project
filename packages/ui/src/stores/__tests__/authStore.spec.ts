@@ -11,8 +11,8 @@ vi.mock("../../composables/api", () => ({
         login: vi.fn<typeof apiModule.login>(),
         register: vi.fn<typeof apiModule.register>(),
     },
-    onAuthTokensRefreshed: vi.fn(),
-    registerForceLogout: vi.fn(),
+    onAuthTokensRefreshed: vi.fn<(cb: (accessToken: string) => void) => void>(),
+    registerForceLogout: vi.fn<(fn: () => void) => void>(),
 }));
 
 const mockUser: User = { id: "u1", email: "test@test.com", name: "Test" },
@@ -65,6 +65,23 @@ describe("useAuthStore", () => {
         expect(ok).toBe(false);
         expect(store.isAuthenticated).toBe(false);
         expect(store.error).toBe("Invalid credentials");
+    });
+
+    it("login failure keeps the 429 code and retry delay", async () => {
+        const { api } = await import("../../composables/api"),
+            store = useAuthStore();
+        vi.mocked(api.login).mockRejectedValue(
+            Object.assign(new Error("Too many login attempts"), {
+                problem: { code: "AUTH_RATE_LIMITED" },
+                retryAfterSeconds: 12,
+            }),
+        );
+        const ok = await store.login("a@test.com", "wrong");
+        expect(ok).toBe(false);
+        expect(store.lastError).toEqual({
+            code: "AUTH_RATE_LIMITED",
+            retryAfterSeconds: 12,
+        });
     });
 
     it("register success saves token and user", async () => {

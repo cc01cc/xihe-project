@@ -10,12 +10,12 @@ paths:
     post:
       operationId: register
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RegisterRequest' } } } }
-      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/AuthResponse' } } } }, '400': { $ref: '#/components/responses/Problem' } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/AuthResponse' } } } }, '400': { $ref: '#/components/responses/Problem' }, '429': { $ref: '#/components/responses/RateLimited' } }
   /api/v1/auth/login:
     post:
       operationId: login
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/LoginRequest' } } } }
-      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AuthResponse' } } } }, '401': { $ref: '#/components/responses/Problem' } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AuthResponse' } } } }, '401': { $ref: '#/components/responses/Problem' }, '429': { $ref: '#/components/responses/RateLimited' } }
   /api/v1/auth/refresh:
     post:
       operationId: refresh
@@ -2646,6 +2646,16 @@ components:
   responses:
     Problem:
       description: RFC 9457 Problem Details
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
+    RateLimited:
+      description: AUTH_RATE_LIMITED — too many attempts; retry after the header delay
+      headers:
+        Retry-After:
+          description: Seconds before the caller should retry
+          schema: { type: integer, minimum: 1 }
+        Cache-Control:
+          description: Always no-store for a throttle response
+          schema: { type: string, enum: [no-store] }
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
   schemas:
     ContextEventReadView:

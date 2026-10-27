@@ -13,27 +13,44 @@ const email = ref(""),
     password = ref(""),
     confirmPassword = ref(""),
     localError = ref<string | null>(null),
-    loading = ref(false);
+    phase = ref<"idle" | "submitting" | "entering">("idle"),
+    busy = computed(() => phase.value !== "idle");
 
 const passwordMismatch = computed(() => {
     return !!(confirmPassword.value && password.value !== confirmPassword.value);
 });
 
+function rateLimitMessage(): string | null {
+    if (auth.lastError?.code !== "AUTH_RATE_LIMITED") return null;
+    const seconds = auth.lastError.retryAfterSeconds;
+    return seconds ? t("register.rateLimitedSeconds", { seconds }) : t("register.rateLimited");
+}
+
 async function handleSubmit() {
-    if (!email.value || !password.value) return;
+    if (phase.value !== "idle" || !email.value || !password.value) return;
     if (password.value !== confirmPassword.value) {
         localError.value = t("common.passwordMismatch");
         return;
     }
-    loading.value = true;
+    phase.value = "submitting";
     localError.value = null;
     const name = email.value.includes("@") ? email.value.split("@")[0] : email.value,
         ok = await auth.register(email.value, password.value, name);
-    loading.value = false;
-    if (ok) {
-        router.push("/workspace");
-    } else {
-        localError.value = auth.error;
+    if (!ok) {
+        localError.value = rateLimitMessage() ?? auth.error;
+        phase.value = "idle";
+        return;
+    }
+    phase.value = "entering";
+    try {
+        const failure = await router.push("/workspace");
+        if (failure) {
+            phase.value = "idle";
+            localError.value = t("register.navigationFailed");
+        }
+    } catch {
+        phase.value = "idle";
+        localError.value = t("register.navigationFailed");
     }
 }
 </script>
@@ -47,7 +64,7 @@ async function handleSubmit() {
             </div>
             <p class="text-sm text-muted-foreground mb-6">{{ t("login.hint") }}</p>
 
-            <form class="space-y-4" @submit.prevent="handleSubmit">
+            <form class="space-y-4" :aria-busy="busy" @submit.prevent="handleSubmit">
                 <div>
                     <label class="block text-sm font-medium mb-1" for="email">{{
                         t("register.username")
@@ -58,7 +75,8 @@ async function handleSubmit() {
                         type="text"
                         name="email"
                         autocomplete="email"
-                        class="w-full px-3 py-2 rounded-md border bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                        :disabled="busy"
+                        class="w-full px-3 py-2 rounded-md border bg-background focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-60"
                     />
                 </div>
                 <div>
@@ -71,7 +89,8 @@ async function handleSubmit() {
                         type="password"
                         name="password"
                         autocomplete="new-password"
-                        class="w-full px-3 py-2 rounded-md border bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                        :disabled="busy"
+                        class="w-full px-3 py-2 rounded-md border bg-background focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-60"
                     />
                 </div>
                 <div>
@@ -84,7 +103,8 @@ async function handleSubmit() {
                         type="password"
                         name="confirmPassword"
                         autocomplete="new-password"
-                        class="w-full px-3 py-2 rounded-md border bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                        :disabled="busy"
+                        class="w-full px-3 py-2 rounded-md border bg-background focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-60"
                         :class="passwordMismatch ? 'ring-1 ring-destructive' : ''"
                     />
                     <p v-if="passwordMismatch" class="text-xs text-destructive mt-1">
@@ -96,10 +116,16 @@ async function handleSubmit() {
 
                 <button
                     type="submit"
-                    :disabled="loading || !email || !password || passwordMismatch"
+                    :disabled="busy || !email || !password || passwordMismatch"
                     class="w-full px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity"
                 >
-                    {{ loading ? t("common.loading") : t("register.submit") }}
+                    {{
+                        phase === "submitting"
+                            ? t("register.submitting")
+                            : phase === "entering"
+                              ? t("register.entering")
+                              : t("register.submit")
+                    }}
                 </button>
 
                 <p class="text-sm text-center text-muted-foreground">
