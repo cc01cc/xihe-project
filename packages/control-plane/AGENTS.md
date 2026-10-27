@@ -75,3 +75,4 @@ Compiler、Checkstyle 和架构规则用途互补。PMD 候选已实际试跑，
 父级指南：[`A03-xihe/AGENTS.md`](../../AGENTS.md)。
 
 - 配置元数据（PLAN-0554）：per-key source/locked/writable/instanceEligible 由 ConfigService.meta 统一计算；UI 不复制规则；非 ADMIN layer=instance 403（explicit-only 模板域只读例外）；env 锁定键 PUT/DELETE 返回 409 CONFIG_ENV_LOCKED，导入跳过并 warning。
+- 管理员锁定（PLAN-0556）：锁记录只存 flag+reason+actor，值落 instance 行（A2）；生效链 env > lock > workspace > user > instance > code，锁定键在 user/workspace 的 overrides 中被剔除；锁定键任何层写入/删除/导入均被拒（409 CONFIG_KEY_LOCKED），仅 `/api/v1/config-locks` 可写；锁域（config-locks）全部 ADMIN，403 不带键名；审计写 audit_logs 且不记值；job-policy 两键为 env 映射，不可锁。

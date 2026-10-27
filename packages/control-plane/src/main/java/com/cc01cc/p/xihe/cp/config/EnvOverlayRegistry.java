@@ -77,6 +77,22 @@ public class EnvOverlayRegistry {
         return Optional.ofNullable(activeOverrides(domain).get(key));
     }
 
+    /**
+     * PLAN-0556: DB keys this domain maps to env at all — the lockable surface
+     * must exclude them whether or not the variable is currently set, otherwise
+     * a lock could silently stop working after a redeploy.
+     */
+    public java.util.Set<String> mappedKeys(String domain) {
+        java.util.Set<String> keys = new java.util.LinkedHashSet<>();
+        for (String domainKey : MAPPING.keySet()) {
+            String[] parts = domainKey.split("\\.", 2);
+            if (parts.length == 2 && parts[0].equals(domain)) {
+                keys.add(parts[1]);
+            }
+        }
+        return keys;
+    }
+
     /** Startup detection: log every active overlay with its env source and value. */
     @EventListener(ApplicationReadyEvent.class)
     public void logStartupOverlays() {

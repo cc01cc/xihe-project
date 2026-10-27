@@ -1,19 +1,32 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
+import { useAuthStore } from "../../stores/auth";
 
 const { t } = useI18n();
 const route = useRoute();
+const auth = useAuthStore();
 
-const tabs = [
-    { name: "settings-config", label: "settings.configTab", path: "/settings/config" },
-    { name: "settings-tool-faces", label: "settings.toolFaces", path: "/settings/tool-faces" },
-    { name: "settings-credentials", label: "credentials.title", path: "/settings/credentials" },
-    { name: "settings-knowledge", label: "settings.knowledge", path: "/settings/knowledge" },
-    { name: "settings-data", label: "settings.dataControls", path: "/settings/data" },
-    { name: "settings-monitoring", label: "settings.monitoring", path: "/settings/monitoring" },
-    { name: "settings-audit", label: "settings.audit", path: "/settings/audit" },
-];
+const tabs = computed(() => {
+    const items = [
+        { name: "settings-config", label: "settings.configTab", path: "/settings/config" },
+        { name: "settings-tool-faces", label: "settings.toolFaces", path: "/settings/tool-faces" },
+        { name: "settings-credentials", label: "credentials.title", path: "/settings/credentials" },
+        { name: "settings-knowledge", label: "settings.knowledge", path: "/settings/knowledge" },
+        { name: "settings-data", label: "settings.dataControls", path: "/settings/data" },
+        { name: "settings-monitoring", label: "settings.monitoring", path: "/settings/monitoring" },
+        { name: "settings-audit", label: "settings.audit", path: "/settings/audit" },
+    ];
+    if (auth.isAdmin) {
+        items.push({
+            name: "settings-config-locks",
+            label: "settings.configLockNav",
+            path: "/settings/config-locks",
+        });
+    }
+    return items;
+});
 </script>
 
 <template>

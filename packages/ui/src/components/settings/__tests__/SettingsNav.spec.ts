@@ -1,10 +1,21 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
 import type { RouteLocationNormalizedLoaded, Router } from "vue-router";
-import SettingsNav from "../SettingsNav.vue";
+
+const admin = { value: false };
 
 vi.mock("vue-router", () => ({
+    // stores/auth imports the router singleton, so the factory exports must exist.
+    createRouter: () => ({
+        push: vi.fn<(location: unknown) => Promise<void>>(),
+        replace: vi.fn<(location: unknown) => Promise<void>>(),
+        beforeEach: vi.fn(),
+        afterEach: vi.fn(),
+        isReady: () => Promise.resolve(),
+        currentRoute: { value: {} },
+    }),
+    createWebHistory: () => ({}),
     useRoute: () =>
         ({
             name: "settings-config",
@@ -21,6 +32,12 @@ vi.mock("vue-router", () => ({
     RouterLink: { template: "<a><slot /></a>" },
 }));
 
+vi.mock("../../../stores/auth", () => ({
+    useAuthStore: () => ({ isAdmin: admin.value }),
+}));
+
+import SettingsNav from "../SettingsNav.vue";
+
 const messages = {
     "zh-CN": {
         settings: {
@@ -36,34 +53,46 @@ function createI18nInstance() {
     return createI18n({ legacy: false, locale: "zh-CN", fallbackLocale: "zh-CN", messages });
 }
 
+function mountNav() {
+    return mount(SettingsNav, { global: { plugins: [createI18nInstance()] } });
+}
+
 describe("SettingsNav", () => {
+    beforeEach(() => {
+        admin.value = false;
+    });
+
     it("renders config tab", () => {
-        const wrapper = mount(SettingsNav, { global: { plugins: [createI18nInstance()] } });
-        expect(wrapper.text()).toContain("配置管理");
+        expect(mountNav().text()).toContain("配置管理");
     });
 
     it("renders knowledge tab", () => {
-        const wrapper = mount(SettingsNav, { global: { plugins: [createI18nInstance()] } });
-        expect(wrapper.text()).toContain("知识库");
+        expect(mountNav().text()).toContain("知识库");
     });
 
     it("renders data controls tab", () => {
-        const wrapper = mount(SettingsNav, { global: { plugins: [createI18nInstance()] } });
-        expect(wrapper.text()).toContain("数据控制");
+        expect(mountNav().text()).toContain("数据控制");
     });
 
     it("retires the permission rules tab but keeps tool classification", () => {
-        const wrapper = mount(SettingsNav, { global: { plugins: [createI18nInstance()] } });
+        const wrapper = mountNav();
         expect(wrapper.text()).not.toContain("权限规则");
         expect(wrapper.text()).toContain("工具分类");
     });
 
     it("renders links with correct paths", () => {
-        const wrapper = mount(SettingsNav, { global: { plugins: [createI18nInstance()] } });
-        expect(wrapper.html()).toContain("/settings/config");
-        expect(wrapper.html()).toContain("/settings/knowledge");
-        expect(wrapper.html()).toContain("/settings/data");
-        expect(wrapper.html()).not.toContain("/settings/policy");
-        expect(wrapper.html()).toContain("/settings/tool-faces");
+        const html = mountNav().html();
+        expect(html).toContain("/settings/config");
+        expect(html).toContain("/settings/knowledge");
+        expect(html).toContain("/settings/data");
+        expect(html).not.toContain("/settings/policy");
+        expect(html).toContain("/settings/tool-faces");
+    });
+
+    it("PLAN-0556: shows the lock page only to administrators", () => {
+        expect(mountNav().html()).not.toContain("/settings/config-locks");
+
+        admin.value = true;
+        expect(mountNav().html()).toContain("/settings/config-locks");
     });
 });

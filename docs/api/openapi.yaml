@@ -1541,7 +1541,7 @@ paths:
     get:
       operationId: getConfigMeta
       summary: Read per-key config provenance for one layer (PLAN-0554)
-      description: 'Returns key/source/locked/writable/reason/instanceEligible/defaultPresent/overridable. No values are returned. layer=instance is ADMIN only; user/workspace are layer-filtered and exclude instance-only keys. Only the 12 UI domains are accepted; service-only context-templates/pricing return INVALID_DOMAIN. workspace layer requires workspaceId or X-Workspace-Id.'
+      description: 'Returns key/source/locked/writable/reason/instanceEligible/defaultPresent/overridable plus PLAN-0556 adminLocked/lockReason. No values are returned. locked means an env overlay wins; adminLocked means an administrator pinned the instance value (env still outranks it) and reason becomes ADMIN_LOCKED. layer=instance is ADMIN only; user/workspace are layer-filtered and exclude instance-only keys. Only the 12 UI domains are accepted; service-only context-templates/pricing return INVALID_DOMAIN. workspace layer requires workspaceId or X-Workspace-Id.'
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: domain, required: true, schema: { type: string } }
@@ -1552,12 +1552,12 @@ paths:
         '400': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
   /api/v1/config/instance/{domain}:
-    put: { operationId: putInstanceConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }], responses: { '200': { description: Updated }, '403': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' } } }
+    put: { operationId: putInstanceConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }], responses: { '200': { description: 'Updated' }, '403': { $ref: '#/components/responses/Problem' }, '409': { description: 'CONFIG_ENV_LOCKED for env-mapped keys; CONFIG_KEY_LOCKED when an administrator locked the key (PLAN-0556) - locked values are writable only through /api/v1/config-locks' } } }
   /api/v1/config/instance/{domain}/{key}:
     delete:
       operationId: deleteInstanceConfig
       summary: Clear one instance-layer default (PLAN-0554)
-      description: 'ADMIN only. Deletes the instance row and falls back to the code default. Idempotent when the row does not exist. Env-locked keys return 409 CONFIG_ENV_LOCKED.'
+      description: 'ADMIN only. Deletes the instance row and falls back to the code default. Idempotent when the row does not exist. Env-locked keys return 409 CONFIG_ENV_LOCKED; administrator-locked keys return 409 CONFIG_KEY_LOCKED (unlock with clearValue instead, PLAN-0556).'
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: domain, required: true, schema: { type: string } }
@@ -1571,6 +1571,47 @@ paths:
     put: { operationId: putWorkspaceConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }, { in: query, name: workspaceId, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Updated }, '403': { $ref: '#/components/responses/Problem' } } }
   /api/v1/config/user/{domain}:
     put: { operationId: putUserConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }], responses: { '200': { description: Updated } } }
+  /api/v1/config-locks:
+    get:
+      operationId: listConfigLocks
+      summary: Read the admin config-lock catalog (PLAN-0556)
+      description: 'ADMIN only. Without domain, returns existing locks only; with domain, returns every schema key with lockable/notLockableReason (INSTANCE_ONLY, ENV_LOCKED, WHOLE_UNIT, SECRET_KEY, NOT_OVERRIDABLE, NO_SCHEMA), lock state, reason, last actor/time and revision. No config values are returned. Non-admin requests are 403 without any key names.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: domain, required: false, schema: { type: string } }
+      responses:
+        '200': { description: 'Catalog {domain, revision, keys[]}', content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+  /api/v1/config-locks/{domain}/{key}:
+    put:
+      operationId: lockConfigKey
+      summary: Lock one config key and pin its instance value (PLAN-0556)
+      description: 'ADMIN only. Writes the enforced value to the instance layer and the lock row in one transaction (A2). Body: {mode?, reason, value?, revision}. reason is mandatory (max 200 chars, shown to users); value is required unless the instance row already has one. revision is the row revision from the catalog (0 for a new lock); a stale value returns 409 CONFIG_LOCK_CONFLICT. Only enforce_value is accepted in v1 (UNSUPPORTED_MODE otherwise). Not-lockable keys return 400 NOT_LOCKABLE.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: domain, required: true, schema: { type: string } }
+        - { in: path, name: key, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 'Locked key view (key/lockable/locked/reason/mode/updatedBy/updatedAt/revision/valuePresent)' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+    delete:
+      operationId: unlockConfigKey
+      summary: Unlock one config key (PLAN-0556)
+      description: 'ADMIN only. Deletes the lock row; the pinned instance value stays as an ordinary default unless clearValue=true, which also removes it and restores inheritance. Idempotent when no lock exists. A stale revision returns 409 CONFIG_LOCK_CONFLICT.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: domain, required: true, schema: { type: string } }
+        - { in: path, name: key, required: true, schema: { type: string } }
+        - { in: query, name: revision, required: false, schema: { type: integer, format: int64, default: 0 } }
+        - { in: query, name: clearValue, required: false, schema: { type: boolean, default: false } }
+      responses:
+        '200': { description: '{"status":"ok"}' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /api/v1/config/embedding/effective:
     get:
       operationId: getEmbeddingEffectiveProfile

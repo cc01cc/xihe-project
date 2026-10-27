@@ -212,6 +212,10 @@ public class ConfigService {
     @Autowired
     private ConfigDomainSchema schemaValidator;
 
+    /** PLAN-0556: administrator locks (read side only; writes go through ConfigLockAdminService). */
+    @Autowired
+    private ConfigLockService configLocks;
+
     @Autowired
     private EnvOverlayRegistry envOverlay;
 
@@ -242,7 +246,10 @@ public class ConfigService {
     /** PLAN-0554: per-key read-only provenance for the config UI. */
     public record ConfigKeyMeta(String key, String source, boolean locked, boolean writable,
                                 String reason, boolean instanceEligible, boolean defaultPresent,
-                                boolean overridable) {}
+                                boolean overridable, boolean adminLocked, String lockReason) {}
+
+    /** PLAN-0556: whether a key may be locked, and why not when it may not. */
+    public record Lockability(boolean lockable, String reason) {}
 
     static String stripJsoncComments(String jsonc) {
         String[] lines = jsonc.split("\n", -1);
@@ -277,6 +284,14 @@ public class ConfigService {
         String envValue = envOverlay.activeOverrides(domain).get(key);
         if (envValue != null) {
             return envValue;
+        }
+        // PLAN-0556: admin lock sits directly below env — the pinning instance
+        // value outranks workspace/user rows (env still wins, decision #3).
+        if (isAdminLocked(domain, key)) {
+            String lockedValue = keyOf(repo.findByLayerAndDomainAndConfigKey("instance", domain, key));
+            if (lockedValue != null) {
+                return lockedValue;
+            }
         }
         String workspaceValue = workspaceId == null ? null
             : keyOf(repo.findByWorkspaceIdAndDomainAndConfigKey(workspaceId, domain, key));
@@ -325,6 +340,12 @@ public class ConfigService {
             if (!envLocked.isEmpty()) {
                 entries.keySet().removeIf(envLocked::contains);
             }
+            // PLAN-0556: locked keys are delivered by the effective chain
+            // (instance pin), never as a user/workspace override.
+            Set<String> adminLocked = adminLockReasons(domain).keySet();
+            if (!adminLocked.isEmpty()) {
+                entries.keySet().removeIf(adminLocked::contains);
+            }
             if (!entries.isEmpty()) {
                 result.put(domain, entries);
             }
@@ -340,6 +361,81 @@ public class ConfigService {
     /** PLAN-0307 T2.14: env-effective values for the UI lock metadata (T2.17). */
     public Map<String, String> envOverridden(String domain) {
         return envOverlay.activeOverrides(domain);
+    }
+
+    // ------------------------------------------------------------------
+    // PLAN-0556: administrator lock surface
+    // ------------------------------------------------------------------
+
+    /** Keys the lock page may offer: the domain's schema properties. */
+    public java.util.SortedSet<String> candidateKeys(String domain) {
+        return new java.util.TreeSet<>(schemaValidator.propertyNames(domain));
+    }
+
+    /**
+     * Decision #8: a key is lockable only when it is a schema scalar that could
+     * otherwise be overridden — not env-backed, not instance-only, not a secret
+     * and not part of a whole-unit (profile/template) domain.
+     */
+    public Lockability lockability(String domain, String key) {
+        if (!schemaValidator.propertyNames(domain).contains(key)) {
+            return new Lockability(false, "NO_SCHEMA");
+        }
+        if (isProviderSecretKey(key)) {
+            return new Lockability(false, "SECRET_KEY");
+        }
+        if (envOverlay.mappedKeys(domain).contains(key)) {
+            return new Lockability(false, "ENV_LOCKED");
+        }
+        if (INSTANCE_DEDICATED_DOMAINS.contains(domain)) {
+            return new Lockability(false, "WHOLE_UNIT");
+        }
+        if (!schemaValidator.isScalarProperty(domain, key)) {
+            return new Lockability(false, "WHOLE_UNIT");
+        }
+        if (isInstanceOnlyKey(domain, key) || INSTANCE_ONLY_DOMAINS.contains(domain)) {
+            return new Lockability(false, "INSTANCE_ONLY");
+        }
+        if (!USER_WRITABLE_DOMAINS.contains(domain) && !WORKSPACE_WRITABLE_DOMAINS.contains(domain)) {
+            return new Lockability(false, "NOT_OVERRIDABLE");
+        }
+        return new Lockability(true, null);
+    }
+
+    /** Current instance-layer value for a key (lock page value display/edit seed). */
+    public String instanceValue(String domain, String key) {
+        return keyOf(repo.findByLayerAndDomainAndConfigKey("instance", domain, key));
+    }
+
+    public boolean isAdminLocked(String domain, String key) {
+        return adminLockReasons(domain).containsKey(key);
+    }
+
+    /**
+     * Lock rows for a domain, or an empty map when the domain can never hold a
+     * lock (whole-unit/instance-only/non-overridable/schema-less). The guard
+     * keeps hot single-key readers ({@code resolve} from usage/telemetry/summary)
+     * off the lock table entirely.
+     */
+    private Map<String, String> adminLockReasons(String domain) {
+        boolean applicable = schemaValidator.hasSchema(domain)
+                && !INSTANCE_DEDICATED_DOMAINS.contains(domain)
+                && (USER_WRITABLE_DOMAINS.contains(domain) || WORKSPACE_WRITABLE_DOMAINS.contains(domain));
+        return applicable ? configLocks.lockReasons(domain) : Map.of();
+    }
+
+    private void rejectAdminLocked(String domain, java.util.Collection<String> keys) {
+        Map<String, String> reasons = adminLockReasons(domain);
+        if (reasons.isEmpty()) {
+            return;
+        }
+        List<String> hit = keys.stream().filter(reasons::containsKey).sorted().toList();
+        if (!hit.isEmpty()) {
+            throw new CpApiException(org.springframework.http.HttpStatus.CONFLICT,
+                    "CONFIG_KEY_LOCKED",
+                    "Config keys are locked by an administrator: " + String.join(", ", hit)
+                            + "; reason: " + reasons.get(hit.get(0)));
+        }
     }
 
     public EffectiveConfig effective(String domain, UUID userId, UUID workspaceId) {
@@ -370,6 +466,20 @@ public class ConfigService {
             source = "workspace";
         }
 
+        // PLAN-0556: an admin-locked key resolves to its instance pin, which
+        // outranks user/workspace rows; the env overlay below still wins.
+        Map<String, String> lockedKeys = adminLockReasons(domain);
+        if (!lockedKeys.isEmpty()) {
+            Map<String, String> instanceValues = new LinkedHashMap<>();
+            instanceRows.forEach(e -> instanceValues.put(e.getConfigKey(), e.getConfigValue()));
+            for (String lockedKey : lockedKeys.keySet()) {
+                String pinned = instanceValues.get(lockedKey);
+                if (pinned != null) {
+                    merged.put(lockedKey, pinned);
+                }
+            }
+        }
+
         if (applyEnvOverlay(domain, merged)) {
             source = "env";
         }
@@ -398,6 +508,7 @@ public class ConfigService {
             : Map.of();
         Map<String, String> env = envOverlay.activeOverrides(domain);
         Map<String, String> defaults = CODE_DEFAULTS.getOrDefault(domain, Map.of());
+        Map<String, String> adminLocked = adminLockReasons(domain);
 
         java.util.Set<String> keys = new java.util.TreeSet<>();
         if (explicitOnly) {
@@ -429,13 +540,15 @@ public class ConfigService {
                 continue;
             }
             boolean locked = env.containsKey(key);
+            boolean adminLockedKey = adminLocked.containsKey(key);
             String source = locked ? "env"
                 : explicitOnly ? explicitSource(layer, key, instance, user, workspace)
                 : sourceFor(layer, key, instance, user, workspace, defaults);
             boolean domainWritable = isLayerWritable(layer, domain);
             boolean instanceOnly = !instanceLayer && isInstanceOnlyKey(domain, key);
-            boolean writable = domainWritable && !locked && !instanceOnly;
+            boolean writable = domainWritable && !locked && !instanceOnly && !adminLockedKey;
             String reason = locked ? "ENV_LOCKED"
+                : adminLockedKey ? "ADMIN_LOCKED"
                 : !domainWritable ? "LAYER_NOT_WRITABLE"
                 : instanceOnly ? "INSTANCE_ONLY" : null;
             boolean eligible = instanceLayer && !INSTANCE_DEDICATED_DOMAINS.contains(domain);
@@ -444,7 +557,8 @@ public class ConfigService {
                 && !INSTANCE_ONLY_DOMAINS.contains(domain)
                 && (USER_WRITABLE_DOMAINS.contains(domain) || WORKSPACE_WRITABLE_DOMAINS.contains(domain));
             result.add(new ConfigKeyMeta(key, source, locked, writable, reason, eligible,
-                defaults.containsKey(key), overridable));
+                defaults.containsKey(key), overridable, adminLockedKey,
+                adminLockedKey ? adminLocked.get(key) : null));
         }
         return result;
     }
@@ -540,6 +654,22 @@ public class ConfigService {
     @Transactional
     public void putLayer(String layer, String domain, Map<String, String> entries,
                          String changedBy, UUID userId, UUID workspaceId) {
+        putLayerInternal(layer, domain, entries, changedBy, userId, workspaceId, false);
+    }
+
+    /**
+     * PLAN-0556: the lock endpoint is the only writer of a locked instance
+     * value, so its value write bypasses the admin-lock guard while every other
+     * guard (env, scope, schema, secrets, instructions) still applies.
+     */
+    @Transactional
+    public void putInstanceLockValue(String domain, String key, String value, String changedBy) {
+        putLayerInternal("instance", domain, Map.of(key, value), changedBy, null, null, true);
+    }
+
+    private void putLayerInternal(String layer, String domain, Map<String, String> entries,
+                                  String changedBy, UUID userId, UUID workspaceId,
+                                  boolean bypassAdminLock) {
         Set<String> envLocked = envOverriddenKeys(domain);
         if (!envLocked.isEmpty()) {
             List<String> lockedKeys = new ArrayList<>();
@@ -554,6 +684,9 @@ public class ConfigService {
                     "CONFIG_ENV_LOCKED",
                     "Env-locked config keys cannot be written: " + String.join(", ", lockedKeys));
             }
+        }
+        if (!bypassAdminLock) {
+            rejectAdminLocked(domain, entries.keySet());
         }
         if ("api-request-templates".equals(domain)) {
             apiRequestTemplates.getObject().putLayer(layer, entries, changedBy, userId, workspaceId);
@@ -1260,6 +1393,26 @@ public class ConfigService {
     @Transactional
     public void deleteKey(String layer, String domain, String configKey, String changedBy,
                           UUID userId, UUID workspaceId) {
+        deleteKeyInternal(layer, domain, configKey, changedBy, userId, workspaceId, false);
+    }
+
+    /**
+     * PLAN-0556: unlock-with-clear path — the lock row is deleted first, so this
+     * removal is allowed to skip the admin-lock guard.
+     */
+    @Transactional
+    public void deleteInstanceKeyUnlocked(String domain, String configKey, String changedBy) {
+        deleteKeyInternal("instance", domain, configKey, changedBy, null, null, true);
+    }
+
+    private void deleteKeyInternal(String layer, String domain, String configKey, String changedBy,
+                                   UUID userId, UUID workspaceId, boolean bypassAdminLock) {
+        if (!bypassAdminLock && isAdminLocked(domain, configKey)) {
+            throw new CpApiException(org.springframework.http.HttpStatus.CONFLICT,
+                    "CONFIG_KEY_LOCKED",
+                    "Config key is locked by an administrator: " + configKey
+                            + "; reason: " + adminLockReasons(domain).get(configKey));
+        }
         if ("api-request-templates".equals(domain)) {
             throw new CpApiException(org.springframework.http.HttpStatus.CONFLICT,
                     "API_REQUEST_TEMPLATE_REVISION_IMMUTABLE", "Use the dedicated template/binding writer");
@@ -1375,6 +1528,17 @@ public class ConfigService {
                 if (removed > 0) {
                     skipped += removed;
                     warnings.add(domain + ": " + removed + " env-locked key(s) skipped");
+                }
+                // PLAN-0556: an admin lock is not bypassed by import either.
+                Set<String> adminLocked = adminLockReasons(domain).keySet();
+                if (!adminLocked.isEmpty()) {
+                    int lockedBefore = entries.size();
+                    entries.keySet().removeIf(adminLocked::contains);
+                    int lockedSkipped = lockedBefore - entries.size();
+                    if (lockedSkipped > 0) {
+                        skipped += lockedSkipped;
+                        warnings.add(domain + ": " + lockedSkipped + " admin-locked key(s) skipped");
+                    }
                 }
                 if (!entries.isEmpty()) {
                     putLayer(layer, domain, entries, changedBy, userId, workspaceId);

@@ -29,6 +29,12 @@ public class ConfigDomainSchema {
 
     private final Map<String, Schema> schemas = new HashMap<>();
 
+    /** PLAN-0556: top-level property names per domain (lockable-key derivation). */
+    private final Map<String, Set<String>> properties = new HashMap<>();
+
+    /** PLAN-0556: properties whose declared type is array/object (not lockable scalars). */
+    private final Map<String, Set<String>> nonScalarProperties = new HashMap<>();
+
     private final ObjectMapper objectMapper;
 
     public ConfigDomainSchema(ObjectMapper objectMapper) {
@@ -51,6 +57,21 @@ public class ConfigDomainSchema {
                 JsonNode schemaNode = objectMapper.readTree(is);
                 Schema schema = registry.getSchema(schemaNode.toString(), InputFormat.JSON);
                 schemas.put(domain, schema);
+                Set<String> names = new java.util.LinkedHashSet<>();
+                Set<String> nonScalar = new java.util.LinkedHashSet<>();
+                JsonNode props = schemaNode.path("properties");
+                props.fieldNames().forEachRemaining(names::add);
+                props.fields().forEachRemaining(property -> {
+                    JsonNode type = property.getValue().path("type");
+                    boolean structured = "object".equals(type.asText()) || "array".equals(type.asText())
+                            || (type.isArray() && (type.toString().contains("\"object\"")
+                                    || type.toString().contains("\"array\"")));
+                    if (structured) {
+                        nonScalar.add(property.getKey());
+                    }
+                });
+                properties.put(domain, Set.copyOf(names));
+                nonScalarProperties.put(domain, Set.copyOf(nonScalar));
                 log.debug("Loaded JSON Schema for domain: {}", domain);
             }
         }
@@ -74,5 +95,16 @@ public class ConfigDomainSchema {
 
     public boolean hasSchema(String domain) {
         return schemas.containsKey(domain);
+    }
+
+    /** PLAN-0556: top-level property names, used to derive the lockable key set. */
+    public Set<String> propertyNames(String domain) {
+        return properties.getOrDefault(domain, Set.of());
+    }
+
+    /** PLAN-0556: true when the key is a scalar (string/number/boolean), not array/object. */
+    public boolean isScalarProperty(String domain, String key) {
+        return properties.getOrDefault(domain, Set.of()).contains(key)
+                && !nonScalarProperties.getOrDefault(domain, Set.of()).contains(key);
     }
 }
