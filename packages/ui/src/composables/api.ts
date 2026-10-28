@@ -2201,6 +2201,19 @@ export const api = {
                 error?: string;
                 retryable?: boolean;
                 attachments?: Array<{ fileId: string; name: string; type: string; size: number }>;
+                /** PLAN-0572: persisted per-Run tool cards (V83 snapshot). */
+                toolCalls?: Array<{
+                    id: string;
+                    name: string;
+                    arguments: string;
+                    status: "running" | "completed" | "failed" | "pending" | "cancelled";
+                    startedAt: string;
+                    completedAt?: string;
+                    result?: string;
+                    truncated?: boolean;
+                }>;
+                toolCallsTruncated?: boolean;
+                toolCallsTotal?: number;
                 jobSummary?: Array<{
                     jobId: string;
                     workspaceId: string;

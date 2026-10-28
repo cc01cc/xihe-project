@@ -1158,11 +1158,14 @@ public class ChatController {
                 logger.info("[LIFECYCLE] service=cp event=chat_run_finished requestId={} sessionId={} runId={} assistantChars={}",
                         requestId, sessionId, runId, assistantContent == null ? 0 : assistantContent.length());
 
-                if (assistantContent != null && !assistantContent.isBlank()) {
-                    String assistantMessageId = chatSubmissionService.persistAssistantResponse(
-                            sessionId, runId, assistantContent);
+                // PLAN-0572 D5: persist a tool-only terminal turn as well; the
+                // service returns null only when there is neither text nor tools.
+                String assistantMessageId = chatSubmissionService.persistAssistantResponse(
+                        sessionId, runId, assistantContent);
+                if (assistantMessageId != null) {
                     logger.info("[LIFECYCLE] service=cp event=chat_assistant_persisted requestId={} sessionId={} runId={} messageId={} assistantChars={}",
-                            requestId, sessionId, runId, assistantMessageId, assistantContent.length());
+                            requestId, sessionId, runId, assistantMessageId,
+                            assistantContent == null ? 0 : assistantContent.length());
                 }
 
                 String outcome = relayResult.outcome();

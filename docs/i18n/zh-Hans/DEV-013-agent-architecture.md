@@ -200,8 +200,8 @@ CP `ContextSourceRefreshService`（**每 run** 在 `ChatController.execAsync` �
 
 1. **提取（L0/L2）**：`LCToolAdapter._arun` 经 `extract_command_result` 容错解析 Runtime `CommandResult`（顶层或 `result`/`data`/`tool_result` 嵌套，`exit_code` 不可用即视为非命令结果）；仅非零退出按冻结规则 `path:line[:col]: message` 解析（path 需 path-like 锚定，severity 仅 error/warning/note，kind 由 command 保守推断）。未命中不猜测、原文不改写（L2，`confidence: low`）。
 2. **去重与预算**：会话级 `DiagnosticsLedger` 按位置身份 `(file, line, column)` 做连续重复抑制——上一轮消失、之后复现的诊断重新回灌；解析成功的零退出记观察空集（回归信号）。预算：Top-N 20 / 单条 1k / 命令结果中段 48k 头尾保留（`truncate_middle` 仅作用于命令结果）。
-3. **四通道**：① 模型可见 = 不可信信封内 `<diagnostics>` 文本块（`items` 非空才追加）；② 结构化 = `ToolMessage.artifact = {"diagnostics": bundle}`（`response_format="content_and_artifact"`，不进模型 wire）；③ durable = `tool.result` payload 触发时增 `diagnostics`；④ SSE = `tool_result.data.diagnostics`（`LangGraphEventAdapter` 从 artifact 复制，CP relay 原样透传）。bundle 形状 `{items, total, confidence}`（`items` 为 Top-N 切片，`total` 为截断前计数）。
-4. **UI 呈现**：`ToolCallCard.vue` 有诊断时整卡自动展开，展示前 3 条 +「另有 N 条」；原文回退默认折叠；`useSSE` 兼容 `tool`/`toolCallId` 键名并写入本 run 内 `message.toolCalls`（历史消息不持久化 toolCalls）。
+3. **四通道（PLAN-0510 后口径）**：① 模型可见 = 不可信信封内 `<diagnostics>` 文本块（`items` 非空才追加）；② 结构化 = `ToolMessage.artifact = {"diagnostics": bundle}`（`response_format="content_and_artifact"`，不进模型 wire）；③ durable = `tool.result` payload 仅保留 `status`/`tool_call_id`/`tool_name`/占位符，`diagnostics` 与结果正文被 CP `ContextEventPayloadSafety` 丢弃；④ SSE = `tool_result.result` 为固定占位符，**不再携带** `diagnostics`。bundle 形状 `{items, total, confidence}`（`items` 为 Top-N 切片，`total` 为截断前计数）。
+4. **UI 呈现**：`ToolCallCard.vue` 保留诊断渲染能力，但 PLAN-0510 后真实链路不再提供诊断数据；`useSSE` 兼容 `tool`/`toolCallId` 键名并写入本 run 内 `message.toolCalls`。自 PLAN-0572（V83）起，assistant 消息持久化有界 `toolCalls` 快照（结果仍为同一占位符），刷新后工具卡可恢复。
 5. **边界**：只解析命令结果（其他工具内容不改写）；不解析 LLM 层失败；诊断不单独落盘（仅随事件 payload / SSE 透传）；跨 session 诊断账本（L1）后置。
 
 ### 3.6 LLM 摘要端点与 `llm/summarize.py`（PLAN-0354）

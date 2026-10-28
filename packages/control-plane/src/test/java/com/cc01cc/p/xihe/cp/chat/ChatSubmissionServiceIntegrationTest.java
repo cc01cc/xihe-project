@@ -40,6 +40,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -86,6 +87,9 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private EventStoreService eventStoreService;
+
+    @Autowired
+    private MessageReadService messageReadService;
 
     @Autowired
     private AgentPrincipalRepository agentPrincipalRepository;
@@ -386,6 +390,158 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         assertTrue(chatRunRepository.findById(UUID.fromString(runId)).isEmpty());
         assertTrue(messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId().toString()).isEmpty());
         assertFalse(mcpInvocationRepository.existsBySessionId(session.getId().toString()));
+    }
+
+    @Test
+    void persistsToolOnlyTurnWithV2SnapshotAndProjectsItAfterRefresh() {
+        ChatFixture fixture = createChatFixture("tool-snapshot");
+        String runId = UUID.randomUUID().toString();
+        ChatSubmissionService.Submission submission = submit(runId, fixture.session(), fixture.user(),
+                fixture.workspace(), "prompt", fixture.principal().getId().toString());
+        String branchId = submission.run().getBranchId();
+        String callId = UUID.randomUUID().toString();
+
+        appendToolEvent(fixture, runId, branchId, "tool.called", Map.of(
+                "schemaVersion", 2,
+                "toolCallId", callId,
+                "toolName", "read_file",
+                "runId", runId,
+                "arguments", Map.of("path", "src/main.rs")));
+        appendToolEvent(fixture, runId, branchId, "tool.result", Map.of(
+                "schemaVersion", 2,
+                "toolCallId", callId,
+                "toolName", "read_file",
+                "runId", runId,
+                "status", "completed",
+                "result", "placeholder"));
+
+        String messageId = submissionService.persistAssistantResponse(
+                fixture.session().getId().toString(), runId, "");
+        assertNotNull(messageId);
+        Message stored = messageRepository.findById(UUID.fromString(messageId)).orElseThrow();
+        assertEquals("", stored.getContent());
+        assertNotNull(stored.getToolCalls());
+        assertTrue(stored.getToolCalls().contains(callId));
+        assertFalse(stored.getToolCalls().contains("request_approval"));
+
+        BranchPathService.BranchVisibility visibility = branchPathService.resolveVisibility(
+                fixture.session().getId().toString(), branchId);
+        String rootBranchId = branchPathService.resolvePath(fixture.session().getId().toString(), branchId);
+        List<Map<String, Object>> messages = messageReadService.listVisibleMessages(
+                fixture.session().getId().toString(), fixture.workspace().getId().toString(),
+                rootBranchId, visibility);
+        Map<String, Object> assistant = messages.stream()
+                .filter(message -> messageId.equals(String.valueOf(message.get("id"))))
+                .findFirst()
+                .orElseThrow();
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> cards = (List<Map<String, Object>>) assistant.get("toolCalls");
+        assertNotNull(cards);
+        assertEquals(1, cards.size());
+        assertEquals(callId, cards.get(0).get("id"));
+        assertEquals("read_file", cards.get(0).get("name"));
+        assertEquals("{\"path\":\"src/main.rs\"}", cards.get(0).get("arguments"));
+        assertEquals("completed", cards.get(0).get("status"));
+        assertNotNull(cards.get(0).get("result"));
+    }
+
+    @Test
+    void persistsLegacySnapshotAndFiltersApprovalTool() throws Exception {
+        ChatFixture fixture = createChatFixture("tool-legacy");
+        String runId = UUID.randomUUID().toString();
+        ChatSubmissionService.Submission submission = submit(runId, fixture.session(), fixture.user(),
+                fixture.workspace(), "prompt", fixture.principal().getId().toString());
+        String branchId = submission.run().getBranchId();
+
+        appendToolEvent(fixture, runId, branchId, "tool.called", Map.of(
+                "call_id", "approval-call", "tool_name", "request_approval",
+                "tool_input", Map.of("action", "approve")));
+        appendToolEvent(fixture, runId, branchId, "tool.called", Map.of(
+                "call_id", "legacy-call", "tool_name", "execute_command",
+                "tool_input", Map.of("command", "cargo test")));
+        appendToolEvent(fixture, runId, branchId, "tool.result", Map.of(
+                "call_id", "legacy-call", "tool_name", "execute_command",
+                "status", "failed", "result", "boom"));
+
+        String messageId = submissionService.persistAssistantResponse(
+                fixture.session().getId().toString(), runId, "done");
+        assertNotNull(messageId);
+        Message stored = messageRepository.findById(UUID.fromString(messageId)).orElseThrow();
+        assertFalse(stored.getToolCalls().contains("approval-call"));
+        assertTrue(stored.getToolCalls().contains("legacy-call"));
+        var card = objectMapper.readTree(stored.getToolCalls()).path("calls").get(0);
+        assertEquals("legacy-call", card.path("id").asText());
+        assertEquals("execute_command", card.path("name").asText());
+        assertEquals("failed", card.path("status").asText());
+    }
+
+    @Test
+    void persistsInterruptedToolOnlyTurnWithRunningCard() throws Exception {
+        ChatFixture fixture = createChatFixture("tool-interrupted");
+        String runId = UUID.randomUUID().toString();
+        ChatSubmissionService.Submission submission = submit(runId, fixture.session(), fixture.user(),
+                fixture.workspace(), "prompt", fixture.principal().getId().toString());
+        String branchId = submission.run().getBranchId();
+
+        appendToolEvent(fixture, runId, branchId, "tool.called", Map.of(
+                "call_id", "interrupted-call", "tool_name", "read_file",
+                "tool_input", Map.of("path", "README.md")));
+
+        String messageId = submissionService.persistAssistantResponse(
+                fixture.session().getId().toString(), runId, "");
+        assertNotNull(messageId);
+        Message stored = messageRepository.findById(UUID.fromString(messageId)).orElseThrow();
+        var card = objectMapper.readTree(stored.getToolCalls()).path("calls").get(0);
+        assertEquals("interrupted-call", card.path("id").asText());
+        assertEquals("running", card.path("status").asText());
+        assertFalse(card.has("completedAt"));
+    }
+
+    @Test
+    void skipsBlankTurnWithoutTools() {
+        ChatFixture fixture = createChatFixture("tool-empty");
+        String runId = UUID.randomUUID().toString();
+        submit(runId, fixture.session(), fixture.user(), fixture.workspace(),
+                "prompt", fixture.principal().getId().toString());
+
+        String messageId = submissionService.persistAssistantResponse(
+                fixture.session().getId().toString(), runId, "");
+
+        assertNull(messageId);
+        assertTrue(messageRepository.findBySessionIdOrderByCreatedAtAsc(
+                        fixture.session().getId().toString()).stream()
+                .noneMatch(message -> message.getRole() == MessageRole.ASSISTANT));
+    }
+
+    private void appendToolEvent(ChatFixture fixture, String runId, String branchId,
+                                 String eventType, Map<String, Object> payload) {
+        eventStoreService.append(fixture.session().getId().toString(),
+                fixture.workspace().getId().toString(), fixture.user().getId().toString(),
+                eventType, payload, runId, branchId);
+    }
+
+    private ChatFixture createChatFixture(String prefix) {
+        User user = userRepository.save(new User(
+                prefix + "-" + UUID.randomUUID() + "@test.com", "hash", UserRole.USER, "Tool snapshot"));
+        Workspace workspace = workspaceRepository.save(new Workspace(prefix + " Workspace", user.getId().toString()));
+        workspaceUserRepository.saveAndFlush(new WorkspaceUser(workspace.getId().toString(),
+                user.getId().toString(), WorkspaceRole.OWNER));
+        Session session = new Session(workspace.getId().toString(), user.getId().toString(), prefix + " Session");
+        session.setId(UUID.randomUUID());
+        Session persistedSession = saveBoundChatSession(session, user);
+        AgentPrincipal principal = savePrincipal(user);
+        try {
+            addPrincipalGrant(principal, user, "read");
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+        workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
+                workspace.getId().toString(), objectMapper.createArrayNode()
+                .add(objectMapper.createObjectNode().put("actionClass", "read"))));
+        return new ChatFixture(user, workspace, persistedSession, principal);
+    }
+
+    private record ChatFixture(User user, Workspace workspace, Session session, AgentPrincipal principal) {
     }
 
     private ChatSubmissionService.Submission submit(String runId, Session session, User user,
