@@ -75,6 +75,12 @@ export const useAuthStore = defineStore("auth", () => {
     const canManageWorkspace = computed(() => workspaceRole.value === "OWNER");
 
     /**
+     * PLAN-0565 ruling #2: the members tab is visible to OWNER/EDITOR and hidden
+     * for VIEWER. CP stays authoritative (list returns 403 for VIEWER anyway).
+     */
+    const canViewMembers = computed(() => workspaceRole.value !== "VIEWER");
+
+    /**
      * PLAN-0328 decision #56 / PLAN-0559: workspace OWNER (or instance ADMIN) may
      * classify tools. The client only decides whether to offer the affordance;
      * CP remains authoritative and returns 403 otherwise.
@@ -344,6 +350,7 @@ export const useAuthStore = defineStore("auth", () => {
         workspaceRole,
         canWriteWorkspace,
         canManageWorkspace,
+        canViewMembers,
         currentWorkspaceId,
         login,
         register,

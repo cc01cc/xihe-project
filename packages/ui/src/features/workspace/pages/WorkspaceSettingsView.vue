@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
@@ -13,6 +13,7 @@ import { clearTabWorkspace, writeTabWorkspace } from "../../../lib/workspaceCont
 import { workspacePath } from "../../../lib/routes";
 import ConfigLayerPanels from "../../../components/settings/ConfigLayerPanels.vue";
 import WorkspaceMcpPanel from "../components/WorkspaceMcpPanel.vue";
+import WorkspaceMembersPanel from "../components/WorkspaceMembersPanel.vue";
 import Input from "../../../components/ui/input/Input.vue";
 import { Button } from "../../../components/ui/button";
 import AlertDialog from "../../../components/ui/alert-dialog/AlertDialog.vue";
@@ -25,7 +26,8 @@ import AlertDialogCancel from "../../../components/ui/alert-dialog/AlertDialogCa
 
 // PLAN-0560：每工作区设置页（常规/配置/MCP）。配置区复用 ConfigLayerPanels
 // （layer=workspace），MCP 复用 WorkspaceMcpPanel；常规区 OWNER 可编辑/删除（T2.6）。
-type SettingsTab = "general" | "config" | "mcp";
+// PLAN-0565：新增「成员」tab（裁定 #2——EDITOR 只读可见、VIEWER 不渲染）。
+type SettingsTab = "general" | "config" | "mcp" | "members";
 
 const route = useRoute(),
     router = useRouter(),
@@ -38,15 +40,30 @@ const workspaceId = computed(() => String(route.params.workspaceId ?? "").trim()
 
 const initialTab = ((): SettingsTab => {
     const q = route.query.tab;
-    return q === "config" || q === "mcp" || q === "general" ? q : "general";
+    return q === "config" || q === "mcp" || q === "members" || q === "general" ? q : "general";
 })();
 const activeTab = ref<SettingsTab>(initialTab);
 
-const tabs = computed<{ key: SettingsTab; label: string }[]>(() => [
-    { key: "general", label: t("workspace.settingsTabGeneral") },
-    { key: "config", label: t("workspace.settingsTabConfig") },
-    { key: "mcp", label: t("workspace.settingsTabMcp") },
-]);
+const tabs = computed<{ key: SettingsTab; label: string }[]>(() => {
+    const base: { key: SettingsTab; label: string }[] = [
+        { key: "general", label: t("workspace.settingsTabGeneral") },
+        { key: "config", label: t("workspace.settingsTabConfig") },
+    ];
+    if (auth.canViewMembers) {
+        base.push({ key: "members", label: t("workspace.settingsTabMembers") });
+    }
+    base.push({ key: "mcp", label: t("workspace.settingsTabMcp") });
+    return base;
+});
+
+// PLAN-0565: VIEWER 载入后（selectWorkspace 刷新角色）若停在已隐藏的成员 tab，
+// 回退到常规 tab；载入前 workspaceRole 为空视为可见，由面板自行处理 403。
+watch(
+    () => auth.canViewMembers,
+    (visible) => {
+        if (!visible && activeTab.value === "members") activeTab.value = "general";
+    },
+);
 
 const loadError = ref(""),
     loading = ref(false),
@@ -404,6 +421,13 @@ onMounted(() => {
                         layer="workspace"
                         :workspace-id="workspaceId"
                         :readonly="!auth.canWriteWorkspace"
+                    />
+                </div>
+
+                <div v-else-if="activeTab === 'members'" data-testid="ws-settings-members">
+                    <WorkspaceMembersPanel
+                        :workspace-id="workspaceId"
+                        :readonly="!auth.canManageWorkspace"
                     />
                 </div>
 
