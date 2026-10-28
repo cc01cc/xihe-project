@@ -79,7 +79,9 @@ public class AuthController {
     public ResponseEntity<?> register(@Valid @RequestBody RegisterRequest request,
                                       HttpServletRequest httpRequest) {
         try {
-            loginAttemptService.checkAndRecordRegister(clientIpResolver.resolve(httpRequest));
+            ClientIpResolver.ResolvedClientIp clientIp =
+                    clientIpResolver.resolveClientIp(httpRequest);
+            loginAttemptService.checkAndRecordRegister(clientIp.raw(), clientIp.bucketKey());
         } catch (LoginThrottledException e) {
             return rateLimited(e);
         }

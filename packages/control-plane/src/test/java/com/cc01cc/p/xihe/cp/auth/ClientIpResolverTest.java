@@ -57,6 +57,24 @@ class ClientIpResolverTest {
     }
 
     @Test
+    void resolveClientIp_directIpv6Loopback_keepsRawAndMasksBucket() {
+        ClientIpResolver resolver = new ClientIpResolver("", 64);
+        MockHttpServletRequest request = request("0:0:0:0:0:0:0:1", null);
+        ClientIpResolver.ResolvedClientIp resolved = resolver.resolveClientIp(request);
+        assertEquals("0:0:0:0:0:0:0:1", resolved.raw());
+        assertEquals("0:0:0:0:0:0:0:0", resolved.bucketKey());
+    }
+
+    @Test
+    void resolveClientIp_trustedProxy_rawIsForwardedLiteral() {
+        ClientIpResolver resolver = new ClientIpResolver("127.0.0.1/32,::1/128", 64);
+        MockHttpServletRequest request = request("0:0:0:0:0:0:0:1", "203.0.113.9");
+        ClientIpResolver.ResolvedClientIp resolved = resolver.resolveClientIp(request);
+        assertEquals("203.0.113.9", resolved.raw());
+        assertEquals("203.0.113.9", resolved.bucketKey());
+    }
+
+    @Test
     void bracketedIpv6_normalizes() {
         assertEquals("0:0:0:0:0:0:0:1", ClientIpResolver.normalize("[::1]"));
     }

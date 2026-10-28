@@ -185,10 +185,51 @@ class LoginAttemptServiceTest {
         AuditLogger audit = mock(AuditLogger.class);
         LoginAttemptService service = service(clock, 100, 100, 2, 4, 100, 2, audit);
 
-        assertDoesNotThrow(() -> service.checkAndRecordRegister("127.0.0.1"));
-        assertDoesNotThrow(() -> service.checkAndRecordRegister("203.0.113.10"));
+        assertDoesNotThrow(() -> service.checkAndRecordRegister("127.0.0.1", "127.0.0.1"));
+        assertDoesNotThrow(() -> service.checkAndRecordRegister("203.0.113.10", "203.0.113.10"));
         assertThrows(LoginThrottledException.class,
-                () -> service.checkAndRecordRegister("203.0.113.10"));
+                () -> service.checkAndRecordRegister("203.0.113.10", "203.0.113.10"));
+    }
+
+    @Test
+    void registerLoopbackExempt_judgesRawAddress_notAggregationBucket() {
+        MutableClock clock = new MutableClock(START);
+        AuditLogger audit = mock(AuditLogger.class);
+        LoginAttemptService service = service(clock, 100, 100, 2, 4, 100, 2, audit);
+
+        // PLAN-0571: ::1 aggregates to the unspecified :: bucket; the raw
+        // address must still be recognized as loopback and stay exempt.
+        for (int i = 0; i < 10; i++) {
+            assertDoesNotThrow(
+                    () -> service.checkAndRecordRegister("0:0:0:0:0:0:0:1", "0:0:0:0:0:0:0:0"));
+        }
+    }
+
+    @Test
+    void registerExemptionDisabled_countsByBucket_evenForLoopbackRaw() {
+        MutableClock clock = new MutableClock(START);
+        AuditLogger audit = mock(AuditLogger.class);
+        LoginAttemptService service = new LoginAttemptService(100, 900, 60, 2, 100, 900, 60, 4,
+                100, 2, 3600, 1800, false, clock, audit);
+
+        assertDoesNotThrow(
+                () -> service.checkAndRecordRegister("0:0:0:0:0:0:0:1", "0:0:0:0:0:0:0:0"));
+        assertThrows(LoginThrottledException.class,
+                () -> service.checkAndRecordRegister("0:0:0:0:0:0:0:1", "0:0:0:0:0:0:0:0"));
+    }
+
+    @Test
+    void registerMaxAttemptsZero_returnsBeforeAnyCounting() {
+        MutableClock clock = new MutableClock(START);
+        AuditLogger audit = mock(AuditLogger.class);
+        // PLAN-0566 D6 exempt lane: max=0 must stay a pure early return
+        // regardless of the raw/bucket signature change (T2.2).
+        LoginAttemptService service = service(clock, 100, 100, 2, 4, 100, 0, audit);
+
+        for (int i = 0; i < 5; i++) {
+            assertDoesNotThrow(
+                    () -> service.checkAndRecordRegister("203.0.113.10", "203.0.113.10"));
+        }
     }
 
     @Test
