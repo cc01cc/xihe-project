@@ -57,6 +57,33 @@ export const CONFIG_DOMAINS: readonly Exclude<
         domain !== "agent-templates" && domain !== "api-request-templates",
 );
 
+/**
+ * PLAN-0573: domains a non-admin session may read via the merged
+ * `GET /config/{domain}` view. Mirror of the CP semantics
+ * (ConfigService.java:90-96,137-141: USER_WRITABLE ∪ WORKSPACE_WRITABLE ∪
+ * EXPLICIT_ONLY; today only `logging` falls outside). CP stays authoritative —
+ * the UI merely avoids issuing requests it knows will be rejected with 403.
+ * Keep in sync when the CP sets change.
+ */
+const NON_ADMIN_READABLE_DOMAINS: ReadonlySet<ConfigDomain> = new Set<ConfigDomain>([
+    "llm-provider",
+    "context-policy",
+    "embedding",
+    "rag",
+    "agent-runtime",
+    "agent-profile",
+    "user-preference",
+    "approval-policy",
+    "agent-templates",
+    "api-request-templates",
+    "job-policy",
+]);
+
+/** True when the merged view of this domain is readable without the ADMIN bypass. */
+export function isDomainReadableWithoutAdmin(domain: ConfigDomain): boolean {
+    return NON_ADMIN_READABLE_DOMAINS.has(domain);
+}
+
 export const LAYER_DOMAINS: Record<ConfigLayer, readonly ConfigDomain[]> = {
     instance: INSTANCE_DOMAINS,
     user: [
@@ -197,10 +224,17 @@ export const useConfigStore = defineStore("config", () => {
         return request<Record<string, string>>(`/config/${domain}`);
     }
 
-    async function loadAllDomains() {
+    /**
+     * PLAN-0573: `isAdmin` bypasses the non-admin domain filter (full
+     * CONFIG_DOMAINS pull, admin behavior unchanged); non-admin callers omit
+     * it so domains CP rejects with 403 are never requested.
+     */
+    async function loadAllDomains(options?: { isAdmin?: boolean }) {
         loading.value = true;
         error.value = null;
-        const domains: ConfigDomain[] = [...CONFIG_DOMAINS];
+        const domains = options?.isAdmin
+            ? [...CONFIG_DOMAINS]
+            : CONFIG_DOMAINS.filter(isDomainReadableWithoutAdmin);
         try {
             const results = await Promise.all(
                 domains.map((d) => fetchDomain(d).then((data) => ({ domain: d, data }))),

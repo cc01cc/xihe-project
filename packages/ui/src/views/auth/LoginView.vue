@@ -38,7 +38,7 @@ async function handleSubmit() {
     // Keep the form locked through the route transition: the old code cleared
     // `loading` before the un-awaited push, which reopened the submit window.
     phase.value = "entering";
-    config.loadAllDomains().catch(() => {
+    config.loadAllDomains({ isAdmin: auth.isAdmin }).catch(() => {
         // 后端不可用时使用本地持久化配置；错误已在 store 中记录
     });
     const redirect = (route.query.redirect as string) || "/workspace";

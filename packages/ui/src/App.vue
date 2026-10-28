@@ -15,7 +15,7 @@ const authStore = useAuthStore(),
     sessionStore = useSessionStore();
 onMounted(async () => {
     if (!authStore.isAuthenticated) return;
-    configStore.loadAllDomains().catch(() => {
+    configStore.loadAllDomains({ isAdmin: authStore.isAdmin }).catch(() => {
         // 后端不可用时使用本地持久化配置；错误已在 store 中记录
     });
     if (authStore.currentWorkspaceId) {
