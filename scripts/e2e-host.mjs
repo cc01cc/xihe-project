@@ -1078,7 +1078,7 @@ async function configureFakeLlm() {
   const login = await fetch(`${cpBaseUrl}/api/v1/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'admin@xihe.local', password: e2eAdminPassword }),
+    body: JSON.stringify({ identifier: 'admin@xihe.local', password: e2eAdminPassword }),
   })
   if (!login.ok) throw new Error(`fake LLM admin login failed: HTTP ${login.status}`)
   const loginBody = await login.json()

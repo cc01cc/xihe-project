@@ -210,7 +210,7 @@ async function login({ retries = 45, delayMs = 2000 } = {}) {
     for (let attempt = 1; attempt <= retries; attempt += 1) {
         try {
             const response = await http("POST", "/api/v1/auth/login", {
-                body: { email: CFG.adminEmail, password },
+                body: { identifier: CFG.adminEmail, password },
                 timeoutMs: 5000,
             });
             if (response.status === 200 && response.json?.accessToken) {

@@ -54,6 +54,10 @@ public class AuthService {
      * Creates the user row and its default grants; returns the persisted user.
      * PLAN-0526: local single-user registration grants the ADMIN role so the
      * single-machine user has full capability.
+     * PLAN-0565 ruling #7: username is required and unique (letter-first);
+     * a caller-supplied value is validated (400 USERNAME_INVALID / 409
+     * USERNAME_TAKEN), a blank one is derived from the email local part with
+     * automatic numeric de-duplication.
      */
     @Transactional
     public User registerUser(RegisterRequest request, boolean adminRole) {
@@ -61,18 +65,48 @@ public class AuthService {
             throw new IllegalArgumentException("Email already registered");
         }
 
+        String username = resolveUsername(request.getUsername(), request.getEmail());
         User user = new User(
                 request.getEmail(),
                 passwordEncoder.encode(request.getPassword()),
                 adminRole ? UserRole.ADMIN : UserRole.USER,
-                request.getName() != null ? request.getName() : request.getEmail().split("@")[0]
+                request.getName() != null ? request.getName() : request.getEmail().split("@")[0],
+                username
         );
         user = userRepository.save(user);
         grantDefaultService.ensureUserDefault(user);
 
-        logger.info("User registered: id={} email={} role={}", user.getId(),
-                AuthLog.maskEmail(user.getEmail()), user.getRole());
+        logger.info("User registered: id={} email={} username={} role={}", user.getId(),
+                AuthLog.maskEmail(user.getEmail()), user.getUsername(), user.getRole());
         return user;
+    }
+
+    /** PLAN-0565 ruling #7: explicit usernames are validated; blank ones are derived. */
+    private String resolveUsername(String requested, String email) {
+        if (requested != null && !requested.isBlank()) {
+            String candidate = requested.trim();
+            if (!candidate.matches("^[a-z][a-z0-9]{0,31}$")) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "USERNAME_INVALID",
+                        "Username must be 1-32 lowercase letters/digits and start with a letter");
+            }
+            if (userRepository.existsByUsername(candidate)) {
+                throw new CpApiException(HttpStatus.CONFLICT, "USERNAME_TAKEN",
+                        "Username already taken");
+            }
+            return candidate;
+        }
+
+        String base = User.defaultUsernameFromEmail(email);
+        String candidate = base;
+        int n = 1;
+        while (userRepository.existsByUsername(candidate)) {
+            n++;
+            String suffix = Integer.toString(n);
+            candidate = base.length() + suffix.length() > 32
+                    ? base.substring(0, 32 - suffix.length()) + suffix
+                    : base + suffix;
+        }
+        return candidate;
     }
 
     /**
@@ -80,9 +114,14 @@ public class AuthService {
      * PLAN-0558: unknown accounts still perform one BCrypt match (dummy hash),
      * and the failure type is credential-only so callers can count it for lockout
      * without catching workspace/token failures by mistake.
+     * PLAN-0565 ruling #7: identifier matches email (contains '@') or username.
      */
     public User authenticate(LoginRequest request) {
-        User user = userRepository.findByEmail(request.getEmail()).orElse(null);
+        String identifier = request.getIdentifier();
+        User user = (identifier != null && identifier.contains("@")
+                ? userRepository.findByEmail(identifier)
+                : userRepository.findByUsername(identifier))
+                .orElse(null);
         if (user == null) {
             passwordEncoder.matches(request.getPassword(), dummyPasswordHash);
             throw new InvalidCredentialsException("Invalid email or password");

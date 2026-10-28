@@ -106,7 +106,7 @@ async function main() {
   const login = await fetch(`${cpBase}/api/v1/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: adminEmail, password: adminPassword }),
+    body: JSON.stringify({ identifier: adminEmail, password: adminPassword }),
     signal: AbortSignal.timeout(10_000),
   });
   if (!login.ok) {

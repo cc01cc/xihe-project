@@ -71,7 +71,7 @@ async function startCpMock({ barrierFirstTwoLists = false, dropCreateResponse = 
     if (url.pathname === '/api/v1/auth/login' && request.method === 'POST') {
       state.loginRequests += 1;
       const body = await requestBody(request);
-      if (body.email !== 'admin@xihe.local' || body.password !== TEST_PASSWORD) {
+      if (body.identifier !== 'admin@xihe.local' || body.password !== TEST_PASSWORD) {
         json(response, 401, { code: 'AUTHENTICATION_FAILED', detail: 'must not be printed' });
         return;
       }

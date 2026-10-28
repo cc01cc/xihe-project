@@ -89,7 +89,7 @@ public abstract class AbstractWireMockTest {
         }
         ResponseEntity<Map> login = restTemplate.postForEntity(
                 url("/api/v1/auth/login"),
-                Map.of("email", email, "password", password),
+                Map.of("identifier", email, "password", password),
                 Map.class);
         Map loginBody = login.getBody();
         return loginBody != null ? (String) loginBody.get("accessToken") : null;

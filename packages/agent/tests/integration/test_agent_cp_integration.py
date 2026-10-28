@@ -52,7 +52,7 @@ class TestAgentCPIntegration:
         # Login
         r = httpx.post(
             f"{CP_URL}/api/v1/auth/login",
-            json={"email": email, "password": "Pass1234!"},
+            json={"identifier": email, "password": "Pass1234!"},
             timeout=10,
         )
         assert r.status_code == 200

@@ -62,7 +62,7 @@ test.describe("@host PLAN-0492 run-budget exhaustion", () => {
         });
         if (reg.ok()) return (await reg.json()) as Auth;
         const login = await request.post(`${CP_URL}/api/v1/auth/login`, {
-            data: { email: SHARED_EMAIL, password: SHARED_PASSWORD },
+            data: { identifier: SHARED_EMAIL, password: SHARED_PASSWORD },
         });
         expect(login.ok()).toBe(true);
         return (await login.json()) as Auth;

@@ -579,7 +579,7 @@ class ConfigControllerTest extends AbstractH2Test {
         String password = DataSeeder.seededAdminPassword();
         ResponseEntity<Map> login = restTemplate.postForEntity(
             url("/api/v1/auth/login"),
-            Map.of("email", "admin@xihe.local", "password", password),
+            Map.of("identifier", "admin@xihe.local", "password", password),
             Map.class);
         assertEquals(HttpStatus.OK, login.getStatusCode());
         String token = (String) login.getBody().get("accessToken");

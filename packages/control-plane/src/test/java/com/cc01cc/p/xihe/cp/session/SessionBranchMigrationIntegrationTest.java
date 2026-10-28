@@ -121,8 +121,8 @@ class SessionBranchMigrationIntegrationTest {
             UUID userId = UUID.randomUUID();
             UUID workspaceId = UUID.randomUUID();
             UUID sessionId = UUID.randomUUID();
-            execute(connection, "INSERT INTO users (id, email, password_hash) VALUES ('" + userId
-                    + "'::uuid, 'branch-fresh-" + userId + "@test.local', 'hash')");
+            execute(connection, "INSERT INTO users (id, email, password_hash, username) VALUES ('" + userId
+                    + "'::uuid, 'branch-fresh-" + userId + "@test.local', 'hash', 'x' || left(md5(random()::text), 31))");
             execute(connection, "INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
                     + "'::uuid, 'branch-fresh-ws', '" + userId + "'::uuid)");
             execute(connection, "INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('"

@@ -37,7 +37,8 @@ function mountView() {
 }
 
 async function fillAndSubmit(wrapper: ReturnType<typeof mountView>) {
-    await wrapper.find("#email").setValue("a@test.com");
+    // PLAN-0565 ruling #7: the login field is the dual identifier (email or username).
+    await wrapper.find("#identifier").setValue("a@test.com");
     await wrapper.find("#password").setValue("pw-12345678");
     await wrapper.find("form").trigger("submit");
 }
@@ -66,7 +67,7 @@ describe("LoginView submission lock", () => {
 
         expect(authMock.login).toHaveBeenCalledTimes(1);
         expect(wrapper.find("form").attributes("aria-busy")).toBe("true");
-        expect(wrapper.find("#email").attributes("disabled")).toBeDefined();
+        expect(wrapper.find("#identifier").attributes("disabled")).toBeDefined();
         expect(wrapper.find('button[type="submit"]').text()).toBe("login.entering");
         resolvePush(undefined);
         await flushPromises();

@@ -125,6 +125,11 @@
       "description": "PLAN-0508 provider-wire transport telemetry: normal / slow-first-response / provider-failure attempts through the CP relay + monitor diagnostics",
       "llmMode": "success",
       "specs": ["e2e/real/plan-0508-transport-telemetry.spec.ts"]
+    },
+    "workspace-members": {
+      "description": "PLAN-0565 workspace members: settings UI journey (add/remove/role matrix) + real-chain permission matrix",
+      "llmMode": "mock",
+      "specs": ["e2e/real/workspace-members.spec.ts"]
     }
   }
 }

@@ -25,6 +25,14 @@ public class User {
     @Column(nullable = false, unique = true, length = 255)
     private String email;
 
+    /**
+     * PLAN-0565 ruling #7: unique account handle, {@code ^[a-z][a-z0-9]{0,31}$}
+     * (letter-first). Backfilled/generated from the email local part when not
+     * supplied at registration.
+     */
+    @Column(nullable = false, unique = true, length = 32)
+    private String username;
+
     @Column(name = "password_hash", nullable = false, length = 255)
     private String passwordHash;
 
@@ -47,10 +55,36 @@ public class User {
     public User() {}
 
     public User(String email, String passwordHash, UserRole role, String name) {
+        this(email, passwordHash, role, name, defaultUsernameFromEmail(email));
+    }
+
+    public User(String email, String passwordHash, UserRole role, String name, String username) {
         this.email = email;
+        this.username = username;
         this.passwordHash = passwordHash;
         this.role = role;
         this.name = name;
+    }
+
+    /**
+     * PLAN-0565: deterministic username fallback derived from the email local
+     * part — lowercase, non-alphanumerics stripped, truncated to 32; an empty
+     * or digit-leading result gets the {@code user} prefix (ruling #7).
+     * Uniqueness is ensured by callers (registration loop / V82 backfill).
+     */
+    public static String defaultUsernameFromEmail(String email) {
+        String cleaned = email == null ? ""
+                : email.toLowerCase().split("@", 2)[0].replaceAll("[^a-z0-9]", "");
+        if (cleaned.length() > 32) {
+            cleaned = cleaned.substring(0, 32);
+        }
+        if (cleaned.isEmpty() || !cleaned.matches("[a-z].*")) {
+            cleaned = ("user" + cleaned);
+            if (cleaned.length() > 32) {
+                cleaned = cleaned.substring(0, 32);
+            }
+        }
+        return cleaned;
     }
 
     @PrePersist
@@ -69,6 +103,9 @@ public class User {
 
     public String getEmail() { return email; }
     public void setEmail(String email) { this.email = email; }
+
+    public String getUsername() { return username; }
+    public void setUsername(String username) { this.username = username; }
 
     public String getPasswordHash() { return passwordHash; }
     public void setPasswordHash(String passwordHash) { this.passwordHash = passwordHash; }

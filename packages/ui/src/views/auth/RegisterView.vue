@@ -10,6 +10,7 @@ const { t } = useI18n(),
     auth = useAuthStore();
 
 const email = ref(""),
+    username = ref(""),
     password = ref(""),
     confirmPassword = ref(""),
     localError = ref<string | null>(null),
@@ -35,7 +36,7 @@ async function handleSubmit() {
     phase.value = "submitting";
     localError.value = null;
     const name = email.value.includes("@") ? email.value.split("@")[0] : email.value,
-        ok = await auth.register(email.value, password.value, name);
+        ok = await auth.register(email.value, password.value, name, username.value || undefined);
     if (!ok) {
         localError.value = rateLimitMessage() ?? auth.error;
         phase.value = "idle";
@@ -67,7 +68,7 @@ async function handleSubmit() {
             <form class="space-y-4" :aria-busy="busy" @submit.prevent="handleSubmit">
                 <div>
                     <label class="block text-sm font-medium mb-1" for="email">{{
-                        t("register.username")
+                        t("register.email")
                     }}</label>
                     <input
                         id="email"
@@ -76,6 +77,21 @@ async function handleSubmit() {
                         name="email"
                         autocomplete="email"
                         :disabled="busy"
+                        class="w-full px-3 py-2 rounded-md border bg-background focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-60"
+                    />
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1" for="username">{{
+                        t("register.username")
+                    }}</label>
+                    <input
+                        id="username"
+                        v-model="username"
+                        type="text"
+                        name="username"
+                        autocomplete="username"
+                        :disabled="busy"
+                        :placeholder="t('register.usernameHint')"
                         class="w-full px-3 py-2 rounded-md border bg-background focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-60"
                     />
                 </div>

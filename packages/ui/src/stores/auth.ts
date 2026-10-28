@@ -75,6 +75,12 @@ export const useAuthStore = defineStore("auth", () => {
     const canManageWorkspace = computed(() => workspaceRole.value === "OWNER");
 
     /**
+     * PLAN-0565 ruling #2: the members tab is visible to OWNER/EDITOR and hidden
+     * for VIEWER. CP stays authoritative (list returns 403 for VIEWER anyway).
+     */
+    const canViewMembers = computed(() => workspaceRole.value !== "VIEWER");
+
+    /**
      * PLAN-0328 decision #56 / PLAN-0559: workspace OWNER (or instance ADMIN) may
      * classify tools. The client only decides whether to offer the affordance;
      * CP remains authoritative and returns 403 otherwise.
@@ -100,12 +106,13 @@ export const useAuthStore = defineStore("auth", () => {
         rotateAnonSessionId();
     }
 
-    async function login(email: string, password: string) {
+    /** PLAN-0565 ruling #7: identifier is email or username. */
+    async function login(identifier: string, password: string) {
         loading.value = true;
         error.value = null;
         lastError.value = null;
         try {
-            const res = await api.login(email, password);
+            const res = await api.login(identifier, password);
             const ws =
                 res.workspace ??
                 (res.workspaceId ? { id: res.workspaceId, name: "Default Workspace" } : null);
@@ -123,12 +130,13 @@ export const useAuthStore = defineStore("auth", () => {
         }
     }
 
-    async function register(email: string, password: string, name: string) {
+    /** PLAN-0565 ruling #7: optional username; blank derives one from email. */
+    async function register(email: string, password: string, name: string, username?: string) {
         loading.value = true;
         error.value = null;
         lastError.value = null;
         try {
-            const res = await api.register(email, password, name);
+            const res = await api.register(email, password, name, username);
             const ws =
                 res.workspace ??
                 (res.workspaceId ? { id: res.workspaceId, name: "Default Workspace" } : null);
@@ -342,6 +350,7 @@ export const useAuthStore = defineStore("auth", () => {
         workspaceRole,
         canWriteWorkspace,
         canManageWorkspace,
+        canViewMembers,
         currentWorkspaceId,
         login,
         register,

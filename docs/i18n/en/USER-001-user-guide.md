@@ -46,8 +46,10 @@ Open browser at `http://localhost:12630`.
 First-time use requires account registration:
 1. Open `http://localhost:12630`
 2. Click "Register"
-3. Fill in email, password (≥8 characters), name
+3. Fill in email, password (≥8 characters), name; optionally a **username** (must start with a lowercase letter, lowercase letters/digits only, ≤32 characters) — leave it blank and a unique default is derived from the email
 4. After login, automatically redirects to chat interface
+
+The login field accepts either value: enter the registered email or the username (PLAN-0565).
 
 ### 1.5. Testing
 
@@ -110,7 +112,9 @@ Click the settings icon at the bottom of the sidebar:
 - **Workspace**: Workspace management
 - **Knowledge Base**: Document upload, chunking, Embedding
 
-**Workspace settings (PLAN-0560)**: every workspace has its own settings page (toolbar gear or `/workspace/:workspaceId/settings`) with General / Config / MCP sections — General lets an OWNER rename or delete the workspace; Config manages this workspace's connections, approval policy, job policy, etc. (overriding user and instance defaults); MCP manages this workspace's MCP servers. The global settings page keeps only the instance and personal layers and links to the workspace settings page.
+**Workspace settings (PLAN-0560)**: every workspace has its own settings page (toolbar gear or `/workspace/:workspaceId/settings`) with General / Config / Members / MCP sections — General lets an OWNER rename or delete the workspace; Config manages this workspace's connections, approval policy, job policy, etc. (overriding user and instance defaults); MCP manages this workspace's MCP servers. The global settings page keeps only the instance and personal layers and links to the workspace settings page.
+
+**Workspace members (PLAN-0565)**: the Members tab in the workspace settings — the OWNER adds existing accounts by username (role "Editor" or "Viewer"), changes member roles and removes members; "Editor" (EDITOR) can see the member list but cannot change it; "Viewer" (VIEWER) does not see the tab at all. The unique owner cannot be removed or downgraded (server-enforced). An unregistered username shows "This user does not exist yet. Ask them to register first." Every add / role change / removal is recorded in the audit log.
 
 ### 2.6. Workspace execution backends
 

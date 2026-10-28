@@ -116,6 +116,18 @@ export interface ApiWorkspace {
     updatedAt?: string;
 }
 
+/** PLAN-0565: member view from /workspaces/{id}/members (spec §2; role is canonical). */
+export interface ApiWorkspaceMember {
+    userId: string;
+    username: string;
+    email: string;
+    name: string | null;
+    role: "OWNER" | "EDITOR" | "VIEWER";
+    createdAt: string;
+}
+
+export type MemberAssignableRole = "EDITOR" | "VIEWER";
+
 export interface ApiSession {
     id: string;
     title: string;
@@ -1912,7 +1924,8 @@ export interface VersionInfo {
 }
 
 export const api = {
-    login(email: string, password: string) {
+    // PLAN-0565 ruling #7: identifier is email (contains '@') or username.
+    login(identifier: string, password: string) {
         return request<{
             accessToken: string;
             refreshToken: string;
@@ -1921,15 +1934,17 @@ export const api = {
             workspace?: ApiWorkspace;
         }>("/auth/login", {
             method: "POST",
-            body: JSON.stringify({ email, password }),
+            body: JSON.stringify({ identifier, password }),
         });
     },
-    register(email: string, password: string, name: string) {
+    register(email: string, password: string, name: string, username?: string) {
         // PLAN-0526: local mode may omit the password (server generates one).
+        // PLAN-0565 ruling #7: optional username; blank derives one from email.
         const body: Record<string, string | undefined> = {
             email,
             password: password || undefined,
             name,
+            username: username || undefined,
         };
         return request<{
             accessToken: string;
@@ -2636,6 +2651,49 @@ export const api = {
             method: "DELETE",
             headers: workspaceHeaders(wsId),
         });
+    },
+    async listWorkspaceMembers(wsId: string): Promise<ApiWorkspaceMember[]> {
+        const response = await request<unknown[]>(
+            `/workspaces/${encodeURIComponent(wsId)}/members`,
+            { headers: workspaceHeaders(wsId) },
+        );
+        return Array.isArray(response) ? (response as ApiWorkspaceMember[]) : [];
+    },
+    async addWorkspaceMember(
+        wsId: string,
+        input: { username: string; role: MemberAssignableRole },
+    ): Promise<ApiWorkspaceMember> {
+        return await request<ApiWorkspaceMember>(
+            `/workspaces/${encodeURIComponent(wsId)}/members`,
+            {
+                method: "POST",
+                headers: workspaceHeaders(wsId),
+                body: JSON.stringify(input),
+            },
+        );
+    },
+    async updateWorkspaceMemberRole(
+        wsId: string,
+        userId: string,
+        role: MemberAssignableRole,
+    ): Promise<ApiWorkspaceMember> {
+        return await request<ApiWorkspaceMember>(
+            `/workspaces/${encodeURIComponent(wsId)}/members/${encodeURIComponent(userId)}`,
+            {
+                method: "PATCH",
+                headers: workspaceHeaders(wsId),
+                body: JSON.stringify({ role }),
+            },
+        );
+    },
+    removeWorkspaceMember(wsId: string, userId: string) {
+        return request<void>(
+            `/workspaces/${encodeURIComponent(wsId)}/members/${encodeURIComponent(userId)}`,
+            {
+                method: "DELETE",
+                headers: workspaceHeaders(wsId),
+            },
+        );
     },
     getWorkspaceEnvironment(wsId: string) {
         return request<WorkspaceEnvironment>(

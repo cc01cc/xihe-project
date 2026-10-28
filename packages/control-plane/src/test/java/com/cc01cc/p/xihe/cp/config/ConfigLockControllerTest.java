@@ -159,7 +159,7 @@ class ConfigLockControllerTest extends AbstractH2Test {
     private String adminToken() {
         ResponseEntity<Map> login = restTemplate.postForEntity(
                 url("/api/v1/auth/login"),
-                Map.of("email", "admin@xihe.local", "password", DataSeeder.seededAdminPassword()),
+                Map.of("identifier", "admin@xihe.local", "password", DataSeeder.seededAdminPassword()),
                 Map.class);
         assertEquals(HttpStatus.OK, login.getStatusCode());
         return (String) login.getBody().get("accessToken");

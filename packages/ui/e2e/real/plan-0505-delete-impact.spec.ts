@@ -119,7 +119,7 @@ test.describe.serial("@host PLAN-0505 delete impact and cascade (browser)", () =
         const adminPassword = process.env.XIHE_E2E_ADMIN_PASSWORD ?? "";
         expect(adminPassword, "XIHE_E2E_ADMIN_PASSWORD must be provided by e2e-host").not.toBe("");
         const adminLogin = await request.post(`${CP_URL}/api/v1/auth/login`, {
-            data: { email: "admin@xihe.local", password: adminPassword },
+            data: { identifier: "admin@xihe.local", password: adminPassword },
         });
         expect(adminLogin.ok(), await adminLogin.text()).toBe(true);
         const adminToken = ((await adminLogin.json()) as { accessToken: string }).accessToken;

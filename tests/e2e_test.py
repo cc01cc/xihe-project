@@ -63,7 +63,7 @@ async def test_chat_sse():
         if reg.status_code != 201:
             log(f"⚠️ 注册失败 ({reg.status_code})，尝试登录...")
             login = await c.post(f"{CP_URL}/api/v1/auth/login", json={
-                "email": "e2e@test.com", "password": "Pass1234!"
+                "identifier": "e2e@test.com", "password": "Pass1234!"
             })
             if login.status_code != 200:
                 log("❌ 登录也失败，跳过 chat 测试")
