@@ -5,7 +5,6 @@ import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnectionAudit;
 import com.cc01cc.p.xihe.cp.entity.ProviderCredentialLease;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.crypto.EnvelopeEncryptionService;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionAuditRepository;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -13,7 +12,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 

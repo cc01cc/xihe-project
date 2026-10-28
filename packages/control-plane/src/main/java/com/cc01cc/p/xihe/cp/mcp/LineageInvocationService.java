@@ -190,7 +190,9 @@ public class LineageInvocationService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void settle(Reservation reservation, String status) {
-        if (reservation == null) return;
+        if (reservation == null) {
+            return;
+        }
         if (!List.of(AgentLineageInvocation.STATUS_COMPLETED,
                 AgentLineageInvocation.STATUS_AMBIGUOUS,
                 AgentLineageInvocation.STATUS_UNKNOWN,
@@ -330,7 +332,9 @@ public class LineageInvocationService {
 
     private RunLineage findRunLineage(String runId) {
         UUID runUuid = parseUuid(runId);
-        if (runUuid == null) return null;
+        if (runUuid == null) {
+            return null;
+        }
         List<RunLineage> rows = jdbc.query("""
                 SELECT cr.session_id, cr.user_id, cr.workspace_id, cr.branch_id,
                        cr.continuation_lineage_id, cr.continuation_source_run_id,
@@ -345,7 +349,9 @@ public class LineageInvocationService {
                 rs.getObject("continuation_lineage_id", UUID.class),
                 rs.getObject("continuation_source_run_id", UUID.class),
                 rs.getObject("source_lineage_id", UUID.class)), runUuid);
-        if (rows.size() != 1) return null;
+        if (rows.size() != 1) {
+            return null;
+        }
         RunLineage run = rows.getFirst();
         UUID lineageId = run.continuationLineageId() != null
                 ? run.continuationLineageId() : run.sourceLineageId();
@@ -414,8 +420,12 @@ public class LineageInvocationService {
                 throw new IllegalArgumentException("MCP tool call body is invalid");
             }
             JsonNode arguments = root.path("params").get("arguments");
-            if (arguments == null) arguments = STRICT_JSON.createObjectNode();
-            if (!arguments.isObject()) throw new IllegalArgumentException("MCP tool arguments are invalid");
+            if (arguments == null) {
+                arguments = STRICT_JSON.createObjectNode();
+            }
+            if (!arguments.isObject()) {
+                throw new IllegalArgumentException("MCP tool arguments are invalid");
+            }
             byte[] canonical = canonicalJson(arguments).getBytes(StandardCharsets.UTF_8);
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(canonical));
         } catch (IllegalArgumentException e) {
@@ -439,21 +449,31 @@ public class LineageInvocationService {
         }
         if (value.isArray()) {
             List<String> items = new ArrayList<>(value.size());
-            for (JsonNode item : value) items.add(canonicalJson(item));
+            for (JsonNode item : value) {
+                items.add(canonicalJson(item));
+            }
             return "[" + String.join(",", items) + "]";
         }
-        if (value.isTextual()) return STRICT_JSON.writeValueAsString(value.textValue());
+        if (value.isTextual()) {
+            return STRICT_JSON.writeValueAsString(value.textValue());
+        }
         if (value.isNumber()) {
             BigDecimal number = value.decimalValue().stripTrailingZeros();
             return number.signum() == 0 ? "0" : number.toPlainString();
         }
-        if (value.isBoolean()) return value.booleanValue() ? "true" : "false";
-        if (value.isNull()) return "null";
+        if (value.isBoolean()) {
+            return value.booleanValue() ? "true" : "false";
+        }
+        if (value.isNull()) {
+            return "null";
+        }
         throw new IllegalArgumentException("MCP tool arguments are invalid");
     }
 
     private static UUID parseUuid(String value) {
-        if (value == null || value.isBlank()) return null;
+        if (value == null || value.isBlank()) {
+            return null;
+        }
         try {
             return UUID.fromString(value.trim());
         } catch (IllegalArgumentException e) {

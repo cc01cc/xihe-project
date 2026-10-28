@@ -2,12 +2,10 @@ package com.cc01cc.p.xihe.cp.provider;
 
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.entity.ProviderCredentialLease;
-import com.cc01cc.p.xihe.cp.crypto.EnvelopeEncryptionService;
 import com.cc01cc.p.xihe.cp.repository.ProviderCredentialLeaseRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
