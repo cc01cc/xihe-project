@@ -114,7 +114,8 @@ public class AuthController {
         boolean throttled = !localModeService.enabled();
         try {
             if (throttled) {
-                lease = loginAttemptService.beginLogin(request.getEmail(), ip);
+                // PLAN-0565 ruling #7: the identifier (email or username) keys the lockout lease.
+                lease = loginAttemptService.beginLogin(request.getIdentifier(), ip);
                 if (!loginAttemptService.tryAcquireBcryptSlot()) {
                     throw new LoginThrottledException(1);
                 }
@@ -132,7 +133,11 @@ public class AuthController {
             return rateLimited(e);
         } catch (InvalidCredentialsException e) {
             loginAttemptService.recordCredentialFailure(lease);
-            logger.warn("Login failed for {}: invalid credentials", AuthLog.maskEmail(request.getEmail()));
+            // Usernames are public handles (ruling #7); only emails get masked.
+            String identifier = request.getIdentifier();
+            logger.warn("Login failed for {}: invalid credentials",
+                    identifier != null && identifier.contains("@")
+                            ? AuthLog.maskEmail(identifier) : identifier);
             return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_FAILED", "Invalid credentials");
         } catch (CpApiException e) {
             // Preserve domain statuses (for example USER_NOT_FOUND/429) instead of

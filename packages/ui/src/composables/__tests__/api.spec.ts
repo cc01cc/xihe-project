@@ -46,7 +46,7 @@ describe("api.login", () => {
             "/api/v1/auth/login",
             expect.objectContaining({
                 method: "POST",
-                body: JSON.stringify({ email: "test@test.com", password: TEST_PASSWORD }),
+                body: JSON.stringify({ identifier: "test@test.com", password: TEST_PASSWORD }),
             }),
         );
         expect(result.accessToken).toBe("test-token");

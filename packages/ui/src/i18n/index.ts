@@ -1593,7 +1593,9 @@ const messages = {
         },
         register: {
             title: "注册",
-            username: "邮箱/用户名",
+            email: "邮箱",
+            username: "用户名",
+            usernameHint: "可选，留空则根据邮箱自动生成",
             password: "密码",
             confirmPassword: "确认密码",
             submit: "注册",
@@ -1607,7 +1609,7 @@ const messages = {
         onboarding: {
             title: "开始使用",
             hint: "本机尚未创建账号，创建后即可直接进入。",
-            username: "邮箱/用户名",
+            email: "邮箱",
             name: "显示名称",
             password: "密码",
             localHint: "本机模式无需密码，可留空。",
@@ -3411,7 +3413,9 @@ const messages = {
         },
         register: {
             title: "Register",
-            username: "Email/Username",
+            email: "Email",
+            username: "Username",
+            usernameHint: "Optional; left blank one is derived from your email",
             password: "Password",
             confirmPassword: "Confirm Password",
             submit: "Register",
@@ -3425,7 +3429,7 @@ const messages = {
         onboarding: {
             title: "Get started",
             hint: "No account exists yet locally; create one to enter.",
-            username: "Email/Username",
+            email: "Email",
             name: "Display name",
             password: "Password",
             localHint: "Local mode needs no password; leave it blank.",

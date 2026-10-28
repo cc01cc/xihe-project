@@ -223,4 +223,46 @@ class OpenApiYamlContractTest {
                     "ConnectionInUseProblem schema is contracted");
         }
     }
+
+    /** PLAN-0565：members API 面与账号标识 schema 同批入契约（T1.1/T1.0）。 */
+    @Test
+    void openApiContainsMemberRoutesAndAccountIdentifierSchemas() throws Exception {
+        Path contract = Path.of("..", "..", "docs", "api", "openapi.yaml");
+        try (InputStream input = Files.newInputStream(contract)) {
+            Map<?, ?> document = new Yaml().load(input);
+            Map<?, ?> paths = (Map<?, ?>) document.get("paths");
+            String base = "/api/v1/workspaces/{workspaceId}/members";
+            assertTrue(paths.containsKey(base), "members collection route is contracted");
+            assertTrue(paths.containsKey(base + "/{userId}"), "members item route is contracted");
+
+            Map<?, ?> collection = (Map<?, ?>) paths.get(base);
+            assertInstanceOf(Map.class, collection, "members collection methods are contracted");
+            assertTrue(collection.containsKey("get"), "member list is contracted");
+            assertTrue(collection.containsKey("post"), "member add is contracted");
+            Map<?, ?> item = (Map<?, ?>) paths.get(base + "/{userId}");
+            assertInstanceOf(Map.class, item, "members item methods are contracted");
+            assertTrue(item.containsKey("patch"), "member role update is contracted");
+            assertTrue(item.containsKey("delete"), "member removal is contracted");
+
+            Map<?, ?> schemas = (Map<?, ?>) ((Map<?, ?>) document.get("components")).get("schemas");
+            Map<?, ?> memberView = (Map<?, ?>) schemas.get("MemberView");
+            assertInstanceOf(Map.class, memberView, "MemberView schema is contracted");
+            Map<?, ?> properties = (Map<?, ?>) memberView.get("properties");
+            for (String field : List.of("userId", "username", "email", "name", "role", "createdAt")) {
+                assertTrue(properties.containsKey(field), "MemberView must carry " + field);
+            }
+            assertTrue(schemas.containsKey("MemberAddRequest"), "MemberAddRequest schema is contracted");
+            assertTrue(schemas.containsKey("MemberRoleUpdateRequest"),
+                    "MemberRoleUpdateRequest schema is contracted");
+
+            Map<?, ?> register = (Map<?, ?>) schemas.get("RegisterRequest");
+            assertInstanceOf(Map.class, register, "RegisterRequest schema is contracted");
+            assertTrue(((Map<?, ?>) register.get("properties")).containsKey("username"),
+                    "RegisterRequest must carry the optional username (ruling #7)");
+            Map<?, ?> login = (Map<?, ?>) schemas.get("LoginRequest");
+            assertInstanceOf(Map.class, login, "LoginRequest schema is contracted");
+            assertTrue(((Map<?, ?>) login.get("properties")).containsKey("identifier"),
+                    "LoginRequest must carry the dual identifier (ruling #7)");
+        }
+    }
 }

@@ -1912,7 +1912,8 @@ export interface VersionInfo {
 }
 
 export const api = {
-    login(email: string, password: string) {
+    // PLAN-0565 ruling #7: identifier is email (contains '@') or username.
+    login(identifier: string, password: string) {
         return request<{
             accessToken: string;
             refreshToken: string;
@@ -1921,15 +1922,17 @@ export const api = {
             workspace?: ApiWorkspace;
         }>("/auth/login", {
             method: "POST",
-            body: JSON.stringify({ email, password }),
+            body: JSON.stringify({ identifier, password }),
         });
     },
-    register(email: string, password: string, name: string) {
+    register(email: string, password: string, name: string, username?: string) {
         // PLAN-0526: local mode may omit the password (server generates one).
+        // PLAN-0565 ruling #7: optional username; blank derives one from email.
         const body: Record<string, string | undefined> = {
             email,
             password: password || undefined,
             name,
+            username: username || undefined,
         };
         return request<{
             accessToken: string;

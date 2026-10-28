@@ -12,7 +12,8 @@ const { t } = useI18n(),
     auth = useAuthStore(),
     config = useConfigStore();
 
-const email = ref(""),
+// PLAN-0565 ruling #7: identifier is email or username.
+const identifier = ref(""),
     password = ref(""),
     errorMsg = ref<string | null>(null),
     phase = ref<"idle" | "submitting" | "entering">("idle"),
@@ -25,10 +26,10 @@ function rateLimitMessage(): string | null {
 }
 
 async function handleSubmit() {
-    if (phase.value !== "idle" || !email.value || !password.value) return;
+    if (phase.value !== "idle" || !identifier.value || !password.value) return;
     phase.value = "submitting";
     errorMsg.value = null;
-    const ok = await auth.login(email.value, password.value);
+    const ok = await auth.login(identifier.value, password.value);
     if (!ok) {
         errorMsg.value = rateLimitMessage() ?? auth.error;
         phase.value = "idle";
@@ -65,15 +66,15 @@ async function handleSubmit() {
 
             <form class="space-y-4" :aria-busy="busy" @submit.prevent="handleSubmit">
                 <div>
-                    <label class="block text-sm font-medium mb-1" for="email">{{
+                    <label class="block text-sm font-medium mb-1" for="identifier">{{
                         t("login.username")
                     }}</label>
                     <input
-                        id="email"
-                        v-model="email"
+                        id="identifier"
+                        v-model="identifier"
                         type="text"
-                        name="email"
-                        autocomplete="email"
+                        name="identifier"
+                        autocomplete="username"
                         :disabled="busy"
                         class="w-full px-3 py-2 rounded-md border bg-background focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-60"
                     />
@@ -96,11 +97,11 @@ async function handleSubmit() {
                     type="submit"
                     class="w-full py-2 px-4 rounded-md font-medium text-primary-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     :class="
-                        email && password && !busy
+                        identifier && password && !busy
                             ? 'bg-primary hover:bg-primary/90'
                             : 'bg-muted-foreground/30 text-muted-foreground'
                     "
-                    :disabled="!email || !password || busy"
+                    :disabled="!identifier || !password || busy"
                 >
                     {{
                         phase === "submitting"

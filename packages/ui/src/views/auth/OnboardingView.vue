@@ -56,7 +56,7 @@ async function handleSubmit() {
             <form class="space-y-4" @submit.prevent="handleSubmit">
                 <div>
                     <label class="block text-sm font-medium mb-1" for="email">{{
-                        t("onboarding.username")
+                        t("onboarding.email")
                     }}</label>
                     <input
                         id="email"

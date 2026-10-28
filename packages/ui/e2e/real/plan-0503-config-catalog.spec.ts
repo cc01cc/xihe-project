@@ -40,7 +40,7 @@ async function loginAsAdmin(request: APIRequestContext) {
     const password = process.env.XIHE_E2E_ADMIN_PASSWORD ?? "";
     expect(password, "XIHE_E2E_ADMIN_PASSWORD must be provided by e2e-host").not.toBe("");
     const login = await request.post(`${CP_URL}/api/v1/auth/login`, {
-        data: { email: ADMIN_EMAIL, password },
+        data: { identifier: ADMIN_EMAIL, password },
     });
     expect(login.ok(), await login.text()).toBe(true);
     adminAuth = (await login.json()) as LoginResult;

@@ -113,6 +113,84 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /api/v1/workspaces/{workspaceId}/members:
+    get:
+      operationId: listWorkspaceMembers
+      summary: List workspace members (PLAN-0565)
+      description: |
+        PLAN-0565 (contract plans/PLAN-0565 spec §3): member list for
+        OWNER/EDITOR (ruling #2: EDITOR read-only view, VIEWER 403). Items are
+        `MemberView` (canonical role; legacy ADMIN/MEMBER project as EDITOR).
+        Instance ADMIN (ruling #3) may read the list even without membership;
+        non-members get 403 WORKSPACE_FORBIDDEN.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Member list, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/MemberView' } } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'WORKSPACE_FORBIDDEN (non-member or VIEWER) / WORKSPACE_READ_ONLY (VIEWER with X-Workspace-Id)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: WORKSPACE_NOT_FOUND (unknown/deleted workspace, authorized callers only), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+    post:
+      operationId: addWorkspaceMember
+      summary: Add an existing account as a workspace member (PLAN-0565)
+      description: |
+        PLAN-0565 (spec §3/§4): workspace OWNER only; instance ADMIN cannot add
+        (ruling #3). Looks up the account by unique username (ruling #7); insert-only
+        (role changes go through PATCH). Duplicate add → 409 MEMBER_ALREADY_EXISTS;
+        unknown username → 404 USER_NOT_FOUND. Audited (`workspace_member_added`).
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/MemberAddRequest' } } }
+      responses:
+        '201': { description: Member added, content: { application/json: { schema: { $ref: '#/components/schemas/MemberView' } } } }
+        '400': { description: 'INVALID_REQUEST (missing/illegal role; role is limited to EDITOR|VIEWER)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'WORKSPACE_FORBIDDEN (non-OWNER) / WORKSPACE_READ_ONLY (VIEWER with X-Workspace-Id)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'WORKSPACE_NOT_FOUND / USER_NOT_FOUND (username not registered; UI copy「该用户不存在，请对方先注册」)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: MEMBER_ALREADY_EXISTS, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/workspaces/{workspaceId}/members/{userId}:
+    patch:
+      operationId: updateWorkspaceMemberRole
+      summary: Change one member's role (PLAN-0565)
+      description: |
+        PLAN-0565 (spec §3/§4): workspace OWNER only; instance ADMIN cannot change
+        roles (ruling #3). New role is limited to EDITOR|VIEWER. Removing/downgrading
+        the unique OWNER is rejected with 409 LAST_OWNER (server-authoritative, no
+        role exception). Audited (`workspace_member_role_changed`).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: userId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/MemberRoleUpdateRequest' } } }
+      responses:
+        '200': { description: Role updated, content: { application/json: { schema: { $ref: '#/components/schemas/MemberView' } } } }
+        '400': { description: INVALID_REQUEST (role not in EDITOR|VIEWER), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'WORKSPACE_FORBIDDEN (non-OWNER) / WORKSPACE_READ_ONLY (VIEWER with X-Workspace-Id)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'WORKSPACE_NOT_FOUND / MEMBER_NOT_FOUND (target not a member of this workspace)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: LAST_OWNER, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+    delete:
+      operationId: removeWorkspaceMember
+      summary: Remove one member (PLAN-0565)
+      description: |
+        PLAN-0565 (spec §3/§4): workspace OWNER, or instance-ADMIN emergency
+        removal (ruling #3). Removing the unique OWNER is rejected with 409
+        LAST_OWNER. Audited (`workspace_member_removed`).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: userId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Member removed }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'WORKSPACE_FORBIDDEN (not OWNER/instance-ADMIN) / WORKSPACE_READ_ONLY (VIEWER with X-Workspace-Id)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'WORKSPACE_NOT_FOUND / MEMBER_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: LAST_OWNER, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/workspaces/{workspaceId}/imports:
     get: { operationId: listWorkspaceImports, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace import jobs }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
     post: { operationId: createWorkspaceImport, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [sourcePath, idempotencyKey], properties: { sourcePath: { type: string }, excludeRules: { type: array, items: { type: string } }, idempotencyKey: { type: string } } } } } }, responses: { '202': { description: Import accepted }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' } } }
@@ -2734,9 +2812,12 @@ components:
     RuntimeReadFileResult: { type: object, required: [found, content, truncated], properties: { found: { type: boolean, description: 'false = path resolved to no content (missing file or unmaterialized root); true = content authoritative even when empty string.' }, content: { type: string, description: 'File content; empty string when found=false or the file is empty (distinguish via found).' }, truncated: { type: boolean } } }
     AgentSpawnRequest: { type: object, required: [parentRunId, toolCallId], additionalProperties: false, properties: { parentRunId: { type: string, format: uuid }, toolCallId: { type: string, format: uuid, description: 'Canonical MCP tool-call correlation ID for the spawn invocation.' } } }
     AgentSpawnResponse: { type: object, required: [sessionId, runId, principalId, workspaceId], properties: { sessionId: { type: string, format: uuid }, runId: { type: string, format: uuid }, principalId: { type: string, format: uuid, description: 'Stable AgentPrincipal resolved from the durable parent Session; never taken from the request' }, workspaceId: { type: string, format: uuid } } }
-    RegisterRequest: { type: object, required: [email, name], properties: { email: { type: string }, password: { type: string, description: 'Optional in local mode (server generates one); required otherwise' }, name: { type: string } } }
+    RegisterRequest: { type: object, required: [email, name], properties: { email: { type: string }, password: { type: string, description: 'Optional in local mode (server generates one); required otherwise' }, name: { type: string }, username: { type: string, pattern: '^[a-z][a-z0-9]{0,31}$', description: 'PLAN-0565 ruling #7: optional; blank derives a unique default from the email local part (letter-first).' } } }
     LocalPasswordResetRequest: { type: object, required: [newPassword], properties: { newPassword: { type: string, minLength: 8, maxLength: 128 } } }
-    LoginRequest: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string } } }
+    LoginRequest: { type: object, required: [identifier, password], properties: { identifier: { type: string, description: 'PLAN-0565 ruling #7: email (contains @) or username; renamed from the former email field.' }, password: { type: string } } }
+    MemberView: { type: object, required: [userId, username, email, role, createdAt], properties: { userId: { type: string, format: uuid }, username: { type: string }, email: { type: string }, name: { type: [string, 'null'] }, role: { type: string, enum: [OWNER, EDITOR, VIEWER], description: 'Canonical role; legacy ADMIN/MEMBER rows project as EDITOR (PLAN-0559).' }, createdAt: { type: string, format: date-time, description: 'Membership creation time (the joined-at value).' } } }
+    MemberAddRequest: { type: object, required: [username, role], properties: { username: { type: string, description: 'Unique account username (PLAN-0565 ruling #7)' }, role: { type: string, enum: [EDITOR, VIEWER] } } }
+    MemberRoleUpdateRequest: { type: object, required: [role], properties: { role: { type: string, enum: [EDITOR, VIEWER] } } }
     AuthResponse: { type: object, properties: { accessToken: { type: string }, refreshToken: { type: string }, user: { type: object }, workspaceId: { type: string } } }
     Workspace: { type: object, required: [id, name, ownerId, storageBackend, storageRef, storageMode, executionMode, generation], properties: { id: { type: string }, name: { type: string }, description: { type: [string, 'null'] }, ownerId: { type: string }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'], description: 'Canonical host path only for the owner/admin; null for ordinary members. Never a display or authorization substitute.' }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] }, workspaceRole: { type: [string, 'null'], enum: [OWNER, EDITOR, VIEWER, null], description: 'PLAN-0559 canonical workspace role for the caller; ADMIN/MEMBER legacy rows project as EDITOR.' }, canWrite: { type: boolean, description: 'PLAN-0559 UI hint; CP remains authoritative.' }, generation: { type: integer }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
     WorkspaceCreateRequest: { type: object, properties: { name: { type: string }, description: { type: [string, 'null'] }, profile: { type: string, enum: [strict, coding, isolated], default: coding, description: 'Docker-only sandbox profile.' }, image: { type: string, description: 'Docker-only allowlisted image.' }, storageMode: { type: string, enum: [managed_import, direct_attach], default: managed_import }, hostPath: { type: string, description: 'Required for direct_attach; Runtime validates the absolute directory. This request field is never echoed to ordinary members.' }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] } } }

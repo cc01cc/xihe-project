@@ -80,7 +80,7 @@ async function registerOrLoginStable(
         workspaceId = body.workspaceId;
     } else {
         const login = await request.post(`${CP_URL}/api/v1/auth/login`, {
-            data: { email: STABLE_EMAIL, password: STABLE_PASSWORD },
+            data: { identifier: STABLE_EMAIL, password: STABLE_PASSWORD },
         });
         expect(login.ok(), `login ${login.status()}: ${await login.text()}`).toBeTruthy();
         const body = (await login.json()) as { accessToken: string; workspaceId: string };

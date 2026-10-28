@@ -100,12 +100,13 @@ export const useAuthStore = defineStore("auth", () => {
         rotateAnonSessionId();
     }
 
-    async function login(email: string, password: string) {
+    /** PLAN-0565 ruling #7: identifier is email or username. */
+    async function login(identifier: string, password: string) {
         loading.value = true;
         error.value = null;
         lastError.value = null;
         try {
-            const res = await api.login(email, password);
+            const res = await api.login(identifier, password);
             const ws =
                 res.workspace ??
                 (res.workspaceId ? { id: res.workspaceId, name: "Default Workspace" } : null);
@@ -123,12 +124,13 @@ export const useAuthStore = defineStore("auth", () => {
         }
     }
 
-    async function register(email: string, password: string, name: string) {
+    /** PLAN-0565 ruling #7: optional username; blank derives one from email. */
+    async function register(email: string, password: string, name: string, username?: string) {
         loading.value = true;
         error.value = null;
         lastError.value = null;
         try {
-            const res = await api.register(email, password, name);
+            const res = await api.register(email, password, name, username);
             const ws =
                 res.workspace ??
                 (res.workspaceId ? { id: res.workspaceId, name: "Default Workspace" } : null);
