@@ -15,7 +15,7 @@ import {
     type WorkspaceAgentBinding,
 } from "../../../../composables/api";
 import { parseRawToParts } from "../composables/useStreamParser.ts";
-import { jobSummariesToToolCalls } from "./jobSummaryToolCalls.ts";
+import { mergeHistoryToolCalls } from "./jobSummaryToolCalls.ts";
 import { logger } from "../../../../lib/logger";
 import type {
     ApprovalDecisionEnvelope,
@@ -238,9 +238,8 @@ async function loadSessionMessages(sessionId: string, requiredMessageIds?: Reado
             retryable: message.retryable,
             // PLAN-0344 T1.4 / PLAN-0465 T2.2：刷新后 job 卡片唯一重建源
             //（messages DTO 的 jobSummary ← workspace_jobs 投影）。
-            toolCalls: message.jobSummary?.length
-                ? jobSummariesToToolCalls(message.jobSummary)
-                : undefined,
+            // PLAN-0572：优先用持久化的 toolCalls 快照，并按 toolCallId 与 jobSummary 合并。
+            toolCalls: mergeHistoryToolCalls(message.toolCalls, message.jobSummary),
             attachments: message.attachments?.map((attachment) => ({
                 id: attachment.fileId,
                 fileId: attachment.fileId,

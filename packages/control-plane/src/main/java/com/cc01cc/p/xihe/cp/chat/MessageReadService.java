@@ -103,6 +103,7 @@ public class MessageReadService {
         dto.put("role", message.getRole().name());
         dto.put("content", message.getContent());
         dto.put("createdAt", message.getCreatedAt());
+        putToolCalls(dto, message);
         if (message.getRunId() != null) {
             ChatRun run = chatRunRepository.findById(java.util.UUID.fromString(message.getRunId())).orElse(null);
             // Forked Message rows may keep the parent Run id as nullable lineage.
@@ -131,6 +132,30 @@ public class MessageReadService {
             dto.put("attachments", new ArrayList<>());
         }
         return dto;
+    }
+
+    /** PLAN-0572: expose the Message's bounded snapshot; parse failures never break the listing. */
+    private void putToolCalls(Map<String, Object> dto, Message message) {
+        String snapshotJson = message.getToolCalls();
+        if (snapshotJson == null || snapshotJson.isBlank()) {
+            return;
+        }
+        try {
+            var snapshot = objectMapper.readTree(snapshotJson);
+            var calls = snapshot.path("calls");
+            if (!calls.isArray() || calls.isEmpty()) {
+                return;
+            }
+            dto.put("toolCalls", objectMapper.convertValue(
+                    calls, new TypeReference<List<Map<String, Object>>>() { }));
+            if (snapshot.path("truncated").asBoolean(false)) {
+                dto.put("toolCallsTruncated", true);
+                dto.put("toolCallsTotal", snapshot.path("total").asInt(calls.size()));
+            }
+        } catch (com.fasterxml.jackson.core.JsonProcessingException | IllegalArgumentException e) {
+            logger.warn("[LIFECYCLE] service=cp event=tool_calls_projection_failed messageId={} errorType={}",
+                    message.getId(), e.getClass().getSimpleName(), e);
+        }
     }
 
     /** Failures remain visible in logs while the message listing remains available without job cards. */

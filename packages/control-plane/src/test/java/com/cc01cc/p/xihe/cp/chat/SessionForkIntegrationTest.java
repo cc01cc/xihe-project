@@ -206,6 +206,12 @@ class SessionForkIntegrationTest extends AbstractIntegrationTest {
         assertTrue(childMessages.stream().anyMatch(message -> "parent prompt".equals(message.getContent())));
         assertTrue(childMessages.stream().anyMatch(message -> "parent answer".equals(message.getContent())));
         assertTrue(childMessages.stream().allMatch(message -> childId.equals(message.getSessionId())));
+        Message childAssistant = childMessages.stream()
+                .filter(message -> "parent answer".equals(message.getContent()))
+                .findFirst().orElseThrow();
+        assertEquals("call-fork-1", objectMapper.readTree(childAssistant.getToolCalls())
+                        .path("calls").get(0).path("id").asText(),
+                "PLAN-0572: the tool-call snapshot is copied with the message");
 
         File childFile = fileRepository.findByMessageIdOrderByIdAsc(
                 childMessages.stream().filter(message -> "parent prompt".equals(message.getContent()))
@@ -249,6 +255,9 @@ class SessionForkIntegrationTest extends AbstractIntegrationTest {
             assertFalse(message.containsKey("errorDetail"));
             assertFalse(message.containsKey("jobSummary"));
         }
+        assertEquals(1, messages.getBody().stream()
+                .filter(message -> message.containsKey("toolCalls"))
+                .count(), "PLAN-0572: forked history still projects the copied snapshot");
 
         sessionService.delete(source.session().getId().toString(), userId, workspaceId);
         assertTrue(sessionRepository.findById(source.session().getId()).isEmpty());
@@ -858,6 +867,15 @@ class SessionForkIntegrationTest extends AbstractIntegrationTest {
         assertTrue(Files.exists(ATTACHMENT_ROOT.resolve(reservedChildId.toString())));
     }
 
+    private String sourceToolCalls() {
+        return """
+                {"version":1,"truncated":false,"total":1,"calls":[
+                  {"id":"call-fork-1","name":"read_file","arguments":"{}","status":"completed",
+                   "startedAt":"2026-10-28T10:00:00Z","completedAt":"2026-10-28T10:00:01Z",
+                   "result":"placeholder","truncated":false}]}
+                """;
+    }
+
     private Source createSource(byte[] bytes, boolean corruptFileSize) throws Exception {
         com.cc01cc.p.xihe.cp.entity.ProviderConnection chatConnection = ChatBindingTestSupport.ensureChatConnection(
                 providerConnectionRepository, "USER", userId, "fork-" + UUID.randomUUID().toString().substring(0, 8), "openai");
@@ -879,6 +897,7 @@ class SessionForkIntegrationTest extends AbstractIntegrationTest {
         Message assistantMessage = new Message(source.getId().toString(), MessageRole.ASSISTANT, "parent answer");
         assistantMessage.setRunId(runId);
         assistantMessage.setBranchId(branchId);
+        assistantMessage.setToolCalls(sourceToolCalls());
         assistantMessage = messageRepository.saveAndFlush(assistantMessage);
         run.setUserMessageId(userMessage.getId().toString());
         run.setAssistantMessageId(assistantMessage.getId().toString());

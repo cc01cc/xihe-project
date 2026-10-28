@@ -378,6 +378,8 @@ export interface ToolCall {
     startedAt?: string;
     completedAt?: string;
     diagnostics?: DiagnosticsBundle;
+    /** PLAN-0572: persisted snapshot marker for bounded arguments. */
+    truncated?: boolean;
     /** UI-only projection from the parent ChatRun waiting link + derived-state API. */
     waitingOn?: ToolCallWaitingOn | null;
     /** PLAN-0344: durable job archival summary restored from the messages DTO after refresh. */
