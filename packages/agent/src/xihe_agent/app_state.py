@@ -18,7 +18,6 @@ import litellm
 from langchain_core.messages import AnyMessage
 from loguru import logger
 
-from xihe_agent.service_token import resolve_service_token
 from xihe_agent.adapters.approval_tool import ApprovalAgentTool, ApprovalTool
 from xihe_agent.adapters.mcp_client import MCPClientManager
 from xihe_agent.cancel_registry import RunCancelRegistry
@@ -39,6 +38,7 @@ from xihe_agent.llm.models import _models_router
 from xihe_agent.llm.token_counter import TokenCounter
 from xihe_agent.rag import VectorStore  # noqa: F401  (test seam; request-scoped since PLAN-0485)
 from xihe_agent.registry.registry import WorkerRegistry
+from xihe_agent.service_token import resolve_service_token
 from xihe_agent.tools import GenerateImageAgentTool, GenerateImageTool, ProviderManager
 
 # Re-exported so the route modules (and tests that patched `main.create_llm`
