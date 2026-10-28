@@ -55,10 +55,18 @@ function seedWorkspaceContext(page: Page, user: RegisteredUser, role: string): v
                 "xihe-user",
                 JSON.stringify({ id: "bootstrap", email: "bootstrap@test.com", name: "B" }),
             );
-            localStorage.setItem("xihe-workspace", JSON.stringify({ id: ws, name: "Default Workspace" }));
+            localStorage.setItem(
+                "xihe-workspace",
+                JSON.stringify({ id: ws, name: "Default Workspace" }),
+            );
             sessionStorage.setItem(
                 "xihe-workspace",
-                JSON.stringify({ id: ws, name: "Default Workspace", workspaceRole: r, ownerId: "x" }),
+                JSON.stringify({
+                    id: ws,
+                    name: "Default Workspace",
+                    workspaceRole: r,
+                    ownerId: "x",
+                }),
             );
         },
         { token: user.token, ws: user.workspaceId, role },
@@ -79,9 +87,7 @@ test.describe("@host PLAN-0565 workspace members", () => {
         outsider = await registerUser(request, "member-outsider");
     });
 
-    test("owner manages members through the settings UI over the real chain", async ({
-        page,
-    }) => {
+    test("owner manages members through the settings UI over the real chain", async ({ page }) => {
         const consoleErrors: string[] = [];
         page.on("console", (msg) => {
             if (msg.type() === "error") consoleErrors.push(msg.text());
@@ -111,9 +117,7 @@ test.describe("@host PLAN-0565 workspace members", () => {
         await page.getByTestId("ws-members-add-input").fill(editorTarget.username);
         await page.getByTestId("ws-members-add-btn").click();
         await expect(page.getByTestId("ws-members-row")).toHaveCount(2, { timeout: 15000 });
-        await expect(page.getByTestId("ws-members-panel")).toContainText(
-            editorTarget.username,
-        );
+        await expect(page.getByTestId("ws-members-panel")).toContainText(editorTarget.username);
 
         // Ruling #6 copy over the real 404 USER_NOT_FOUND.
         await page.getByTestId("ws-members-add-input").fill(`ghost${Date.now()}`);
@@ -123,9 +127,7 @@ test.describe("@host PLAN-0565 workspace members", () => {
         );
 
         // Role select is locked for the OWNER row (ruling #4 defers ownership transfer).
-        const ownerRow = page
-            .getByTestId("ws-members-row")
-            .filter({ hasText: owner.username });
+        const ownerRow = page.getByTestId("ws-members-row").filter({ hasText: owner.username });
         await expect(ownerRow.locator("select")).toBeDisabled();
 
         await page.screenshot({
@@ -152,31 +154,25 @@ test.describe("@host PLAN-0565 workspace members", () => {
 
     test("member matrix holds on the real API chain", async ({ request }) => {
         // Owner adds editorTarget (EDITOR) and keeps outsider out.
-        const add = await request.post(
-            `${CP_URL}/api/v1/workspaces/${owner.workspaceId}/members`,
-            {
-                headers: {
-                    Authorization: `Bearer ${owner.token}`,
-                    "Content-Type": "application/json",
-                    "X-Workspace-Id": owner.workspaceId,
-                },
-                data: { username: editorTarget.username, role: "EDITOR" },
+        const add = await request.post(`${CP_URL}/api/v1/workspaces/${owner.workspaceId}/members`, {
+            headers: {
+                Authorization: `Bearer ${owner.token}`,
+                "Content-Type": "application/json",
+                "X-Workspace-Id": owner.workspaceId,
             },
-        );
+            data: { username: editorTarget.username, role: "EDITOR" },
+        });
         expect(add.status(), `add failed: ${add.status()} ${await add.text()}`).toBe(201);
         const added = (await add.json()) as { userId: string; username: string };
         expect(added.username).toBe(editorTarget.username);
 
         // EDITOR: list visible, write forbidden (ruling #2).
-        const list = await request.get(
-            `${CP_URL}/api/v1/workspaces/${owner.workspaceId}/members`,
-            {
-                headers: {
-                    Authorization: `Bearer ${editorTarget.token}`,
-                    "X-Workspace-Id": owner.workspaceId,
-                },
+        const list = await request.get(`${CP_URL}/api/v1/workspaces/${owner.workspaceId}/members`, {
+            headers: {
+                Authorization: `Bearer ${editorTarget.token}`,
+                "X-Workspace-Id": owner.workspaceId,
             },
-        );
+        });
         expect(list.status()).toBe(200);
         const editorAdd = await request.post(
             `${CP_URL}/api/v1/workspaces/${owner.workspaceId}/members`,
