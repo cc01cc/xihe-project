@@ -206,12 +206,16 @@ public class LoginAttemptService {
     }
 
     /** Counts every register request from an IP; throws when the limit is reached. */
-    public void checkAndRecordRegister(String ip) {
+    public void checkAndRecordRegister(String rawIp, String bucketKeyIp) {
         if (registerMaxAttempts == 0) {
             return;
         }
-        String key = ipKey(ip);
-        if (registerExemptLoopback && isLoopback(key)) {
+        String key = ipKey(bucketKeyIp);
+        // PLAN-0571: loopback is judged on the raw client address. The /64
+        // aggregation bucket of ::1 is the unspecified ::, which is not a
+        // loopback address, so judging on the bucket key defeated the
+        // register.exempt-loopback knob for IPv6 localhost.
+        if (registerExemptLoopback && isLoopback(ipKey(rawIp))) {
             return;
         }
         Instant now = clock.instant();

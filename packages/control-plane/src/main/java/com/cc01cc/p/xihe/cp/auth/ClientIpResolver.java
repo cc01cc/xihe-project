@@ -41,12 +41,31 @@ public class ClientIpResolver {
 
     /** Returns a stable, normalized bucket key; never throws. */
     public String resolve(HttpServletRequest request) {
+        return bucketKey(clientLiteral(request));
+    }
+
+    /**
+     * PLAN-0571: the raw client literal (before IPv6 /64 aggregation) paired
+     * with its bucket key. Register throttling must exempt loopback by the
+     * raw address: masking ::1 into the unspecified :: hides its loopback
+     * nature and defeats the register.exempt-loopback knob.
+     */
+    public ResolvedClientIp resolveClientIp(HttpServletRequest request) {
+        String literal = clientLiteral(request);
+        return new ResolvedClientIp(literal, bucketKey(literal));
+    }
+
+    public record ResolvedClientIp(String raw, String bucketKey) {
+    }
+
+    /** First non-trusted XFF literal (trusted proxy chains) or the remote address. */
+    private String clientLiteral(HttpServletRequest request) {
         String remote = normalize(request.getRemoteAddr());
         if (remote == null) {
             return "unknown";
         }
         if (!isTrusted(remote)) {
-            return bucketKey(remote);
+            return remote;
         }
         List<String> forwarded = new ArrayList<>();
         for (String header : Collections.list(request.getHeaders("X-Forwarded-For"))) {
@@ -63,10 +82,10 @@ public class ClientIpResolver {
         for (int i = forwarded.size() - 1; i >= 0; i--) {
             String candidate = forwarded.get(i);
             if (!isTrusted(candidate)) {
-                return bucketKey(candidate);
+                return candidate;
             }
         }
-        return bucketKey(remote);
+        return remote;
     }
 
     static String normalize(String value) {
