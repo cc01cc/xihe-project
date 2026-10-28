@@ -183,7 +183,7 @@ if (code !== "200") failA(`CP /api/v1/health -> ${code}`);
 console.log("✅ CP health 200");
 
 console.log("--- A2 登录 ---");
-code = await api("POST", "/api/v1/auth/login", JSON.stringify({ email: EMAIL, password: PASSWORD }));
+code = await api("POST", "/api/v1/auth/login", JSON.stringify({ identifier: EMAIL, password: PASSWORD }));
 if (code !== "200") failA(`login -> ${code}（凭据错？或 admin 密码已轮换）`);
 TOKEN = json("accessToken");
 if (!TOKEN) failA("login 200 但无 accessToken");

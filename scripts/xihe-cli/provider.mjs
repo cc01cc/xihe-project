@@ -181,7 +181,7 @@ export async function login({ apiBase, fetchImpl, env, options, promptSecret }) 
     apiBase,
     fetchImpl,
     method: 'POST',
-    body: { email, password },
+    body: { identifier: email, password },
   });
   if (typeof response?.accessToken !== 'string' || response.accessToken.length === 0) {
     throw new CliError('AUTH_RESPONSE_INVALID', 'CP login response did not contain an access token.');

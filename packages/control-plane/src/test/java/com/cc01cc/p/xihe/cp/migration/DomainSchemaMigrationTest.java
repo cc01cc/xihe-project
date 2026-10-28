@@ -222,8 +222,8 @@ class DomainSchemaMigrationTest {
                 "SELECT count(*) FROM flyway_schema_history WHERE version = '59' AND success = true"),
                 "V59 must be recorded as applied");
         UUID userId = UUID.randomUUID();
-        executeUpdate("INSERT INTO users (id, email, password_hash) VALUES ('" + userId
-                + "'::uuid, 'v59-" + userId + "@test.local', 'hash')");
+        executeUpdate("INSERT INTO users (id, email, password_hash, username) VALUES ('" + userId
+                + "'::uuid, 'v59-" + userId + "@test.local', 'hash', 'x' || left(md5(random()::text), 31))");
         UUID workspaceId = UUID.randomUUID();
         UUID sessionId = UUID.randomUUID();
         UUID branchId = UUID.randomUUID();
@@ -352,8 +352,8 @@ class DomainSchemaMigrationTest {
     void v27WorkspaceSliceConstraintsApply() throws SQLException {
         UUID userId = UUID.randomUUID();
         UUID workspaceId = UUID.randomUUID();
-        executeUpdate("INSERT INTO users (id, email, password_hash) VALUES ('" + userId
-                + "'::uuid, 'cp-" + userId + "@test.local', 'hash')");
+        executeUpdate("INSERT INTO users (id, email, password_hash, username) VALUES ('" + userId
+                + "'::uuid, 'cp-" + userId + "@test.local', 'hash', 'x' || left(md5(random()::text), 31))");
         executeUpdate("INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
                 + "'::uuid, 'cp-ws', '" + userId + "'::uuid)");
 
@@ -1110,8 +1110,8 @@ class DomainSchemaMigrationTest {
         assertV42PrincipalStructuresIntact(connection);
 
         UUID userId = UUID.randomUUID();
-        executeUpdate("INSERT INTO users (id, email, password_hash) VALUES ('" + userId
-                + "'::uuid, 'v44-fresh-" + userId + "@test.local', 'hash')");
+        executeUpdate("INSERT INTO users (id, email, password_hash, username) VALUES ('" + userId
+                + "'::uuid, 'v44-fresh-" + userId + "@test.local', 'hash', 'x' || left(md5(random()::text), 31))");
         UUID runId = insertV44Fixture(connection, userId, "v44-fresh");
         assertEquals(0, scalarInt("SELECT count(*) FROM chat_runs WHERE id = '" + runId
                         + "'::uuid AND terminal_at IS NOT NULL"),

@@ -75,7 +75,7 @@ class HttpCpClient:
     @classmethod
     def login(cls, base_url: str, email: str, password: str, **kwargs: Any) -> HttpCpClient:
         with httpx.Client(base_url=base_url.rstrip("/"), timeout=kwargs.get("timeout", 30.0), trust_env=False) as c:
-            resp = c.post("/api/v1/auth/login", json={"email": email, "password": password})
+            resp = c.post("/api/v1/auth/login", json={"identifier": email, "password": password})
             resp.raise_for_status()
             token = resp.json()["accessToken"]
         return cls(base_url, token, **kwargs)

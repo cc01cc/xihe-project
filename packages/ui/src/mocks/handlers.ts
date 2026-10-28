@@ -9,7 +9,7 @@ export const handlers = [
     // Auth
     http.post(`${API}/auth/login`, async ({ request }) => {
         const body = (await request.json()) as Record<string, unknown>;
-        if (body.email === "test@test.com" && body.password === "password") {
+        if (body.identifier === "test@test.com" && body.password === "password") {
             return HttpResponse.json({
                 accessToken: MOCK_TOKEN,
                 refreshToken: "mock-refresh-token",

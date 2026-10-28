@@ -50,8 +50,8 @@ class ScheduledTaskMigrationIntegrationTest {
         userId = UUID.randomUUID();
         workspaceId = UUID.randomUUID();
         sessionId = UUID.randomUUID();
-        execute("INSERT INTO users (id, email, password_hash) VALUES ('" + userId
-                + "'::uuid, 'sched-" + userId + "@test.local', 'hash')");
+        execute("INSERT INTO users (id, email, password_hash, username) VALUES ('" + userId
+                + "'::uuid, 'sched-" + userId + "@test.local', 'hash', 'x' || left(md5(random()::text), 31))");
         execute("INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
                 + "'::uuid, 'sched-workspace', '" + userId + "'::uuid)");
         execute("INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('" + sessionId

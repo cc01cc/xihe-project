@@ -60,7 +60,7 @@ class TestAgentCPRealIntegration:
 
         r = httpx.post(
             f"{CP_URL}/api/v1/auth/login",
-            json={"email": email, "password": "Pass1234!"},
+            json={"identifier": email, "password": "Pass1234!"},
             timeout=10,
         )
         assert r.status_code == 200
@@ -316,7 +316,7 @@ class TestAgentCPRealIntegration:
         assert r.status_code in (200, 201), r.text
         r = httpx.post(
             f"{CP_URL}/api/v1/auth/login",
-            json={"email": email, "password": password},
+            json={"identifier": email, "password": password},
             timeout=15,
         )
         assert r.status_code == 200, r.text

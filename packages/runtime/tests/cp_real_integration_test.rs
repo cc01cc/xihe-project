@@ -70,7 +70,7 @@ async fn test_cp_auth_register_login() {
     }
 
     let login_body = serde_json::json!({
-        "email": email,
+        "identifier": email,
         "password": register_body["password"]
     });
 

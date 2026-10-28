@@ -121,8 +121,8 @@ class InboxFreshMigrationTest {
         UUID childRunId = UUID.randomUUID();
         UUID inboxId = UUID.randomUUID();
         try (Connection connection = connect(jdbcUrl)) {
-            execute(connection, "INSERT INTO users (id, email, password_hash) VALUES ('" + userId
-                    + "'::uuid, 'inbox-fresh-" + userId + "@test.local', 'hash')");
+            execute(connection, "INSERT INTO users (id, email, password_hash, username) VALUES ('" + userId
+                    + "'::uuid, 'inbox-fresh-" + userId + "@test.local', 'hash', 'x' || left(md5(random()::text), 31))");
             execute(connection, "INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
                     + "'::uuid, 'inbox-fresh-ws', '" + userId + "'::uuid)");
             execute(connection, "INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('"

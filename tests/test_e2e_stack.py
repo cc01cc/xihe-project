@@ -85,7 +85,7 @@ class TestAuthFlow:
             "email": email, "password": "Pass1234!", "name": "Login"
         }, timeout=10)
         r = httpx.post(f"{CP_URL}/api/v1/auth/login", json={
-            "email": email, "password": "Pass1234!"
+            "identifier": email, "password": "Pass1234!"
         }, timeout=10)
         assert r.status_code == 200
         assert "accessToken" in r.json()
@@ -96,7 +96,7 @@ class TestAuthFlow:
             "email": email, "password": "correctpass", "name": "Wrong"
         }, timeout=10)
         r = httpx.post(f"{CP_URL}/api/v1/auth/login", json={
-            "email": email, "password": "incorrectpass"
+            "identifier": email, "password": "incorrectpass"
         }, timeout=10)
         assert r.status_code == 401
 

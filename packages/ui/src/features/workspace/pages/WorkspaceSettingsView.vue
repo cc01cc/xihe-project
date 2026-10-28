@@ -56,13 +56,14 @@ const tabs = computed<{ key: SettingsTab; label: string }[]>(() => {
     return base;
 });
 
-// PLAN-0565: VIEWER 载入后（selectWorkspace 刷新角色）若停在已隐藏的成员 tab，
-// 回退到常规 tab；载入前 workspaceRole 为空视为可见，由面板自行处理 403。
+// PLAN-0565: VIEWER 若直接落在已隐藏的成员 tab（含 ?tab=members 直链与载入后
+// 角色刷新），回退到常规 tab；载入前 workspaceRole 为空视为可见，由面板自行处理 403。
 watch(
     () => auth.canViewMembers,
     (visible) => {
         if (!visible && activeTab.value === "members") activeTab.value = "general";
     },
+    { immediate: true },
 );
 
 const loadError = ref(""),
@@ -424,7 +425,10 @@ onMounted(() => {
                     />
                 </div>
 
-                <div v-else-if="activeTab === 'members'" data-testid="ws-settings-members">
+                <div
+                    v-else-if="activeTab === 'members' && auth.canViewMembers"
+                    data-testid="ws-settings-members"
+                >
                     <WorkspaceMembersPanel
                         :workspace-id="workspaceId"
                         :readonly="!auth.canManageWorkspace"

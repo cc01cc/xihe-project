@@ -220,7 +220,7 @@ class WorkspaceJobOutputIntegrationTest extends AbstractIntegrationTest {
         restTemplate.postForEntity(baseUrl + "/api/v1/auth/register",
                 new RegisterRequest(otherEmail, TestDataFactory.PASSWORD, "Other"), AuthResponse.class);
         String otherToken = restTemplate.postForEntity(baseUrl + "/api/v1/auth/login",
-                Map.of("email", otherEmail, "password", TestDataFactory.PASSWORD), Map.class)
+                Map.of("identifier", otherEmail, "password", TestDataFactory.PASSWORD), Map.class)
                 .getBody().get("accessToken").toString();
         ResponseEntity<Map> foreign = getOutput(domainJobId, otherToken, "");
         assertEquals(HttpStatus.NOT_FOUND, foreign.getStatusCode());
