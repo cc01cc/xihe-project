@@ -9,7 +9,7 @@ const PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
  * with XIHE_CP_AUTH_LOGIN_ACCOUNT_MAX_FAILURES=3 and
  * XIHE_CP_AUTH_LOGIN_ACCOUNT_LOCK_SECONDS=6.
  */
-test.describe("Auth lockout — Real Backend", () => {
+test.describe("@host Auth lockout — Real Backend", () => {
     test("locks after repeated failures, shows localized copy, then unlocks", async ({ page }) => {
         const email = `real-lockout-${Date.now()}@test.com`;
         const registered = await fetch(`${CP_URL}/api/v1/auth/register`, {
@@ -21,7 +21,7 @@ test.describe("Auth lockout — Real Backend", () => {
 
         await page.goto("/login");
         for (let attempt = 0; attempt < 3; attempt += 1) {
-            await page.fill('input[name="email"]', email);
+            await page.fill('input[name="identifier"]', email);
             await page.fill('input[type="password"]', "wrong-password");
             const [response] = await Promise.all([
                 page.waitForResponse(
@@ -34,7 +34,7 @@ test.describe("Auth lockout — Real Backend", () => {
             expect(response.status()).toBe(401);
         }
 
-        await page.fill('input[name="email"]', email);
+        await page.fill('input[name="identifier"]', email);
         await page.fill('input[type="password"]', "wrong-password");
         const [locked] = await Promise.all([
             page.waitForResponse(
@@ -52,7 +52,7 @@ test.describe("Auth lockout — Real Backend", () => {
         await expect
             .poll(
                 async () => {
-                    await page.fill('input[name="email"]', email);
+                    await page.fill('input[name="identifier"]', email);
                     await page.fill('input[type="password"]', PASSWORD);
                     const [response] = await Promise.all([
                         page.waitForResponse(

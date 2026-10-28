@@ -73,7 +73,9 @@ public class AgentGraphCheckpointService {
         if ((sourceRunId == null) == (probeId == null)) {
             throw invalid("exactly one of sourceRunId or probeId is required");
         }
-        if (probeId != null) requireCheckpointProbeEnabled();
+        if (probeId != null) {
+            requireCheckpointProbeEnabled();
+        }
         UUID branchId;
         if (sourceRunId != null) {
             List<UUID> runBranches = jdbc.query(
@@ -91,7 +93,9 @@ public class AgentGraphCheckpointService {
         String producerVersion = identifier(request.producerVersion(), "producerVersion", 64);
 
         LineageView existing = findLineage(sessionId, userId, workspaceId, branchId, sourceRunId, probeId);
-        if (existing != null) return existing;
+        if (existing != null) {
+            return existing;
+        }
 
         UUID lineageId = UUID.randomUUID();
         UUID threadId = UUID.randomUUID();
@@ -105,13 +109,17 @@ public class AgentGraphCheckpointService {
                 sourceRunId, probeId, producerVersion);
         if (inserted == 0) {
             existing = findLineage(sessionId, userId, workspaceId, branchId, sourceRunId, probeId);
-            if (existing == null) throw conflict("Checkpoint lineage key is already bound");
+            if (existing == null) {
+                throw conflict("Checkpoint lineage key is already bound");
+            }
             return existing;
         }
         OffsetDateTime createdAt = jdbc.queryForObject(
                 "SELECT created_at FROM agent_graph_checkpoint_lineages WHERE lineage_id = ?",
                 OffsetDateTime.class, lineageId);
-        if (createdAt == null) throw notFound();
+        if (createdAt == null) {
+            throw notFound();
+        }
         // The source Run is a logical reference: lineage retention follows Session retention,
         // so deleting one Run must not delete graph state still owned by the Session.
         return new LineageView(
@@ -149,7 +157,9 @@ public class AgentGraphCheckpointService {
                             rs.getObject("created_at", OffsetDateTime.class).toString(),
                             rs.getString("producer_version"));
                 }, args.toArray());
-        if (lineages.size() > 1) throw conflict("Checkpoint lineage identity is ambiguous");
+        if (lineages.size() > 1) {
+            throw conflict("Checkpoint lineage identity is ambiguous");
+        }
         return lineages.isEmpty() ? null : lineages.getFirst();
     }
 
@@ -172,7 +182,9 @@ public class AgentGraphCheckpointService {
                     "SELECT branch_id FROM chat_runs WHERE id = ? AND session_id = ? AND user_id = ? AND workspace_id = ?",
                     (rs, rowNum) -> rs.getObject("branch_id", UUID.class),
                     expectedSourceRunId, scope.sessionId(), scope.userId(), scope.workspaceId());
-            if (runBranches.size() != 1 || runBranches.getFirst() == null) throw notFound();
+            if (runBranches.size() != 1 || runBranches.getFirst() == null) {
+                throw notFound();
+            }
             expectedBranchId = runBranches.getFirst();
         }
         if (!java.util.Objects.equals(scope.sourceRunId(), expectedSourceRunId)
@@ -206,7 +218,9 @@ public class AgentGraphCheckpointService {
                 "SELECT branch_id FROM chat_runs WHERE id = ? AND session_id = ? AND user_id = ? AND workspace_id = ?",
                 (rs, rowNum) -> rs.getObject("branch_id", UUID.class),
                 sourceRunId, sessionId, userId, workspaceId);
-        if (runBranches.size() != 1 || runBranches.getFirst() == null) throw notFound();
+        if (runBranches.size() != 1 || runBranches.getFirst() == null) {
+            throw notFound();
+        }
         UUID expectedBranchId = runBranches.getFirst();
 
         List<Scope> lineages = jdbc.query("""
@@ -221,9 +235,13 @@ public class AgentGraphCheckpointService {
                 rs.getObject("source_run_id", UUID.class), rs.getObject("probe_id", UUID.class),
                 rs.getInt("schema_version"), rs.getObject("created_at", OffsetDateTime.class).toString(),
                 rs.getString("producer_version")), sourceRunId, sessionId, userId, workspaceId);
-        if (lineages.size() != 1) throw notFound();
+        if (lineages.size() != 1) {
+            throw notFound();
+        }
         Scope scope = lineages.getFirst();
-        if (!expectedBranchId.equals(scope.branchId()) || scope.probeId() != null) throw notFound();
+        if (!expectedBranchId.equals(scope.branchId()) || scope.probeId() != null) {
+            throw notFound();
+        }
         requireBranch(sessionId, scope.branchId());
 
         List<CheckpointRow> rows = jdbc.query("""
@@ -236,11 +254,15 @@ public class AgentGraphCheckpointService {
                  ORDER BY c.created_at DESC, c.checkpoint_id DESC
                  LIMIT 1
                 """, CHECKPOINT_ROW, scope.lineageId(), scope.threadId());
-        if (rows.isEmpty()) return null;
+        if (rows.isEmpty()) {
+            return null;
+        }
         CheckpointRow checkpoint = rows.getFirst();
         Map<String, Object> metadata = parseMetadata(checkpoint.metadataJson());
         Long eventSequence = exactLong(metadata.get("eventSequence"));
-        if (eventSequence == null || eventSequence < 0) throw notFound();
+        if (eventSequence == null || eventSequence < 0) {
+            throw notFound();
+        }
         long currentVisibleBranchHead = contextService.latestVisibleSequence(
                 sessionId.toString(), scope.branchId().toString());
         if (eventSequence > currentVisibleBranchHead) {
@@ -309,13 +331,17 @@ public class AgentGraphCheckpointService {
                       FROM agent_graph_checkpoints
                      WHERE lineage_id = ? AND thread_id = ? AND checkpoint_ns = ? AND checkpoint_id = ?
                     """, CHECKPOINT_ROW, scope.lineageId(), scope.threadId(), checkpointNs, checkpointId);
-            if (existing.isEmpty()) throw notFound();
+            if (existing.isEmpty()) {
+                throw notFound();
+            }
             CheckpointRow row = existing.getFirst();
             boolean same = row.payloadType().equals(payloadType)
                     && Arrays.equals(row.blob(), blob)
                     && java.util.Objects.equals(row.parentCheckpointId(), parentCheckpointId)
                     && parseMetadata(row.metadataJson()).equals(normalizedMetadata);
-            if (!same) throw conflict("Checkpoint key is already bound to different data");
+            if (!same) {
+                throw conflict("Checkpoint key is already bound to different data");
+            }
         }
     }
 
@@ -349,7 +375,9 @@ public class AgentGraphCheckpointService {
         Scope scope = requireScope(threadIdValue, owner.sessionId(), owner.userId(), owner.workspaceId());
         String checkpointNs = checkpointNamespace(checkpointNsValue);
         int limit = requestedLimit == null ? MAX_LIST_LIMIT : requestedLimit;
-        if (limit < 1 || limit > MAX_LIST_LIMIT) throw invalid("limit is out of range");
+        if (limit < 1 || limit > MAX_LIST_LIMIT) {
+            throw invalid("limit is out of range");
+        }
         if (filterSource != null && !SAFE_METADATA_SOURCES.contains(filterSource)) {
             throw invalid("filterSource is invalid");
         }
@@ -377,15 +405,21 @@ public class AgentGraphCheckpointService {
         String checkpointId = identifier(request.checkpointId(), "checkpointId", 128);
         String taskId = identifier(request.taskId(), "taskId", 256);
         String taskPath = request.taskPath() == null ? "" : request.taskPath();
-        if (taskPath.length() > 1024 || taskPath.indexOf('\0') >= 0) throw invalid("taskPath is invalid");
-        if (request.writes() == null || request.writes().size() > 256) throw invalid("writes are invalid");
+        if (taskPath.length() > 1024 || taskPath.indexOf('\0') >= 0) {
+            throw invalid("taskPath is invalid");
+        }
+        if (request.writes() == null || request.writes().size() > 256) {
+            throw invalid("writes are invalid");
+        }
         List<UUID> checkpointRows = jdbc.query("""
                 SELECT checkpoint_row_id FROM agent_graph_checkpoints
                  WHERE lineage_id = ? AND thread_id = ? AND checkpoint_ns = ? AND checkpoint_id = ?
                  FOR UPDATE
                 """, (rs, rowNum) -> rs.getObject("checkpoint_row_id", UUID.class),
                 scope.lineageId(), scope.threadId(), checkpointNs, checkpointId);
-        if (checkpointRows.size() != 1) throw notFound();
+        if (checkpointRows.size() != 1) {
+            throw notFound();
+        }
         Long writeCount = jdbc.queryForObject("""
                 SELECT count(*) FROM agent_graph_checkpoint_writes
                  WHERE lineage_id = ? AND thread_id = ? AND checkpoint_ns = ? AND checkpoint_id = ?
@@ -398,7 +432,9 @@ public class AgentGraphCheckpointService {
         long admittedBytes = writeBytes == null ? 0 : writeBytes;
         for (int index = 0; index < request.writes().size(); index++) {
             WriteValue write = request.writes().get(index);
-            if (write == null) throw invalid("write is invalid");
+            if (write == null) {
+                throw invalid("write is invalid");
+            }
             String channel = identifier(write.channel(), "channel", 256);
             String payloadType = identifier(write.payloadType(), "payloadType", 64);
             byte[] blob = decodePayload(payloadType, write.payloadBase64(), MAX_WRITE_BYTES);
@@ -442,7 +478,9 @@ public class AgentGraphCheckpointService {
                         rs.getString("task_path"), rs.getString("channel"),
                         rs.getString("payload_type"), rs.getBytes("value_blob")),
                         scope.lineageId(), scope.threadId(), checkpointNs, checkpointId, taskId, writeIndex);
-                if (conflictedRows.isEmpty()) throw notFound();
+                if (conflictedRows.isEmpty()) {
+                    throw notFound();
+                }
                 ExistingWrite row = conflictedRows.getFirst();
                 if (!row.taskPath().equals(taskPath) || !row.channel().equals(channel)
                         || !row.payloadType().equals(payloadType) || !Arrays.equals(row.blob(), blob)) {
@@ -550,7 +588,9 @@ public class AgentGraphCheckpointService {
                 rs.getInt("schema_version"),
                 rs.getObject("created_at", OffsetDateTime.class).toString(), rs.getString("producer_version")),
                 threadId, sessionId, userId, workspaceId);
-        if (scopes.size() != 1) throw notFound();
+        if (scopes.size() != 1) {
+            throw notFound();
+        }
         Scope scope = scopes.getFirst();
         requireBranch(sessionId, scope.branchId());
         return scope;
@@ -560,7 +600,9 @@ public class AgentGraphCheckpointService {
         Integer matchingBranches = jdbc.queryForObject(
                 "SELECT count(*) FROM session_branches WHERE session_id = ? AND id = ?",
                 Integer.class, sessionId, branchId);
-        if (matchingBranches == null || matchingBranches != 1) throw notFound();
+        if (matchingBranches == null || matchingBranches != 1) {
+            throw notFound();
+        }
     }
 
     private void requireCheckpointProbeEnabled() {
@@ -577,25 +619,35 @@ public class AgentGraphCheckpointService {
     }
 
     static Map<String, Object> normalizeMetadata(Map<String, Object> input) {
-        if (input == null || input.isEmpty()) return Map.of();
+        if (input == null || input.isEmpty()) {
+            return Map.of();
+        }
         Map<String, Object> safe = new LinkedHashMap<>();
         Object source = input.get("source");
-        if (source instanceof String value && SAFE_METADATA_SOURCES.contains(value)) safe.put("source", value);
+        if (source instanceof String value && SAFE_METADATA_SOURCES.contains(value)) {
+            safe.put("source", value);
+        }
         Object step = input.get("step");
         if (step instanceof Number number) {
             long value = number.longValue();
-            if (value >= -1 && value <= 1_000_000_000L && number.doubleValue() == value) safe.put("step", value);
+            if (value >= -1 && value <= 1_000_000_000L && number.doubleValue() == value) {
+                safe.put("step", value);
+            }
         }
         Object eventSequence = input.get("eventSequence");
         if (eventSequence instanceof Number number) {
             long value = number.longValue();
-            if (value >= 0 && number.doubleValue() == value) safe.put("eventSequence", value);
+            if (value >= 0 && number.doubleValue() == value) {
+                safe.put("eventSequence", value);
+            }
         }
         return safe;
     }
 
     private static Long exactLong(Object value) {
-        if (!(value instanceof Number number)) return null;
+        if (!(value instanceof Number number)) {
+            return null;
+        }
         long converted = number.longValue();
         return number.doubleValue() == converted ? converted : null;
     }
@@ -635,7 +687,9 @@ public class AgentGraphCheckpointService {
     }
 
     static String checkpointNamespace(String value) {
-        if (value == null || value.isEmpty()) return "";
+        if (value == null || value.isEmpty()) {
+            return "";
+        }
         return identifier(value, "checkpointNs", 256);
     }
 

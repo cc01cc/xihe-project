@@ -1,4 +1,3 @@
-import os
 import re
 from datetime import UTC, datetime
 from typing import Any
@@ -8,8 +7,8 @@ import litellm
 from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
 
-from xihe_agent.service_token import resolve_service_token
 from xihe_agent.llm.base import fallback_provider_configs
+from xihe_agent.service_token import resolve_service_token
 
 router = APIRouter()
 

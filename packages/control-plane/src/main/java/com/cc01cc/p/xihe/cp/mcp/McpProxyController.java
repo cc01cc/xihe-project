@@ -8,7 +8,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import org.springframework.beans.factory.annotation.Value;
-import jakarta.annotation.PostConstruct;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -51,14 +50,10 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -1852,7 +1847,9 @@ public class McpProxyController {
 
     /** Record a CP-side fail-closed rejection on the already-open Run invocation. */
     private void settleRejectedLineageInvocation(UUID invocationId) {
-        if (invocationId == null) return;
+        if (invocationId == null) {
+            return;
+        }
         try {
             mcpInvocationService.startDispatchAttempt(invocationId, null).ifPresent(attemptId ->
                     mcpInvocationService.finishDispatchAttempt(invocationId, attemptId, 409,

@@ -1,9 +1,9 @@
-import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
 import { ensureAgentWorkspaceBinding, getRootBranchId } from "./helpers/journey";
+import { seedUserGrant } from "./helpers/user-grants";
 import { test, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
 
@@ -85,7 +85,6 @@ test.describe("@host PLAN-0344 durable job resume", () => {
         expect(me.ok(), await me.text()).toBeTruthy();
         const userId = ((await me.json()) as { id: string }).id;
         seedUserGrant(userId, sharedWs);
-
         const roleId = randomUUID(),
             templateId = randomUUID();
         const rolePermissions = [
@@ -366,43 +365,3 @@ test.describe("@host PLAN-0344 durable job resume", () => {
         console.log(`[job-resume] evidence written to ${EVIDENCE_DIR}`);
     });
 });
-
-/**
- * cad8e727 后配置/agent 管理写需要显式 grant（复制自 session-branch.spec.ts）：
- * CREATE_ACCOUNT / CREATE_TEMPLATE / MANAGE_WORKSPACE_AGENTS。
- */
-function seedUserGrant(userId: string, workspaceId: string) {
-    const container = process.env.XIHE_E2E_PG_CONTAINER,
-        database = process.env.XIHE_E2E_PG_DATABASE;
-    const dbUser = process.env.XIHE_E2E_PG_USER;
-    if (!container || !database || !dbUser) {
-        throw new Error(
-            "isolated PostgreSQL fixture metadata is unavailable; run through scripts/e2e-host.mjs",
-        );
-    }
-    const permissions = JSON.stringify([
-        { actionClass: "CREATE_ACCOUNT", resource: "*" },
-        { actionClass: "CREATE_TEMPLATE", resource: "*" },
-        { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: workspaceId },
-    ]).replaceAll("'", "''");
-    execFileSync(
-        process.platform === "win32" ? "docker.exe" : "docker",
-        [
-            "exec",
-            container,
-            "psql",
-            "-X",
-            "-A",
-            "-t",
-            "-U",
-            dbUser,
-            "-d",
-            database,
-            "-c",
-            `INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions, source, read_state) ` +
-                `VALUES (gen_random_uuid(), 'user', '${userId}'::uuid, 'user', '${userId}'::uuid, ` +
-                `'${permissions}'::jsonb, 'direct', 'read')`,
-        ],
-        { encoding: "utf8", timeout: 15_000, windowsHide: true },
-    );
-}

@@ -1,7 +1,7 @@
-import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
 import { CP_URL } from "./journey";
+import { seedUserGrantPermissions, standardWorkspaceUserPermissions } from "./user-grants";
 
 type AgentAuth = { accessToken: string; workspaceId: string };
 type ToolAction = "read" | "write";
@@ -15,41 +15,12 @@ function seedPrincipalManagementGrant(
     workspaceId: string,
     actions: ToolAction[],
 ): void {
-    const container = process.env.XIHE_E2E_PG_CONTAINER,
-        database = process.env.XIHE_E2E_PG_DATABASE;
-    const dbUser = process.env.XIHE_E2E_PG_USER;
-    if (!container || !database || !dbUser) {
-        throw new Error(
-            "isolated PostgreSQL fixture metadata is unavailable; run through e2e-host",
-        );
-    }
-
-    const permissions = JSON.stringify([
-        { actionClass: "CREATE_ACCOUNT", resource: "*" },
-        { actionClass: "CREATE_TEMPLATE", resource: "*" },
-        { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: workspaceId },
+    // V64/V65: one direct grant row per subject — merge into the existing row
+    // (the journey user may already carry a spec-seeded direct grant).
+    seedUserGrantPermissions(userId, [
+        ...standardWorkspaceUserPermissions(workspaceId),
         ...actions.map((actionClass) => ({ actionClass, resource: "*" })),
-    ]).replace(/'/g, "''");
-    execFileSync(
-        process.platform === "win32" ? "docker.exe" : "docker",
-        [
-            "exec",
-            container,
-            "psql",
-            "-X",
-            "-A",
-            "-t",
-            "-U",
-            dbUser,
-            "-d",
-            database,
-            "-c",
-            `INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions, source, read_state) ` +
-                `VALUES (gen_random_uuid(), 'user', '${userId}'::uuid, 'user', '${userId}'::uuid, ` +
-                `'${permissions}'::jsonb, 'direct', 'read')`,
-        ],
-        { encoding: "utf8", timeout: 15_000, windowsHide: true },
-    );
+    ]);
 }
 
 export async function provisionWorkspaceAgentPrincipal(

@@ -490,11 +490,19 @@ def evaluate_gate_v2(
             if error:
                 return gate_error(error)
             valid = attempts - infra_failures
-            if valid < threshold.min_valid or rate is None:
+            # The behavior-threshold config validation above already rejects
+            # thresholds whose value / min_valid are unset or out of range;
+            # rebind locally (fail-closed on config drift) so the comparisons
+            # below stay typed instead of comparing against None.
+            min_valid = threshold.min_valid
+            threshold_value = threshold.value
+            if min_valid is None or threshold_value is None:
+                return gate_error(f"threshold_config_invalid:{threshold.metric_id}")
+            if rate is None or valid < min_valid:
                 result.not_evaluated.append(
                     GateNotEvaluatedV2(task_id=task_id, reason_code="infra_insufficient")
                 )
-            elif float(rate) < float(threshold.value):
+            elif isinstance(rate, (int, float)) and float(rate) < threshold_value:
                 result.failures.append(
                     GateFailureV2(
                         task_id=task_id,

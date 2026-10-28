@@ -227,6 +227,22 @@ node scripts/e2e-host-detached.mjs --timeout-min 45 \
 - 超时返回 `503 E2E_GUIDANCE_BARRIER_TIMEOUT` 且不落库；`try/finally` 里无条件 release。
 - 断言 console 时，被测试**故意触发**的 4xx 会带一条浏览器资源错误日志，需精确放行该条，不要整体放宽。
 
+### 3.3 认证限流车道（PLAN-0566 D6 双栈）
+
+runner 以 `--auth-lane=<exempt|ratelimit>`（默认 `exempt`）选择 CP 的认证限流 env 注入；键面全部复用既有 `XIHE_CP_AUTH_*`（`application.properties` 0558 段），产品代码零改动，禁止 shell/mise 全局预设：
+
+| 车道 | 注入键（CP serviceEnv） | 用途 |
+|---|---|---|
+| `exempt`（默认，全矩阵） | `XIHE_CP_AUTH_LOGIN_REGISTER_MAX_ATTEMPTS=0`（维度关闭，service 直接 return） | journey/mock-full 等批内 register 调用不被 429 击穿 |
+| `ratelimit`（限流断言栈） | `XIHE_CP_AUTH_LOGIN_REGISTER_MAX_ATTEMPTS=6`、`XIHE_CP_AUTH_TRUSTED_PROXIES=127.0.0.1/32,::1/128`（回环 remote 判 trusted → 非回环 XFF literal 生效）、`XIHE_CP_AUTH_LOGIN_ACCOUNT_MAX_FAILURES=3`、`XIHE_CP_AUTH_LOGIN_ACCOUNT_LOCK_SECONDS=6` | `auth-rate-limit.spec.ts` 反向断言（429 + `AUTH_RATE_LIMITED` + `Retry-After`）与 `auth-lockout.spec.ts`（`@host`，登录用 identifier 选择器）接线运行 |
+
+```bash
+node scripts/e2e-host-detached.mjs --timeout-min 25 --auth-lane=ratelimit \
+  e2e/real/auth-rate-limit.spec.ts e2e/real/auth-lockout.spec.ts --llm-mode=mock
+```
+
+生产与日常 host 栈默认限流开启（不注入 = 既有默认值）；`XIHE_E2E_EXTERNAL_SERVER=1` 复用模式不在该车道判定内。限流的产品侧根因（IPv6 回环豁免失效）另见 PLAN-0571。
+
 ## 4. 参考
 
 - XH E2E profile、readiness 和实际结果矩阵：维护在 workspace 私有 internal 层（不在本仓库分发）

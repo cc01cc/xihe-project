@@ -1,6 +1,5 @@
 package com.cc01cc.p.xihe.cp.provider;
 
-import com.cc01cc.p.xihe.cp.crypto.EnvelopeEncryptionService;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.entity.ProviderCredentialLease;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;

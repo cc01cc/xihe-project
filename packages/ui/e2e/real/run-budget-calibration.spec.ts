@@ -11,6 +11,7 @@ import {
     registerJourneyUser,
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
+import { seedUserGrant } from "./helpers/user-grants";
 
 // PLAN-0492 T0.3 calibration lane: drive representative prompts over the real
 // provider (host lane with XIHE_E2E_REAL_ROUTE=openai-compat) in three shapes:
@@ -61,23 +62,7 @@ const TOOL_PROMPTS: string[] = [
     "再创建 calibration-b.txt，内容为：run budget calibration beta；随后列出根目录下所有 calibration-*.txt 文件并汇报结果。",
 ];
 
-// Fresh journey users carry no grants; the template/principal writes need them
-// (same fixture as session-branch / real-tool-roundtrip specs).
-function seedUserGrant(userId: string, workspaceId: string) {
-    const permissions = JSON.stringify([
-        { actionClass: "CREATE_ACCOUNT", resource: "*" },
-        { actionClass: "CREATE_TEMPLATE", resource: "*" },
-        { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: workspaceId },
-        { actionClass: "write", resource: "*" },
-    ]).replaceAll("'", "''");
-    psql(
-        `INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions, source, read_state) ` +
-            `VALUES (gen_random_uuid(), 'user', '${userId}'::uuid, 'user', '${userId}'::uuid, ` +
-            `'${permissions}'::jsonb, 'direct', 'read')`,
-    );
-}
-
-// Isolated PostgreSQL fixture access (same contract as seedUserGrant above).
+// Isolated PostgreSQL fixture access.
 function psql(sql: string): string {
     const container = process.env.XIHE_E2E_PG_CONTAINER,
         database = process.env.XIHE_E2E_PG_DATABASE;
@@ -248,7 +233,7 @@ test.describe("@host PLAN-0492 T0.3 token calibration", () => {
         const meRes = await request.get(`${CP_URL}/api/v1/auth/me`, { headers });
         expect(meRes.ok(), await meRes.text()).toBeTruthy();
         const userId = ((await meRes.json()) as { id: string }).id;
-        seedUserGrant(userId, wsId);
+        seedUserGrant(userId, wsId, [{ actionClass: "write", resource: "*" }]);
 
         const chatPrincipal = await createPrincipal(request, auth, {
             name: "Calibration Agent",

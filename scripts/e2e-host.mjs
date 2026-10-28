@@ -148,6 +148,17 @@ const exactCheckpointHostProbeRequested = checkpointSaverProbeRequested || check
 const llmMode = checkpointResumeRequested && requestedLlmMode === undefined
   ? 'checkpoint_resume'
   : requestedLlmMode ?? 'mock'
+// PLAN-0566 (D6): auth rate-limit lane selection over the existing
+// XIHE_CP_AUTH_* key surface (no product code change, no new keys). `exempt`
+// (default) disables the register dimension for full-matrix lanes so journey
+// registrations never trip AUTH_RATE_LIMITED; `ratelimit` lowers thresholds
+// and trusts the loopback proxies so the auth-lane specs can drive and assert
+// real 429 responses through a non-loopback X-Forwarded-For literal.
+const authLaneArg = process.argv.find((arg) => arg.startsWith('--auth-lane='))
+const authLane = authLaneArg ? authLaneArg.slice('--auth-lane='.length) : 'exempt'
+if (authLane !== 'exempt' && authLane !== 'ratelimit') {
+  throw new Error(`invalid --auth-lane value: ${authLane} (expected exempt|ratelimit)`)
+}
 const skipRuntime = process.argv.includes('--skip-runtime')
 // Supplementary real-provider sampling (PLAN-247, requires explicit user
 // approval per run). The key travels only via this env var into the CP Admin
@@ -345,6 +356,7 @@ usage: node scripts/e2e-host.mjs [runner flags] [playwright args...]
 runner flags:
   --llm-mode=<mode>     spec gate mode (mock default; also real / write_file / approval / spawn_agent / history-marker / job / job-cancel / exec_command / overflow / success)
   --batch=<name>        expand a batch from scripts/e2e-batches.jsonc; the batch llm-mode applies unless --llm-mode is explicit
+  --auth-lane=<lane>    CP auth env lane (PLAN-0566 D6): exempt (default, register dimension off) | ratelimit (lowered thresholds + loopback trusted proxies for auth-lockout / auth-rate-limit)
   --list-batches        list batch names, modes and spec counts, then exit
   --report-name=<file>  write the Playwright JSON report to .local/dev/<file> (adds the list,json reporter unless one is given)
   --jar-mode=<mode>     CP boot artifact policy: auto (default) | use | rebuild | run
@@ -700,6 +712,18 @@ async function launchNativeService({ name, cmd, args, cwd, extraEnv, healthUrl }
   } else if (name === 'control-plane') {
     // Probe lineage IDs are accepted only by the runner-owned exact T0.5 lane.
     serviceEnv.XIHE_E2E_CHECKPOINT_PROBE = checkpointSaverProbeRequested ? '1' : '0'
+    // PLAN-0566 D6: default lane exempts the register dimension (0 disables
+    // it, LoginAttemptService early-returns); the ratelimit lane lowers the
+    // register threshold, trusts the loopback proxies (XFF honored) and pins
+    // the account-lockout knobs the auth-lockout spec documents.
+    if (authLane === 'ratelimit') {
+      serviceEnv.XIHE_CP_AUTH_LOGIN_REGISTER_MAX_ATTEMPTS = '6'
+      serviceEnv.XIHE_CP_AUTH_TRUSTED_PROXIES = '127.0.0.1/32,::1/128'
+      serviceEnv.XIHE_CP_AUTH_LOGIN_ACCOUNT_MAX_FAILURES = '3'
+      serviceEnv.XIHE_CP_AUTH_LOGIN_ACCOUNT_LOCK_SECONDS = '6'
+    } else {
+      serviceEnv.XIHE_CP_AUTH_LOGIN_REGISTER_MAX_ATTEMPTS = '0'
+    }
   }
   const child = spawnCommand(cmd, args, {
     cwd: cwd ?? join(projectDir, 'packages', name),
@@ -1188,7 +1212,7 @@ async function recycleHostRoot() {
 async function runPlaywright() {
   // PLAN-0375: runner-owned flags must never reach the Playwright CLI.
   const runnerOnlyArgs = new Set(['--keep', '--skip-runtime', '--persistent', '--teardown', '--skip-preflight', '--validate-at-end', '--list-batches', '--help', '-h'])
-  const runnerOnlyPrefixes = ['--llm-mode=', '--batch=', '--report-name=', '--jar-mode=']
+  const runnerOnlyPrefixes = ['--llm-mode=', '--batch=', '--report-name=', '--jar-mode=', '--auth-lane=']
   const testArgs = process.argv.slice(2).filter(
     (arg) => !runnerOnlyArgs.has(arg) && !runnerOnlyPrefixes.some((prefix) => arg.startsWith(prefix)),
   )

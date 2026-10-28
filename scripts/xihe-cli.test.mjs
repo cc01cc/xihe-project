@@ -638,7 +638,12 @@ test('config import helper omits API key fragments and reports ambiguous 5xx out
   assert.equal(success.code, 0);
   assert.equal(cp.state.configImportRequests, 1);
   assert.equal(cp.state.importedConfig['llm-provider'].xiaomiApiKey, configSecret);
-  assert.match(success.stdout, /xiaomiApiKey\s+: present/);
+  // PLAN-0504 replaced the per-key "present/absent" summary lines with
+  // imported/domains/llmProfile; the summary must not surface the key name
+  // or any fragment of its value.
+  assert.match(success.stdout, /imported\s+: 1/);
+  assert.match(success.stdout, /domains\s+: llm-provider/);
+  assert.equal(success.stdout.includes('xiaomiApiKey'), false);
   assert.equal(success.stdout.includes(configSecret), false);
   assert.equal(success.stdout.includes(configSecret.slice(0, 6)), false);
   assert.equal(success.stdout.includes(configSecret.slice(-6)), false);

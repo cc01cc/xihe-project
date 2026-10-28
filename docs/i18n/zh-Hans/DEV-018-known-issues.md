@@ -143,9 +143,17 @@ updated: 2026-10-25
 
 ## host 车道全矩阵基建阻断（PLAN-0560 补跑发现，2026-10-28 登记；未修，需立项）
 
-- **现象**：`mock-full` 批次（host 隔离栈全矩阵）在 develop `3516901b` 后代与 `plan-0560` worktree 两侧都无法整跑：① `cargo run` 包裹的 `xihe-runtime.exe` 在就绪 ~2min 后**无 panic、无 Windows 事件/Defender 记录**地 exit 1（runtime 自身日志干净截断），此后 CP→runtime 全链 502/503 连锁失败；② PLAN-0559 引入的 `AUTH_RATE_LIMITED` 注册限流被全矩阵注册量击穿（34 次 429；未设 `X-Forwarded-For` 的 spec 共享同一 IP 桶）。实测 21P/35F/1 flaky/56S。
-- **影响**：host 车道自 PLAN-0559 限流上线后失去整跑能力；mock lane 与单测不受影响。PLAN-0560 复跑记录见 `one/plans/PLAN-0560-*/evidence/m5-host-e2e.md`（含 teardown 零残留与日志位置）。
+- **现象**：`mock-full` 批次（host 隔离栈全矩阵）在 develop `3516901b` 后代与 `plan-0560` worktree 两侧都无法整跑：① `cargo run` 包裹的 `xihe-runtime.exe` 在就绪 ~2min 后**无 panic、无 Windows 事件/Defender 记录**地 exit 1（runtime 自身日志干净截断），此后 CP→runtime 全链 502/503 连锁失败；② PLAN-0558 交付的 `AUTH_RATE_LIMITED` 注册限流被全矩阵注册量击穿（34 次 429；未设 `X-Forwarded-For` 的 spec 共享同一 IP 桶；归属勘误 2026-10-28：限流为 PLAN-0558 `1c203603` 交付，原文误记 0559）。实测 21P/35F/1 flaky/56S。
+- **影响**：host 车道自 PLAN-0558 限流上线后失去整跑能力；mock lane 与单测不受影响。PLAN-0560 复跑记录见 `one/plans/PLAN-0560-*/evidence/m5-host-e2e.md`（含 teardown 零残留与日志位置）。
 - **修复方向**：runtime 静默退出需独立根因（复现最小化：`mock-full` 前段 mcp-init 直连工具调用期）；限流需 e2e 豁免口径（隔离栈 env 关闭或按 token 豁免）或全矩阵 spec 统一 XFF 注入。修好后重跑 `mock-full`（恢复 41P/0F 基线口径）+ `real-full`。
+- **429 根因与去向（2026-10-28 PLAN-0566 T0.9 实证）**：IPv6 /64 掩蔽致回环豁免失效——`AuthController.register` 把 `ClientIpResolver.resolve()` 已按 `cp.auth.login.ipv6-prefix-length=64` 掩蔽的桶键传入 `LoginAttemptService.checkAndRecordRegister`，`::1` 被掩蔽为未指定地址 `::`，`isLoopback()=false`，`register.exempt-loopback` 对 localhost 直连失效（jshell 探针 + `ClientIpResolverTest.ipv6_aggregatesTo64` 证实掩蔽本身为设计内行为，缺陷在掩蔽先于豁免判定的组合位）。IPv6 修复属产品行为变更，转独立缺陷 PLAN-0571；E2E 豁免口径由 PLAN-0566 按 D6 双栈（既有 `XIHE_CP_AUTH_*` 键 runner serviceEnv 注入）承接。
+
+## 非管理员 UI 拉取 config/logging 403（PLAN-0566 T3.1 复跑发现，2026-10-28 登记；未修，需立项）
+
+- **现象**：非 ADMIN 用户触发的 `GET /api/v1/config/logging`（无 `layer` 参数）返回 403 `FORBIDDEN`（"Configuration domain is not readable"），浏览器 console 出现 `Failed to load resource: 403`。PLAN-0566 T3.1 复跑 `session-branch.spec.ts`（0566 worktree + develop `69d9c220`）时由严格 console 门捕获（trace：`GET /api/v1/config/logging` 403，带用户 JWT + 自身 `X-Workspace-Id`）。
+- **根因**：`src/stores/config.ts` `INSTANCE_DOMAINS` 含 `logging`（:39），`CONFIG_DOMAINS` 过滤后仍包含它，`loadAllDomains()` 对每个域发 `GET /config/{domain}`；而 CP `ConfigService.isReadableByNonAdmin` 只放行 USER_WRITABLE/WORKSPACE_WRITABLE/explicit-only 域，`logging` 三者皆不在（`ConfigController:161` → 403）。UI 域清单与 CP 可读域元数据不一致。
+- **影响**：非管理员会话里触发该拉取面的页面出现 403 console 错误；严格 console 门的 real spec（session-branch 等）被阻断。admin 会话不受影响（`isAdmin()` 放行）。
+- **修复方向**：二选一——① UI 侧按角色/域元数据过滤可读域（`GET /config/{domain}/meta` 已提供 writability 信息）；② CP 侧将 `logging` 纳入非管理员可读（如属有意放开）。需先裁定哪个语义是对的。查重：归档区无同例（`round-19.md` 仅记录过 `api-request-templates` 的同类缺口，已修）。
 
 ## Mock E2E ProviderHub 夹具债务（PLAN-0505 审查发现，2026-10-15 登记；未修，需立项）
 

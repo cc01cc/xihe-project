@@ -29,6 +29,7 @@ import {
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
 import { createWorkspaceSessionWithPrincipal } from "./helpers/agent-principal";
+import { seedUserGrant } from "./helpers/user-grants";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
@@ -68,23 +69,6 @@ function psql(sql: string): string {
 
 function sqlLiteral(value: string): string {
     return value.replaceAll("'", "''");
-}
-
-/** V64: one direct grant per subject — base ceilings plus credential_manage:* in a single row. */
-function seedUserGrant(userId: string, workspaceId: string) {
-    const permissions = JSON.stringify([
-        { actionClass: "CREATE_ACCOUNT", resource: "*" },
-        { actionClass: "CREATE_TEMPLATE", resource: "*" },
-        { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: workspaceId },
-        { actionClass: "write", resource: "*" },
-        { actionClass: "delete", resource: "*" },
-        { actionClass: "credential_manage", resource: "credential:*" },
-    ]).replaceAll("'", "''");
-    psql(
-        `INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions, source, read_state) ` +
-            `VALUES (gen_random_uuid(), 'user', '${userId}'::uuid, 'user', '${userId}'::uuid, ` +
-            `'${permissions}'::jsonb, 'direct', 'read')`,
-    );
 }
 
 /**
@@ -214,7 +198,11 @@ test("@host credential manager — UI registration, role block, binding, lease u
     expect(meResponse.ok(), await meResponse.text()).toBe(true);
     const userId = ((await meResponse.json()) as { id: string }).id;
 
-    seedUserGrant(userId, wsId);
+    seedUserGrant(userId, wsId, [
+        { actionClass: "write", resource: "*" },
+        { actionClass: "delete", resource: "*" },
+        { actionClass: "credential_manage", resource: "credential:*" },
+    ]);
 
     await page.addInitScript((t) => localStorage.setItem("xihe-token", t), authToken);
     await page.addInitScript(

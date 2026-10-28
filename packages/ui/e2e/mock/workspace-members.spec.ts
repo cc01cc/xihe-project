@@ -122,7 +122,10 @@ test.describe("PLAN-0565 workspace members tab", () => {
                     });
                     return;
                 }
-                if (target.role === "OWNER" && members.filter((m) => m.role === "OWNER").length <= 1) {
+                if (
+                    target.role === "OWNER" &&
+                    members.filter((m) => m.role === "OWNER").length <= 1
+                ) {
                     await route.fulfill({
                         status: 409,
                         contentType: "application/problem+json",

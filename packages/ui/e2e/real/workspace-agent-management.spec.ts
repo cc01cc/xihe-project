@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { CP_URL, registerJourneyUser, seedPage } from "./helpers/journey";
+import { seedUserGrantPermissions } from "./helpers/user-grants";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TEMPLATE_PROMPT = "Answer using only the scoped workspace material.";
@@ -32,19 +33,6 @@ function requireUuid(value: string): string {
     return value;
 }
 
-function seedUserGrant(
-    userIdValue: string,
-    permissions: Array<{ actionClass: string; resource: string }>,
-): void {
-    const userId = requireUuid(userIdValue),
-        permissionJson = JSON.stringify(permissions).replaceAll("'", "''");
-    queryIsolatedPostgres(`
-    INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions, source, read_state)
-    VALUES (gen_random_uuid(), 'user', '${userId}'::uuid, 'user', '${userId}'::uuid,
-            '${permissionJson}'::jsonb, 'direct', 'read')
-  `);
-}
-
 function scalarCount(sql: string): number {
     const value = queryIsolatedPostgres(sql);
     if (!/^\d+$/.test(value)) throw new Error(`Expected a scalar count, received: ${value}`);
@@ -70,14 +58,16 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     const workspaceA = requireUuid(owner.workspaceId),
         workspaceB = requireUuid(secondOwner.workspaceId);
 
-    seedUserGrant(ownerUserId, [
+    seedUserGrantPermissions(ownerUserId, [
         { actionClass: "CREATE_ACCOUNT", resource: "*" },
         { actionClass: "CREATE_TEMPLATE", resource: "*" },
         { actionClass: "read", resource: "*" },
         { actionClass: "write", resource: "*" },
         { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: workspaceA },
     ]);
-    seedUserGrant(secondUserId, [{ actionClass: "MANAGE_WORKSPACE_AGENTS", resource: workspaceB }]);
+    seedUserGrantPermissions(secondUserId, [
+        { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: workspaceB },
+    ]);
 
     const pageErrors: string[] = [],
         apiRequestFailures: string[] = [];

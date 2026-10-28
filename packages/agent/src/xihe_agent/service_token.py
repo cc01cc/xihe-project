@@ -7,7 +7,7 @@ module (no ``app_state`` import) to avoid a circular import with
 """
 
 import os
-from typing import Mapping
+from collections.abc import Mapping
 
 _DEV_TOKEN = "dev-token-not-secure"
 

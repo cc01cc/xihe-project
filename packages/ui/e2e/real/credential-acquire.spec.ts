@@ -30,6 +30,7 @@ import {
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
 import { createWorkspaceSessionWithPrincipal } from "./helpers/agent-principal";
+import { seedUserGrant } from "./helpers/user-grants";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
@@ -68,23 +69,6 @@ function psql(sql: string): string {
         ],
         { encoding: "utf8", timeout: 20_000, windowsHide: true },
     ).trim();
-}
-
-/** V64: one direct grant per subject — seed every ceiling the flow needs in a single row. */
-function seedUserGrant(userId: string, workspaceId: string, extra: Array<Record<string, string>>) {
-    const permissions = JSON.stringify([
-        { actionClass: "CREATE_ACCOUNT", resource: "*" },
-        { actionClass: "CREATE_TEMPLATE", resource: "*" },
-        { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: workspaceId },
-        { actionClass: "write", resource: "*" },
-        { actionClass: "delete", resource: "*" },
-        ...extra,
-    ]).replaceAll("'", "''");
-    psql(
-        `INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions, source, read_state) ` +
-            `VALUES (gen_random_uuid(), 'user', '${userId}'::uuid, 'user', '${userId}'::uuid, ` +
-            `'${permissions}'::jsonb, 'direct', 'read')`,
-    );
 }
 
 async function provisionCredentialAgent(
@@ -229,6 +213,8 @@ test("@host credential acquisition — manual ask, delivery, memory-only value",
     // The credential_use ceiling is required to write the template/principal and
     // the workspace cap; credential_manage:* is required to register the credential.
     seedUserGrant(userId, wsId, [
+        { actionClass: "write", resource: "*" },
+        { actionClass: "delete", resource: "*" },
         { actionClass: "credential_manage", resource: "credential:*" },
         { actionClass: "credential_use", resource: "credential:*" },
     ]);
