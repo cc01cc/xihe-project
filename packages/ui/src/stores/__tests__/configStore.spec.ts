@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
-import { useConfigStore, CONFIG_DOMAINS, INSTANCE_DOMAINS, LAYER_DOMAINS } from "../config";
+import {
+    useConfigStore,
+    CONFIG_DOMAINS,
+    INSTANCE_DOMAINS,
+    LAYER_DOMAINS,
+    isDomainReadableWithoutAdmin,
+} from "../config";
 
 beforeEach(() => {
     setActivePinia(createPinia());
@@ -64,7 +70,7 @@ describe("useConfigStore", () => {
             expect(parsed["llm-provider"].temperature).toBe("0.5");
         });
 
-        it("loadAllDomains fetches and updates mergedConfig", async () => {
+        it("loadAllDomains fetches and updates mergedConfig for admins", async () => {
             const requestedDomains: string[] = [];
             vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
                 const url = typeof input === "string" ? input : input.url,
@@ -86,7 +92,7 @@ describe("useConfigStore", () => {
             });
             const store = useConfigStore();
 
-            await store.loadAllDomains();
+            await store.loadAllDomains({ isAdmin: true });
 
             expect(store.mergedConfig["logging"]?.logLevel).toBe("DEBUG");
             expect(store.mergedConfig["llm-provider"]?.temperature).toBe("0.5");
@@ -96,6 +102,60 @@ describe("useConfigStore", () => {
             expect(INSTANCE_DOMAINS).toContain("agent-templates");
             expect(requestedDomains).not.toContain("agent-templates");
             expect(store.mergedConfig["agent-templates"]).toBeUndefined();
+        });
+
+        it("loadAllDomains as non-admin never requests domains CP rejects with 403", async () => {
+            const requestedDomains: string[] = [];
+            vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+                const url = typeof input === "string" ? input : input.url,
+                    domain = url.split("/").pop()?.split("?")[0] ?? "";
+                requestedDomains.push(domain);
+                const payload: Record<string, Record<string, string>> = {
+                    "llm-provider": { temperature: "0.5" },
+                    "context-policy": {},
+                    embedding: {},
+                    rag: {},
+                    "agent-runtime": {},
+                    "agent-profile": {},
+                    "user-preference": {},
+                    "approval-policy": {},
+                    "job-policy": {},
+                };
+                return Promise.resolve(
+                    new Response(JSON.stringify(payload[domain] ?? {}), { status: 200 }),
+                );
+            });
+            const store = useConfigStore();
+
+            await store.loadAllDomains();
+
+            // PLAN-0573: logging is outside the CP non-admin readable set
+            // (ConfigService.isReadableByNonAdmin) — the UI must not issue the
+            // doomed request at all (strict console gate sees every 403).
+            expect(requestedDomains).not.toContain("logging");
+            expect(requestedDomains).toContain("llm-provider");
+            expect(store.mergedConfig["logging"]).toBeUndefined();
+            expect(store.mergedConfig["llm-provider"]?.temperature).toBe("0.5");
+            expect(store.error).toBeNull();
+        });
+
+        it("non-admin readable domain set mirrors CP isReadableByNonAdmin semantics", () => {
+            // CP ConfigService.java:90-96,137-141 — every UI domain except
+            // `logging` is readable without the ADMIN bypass.
+            const expectedUnreadable: string[] = ["logging"];
+            const unreadable = INSTANCE_DOMAINS.filter(
+                (domain) => !isDomainReadableWithoutAdmin(domain),
+            );
+            expect(unreadable).toEqual(expectedUnreadable);
+            // The merged pull surface (CONFIG_DOMAINS) sheds exactly `logging`.
+            expect(CONFIG_DOMAINS.filter((d) => !isDomainReadableWithoutAdmin(d))).toEqual([
+                "logging",
+            ]);
+            // Layer surfaces (user/workspace tabs reachable by non-admins) stay
+            // fully readable: no request there can 403 on domain grounds.
+            for (const domain of [...LAYER_DOMAINS.user, ...LAYER_DOMAINS.workspace]) {
+                expect(isDomainReadableWithoutAdmin(domain)).toBe(true);
+            }
         });
 
         it("loadAllDomains sets error on failure", async () => {

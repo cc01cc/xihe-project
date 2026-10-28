@@ -148,12 +148,13 @@ updated: 2026-10-25
 - **修复方向**：runtime 静默退出需独立根因（复现最小化：`mock-full` 前段 mcp-init 直连工具调用期）；限流需 e2e 豁免口径（隔离栈 env 关闭或按 token 豁免）或全矩阵 spec 统一 XFF 注入。修好后重跑 `mock-full`（恢复 41P/0F 基线口径）+ `real-full`。
 - **429 根因与去向（2026-10-28 PLAN-0566 T0.9 实证；已修复，PLAN-0571）**：IPv6 /64 掩蔽致回环豁免失效——`AuthController.register` 把 `ClientIpResolver.resolve()` 已按 `cp.auth.login.ipv6-prefix-length=64` 掩蔽的桶键传入 `LoginAttemptService.checkAndRecordRegister`，`::1` 被掩蔽为未指定地址 `::`，`isLoopback()=false`，`register.exempt-loopback` 对 localhost 直连失效（jshell 探针 + `ClientIpResolverTest.ipv6_aggregatesTo64` 证实掩蔽本身为设计内行为，缺陷在掩蔽先于豁免判定的组合位）。**修复（PLAN-0571，2026-10-28）**：`ClientIpResolver.resolveClientIp()` 返回 raw 字面量 + 桶键，`checkAndRegister` 豁免判定改读 raw（计数仍用桶键，公网 /64 聚合反爆破语义不变）；定向 25/25 + auth 集成 15/15 + host ratelimit 车道实证（直连 ::1 ×8 全 201 零 429，非回环 XFF 仍 429）。E2E 豁免口径由 PLAN-0566 按 D6 双栈（既有 `XIHE_CP_AUTH_*` 键 runner serviceEnv 注入）承接。
 
-## 非管理员 UI 拉取 config/logging 403（PLAN-0566 T3.1 复跑发现，2026-10-28 登记；未修，需立项）
+## 非管理员 UI 拉取 config/logging 403（PLAN-0566 T3.1 复跑发现，2026-10-28 登记；已修复，PLAN-0573）
 
 - **现象**：非 ADMIN 用户触发的 `GET /api/v1/config/logging`（无 `layer` 参数）返回 403 `FORBIDDEN`（"Configuration domain is not readable"），浏览器 console 出现 `Failed to load resource: 403`。PLAN-0566 T3.1 复跑 `session-branch.spec.ts`（0566 worktree + develop `69d9c220`）时由严格 console 门捕获（trace：`GET /api/v1/config/logging` 403，带用户 JWT + 自身 `X-Workspace-Id`）。
 - **根因**：`src/stores/config.ts` `INSTANCE_DOMAINS` 含 `logging`（:39），`CONFIG_DOMAINS` 过滤后仍包含它，`loadAllDomains()` 对每个域发 `GET /config/{domain}`；而 CP `ConfigService.isReadableByNonAdmin` 只放行 USER_WRITABLE/WORKSPACE_WRITABLE/explicit-only 域，`logging` 三者皆不在（`ConfigController:161` → 403）。UI 域清单与 CP 可读域元数据不一致。
 - **影响**：非管理员会话里触发该拉取面的页面出现 403 console 错误；严格 console 门的 real spec（session-branch 等）被阻断。admin 会话不受影响（`isAdmin()` 放行）。
 - **修复方向**：二选一——① UI 侧按角色/域元数据过滤可读域（`GET /config/{domain}/meta` 已提供 writability 信息）；② CP 侧将 `logging` 纳入非管理员可读（如属有意放开）。需先裁定哪个语义是对的。查重：归档区无同例（`round-19.md` 仅记录过 `api-request-templates` 的同类缺口，已修）。
+- **修复（PLAN-0573，2026-10-28）**：用户裁定方案①改前端。M0 核实 meta 端点对不可读域非管理员**三层全 403**（`layer` 必填；instance 恒 403，user/workspace 走 `isLayerWritable`），不能作可读性来源；CP config 面也无域清单端点 → 落地方案 A：UI 静态域元数据 `isDomainReadableWithoutAdmin` 镜像 CP `isReadableByNonAdmin`（CONFIG_DOMAINS/INSTANCE_DOMAINS 全域比对，唯一不可读域 = `logging`；`pricing`/`context-templates` 不在 UI 清单无请求面），`loadAllDomains({ isAdmin })` 按角色过滤，admin 旁路与 CP 语义零改动。验证：session-branch 严格门复跑 **2 passed**（45.9s）；新增 `plan0573-config-domain-filter.spec.ts` 双会话验收 **2 passed**（V1 非管理员零 `logging` 请求 + console 干净，V2 admin `logging` 200 + instance tab 渲染）；单测覆盖全域分类镜像（27 passed）。
 
 ## Mock E2E ProviderHub 夹具债务（PLAN-0505 审查发现，2026-10-15 登记；未修，需立项）
 
