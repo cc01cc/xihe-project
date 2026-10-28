@@ -75,8 +75,8 @@ updated: 2026-10-25
 ## PLAN-0342 诊断回灌 — 已知限制（2026-09-17，2026-10-28 按 PLAN-0510/0572 校正）
 
 - **历史消息 toolCalls（已修，PLAN-0572）**：assistant 消息自 V83 起持久化有界 `toolCalls` 快照，刷新后工具卡恢复（含 only-tool 轮次）；V83 之前的消息不回填，仍无卡。注意 PLAN-0510 后结果正文/诊断在 SSE 与 durable 两侧都只保留占位符，「诊断仅本 run 可见」已不成立。
-- **去重账本为进程内存（另立登记）**：`DiagnosticsLedger` 重启即清空，仅影响去重噪音（可能重复回灌一次），不影响诊断正确性；按 PLAN-0572 D2 另立条目，不并入该计划。
-- **Job 失败判定（另立登记）**：非零 `exit_code` 的命令结果在 job/`workspace_jobs` 仍记 `succeeded`，诊断不参与工具失败判定；Operation Ledger 已退役，本项改指 job 状态；按 PLAN-0572 D3 另立条目。
+- **去重账本为进程内存（另立登记 BL-129）**：`DiagnosticsLedger` 重启即清空，仅影响去重噪音（可能重复回灌一次），不影响诊断正确性；按 PLAN-0572 D2 另立条目，不并入该计划。
+- **Job 失败判定（另立登记 BL-130）**：非零 `exit_code` 的命令结果在 job/`workspace_jobs` 仍记 `succeeded`，诊断不参与工具失败判定；Operation Ledger 已退役，本项改指 job 状态；按 PLAN-0572 D3 另立条目。
 
 ## PLAN-0341 上下文管道与 prune — 状态（2026-09-17）
 

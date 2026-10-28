@@ -476,6 +476,28 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void persistsInterruptedToolOnlyTurnWithRunningCard() throws Exception {
+        ChatFixture fixture = createChatFixture("tool-interrupted");
+        String runId = UUID.randomUUID().toString();
+        ChatSubmissionService.Submission submission = submit(runId, fixture.session(), fixture.user(),
+                fixture.workspace(), "prompt", fixture.principal().getId().toString());
+        String branchId = submission.run().getBranchId();
+
+        appendToolEvent(fixture, runId, branchId, "tool.called", Map.of(
+                "call_id", "interrupted-call", "tool_name", "read_file",
+                "tool_input", Map.of("path", "README.md")));
+
+        String messageId = submissionService.persistAssistantResponse(
+                fixture.session().getId().toString(), runId, "");
+        assertNotNull(messageId);
+        Message stored = messageRepository.findById(UUID.fromString(messageId)).orElseThrow();
+        var card = objectMapper.readTree(stored.getToolCalls()).path("calls").get(0);
+        assertEquals("interrupted-call", card.path("id").asText());
+        assertEquals("running", card.path("status").asText());
+        assertFalse(card.has("completedAt"));
+    }
+
+    @Test
     void skipsBlankTurnWithoutTools() {
         ChatFixture fixture = createChatFixture("tool-empty");
         String runId = UUID.randomUUID().toString();
