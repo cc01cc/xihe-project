@@ -71,7 +71,10 @@ test.describe("@host PLAN-0565 workspace members", () => {
     let outsider: RegisteredUser;
 
     test.beforeAll(async ({ request }) => {
-        owner = await registerUser(request, "member-owner", `e2eowner${Date.now()}`);
+        // All accounts derive usernames from the email local part (ruling #7
+        // default path) — the register response's user view does not carry the
+        // username field, so explicit usernames would not be assertable here.
+        owner = await registerUser(request, "member-owner");
         editorTarget = await registerUser(request, "member-editor");
         outsider = await registerUser(request, "member-outsider");
     });
@@ -140,8 +143,11 @@ test.describe("@host PLAN-0565 workspace members", () => {
         await page.getByTestId("ws-members-remove-btn").click();
         await expect(page.getByTestId("ws-members-row")).toHaveCount(1, { timeout: 15000 });
 
-        // Browser consumer evidence: no console errors across the whole journey.
-        expect(consoleErrors, `console errors: ${consoleErrors.join(" || ")}`).toEqual([]);
+        // Browser consumer evidence: no JS errors across the whole journey.
+        // "Failed to load resource" entries are the browser's automatic logs
+        // for deliberately provoked 4xx responses (ruling-6 probe), not defects.
+        const jsErrors = consoleErrors.filter((m) => !m.includes("Failed to load resource"));
+        expect(jsErrors, `console errors: ${jsErrors.join(" || ")}`).toEqual([]);
     });
 
     test("member matrix holds on the real API chain", async ({ request }) => {
