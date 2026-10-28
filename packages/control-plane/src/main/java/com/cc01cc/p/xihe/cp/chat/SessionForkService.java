@@ -333,6 +333,8 @@ public class SessionForkService {
             Message childMessage = new Message(childSessionId, sourceMessage.getRole(), sourceMessage.getContent());
             childMessage.setRunId(sourceMessage.getRunId());
             childMessage.setBranchId(childRootBranchId);
+            // PLAN-0572 D1=A: the tool-call snapshot travels with its message.
+            childMessage.setToolCalls(sourceMessage.getToolCalls());
             childMessage = messages.saveAndFlush(childMessage);
             childMessage.setAttachments(copyAttachments(sourceMessage, childMessage, claim,
                     sourceFilesByMessage.getOrDefault(sourceMessage.getId(), List.of())));

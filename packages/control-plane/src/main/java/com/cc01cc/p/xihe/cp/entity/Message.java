@@ -46,6 +46,11 @@ public class Message {
     @Column(name = "attachments", columnDefinition = "TEXT")
     private String attachments;
 
+    /** PLAN-0572 D1=A: bounded tool-call snapshot for this assistant Message (JSONB). */
+    @Column(name = "tool_calls", columnDefinition = "jsonb")
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
+    private String toolCalls;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -86,6 +91,9 @@ public class Message {
 
     public String getAttachments() { return attachments; }
     public void setAttachments(String attachments) { this.attachments = attachments; }
+
+    public String getToolCalls() { return toolCalls; }
+    public void setToolCalls(String toolCalls) { this.toolCalls = toolCalls; }
 
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }

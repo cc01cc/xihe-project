@@ -71,6 +71,7 @@ public class ChatSubmissionService {
     // PLAN-0470 (decision #23): the attachment->Message link write is owned
     // by Files (ChatAttachmentService); this service no longer holds FileRepository.
     private final com.cc01cc.p.xihe.cp.files.ChatAttachmentService chatAttachmentService;
+    private final ToolCallSnapshotService toolCallSnapshotService;
 
     public ChatSubmissionService(ChatRunRepository chatRunRepository,
                                  InboxRepository inboxRepository,
@@ -87,7 +88,8 @@ public class ChatSubmissionService {
                                  AuditLogger auditLogger,
                                  McpInvocationService mcpInvocationService,
                                  EventStoreService eventStoreService,
-                                 com.cc01cc.p.xihe.cp.files.ChatAttachmentService chatAttachmentService) {
+                                 com.cc01cc.p.xihe.cp.files.ChatAttachmentService chatAttachmentService,
+                                 ToolCallSnapshotService toolCallSnapshotService) {
         this.chatRunRepository = chatRunRepository;
         this.inboxRepository = inboxRepository;
         this.messageRepository = messageRepository;
@@ -104,6 +106,7 @@ public class ChatSubmissionService {
         this.mcpInvocationService = mcpInvocationService;
         this.eventStoreService = eventStoreService;
         this.chatAttachmentService = chatAttachmentService;
+        this.toolCallSnapshotService = toolCallSnapshotService;
     }
 
     @Transactional
@@ -163,11 +166,24 @@ public class ChatSubmissionService {
                 agentPrincipalId, false);
     }
 
-    /** Persists an assistant response and links it to its Run in the existing order. */
+    /**
+     * Persists an assistant response and links it to its Run in the existing order.
+     *
+     * <p>PLAN-0572 D1=A/D5: the Message carries a bounded snapshot of this Run's
+     * tool calls; a terminal tool-only turn (blank assistant text) is persisted
+     * when the snapshot is non-empty. Returns {@code null} when there is nothing
+     * renderable to persist.</p>
+     */
     public String persistAssistantResponse(String sessionId, String runId, String assistantContent) {
         // Preserve the existing repository commit boundaries by keeping this method non-transactional.
-        Message assistantMessage = new Message(sessionId, MessageRole.ASSISTANT, assistantContent);
+        String toolCalls = toolCallSnapshotService.snapshotJson(sessionId, runId);
+        String content = assistantContent == null ? "" : assistantContent;
+        if (content.isBlank() && toolCalls == null) {
+            return null;
+        }
+        Message assistantMessage = new Message(sessionId, MessageRole.ASSISTANT, content);
         assistantMessage.setRunId(runId);
+        assistantMessage.setToolCalls(toolCalls);
         var ownerRun = chatRunRepository.findById(UUID.fromString(runId));
         ownerRun.ifPresent(run -> assistantMessage.setBranchId(run.getBranchId()));
         messageRepository.save(assistantMessage);
