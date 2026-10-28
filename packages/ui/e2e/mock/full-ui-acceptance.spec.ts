@@ -18,6 +18,8 @@ const providerCatalog = {
             modelDiscovery: "remote-models",
             credential: { type: "api-key", required: true, placeholder: "sk-test" },
             supports: { customBaseUrl: true, streaming: true, tools: true, vision: true },
+            supportedApiTypes: [{ apiTypeId: "openai-chat-completions", version: 1 }],
+            defaultApiType: { apiTypeId: "openai-chat-completions", version: 1 },
         },
         {
             id: "local",
@@ -28,6 +30,8 @@ const providerCatalog = {
             modelDiscovery: "manual",
             credential: { type: "none", required: false },
             supports: { customBaseUrl: false, streaming: false },
+            supportedApiTypes: [{ apiTypeId: "openai-chat-completions", version: 1 }],
+            defaultApiType: { apiTypeId: "openai-chat-completions", version: 1 },
         },
     ],
 };
@@ -344,16 +348,14 @@ test.describe("PLAN-269 full UI acceptance: settings and provider", () => {
         await form.locator('input[type="password"]').fill("sk-test-key");
         await form.getByRole("button", { name: "验证并保存" }).click();
         await expect(form).toBeHidden({ timeout: 10000 });
-        await expect(hub.getByText("Test OpenAI")).toBeVisible({ timeout: 10000 });
-        await expect(
-            hub.getByTestId("provider-connection-openai").getByText("已连接"),
-        ).toBeVisible();
+        // The label now renders both on the connection card and in the layer
+        // default row, so scope the assertion to the created connection card.
+        const connectionCard = hub.getByTestId("provider-connection-openai");
+        await expect(connectionCard.getByText("Test OpenAI")).toBeVisible({ timeout: 10000 });
+        await expect(connectionCard.getByText("已连接")).toBeVisible();
         await expectPlatformScreenshot(page, "plan-269-provider-connected.png");
 
-        await hub
-            .getByTestId("provider-connection-openai")
-            .getByRole("button", { name: "验证", exact: true })
-            .click();
+        await connectionCard.getByRole("button", { name: "验证", exact: true }).click();
         await expect(hub.getByText("刚刚验证")).toBeVisible({ timeout: 10000 });
         // PLAN-0505: the delete button opens the impact confirm dialog instead
         // of the old window.confirm; cancel first (zero mutations), then confirm.

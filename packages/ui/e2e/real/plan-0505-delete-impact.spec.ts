@@ -31,172 +31,239 @@ function authHeaders(auth: Auth): Record<string, string> {
 
 function installAuth(page: Page, auth: Auth) {
     void page.addInitScript(
-        ({ token, workspaceId }) => {
+        ({ token, workspaceId, userId }) => {
             localStorage.setItem("xihe-token", token);
             localStorage.setItem("xihe-user", JSON.stringify({ workspaceId }));
             localStorage.setItem(
                 "xihe-workspace",
                 JSON.stringify({ id: workspaceId, name: "Default Workspace" }),
             );
+            // PLAN-0577: per-tab workspace context wins over localStorage.
+            // Without overwriting sessionStorage the second viewport run keeps
+            // the previous user's workspace id and CP rejects the request.
+            sessionStorage.setItem(
+                "xihe-workspace",
+                JSON.stringify({
+                    id: workspaceId,
+                    name: "Default Workspace",
+                    workspaceRole: "OWNER",
+                    ownerId: userId,
+                }),
+            );
         },
-        { token: auth.accessToken, workspaceId: auth.workspaceId },
+        { token: auth.accessToken, workspaceId: auth.workspaceId, userId: auth.userId },
     );
 }
 
 // PLAN-0505 V4（真实链路浏览器验证）：API 种子连接与三类引用 → UI 删除入口
-// 拉取 delete-impact 预览 → 取消（零变更）→ 确认 → 级联清理读回为零。
+// 拉取 delete-impact 预览 → 取消（服务端零变更）→ 确认 → 级联清理读回为零。
+// PLAN-0577：同一真实流程分别覆盖桌面与移动 viewport，每次使用独立用户数据。
 // 跑法：node scripts/e2e-host.mjs --skip-runtime --llm-mode=mock
 //        e2e/real/plan-0505-delete-impact.spec.ts
 // （连接经 API 种子而非 UI 表单：mock 夹具的 picker→form 链路存在预存债务，
 //  见 PLAN-0401 evidence；删除流本身不依赖该夹具。）
+const VIEWPORTS = [
+    { tag: "desktop", width: 1920, height: 1080 },
+    { tag: "mobile", width: 390, height: 844 },
+] as const;
+
 test.describe.serial("@host PLAN-0505 delete impact and cascade (browser)", () => {
-    test("preview counts, cancel keeps zero mutation, confirm cascades references away", async ({
+    test("preview counts, cancel keeps zero mutation, confirm cascades references away (desktop + mobile)", async ({
         page,
         request,
     }, testInfo) => {
-        test.setTimeout(120000);
-        const auth = await register(request, "plan0505-browser");
-        installAuth(page, auth);
+        test.setTimeout(180000);
 
-        // Seed: user connection (UNVERIFIED is fine — delete needs no READY).
-        const created = await request.post(`${CP_URL}/api/v1/provider-connections`, {
-            headers: authHeaders(auth),
-            data: {
-                providerId: PROVIDER_ID,
-                label: "Browser Cascade",
-                scope: "USER",
-                apiKey: "isolated-test-only",
-                baseUrl: "http://localhost:1/v1",
-                modelDiscovery: "manual",
-                manualModels: ["m1", "m2"],
-                connectionKey: CONNECTION_KEY,
-            },
-        });
-        expect(created.status(), await created.text()).toBe(201);
-        const connection = (await created.json()) as {
-            id: string;
-            revision: number;
-        };
-        const id = connection.id;
+        for (const viewport of VIEWPORTS) {
+            await page.setViewportSize({ width: viewport.width, height: viewport.height });
+            const auth = await register(request, `plan0505-${viewport.tag}`);
+            installAuth(page, auth);
 
-        // Seed: user-layer model bindings (m1 + m2) against the instance builtin ref.
-        const definitions = await request.get(
-            `${CP_URL}/api/v1/config/api-request-templates?layer=instance`,
-            { headers: authHeaders(auth) },
-        );
-        expect(definitions.ok(), await definitions.text()).toBe(true);
-        const list = (await definitions.json()) as {
-            templates: string | Array<{ id: string; version: number; apiTypeId: string }>;
-        };
-        const parsed = (
-            typeof list.templates === "string" ? JSON.parse(list.templates) : list.templates
-        ) as Array<{ id: string; version: number; apiTypeId: string }>;
-        const openai = parsed.find((item) => item.apiTypeId === "openai-chat-completions");
-        expect(openai, "instance openai-chat-completions builtin must exist").toBeTruthy();
-        const ref = { layer: "instance", templateId: openai!.id, version: openai!.version };
-        const bindings = await request.put(`${CP_URL}/api/v1/config/user/api-request-templates`, {
-            headers: { ...authHeaders(auth), "Content-Type": "application/json" },
-            data: {
-                providerModelBindings: JSON.stringify({
-                    [id]: { m1: ref, m2: ref },
-                }),
-            },
-        });
-        expect(bindings.status(), await bindings.text()).toBe(200);
-
-        // Seed: owner-layer connectionDefaultTemplates entry.
-        const patched = await request.patch(`${CP_URL}/api/v1/provider-connections/${id}`, {
-            headers: { ...authHeaders(auth), "Content-Type": "application/json" },
-            data: {
-                expectedRevision: connection.revision,
-                connectionDefaultTemplateRef: ref,
-            },
-        });
-        expect(patched.status(), await patched.text()).toBe(200);
-
-        // Seed: instance llm-provider profile pointing at this connection
-        // (admin seed: instance writes skip the connection readiness check).
-        const adminPassword = process.env.XIHE_E2E_ADMIN_PASSWORD ?? "";
-        expect(adminPassword, "XIHE_E2E_ADMIN_PASSWORD must be provided by e2e-host").not.toBe("");
-        const adminLogin = await request.post(`${CP_URL}/api/v1/auth/login`, {
-            data: { identifier: "admin@xihe.local", password: adminPassword },
-        });
-        expect(adminLogin.ok(), await adminLogin.text()).toBe(true);
-        const adminToken = ((await adminLogin.json()) as { accessToken: string }).accessToken;
-        const profile = await request.put(`${CP_URL}/api/v1/config/instance/llm-provider`, {
-            headers: {
-                Authorization: `Bearer ${adminToken}`,
-                "Content-Type": "application/json",
-            },
-            data: {
-                profile: JSON.stringify({
+            // Seed: user connection (UNVERIFIED is fine — delete needs no READY).
+            const created = await request.post(`${CP_URL}/api/v1/provider-connections`, {
+                headers: authHeaders(auth),
+                data: {
                     providerId: PROVIDER_ID,
+                    label: `Browser Cascade ${viewport.tag}`,
+                    scope: "USER",
+                    apiKey: "isolated-test-only",
+                    baseUrl: "http://localhost:1/v1",
+                    modelDiscovery: "manual",
+                    manualModels: ["m1", "m2"],
                     connectionKey: CONNECTION_KEY,
-                    model: "m1",
-                }),
-            },
-        });
-        expect(profile.status(), await profile.text()).toBe(200);
+                },
+            });
+            expect(created.status(), await created.text()).toBe(201);
+            const connection = (await created.json()) as {
+                id: string;
+                revision: number;
+            };
+            const id = connection.id;
 
-        // UI: open the settings hub and drive the delete confirm flow.
-        await page.goto("/settings/config");
-        const article = page.locator(
-            `[data-testid="provider-connection-${PROVIDER_ID}"][data-connection-key="${CONNECTION_KEY}"]`,
-        );
-        await expect(article).toBeVisible({ timeout: 15000 });
-        await article.getByTestId(`provider-connection-delete-${id}`).click();
-        const dialog = page.getByTestId("provider-delete-confirm-modal");
-        await expect(dialog).toBeVisible();
-        await expect(dialog.getByText("删除 Provider 连接")).toBeVisible();
-        const summary = page.getByTestId("provider-delete-impact-summary");
-        await expect(summary).toContainText("模型绑定 2 项（1 个用户）");
-        await expect(summary).toContainText("连接默认模板指向 1 项");
-        await expect(summary).toContainText("默认身份 profile 1 项");
-        const screenshot = testInfo.outputPath("plan-0505-delete-confirm.png");
-        await page.screenshot({ path: screenshot, fullPage: false });
-        await testInfo.attach("plan-0505-delete-confirm.png", {
-            path: screenshot,
-            contentType: "image/png",
-        });
+            // Seed: user-layer model bindings (m1 + m2) against the instance builtin ref.
+            const definitions = await request.get(
+                `${CP_URL}/api/v1/config/api-request-templates?layer=instance`,
+                { headers: authHeaders(auth) },
+            );
+            expect(definitions.ok(), await definitions.text()).toBe(true);
+            const list = (await definitions.json()) as {
+                templates: string | Array<{ id: string; version: number; apiTypeId: string }>;
+            };
+            const parsed = (
+                typeof list.templates === "string" ? JSON.parse(list.templates) : list.templates
+            ) as Array<{ id: string; version: number; apiTypeId: string }>;
+            const openai = parsed.find((item) => item.apiTypeId === "openai-chat-completions");
+            expect(openai, "instance openai-chat-completions builtin must exist").toBeTruthy();
+            const ref = { layer: "instance", templateId: openai!.id, version: openai!.version };
+            const bindings = await request.put(
+                `${CP_URL}/api/v1/config/user/api-request-templates`,
+                {
+                    headers: { ...authHeaders(auth), "Content-Type": "application/json" },
+                    data: {
+                        providerModelBindings: JSON.stringify({
+                            [id]: { m1: ref, m2: ref },
+                        }),
+                    },
+                },
+            );
+            expect(bindings.status(), await bindings.text()).toBe(200);
 
-        // Cancel: zero mutation.
-        await page.getByTestId("provider-delete-cancel").click();
-        await expect(dialog).not.toBeVisible();
-        await expect(article).toBeVisible();
+            // Seed: owner-layer connectionDefaultTemplates entry.
+            const patched = await request.patch(`${CP_URL}/api/v1/provider-connections/${id}`, {
+                headers: { ...authHeaders(auth), "Content-Type": "application/json" },
+                data: {
+                    expectedRevision: connection.revision,
+                    connectionDefaultTemplateRef: ref,
+                },
+            });
+            expect(patched.status(), await patched.text()).toBe(200);
 
-        // Confirm: cascade delete succeeds.
-        await article.getByTestId(`provider-connection-delete-${id}`).click();
-        await expect(dialog).toBeVisible();
-        await page.getByTestId("provider-delete-confirm").click();
-        await expect(article).toHaveCount(0, { timeout: 15000 });
-        await expect(page.getByTestId("provider-delete-confirm-modal")).not.toBeVisible();
+            // Seed: instance llm-provider profile pointing at this connection
+            // (admin seed: instance writes skip the connection readiness check).
+            const adminPassword = process.env.XIHE_E2E_ADMIN_PASSWORD ?? "";
+            expect(adminPassword, "XIHE_E2E_ADMIN_PASSWORD must be provided by e2e-host").not.toBe(
+                "",
+            );
+            const adminLogin = await request.post(`${CP_URL}/api/v1/auth/login`, {
+                data: { identifier: "admin@xihe.local", password: adminPassword },
+            });
+            expect(adminLogin.ok(), await adminLogin.text()).toBe(true);
+            const adminToken = ((await adminLogin.json()) as { accessToken: string }).accessToken;
+            const profile = await request.put(`${CP_URL}/api/v1/config/instance/llm-provider`, {
+                headers: {
+                    Authorization: `Bearer ${adminToken}`,
+                    "Content-Type": "application/json",
+                },
+                data: {
+                    profile: JSON.stringify({
+                        providerId: PROVIDER_ID,
+                        connectionKey: CONNECTION_KEY,
+                        model: "m1",
+                    }),
+                },
+            });
+            expect(profile.status(), await profile.text()).toBe(200);
 
-        // V1 read-back: the connection and all three reference kinds are gone.
-        const remaining = await request.get(`${CP_URL}/api/v1/provider-connections`, {
-            headers: authHeaders(auth),
-        });
-        expect(remaining.ok()).toBe(true);
-        const remainingBody = (await remaining.json()) as { connections: Array<{ id: string }> };
-        expect(
-            remainingBody.connections.some((entry) => entry.id === id),
-            "the deleted connection must disappear from the list",
-        ).toBe(false);
+            // UI: open the settings hub and drive the delete confirm flow.
+            await page.goto("/settings/config");
+            const article = page.locator(
+                `[data-testid="provider-connection-${PROVIDER_ID}"][data-connection-key="${CONNECTION_KEY}"]`,
+            );
+            await expect(article).toBeVisible({ timeout: 15000 });
+            await article.getByTestId(`provider-connection-delete-${id}`).click();
+            const dialog = page.getByTestId("provider-delete-confirm-modal");
+            await expect(dialog).toBeVisible();
+            await expect(dialog.getByText("删除 Provider 连接")).toBeVisible();
+            const summary = page.getByTestId("provider-delete-impact-summary");
+            await expect(summary).toContainText("模型绑定 2 项（1 个用户）");
+            await expect(summary).toContainText("连接默认模板指向 1 项");
+            await expect(summary).toContainText("默认身份 profile 1 项");
+            const screenshot = testInfo.outputPath(`plan-0505-delete-confirm-${viewport.tag}.png`);
+            await page.screenshot({ path: screenshot, fullPage: false });
+            await testInfo.attach(`plan-0505-delete-confirm-${viewport.tag}.png`, {
+                path: screenshot,
+                contentType: "image/png",
+            });
 
-        const templatesRead = await request.get(
+            // Cancel: no server-side mutation of the connection or its references.
+            await page.getByTestId("provider-delete-cancel").click();
+            await expect(dialog).not.toBeVisible();
+            await expect(article).toBeVisible();
+
+            const connectionsAfterCancel = await request.get(
+                `${CP_URL}/api/v1/provider-connections`,
+                { headers: authHeaders(auth) },
+            );
+            expect(connectionsAfterCancel.ok()).toBe(true);
+            const connectionsBody = (await connectionsAfterCancel.json()) as {
+                connections: Array<{ id: string }>;
+            };
+            expect(
+                connectionsBody.connections.some((entry) => entry.id === id),
+                "cancel must not delete the connection",
+            ).toBe(true);
+
+            const templatesAfterCancel = await request.get(
                 `${CP_URL}/api/v1/config/api-request-templates?layer=user`,
                 { headers: authHeaders(auth) },
-            ),
-            profileRead = await request.get(`${CP_URL}/api/v1/config/llm-provider?layer=instance`, {
-                headers: { Authorization: `Bearer ${adminToken}` },
+            );
+            expect(templatesAfterCancel.ok()).toBe(true);
+            expect(
+                JSON.stringify(await templatesAfterCancel.json()),
+                "cancel must keep model bindings and the connection default ref",
+            ).toContain(id);
+
+            const profileAfterCancel = await request.get(
+                `${CP_URL}/api/v1/config/llm-provider?layer=instance`,
+                { headers: { Authorization: `Bearer ${adminToken}` } },
+            );
+            expect(profileAfterCancel.ok(), await profileAfterCancel.text()).toBe(true);
+            expect(
+                JSON.stringify(await profileAfterCancel.json()),
+                "cancel must keep the instance profile",
+            ).toContain(CONNECTION_KEY);
+
+            // Confirm: cascade delete succeeds.
+            await article.getByTestId(`provider-connection-delete-${id}`).click();
+            await expect(dialog).toBeVisible();
+            await page.getByTestId("provider-delete-confirm").click();
+            await expect(article).toHaveCount(0, { timeout: 15000 });
+            await expect(page.getByTestId("provider-delete-confirm-modal")).not.toBeVisible();
+
+            // V1 read-back: the connection and all three reference kinds are gone.
+            const remaining = await request.get(`${CP_URL}/api/v1/provider-connections`, {
+                headers: authHeaders(auth),
             });
-        expect(templatesRead.ok()).toBe(true);
-        expect(profileRead.ok(), await profileRead.text()).toBe(true);
-        const templatesBody = JSON.stringify(await templatesRead.json()),
-            profileBody = JSON.stringify(await profileRead.json());
-        expect(templatesBody, "bindings and default refs must be cascaded away").not.toContain(id);
-        expect(
-            profileBody,
-            "the instance profile pointing at the connection must be gone",
-        ).not.toContain(CONNECTION_KEY);
+            expect(remaining.ok()).toBe(true);
+            const remainingBody = (await remaining.json()) as {
+                connections: Array<{ id: string }>;
+            };
+            expect(
+                remainingBody.connections.some((entry) => entry.id === id),
+                "the deleted connection must disappear from the list",
+            ).toBe(false);
+
+            const templatesRead = await request.get(
+                    `${CP_URL}/api/v1/config/api-request-templates?layer=user`,
+                    { headers: authHeaders(auth) },
+                ),
+                profileRead = await request.get(
+                    `${CP_URL}/api/v1/config/llm-provider?layer=instance`,
+                    {
+                        headers: { Authorization: `Bearer ${adminToken}` },
+                    },
+                );
+            expect(templatesRead.ok()).toBe(true);
+            expect(profileRead.ok(), await profileRead.text()).toBe(true);
+            const templatesBody = JSON.stringify(await templatesRead.json()),
+                profileBody = JSON.stringify(await profileRead.json());
+            expect(templatesBody, "bindings and default refs must be cascaded away").not.toContain(
+                id,
+            );
+            expect(
+                profileBody,
+                "the instance profile pointing at the connection must be gone",
+            ).not.toContain(CONNECTION_KEY);
+        }
     });
 });

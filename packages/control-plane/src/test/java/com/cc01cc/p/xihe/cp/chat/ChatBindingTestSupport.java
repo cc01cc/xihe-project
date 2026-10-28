@@ -6,6 +6,10 @@ import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService;
 import com.fasterxml.jackson.databind.JsonNode;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.UUID;
 
 /**
@@ -16,6 +20,10 @@ import java.util.UUID;
  * runtime create raw Sessions without one, so they bind through this helper.
  */
 public final class ChatBindingTestSupport {
+
+    private static final String FIXTURE_API_TYPE_ID = "openai-chat-completions";
+    private static final int FIXTURE_API_TYPE_VERSION = 1;
+    private static final String FIXTURE_MODEL_DISCOVERY = "remote-models";
 
     private ChatBindingTestSupport() {
     }
@@ -39,16 +47,27 @@ public final class ChatBindingTestSupport {
     public static ProviderConnection ensureChatConnection(ProviderConnectionRepository connections,
                                                           String ownerType, String ownerId, String connectionKey,
                                                           String providerId) {
+        // PLAN-0577: idempotent for the same business key (owner + provider +
+        // connectionKey). The unique index only covers the normalized label, so
+        // every distinct key needs a distinct label; a digest keeps the label
+        // bounded and free of case/whitespace normalization collisions.
+        var existing = connections.findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
+                ownerType, ownerId, providerId, connectionKey);
+        if (existing.isPresent()) {
+            ProviderConnection reused = existing.get();
+            requireFixtureShape(reused);
+            return reused;
+        }
         ProviderConnection connection = new ProviderConnection();
         connection.setId(UUID.randomUUID());
         connection.setOwnerType(ownerType);
         connection.setOwnerId(ownerId);
         connection.setProviderId(providerId);
         connection.setConnectionKey(connectionKey);
-        connection.setApiTypeId("openai-chat-completions");
-        connection.setApiTypeVersion(1);
-        connection.setLabel("chat binding fixture");
-        connection.setModelDiscovery("remote-models");
+        connection.setApiTypeId(FIXTURE_API_TYPE_ID);
+        connection.setApiTypeVersion(FIXTURE_API_TYPE_VERSION);
+        connection.setLabel(fixtureLabel(connectionKey));
+        connection.setModelDiscovery(FIXTURE_MODEL_DISCOVERY);
         connection.setEnabled(true);
         connection.setStatus(ProviderConnection.STATUS_READY);
         connection.setRevision(1L);
@@ -63,6 +82,38 @@ public final class ChatBindingTestSupport {
                     ownerId).getId());
         }
         return connections.saveAndFlush(connection);
+    }
+
+    /**
+     * Deterministic, bounded and normalization-safe fixture label. The V79
+     * unique index compares {@code lower(btrim(label))}, so the raw key cannot
+     * be embedded: keys that differ only by case or padding would still clash.
+     */
+    private static String fixtureLabel(String connectionKey) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(connectionKey.getBytes(StandardCharsets.UTF_8));
+            return "chat binding fixture " + HexFormat.of().formatHex(digest, 0, 16);
+        } catch (NoSuchAlgorithmException cause) {
+            throw new IllegalStateException("SHA-256 unavailable for fixture label", cause);
+        }
+    }
+
+    /**
+     * Reuse only when the stored row is the same shape this helper would create;
+     * a key collision with different semantics must fail loudly instead of
+     * silently handing a different connection to the caller.
+     */
+    private static void requireFixtureShape(ProviderConnection connection) {
+        boolean sameShape = FIXTURE_API_TYPE_ID.equals(connection.getApiTypeId())
+                && connection.getApiTypeVersion() == FIXTURE_API_TYPE_VERSION
+                && FIXTURE_MODEL_DISCOVERY.equals(connection.getModelDiscovery())
+                && connection.isEnabled()
+                && ProviderConnection.STATUS_READY.equals(connection.getStatus());
+        if (!sameShape) {
+            throw new IllegalStateException(
+                    "chat binding fixture key was reused with a different shape: " + connection.getId());
+        }
     }
 
     /**
@@ -94,7 +145,9 @@ public final class ChatBindingTestSupport {
      */
     public static void bindNewChatConnection(Session session, ProviderConnectionRepository connections,
                                              ApiRequestTemplateService templates, String userId) {
-        String key = "chat-" + session.getId().toString().substring(0, 8);
+        // Full id: a truncated prefix could collide across sessions, and with
+        // same-key idempotency that would silently share one connection.
+        String key = "chat-" + session.getId();
         bind(session, ensureChatConnection(connections, "USER", userId, key), templates);
     }
 }

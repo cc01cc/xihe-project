@@ -156,12 +156,13 @@ updated: 2026-10-25
 - **修复方向**：二选一——① UI 侧按角色/域元数据过滤可读域（`GET /config/{domain}/meta` 已提供 writability 信息）；② CP 侧将 `logging` 纳入非管理员可读（如属有意放开）。需先裁定哪个语义是对的。查重：归档区无同例（`round-19.md` 仅记录过 `api-request-templates` 的同类缺口，已修）。
 - **修复（PLAN-0573，2026-10-28）**：用户裁定方案①改前端。M0 核实 meta 端点对不可读域非管理员**三层全 403**（`layer` 必填；instance 恒 403，user/workspace 走 `isLayerWritable`），不能作可读性来源；CP config 面也无域清单端点 → 落地方案 A：UI 静态域元数据 `isDomainReadableWithoutAdmin` 镜像 CP `isReadableByNonAdmin`（CONFIG_DOMAINS/INSTANCE_DOMAINS 全域比对，唯一不可读域 = `logging`；`pricing`/`context-templates` 不在 UI 清单无请求面），`loadAllDomains({ isAdmin })` 按角色过滤，admin 旁路与 CP 语义零改动。验证：session-branch 严格门复跑 **2 passed**（45.9s）；新增 `plan0573-config-domain-filter.spec.ts` 双会话验收 **2 passed**（V1 非管理员零 `logging` 请求 + console 干净，V2 admin `logging` 200 + instance tab 渲染）；单测覆盖全域分类镜像（27 passed）。
 
-## Mock E2E ProviderHub 夹具债务（PLAN-0505 审查发现，2026-10-15 登记；未修，需立项）
+## Mock E2E ProviderHub 夹具债务（PLAN-0505 审查发现，2026-10-15 登记；已修待验收：PLAN-0577 worktree，未合并）
 
 - **现象**：`e2e/mock/full-ui-acceptance.spec.ts` 的 ProviderHub-creates 用例在 develop 基线（e42d95c0）即红：点击 provider 卡片后 `provider-connection-modal`（连接表单）不出现，15s 超时。同轮 sidebar、message-search（PLAN-0401 evidence 已登记同族）、workspace-file、PDF、FileEditor 共 6 个红点。0505 的双端对照实证见 `plans/PLAN-0505-*/evidence/reports/plan0505-baseline-mock.log`。
 - **影响**：mock lane 对 ProviderHub 表单类流程（创建/类型变更 UI 流）失去回归能力；0505 删除流的浏览器证据由 real lane `plan-0505-delete-impact.spec.ts` 承载（真实链路一次通过），不受影响。
 - **修复方向**：独立小批次修 mock 夹具（route mock 与组件接线的对齐），修好后补删除流桌面/移动断言。真实链路回归不可因此省略（0505 复跑曾靠 real lane 逮住单测漏掉的对话框回归）。
 - **PLAN-0560 复核（2026-10-27）**：develop `3516901b` 与 `plan-0560` worktree 双侧仍红，与 0505 同根（picker→connection form 打开链路），同族新增 `e2e/mock/provider-protocol-groups.spec.ts:104`（discovery select 选项缺失，同为 picker 表单链路）。另发现独立根因一例：`workspace-management.spec.ts:65` empty-state——router 守卫对 `/workspace/new` 执行 `writeTabWorkspaceId("new")`，而 helper 对任意 id 的 `GET /api/v1/workspaces/*` 一律返回 Mock Workspace，导致空态分支永不可达。三例均已在两侧复跑归因（`one/plans/PLAN-0560-*/evidence/m4-wave.md`）。全量 mock lane 并行 run 在两侧都大面积环境性 flaky（分支 17F / develop ≥25F，失败集互相重叠且含大量非 ProviderHub spec），逐 spec 串行为准。
+- **修复待验收（PLAN-0577 worktree，2026-10-29，未提交/未合并）**：8 例单进程串行复跑 **8 passed**（`--workers=1 --retries=0`）。根因分三类：① mock provider catalog 缺 `supportedApiTypes`/`defaultApiType`，组件 `resetForm` 读取即中断 picker→form 链路（ProviderHub、protocol groups）；② workspace 空态入口误用 `/workspace/new`，改为 `/workspace`，managed 创建按现行对话框不传 `executionMode`；③ 新增根因：未 mock 的 `/api/v1/chat/sessions/*/monitor` 经 dev 代理命中真实 CP 返回 401，触发全局登出，使 sidebar/message-search/workspace-file 依赖外部服务状态——已在 `helpers/auth.ts` 补 SSE 桩。两处过时断言按现行契约更新（discovery 四种模式见 PLAN-0438；managed 跳过执行模式），未放宽为纯删除：`LiteLLM Catalog` 改正向断言、退役标签仍拒绝。real lane `plan-0505-delete-impact.spec.ts` 补齐桌面 `1920x1080` + 移动 `390x844` 双视口、取消后服务端零变更读回，隔离栈 1 passed 并完成截图复核。并行 flaky（D4）未修，仍按逐 spec 串行口径。证据：`one/plans/PLAN-0577-XH-fixture-debt-batch/evidence/m1-mock.md`。
 
 ## PLAN-0505 审查次生回归 — 状态机守卫须双侧验证（已修复，供回溯）
 

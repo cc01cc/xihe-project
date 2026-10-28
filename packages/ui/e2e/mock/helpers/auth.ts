@@ -223,6 +223,17 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
             });
             return;
         }
+        // PLAN-0577: the per-session chat monitor is an SSE endpoint. Without a
+        // stub it escapes to the dev proxy, and a live CP answers 401, which
+        // makes the API layer log the mock session out mid-test.
+        if (url.includes("/api/v1/chat/sessions/") && url.includes("/monitor")) {
+            await route.fulfill({
+                status: 200,
+                headers: { "Content-Type": "text/event-stream" },
+                body: "retry: 1000\n\n",
+            });
+            return;
+        }
         if (url.includes("/api/v1/events") || url.includes("/chat") || url.includes("/models")) {
             return route.fallback();
         }
