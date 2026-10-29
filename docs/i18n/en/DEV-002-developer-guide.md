@@ -455,19 +455,22 @@ uv run --with httpx pytest tests/ -v -m integration
 
 UI API integration tests use MSW (Mock Service Worker) to intercept HTTP requests. Handlers are defined in `packages/ui/src/mocks/handlers.ts`, covering auth/session/health check scenarios. MSW does not intercept EventSource (SSE); SSE tests are verified through fetch-based approach.
 
-### 4.7. One-shot stack verification (`scripts/verify-stack.mjs`, PLAN-0539 / Node since PLAN-0547)
+### 4.7. One-shot stack verification (`mise run xihe -- verify`, PLAN-0574)
 
-The manual v1 chain (login → session + root branch → SSE → model list → chat) also runs as a single script:
+The manual v1 chain (login → session + root branch → SSE → model list → chat) also runs as one CLI command (implementation: `scripts/xihe-cli/verify.mjs`):
 
 ```bash
-XIHE_VERIFY_PASSWORD=<admin password> node scripts/verify-stack.mjs
-node scripts/verify-stack.mjs --stack 2          # --stack takes precedence over XIHE_STACK_ID
+XIHE_VERIFY_PASSWORD=<admin password> mise run xihe -- verify \
+  --stack 2 --email admin@xihe.local --workspace <wsId> --yes
 ```
 
-- **Credentials**: `XIHE_VERIFY_EMAIL` (default `admin@xihe.local`) plus `XIHE_VERIFY_PASSWORD` (required; exits 2 when missing; falls back to `XIHE_DEV_ADMIN_PASSWORD` — OS env > `.env` chain). No literal password lives in the script and the token is never echoed. Generate a password with `mise run reset-admin`; it resolves the target stack as `-StackId` > `XIHE_STACK_ID` and the target database as `--url` > `XIHE_CP_DATASOURCE_URL` > `localhost:$XIHE_PG_PORT/$POSTGRES_DB` (default `12634/xihe_1`, matching the post-0533 `xihe_<n>` naming) and prints the target it used.
-- **Stack derivation**: the script reads ports and the sandbox prefix from `node scripts/stack-run.mjs env-json --stack <id>`.
-- **Verdict and exit codes**: tier A (CP health / login / session + branch / SSE / model list / agent health) must pass; tier B (`POST /api/v1/chat`) additionally needs provider credentials, a bound agent principal and an explicit API type binding. `0` = both tiers passed, `4` = tier A passed but tier B precondition missing (reason code on the last line), `1` = failure, `2` = missing credentials.
-- **Agent principal**: creating a session requires `agentPrincipalId`. The script resolves it as explicit `XIHE_VERIFY_AGENT_PRINCIPAL_ID` → first principal already bound to the workspace → newly created one. It only calls `PUT …/agents/{id}` right after creating a principal — that call **narrows** the workspace cap of an existing principal.
+- **Explicit target**: `--stack`, `--email` and `--workspace` are all required and missing values fail (exit 2). The CLI never falls back to the default workspace from the login response; `--yes` only confirms the execution prompt and never replaces a target flag. Without `--yes` a TTY confirmation is required.
+- **Credentials**: the password comes from `XIHE_VERIFY_PASSWORD`, falling back to `XIHE_DEV_ADMIN_PASSWORD` (OS env > `.env` chain); a TTY prompt is used without echo. No password exits 2 and the token is never echoed. Generate a password with `mise run reset-admin`; it resolves the target stack as `-StackId` > `XIHE_STACK_ID` and the target database as `--url` > `XIHE_CP_DATASOURCE_URL` > `localhost:$XIHE_PG_PORT/$POSTGRES_DB` (default `12634/xihe_1`, matching the post-0533 `xihe_<n>` naming) and prints the target it used.
+- **Stack derivation**: ports come from `node scripts/stack-run.mjs env-json --stack <id>`; an unknown stack exits 2.
+- **Side effects**: creates an agent principal (when the workspace has none bound), a session and a chat run, and really calls the model provider, which may incur cost. Use an isolated stack and a test workspace, and confirm the prompt first.
+- **Verdict and exit codes**: tier A (CP health / login / workspace access / principal / session + branch / messages / SSE / model list / agent health) must pass; tier B keeps the original `POST /api/v1/chat` acceptance semantics (200/202 with a `runId`). `0` = A/B passed and the run reached the `succeeded` terminal state, `4` = tier A passed but tier B precondition missing, `1` = failure (including a failed run terminal), `2` = missing target/credentials or stack derivation failure, `5` = run wait timeout (`--wait-seconds`, default 120; on timeout the CLI first calls `POST /api/v1/chat/runs/{runId}/cancel` and then deletes the session it created).
+- **Cleanup and residue**: on completion or failure the CLI closes SSE first and then `DELETE /api/v1/sessions/{sessionId}` for the session it created. A principal created by this run has no confirmed delete API and is retained and reported (`cleanup.principal`); pre-existing principals are never modified or deleted. Audit and provider-side records may persist.
+- **Agent principal**: creating a session requires `agentPrincipalId`. The CLI resolves it as explicit `XIHE_VERIFY_AGENT_PRINCIPAL_ID` → first principal already bound to the workspace → newly created one. It only calls `PUT …/agents/{id}` right after creating a principal — that call **narrows** the workspace cap of an existing principal. Diagnostics only print whitelisted status fields, never raw agent logs.
 
 ## 5. Deployment
 

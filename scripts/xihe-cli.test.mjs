@@ -59,6 +59,10 @@ async function startCpMock({ barrierFirstTwoLists = false, dropCreateResponse = 
     configImportRequests: 0,
     configImportStatus: 200,
     importedConfig: null,
+    deleteImpactRequests: 0,
+    deleteRequests: 0,
+    deleteStatus: 204,
+    deleteBody: null,
   };
   let releaseLists;
   const firstListsReleased = new Promise((resolve) => { releaseLists = resolve; });
@@ -182,6 +186,33 @@ async function startCpMock({ barrierFirstTwoLists = false, dropCreateResponse = 
         return;
       }
       json(response, 200, { connection, models: [] });
+      return;
+    }
+    const impactMatch = url.pathname.match(/^\/api\/v1\/provider-connections\/([^/]+)\/delete-impact$/);
+    if (impactMatch && request.method === 'GET') {
+      state.deleteImpactRequests += 1;
+      json(response, 200, {
+        connectionId: impactMatch[1],
+        providerId: 'xiaomi',
+        connectionKey: 'owner-1',
+        bindingCount: 2,
+        bindingUserScopes: ['user-a', 'user-b'],
+        defaultTemplateRef: 'default',
+        profileCount: 1,
+        profileScopes: ['scope-a'],
+        sessionCount: 3,
+        blocked: false,
+      });
+      return;
+    }
+    if (connectionMatch && request.method === 'DELETE' && !connectionMatch[2]) {
+      state.deleteRequests += 1;
+      if (state.deleteStatus === 204) {
+        response.writeHead(204);
+        response.end();
+        return;
+      }
+      json(response, state.deleteStatus, state.deleteBody ?? { code: 'CONNECTION_IN_USE' });
       return;
     }
     json(response, 404, { code: 'NOT_FOUND', detail: 'unknown endpoint' });
@@ -959,4 +990,649 @@ test('credential rotate aborts when a batch makes no progress', async () => {
   });
   assert.equal(result.error.code, 'ROTATION_STALLED');
   assert.equal(runCalls, 1, 'a no-progress batch must abort instead of spinning to --max-batches');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLAN-0574 M1: verify / config export / provider delete / version
+// ─────────────────────────────────────────────────────────────────────────────
+
+function sink() {
+  const chunks = [];
+  return {
+    chunks,
+    write(chunk) { chunks.push(String(chunk)); return true; },
+    text() { return chunks.join(''); },
+  };
+}
+
+async function startVerifyCpMock({
+  existingPrincipal = null,
+  chatResponse = { status: 202, body: { status: 'accepted', runId: 'run-1' } },
+  runResponses = [{ status: 'succeeded' }],
+  workspaceStatus = 200,
+  agentHealthStatus = 200,
+  dropSessionResponse = false,
+} = {}) {
+  const state = { calls: [], runIndex: 0 };
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    const pathname = url.pathname;
+    let body;
+    if (request.method !== 'GET' && request.method !== 'DELETE' && request.method !== 'HEAD') {
+      try { body = await requestBody(request); } catch { body = undefined; }
+    }
+    state.calls.push({ method: request.method, pathname, search: url.search, headers: request.headers, body });
+
+    if (pathname === '/api/v1/health' && request.method === 'GET') {
+      json(response, 200, { status: 'UP' });
+      return;
+    }
+    if (pathname === '/api/v1/auth/login' && request.method === 'POST') {
+      if (body?.password !== TEST_PASSWORD) {
+        json(response, 401, { code: 'AUTHENTICATION_FAILED', detail: 'must not be printed' });
+        return;
+      }
+      json(response, 200, { accessToken: 'verify-token' });
+      return;
+    }
+    if (pathname === '/api/v1/workspaces/ws-1' && request.method === 'GET') {
+      if (workspaceStatus !== 200) {
+        json(response, workspaceStatus, { code: 'WORKSPACE_NOT_FOUND' });
+        return;
+      }
+      json(response, 200, { id: 'ws-1' });
+      return;
+    }
+    if (pathname === '/api/v1/workspaces/ws-1/agents' && request.method === 'GET') {
+      json(response, 200, existingPrincipal ? [{ principalId: existingPrincipal }] : []);
+      return;
+    }
+    if (pathname === '/api/v1/agent-principals' && request.method === 'POST') {
+      json(response, 201, { principalId: 'principal-new', name: body?.name });
+      return;
+    }
+    if (pathname === '/api/v1/workspaces/ws-1/agents/principal-new' && request.method === 'PUT') {
+      json(response, 200, { principalId: 'principal-new', workspaceId: 'ws-1', permissions: [] });
+      return;
+    }
+    if (pathname === '/api/v1/sessions' && request.method === 'POST') {
+      if (dropSessionResponse) {
+        response.socket.destroy();
+        return;
+      }
+      json(response, 201, { id: 'session-1', agentPrincipalId: body?.agentPrincipalId });
+      return;
+    }
+    if (pathname === '/api/v1/sessions/session-1/branches' && request.method === 'GET') {
+      json(response, 200, { sessionId: 'session-1', items: [{ branchId: 'branch-1' }] });
+      return;
+    }
+    if (pathname === '/api/v1/sessions/session-1/messages' && request.method === 'GET') {
+      json(response, 200, { items: [] });
+      return;
+    }
+    if (pathname === '/api/v1/events' && request.method === 'GET') {
+      response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      response.write('data: {"type":"connected","sessionId":"session-1"}\n\n');
+      response.end();
+      return;
+    }
+    if (pathname === '/api/v1/models' && request.method === 'GET') {
+      json(response, 200, { models: [{ id: 'model-a' }], configRevision: 'rev-1' });
+      return;
+    }
+    if (pathname === '/api/v1/chat' && request.method === 'POST') {
+      json(response, chatResponse.status, chatResponse.body);
+      return;
+    }
+    if (pathname === '/api/v1/chat/runs/run-1' && request.method === 'GET') {
+      const index = Math.min(state.runIndex, runResponses.length - 1);
+      state.runIndex += 1;
+      json(response, 200, runResponses[index]);
+      return;
+    }
+    if (pathname === '/api/v1/chat/runs/run-1/cancel' && request.method === 'POST') {
+      json(response, 200, { status: 'cancel_accepted', runId: 'run-1' });
+      return;
+    }
+    if (pathname === '/api/v1/sessions/session-1' && request.method === 'DELETE') {
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+    json(response, 404, { code: 'NOT_FOUND', detail: 'unknown endpoint' });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const cpPort = server.address().port;
+  const agent = createServer((request, response) => {
+    response.writeHead(agentHealthStatus, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({
+      status: 'ok',
+      llmReady: true,
+      configRevision: 'rev-1',
+      mcpInitialized: false,
+      rawLogLine: 'agent log must not be printed',
+    }));
+  });
+  await new Promise((resolve) => agent.listen(0, '127.0.0.1', resolve));
+  const agentPort = agent.address().port;
+  return {
+    state,
+    env: {
+      XIHE_CP_PORT: String(cpPort),
+      XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD,
+    },
+    spawnSyncImpl: () => ({
+      status: 0,
+      stdout: JSON.stringify({ env: { XIHE_CP_PORT: String(cpPort), XIHE_AGENT_PORT: String(agentPort) } }),
+      stderr: '',
+    }),
+    close: async () => {
+      await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      await new Promise((resolve, reject) => agent.close((error) => error ? reject(error) : resolve()));
+    },
+  };
+}
+
+async function startExportMock({ body = '{ // JSONC comment\n  "domain": { "a": 1 }\n}\n' } = {}) {
+  const state = { requests: 0, queries: [] };
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    if (url.pathname === '/api/v1/auth/login' && request.method === 'POST') {
+      await requestBody(request);
+      json(response, 200, { accessToken: 'export-token' });
+      return;
+    }
+    if (url.pathname === '/api/v1/config/export' && request.method === 'GET') {
+      state.requests += 1;
+      state.queries.push(url.searchParams);
+      response.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      response.end(body);
+      return;
+    }
+    json(response, 404, { code: 'NOT_FOUND' });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    state,
+    body,
+    env: { XIHE_CP_PORT: String(server.address().port), XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD },
+    close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
+  };
+}
+
+test('verify runs the full tier-A chain plus run terminal and cleans up its session', async (t) => {
+  const cp = await startVerifyCpMock();
+  t.after(cp.close);
+  const stdout = sink();
+  const stderr = sink();
+  const result = await runCommand([
+    'verify', '--stack', 'stack-1', '--email', 'admin@xihe.local', '--workspace', 'ws-1', '--yes',
+  ], {
+    env: cp.env,
+    spawnSyncImpl: cp.spawnSyncImpl,
+    promptSecret: noPrompt,
+    stdout,
+    stderr,
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.data.result, 'PASS');
+  assert.equal(result.data.a.status, 'PASS');
+  assert.equal(result.data.b.status, 'PASS');
+  assert.equal(result.data.run.status, 'SUCCEEDED');
+  assert.equal(result.data.cleanup.session.status, 'deleted');
+  assert.equal(result.data.cleanup.principal.status, 'retained');
+  assert.equal(JSON.stringify(result).includes('agent log must not be printed'), false);
+  assert.equal(stderr.text().includes('agent log must not be printed'), false);
+
+  const methods = cp.state.calls.map((call) => `${call.method} ${call.pathname}`);
+  assert.ok(methods.indexOf('POST /api/v1/agent-principals') < methods.indexOf('PUT /api/v1/workspaces/ws-1/agents/principal-new'));
+  assert.ok(methods.indexOf('PUT /api/v1/workspaces/ws-1/agents/principal-new') < methods.indexOf('POST /api/v1/sessions'));
+  assert.ok(methods.indexOf('POST /api/v1/chat') < methods.indexOf('GET /api/v1/chat/runs/run-1'));
+  assert.equal(methods.at(-1), 'DELETE /api/v1/sessions/session-1');
+
+  for (const path of ['/api/v1/sessions', '/api/v1/chat', '/api/v1/chat/runs/run-1']) {
+    const call = cp.state.calls.find((item) => item.pathname === path);
+    assert.equal(call.headers['x-workspace-id'], 'ws-1');
+  }
+  const principalCall = cp.state.calls.find((item) => item.pathname === '/api/v1/agent-principals');
+  assert.equal(principalCall.headers['x-workspace-id'], undefined);
+});
+
+test('verify requires explicit stack/email/workspace before any request', async () => {
+  let fetchCalls = 0;
+  const result = await runCommand(['verify', '--stack', 'stack-1'], {
+    env: {},
+    fetchImpl: async () => { fetchCalls += 1; throw new Error('unexpected request'); },
+  });
+  assert.equal(result.error.code, 'VERIFY_TARGET_REQUIRED');
+  assert.equal(result.exitCode, 2);
+  assert.deepEqual(result.error.details.missing, ['--email', '--workspace']);
+  assert.equal(fetchCalls, 0);
+});
+
+test('verify timeout cancels the run before deleting the session and exits 5', async (t) => {
+  const cp = await startVerifyCpMock({ runResponses: [{ status: 'running' }] });
+  t.after(cp.close);
+  let tick = 0;
+  const result = await runCommand([
+    'verify', '--stack', 'stack-1', '--email', 'admin@xihe.local', '--workspace', 'ws-1', '--yes', '--wait-seconds', '1',
+  ], {
+    env: cp.env,
+    spawnSyncImpl: cp.spawnSyncImpl,
+    promptSecret: noPrompt,
+    nowImpl: () => { tick += 600; return tick; },
+    sleepImpl: async () => {},
+    stdout: sink(),
+    stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 5);
+  assert.equal(result.data.result, 'TIMEOUT');
+  assert.equal(result.data.run.status, 'TIMEOUT');
+  assert.equal(result.data.cleanup.runCancel.status, 'cancelled');
+  const methods = cp.state.calls.map((call) => `${call.method} ${call.pathname}`);
+  assert.ok(methods.indexOf('POST /api/v1/chat/runs/run-1/cancel') < methods.indexOf('DELETE /api/v1/sessions/session-1'));
+});
+
+test('verify maps a chat precondition failure to exit 4 and still deletes the session', async (t) => {
+  const cp = await startVerifyCpMock({
+    chatResponse: { status: 409, body: { code: 'SSE_SUBSCRIPTION_REQUIRED' } },
+  });
+  t.after(cp.close);
+  const result = await runCommand([
+    'verify', '--stack', 'stack-1', '--email', 'admin@xihe.local', '--workspace', 'ws-1', '--yes',
+  ], {
+    env: cp.env,
+    spawnSyncImpl: cp.spawnSyncImpl,
+    promptSecret: noPrompt,
+    stdout: sink(),
+    stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 4);
+  assert.equal(result.data.b.status, 'NOT_AVAILABLE');
+  assert.equal(result.data.cleanup.session.status, 'deleted');
+  assert.equal(cp.state.calls.some((call) => call.pathname.startsWith('/api/v1/chat/runs/')), false);
+});
+
+test('verify reuses a pre-existing principal without rebinding it', async (t) => {
+  const cp = await startVerifyCpMock({ existingPrincipal: 'principal-existing' });
+  t.after(cp.close);
+  const result = await runCommand([
+    'verify', '--stack', 'stack-1', '--email', 'admin@xihe.local', '--workspace', 'ws-1', '--yes',
+  ], {
+    env: cp.env,
+    spawnSyncImpl: cp.spawnSyncImpl,
+    promptSecret: noPrompt,
+    stdout: sink(),
+    stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.data.cleanup.principal.status, 'pre_existing');
+  assert.equal(cp.state.calls.some((call) => call.pathname === '/api/v1/agent-principals'), false);
+  assert.equal(cp.state.calls.some((call) => call.method === 'PUT'), false);
+});
+
+test('config export defaults to includeSecrets=false and returns the JSONC text', async (t) => {
+  const cp = await startExportMock();
+  t.after(cp.close);
+  const result = await runCommand(['config', 'export'], {
+    env: cp.env,
+    promptSecret: noPrompt,
+    stdout: sink(),
+    stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.data.includeSecrets, false);
+  assert.equal(result.data.content, cp.body);
+  assert.equal(cp.state.queries[0].get('includeSecrets'), 'false');
+  assert.equal(cp.state.queries[0].get('layer'), 'instance');
+  assert.equal(result.data.cacheControl, 'no-store');
+});
+
+test('config export --include-secrets passes true, keeps the secret out of logs, and returns it only as data', async (t) => {
+  const secret = 'EXPORT_SECRET_SENTINEL_4a1f';
+  const cp = await startExportMock({ body: `{ "secret": "${secret}" }\n` });
+  t.after(cp.close);
+  const stderr = sink();
+  const result = await runCommand(['config', 'export', '--include-secrets', '--json'], {
+    env: cp.env,
+    promptSecret: noPrompt,
+    stderr,
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.data.includeSecrets, true);
+  assert.equal(cp.state.queries[0].get('includeSecrets'), 'true');
+  assert.equal(result.data.content.includes(secret), true);
+  assert.match(stderr.text(), /contains secrets/);
+  assert.equal(stderr.text().includes(secret), false);
+});
+
+test('config export writes a new file exclusively and does not duplicate the body in data', async (t) => {
+  const cp = await startExportMock();
+  t.after(cp.close);
+  const directory = fs.mkdtempSync(path.join(tmpdir(), 'xihe-export-new-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const target = path.join(directory, 'export.jsonc');
+
+  const result = await runCommand(['config', 'export', '--out', target, '--json'], {
+    env: cp.env,
+    promptSecret: noPrompt,
+    stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.data.mode, 'file');
+  assert.equal(result.data.content, undefined);
+  assert.equal(result.data.file.path, path.resolve(target));
+  assert.equal(result.data.file.created, true);
+  assert.equal(fs.readFileSync(target, 'utf8'), cp.body);
+});
+
+test('config export refuses an existing file without confirmation or --force', async (t) => {
+  const cp = await startExportMock();
+  t.after(cp.close);
+  const directory = fs.mkdtempSync(path.join(tmpdir(), 'xihe-export-confirm-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const target = path.join(directory, 'export.jsonc');
+  fs.writeFileSync(target, 'ORIGINAL');
+
+  const result = await runCommand(['config', 'export', '--out', target], {
+    env: cp.env,
+    promptSecret: noPrompt,
+    stdout: sink(),
+    stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.error.code, 'CONFIRMATION_REQUIRED');
+  assert.equal(fs.readFileSync(target, 'utf8'), 'ORIGINAL');
+});
+
+test('config export overwrites an existing file with --force or an interactive confirmation', async (t) => {
+  const cp = await startExportMock();
+  t.after(cp.close);
+  const directory = fs.mkdtempSync(path.join(tmpdir(), 'xihe-export-force-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const forced = path.join(directory, 'forced.jsonc');
+  const confirmed = path.join(directory, 'confirmed.jsonc');
+  fs.writeFileSync(forced, 'ORIGINAL');
+  fs.writeFileSync(confirmed, 'ORIGINAL');
+
+  const forcedResult = await runCommand(['config', 'export', '--out', forced, '--force'], {
+    env: cp.env,
+    promptSecret: noPrompt,
+    stdout: sink(),
+    stderr: sink(),
+  });
+  const confirmedResult = await runCommand(['config', 'export', '--out', confirmed], {
+    env: cp.env,
+    promptSecret: noPrompt,
+    confirmAction: async () => {},
+    stdout: sink(),
+    stderr: sink(),
+  });
+
+  assert.equal(forcedResult.exitCode, 0);
+  assert.equal(forcedResult.data.file.created, false);
+  assert.equal(fs.readFileSync(forced, 'utf8'), cp.body);
+  assert.equal(confirmedResult.exitCode, 0);
+  assert.equal(fs.readFileSync(confirmed, 'utf8'), cp.body);
+});
+
+test('config export rejects directories and symbolic links', async (t) => {
+  const cp = await startExportMock();
+  t.after(cp.close);
+  const directory = fs.mkdtempSync(path.join(tmpdir(), 'xihe-export-target-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+
+  const directoryResult = await runCommand(['config', 'export', '--out', directory], {
+    env: cp.env,
+    promptSecret: noPrompt,
+    stdout: sink(),
+    stderr: sink(),
+  });
+  assert.equal(directoryResult.error.code, 'EXPORT_TARGET_UNSAFE');
+
+  const linkTarget = path.join(directory, 'link-target.txt');
+  const linkPath = path.join(directory, 'link.txt');
+  fs.writeFileSync(linkTarget, 'DO-NOT-TOUCH');
+  try {
+    fs.symlinkSync(linkTarget, linkPath, 'file');
+  } catch (error) {
+    t.skip(`symlink unavailable on this host (${error.code})`);
+    return;
+  }
+  const linkResult = await runCommand(['config', 'export', '--out', linkPath, '--force'], {
+    env: cp.env,
+    promptSecret: noPrompt,
+    stdout: sink(),
+    stderr: sink(),
+  });
+  assert.equal(linkResult.error.code, 'EXPORT_TARGET_UNSAFE');
+  assert.equal(fs.readFileSync(linkTarget, 'utf8'), 'DO-NOT-TOUCH');
+  assert.equal(fs.lstatSync(linkPath).isSymbolicLink(), true);
+});
+
+test('config export detects an ino/dev replacement after opening and writes nothing', async (t) => {
+  const cp = await startExportMock();
+  t.after(cp.close);
+  const directory = fs.mkdtempSync(path.join(tmpdir(), 'xihe-export-swap-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const target = path.join(directory, 'swap.jsonc');
+  const moved = path.join(directory, 'swap.moved.jsonc');
+  fs.writeFileSync(target, 'ORIGINAL');
+  let hooked = false;
+  const fsImpl = {
+    ...fs,
+    openSync(file, flags, ...rest) {
+      const fd = fs.openSync(file, flags, ...rest);
+      if (flags === 'r+' && !hooked) {
+        hooked = true;
+        fs.renameSync(file, moved);
+        fs.writeFileSync(file, 'REPLACEMENT');
+      }
+      return fd;
+    },
+  };
+
+  const result = await runCommand(['config', 'export', '--out', target, '--force'], {
+    env: cp.env,
+    promptSecret: noPrompt,
+    fsImpl,
+    stdout: sink(),
+    stderr: sink(),
+  });
+
+  assert.equal(result.error.code, 'EXPORT_TARGET_REPLACED');
+  assert.equal(fs.readFileSync(target, 'utf8'), 'REPLACEMENT');
+  assert.equal(fs.readFileSync(moved, 'utf8'), 'ORIGINAL');
+});
+
+test('config export reports a failed write and removes only the file it created', async (t) => {
+  const cp = await startExportMock();
+  t.after(cp.close);
+  const directory = fs.mkdtempSync(path.join(tmpdir(), 'xihe-export-fail-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const created = path.join(directory, 'created.jsonc');
+  const existing = path.join(directory, 'existing.jsonc');
+  fs.writeFileSync(existing, 'ORIGINAL');
+  const failingFs = {
+    ...fs,
+    writeSync() {
+      const error = new Error('disk full');
+      error.code = 'ENOSPC';
+      throw error;
+    },
+  };
+
+  const createdResult = await runCommand(['config', 'export', '--out', created], {
+    env: cp.env,
+    promptSecret: noPrompt,
+    fsImpl: failingFs,
+    stdout: sink(),
+    stderr: sink(),
+  });
+  assert.equal(createdResult.error.code, 'EXPORT_WRITE_FAILED');
+  assert.equal(createdResult.error.details.residual, false);
+  assert.equal(fs.existsSync(created), false);
+
+  const existingResult = await runCommand(['config', 'export', '--out', existing, '--force'], {
+    env: cp.env,
+    promptSecret: noPrompt,
+    fsImpl: failingFs,
+    stdout: sink(),
+    stderr: sink(),
+  });
+  assert.equal(existingResult.error.code, 'EXPORT_WRITE_FAILED');
+  assert.equal(existingResult.error.details.residual, true);
+  assert.equal(fs.readFileSync(existing, 'utf8'), 'ORIGINAL');
+});
+
+test('config export refuses a read-only existing target and leaves it untouched', async (t) => {
+  const cp = await startExportMock();
+  t.after(cp.close);
+  const directory = fs.mkdtempSync(path.join(tmpdir(), 'xihe-export-readonly-'));
+  const target = path.join(directory, 'readonly.jsonc');
+  fs.writeFileSync(target, 'ORIGINAL');
+  t.after(() => {
+    try { fs.chmodSync(target, 0o666); } catch { /* already gone */ }
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  fs.chmodSync(target, 0o444);
+
+  const result = await runCommand(['config', 'export', '--out', target, '--force'], {
+    env: cp.env,
+    promptSecret: noPrompt,
+    stdout: sink(),
+    stderr: sink(),
+  });
+
+  if (result.exitCode === 0) {
+    // Some filesystems ignore the read-only bit; the safety property still holds
+    // because the write went through identity-checked open.
+    assert.equal(fs.readFileSync(target, 'utf8'), cp.body);
+    return;
+  }
+  assert.equal(result.error.code, 'EXPORT_WRITE_FAILED');
+  assert.equal(fs.readFileSync(target, 'utf8'), 'ORIGINAL');
+});
+
+test('provider delete shows impact, requires confirmation, and deletes after --yes', async (t) => {
+  const cp = await startCpMock();
+  t.after(cp.close);
+  const blocked = await runCommand(['provider', 'delete', 'connection-1'], {
+    env: cp.env,
+    promptSecret: noPrompt,
+    stdout: sink(),
+    stderr: sink(),
+  });
+  assert.equal(blocked.error.code, 'CONFIRMATION_REQUIRED');
+  assert.equal(cp.state.deleteImpactRequests, 1);
+  assert.equal(cp.state.deleteRequests, 0);
+
+  const confirmedResult = await runCommand(['provider', 'delete', 'connection-1', '--yes'], {
+    env: cp.env,
+    promptSecret: noPrompt,
+    stdout: sink(),
+    stderr: sink(),
+  });
+  assert.equal(confirmedResult.exitCode, 0);
+  assert.equal(confirmedResult.data.action, 'deleted');
+  assert.equal(cp.state.deleteRequests, 1);
+  assert.equal(cp.state.deleteImpactRequests, 2);
+});
+
+test('provider delete supports interactive confirmation and maps 409 without leaking detail', async (t) => {
+  const cp = await startCpMock();
+  t.after(cp.close);
+  const confirmed = await runCommand(['provider', 'delete', 'connection-1'], {
+    env: cp.env,
+    promptSecret: noPrompt,
+    confirmAction: async () => {},
+    stdout: sink(),
+    stderr: sink(),
+  });
+  assert.equal(confirmed.exitCode, 0);
+  assert.equal(cp.state.deleteRequests, 1);
+
+  cp.state.deleteStatus = 409;
+  cp.state.deleteBody = {
+    code: 'CONNECTION_IN_USE',
+    sessionCount: 2,
+    connectionId: 'connection-1',
+    requestId: 'req-9',
+    detail: TEST_KEY,
+  };
+  const blocked = await runCommand(['provider', 'delete', 'connection-1', '--yes', '--json'], {
+    env: cp.env,
+    promptSecret: noPrompt,
+    stdout: sink(),
+    stderr: sink(),
+  });
+  assert.equal(blocked.error.code, 'CONNECTION_IN_USE');
+  assert.equal(blocked.error.details.sessionCount, 2);
+  assert.equal(blocked.error.details.connectionId, 'connection-1');
+  assert.equal(blocked.error.details.requestId, 'req-9');
+  assert.equal(JSON.stringify(blocked).includes(TEST_KEY), false);
+});
+
+test('version reports the four module manifests and the development checkout label', async () => {
+  const result = await runCommand(['version'], { env: {}, stdout: sink() });
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.data.version, 'development checkout');
+  assert.deepEqual(result.data.modules.map((module) => module.name), ['ui', 'cp', 'agent', 'runtime']);
+  for (const module of result.data.modules) {
+    assert.equal(typeof module.version, 'string', `${module.name} version`);
+    assert.match(module.version, /^\d+\.\d+\.\d+/);
+  }
+});
+
+test('version --check reuses the consistency check and passes on this checkout', async () => {
+  const result = await runCommand(['version', '--check'], { env: {}, stdout: sink() });
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.data.check.ok, true);
+  assert.equal(result.data.check.failureCount, 0);
+});
+
+test('version reports missing and unparsable manifests per module', async (t) => {
+  const root = fs.mkdtempSync(path.join(tmpdir(), 'xihe-version-partial-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'packages', 'ui'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'packages', 'ui', 'package.json'), '{"version":"9.9.9"}');
+
+  const result = await runCommand(['version'], { env: {}, projectRoot: root, stdout: sink() });
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.data.ok, false);
+  assert.equal(result.data.modules.find((module) => module.name === 'ui').version, '9.9.9');
+  assert.equal(result.data.modules.find((module) => module.name === 'agent').error.code, 'MANIFEST_MISSING');
+
+  const check = await runCommand(['version', '--check'], { env: {}, projectRoot: root, stdout: sink() });
+  assert.equal(check.exitCode, 1);
+  assert.equal(check.data.check.ok, false);
+  assert.ok(check.data.check.failures.length > 0);
+});
+test('verify reports an unknown session-create outcome instead of guessing an ID', async (t) => {
+  const cp = await startVerifyCpMock({ dropSessionResponse: true });
+  t.after(cp.close);
+  const result = await runCommand([
+    'verify', '--stack', 'stack-1', '--email', 'admin@xihe.local', '--workspace', 'ws-1', '--yes',
+  ], {
+    env: cp.env,
+    spawnSyncImpl: cp.spawnSyncImpl,
+    promptSecret: noPrompt,
+    stdout: sink(),
+    stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.data.a.status, 'FAIL');
+  assert.equal(result.data.cleanup.session.status, 'unknown');
+  assert.equal(result.data.cleanup.session.reason, 'CREATE_OUTCOME_UNKNOWN');
+  assert.equal(cp.state.calls.some((call) => call.method === 'DELETE'), false);
 });

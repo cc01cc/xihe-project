@@ -258,19 +258,22 @@ curl -sS -X POST "http://localhost:12631/api/v1/chat" \
 
 Chat SSE 结构化事件与日志字段见 DEV-004 §6.3；UI 传输层见 DEV-010 §4；跨层协议核对（Controller 契约/JWT/`effective` 域键与 env 兜底键/LLM `provider/model` 格式）改一层查一层。
 
-### 一键验证脚本（`scripts/verify-stack.mjs`，PLAN-0539 引入 / PLAN-0547 平移 Node）
+### 一键验证命令（`mise run xihe -- verify`，PLAN-0574 收编）
 
-上面 2.1–2.5 的手工链路可一键跑：
+上面 2.1–2.5 的手工链路可一键跑（实现位于 `scripts/xihe-cli/verify.mjs`）：
 
 ```bash
-XIHE_VERIFY_PASSWORD=<admin 密码> node scripts/verify-stack.mjs
-node scripts/verify-stack.mjs --stack 2          # --stack 参数优先于 XIHE_STACK_ID env
+XIHE_VERIFY_PASSWORD=<admin 密码> mise run xihe -- verify \
+  --stack 2 --email admin@xihe.local --workspace <wsId> --yes
 ```
 
-- **凭据**：`XIHE_VERIFY_EMAIL`（默认 `admin@xihe.local`）+ `XIHE_VERIFY_PASSWORD`（必填，缺失 exit 2；回退 `XIHE_DEV_ADMIN_PASSWORD`——OS env > `.env` 文件链）；脚本内无字面密码、token 不回显。密码用 `mise run reset-admin` 生成（目标栈按 `-StackId` > `XIHE_STACK_ID` 解析，栈内按 `--url` > `XIHE_CP_DATASOURCE_URL` > `XIHE_PG_PORT`/`POSTGRES_DB` 解析，运行时会打印实际目标）。
-- **栈派生**：脚本开头经 `node scripts/stack-run.mjs env-json --stack <id>` 取端口/容器前缀。
-- **判定与退出码**：A 档（CP health / 登录 / 建 session+分支 / SSE / 模型列表 / Agent health）必过；B 档 `POST /api/v1/chat` 受 provider 凭据、principal 绑定与 API Type 绑定约束。`0`=两档通过、`4`=A 通过但 B 前置缺失（末行给原因码）、`1`=失败、`2`=缺凭据。
-- **agent principal**：建 session 必须带 `agentPrincipalId`；脚本按「显式 `XIHE_VERIFY_AGENT_PRINCIPAL_ID` → workspace 已绑定的第一个 → 自动新建」解析。只有新建后才调 `PUT …/agents/{id}` 绑定——对已有 principal 调该接口会**收窄**它的 workspace cap。
+- **目标必须显式**：`--stack`、`--email`、`--workspace` 三项必填，缺失即失败（exit 2），CLI 从不回退到登录响应的默认 workspace；`--yes` 只确认执行提示，不替代目标参数。非交互未加 `--yes` 时需 TTY 交互确认。
+- **凭据**：密码取 `XIHE_VERIFY_PASSWORD`，回退 `XIHE_DEV_ADMIN_PASSWORD`（OS env > `.env` 文件链），TTY 下可无回显输入；无密码 exit 2，token 不回显。密码用 `mise run reset-admin` 生成（目标栈按 `-StackId` > `XIHE_STACK_ID` 解析，栈内按 `--url` > `XIHE_CP_DATASOURCE_URL` > `XIHE_PG_PORT`/`POSTGRES_DB` 解析，运行时会打印实际目标）。
+- **栈派生**：经 `node scripts/stack-run.mjs env-json --stack <id>` 取端口；非法/未登记栈 exit 2。
+- **副作用**：会创建 agent principal（workspace 尚无绑定时）、session 与 chat run，并真实调用模型 provider，可能产生费用；请使用隔离栈与测试 workspace，并先确认执行提示。
+- **判定与退出码**：A 档（CP health / 登录 / workspace 可访问 / principal / session+分支 / messages / SSE / 模型列表 / Agent health）必过；B 档 `POST /api/v1/chat` 受理（200/202 且返回 `runId`）保持原语义。`0`=A/B 通过且 run 终态 `succeeded`、`4`=A 通过但 B 前置缺失、`1`=失败（含 run 终态失败）、`2`=缺目标/凭据或派生失败、`5`=run 等待超时（`--wait-seconds`，默认 120；超时先 `POST /api/v1/chat/runs/{runId}/cancel` 再删本次 session）。
+- **清理与残留**：结束或失败时先关闭 SSE，再 `DELETE /api/v1/sessions/{sessionId}` 删除本次创建的 session；本次新建的 agent principal 无可确认的删除接口，保留并在结果中报告（`cleanup.principal`）；不会修改或删除已存在的 principal。审计与模型侧记录可能保留。
+- **agent principal**：建 session 必须带 `agentPrincipalId`；按「显式 `XIHE_VERIFY_AGENT_PRINCIPAL_ID` → workspace 已绑定的第一个 → 自动新建」解析。只有新建后才调 `PUT …/agents/{id}` 绑定——对已有 principal 调该接口会**收窄**它的 workspace cap。诊断只输出白名单状态字段，不打印 Agent 原始日志。
 
 ## 5. 测试入口
 
