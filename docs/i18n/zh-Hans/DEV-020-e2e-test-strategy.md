@@ -243,6 +243,13 @@ node scripts/e2e-host-detached.mjs --timeout-min 25 --auth-lane=ratelimit \
 
 生产与日常 host 栈默认限流开启（不注入 = 既有默认值）；`XIHE_E2E_EXTERNAL_SERVER=1` 复用模式不在该车道判定内。限流的产品侧根因（IPv6 回环豁免失效）另见 PLAN-0571。
 
+### 3.4 时间预算与网络分类（PLAN-0586）
+
+- **批次预算**：mock-full 整批墙钟基线 7.5 min → 6.7 min（0586 优化后 402.8 s，82 passed / 0 unexpected / 0 flaky；证据 `plans/PLAN-0586-XH-e2e-runtime-slim/evidence/m1-batch-ab.md`）。新增/改动不得使整批退回 7.5 min 以上。
+- **网络分类**：E2E 内的网络等待分三类处置——① 确定性 HTTP/SSE（`waitForResponse`/事件断言）；② 进程 readiness（Agent 重启、Runtime 心跳，用 `expect.poll` + 明确终态）；③ 不确定外部依赖（不得固定 sleep，必须显式 timeout 或 mock）。固定 `waitForTimeout` 视为缺陷（V4）。
+- **Agent readiness 实测**：整批负载下 `spawn → health+llmReady` 实测 p95 ≈7.2 s（6 次样本 5.1–7.6 s），默认预算 30 s 保留（`XIHE_E2E_AGENT_READY_TIMEOUT_MS` 可覆盖）；失败信息必须带「已等待时长 + 最后状态 + agent 日志路径」便于定位。
+- **清理耗时**：带 import 作业的 workspace DELETE ≈11 s/次（空闲工作区 29 ms），批量清理必须并发而不是串行；runner teardown 的零残留复核不变。
+
 ## 4. 参考
 
 - XH E2E profile、readiness 和实际结果矩阵：维护在 workspace 私有 internal 层（不在本仓库分发）
