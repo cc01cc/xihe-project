@@ -24,7 +24,8 @@ class SecurityDefaultsValidatorTest {
         "XIHE_CP_OAUTH_ENCRYPTION_KEY",
         "XIHE_CP_PROVIDER_CREDENTIALS_KEY",
         "XIHE_CP_CREDENTIALS_KEY",
-        "XIHE_CP_CREDENTIALS_KEY_RING"
+        "XIHE_CP_CREDENTIALS_KEY_RING",
+        "XIHE_CP_CREDENTIALS_FINGERPRINT_KEY"
     };
 
     @AfterEach
@@ -46,8 +47,8 @@ class SecurityDefaultsValidatorTest {
                     "XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY", "true");
             return values.get(key);
         });
-        // 6 explicit insecure values + 3 empty-required encryption keys.
-        assertEquals(9, violations.size());
+        // 6 explicit insecure values + 4 empty-required secrets.
+        assertEquals(10, violations.size());
     }
 
     @Test
@@ -57,6 +58,7 @@ class SecurityDefaultsValidatorTest {
         System.setProperty("XIHE_CP_OAUTH_ENCRYPTION_KEY", "secret-key");
         System.setProperty("XIHE_CP_PROVIDER_CREDENTIALS_KEY", "secret-key");
         System.setProperty("XIHE_CP_CREDENTIALS_KEY", "secret-key");
+        System.setProperty("XIHE_CP_CREDENTIALS_FINGERPRINT_KEY", "secret-key");
 
         assertThrows(IllegalStateException.class, SecurityDefaultsValidator::enforce);
     }
@@ -72,6 +74,7 @@ class SecurityDefaultsValidatorTest {
         System.setProperty("XIHE_CP_OAUTH_ENCRYPTION_KEY", "base64-key");
         System.setProperty("XIHE_CP_PROVIDER_CREDENTIALS_KEY", "base64-key");
         System.setProperty("XIHE_CP_CREDENTIALS_KEY", "base64-key");
+        System.setProperty("XIHE_CP_CREDENTIALS_FINGERPRINT_KEY", "base64-key");
 
         SecurityDefaultsValidator.enforce();
     }
@@ -107,8 +110,27 @@ class SecurityDefaultsValidatorTest {
     void credentialKeyRingSatisfiesProdRequirement() {
         Map<String, String> env = new HashMap<>();
         env.put("XIHE_CP_CREDENTIALS_KEY_RING", "{\"v1\":\"base64-key\"}");
+        env.put("XIHE_CP_CREDENTIALS_FINGERPRINT_KEY", "base64-key");
         assertFalse(SecurityDefaultsValidator.collectViolations(env::get).stream()
                 .anyMatch(item -> item.startsWith("XIHE_CP_CREDENTIALS_KEY")));
+    }
+
+    @Test
+    void missingFingerprintKeyIsAProdViolation() {
+        Map<String, String> env = new HashMap<>();
+        env.put("XIHE_CP_JWT_SECRET", "a-real-random-secret");
+        env.put("XIHE_CP_API_TOKEN", "strong-service-token");
+        env.put("XIHE_CP_AGENT_API_TOKEN", "strong-service-token");
+        env.put("XIHE_CP_OAUTH_ALLOW_DEV_KEY", "false");
+        env.put("XIHE_CP_PROVIDER_CREDENTIALS_ALLOW_DEV_KEY", "false");
+        env.put("XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY", "false");
+        env.put("XIHE_CP_OAUTH_ENCRYPTION_KEY", "base64-key");
+        env.put("XIHE_CP_PROVIDER_CREDENTIALS_KEY", "base64-key");
+        env.put("XIHE_CP_CREDENTIALS_KEY", "base64-key");
+
+        List<String> violations = SecurityDefaultsValidator.collectViolations(env::get);
+        assertEquals(1, violations.size(), "only the fingerprint key is missing");
+        assertTrue(violations.get(0).startsWith("XIHE_CP_CREDENTIALS_FINGERPRINT_KEY"));
     }
 
     @Test

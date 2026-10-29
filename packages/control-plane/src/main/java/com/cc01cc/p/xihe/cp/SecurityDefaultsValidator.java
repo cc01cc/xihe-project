@@ -94,6 +94,11 @@ public final class SecurityDefaultsValidator {
             violations.add("XIHE_CP_CREDENTIALS_KEY: required in prod "
                     + "(provide a base64 key or a key ring)");
         }
+        // PLAN-0576 T2.1: the fingerprint HMAC key is independent of the key ring.
+        if (isBlank(lookup.apply("XIHE_CP_CREDENTIALS_FINGERPRINT_KEY"))) {
+            violations.add("XIHE_CP_CREDENTIALS_FINGERPRINT_KEY: required in prod "
+                    + "(provide a base64 32-byte HMAC key)");
+        }
         // PLAN-0526: local single-user mode disables the login entry; never in prod.
         if ("true".equalsIgnoreCase(lookup.apply("XIHE_LOCAL_MODE"))
                 && PROD_ENV_NAME.equals(lookup.apply("XIHE_ENV"))) {

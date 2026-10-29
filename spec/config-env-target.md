@@ -63,5 +63,6 @@
 | `XIHE_CP_PROVIDER_CREDENTIALS_KEY` | 未配置 | 提供 base64 AES-256 key |
 | `XIHE_CP_PROVIDER_CREDENTIALS_ALLOW_DEV_KEY` | 为 `true` | 置 `false` |
 | `XIHE_CP_CREDENTIALS_KEY` / `XIHE_CP_CREDENTIALS_KEY_RING` | 两者皆未配置 | 提供 key 或 key ring |
+| `XIHE_CP_CREDENTIALS_FINGERPRINT_KEY` | 未配置 | 提供独立 base64 32-byte HMAC key（不得复用加密 key/环，PLAN-0576） |
 | `XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY` | 为 `true` | 置 `false` |
 | `XIHE_LOCAL_MODE` | 为 `true`（PLAN-0526：本地单用户模式关闭登录入口，禁用于生产） | 置 `false` |

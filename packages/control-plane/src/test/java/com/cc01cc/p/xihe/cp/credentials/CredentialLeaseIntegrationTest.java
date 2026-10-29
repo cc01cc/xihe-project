@@ -192,13 +192,38 @@ class CredentialLeaseIntegrationTest extends AbstractIntegrationTest {
         Credential row = credentialRepository.findById(credential.getId()).orElseThrow();
         row.setRevision(2);
         row.setSecretCiphertext(credentialEncryption.encrypt("{\"token\":\"replaced\"}",
-                CredentialAad.format(row.getId().toString(), row.getOwnerType(), row.getOwnerId())));
+                CredentialAad.formatV2(row.getId().toString(), row.getOwnerType(), row.getOwnerId(),
+                        row.getKind(), row.getRevision(), row.getKeyVersion())));
         credentialRepository.save(row);
 
         CpApiException error = assertThrows(CpApiException.class, () -> leaseService.redeemLease(
                 issued.token(), PRINCIPAL_ID, SESSION_ID, RUN_ID, WORKSPACE_ID));
         assertEquals(HttpStatus.CONFLICT, error.getStatus());
         assertEquals("CREDENTIAL_REVISION_CHANGED", error.getCode());
+    }
+
+    @Test
+    void legacyV1AadRowIsStillDeliverable() {
+        Credential row = new Credential();
+        row.setId(UUID.randomUUID());
+        row.setOwnerType(Credential.OWNER_USER);
+        row.setOwnerId(UUID.randomUUID().toString());
+        row.setLabel("legacy-v1");
+        row.setKind(Credential.KIND_TOKEN);
+        row.setDeliveryTier(Credential.TIER_LEASE);
+        row.setKeyVersion("v1");
+        row.setSecretCiphertext(credentialEncryption.encrypt("{\"token\":\"legacy-value\"}",
+                CredentialAad.formatV1(row.getId().toString(), row.getOwnerType(), row.getOwnerId())));
+        row.setFingerprint("legacy-fingerprint");
+        Credential saved = credentialRepository.save(row);
+        credentialIds.add(saved.getId());
+
+        CredentialLeaseService.AcquiredCredential acquired = leaseService.acquire(
+                saved.getId().toString(), PRINCIPAL_ID, SESSION_ID, RUN_ID, WORKSPACE_ID);
+
+        assertEquals(Credential.AAD_VERSION_LEGACY, saved.getAadVersion());
+        assertEquals("{\"token\":\"legacy-value\"}", acquired.plaintext(),
+                "rows written before V84 must stay readable through the unified entry point (V2)");
     }
 
     private Credential createLeaseCredential(String label, String secret, String tier) {

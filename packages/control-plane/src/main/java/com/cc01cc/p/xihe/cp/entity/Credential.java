@@ -34,6 +34,14 @@ public class Credential {
     public static final String STATUS_ACTIVE = "active";
     public static final String STATUS_DISABLED = "disabled";
 
+    /** PLAN-0576: AAD format version stored per row (V84 default 1 = PLAN-0495 format). */
+    public static final short AAD_VERSION_LEGACY = 1;
+    public static final short AAD_VERSION_V2 = 2;
+
+    /** PLAN-0576: fingerprint algorithm/key version stored per row. */
+    public static final String FINGERPRINT_VERSION_SHA256 = "sha256";
+    public static final String FINGERPRINT_VERSION_HMAC_SHA256_V1 = "hmac-sha256-v1";
+
     @Id
     @Column(length = 36, columnDefinition = "uuid")
     private UUID id;
@@ -68,6 +76,12 @@ public class Credential {
 
     @Column(name = "key_version", nullable = false, length = 16)
     private String keyVersion;
+
+    @Column(name = "aad_version", nullable = false)
+    private short aadVersion = AAD_VERSION_LEGACY;
+
+    @Column(name = "fingerprint_version", nullable = false, length = 32)
+    private String fingerprintVersion = FINGERPRINT_VERSION_SHA256;
 
     @Column(name = "created_by", length = 36)
     @Convert(converter = UuidStringConverter.class)
@@ -130,6 +144,10 @@ public class Credential {
     public void setFingerprint(String fingerprint) { this.fingerprint = fingerprint; }
     public String getKeyVersion() { return keyVersion; }
     public void setKeyVersion(String keyVersion) { this.keyVersion = keyVersion; }
+    public short getAadVersion() { return aadVersion; }
+    public void setAadVersion(short aadVersion) { this.aadVersion = aadVersion; }
+    public String getFingerprintVersion() { return fingerprintVersion; }
+    public void setFingerprintVersion(String fingerprintVersion) { this.fingerprintVersion = fingerprintVersion; }
     public String getCreatedBy() { return createdBy; }
     public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
     public Instant getReplacedAt() { return replacedAt; }

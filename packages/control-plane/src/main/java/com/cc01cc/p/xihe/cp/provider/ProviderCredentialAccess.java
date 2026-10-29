@@ -1,9 +1,8 @@
 package com.cc01cc.p.xihe.cp.provider;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
-import com.cc01cc.p.xihe.cp.credentials.CredentialAad;
+import com.cc01cc.p.xihe.cp.credentials.CredentialEnvelope;
 import com.cc01cc.p.xihe.cp.credentials.CredentialNotFoundException;
-import com.cc01cc.p.xihe.cp.crypto.EnvelopeEncryptionService;
 import com.cc01cc.p.xihe.cp.entity.Credential;
 import com.cc01cc.p.xihe.cp.policy.GrantAuthorizationService;
 import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
@@ -11,7 +10,6 @@ import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.ToolShape;
 import com.cc01cc.p.xihe.cp.repository.CredentialRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,17 +28,17 @@ import java.util.UUID;
 public class ProviderCredentialAccess {
 
     private final CredentialRepository credentials;
-    private final EnvelopeEncryptionService encryption;
+    private final CredentialEnvelope credentialEnvelope;
     private final GrantAuthorizationService grants;
     private final ObjectMapper objectMapper;
 
     public ProviderCredentialAccess(
             CredentialRepository credentials,
-            @Qualifier("credentialEncryption") EnvelopeEncryptionService encryption,
+            CredentialEnvelope credentialEnvelope,
             GrantAuthorizationService grants,
             ObjectMapper objectMapper) {
         this.credentials = credentials;
-        this.encryption = encryption;
+        this.credentialEnvelope = credentialEnvelope;
         this.grants = grants;
         this.objectMapper = objectMapper;
     }
@@ -125,9 +123,7 @@ public class ProviderCredentialAccess {
     }
 
     private String decryptToken(Credential credential) {
-        String plaintext = encryption.decrypt(credential.getSecretCiphertext(),
-                CredentialAad.format(credential.getId().toString(), credential.getOwnerType(),
-                        credential.getOwnerId()));
+        String plaintext = credentialEnvelope.decrypt(credential);
         try {
             String token = objectMapper.readTree(plaintext).path("token").asText(null);
             if (token == null || token.isBlank()) {

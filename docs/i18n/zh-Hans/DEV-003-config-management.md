@@ -204,7 +204,11 @@ Catalog 标为 manual discovery 的 Provider（如 Ark）创建连接时，还�
 
 Provider verify 的 ready 只表示 CP 当前 remote `/models` 响应结构有效（`data` 数组可为空），不代表模型 completion 成功。`test:e2e:host:real` 沿用 Agent 进程的 `XIHE_E2E_REAL_XIAOMI_KEY` 通路，不消费此处的 Provider Connection lease；两条路径不可相互替代。
 
-**凭据管理域与轮换（PLAN-0495）**：`credentials` 表承载 owner 级独立凭据对象（USER/WORKSPACE 两级；`token`/`key_pair` 两形态；`lease`/`reveal` 单通道档位）。独立主密钥 `XIHE_CP_CREDENTIALS_KEY`（或 `XIHE_CP_CREDENTIALS_KEY_RING` JSON 环 + `XIHE_CP_CREDENTIALS_CURRENT_VERSION`，环须含 current）；prod 未配置 key/ring 或 `XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY=true` 时 fail-fast 拒绝启动。密钥轮换经 `mise run xihe -- credential rotate`（internal 服务面，需 `XIHE_CP_API_TOKEN`）：扩环（旧+新，current=新）→ 批量重加密（CAS 回写、可续跑）→ 退役校验（按版本计数为 0 后方可移除旧 key）。契约见 `spec/security/credential-management.md`。
+**凭据管理域与轮换/迁移（PLAN-0495 + PLAN-0576）**：`credentials` 表承载 owner 级独立凭据对象（USER/WORKSPACE 两级；`token`/`key_pair` 两形态；`lease`/`reveal` 单通道档位）。独立主密钥 `XIHE_CP_CREDENTIALS_KEY`（或 `XIHE_CP_CREDENTIALS_KEY_RING` JSON 环 + `XIHE_CP_CREDENTIALS_CURRENT_VERSION`，环须含 current）；prod 未配置 key/ring 或 `XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY=true` 时 fail-fast 拒绝启动。
+
+PLAN-0576 起（V84）：新写密文使用 AAD v2（`v2|credentialId|ownerType|ownerId|kind|revision|keyVersion`），旧行按 `aad_version=1` 兼容可解，未知版本显式失败；指纹改为独立 key 的 HMAC-SHA256，新写 `fingerprint_version='hmac-sha256-v1'`，旧 `sha256` 行迁移时重算。新增独立指纹密钥 `XIHE_CP_CREDENTIALS_FINGERPRINT_KEY`（base64 32 bytes，**不得复用**加密 key/环）：prod 未配置即 fail-fast；dev 留空走固定 dev key 并 WARN，不得用于真实凭据。
+
+轮换/迁移统一走 internal `POST /internal/v1/credentials/rotation/runs`（Bearer service auth，需 `XIHE_CP_API_TOKEN`）：扩环（旧+新，current=新）→ id 游标扫描（软删跳过、不设失败上限、失败行跨过后下次重试）→ 逐行解密、按当前 keyVersion + v2 AAD 重加密、重算 HMAC、CAS 回写（条件为读取到的密文 + 未删除）→ 退役校验（按 key 版本计数为 0 后方可移除旧 key）。**不要用 `mise run xihe -- credential rotate` 判定迁移完成**：该 CLI 的 `pendingTotal` 只统计 key 版本，会漏掉 AAD/指纹迁移。终止判据 = 一次到达游标末尾的运行满足「可迁移行 = 0 + 不可迁移行有本次运行 id 证据」；被中断的运行不算。单版本部署：V84 后旧 CP 不能启动；停写窗口 = 正式备份开始到 V84 + 新 CP 启动结束，回滚只能恢复该备份（之后的新写入会丢失）。契约见 `spec/security/credential-management.md`。
 
 **导入导出契约（决策 #36/#37，T2.21/T2.25）**：导出 `GET /api/v1/config/export?layer=instance&includeSecrets=<bool>`（ADMIN）—— config KV + `provider-connections` 元数据（label/status/modelDiscovery/manualModels/enabled/ownerType/ownerId/baseUrl）；`includeSecrets=false` 仅排除明文 `apiKey`，**任何模式都不输出库内密文**；导出写 AUDIT sink（actor/时间/是否含密钥，不记响应体）且响应 `Cache-Control: no-store`。导入**不恢复任何凭证**——`provider-connections` 条目整体跳过并在响应 `{imported, skipped, warnings}` 中列出（owner id 跨实例不可映射），需人工经凭证 API/UI 重建。导出产物落盘使用 `config.export*.jsonc`（gitignored）。UI 实例页内提供导出（含可选明文密钥开关）与导入（文件 + WARN 清单）入口。
 

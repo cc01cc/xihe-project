@@ -12,11 +12,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
-import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,8 +24,10 @@ import java.util.UUID;
  * soft delete and the existsForOwner dangling-check seam consumed by 0496.
  *
  * <p>The whole secret payload is serialized to one JSON document and encrypted
- * as a single envelope under AAD {@code credentialId|ownerType|ownerId}
- * (0495 #2/I2). Every mutation writes a credential_events row (never a value)
+ * as a single envelope through {@link CredentialEnvelope}. New writes use
+ * PLAN-0576 AAD v2 ({@code v2|id|ownerType|ownerId|kind|revision|keyVersion})
+ * and the keyed HMAC fingerprint; legacy v1 rows stay readable until rotation
+ * migrates them. Every mutation writes a credential_events row (never a value)
  * plus the AuditLogger stream. Deletion is soft; the reference report is
  * assembled by 0496 from grant data on top of {@link #delete}.
  */
@@ -42,15 +40,21 @@ public class CredentialService {
     private final CredentialRepository credentialRepository;
     private final CredentialEventRepository credentialEventRepository;
     private final EnvelopeEncryptionService credentialEncryption;
+    private final CredentialEnvelope credentialEnvelope;
+    private final CredentialFingerprint credentialFingerprint;
     private final AuditLogger auditLogger;
 
     public CredentialService(CredentialRepository credentialRepository,
             CredentialEventRepository credentialEventRepository,
             @Qualifier("credentialEncryption") EnvelopeEncryptionService credentialEncryption,
+            CredentialEnvelope credentialEnvelope,
+            @Qualifier("credentialFingerprint") CredentialFingerprint credentialFingerprint,
             AuditLogger auditLogger) {
         this.credentialRepository = credentialRepository;
         this.credentialEventRepository = credentialEventRepository;
         this.credentialEncryption = credentialEncryption;
+        this.credentialEnvelope = credentialEnvelope;
+        this.credentialFingerprint = credentialFingerprint;
         this.auditLogger = auditLogger;
     }
 
@@ -88,9 +92,14 @@ public class CredentialService {
         credential.setLabel(label);
         credential.setKind(kind);
         credential.setDeliveryTier(deliveryTier);
-        credential.setSecretCiphertext(encrypt(kind, secret, credentialId.toString(), ownerType, ownerId));
+        // PLAN-0576 T1.5: AAD uses the values written by this operation — the
+        // first revision and the current key version are set before encryption.
+        credential.setRevision(1);
         credential.setKeyVersion(credentialEncryption.currentVersion());
+        credential.setSecretCiphertext(credentialEnvelope.encryptV2(credential,
+                toPlaintextJson(kind, secret)));
         credential.setFingerprint(fingerprint(kind, secret));
+        credential.setFingerprintVersion(Credential.FINGERPRINT_VERSION_HMAC_SHA256_V1);
         credential.setCreatedBy(normalizeActorUserId(actorUserId));
         credentialRepository.save(credential);
 
@@ -104,25 +113,34 @@ public class CredentialService {
         Credential credential = requireActive(credentialId);
         SecretPayload checked = requireSecret(credential.getKind(), secret);
 
-        String ciphertext = encrypt(credential.getKind(), checked,
-                credential.getId().toString(), credential.getOwnerType(), credential.getOwnerId());
-        String fingerprint = fingerprint(credential.getKind(), checked);
+        // PLAN-0576 T1.5: freeze the AAD inputs on the post-write values —
+        // revision+1 and the current key version. The managed entity is not
+        // mutated before the CAS (Hibernate would flush the bump and defeat the
+        // revision fence), so encryption takes the explicit written values.
+        int expectedRevision = credential.getRevision();
         String keyVersion = credentialEncryption.currentVersion();
+        String ciphertext = credentialEnvelope.encryptV2(credential.getId().toString(),
+                credential.getOwnerType(), credential.getOwnerId(), credential.getKind(),
+                expectedRevision + 1, keyVersion, toPlaintextJson(credential.getKind(), checked));
+        String fingerprint = fingerprint(credential.getKind(), checked);
         Instant now = Instant.now();
 
         // Conditional write (round-4 fix): never clobber a concurrent delete
         // (deletedAt fence) or another replace (revision fence), and only touch
         // replace-owned columns so concurrent rotation writes survive.
         int updated = credentialRepository.replaceSecretIfRevisionMatches(credentialId,
-                credential.getRevision(), ciphertext, fingerprint, keyVersion, now);
+                expectedRevision, ciphertext, fingerprint, keyVersion,
+                Credential.AAD_VERSION_V2, Credential.FINGERPRINT_VERSION_HMAC_SHA256_V1, now);
         if (updated == 0) {
             throw new CredentialConcurrentModificationException(credentialId);
         }
 
         credential.setSecretCiphertext(ciphertext);
         credential.setFingerprint(fingerprint);
+        credential.setRevision(expectedRevision + 1);
         credential.setKeyVersion(keyVersion);
-        credential.setRevision(credential.getRevision() + 1);
+        credential.setAadVersion(Credential.AAD_VERSION_V2);
+        credential.setFingerprintVersion(Credential.FINGERPRINT_VERSION_HMAC_SHA256_V1);
         credential.setReplacedAt(now);
         credential.setUpdatedAt(now);
 
@@ -186,12 +204,6 @@ public class CredentialService {
                 .orElseThrow(() -> new CredentialNotFoundException(credentialId));
     }
 
-    private String encrypt(String kind, SecretPayload secret, String credentialId,
-            String ownerType, String ownerId) {
-        String plaintext = toPlaintextJson(kind, secret);
-        return credentialEncryption.encrypt(plaintext, CredentialAad.format(credentialId, ownerType, ownerId));
-    }
-
     private static String toPlaintextJson(String kind, SecretPayload secret) {
         Map<String, String> payload = new LinkedHashMap<>();
         if (Credential.KIND_TOKEN.equals(kind)) {
@@ -207,18 +219,9 @@ public class CredentialService {
         }
     }
 
-    /** Unreversible display/dedup helper; derived from the raw secret value only. */
-    static String fingerprint(String kind, SecretPayload secret) {
-        String canonical = Credential.KIND_TOKEN.equals(kind)
-                ? secret.token()
-                : secret.accessKey() + "\n" + secret.secretKey();
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(canonical.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(digest);
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 is unavailable", e);
-        }
+    /** Keyed display/dedup fingerprint; derived from the raw secret value only. */
+    private String fingerprint(String kind, SecretPayload secret) {
+        return credentialFingerprint.fingerprint(CredentialSecretCodec.canonical(kind, secret));
     }
 
     private void recordEvent(Credential credential, String eventType, String actorUserId) {
