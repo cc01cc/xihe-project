@@ -88,5 +88,12 @@ export function startRequestTracker(page: Page): RequestTracker {
  * arrives (the caller then fails on it); otherwise it expires after `windowMs`.
  */
 export async function waitForPageErrorWindow(page: Page, windowMs = 1500): Promise<void> {
-    await page.waitForEvent("pageerror", { timeout: windowMs }).catch(() => undefined);
+    try {
+        await page.waitForEvent("pageerror", { timeout: windowMs });
+    } catch (error) {
+        // Only a timeout means "no delayed error observed"; any other failure (page
+        // closed/crashed) must surface instead of silently passing the later assertion.
+        const isTimeout = error instanceof Error && error.name === "TimeoutError";
+        if (!isTimeout) throw error;
+    }
 }

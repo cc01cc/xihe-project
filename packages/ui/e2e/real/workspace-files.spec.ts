@@ -269,15 +269,20 @@ test.describe("@host Workspace — File Panel & Delete Flow", () => {
             },
         });
         const registered = (await r.json()) as { accessToken: string; workspaceId: string };
+        expect(registered.workspaceId, "register must return a workspaceId").toBeTruthy();
         await page.addInitScript(
             (t) => localStorage.setItem("xihe-token", t),
             registered.accessToken,
         );
         await page.goto("/workspace/" + registered.workspaceId, { waitUntil: "load" });
-        // PLAN-0586 (review round-1 #1): the fixed 1.5 s wait is replaced by the toolbar as
-        // a *ready* signal only; the actual pass condition is the real empty-state marker
-        // rendered by FileTreePanel.vue ("工作区暂无文件"), not the page-level "暂无工作区"
-        // branch (unreachable with a workspace URL) and not the toolbar itself.
+        // PLAN-0586 (review round-1 #1): the toolbar is only a *ready* signal; the actual
+        // pass condition is the real empty-state marker rendered by FileTreePanel.vue
+        // ("工作区暂无文件"), not the page-level "暂无工作区" branch and not the toolbar.
+        // BLOCKED (round-2 verification): a fresh register workspace returns
+        // "Workspace access denied" for tree reads in the host lane, so the marker cannot
+        // render; an API-created workspace instead returns "File not found: /workspace/archive"
+        // (storage not materialized). A dedicated empty-but-materialized fixture is needed —
+        // tracked in review/round-2.md, this test is intentionally red until decided.
         await expect(page.getByTestId("workspace-toolbar-settings")).toBeVisible({
             timeout: 10000,
         });

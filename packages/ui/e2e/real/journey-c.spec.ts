@@ -79,6 +79,9 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
                 { timeout: 15000, intervals: [250, 500, 1000, 2000] },
             )
             .toBe(true);
+        // Explicit proof (review round-2 evidence): the async new-chat session switch must
+        // not clear the input between the poll succeeding and the click.
+        await expect(input).toHaveValue(text);
         await send.click();
     }
 
