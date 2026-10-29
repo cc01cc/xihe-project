@@ -334,7 +334,7 @@ test.describe("@host Journey B — manual workspace mutations (PLAN-0353 D1)", (
         await expect(page.getByTestId("settings-audit-items")).toContainText("write_file", {
             timeout: 15000,
         });
-        await page.screenshot({ path: evidencePath("b2-audit.png"), fullPage: false });
+        await page.screenshot({ scale: "css", path: evidencePath("b2-audit.png"), fullPage: false });
     });
 
     test("B1-fail-human: Runtime down yields the human-readable runtime-unreachable error", async ({
@@ -375,7 +375,7 @@ test.describe("@host Journey B — manual workspace mutations (PLAN-0353 D1)", (
             await expect(
                 page.getByRole("button", { name: fileName, exact: true }),
             ).not.toBeVisible();
-            await page.screenshot({ path: evidencePath("b1-error.png"), fullPage: false });
+            await page.screenshot({ scale: "css", path: evidencePath("b1-error.png"), fullPage: false });
         } finally {
             // PLAN-0579 R3: recovery is unconditional — a failed assertion above
             // must not leave the runtime dead for the remaining serial specs.
@@ -408,6 +408,6 @@ test.describe("@host Journey B — manual workspace mutations (PLAN-0353 D1)", (
         await expect(deleteModal).toBeVisible({ timeout: 8000 });
         await deleteModal.getByRole("button", { name: "Delete", exact: true }).click();
         await expect(created).not.toBeVisible({ timeout: 20000 });
-        await page.screenshot({ path: evidencePath("b1-recover.png"), fullPage: false });
+        await page.screenshot({ scale: "css", path: evidencePath("b1-recover.png"), fullPage: false });
     });
 });

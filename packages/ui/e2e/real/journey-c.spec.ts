@@ -70,7 +70,6 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
         for (let i = 0; i < 6; i++) {
             await input.fill(text);
             if (await send.isEnabled().catch(() => false)) break;
-            await page.waitForTimeout(1000);
         }
         await expect(send).toBeEnabled({ timeout: 15000 });
         await send.click();
@@ -111,7 +110,7 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
         await expect(preview, "ImagePreview branch reachable via base64 read").toBeVisible({
             timeout: 30000,
         });
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "t6-image-preview.png"),
             fullPage: false,
         });
@@ -151,7 +150,7 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
         await chatInput.fill(`XIHE-E2E-WRITE ${fileName} ${content}`);
         await page.locator('[data-testid="chat-send-button"]').click();
         await expect(modal, "approval modal for large write_file").toBeVisible({ timeout: 120000 });
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "h2-modal-truncated.png"),
             fullPage: false,
         });
@@ -171,7 +170,7 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
                 { message: `expected ${approvedPath} to contain the full content`, timeout: 30000 },
             )
             .toContain(content);
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "h2-after-approve.png"),
             fullPage: false,
         });
@@ -221,7 +220,7 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
         await expect(modal2, "pending approval re-rendered after refresh").toBeVisible({
             timeout: 60000,
         });
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "c1-recovered-modal.png"),
             fullPage: false,
         });
@@ -281,7 +280,7 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
         ).toBeVisible({
             timeout: 60000,
         });
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "c2-after-reject.png"),
             fullPage: false,
         });

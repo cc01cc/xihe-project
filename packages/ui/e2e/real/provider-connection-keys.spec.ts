@@ -218,7 +218,7 @@ test.describe("@host PLAN-0438 Provider Connection keys", () => {
 
             const info = test.info();
             const screenshotPath = info.outputPath("plan-0438-provider-connection-keys-full.png");
-            await page.screenshot({ path: screenshotPath, fullPage: true });
+            await page.screenshot({ scale: "css", path: screenshotPath, fullPage: true });
             await info.attach("plan-0438-provider-connection-keys-full.png", {
                 path: screenshotPath,
                 contentType: "image/png",
@@ -227,7 +227,7 @@ test.describe("@host PLAN-0438 Provider Connection keys", () => {
             await connectionArticle(page, "secondary").scrollIntoViewIfNeeded();
             await expect(connectionArticle(page, "secondary")).toBeInViewport();
             const mobilePath = info.outputPath("plan-0438-provider-connection-keys-mobile.png");
-            await page.screenshot({ path: mobilePath, fullPage: true });
+            await page.screenshot({ scale: "css", path: mobilePath, fullPage: true });
             await info.attach("plan-0438-provider-connection-keys-mobile.png", {
                 path: mobilePath,
                 contentType: "image/png",
@@ -239,7 +239,7 @@ test.describe("@host PLAN-0438 Provider Connection keys", () => {
             const mobileDetailPath = info.outputPath(
                 "plan-0438-provider-connection-detail-mobile.png",
             );
-            await page.screenshot({ path: mobileDetailPath });
+            await page.screenshot({ scale: "css", path: mobileDetailPath });
             await info.attach("plan-0438-provider-connection-detail-mobile.png", {
                 path: mobileDetailPath,
                 contentType: "image/png",

@@ -263,7 +263,7 @@ test.describe("@host diagnostics feedback", () => {
         const severityColor = await severity.evaluate((el) => getComputedStyle(el).color);
         expect(severityClass).toContain("text-destructive");
 
-        await page.screenshot({ path: path.join(EVIDENCE_DIR, "desktop-diagnostics.png") });
+        await page.screenshot({ scale: "css", path: path.join(EVIDENCE_DIR, "desktop-diagnostics.png") });
         record("v1-v3-desktop", {
             runId,
             severityClass,
@@ -359,7 +359,7 @@ test.describe("@host diagnostics feedback", () => {
         );
         expect(overflow, "horizontal overflow px").toBeLessThanOrEqual(1);
 
-        await page.screenshot({ path: path.join(EVIDENCE_DIR, "mobile-diagnostics.png") });
+        await page.screenshot({ scale: "css", path: path.join(EVIDENCE_DIR, "mobile-diagnostics.png") });
         record("v8-mobile", { runId, overflow });
     });
 });

@@ -202,7 +202,7 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
         }
         const dockerCard = page.locator('[data-testid="workspace-execution-mode-docker"]');
         await expect(dockerCard).toBeDisabled();
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "execution-mode-cards.png"),
             fullPage: true,
         });
@@ -228,7 +228,7 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
         if (expectedExecutionMode === "windows-host") {
             await page.getByRole("checkbox", { name: /确认使用宿主执行/ }).check();
         }
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "confirm-summary.png"),
             fullPage: true,
         });
@@ -317,7 +317,7 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
         await expect(select).toBeVisible({ timeout: 20000 });
         await select.selectOption("windows-host");
         await expect(select).toHaveValue("windows-host", { timeout: 20000 });
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "execution-mode-switch.png"),
             fullPage: true,
         });
@@ -464,7 +464,7 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
             timeout: 15000,
         });
         await page.locator('[data-testid="workspace-storage-direct"]').click();
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "mobile-source-step.png"),
             fullPage: true,
         });

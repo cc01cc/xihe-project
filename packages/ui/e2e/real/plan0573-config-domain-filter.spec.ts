@@ -122,7 +122,7 @@ test.describe.serial("@host PLAN-0573 config domain filter", () => {
         ).toEqual([]);
         expect(actionableErrors(errors), errors.join("\n")).toEqual([]);
 
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: test.info().outputPath("plan0573-non-admin-config.png"),
             fullPage: true,
         });
@@ -161,7 +161,7 @@ test.describe.serial("@host PLAN-0573 config domain filter", () => {
         }
         expect(actionableErrors(errors), errors.join("\n")).toEqual([]);
 
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: test.info().outputPath("plan0573-admin-config.png"),
             fullPage: true,
         });

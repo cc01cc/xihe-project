@@ -300,6 +300,6 @@ test.describe("@host PLAN-0470 checkpoint direct-attach MXC consumer", () => {
             "../../.local/evidence/plan0470-checkpoint-mxc.png",
         );
         mkdirSync(path.dirname(screenshotPath), { recursive: true });
-        await page.screenshot({ path: screenshotPath });
+        await page.screenshot({ scale: "css", path: screenshotPath });
     });
 });

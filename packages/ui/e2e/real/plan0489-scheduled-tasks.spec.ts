@@ -293,7 +293,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         );
         await expect(firstRow.locator("td").nth(5)).toContainText(user.name);
 
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "plan0489-u1-list.png"),
             fullPage: true,
         });
@@ -348,7 +348,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         // 下次触发非空：缺失时该单元格渲染占位「—」。
         await expect(cronRow.locator("td").nth(4)).not.toContainText("—");
 
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "plan0489-u2-cron-created.png"),
             fullPage: true,
         });
@@ -396,7 +396,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
             "调度中",
         );
 
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "plan0489-u2-delay-created.png"),
             fullPage: true,
         });
@@ -437,7 +437,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
             taskRow(page, "0 5 * * *").locator('[data-testid="scheduled-task-status"]'),
         ).toContainText("错过 · 待处理");
 
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "plan0489-u3-missed.png"),
             fullPage: true,
         });
@@ -516,7 +516,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
             });
         }
 
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "plan0489-u3-rerun.png"),
             fullPage: true,
         });
@@ -555,7 +555,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         );
         await expect(delayRow.locator("td").nth(4)).not.toContainText("—");
 
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "plan0489-u3-postponed.png"),
             fullPage: true,
         });
@@ -604,7 +604,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         expect(idempotent.changed).toBe(false);
         expect(idempotent.status).toBe("cancelled");
 
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "plan0489-u3-removed.png"),
             fullPage: true,
         });
@@ -656,7 +656,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         await expect(fieldError).toContainText("cron 表达式无效");
         await expect(dialog).toBeVisible();
 
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "plan0489-u2-invalid-cron.png"),
             fullPage: false,
         });
@@ -703,7 +703,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         );
         expect(overflow, "no horizontal overflow at 390px").toBeLessThanOrEqual(2);
 
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "plan0489-mobile-list.png"),
             fullPage: true,
         });

@@ -104,18 +104,27 @@ test.describe("@host Workspace import", () => {
     test.afterAll(async ({ request }) => {
         // Workspace files live under the isolated host root, which the runner recycles at
         // teardown; only the test-created temp source trees need explicit removal here.
-        test.setTimeout(180000);
+        test.setTimeout(60000);
         if (sourceDir) fs.rmSync(sourceDir, { recursive: true, force: true });
         for (const dir of bulkDirs) fs.rmSync(dir, { recursive: true, force: true });
-        for (const user of users) {
-            await request
-                .delete(`${CP_URL}/api/v1/workspaces/${user.wsId}`, {
-                    headers: { Authorization: `Bearer ${user.token}` },
-                })
-                .catch(() => undefined);
+        // PLAN-0586: CP workspace DELETE takes ~11 s each here (active-job/cleanup gate),
+        // so issue the independent deletes concurrently instead of serially. The runner's
+        // teardown still performs the residual check on the isolated host root.
+        const results = await Promise.all(
+            users.map(async (user) => {
+                const response = await request
+                    .delete(`${CP_URL}/api/v1/workspaces/${user.wsId}`, {
+                        headers: { Authorization: `Bearer ${user.token}` },
+                    })
+                    .catch(() => undefined);
+                return { wsId: user.wsId, status: response?.status() ?? 0 };
+            }),
+        );
+        const unexpected = results.filter((row) => row.status !== 204 && row.status !== 404);
+        if (unexpected.length > 0) {
+            console.warn(`PLAN-0586 workspace teardown unexpected statuses: ${JSON.stringify(unexpected)}`);
         }
     });
-
     test("imports a Runtime-visible source directory without creating a Session", async ({
         page,
         request,

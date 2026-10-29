@@ -159,7 +159,7 @@ test.describe("@host PLAN-0508 transport telemetry relay and diagnostics", () =>
     async function capture(page: Page, name: string): Promise<void> {
         mkdirSync(EVIDENCE_DIR, { recursive: true });
         const file = path.join(EVIDENCE_DIR, name);
-        await page.screenshot({ path: file, animations: "disabled" });
+        await page.screenshot({ scale: "css", path: file, animations: "disabled" });
         const viewport = page.viewportSize();
         shots.push({
             name,

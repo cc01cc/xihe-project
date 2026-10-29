@@ -196,7 +196,7 @@ test.describe("@host PLAN-0439 owner-scope connection resolver matrix", () => {
                 page.getByTestId("model-item-custom-openai-compatible/shared-model"),
             ).toBeVisible();
             await expect(page.locator('[data-testid="model-group-dashscope-qwen"]')).toHaveCount(0);
-            await page.screenshot({
+            await page.screenshot({ scale: "css",
                 path: test.info().outputPath("resolver-model-popover.png"),
                 animations: "disabled",
             });

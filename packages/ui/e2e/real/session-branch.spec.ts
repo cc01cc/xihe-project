@@ -389,7 +389,7 @@ test.describe("@host Session branch path", () => {
         ).toBe(true);
 
         const desktopScreenshot = test.info().outputPath("session-branch-desktop.png");
-        await page.screenshot({ path: desktopScreenshot, fullPage: false });
+        await page.screenshot({ scale: "css", path: desktopScreenshot, fullPage: false });
         await test.info().attach("session-branch-desktop.png", {
             path: desktopScreenshot,
             contentType: "image/png",
@@ -460,7 +460,7 @@ test.describe("@host Session branch path", () => {
         ).toBe(true);
 
         const childDesktopScreenshot = testInfo.outputPath("session-fork-child-desktop.png");
-        await page.screenshot({ path: childDesktopScreenshot, fullPage: false });
+        await page.screenshot({ scale: "css", path: childDesktopScreenshot, fullPage: false });
         await testInfo.attach("session-fork-child-desktop.png", {
             path: childDesktopScreenshot,
             contentType: "image/png",
@@ -484,7 +484,7 @@ test.describe("@host Session branch path", () => {
         );
         expect(mobileOverflow).toBe(false);
         const mobileScreenshot = testInfo.outputPath("session-fork-child-mobile.png");
-        await page.screenshot({ path: mobileScreenshot, fullPage: false });
+        await page.screenshot({ scale: "css", path: mobileScreenshot, fullPage: false });
         await testInfo.attach("session-fork-child-mobile.png", {
             path: mobileScreenshot,
             contentType: "image/png",
@@ -625,7 +625,7 @@ test.describe("@host Session branch path", () => {
         );
 
         const screenshot = testInfo.outputPath("session-branch-compressed-child.png");
-        await page.screenshot({ path: screenshot, fullPage: false });
+        await page.screenshot({ scale: "css", path: screenshot, fullPage: false });
         await testInfo.attach("session-branch-compressed-child.png", {
             path: screenshot,
             contentType: "image/png",

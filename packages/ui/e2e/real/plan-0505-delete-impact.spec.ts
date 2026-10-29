@@ -247,7 +247,7 @@ test.describe.serial("@host PLAN-0505 delete impact and cascade (browser)", () =
             await expect(summary).toContainText("连接默认模板指向 1 项");
             await expect(summary).toContainText("默认身份 profile 1 项");
             const screenshot = testInfo.outputPath(`plan-0505-delete-confirm-${viewport.tag}.png`);
-            await page.screenshot({ path: screenshot, fullPage: false });
+            await page.screenshot({ scale: "css", path: screenshot, fullPage: false });
             await testInfo.attach(`plan-0505-delete-confirm-${viewport.tag}.png`, {
                 path: screenshot,
                 contentType: "image/png",

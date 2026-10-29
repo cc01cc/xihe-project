@@ -133,7 +133,8 @@ test.describe("UI Health — Console, Overflow, Hit-Test", () => {
                     .first()
                     .waitFor({ state: "visible", timeout: 10000 });
             }
-            await page.waitForTimeout(1500);
+            await page.waitForLoadState("load");
+            await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 
             expect(pageErrors, `pageerrors on ${path}: ${pageErrors.join("; ")}`).toHaveLength(0);
 

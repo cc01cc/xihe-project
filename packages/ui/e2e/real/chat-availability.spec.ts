@@ -105,7 +105,7 @@ test.describe("PLAN-247 Chat availability @host", () => {
                 .poll(async () => (await messages(request, auth, id)).length, { timeout: 5000 })
                 .toBe(0);
             await expectNoHorizontalOverflow(page);
-            await page.screenshot({
+            await page.screenshot({ scale: "css",
                 path: test.info().outputPath("PLAN-247-host-no-credentials.png"),
                 fullPage: true,
             });
@@ -133,7 +133,7 @@ test.describe("PLAN-247 Chat availability @host", () => {
                 false,
             );
             await expectNoHorizontalOverflow(page);
-            await page.screenshot({
+            await page.screenshot({ scale: "css",
                 path: test.info().outputPath("PLAN-247-host-credential-error.png"),
                 fullPage: true,
             });
@@ -204,7 +204,7 @@ test.describe("PLAN-247 Chat availability @host", () => {
             await expect(page.getByText(/Thinking/)).not.toBeVisible({ timeout: 30000 });
             expect(mcpRequests).toEqual([]);
             await expectNoHorizontalOverflow(page);
-            await page.screenshot({
+            await page.screenshot({ scale: "css",
                 path: test.info().outputPath("PLAN-247-host-fake-success.png"),
                 fullPage: true,
             });
@@ -286,7 +286,7 @@ test.describe("PLAN-247 Chat availability @host", () => {
                 .toBeGreaterThan(0);
             await expect(page.getByText(/Thinking/)).not.toBeVisible({ timeout: 60000 });
             await expectNoHorizontalOverflow(page);
-            await page.screenshot({
+            await page.screenshot({ scale: "css",
                 path: test.info().outputPath("PLAN-247-host-real-xiaomi.png"),
                 fullPage: true,
             });
@@ -317,7 +317,7 @@ test.describe("PLAN-247 Chat availability @host", () => {
                 )
                 .toBe(true);
             await expectNoHorizontalOverflow(page);
-            await page.screenshot({
+            await page.screenshot({ scale: "css",
                 path: test.info().outputPath("PLAN-247-host-run-ambiguous.png"),
                 fullPage: true,
             });

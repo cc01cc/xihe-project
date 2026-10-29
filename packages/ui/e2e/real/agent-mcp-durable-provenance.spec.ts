@@ -159,7 +159,7 @@ test("@host PLAN-0387 T3.2 — CP checks durable Agent MCP tool-call provenance"
     await expect(approvalModal).toBeVisible({ timeout: 120_000 });
     await expect(approvalModal).toContainText("write_file");
     await expect(approvalModal).toContainText(fileName);
-    await page.screenshot({ path: testInfo.outputPath("mcp-durable-call-approval.png") });
+    await page.screenshot({ scale: "css", path: testInfo.outputPath("mcp-durable-call-approval.png") });
     await approvalModal.getByTestId("approval-approve").click();
     await expect(approvalModal).toBeHidden({ timeout: 20_000 });
 
@@ -187,7 +187,7 @@ test("@host PLAN-0387 T3.2 — CP checks durable Agent MCP tool-call provenance"
     await expect(page.getByText(fileName, { exact: true }).first()).toBeVisible({
         timeout: 30_000,
     });
-    await page.screenshot({ path: testInfo.outputPath("mcp-durable-call-result.png") });
+    await page.screenshot({ scale: "css", path: testInfo.outputPath("mcp-durable-call-result.png") });
 
     const invocationResponse = await request.get(
         `${CP_URL}/api/v1/audit/entries?type=mcp_invocation&workspaceId=${workspaceId}&size=50`,

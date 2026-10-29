@@ -372,7 +372,7 @@ test.describe("@host PLAN-0509 Run trace browser acceptance", () => {
     async function capture(page: Page, name: string): Promise<void> {
         mkdirSync(EVIDENCE_DIR, { recursive: true });
         const file = path.join(EVIDENCE_DIR, name);
-        await page.screenshot({ path: file, animations: "disabled", fullPage: false });
+        await page.screenshot({ scale: "css", path: file, animations: "disabled", fullPage: false });
         const viewport = page.viewportSize();
         screenshots.push({
             name,

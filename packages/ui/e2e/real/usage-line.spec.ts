@@ -105,7 +105,7 @@ test.describe("@host PLAN-0343 — usage line in session header", () => {
         // source badge: real | estimated | fallback
         expect(lineText).toMatch(/real|estimated|fallback/);
 
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: "usage-line-header.png",
             fullPage: false,
         });

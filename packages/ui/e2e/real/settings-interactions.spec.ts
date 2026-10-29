@@ -64,7 +64,7 @@ test.describe("@host Settings — Tier Tabs & Interactions", () => {
             expect(overlap).toBe(false);
         }
         // Evidence screenshot (dynamic content — no pixel baseline).
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: test.info().outputPath("settings-save-toast.png"),
             fullPage: true,
         });

@@ -158,11 +158,9 @@ test.describe("@host Workspace — File Panel & Delete Flow", () => {
         try {
             await expect(fileEntry).toBeVisible({ timeout: 15000 });
         } catch {
-            await page.waitForTimeout(500);
             throw new Error(`seeded file not visible; mcp responses: ${mcpBodies.join(" || ")}`);
         }
         await fileEntry.click();
-        await page.waitForTimeout(1500);
 
         await expect(page.locator("text=E2E Note").first()).toBeVisible({ timeout: 10000 });
         const overflow = await page.evaluate(() => {
@@ -273,7 +271,14 @@ test.describe("@host Workspace — File Panel & Delete Flow", () => {
         const token = (await r.json()).accessToken;
         await page.addInitScript((t) => localStorage.setItem("xihe-token", t), token);
         await page.goto("/workspace/" + wsId, { waitUntil: "load" });
-        await page.waitForTimeout(1500);
+        // PLAN-0586: replace the fixed 1.5 s wait with an explicit "SPA rendered" signal;
+        // this test's assertion is the screenshot itself, so accept toolbar or empty state.
+        await expect(
+            page
+                .getByTestId("workspace-toolbar-settings")
+                .or(page.getByText("工作区暂无文件"))
+                .or(page.getByText("暂无工作区")),
+        ).toBeVisible({ timeout: 10000 });
         await expectPlatformScreenshot(page, "workspace-empty-state.png");
     });
 });

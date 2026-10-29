@@ -94,7 +94,7 @@ test.describe("@host PLAN-0396 workspace job capability", () => {
         await expect(hint).toHaveAttribute("aria-disabled", "false");
         await expect(hint).toContainText("无隔离");
         await expect(hint).not.toContainText("尚无启动器");
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "unrestricted-job-hint.png"),
             fullPage: true,
         });

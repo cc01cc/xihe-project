@@ -154,7 +154,7 @@ test("@host PLAN-0337 Workspace approval mode is set in Settings and survives a 
         page.getByTestId("config-field-approval-policy-mode").locator("select"),
     ).toHaveValue("auto", { timeout: 20000 });
 
-    await page.screenshot({ path: testInfo.outputPath("approval-policy-workspace.png") });
+    await page.screenshot({ scale: "css", path: testInfo.outputPath("approval-policy-workspace.png") });
 });
 
 test("@host PLAN-0337 Session approval mode is persisted and reflected by the chat control", async ({
@@ -186,7 +186,7 @@ test("@host PLAN-0337 Session approval mode is persisted and reflected by the ch
     await expect(page.getByTestId("session-policy-mode")).toHaveValue("auto");
     await expect(page.getByTestId("session-policy-auto-banner")).toBeVisible();
 
-    await page.screenshot({ path: testInfo.outputPath("approval-policy-session-auto.png") });
+    await page.screenshot({ scale: "css", path: testInfo.outputPath("approval-policy-session-auto.png") });
 
     await setSessionMode(request, auth, { sessionId, mode: "manual" });
     await expect
@@ -198,7 +198,7 @@ test("@host PLAN-0337 Session approval mode is persisted and reflected by the ch
     await expect(page.getByTestId("session-policy-mode")).toHaveValue("manual");
     await expect(page.getByTestId("session-policy-auto-banner")).toHaveCount(0);
 
-    await page.screenshot({ path: testInfo.outputPath("approval-policy-session-manual.png") });
+    await page.screenshot({ scale: "css", path: testInfo.outputPath("approval-policy-session-manual.png") });
 
     // 不可达依赖必须失败：模式接口读回空串视为异常。
     expect(await readSessionMode(request, auth, sessionId)).not.toBe("");
