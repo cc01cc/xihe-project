@@ -161,8 +161,10 @@ export async function requestJson(pathname, {
   body,
   timeoutMs = CP_REQUEST_TIMEOUT_MS,
   problemFields = [],
+  maxBytes = 1_000_000,
+  headers: extraHeaders,
 }) {
-  const headers = { Accept: 'application/json' };
+  const headers = { Accept: 'application/json', ...extraHeaders };
   if (token) headers.Authorization = `Bearer ${token}`;
   if (body !== undefined) headers['Content-Type'] = 'application/json';
 
@@ -185,7 +187,7 @@ export async function requestJson(pathname, {
     }
     throw new CliError('CP_RESPONSE_INVALID', 'CP response could not be read.');
   }
-  if (text.length > 1_000_000) throw new CliError('CP_RESPONSE_TOO_LARGE', 'CP response exceeded the CLI response limit.');
+  if (text.length > maxBytes) throw new CliError('CP_RESPONSE_TOO_LARGE', 'CP response exceeded the CLI response limit.');
 
   let parsed = null;
   if (text.trim() !== '') {

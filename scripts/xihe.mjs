@@ -22,6 +22,16 @@ import {
 import { checkDevelopmentEnvironment, runConfigImport, runRealTest } from './xihe-cli/host.mjs';
 import { rotateCredentials } from './xihe-cli/credential.mjs';
 import { runConfigExport } from './xihe-cli/config-export.mjs';
+import {
+  collectStatus,
+  runAuditList,
+  runCheckpointList,
+  runJobList,
+  runJobOutput,
+  runScheduledTaskList,
+  runWorkspaceGet,
+  runWorkspaceList,
+} from './xihe-cli/readonly.mjs';
 import { runVerify } from './xihe-cli/verify.mjs';
 import { runVersion } from './xihe-cli/version.mjs';
 import { loadEnvFileChain } from './lib/env-file.mjs';
@@ -52,6 +62,14 @@ function helpText() {
     '  node scripts/xihe.mjs config export [--layer instance] [--include-secrets] [--out <file>] [--force]',
     '  node scripts/xihe.mjs verify --stack <n> --email <account> --workspace <wsId> [--wait-seconds <n>] [--yes]',
     '  node scripts/xihe.mjs version [--check]',
+    '  node scripts/xihe.mjs status',
+    '  node scripts/xihe.mjs workspace list',
+    '  node scripts/xihe.mjs workspace get <wsId>',
+    '  node scripts/xihe.mjs job list <wsId>',
+    '  node scripts/xihe.mjs job output <wsId> <jobId> [--stream stdout|stderr] [--offset <n>] [--limit <n>]',
+    '  node scripts/xihe.mjs checkpoint list <wsId>',
+    '  node scripts/xihe.mjs scheduled-task list <wsId> [--page <n>] [--size <n>]',
+    '  node scripts/xihe.mjs audit list [--type <type>] [--page <n>] [--size <n>]',
     '  node scripts/xihe.mjs provider add <id> --scope <USER|WORKSPACE> --label <label> [--models <id,id>] [--api-key-env <name>]',
     '  node scripts/xihe.mjs provider update <id> [--label <label>] [--base-url <url>] [--models <id,id>] [--api-key-env <name>]',
     '  node scripts/xihe.mjs provider list [--scope <USER|WORKSPACE>]',
@@ -119,6 +137,93 @@ export async function runCommand(argv, dependencies = {}) {
         root: dependencies.projectRoot,
       });
       return { exitCode: verifyResult.exitCode, json, data: verifyResult.data };
+    }
+
+    if (group === 'status') {
+      const parsed = parseCommandOptions(rest, [], []);
+      if (parsed.positionals.length !== 0) throw new CliError('INVALID_ARGUMENT', 'status takes no positional arguments.');
+      const apiBase = getApiBase(env);
+      const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+      const data = await collectStatus({ apiBase, fetchImpl, token });
+      return { exitCode: 0, json, data };
+    }
+
+    if (group === 'workspace') {
+      let parsed;
+      if (command === 'list') {
+        parsed = parseCommandOptions(rest, ['--email'], []);
+      } else if (command === 'get') {
+        parsed = parseCommandOptions(rest, ['--email'], []);
+      } else {
+        throw new CliError('INVALID_ARGUMENT', 'Unknown workspace command; use list/get.');
+      }
+      const apiBase = getApiBase(env);
+      const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+      if (command === 'list') {
+        if (parsed.positionals.length !== 0) throw new CliError('INVALID_ARGUMENT', 'workspace list takes no positional arguments.');
+        return { exitCode: 0, json, data: await runWorkspaceList({ apiBase, fetchImpl, token }) };
+      }
+      if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'workspace get requires one workspace ID.');
+      const data = await runWorkspaceGet({ apiBase, fetchImpl, token, workspaceId: parsed.positionals[0] });
+      return { exitCode: data.partial ? 1 : 0, json, data };
+    }
+
+    if (group === 'job') {
+      let parsed;
+      if (command === 'list') {
+        parsed = parseCommandOptions(rest, ['--email'], []);
+      } else if (command === 'output') {
+        parsed = parseCommandOptions(rest, ['--stream', '--offset', '--limit', '--email'], []);
+      } else {
+        throw new CliError('INVALID_ARGUMENT', 'Unknown job command; use list/output.');
+      }
+      if (command === 'list' && parsed.positionals.length !== 1) {
+        throw new CliError('INVALID_ARGUMENT', 'job list requires one workspace ID.');
+      }
+      if (command === 'output' && parsed.positionals.length !== 2) {
+        throw new CliError('INVALID_ARGUMENT', 'job output requires a workspace ID and a job ID.');
+      }
+      const apiBase = getApiBase(env);
+      const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+      if (command === 'list') {
+        return { exitCode: 0, json, data: await runJobList({ apiBase, fetchImpl, token, workspaceId: parsed.positionals[0] }) };
+      }
+      const data = await runJobOutput({
+        apiBase,
+        fetchImpl,
+        token,
+        workspaceId: parsed.positionals[0],
+        jobId: parsed.positionals[1],
+        options: parsed.values,
+      });
+      return { exitCode: 0, json, data };
+    }
+
+    if (group === 'checkpoint' && command === 'list') {
+      const parsed = parseCommandOptions(rest, ['--email'], []);
+      if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'checkpoint list requires one workspace ID.');
+      const apiBase = getApiBase(env);
+      const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+      const data = await runCheckpointList({ apiBase, fetchImpl, token, workspaceId: parsed.positionals[0] });
+      return { exitCode: data.partial ? 1 : 0, json, data };
+    }
+
+    if (group === 'scheduled-task' && command === 'list') {
+      const parsed = parseCommandOptions(rest, ['--page', '--size', '--email'], []);
+      if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'scheduled-task list requires one workspace ID.');
+      const apiBase = getApiBase(env);
+      const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+      const data = await runScheduledTaskList({ apiBase, fetchImpl, token, workspaceId: parsed.positionals[0], options: parsed.values });
+      return { exitCode: 0, json, data };
+    }
+
+    if (group === 'audit' && command === 'list') {
+      const parsed = parseCommandOptions(rest, ['--type', '--page', '--size', '--email'], []);
+      if (parsed.positionals.length !== 0) throw new CliError('INVALID_ARGUMENT', 'audit list takes no positional arguments.');
+      const apiBase = getApiBase(env);
+      const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+      const data = await runAuditList({ apiBase, fetchImpl, token, options: parsed.values });
+      return { exitCode: 0, json, data };
     }
 
     if (group === 'dev' && command === 'check') {
@@ -299,7 +404,7 @@ export async function runCommand(argv, dependencies = {}) {
   }
 }
 
-function printResult(result) {
+export function printResult(result) {
   if (result.json) {
     const value = result.error
       ? { ok: false, error: result.error }
@@ -360,6 +465,70 @@ function printResult(result) {
   }
   if (result.data?.action === 'deleted' && result.data?.connectionId) {
     process.stdout.write(`deleted: ${result.data.connectionId}\n`);
+    return;
+  }
+  const out = process.stdout;
+  const endpointLabel = (view) => view?.status === 'ok' ? 'ok' : `failed(${view?.code ?? `HTTP ${view?.httpStatus ?? '?'}`})`;
+  if (result.data?.kind === 'status') {
+    const e = result.data.endpoints;
+    out.write(`STATUS: ${result.data.overall} | status=${endpointLabel(e.status)} health=${endpointLabel(e.health)} version=${endpointLabel(e.version)}\n`);
+    return;
+  }
+  if (result.data?.kind === 'workspace-list') {
+    out.write(`workspaces: ${result.data.items.length}\n`);
+    for (const item of result.data.items) {
+      out.write(`${item.id}  ${item.name ?? ''}  ${item.workspaceRole ?? ''}${item.canWrite === false ? ' (readonly)' : ''}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'workspace') {
+    const item = result.data.workspace ?? {};
+    out.write(`${item.id ?? ''}  ${item.name ?? ''}  ${item.workspaceRole ?? ''}\n`);
+    const env = result.data.environment;
+    if (env?.retrieved === false) {
+      out.write(`environment: failed(${env.code ?? `HTTP ${env.httpStatus ?? '?'}`})\n`);
+    } else {
+      out.write(`environment: status=${env?.status ?? '?'} executionMode=${env?.executionMode ?? '?'} backend=${env?.storageBackend ?? '?'}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'job-list') {
+    out.write(`jobs: ${result.data.items.length}\n`);
+    for (const item of result.data.items) {
+      out.write(`${item.jobId}  ${item.status ?? ''}  ${item.startedAt ?? ''}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'job-output') {
+    const text = result.data.text ?? '';
+    out.write(text.endsWith('\n') || text === '' ? text : `${text}\n`);
+    return;
+  }
+  if (result.data?.kind === 'checkpoint-list') {
+    out.write(`checkpoints: ${result.data.items.length}\n`);
+    for (const item of result.data.items) {
+      out.write(`${item.sliceRef ?? item.id ?? ''}  ${item.state ?? ''}  ${item.capturedAt ?? ''}\n`);
+    }
+    const retention = result.data.retention;
+    if (retention?.retrieved === false) {
+      out.write(`retention: failed(${retention.code ?? `HTTP ${retention.httpStatus ?? '?'}`})\n`);
+    } else {
+      out.write(`retention: maxRuns=${retention?.maxRuns ?? '?'} ttlDays=${retention?.ttlDays ?? '?'} currentRuns=${retention?.currentRuns ?? '?'}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'scheduled-task-list') {
+    out.write(`scheduled tasks: ${result.data.items.length} (page ${result.data.page}, size ${result.data.size})\n`);
+    for (const item of result.data.items) {
+      out.write(`${item.id}  ${item.status ?? ''}  ${item.triggerKind ?? ''}${item.cronExpr ? ` ${item.cronExpr}` : ''}  next=${item.nextFireAt ?? ''}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'audit-list') {
+    out.write(`audit entries: ${result.data.entries.length} (page ${result.data.page}/${result.data.totalPages ?? '?'}, total ${result.data.totalElements ?? '?'})\n`);
+    for (const item of result.data.entries) {
+      out.write(`${item.createdAt ?? ''}  ${item.type ?? ''}  ${item.status ?? ''}  ${item.id ?? ''}\n`);
+    }
     return;
   }
   if (Array.isArray(result.data?.checks)) {

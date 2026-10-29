@@ -7,7 +7,7 @@ import { PassThrough } from 'node:stream';
 import { test } from 'node:test';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { runCommand } from './xihe.mjs';
+import { printResult, runCommand } from './xihe.mjs';
 import { promptSecret } from './xihe-cli/provider.mjs';
 
 const TEST_KEY = 'test-provider-secret-value';
@@ -1635,4 +1635,342 @@ test('verify reports an unknown session-create outcome instead of guessing an ID
   assert.equal(result.data.cleanup.session.status, 'unknown');
   assert.equal(result.data.cleanup.session.reason, 'CREATE_OUTCOME_UNKNOWN');
   assert.equal(cp.state.calls.some((call) => call.method === 'DELETE'), false);
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// PLAN-0574 M2: read-only surface (status / workspace / job / checkpoint /
+// scheduled-task / audit)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function captureStdout(fn) {
+  const chunks = [];
+  const original = process.stdout.write;
+  process.stdout.write = (chunk) => { chunks.push(String(chunk)); return true; };
+  try {
+    fn();
+  } finally {
+    process.stdout.write = original;
+  }
+  return chunks.join('');
+}
+
+async function startReadonlyMock({
+  versionStatus = 200,
+  environmentStatus = 200,
+  retentionStatus = 200,
+  jobOutputResponse = null,
+} = {}) {
+  const state = { queries: [], headers: [] };
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    await requestBody(request).catch(() => undefined);
+    state.headers.push({ method: request.method, pathname: url.pathname, workspaceId: request.headers['x-workspace-id'] ?? null });
+
+    if (url.pathname === '/api/v1/auth/login' && request.method === 'POST') {
+      json(response, 200, { accessToken: 'readonly-token' });
+      return;
+    }
+    if (url.pathname === '/api/v1/status' && request.method === 'GET') {
+      json(response, 200, { status: 'healthy', services: [{ name: 'cp', key: 'cp', status: 'up' }] });
+      return;
+    }
+    if (url.pathname === '/api/v1/health' && request.method === 'GET') {
+      json(response, 200, { status: 'UP' });
+      return;
+    }
+    if (url.pathname === '/api/v1/version' && request.method === 'GET') {
+      if (versionStatus !== 200) {
+        json(response, versionStatus, { code: 'HTTP_503' });
+        return;
+      }
+      json(response, 200, { stackId: 'stack-1', modules: { cp: { version: '0.1.0' } } });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces' && request.method === 'GET') {
+      json(response, 200, [{ id: 'ws-1', name: 'alpha', workspaceRole: 'OWNER', canWrite: true }]);
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1' && request.method === 'GET') {
+      json(response, 200, { id: 'ws-1', name: 'alpha', workspaceRole: 'OWNER' });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/environment' && request.method === 'GET') {
+      if (environmentStatus !== 200) {
+        json(response, environmentStatus, { code: 'RUNTIME_UNAVAILABLE', requestId: 'req-env-1' });
+        return;
+      }
+      json(response, 200, { workspaceId: 'ws-1', status: 'ready', executionMode: 'docker', storageBackend: 'local' });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/jobs' && request.method === 'GET') {
+      json(response, 200, [{ jobId: 'job-1', status: 'succeeded', startedAt: '2026-10-29T00:00:00Z' }]);
+      return;
+    }
+    if (url.pathname.startsWith('/api/v1/workspaces/ws-1/jobs/') && url.pathname.endsWith('/output') && request.method === 'GET') {
+      state.queries.push({ pathname: url.pathname, params: url.searchParams });
+      if (jobOutputResponse) {
+        json(response, jobOutputResponse.status, jobOutputResponse.body);
+        return;
+      }
+      json(response, 200, {
+        jobId: url.pathname.split('/')[6],
+        runtimeJobId: 'rt-1',
+        stream: url.searchParams.get('stream') ?? 'stdout',
+        offset: Number(url.searchParams.get('offset') ?? 0),
+        nextOffset: 5,
+        sizeBytes: 5,
+        truncated: false,
+        data: 'line-1\nline-2\n',
+        jobStatus: 'succeeded',
+      });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/checkpoints' && request.method === 'GET') {
+      json(response, 200, [{ id: 'ck-1', sliceRef: 'slice-1', state: 'unrollable', capturedAt: '2026-10-29T00:00:00Z' }]);
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/checkpoints/retention' && request.method === 'GET') {
+      if (retentionStatus !== 200) {
+        json(response, retentionStatus, { code: 'RUNTIME_UNAVAILABLE', requestId: 'req-ret-1' });
+        return;
+      }
+      json(response, 200, { maxRuns: 20, ttlDays: 30, unsealedNeverDeleted: false, currentRuns: 3, currentRefs: 3 });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/scheduled-tasks' && request.method === 'GET') {
+      state.queries.push({ pathname: url.pathname, params: url.searchParams });
+      json(response, 200, {
+        workspaceId: 'ws-1',
+        page: Number(url.searchParams.get('page') ?? 0),
+        size: Number(url.searchParams.get('size') ?? 100),
+        tasks: [{ id: 'task-1', status: 'active', triggerKind: 'cron', cronExpr: '0 9 * * *', nextFireAt: '2026-10-30T09:00:00Z' }],
+      });
+      return;
+    }
+    if (url.pathname === '/api/v1/audit/entries' && request.method === 'GET') {
+      state.queries.push({ pathname: url.pathname, params: url.searchParams });
+      json(response, 200, {
+        entries: [{ id: 'entry-1', type: 'config.export', status: 'ok', createdAt: '2026-10-29T00:00:00Z' }],
+        page: Number(url.searchParams.get('page') ?? 0),
+        size: Number(url.searchParams.get('size') ?? 20),
+        totalElements: 1,
+        totalPages: 1,
+      });
+      return;
+    }
+    json(response, 404, { code: 'NOT_FOUND', detail: 'unknown endpoint' });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    state,
+    env: { XIHE_CP_PORT: String(server.address().port), XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD },
+    close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
+  };
+}
+
+test('status aggregates all three endpoints and reports healthy', async (t) => {
+  const cp = await startReadonlyMock();
+  t.after(cp.close);
+  const result = await runCommand(['status'], { env: cp.env, promptSecret: noPrompt, stdout: sink(), stderr: sink() });
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.data.overall, 'healthy');
+  assert.equal(result.data.endpoints.status.status, 'ok');
+  assert.equal(result.data.endpoints.health.status, 'ok');
+  assert.equal(result.data.endpoints.version.status, 'ok');
+  const human = captureStdout(() => printResult(result));
+  assert.match(human, /^STATUS: healthy \| status=ok health=ok version=ok\n$/);
+});
+
+test('status keeps a failed endpoint visible and reports degraded instead of healthy', async (t) => {
+  const cp = await startReadonlyMock({ versionStatus: 503 });
+  t.after(cp.close);
+  const result = await runCommand(['status'], { env: cp.env, promptSecret: noPrompt, stdout: sink(), stderr: sink() });
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.data.overall, 'degraded');
+  assert.equal(result.data.endpoints.version.status, 'failed');
+  assert.equal(result.data.endpoints.status.status, 'ok');
+  assert.equal(result.data.endpoints.health.status, 'ok');
+});
+
+test('workspace list and get use the same source with workspace headers only where scoped', async (t) => {
+  const cp = await startReadonlyMock();
+  t.after(cp.close);
+  const list = await runCommand(['workspace', 'list'], { env: cp.env, promptSecret: noPrompt, stdout: sink(), stderr: sink() });
+  assert.equal(list.exitCode, 0);
+  assert.equal(list.data.items.length, 1);
+  const listCall = cp.state.headers.find((call) => call.pathname === '/api/v1/workspaces');
+  assert.equal(listCall.workspaceId, null);
+
+  const got = await runCommand(['workspace', 'get', 'ws-1', '--json'], { env: cp.env, promptSecret: noPrompt, stdout: sink(), stderr: sink() });
+  assert.equal(got.exitCode, 0);
+  assert.equal(got.data.workspace.id, 'ws-1');
+  assert.equal(got.data.environment.retrieved, true);
+  assert.equal(got.data.environment.executionMode, 'docker');
+  for (const path of ['/api/v1/workspaces/ws-1', '/api/v1/workspaces/ws-1/environment']) {
+    const call = cp.state.headers.find((item) => item.pathname === path);
+    assert.equal(call.workspaceId, 'ws-1');
+  }
+});
+
+test('workspace get surfaces an environment failure instead of dropping it', async (t) => {
+  const cp = await startReadonlyMock({ environmentStatus: 502 });
+  t.after(cp.close);
+  const result = await runCommand(['workspace', 'get', 'ws-1'], { env: cp.env, promptSecret: noPrompt, stdout: sink(), stderr: sink() });
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.data.workspace.id, 'ws-1');
+  assert.equal(result.data.environment.retrieved, false);
+  assert.equal(result.data.environment.code, 'RUNTIME_UNAVAILABLE');
+  assert.equal(result.data.partial, 'environment');
+});
+
+test('job output passes stream/offset/limit defaults and prints raw text', async (t) => {
+  const cp = await startReadonlyMock();
+  t.after(cp.close);
+  const stdout = sink();
+  const result = await runCommand(['job', 'output', 'ws-1', 'job-1'], { env: cp.env, promptSecret: noPrompt, stdout, stderr: sink() });
+  assert.equal(result.exitCode, 0);
+  const query = cp.state.queries[0].params;
+  assert.equal(query.get('stream'), 'stdout');
+  assert.equal(query.get('offset'), '0');
+  assert.equal(query.get('limit'), '65536');
+  assert.equal(result.data.text, 'line-1\nline-2\n');
+  assert.equal(result.data.nextOffset, 5);
+  const human = captureStdout(() => printResult(result));
+  assert.equal(human, 'line-1\nline-2\n');
+  const call = cp.state.headers.find((item) => item.pathname?.startsWith('/api/v1/workspaces/ws-1/jobs/'));
+  assert.equal(call.workspaceId, 'ws-1');
+});
+
+test('job output forwards explicit pagination and rejects invalid arguments before requests', async (t) => {
+  const cp = await startReadonlyMock();
+  t.after(cp.close);
+  const custom = await runCommand(['job', 'output', 'ws-1', 'job-1', '--stream', 'stderr', '--offset', '10', '--limit', '100', '--json'], {
+    env: cp.env,
+    promptSecret: noPrompt,
+    stderr: sink(),
+  });
+  assert.equal(custom.exitCode, 0);
+  assert.equal(cp.state.queries[0].params.get('stream'), 'stderr');
+  assert.equal(cp.state.queries[0].params.get('offset'), '10');
+  assert.equal(cp.state.queries[0].params.get('limit'), '100');
+  assert.equal(custom.data.truncated, false);
+
+  const badStream = await runCommand(['job', 'output', 'ws-1', 'job-1', '--stream', 'both'], { env: cp.env, promptSecret: noPrompt, stdout: sink(), stderr: sink() });
+  assert.equal(badStream.error.code, 'INVALID_ARGUMENT');
+  const badOffset = await runCommand(['job', 'output', 'ws-1', 'job-1', '--offset', '-1'], { env: cp.env, promptSecret: noPrompt, stdout: sink(), stderr: sink() });
+  assert.equal(badOffset.error.code, 'INVALID_ARGUMENT');
+  assert.equal(cp.state.queries.length, 1);
+});
+
+test('job output maps 409 JOB_OUTPUT_LOST with requestId without arbitrary detail', async (t) => {
+  const cp = await startReadonlyMock({
+    jobOutputResponse: {
+      status: 409,
+      body: { code: 'JOB_OUTPUT_LOST', requestId: 'req-lost-1', detail: TEST_KEY },
+    },
+  });
+  t.after(cp.close);
+  const result = await runCommand(['job', 'output', 'ws-1', 'job-1', '--json'], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.error.code, 'JOB_OUTPUT_LOST');
+  assert.equal(result.error.details.requestId, 'req-lost-1');
+  assert.equal(JSON.stringify(result).includes(TEST_KEY), false);
+});
+
+test('checkpoint list merges retention and reports a retention failure as partial', async (t) => {
+  const cp = await startReadonlyMock();
+  t.after(cp.close);
+  const ok = await runCommand(['checkpoint', 'list', 'ws-1'], { env: cp.env, promptSecret: noPrompt, stdout: sink(), stderr: sink() });
+  assert.equal(ok.exitCode, 0);
+  assert.equal(ok.data.items.length, 1);
+  assert.equal(ok.data.retention.retrieved, true);
+  assert.equal(ok.data.retention.maxRuns, 20);
+
+  const failing = await startReadonlyMock({ retentionStatus: 502 });
+  t.after(failing.close);
+  const partial = await runCommand(['checkpoint', 'list', 'ws-1', '--json'], { env: failing.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(partial.exitCode, 1);
+  assert.equal(partial.data.items.length, 1);
+  assert.equal(partial.data.retention.retrieved, false);
+  assert.equal(partial.data.retention.code, 'RUNTIME_UNAVAILABLE');
+  assert.equal(partial.data.partial, 'retention');
+});
+
+test('scheduled-task and audit lists forward page/size/type filters', async (t) => {
+  const cp = await startReadonlyMock();
+  t.after(cp.close);
+  const scheduled = await runCommand(['scheduled-task', 'list', 'ws-1', '--page', '2', '--size', '50', '--json'], {
+    env: cp.env,
+    promptSecret: noPrompt,
+    stderr: sink(),
+  });
+  assert.equal(scheduled.exitCode, 0);
+  assert.equal(scheduled.data.items.length, 1);
+  const scheduledQuery = cp.state.queries.find((item) => item.pathname === '/api/v1/workspaces/ws-1/scheduled-tasks').params;
+  assert.equal(scheduledQuery.get('page'), '2');
+  assert.equal(scheduledQuery.get('size'), '50');
+
+  const audit = await runCommand(['audit', 'list', '--type', 'config.export', '--page', '1', '--size', '10'], {
+    env: cp.env,
+    promptSecret: noPrompt,
+    stdout: sink(),
+    stderr: sink(),
+  });
+  assert.equal(audit.exitCode, 0);
+  const auditQuery = cp.state.queries.find((item) => item.pathname === '/api/v1/audit/entries').params;
+  assert.equal(auditQuery.get('type'), 'config.export');
+  assert.equal(auditQuery.get('page'), '1');
+  assert.equal(auditQuery.get('size'), '10');
+  assert.equal(audit.data.entries[0].type, 'config.export');
+});
+
+test('job list and scheduled-task/audit argument validation fail without requests', async (t) => {
+  const cp = await startReadonlyMock();
+  t.after(cp.close);
+  const noWs = await runCommand(['job', 'list'], { env: cp.env, promptSecret: noPrompt, stdout: sink(), stderr: sink() });
+  assert.equal(noWs.error.code, 'INVALID_ARGUMENT');
+  const extraPos = await runCommand(['audit', 'list', 'ws-1'], { env: cp.env, promptSecret: noPrompt, stdout: sink(), stderr: sink() });
+  assert.equal(extraPos.error.code, 'INVALID_ARGUMENT');
+  assert.equal(cp.state.headers.filter((call) => call.pathname !== '/api/v1/auth/login').length, 0);
+});
+test('T2.7 --json envelope and human output stay consistent across M1/M2 commands', async (t) => {
+  const ro = await startReadonlyMock();
+  const ex = await startExportMock();
+  t.after(() => Promise.all([ro.close(), ex.close()]));
+  const cases = [
+    { args: ['status'], env: ro.env, kind: 'status' },
+    { args: ['workspace', 'list'], env: ro.env, kind: 'workspace-list' },
+    { args: ['workspace', 'get', 'ws-1'], env: ro.env, kind: 'workspace' },
+    { args: ['job', 'list', 'ws-1'], env: ro.env, kind: 'job-list' },
+    { args: ['job', 'output', 'ws-1', 'job-1'], env: ro.env, kind: 'job-output' },
+    { args: ['checkpoint', 'list', 'ws-1'], env: ro.env, kind: 'checkpoint-list' },
+    { args: ['scheduled-task', 'list', 'ws-1'], env: ro.env, kind: 'scheduled-task-list' },
+    { args: ['audit', 'list'], env: ro.env, kind: 'audit-list' },
+    { args: ['config', 'export'], env: ex.env, kind: null, check: (data) => typeof data.content === 'string' },
+    { args: ['version'], env: {}, kind: null, check: (data) => data.version === 'development checkout' },
+  ];
+  for (const { args, env, kind, check } of cases) {
+    const result = await runCommand([...args, '--json'], { env, promptSecret: noPrompt, stderr: sink() });
+    assert.equal(result.exitCode, 0, args.join(' '));
+    const printed = JSON.parse(captureStdout(() => printResult(result)));
+    assert.equal(printed.ok, true, args.join(' '));
+    assert.equal(typeof printed.data, 'object', args.join(' '));
+    if (kind) assert.equal(printed.data.kind, kind, args.join(' '));
+    if (check) assert.equal(check(printed.data), true, args.join(' '));
+  }
+
+  const human = await runCommand(['status'], { env: ro.env, promptSecret: noPrompt, stdout: sink(), stderr: sink() });
+  const humanText = captureStdout(() => printResult(human));
+  assert.match(humanText, /^STATUS: /);
+  assert.throws(() => JSON.parse(humanText), SyntaxError);
+
+  const failing = await runCommand(['status', '--json'], {
+    env: { XIHE_CP_PORT: '1', XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD },
+    promptSecret: noPrompt,
+    stderr: sink(),
+  });
+  assert.notEqual(failing.exitCode, 0);
+  const failingPrinted = JSON.parse(captureStdout(() => printResult(failing)));
+  assert.equal(failingPrinted.ok, false);
+  assert.equal(typeof failingPrinted.error.code, 'string');
+  assert.equal(typeof failingPrinted.error.message, 'string');
 });
