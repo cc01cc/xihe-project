@@ -3,17 +3,29 @@ import { expect, type Page, type Request } from "@playwright/test";
 /**
  * PLAN-0586 helpers for the ui-health guard.
  *
- * Background (review round-1 #2): the previous fixed 1.5 s wait after `goto(... load)`
- * was a *delayed pageerror observation window*, not a rendering wait. Replacing it with
- * `waitForLoadState("load")` was a no-op and collapsed the window to two rAF ticks.
- * These helpers keep the guarantee while staying event-driven:
- *  1. `waitForRequestQuiescence` waits until no non-stream request is in flight (SSE and
- *     long-lived streams are excluded so chat/event pages can still settle);
- *  2. `waitForPageErrorWindow` then waits for the `pageerror` event itself, bounded by the
- *     configured window. A delayed error resolves it immediately and is still asserted by
- *     `expect(pageErrors).toHaveLength(0)`.
- * The window guarantee is proven by the one-shot negative probe in
- * `.local/plan-0586/plan0586-pageerror-probe.spec.ts` (run after the p2 stack window).
+ * Background (review round-1 #2 / round-2 P1): the previous fixed 1.5 s wait after
+ * `goto(... load)` was a *delayed pageerror observation window*, not a rendering wait.
+ * Replacing it with `waitForLoadState("load")` was a no-op; and attaching request
+ * listeners after `goto` meant already in-flight requests never entered the pending set
+ * (the quiescence poll returned 0 on the first tick). The tracker therefore must be
+ * created BEFORE navigation:
+ *
+ *   const tracker = startRequestTracker(page);
+ *   try {
+ *       await page.goto(...);
+ *       await tracker.waitForQuiescence();
+ *       await waitForPageErrorWindow(page);
+ *   } finally {
+ *       tracker.dispose();
+ *   }
+ *
+ * `waitForPageErrorWindow` stays a bounded `page.waitForEvent("pageerror")` observation
+ * window (not a fixed sleep): a delayed error resolves it immediately and is still
+ * asserted by `expect(pageErrors).toHaveLength(0)`.
+ *
+ * The window guarantee is proven by the negative probe in
+ * `e2e/real/helpers/probes/plan0586-pageerror-probe.spec.ts` (copied into testDir only
+ * while running; see the probe header for the exact commands).
  */
 
 /** SSE / long-lived streams keep a connection open and must not block quiescence. */
@@ -23,10 +35,22 @@ export function isLongLivedRequest(resourceType: string, url: string): boolean {
     return resourceType === "eventsource" || LONG_LIVED_URL.test(url);
 }
 
-export async function waitForRequestQuiescence(page: Page, timeoutMs = 5000): Promise<void> {
+export interface RequestTracker {
+    /** Resolves once no tracked (non-stream) request is in flight. */
+    waitForQuiescence(timeoutMs?: number): Promise<void>;
+    /** Number of tracked requests observed since the tracker was created (evidence). */
+    observedCount(): number;
+    /** Detaches the listeners; safe to call more than once. */
+    dispose(): void;
+}
+
+export function startRequestTracker(page: Page): RequestTracker {
     const pending = new Set<Request>();
+    let observed = 0;
     const onRequest = (request: Request): void => {
-        if (!isLongLivedRequest(request.resourceType(), request.url())) pending.add(request);
+        if (isLongLivedRequest(request.resourceType(), request.url())) return;
+        pending.add(request);
+        observed += 1;
     };
     const onDone = (request: Request): void => {
         pending.delete(request);
@@ -34,17 +58,29 @@ export async function waitForRequestQuiescence(page: Page, timeoutMs = 5000): Pr
     page.on("request", onRequest);
     page.on("requestfinished", onDone);
     page.on("requestfailed", onDone);
-    try {
-        // `expect.poll` is the project's standard event-driven wait (explicit timeout,
-        // no fixed sleep); it returns as soon as the tracked set drains.
-        await expect
-            .poll(() => pending.size, { timeout: timeoutMs, intervals: [100, 100, 200, 300, 500] })
-            .toBe(0);
-    } finally {
-        page.off("request", onRequest);
-        page.off("requestfinished", onDone);
-        page.off("requestfailed", onDone);
-    }
+    let disposed = false;
+    return {
+        async waitForQuiescence(timeoutMs = 5000): Promise<void> {
+            // `expect.poll` is the project's standard event-driven wait (explicit timeout,
+            // no fixed sleep); it returns as soon as the tracked set drains.
+            await expect
+                .poll(() => pending.size, {
+                    timeout: timeoutMs,
+                    intervals: [100, 100, 200, 300, 500],
+                })
+                .toBe(0);
+        },
+        observedCount(): number {
+            return observed;
+        },
+        dispose(): void {
+            if (disposed) return;
+            disposed = true;
+            page.off("request", onRequest);
+            page.off("requestfinished", onDone);
+            page.off("requestfailed", onDone);
+        },
+    };
 }
 
 /**
