@@ -23,6 +23,8 @@ const CATALOG = {
             modelDiscovery: "remote-models",
             credential: { type: "api-key", required: true },
             supports: { customBaseUrl: true, streaming: true, tools: false, vision: false },
+            supportedApiTypes: [{ apiTypeId: "openai-chat-completions", version: 1 }],
+            defaultApiType: { apiTypeId: "openai-chat-completions", version: 1 },
         },
         {
             id: "zhipu",
@@ -34,6 +36,8 @@ const CATALOG = {
             modelDiscovery: "remote-models",
             credential: { type: "api-key", required: true },
             supports: { customBaseUrl: true, streaming: true, tools: true },
+            supportedApiTypes: [{ apiTypeId: "openai-chat-completions", version: 1 }],
+            defaultApiType: { apiTypeId: "openai-chat-completions", version: 1 },
         },
         {
             id: "custom-openai-compatible",
@@ -45,11 +49,13 @@ const CATALOG = {
             modelDiscovery: "manual",
             credential: { type: "api-key", required: false },
             supports: { customBaseUrl: true, streaming: true },
+            supportedApiTypes: [{ apiTypeId: "openai-chat-completions", version: 1 }],
+            defaultApiType: { apiTypeId: "openai-chat-completions", version: 1 },
         },
     ],
 };
 
-test.describe("Provider protocol groups (PLAN-0364 M4)", () => {
+test.describe("Provider protocol groups (PLAN-0364 M4, discovery modes per PLAN-0438)", () => {
     test.beforeEach(async ({ page }) => {
         await page.addInitScript(() => {
             localStorage.setItem("xihe-token", "mock-token");
@@ -101,7 +107,7 @@ test.describe("Provider protocol groups (PLAN-0364 M4)", () => {
         );
     });
 
-    test("groups by protocol family, shows supports read-only, and drops unimplemented discovery modes", async ({
+    test("groups by protocol family, shows supports read-only, and lists current discovery modes", async ({
         page,
     }) => {
         await page.goto("/workspace/ws-1/settings?tab=config", { waitUntil: "load" });
@@ -131,12 +137,18 @@ test.describe("Provider protocol groups (PLAN-0364 M4)", () => {
         expect(color).not.toBe("rgba(0, 0, 0, 0)");
         await expect(streamingBadge).toBeVisible();
 
-        // 模型发现仅保留有实现的两种
+        // 模型发现按当前 CP 契约展示：ProviderConnectionService 接受
+        // remote-models / litellm-catalog / curated / manual 四种（PLAN-0438），
+        // 已退役的旧「精选模型」标签不得复现。
         await page.getByTestId("provider-picker-custom-openai-compatible").click();
-        const optionText = (await page.locator("select option").allTextContents()).join(" | ");
+        const discoverySelect = page
+            .getByTestId("provider-connection-modal")
+            .locator("select")
+            .nth(1);
+        const optionText = (await discoverySelect.locator("option").allTextContents()).join(" | ");
         expect(optionText).toContain("Provider /models");
+        expect(optionText).toContain("LiteLLM Catalog");
         expect(optionText).toContain("手动输入模型");
-        expect(optionText).not.toContain("LiteLLM Catalog");
         expect(optionText).not.toContain("精选模型");
 
         await page.screenshot({

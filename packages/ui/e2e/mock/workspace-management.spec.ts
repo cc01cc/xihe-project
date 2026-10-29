@@ -62,24 +62,26 @@ test.describe("Workspace management dialogs (PLAN-262 M2)", () => {
         });
     });
 
-    test("empty state offers creation; managed create posts storage and execution mode", async ({
+    test("empty state offers creation; managed create posts storage without execution mode", async ({
         page,
     }) => {
         // No workspace in storage -> empty state (PLAN-262 decision 11).
         // setupMockAuth seeds per-tab sessionStorage too (PLAN-0560), so clear both.
+        // PLAN-0577: the real empty-state entry is /workspace; "/workspace/new"
+        // resolves as workspaceId="new" and makes the fixture mock a workspace.
         await page.addInitScript(() => {
             localStorage.removeItem("xihe-workspace");
             sessionStorage.removeItem("xihe-workspace");
         });
-        await page.goto("/workspace/new");
+        await page.goto("/workspace");
         await expect(page.getByText("暂无工作区")).toBeVisible();
         await page.getByRole("button", { name: "创建工作区" }).click();
 
         const dialog = page.getByTestId("workspace-create-dialog");
         await expect(dialog).toBeVisible();
-        // PLAN-0384 progressive flow: managed import → execution mode → confirm.
+        // Managed import keeps the server default docker backend and therefore
+        // skips the execution-mode step entirely (no explicit executionMode).
         await dialog.getByTestId("workspace-storage-managed").click();
-        await dialog.getByTestId("workspace-execution-next").click();
         await dialog.getByTestId("workspace-create-name").fill("E2E Workspace");
         await dialog.getByTestId("workspace-create-submit").click();
 
@@ -87,8 +89,8 @@ test.describe("Workspace management dialogs (PLAN-262 M2)", () => {
         expect(createPayload).toMatchObject({
             name: "E2E Workspace",
             storageMode: "managed_import",
-            executionMode: "windows-mxc",
         });
+        expect(createPayload?.executionMode).toBeUndefined();
         expect(createPayload?.profile).toBeUndefined();
         expect(createPayload?.hostPath).toBeUndefined();
     });
