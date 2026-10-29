@@ -124,6 +124,18 @@ const HOST_ROOT = path.resolve(
 );
 const AGENT_DIR = path.resolve(process.cwd(), "../agent");
 const BINDING_STATE_FILE = path.join(HOST_ROOT, "agent-binding.json");
+// BL-143: agent rebind readiness budget. Measured spawn -> llmReady=ready is
+// ~8.7s (6.8-8.9s across 8 rebind logs, 2026-10-29) plus the 0.5s poll grain, so
+// 30s keeps ~3x headroom. Terminal LLM states fail fast instead of burning the
+// budget: waiting 180s for a state that will never turn ready was the single
+// largest time sink of the first mock-full baseline run.
+const AGENT_READY_TIMEOUT_MS = Number(process.env.XIHE_E2E_AGENT_READY_TIMEOUT_MS ?? 30000);
+const AGENT_READY_POLL_INTERVAL_MS = 500;
+const TERMINAL_LLM_READY_STATES = new Set([
+    "missing_credentials",
+    "invalid_credentials",
+    "model_unavailable",
+]);
 
 function listeningPid(port: number): number | null {
     try {
@@ -288,7 +300,7 @@ export async function ensureAgentWorkspaceBinding(workspaceId: string): Promise<
     }
     console.log(`[journey] Agent restarted for workspace ${workspaceId} (log: ${logFile})`);
 
-    const deadline = Date.now() + 180000;
+    const deadline = Date.now() + AGENT_READY_TIMEOUT_MS;
     let lastState = "not ready";
     while (Date.now() < deadline) {
         const health = await agentHealthOk();
@@ -299,10 +311,23 @@ export async function ensureAgentWorkspaceBinding(workspaceId: string): Promise<
             );
             return;
         }
+        if (health.ok && TERMINAL_LLM_READY_STATES.has(health.llmReady)) {
+            // BL-143 fail-fast: a terminal LLM readiness state never turns ready
+            // by waiting. Surface the cause (provider connection / credential
+            // resolution) immediately instead of burning the whole budget.
+            throw new Error(
+                `Agent LLM readiness is terminal after rebind: llmReady=${health.llmReady}. ` +
+                    "Check the bound provider connection and credential resolution for this " +
+                    "workspace before rerunning the E2E lane (BL-143 fail-fast).",
+            );
+        }
         lastState = health.ok ? `llmReady=${health.llmReady}` : "health unreachable";
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await new Promise((resolve) => setTimeout(resolve, AGENT_READY_POLL_INTERVAL_MS));
     }
-    throw new Error(`Agent did not become ready within 180000ms (${lastState})`);
+    throw new Error(
+        `Agent did not become ready within ${AGENT_READY_TIMEOUT_MS}ms (${lastState}); ` +
+            "override with XIHE_E2E_AGENT_READY_TIMEOUT_MS for cold starts",
+    );
 }
 
 /** Seed localStorage with auth/workspace so the SPA boots straight into the workspace. */
