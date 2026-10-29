@@ -4,12 +4,15 @@
 //
 // Host profile only. Run via:
 //   node scripts/e2e-host.mjs --retries=0 e2e/real/journey-b.spec.ts
-// The spec kills the isolated Runtime process itself and restarts it in
-// B1-recover. PLAN-0369: the restarted process is intentionally LEFT RUNNING so
-// the remaining specs in a full @host run keep a working Runtime (the previous
-// afterAll kill cascaded into every later Runtime-dependent spec); the isolated
-// runner reaps it by port during teardown. On a dev stack, restart the runtime
-// afterwards with `mise run dev:runtime`.
+// The spec kills the isolated Runtime process itself; the restart is guarded
+// unconditionally in B1-fail-human's finally and re-checked in B1-recover
+// (PLAN-0579 R3) so a failed B1 assertion can no longer leave the runtime dead
+// for the remaining serial specs. PLAN-0369: the restarted process is
+// intentionally LEFT RUNNING so the remaining specs in a full @host run keep a
+// working Runtime (the previous afterAll kill cascaded into every later
+// Runtime-dependent spec); the isolated runner reaps it by port during
+// teardown. On a dev stack, restart the runtime afterwards with `mise run
+// dev:runtime`.
 import { execSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, closeSync } from "node:fs";
 import path from "node:path";
@@ -19,12 +22,25 @@ import { registerJourneyUser, seedPage, type JourneyContext } from "./helpers/jo
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const RUNTIME_PORT = Number(process.env.XIHE_RUNTIME_PORT || "12633");
 const RUNTIME_DIR = path.resolve(process.cwd(), "../runtime");
-const RUNTIME_EXE = path.join(
-    RUNTIME_DIR,
-    "target",
-    "debug",
-    process.platform === "win32" ? "xihe-runtime.exe" : "xihe-runtime",
-);
+const RUNTIME_EXE_NAME = process.platform === "win32" ? "xihe-runtime.exe" : "xihe-runtime";
+// PLAN-0579 R2: the restart binary must survive an external CARGO_TARGET_DIR.
+// The host runner injects XIHE_RUNTIME_EXE (the binary it actually launched,
+// resolved across the same candidates); the local fallback mirrors cargo's
+// debug/release resolution so standalone runs keep working, and a miss reports
+// every probed path instead of a single hard-coded location.
+function runtimeBinaryCandidates(): string[] {
+    const external = process.env.CARGO_TARGET_DIR;
+    return [
+        ...(external
+            ? [
+                  path.join(external, "debug", RUNTIME_EXE_NAME),
+                  path.join(external, "release", RUNTIME_EXE_NAME),
+              ]
+            : []),
+        path.join(RUNTIME_DIR, "target", "debug", RUNTIME_EXE_NAME),
+        path.join(RUNTIME_DIR, "target", "release", RUNTIME_EXE_NAME),
+    ];
+}
 const HOST_ROOT = path.resolve(
     process.cwd(),
     "../../.tmp/e2e-host",
@@ -33,7 +49,12 @@ const HOST_ROOT = path.resolve(
 // 运行证据写 .local（已 gitignore）；需要入册时再把摘要/截图拷入对应 PLAN evidence。
 // 2026-09-19: PLAN-0369 归档后此前的 plans/PLAN-0369-.../evidence 落点会在旧路径重建目录。
 const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/journey-b"),
-    HUMAN_RUNTIME_DOWN = "沙盒未就绪";
+    // PLAN-0579 R1: the humanized copy for RUNTIME_UNAVAILABLE per the current
+    // mapping (packages/ui/src/lib/errorMessages.ts, PLAN-0557); the old
+    // "沙盒未就绪" copy moved to MCP_STREAM_*. Hard-coded verbatim so a future
+    // copy drift keeps failing this assertion instead of silently passing.
+    HUMAN_RUNTIME_DOWN =
+        "工作区运行时未就绪（Runtime 不可达），请确认服务已启动后重试；若持续失败请联系管理员";
 
 let ctx: JourneyContext;
 
@@ -103,13 +124,26 @@ async function killRuntime(): Promise<void> {
         .toBe(false);
 }
 
-async function startRuntime(request: APIRequestContext): Promise<void> {
-    expect(existsSync(RUNTIME_EXE), `runtime binary exists at ${RUNTIME_EXE}`).toBe(true);
+function resolveRuntimeExe(): string | null {
+    const injected = process.env.XIHE_RUNTIME_EXE;
+    if (injected && existsSync(injected)) return injected;
+    return runtimeBinaryCandidates().find((candidate) => existsSync(candidate)) ?? null;
+}
+
+async function spawnRuntime(): Promise<void> {
+    const probed = [process.env.XIHE_RUNTIME_EXE, ...runtimeBinaryCandidates()].filter(
+        (candidate): candidate is string => Boolean(candidate),
+    );
+    const runtimeExe = resolveRuntimeExe();
+    expect(
+        runtimeExe,
+        `runtime binary not found; probed paths: ${[...new Set(probed)].join(", ")}`,
+    ).toBeTruthy();
     const logFile = path.join(HOST_ROOT, "logs", "journey-b-runtime-restart.log");
     mkdirSync(path.dirname(logFile), { recursive: true });
     const fd = openSync(logFile, "a");
     try {
-        const child = spawn(RUNTIME_EXE, [], {
+        const child = spawn(runtimeExe as string, [], {
             cwd: RUNTIME_DIR,
             detached: true,
             windowsHide: true,
@@ -135,6 +169,18 @@ async function startRuntime(request: APIRequestContext): Promise<void> {
     }
     await waitForHttp(`http://127.0.0.1:${RUNTIME_PORT}/health`);
     await waitForHttp(`http://127.0.0.1:${RUNTIME_PORT}/ready`);
+}
+
+/**
+ * PLAN-0579 R3: restart the runtime only when it is actually down, so the B1
+ * finally and B1-recover can both call this without double-spawning onto the
+ * same port. Recovery must not depend on B1 assertions passing: in serial mode
+ * a failed assertion would otherwise skip the only restart point and cascade
+ * into every later Runtime-dependent spec.
+ */
+async function ensureRuntimeUp(request: APIRequestContext): Promise<void> {
+    if (await fetchOk(`http://127.0.0.1:${RUNTIME_PORT}/health`)) return;
+    await spawnRuntime();
     // CP must observe the runtime again before the UI retries the mutation.
     await expect
         .poll(
@@ -291,8 +337,9 @@ test.describe("@host Journey B — manual workspace mutations (PLAN-0353 D1)", (
         await page.screenshot({ path: evidencePath("b2-audit.png"), fullPage: false });
     });
 
-    test("B1-fail-human: Runtime down yields the human-readable sandbox error", async ({
+    test("B1-fail-human: Runtime down yields the human-readable runtime-unreachable error", async ({
         page,
+        request,
     }) => {
         // Load the tree while Runtime is still up: with Runtime down a cold tree
         // load replaces the panel with its own error state and there is no node to
@@ -301,33 +348,48 @@ test.describe("@host Journey B — manual workspace mutations (PLAN-0353 D1)", (
         await page.goto("/workspace/" + ctx.workspaceId, { waitUntil: "load" });
         await expect(dirButton(page)).toBeVisible({ timeout: 30000 });
 
-        await killRuntime();
+        try {
+            await killRuntime();
 
-        const fileName = `journey-b-b1-error-${Date.now()}.md`;
-        const problemResponse = page.waitForResponse(
-            (res) =>
-                res.url().includes("/api/v1/mcp") &&
-                res.status() === 502 &&
-                (res.request().postData() ?? "").includes("write_file"),
-        );
-        await createFileThroughUi(page, "journey-b", fileName);
-        const problem = (await (await problemResponse).json()) as { code?: string };
-        expect(problem.code, `problem body: ${JSON.stringify(problem)}`).toBe(
-            "RUNTIME_UNAVAILABLE",
-        );
-        // The failed mutation replaces the tree panel with the humanized error and
-        // a Retry affordance (the New File modal unmounts with the tree).
-        await expect(page.getByText(HUMAN_RUNTIME_DOWN).first()).toBeVisible({ timeout: 30000 });
-        await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
-        await expect(page.getByRole("button", { name: fileName, exact: true })).not.toBeVisible();
-        await page.screenshot({ path: evidencePath("b1-error.png"), fullPage: false });
+            const fileName = `journey-b-b1-error-${Date.now()}.md`;
+            // PLAN-0579 R1: PLAN-0557 unified an unreachable Runtime into
+            // 503 RUNTIME_UNAVAILABLE (McpProxyController.dependencyFailure);
+            // the old 502 expectation came from PLAN-0353 and timed out here.
+            const problemResponse = page.waitForResponse(
+                (res) =>
+                    res.url().includes("/api/v1/mcp") &&
+                    res.status() === 503 &&
+                    (res.request().postData() ?? "").includes("write_file"),
+            );
+            await createFileThroughUi(page, "journey-b", fileName);
+            const problem = (await (await problemResponse).json()) as { code?: string };
+            expect(problem.code, `problem body: ${JSON.stringify(problem)}`).toBe(
+                "RUNTIME_UNAVAILABLE",
+            );
+            // The failed mutation replaces the tree panel with the humanized error and
+            // a Retry affordance (the New File modal unmounts with the tree).
+            await expect(page.getByText(HUMAN_RUNTIME_DOWN).first()).toBeVisible({
+                timeout: 30000,
+            });
+            await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+            await expect(
+                page.getByRole("button", { name: fileName, exact: true }),
+            ).not.toBeVisible();
+            await page.screenshot({ path: evidencePath("b1-error.png"), fullPage: false });
+        } finally {
+            // PLAN-0579 R3: recovery is unconditional — a failed assertion above
+            // must not leave the runtime dead for the remaining serial specs.
+            await ensureRuntimeUp(request);
+        }
     });
 
     test("B1-recover: Runtime restart restores manual create/delete with visible tree changes", async ({
         page,
         request,
     }) => {
-        await startRuntime(request);
+        // No-op when B1-fail-human's finally already restored the runtime; still
+        // restarts it when this test is reached with the runtime down.
+        await ensureRuntimeUp(request);
 
         seedPage(page, ctx);
         await page.goto("/workspace/" + ctx.workspaceId, { waitUntil: "load" });

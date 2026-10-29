@@ -418,9 +418,12 @@ async function writeArtifactsManifest(cpBootPlan) {
   if (cpBootPlan?.mode === 'jar' && cpBootPlan.jar && existsSync(cpBootPlan.jar.path)) {
     artifacts.push(await fingerprintArtifact('control-plane-jar', cpBootPlan.jar.path, true))
   }
-  const runtimeBinary = join(projectDir, 'packages', 'runtime', 'target', 'debug', process.platform === 'win32' ? 'xihe-runtime.exe' : 'xihe-runtime')
-  if (existsSync(runtimeBinary)) {
-    artifacts.push(await fingerprintArtifact('runtime-debug-binary', runtimeBinary, !skipRuntime))
+  const runtimeBinary = resolveRuntimeBinary()
+  if (runtimeBinary.path) {
+    const label = runtimeBinary.path.replaceAll('\\', '/').includes('/debug/')
+      ? 'runtime-debug-binary'
+      : 'runtime-binary'
+    artifacts.push(await fingerprintArtifact(label, runtimeBinary.path, !skipRuntime))
   }
   let gitHead = ''
   try {
@@ -1209,6 +1212,21 @@ async function recycleHostRoot() {
   await rm(hostRoot, { recursive: true, force: true })
 }
 
+// PLAN-0579 R2: resolve the runtime binary across an external CARGO_TARGET_DIR.
+// `cargo run` honors CARGO_TARGET_DIR (passed through by the runtime launch
+// below), so the artifact may live outside packages/runtime/target. Candidates
+// mirror cargo's resolution: external debug/release first, then the in-tree
+// debug/release profiles. A miss is reported with every probed path.
+function resolveRuntimeBinary() {
+  const exe = process.platform === 'win32' ? 'xihe-runtime.exe' : 'xihe-runtime'
+  const inTreeTarget = join(projectDir, 'packages', 'runtime', 'target')
+  const candidates = process.env.CARGO_TARGET_DIR
+    ? [join(process.env.CARGO_TARGET_DIR, 'debug', exe), join(process.env.CARGO_TARGET_DIR, 'release', exe)]
+    : []
+  candidates.push(join(inTreeTarget, 'debug', exe), join(inTreeTarget, 'release', exe))
+  return { path: candidates.find((candidate) => existsSync(candidate)) ?? null, candidates }
+}
+
 async function runPlaywright() {
   // PLAN-0375: runner-owned flags must never reach the Playwright CLI.
   const runnerOnlyArgs = new Set(['--keep', '--skip-runtime', '--persistent', '--teardown', '--skip-preflight', '--validate-at-end', '--list-batches', '--help', '-h'])
@@ -1226,6 +1244,14 @@ async function runPlaywright() {
   const hasReporter = playwrightTestArgs.some((arg) => arg === '--reporter' || arg.startsWith('--reporter='))
   if (reportPath && !hasReporter) playwrightTestArgs = ['--reporter=list,json', ...playwrightTestArgs]
   if (reportPath) console.log(`[e2e-host] JSON report → ${reportPath}`)
+  // PLAN-0579 R2: specs that restart the Runtime (journey-b B1) must spawn the
+  // same binary the runner launched, resolved across an external CARGO_TARGET_DIR.
+  const runtimeBinary = resolveRuntimeBinary()
+  if (runtimeBinary.path) {
+    console.log(`[e2e-host] runtime binary for spec restarts: ${runtimeBinary.path}`)
+  } else {
+    console.warn(`[e2e-host] runtime binary not found; probed: ${runtimeBinary.candidates.join(', ')}`)
+  }
   // PLAN-0369: the Agent binds one MCP workspace per process. Specs that move
   // between workspaces restart the Agent through `ensureAgentWorkspaceBinding`
   // and need the exact provider/credential env the Agent was launched with.
@@ -1293,6 +1319,9 @@ async function runPlaywright() {
       XIHE_CP_PORT: cpPort,
       XIHE_AGENT_PORT: agentPort,
       XIHE_RUNTIME_PORT: runtimePort,
+      // PLAN-0579 R2: injected for journey-b's B1 runtime restart; specs fall
+      // back to the same multi-candidate resolution when absent.
+      ...(runtimeBinary.path ? { XIHE_RUNTIME_EXE: runtimeBinary.path } : {}),
       XIHE_FAKE_OAUTH_PORT: fakeOAuthPort,
       XIHE_FAKE_LLM_PORT: fakeLlmPort,
       XIHE_FAKE_MCP_PORT: fakeMcpPort,
