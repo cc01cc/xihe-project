@@ -21,7 +21,10 @@ const child = spawn(process.execPath, [viteEntry, ...forwarded], {
   cwd: uiRoot,
   env: process.env,
   stdio: ["inherit", "pipe", "pipe"],
-  windowsHide: false,
+  // Windows: a console child of a console-less parent (agent runner, detached
+  // E2E) otherwise pops a new terminal window. Interactive dev can opt back in
+  // with XIHE_DEV_SHOW_CONSOLE=1.
+  windowsHide: process.env.XIHE_DEV_SHOW_CONSOLE !== "1",
 });
 
 function write(chunk, target) {

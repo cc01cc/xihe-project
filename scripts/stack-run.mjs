@@ -85,14 +85,18 @@ function quoteArg(value) {
 function launch({ command, args, cwd, env }) {
   const isWindows = process.platform === "win32";
   const direct = command === process.execPath || /\.exe$/i.test(command);
+  // Windows: a console child of a console-less parent (agent runner, detached
+  // E2E, CI) otherwise pops a new terminal window for every service. Interactive
+  // dev can opt back in with XIHE_DEV_SHOW_CONSOLE=1.
+  const hideWindow = process.env.XIHE_DEV_SHOW_CONSOLE !== "1";
   const child = isWindows && !direct
     ? spawn(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", [command, ...args].map(quoteArg).join(" ")], {
         cwd,
         env,
         stdio: "inherit",
-        windowsHide: false,
+        windowsHide: hideWindow,
       })
-    : spawn(command, args, { cwd, env, stdio: "inherit", windowsHide: false });
+    : spawn(command, args, { cwd, env, stdio: "inherit", windowsHide: hideWindow });
 
   child.once("error", (error) => {
     console.error(`[stack] ERROR: failed to launch ${command}: ${error.message}`);

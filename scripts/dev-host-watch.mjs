@@ -70,7 +70,10 @@ function startStack() {
     cwd: projectRoot,
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: false,
+    // Windows: avoid spawning a terminal window when the watcher itself runs
+    // without a console (agent runner / detached). Opt back in with
+    // XIHE_DEV_SHOW_CONSOLE=1.
+    windowsHide: process.env.XIHE_DEV_SHOW_CONSOLE !== "1",
   });
 
   child.stdout?.on("data", (chunk) => {
