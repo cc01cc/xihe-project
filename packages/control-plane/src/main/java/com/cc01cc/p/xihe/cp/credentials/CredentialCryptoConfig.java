@@ -35,6 +35,9 @@ public class CredentialCryptoConfig {
 
     private static final String SINGLE_KEY_SOURCE = "cp.credentials.encryption-key";
     private static final String KEY_RING_SOURCE = "cp.credentials.key-ring";
+    private static final String FINGERPRINT_KEY_SOURCE = "cp.credentials.fingerprint-key";
+    private static final String DEV_FINGERPRINT_SEED =
+            "xihe-local-credential-fingerprint-key-not-for-production";
     private static final int KEY_BYTES = 32;
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -66,6 +69,37 @@ public class CredentialCryptoConfig {
                     + currentVersion + "'; registered versions: " + ring.keySet());
         }
         return new EnvelopeEncryptionService(ring, currentVersion);
+    }
+
+    /**
+     * PLAN-0576 T2.1 (decision #2): independent HMAC key for credential
+     * fingerprints. Production must provide {@code XIHE_CP_CREDENTIALS_FINGERPRINT_KEY}
+     * (enforced by {@code SecurityDefaultsValidator}); dev falls back to a fixed
+     * public constant and WARNs. Never reuse the encryption key ring.
+     */
+    @Bean(name = "credentialFingerprint")
+    CredentialFingerprint credentialFingerprint(
+            @Value("${cp.credentials.fingerprint-key:}") String configuredKey,
+            @Value("${cp.credentials.allow-dev-key:true}") boolean allowDevKey) {
+        if (configuredKey == null || configuredKey.isBlank()) {
+            if (!allowDevKey) {
+                throw new IllegalStateException(FINGERPRINT_KEY_SOURCE + " is required");
+            }
+            log.warn("[CONFIG] credential fingerprint dev key active - "
+                    + "cp.credentials.fingerprint-key is unset; do not compute fingerprints "
+                    + "for real credentials with this key");
+            return new CredentialFingerprint(devFingerprintKey());
+        }
+        return new CredentialFingerprint(decodeKey(configuredKey, FINGERPRINT_KEY_SOURCE));
+    }
+
+    private static byte[] devFingerprintKey() {
+        try {
+            return MessageDigest.getInstance("SHA-256")
+                    .digest(DEV_FINGERPRINT_SEED.getBytes(StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            throw new IllegalStateException("Unable to create development credential fingerprint key", e);
+        }
     }
 
     private static EnvelopeEncryptionService devFallback(String currentVersion) {

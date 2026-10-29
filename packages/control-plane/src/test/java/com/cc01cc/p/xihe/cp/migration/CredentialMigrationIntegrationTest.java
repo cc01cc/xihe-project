@@ -226,6 +226,47 @@ class CredentialMigrationIntegrationTest {
                 "ck_credential_events_type must reject unknown event types");
     }
 
+    @Test
+    void v84_aad_and_fingerprint_versions_have_legacy_defaults() throws SQLException {
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '84' AND success = true"),
+                "V84 must be recorded as applied");
+        assertEquals("smallint", scalarString(
+                "SELECT data_type FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'credentials' AND column_name = 'aad_version'"));
+        assertEquals("NO", scalarString(
+                "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'credentials' AND column_name = 'aad_version'"));
+        assertEquals("1", scalarString(
+                "SELECT column_default FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'credentials' AND column_name = 'aad_version'"));
+        assertEquals("character varying", scalarString(
+                "SELECT data_type FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'credentials' AND column_name = 'fingerprint_version'"));
+        assertEquals("'sha256'::character varying", scalarString(
+                "SELECT column_default FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'credentials' AND column_name = 'fingerprint_version'"));
+
+        UUID credentialId = UUID.randomUUID();
+        execute("INSERT INTO credentials (id, owner_type, owner_id, label, kind, delivery_tier, "
+                + "status, secret_ciphertext, fingerprint, key_version) VALUES ('"
+                + credentialId + "'::uuid, 'USER', '" + UUID.randomUUID()
+                + "'::uuid, 'legacy-default', 'token', 'lease', 'active', 'v1:a:b', 'fp', 'v1')");
+        assertEquals(1, scalarInt("SELECT aad_version FROM credentials WHERE id = '"
+                + credentialId + "'::uuid"), "legacy rows default to AAD v1");
+        assertEquals("sha256", scalarString("SELECT fingerprint_version FROM credentials WHERE id = '"
+                + credentialId + "'::uuid"), "legacy rows default to the bare SHA-256 fingerprint");
+
+        assertThrows(SQLException.class, () -> execute(
+                "UPDATE credentials SET aad_version = 3 WHERE id = '" + credentialId + "'::uuid"),
+                "ck_credentials_aad_version must reject unknown AAD versions");
+        assertThrows(SQLException.class, () -> execute(
+                "UPDATE credentials SET fingerprint_version = 'md5' WHERE id = '" + credentialId + "'::uuid"),
+                "ck_credentials_fingerprint_version must reject unknown fingerprint versions");
+        execute("UPDATE credentials SET aad_version = 2, fingerprint_version = 'hmac-sha256-v1' "
+                + "WHERE id = '" + credentialId + "'::uuid");
+    }
+
     private static void insertCredential(String tier, String kind, String status, int revision)
             throws SQLException {
         execute("INSERT INTO credentials (id, owner_type, owner_id, label, kind, delivery_tier, "

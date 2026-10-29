@@ -56,6 +56,10 @@ class CredentialRevealIntegrationTest extends AbstractIntegrationTest {
     @Autowired private CredentialEventRepository credentialEventRepository;
     @Autowired private ChatApprovalRepository chatApprovalRepository;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private CredentialRotationService credentialRotationService;
+    @Autowired
+    @org.springframework.beans.factory.annotation.Qualifier("credentialEncryption")
+    private com.cc01cc.p.xihe.cp.crypto.EnvelopeEncryptionService credentialEncryption;
 
     private UUID userId;
     private String workspaceId;
@@ -107,6 +111,55 @@ class CredentialRevealIntegrationTest extends AbstractIntegrationTest {
         assertEquals(1, revealedTrail.size(), "exactly one revealed event for the delivery");
         assertEquals("user:" + userId, revealedTrail.getFirst().getActor());
         assertFalse(revealedTrail.getFirst().toString().contains(secret));
+    }
+
+    @Test
+    void legacyV1AadRowIsStillRevealable() {
+        register();
+        grantUser("{\"actionClass\":\"credential_manage\",\"resource\":\"credential:*\"}");
+        grantUser("{\"actionClass\":\"credential_reveal\",\"resource\":\"credential:*\"}");
+        String secret = "reveal-legacy-v1-0123456789";
+        String credentialId = createCredential("reveal", secret);
+
+        Credential row = credentialRepository.findById(UUID.fromString(credentialId)).orElseThrow();
+        row.setAadVersion(Credential.AAD_VERSION_LEGACY);
+        row.setSecretCiphertext(credentialEncryption.encrypt("{\"token\":\"" + secret + "\"}",
+                CredentialAad.formatV1(row.getId().toString(), row.getOwnerType(), row.getOwnerId())));
+        credentialRepository.save(row);
+
+        ResponseEntity<String> revealed = reveal(credentialId, TestDataFactory.PASSWORD);
+
+        assertEquals(HttpStatus.OK, revealed.getStatusCode(), revealed.getBody());
+        assertTrue(revealed.getBody().contains(secret),
+                "pre-V84 rows must stay revealable through the unified entry point (V2)");
+    }
+
+    @Test
+    void migratedV1RowIsRevealableAfterRotation() {
+        register();
+        grantUser("{\"actionClass\":\"credential_manage\",\"resource\":\"credential:*\"}");
+        grantUser("{\"actionClass\":\"credential_reveal\",\"resource\":\"credential:*\"}");
+        String secret = "reveal-migrated-0123456789";
+        String credentialId = createCredential("reveal", secret);
+
+        Credential row = credentialRepository.findById(UUID.fromString(credentialId)).orElseThrow();
+        row.setAadVersion(Credential.AAD_VERSION_LEGACY);
+        row.setFingerprintVersion(Credential.FINGERPRINT_VERSION_SHA256);
+        row.setSecretCiphertext(credentialEncryption.encrypt("{\"token\":\"" + secret + "\"}",
+                CredentialAad.formatV1(row.getId().toString(), row.getOwnerType(), row.getOwnerId())));
+        credentialRepository.save(row);
+
+        assertEquals(1, credentialRotationService.rotateBatch(50).migrated(),
+                "the migration run must promote the v1 row to AAD v2 + HMAC");
+        Credential migrated = credentialRepository.findById(UUID.fromString(credentialId)).orElseThrow();
+        assertEquals(Credential.AAD_VERSION_V2, migrated.getAadVersion());
+        assertEquals(Credential.FINGERPRINT_VERSION_HMAC_SHA256_V1, migrated.getFingerprintVersion());
+
+        ResponseEntity<String> revealed = reveal(credentialId, TestDataFactory.PASSWORD);
+
+        assertEquals(HttpStatus.OK, revealed.getStatusCode(), revealed.getBody());
+        assertTrue(revealed.getBody().contains(secret),
+                "migrated rows must stay revealable through the unified entry point");
     }
 
     @Test

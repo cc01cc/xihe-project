@@ -2,6 +2,8 @@ package com.cc01cc.p.xihe.cp.credentials;
 
 import com.cc01cc.p.xihe.cp.crypto.EnvelopeEncryptionService;
 import com.cc01cc.p.xihe.cp.entity.Credential;
+import com.cc01cc.p.xihe.cp.repository.CredentialEventRepository;
+import com.cc01cc.p.xihe.cp.repository.CredentialLeaseRepository;
 import com.cc01cc.p.xihe.cp.repository.CredentialRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,18 +33,22 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * PLAN-0495 T3.2 / V3 首次演练：两版本环注入（v1=v1 旧 + v2=current）→
- * 批量重加密（解密-重加密 + compare-and-set 回写，分批续跑）→ 退役前缀计数
- * 为零；CAS 防覆盖与损坏密文容错；批次审计（不含值）。
+ * PLAN-0495 M3 key rotation + PLAN-0576 M3 crypto migration: v1→v2 AAD and
+ * SHA-256→HMAC fingerprint promotion in one id-cursor run, key rotation, soft
+ * delete skip, failure crossing, CAS fences against replace/delete, and
+ * deliverability after migration.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Testcontainers
@@ -81,7 +87,23 @@ class CredentialRotationIntegrationTest {
     private CredentialRepository credentialRepository;
 
     @Autowired
-    private com.cc01cc.p.xihe.cp.repository.CredentialEventRepository credentialEventRepository;
+    private CredentialEventRepository credentialEventRepository;
+
+    @Autowired
+    private CredentialLeaseRepository credentialLeaseRepository;
+
+    @Autowired
+    private CredentialLeaseService credentialLeaseService;
+
+    @Autowired
+    private CredentialService credentialService;
+
+    @Autowired
+    private CredentialEnvelope credentialEnvelope;
+
+    @Autowired
+    @Qualifier("credentialFingerprint")
+    private CredentialFingerprint credentialFingerprint;
 
     @Autowired
     @Qualifier("credentialEncryption")
@@ -98,6 +120,7 @@ class CredentialRotationIntegrationTest {
     @BeforeEach
     void resetStateAndAttachAuditAppender() {
         // Rotation status/counters are global; isolate each method on the shared context.
+        credentialLeaseRepository.deleteAll();
         credentialEventRepository.deleteAll();
         credentialRepository.deleteAll();
 
@@ -123,14 +146,14 @@ class CredentialRotationIntegrationTest {
         CredentialRotationService.RotationStatus status = rotationService.status();
 
         assertEquals("v2", status.currentVersion());
-        assertEquals(java.util.List.of("v1", "v2"), status.ringVersions());
+        assertEquals(List.of("v1", "v2"), status.ringVersions());
         assertEquals(2L, status.pendingByVersion().get("v1"));
         assertEquals(2L, status.pendingTotal());
         assertEquals(3L, status.countsByVersion().values().stream().mapToLong(Long::longValue).sum());
     }
 
     @Test
-    void rotationMigratesAllRowsAndRetireCheckReachesZero() {
+    void rotationMigratesKeyAadAndFingerprintTogether() {
         Credential first = seedV1Row("first-secret");
         Credential second = seedV1Row("second-secret");
 
@@ -140,34 +163,39 @@ class CredentialRotationIntegrationTest {
         assertEquals(2, result.migrated());
         assertEquals(0, result.conflicts());
         assertEquals(0, result.failures());
-        assertEquals(0L, result.remaining());
+        assertEquals(0L, result.remaining(), "retirement count is key-version based");
         assertEquals("v2", result.targetVersion());
 
-        for (Credential seed : java.util.List.of(first, second)) {
+        for (Credential seed : List.of(first, second)) {
             Credential row = credentialRepository.findById(seed.getId()).orElseThrow();
             assertEquals("v2", row.getKeyVersion());
             assertTrue(row.getSecretCiphertext().startsWith("v2:"));
+            assertEquals(Credential.AAD_VERSION_V2, row.getAadVersion());
+            assertEquals(Credential.FINGERPRINT_VERSION_HMAC_SHA256_V1, row.getFingerprintVersion());
             assertNotNull(row.getRotatedAt());
             assertEquals(1, row.getRevision(), "rotation must not bump the replace revision");
-            String decrypted = credentialEncryption.decrypt(row.getSecretCiphertext(),
-                    CredentialAad.format(row.getId().toString(), row.getOwnerType(), row.getOwnerId()));
-            assertEquals("{\"token\":\"" + seed.getLabel() + "\"}", decrypted);
+            assertEquals("{\"token\":\"" + seed.getLabel() + "\"}", credentialEnvelope.decrypt(row));
+            assertEquals(credentialFingerprint.fingerprint(CredentialSecretCodec.canonical(
+                            "token", "{\"token\":\"" + seed.getLabel() + "\"}")),
+                    row.getFingerprint(), "the migration must rewrite the fingerprint with HMAC");
+            assertNotEquals("fp-" + seed.getId(), row.getFingerprint());
         }
 
         CredentialRotationService.RotationStatus status = rotationService.status();
         assertEquals(0L, status.pendingTotal(), "retirement check: no row remains under the old key");
         assertFalse(status.pendingByVersion().containsKey("v1"));
 
-        // V3 (round-4): once the retire count is zero the old key may leave the
-        // ring — every migrated row must still decrypt under the new key alone.
+        // Once the retire count is zero the old key may leave the ring — every
+        // migrated row must still decrypt under the new key alone with AAD v2.
         EnvelopeEncryptionService v2Only =
-                new EnvelopeEncryptionService(java.util.Map.of("v2", KEY_V2), "v2");
-        for (Credential seed : java.util.List.of(first, second)) {
+                new EnvelopeEncryptionService(Map.of("v2", KEY_V2), "v2");
+        for (Credential seed : List.of(first, second)) {
             Credential row = credentialRepository.findById(seed.getId()).orElseThrow();
             assertEquals("{\"token\":\"" + seed.getLabel() + "\"}",
                     v2Only.decrypt(row.getSecretCiphertext(),
-                            CredentialAad.format(row.getId().toString(), row.getOwnerType(),
-                                    row.getOwnerId())),
+                            CredentialAad.formatV2(row.getId().toString(), row.getOwnerType(),
+                                    row.getOwnerId(), row.getKind(), row.getRevision(),
+                                    row.getKeyVersion())),
                     "rows must remain readable after the retired key is removed");
         }
 
@@ -180,50 +208,160 @@ class CredentialRotationIntegrationTest {
     }
 
     @Test
-    void rotationIsResumableAcrossBatches() {
+    void singleRunMigratesAllPagesWithBoundedPageSize() {
         for (int index = 0; index < 5; index++) {
             seedV1Row("batch-secret-" + index);
         }
 
-        assertEquals(3L, rotationService.rotateBatch(2).remaining());
-        assertEquals(1L, rotationService.rotateBatch(2).remaining());
-        assertEquals(0L, rotationService.rotateBatch(2).remaining());
-        assertEquals(0L, rotationService.status().pendingTotal());
+        CredentialRotationService.BatchResult result = rotationService.rotateBatch(2);
+
+        assertEquals(5, result.scanned(), "one call loops the id cursor to the end");
+        assertEquals(5, result.migrated());
+        assertEquals(0, result.conflicts());
+        assertEquals(0, result.failures());
+        assertEquals(0L, result.remaining());
+        assertEquals(0L, credentialRepository.countPendingMigration("v2"));
     }
 
     @Test
-    void compareAndSetRefusesToOverwriteChangedCiphertext() {
-        Credential row = seedV1Row("cas-secret");
-        String stored = credentialRepository.findById(row.getId()).orElseThrow().getSecretCiphertext();
-        String replacement = credentialEncryption.encrypt("{\"token\":\"cas-rewrite\"}",
-                CredentialAad.format(row.getId().toString(), row.getOwnerType(), row.getOwnerId()));
-
-        int staleWrite = credentialRepository.compareAndSetSecret(row.getId(),
-                "v1:not-the-stored:value", replacement, "v2", Instant.now());
-        assertEquals(0, staleWrite, "a CAS against a different ciphertext must not write");
-
-        int freshWrite = credentialRepository.compareAndSetSecret(row.getId(),
-                stored, replacement, "v2", Instant.now());
-        assertEquals(1, freshWrite);
-        Credential updated = credentialRepository.findById(row.getId()).orElseThrow();
-        assertEquals("v2", updated.getKeyVersion());
-        assertNotNull(updated.getRotatedAt());
-    }
-
-    @Test
-    void corruptedCiphertextIsCountedAsFailureWithoutAbortingTheBatch() {
-        Credential healthy = seedV1Row("healthy-secret");
-        Credential corrupted = seedV1Row("corrupted-secret");
-        corrupted.setSecretCiphertext("v1:AAAAAAAAAAAAAAAA:BBBB");
-        credentialRepository.save(corrupted);
+    void currentKeyRowsWithLegacyAadAndFingerprintAreMigrated() {
+        Credential seeded = seedRow(UUID.randomUUID(), "current-key-legacy-aad", "v2",
+                credentialEncryption, Credential.AAD_VERSION_LEGACY,
+                Credential.FINGERPRINT_VERSION_SHA256);
+        assertEquals(0L, rotationService.status().pendingTotal(),
+                "the key-version retirement counter starts at zero");
 
         CredentialRotationService.BatchResult result = rotationService.rotateBatch(50);
 
+        assertEquals(1, result.scanned());
         assertEquals(1, result.migrated());
+        Credential row = credentialRepository.findById(seeded.getId()).orElseThrow();
+        assertEquals(Credential.AAD_VERSION_V2, row.getAadVersion());
+        assertEquals(Credential.FINGERPRINT_VERSION_HMAC_SHA256_V1, row.getFingerprintVersion());
+        assertEquals("v2", row.getKeyVersion());
+        assertEquals("{\"token\":\"current-key-legacy-aad\"}", credentialEnvelope.decrypt(row));
+        assertEquals(0L, credentialRepository.countPendingMigration("v2"));
+    }
+
+    @Test
+    void softDeletedRowsAreSkippedAndNeverRewritten() {
+        Credential deleted = seedV1Row("soft-deleted-secret");
+        String originalCiphertext = deleted.getSecretCiphertext();
+        deleted.setDeletedAt(Instant.now());
+        credentialRepository.save(deleted);
+
+        CredentialRotationService.BatchResult result = rotationService.rotateBatch(50);
+
+        assertEquals(0, result.scanned());
+        assertEquals(0, result.migrated());
+        assertEquals(0L, credentialRepository.countPendingMigration("v2"));
+        Credential row = credentialRepository.findById(deleted.getId()).orElseThrow();
+        assertEquals("v1", row.getKeyVersion());
+        assertEquals(Credential.AAD_VERSION_LEGACY, row.getAadVersion());
+        assertEquals(originalCiphertext, row.getSecretCiphertext());
+        assertNotNull(row.getDeletedAt(), "rotation must not revive a deleted row");
+    }
+
+    @Test
+    void corruptedRowIsCrossedAndDoesNotBlockLaterRows() {
+        Credential corrupted = seedRow(UUID.fromString("00000000-0000-0000-0000-000000000001"),
+                "corrupted-secret", "v1", legacyEncryption, Credential.AAD_VERSION_LEGACY,
+                Credential.FINGERPRINT_VERSION_SHA256);
+        corrupted.setSecretCiphertext("v1:AAAAAAAAAAAAAAAA:BBBB");
+        credentialRepository.save(corrupted);
+        Credential second = seedRow(UUID.fromString("00000000-0000-0000-0000-000000000002"),
+                "second-secret", "v1", legacyEncryption, Credential.AAD_VERSION_LEGACY,
+                Credential.FINGERPRINT_VERSION_SHA256);
+        Credential third = seedRow(UUID.fromString("00000000-0000-0000-0000-000000000003"),
+                "third-secret", "v1", legacyEncryption, Credential.AAD_VERSION_LEGACY,
+                Credential.FINGERPRINT_VERSION_SHA256);
+
+        CredentialRotationService.BatchResult result = rotationService.rotateBatch(2);
+
+        assertEquals(3, result.scanned());
+        assertEquals(2, result.migrated());
         assertEquals(1, result.failures());
         assertEquals(1L, result.remaining(), "the corrupted row stays pending for manual triage");
-        assertEquals("v2", credentialRepository.findById(healthy.getId()).orElseThrow().getKeyVersion());
+        assertEquals("v2", credentialRepository.findById(second.getId()).orElseThrow().getKeyVersion());
+        assertEquals("v2", credentialRepository.findById(third.getId()).orElseThrow().getKeyVersion(),
+                "the cursor must cross the failed row and reach later ids");
         assertEquals("v1", credentialRepository.findById(corrupted.getId()).orElseThrow().getKeyVersion());
+        assertEquals(Credential.AAD_VERSION_LEGACY,
+                credentialRepository.findById(corrupted.getId()).orElseThrow().getAadVersion());
+    }
+
+    @Test
+    void compareAndSetHonorsCiphertextAndDeleteFences() {
+        Credential row = seedV1Row("cas-secret");
+        String stored = credentialRepository.findById(row.getId()).orElseThrow().getSecretCiphertext();
+        String replacement = credentialEncryption.encrypt("{\"token\":\"cas-rewrite\"}",
+                CredentialAad.formatV2(row.getId().toString(), row.getOwnerType(), row.getOwnerId(),
+                        row.getKind(), row.getRevision(), "v2"));
+
+        int staleWrite = credentialRepository.compareAndSetSecret(row.getId(),
+                "v1:not-the-stored:value", replacement, "v2", Credential.AAD_VERSION_V2,
+                "hmac-fp", Credential.FINGERPRINT_VERSION_HMAC_SHA256_V1, Instant.now());
+        assertEquals(0, staleWrite, "a CAS against a different ciphertext must not write");
+
+        int freshWrite = credentialRepository.compareAndSetSecret(row.getId(),
+                stored, replacement, "v2", Credential.AAD_VERSION_V2,
+                "hmac-fp", Credential.FINGERPRINT_VERSION_HMAC_SHA256_V1, Instant.now());
+        assertEquals(1, freshWrite);
+        Credential updated = credentialRepository.findById(row.getId()).orElseThrow();
+        assertEquals("v2", updated.getKeyVersion());
+        assertEquals(Credential.AAD_VERSION_V2, updated.getAadVersion());
+        assertEquals(Credential.FINGERPRINT_VERSION_HMAC_SHA256_V1, updated.getFingerprintVersion());
+        assertEquals("hmac-fp", updated.getFingerprint());
+        assertNotNull(updated.getRotatedAt());
+
+        Credential deleted = seedV1Row("cas-deleted");
+        String deletedCiphertext = deleted.getSecretCiphertext();
+        deleted.setDeletedAt(Instant.now());
+        credentialRepository.save(deleted);
+        int softDeleted = credentialRepository.compareAndSetSecret(deleted.getId(),
+                deletedCiphertext, replacement, "v2", Credential.AAD_VERSION_V2,
+                "hmac-fp", Credential.FINGERPRINT_VERSION_HMAC_SHA256_V1, Instant.now());
+        assertEquals(0, softDeleted, "rotation must never rewrite a soft-deleted row");
+        assertEquals("v1", credentialRepository.findById(deleted.getId()).orElseThrow().getKeyVersion());
+    }
+
+    @Test
+    void concurrentReplaceIsNeverOverwrittenByAStaleRotationSnapshot() {
+        Credential seeded = seedV1Row("replace-race");
+        String staleCiphertext = seeded.getSecretCiphertext();
+        Credential replaced = credentialService.replaceSecret(seeded.getId(),
+                CredentialService.SecretPayload.ofToken("replaced-value"), null);
+
+        int staleWrite = credentialRepository.compareAndSetSecret(seeded.getId(), staleCiphertext,
+                "v2:stale:rotation", "v2", Credential.AAD_VERSION_V2, "stale-fp",
+                Credential.FINGERPRINT_VERSION_HMAC_SHA256_V1, Instant.now());
+        assertEquals(0, staleWrite, "the rotation CAS must not clobber a concurrent replace");
+
+        Credential row = credentialRepository.findById(seeded.getId()).orElseThrow();
+        assertEquals(2, row.getRevision());
+        assertEquals(replaced.getSecretCiphertext(), row.getSecretCiphertext());
+        assertEquals(replaced.getFingerprint(), row.getFingerprint());
+        assertEquals(Credential.AAD_VERSION_V2, row.getAadVersion());
+        assertEquals("{\"token\":\"replaced-value\"}", credentialEnvelope.decrypt(row));
+
+        CredentialRotationService.BatchResult result = rotationService.rotateBatch(50);
+        assertEquals(0, result.scanned(), "a replace already wrote v2/hmac; nothing left to migrate");
+        assertEquals(0, result.conflicts());
+    }
+
+    @Test
+    void migratedRowsRemainDeliverableThroughTheLeasePath() {
+        Credential seeded = seedV1Row("lease-after-migration");
+
+        assertEquals(1, rotationService.rotateBatch(50).migrated());
+
+        CredentialLeaseService.AcquiredCredential acquired = credentialLeaseService.acquire(
+                seeded.getId().toString(), UUID.randomUUID().toString(),
+                UUID.randomUUID().toString(), UUID.randomUUID().toString(),
+                UUID.randomUUID().toString());
+        assertEquals("{\"token\":\"lease-after-migration\"}", acquired.plaintext());
+        assertEquals(Credential.AAD_VERSION_V2,
+                credentialRepository.findById(seeded.getId()).orElseThrow().getAadVersion());
     }
 
     @Test
@@ -249,14 +387,14 @@ class CredentialRotationIntegrationTest {
 
         ResponseEntity<String> invalid = client.exchange(
                 baseUrl + "/internal/v1/credentials/rotation/runs", HttpMethod.POST,
-                new HttpEntity<>(java.util.Map.of("batchSize", 0), headers), String.class);
+                new HttpEntity<>(Map.of("batchSize", 0), headers), String.class);
         assertEquals(HttpStatus.BAD_REQUEST, invalid.getStatusCode(),
                 "out-of-range batchSize must fail with 400, not a silent clamp");
 
         seedV1Row("http-secret");
         ResponseEntity<String> run = client.exchange(
                 baseUrl + "/internal/v1/credentials/rotation/runs", HttpMethod.POST,
-                new HttpEntity<>(java.util.Map.of("batchSize", 10), headers), String.class);
+                new HttpEntity<>(Map.of("batchSize", 10), headers), String.class);
         assertEquals(HttpStatus.OK, run.getStatusCode());
         assertTrue(run.getBody().contains("\"migrated\":1"));
         assertTrue(run.getBody().contains("\"remaining\":0"));
@@ -275,26 +413,35 @@ class CredentialRotationIntegrationTest {
     }
 
     private Credential seedV1Row(String tokenValue) {
-        return seedRow(tokenValue, "v1", legacyEncryption);
+        return seedRow(UUID.randomUUID(), tokenValue, "v1", legacyEncryption,
+                Credential.AAD_VERSION_LEGACY, Credential.FINGERPRINT_VERSION_SHA256);
     }
 
     private Credential seedCurrentRow(String tokenValue) {
-        return seedRow(tokenValue, credentialEncryption.currentVersion(), credentialEncryption);
+        return seedRow(UUID.randomUUID(), tokenValue, credentialEncryption.currentVersion(),
+                credentialEncryption, Credential.AAD_VERSION_V2,
+                Credential.FINGERPRINT_VERSION_HMAC_SHA256_V1);
     }
 
-    private Credential seedRow(String tokenValue, String keyVersion, EnvelopeEncryptionService service) {
+    private Credential seedRow(UUID id, String tokenValue, String keyVersion,
+            EnvelopeEncryptionService service, short aadVersion, String fingerprintVersion) {
         String ownerId = UUID.randomUUID().toString();
         Credential row = new Credential();
-        row.setId(UUID.randomUUID());
+        row.setId(id);
         row.setOwnerType(Credential.OWNER_USER);
         row.setOwnerId(ownerId);
         row.setLabel(tokenValue);
         row.setKind(Credential.KIND_TOKEN);
         row.setDeliveryTier(Credential.TIER_LEASE);
         row.setSecretCiphertext(service.encrypt("{\"token\":\"" + tokenValue + "\"}",
-                CredentialAad.format(row.getId().toString(), Credential.OWNER_USER, ownerId)));
+                aadVersion == Credential.AAD_VERSION_V2
+                        ? CredentialAad.formatV2(id.toString(), Credential.OWNER_USER, ownerId,
+                                Credential.KIND_TOKEN, 1, keyVersion)
+                        : CredentialAad.formatV1(id.toString(), Credential.OWNER_USER, ownerId)));
         row.setKeyVersion(keyVersion);
-        row.setFingerprint("fp-" + row.getId());
+        row.setAadVersion(aadVersion);
+        row.setFingerprint("fp-" + id);
+        row.setFingerprintVersion(fingerprintVersion);
         return credentialRepository.save(row);
     }
 }
