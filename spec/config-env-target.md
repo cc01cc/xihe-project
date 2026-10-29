@@ -1,6 +1,6 @@
 # 配置目标态与 env 映射（config-env-target）
 
-> 契约状态：`proposed`；实现状态：`partial`；Profile：`configuration`；Owner：CP ConfigService；来源：PLAN-0307（T3.1/T3.4/T3.5）、PLAN-0389、PLAN-0526；更新：2026-10-16。
+> 契约状态：`proposed`；实现状态：`partial`；Profile：`configuration`；Owner：CP ConfigService；来源：PLAN-0307（T3.1/T3.4/T3.5）、PLAN-0389、PLAN-0526、PLAN-0574；更新：2026-10-29。
 > 消费者：CP / Agent / Runtime 各模块的 env 链 loader 与启动校验；`DEV-003-config-management.md`。
 > 说明：本文件补齐历史上被多处引用（`§1.2/§1.5` 与 `§6`）但缺失的目标态规范；优先级模型另见 [`configuration/env-effective.md`](configuration/env-effective.md)，本文件只定义 **env 映射与危险默认清单**。
 
@@ -13,7 +13,8 @@
 
 ### 1.2 加载顺序（loader 语义）
 
-- 后加载覆盖先加载：文件链按 1.1 顺序覆盖，进程 env 覆盖所有文件；显式 CLI `--set` 覆盖进程 env。
+- 后加载覆盖先加载：文件链按 1.1 顺序覆盖，进程 env 覆盖所有文件。
+- **CLI `--set` 的实际机制（PLAN-0574 M4 起生效）**：bootstrap 面的 `--set` 由 **launcher（`scripts/stack-run.mjs`）** 在白名单校验后直接注入目标子进程 env，优先级为 `CLI --set > 进程已有 env（OS env / mise / 派生默认） > 文件链 > 代码默认`；三模块内置 loader 不解析 CLI argv（launcher 不转发 argv），覆盖以「子进程自身的环境变量」生效。首批白名单仅 `XIHE_CP_PORT` / `XIHE_AGENT_PORT` / `XIHE_RUNTIME_PORT`（十进制 1..65535），且只注入实际消费该键的目标；未知键、敏感键与不合法值在 launcher 侧拒绝，错误不回显输入值。**业务生效链的 `CLI --set`（per-call 之上的业务域覆盖）仍为 deferred**：无消费方语义，先定 spec 再实现（`configuration/env-effective.md`）。
 - 已存在的进程 env 键视为**已锁定**：不得被文件链覆盖。
 - loader 为**模块内置、按设计复制**（CP / Agent / Runtime 各一份），保证模块可独立启动；三份实现的键集合与覆盖语义必须一致。
 

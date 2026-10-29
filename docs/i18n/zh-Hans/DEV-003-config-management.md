@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 3
 status: active
 created: 2026-09-03
-updated: 2026-10-12
+updated: 2026-10-29
 ---
 
 # DEV-003: 配置管理
@@ -52,7 +52,7 @@ ConfigService 按三层作用域 × 领域（Domain）组织配置；域集合�
 
 ```text
 per-call（run payload overrides / 转发头）
-  > CLI --set（M3 目标）
+  > CLI --set（业务链 deferred：无消费方语义，PLAN-0574 仅落地 bootstrap 面，见 §2）
   > env（部署权威；命中即锁定）
   > workspace > user > instance
   > 代码默认
@@ -81,11 +81,13 @@ UI 配置入口分两处（PLAN-0560）：全局 `/settings/config` 承载**实�
 仅基础设施启动变量走进程启动环境变量（指服务启动前由 Shell、mise、`.env` 文件链或 `--set` 注入进程的变量，修改后通常需重启）。**模块内 dotenv loader 是唯一加载器**（`DotenvLoader.java` / `dotenv_loader.rs` / `dotenv_loader.py` 同一时序）：
 
 ```text
-CLI --set KEY=VALUE（最高，启动日志掩码标注）
+CLI --set KEY=VALUE（最高，启动日志掩码标注；PLAN-0574 M4 起实际机制见下）
   > 进程已有 env（OS env / mise / 容器注入，快照后永不被文件覆盖）
   > .env → .env.$XIHE_ENV → .env.local（后加载覆盖先加载；支持 ${VAR} / ${VAR:-default}，未定义 WARN）
   > 代码默认
 ```
+
+**CLI `--set` 的实际机制（PLAN-0574 M4）**：`--set` 由 **launcher（`node scripts/stack-run.mjs <target> --set KEY=VALUE`）** 接收——白名单校验通过后，launcher 把值直接写入被启动子进程的环境变量（覆盖同名 OS env 与派生默认），子进程内的 loader 将其视为普通进程 env（即上链的最高层）。首批白名单仅 `XIHE_CP_PORT` / `XIHE_AGENT_PORT` / `XIHE_RUNTIME_PORT`（十进制 1..65535），且仅注入实际消费该键的目标（CP←`XIHE_CP_PORT`；Agent←`XIHE_AGENT_PORT`；Runtime←`XIHE_RUNTIME_PORT`）；重复键、未知键、敏感键与不合法值在启动前拒绝，错误不回显输入值。`XIHE_CP_URL` / `XIHE_AGENT_URL(_BASE_URL)` / `XIHE_RUNTIME_URL` 已显式设置时，端口覆盖只改监听端，launcher 会提示断链风险。三模块 loader 自带的 `--set` argv 解析保留但 launcher 不转发 argv。业务域键没有也不得有 `--set` 通道（见 §1 deferred 标注）。
 
 | 文件 | 内容 | 入库 |
 |------|------|------|

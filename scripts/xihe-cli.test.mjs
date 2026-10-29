@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import { createServer } from 'node:http';
@@ -9,6 +9,7 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { printResult, runCommand } from './xihe.mjs';
 import { promptSecret } from './xihe-cli/provider.mjs';
+import { applySetToEnv, applyUrlSyncToEnv, parseStackSetArgs } from './lib/stack-set.mjs';
 
 const TEST_KEY = 'test-provider-secret-value';
 const TEST_PASSWORD = 'test-admin-password';
@@ -1658,12 +1659,14 @@ async function startReadonlyMock({
   environmentStatus = 200,
   retentionStatus = 200,
   jobOutputResponse = null,
+  cancelResponse = null,
+  previewResponse = null,
 } = {}) {
   const state = { queries: [], headers: [] };
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
-    await requestBody(request).catch(() => undefined);
-    state.headers.push({ method: request.method, pathname: url.pathname, workspaceId: request.headers['x-workspace-id'] ?? null });
+    const body = await requestBody(request).catch(() => undefined);
+    state.headers.push({ method: request.method, pathname: url.pathname, workspaceId: request.headers['x-workspace-id'] ?? null, body: body ?? null });
 
     if (url.pathname === '/api/v1/auth/login' && request.method === 'POST') {
       json(response, 200, { accessToken: 'readonly-token' });
@@ -1721,6 +1724,28 @@ async function startReadonlyMock({
         truncated: false,
         data: 'line-1\nline-2\n',
         jobStatus: 'succeeded',
+      });
+      return;
+    }
+    if (url.pathname.startsWith('/api/v1/workspaces/ws-1/jobs/') && url.pathname.endsWith('/cancel') && request.method === 'POST') {
+      if (cancelResponse) {
+        json(response, cancelResponse.status, cancelResponse.body);
+        return;
+      }
+      json(response, 200, { jobId: url.pathname.split('/')[6], status: 'cancelled', changed: true });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/checkpoints/revert/preview' && request.method === 'POST') {
+      if (previewResponse) {
+        json(response, previewResponse.status, previewResponse.body);
+        return;
+      }
+      json(response, 200, {
+        sliceRef: body?.sliceRef ?? null,
+        counts: { files: 2, hunks: 5 },
+        entries: [{ path: 'a.txt' }, { path: 'b.txt' }],
+        truncated: false,
+        opaqueNestedRepos: 0,
       });
       return;
     }
@@ -1973,4 +1998,333 @@ test('T2.7 --json envelope and human output stay consistent across M1/M2 command
   assert.equal(failingPrinted.ok, false);
   assert.equal(typeof failingPrinted.error.code, 'string');
   assert.equal(typeof failingPrinted.error.message, 'string');
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// PLAN-0574 M3: key writes (job cancel / checkpoint revert preview)
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('job cancel passes through success and idempotent changed semantics', async (t) => {
+  const cp = await startReadonlyMock();
+  t.after(cp.close);
+  const first = await runCommand(['job', 'cancel', 'ws-1', 'job-1'], { env: cp.env, promptSecret: noPrompt, stdout: sink(), stderr: sink() });
+  assert.equal(first.exitCode, 0);
+  assert.equal(first.data.kind, 'job-cancel');
+  assert.equal(first.data.changed, true);
+  assert.equal(first.data.status, 'cancelled');
+  const cancelCall = cp.state.headers.find((call) => call.pathname?.endsWith('/jobs/job-1/cancel'));
+  assert.equal(cancelCall.method, 'POST');
+  assert.equal(cancelCall.workspaceId, 'ws-1');
+  assert.equal(cancelCall.body, null);
+  const human = captureStdout(() => printResult(first));
+  assert.equal(human, 'cancel: job-1 status=cancelled changed=true\n');
+  const printedCancel = JSON.parse(captureStdout(() => printResult({ exitCode: 0, json: true, data: first.data })));
+  assert.equal(printedCancel.ok, true);
+  assert.equal(printedCancel.data.kind, 'job-cancel');
+  assert.equal(printedCancel.data.changed, true);
+
+  cp.state.headers = [];
+  const idempotent = await startReadonlyMock({
+    cancelResponse: { status: 200, body: { jobId: 'job-1', status: 'cancelled', changed: false } },
+  });
+  t.after(idempotent.close);
+  const second = await runCommand(['job', 'cancel', 'ws-1', 'job-1', '--json'], { env: idempotent.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(second.exitCode, 0);
+  assert.equal(second.data.changed, false);
+});
+
+test('job cancel maps 404 transparently and reports a lost 502 outcome without replay', async (t) => {
+  const missing = await startReadonlyMock({
+    cancelResponse: { status: 404, body: { code: 'JOB_ARCHIVE_NOT_FOUND', requestId: 'req-c-404', detail: TEST_KEY } },
+  });
+  t.after(missing.close);
+  const notFound = await runCommand(['job', 'cancel', 'ws-1', 'job-1', '--json'], { env: missing.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(notFound.exitCode, 1);
+  assert.equal(notFound.error.code, 'JOB_ARCHIVE_NOT_FOUND');
+  assert.equal(notFound.error.details.requestId, 'req-c-404');
+  assert.equal(JSON.stringify(notFound).includes(TEST_KEY), false);
+  const printedNotFound = JSON.parse(captureStdout(() => printResult(notFound)));
+  assert.equal(printedNotFound.ok, false);
+  assert.equal(printedNotFound.error.code, 'JOB_ARCHIVE_NOT_FOUND');
+  assert.equal(printedNotFound.error.details.requestId, 'req-c-404');
+
+  const unconfirmed = await startReadonlyMock({
+    cancelResponse: { status: 502, body: { code: 'JOB_CANCEL_UNCONFIRMED', requestId: 'req-c-502' } },
+  });
+  t.after(unconfirmed.close);
+  const lost = await runCommand(['job', 'cancel', 'ws-1', 'job-1', '--json'], { env: unconfirmed.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(lost.exitCode, 1);
+  assert.equal(lost.error.code, 'OPERATION_OUTCOME_UNKNOWN');
+  assert.equal(lost.error.details.status, 502);
+  assert.equal(unconfirmed.state.headers.filter((call) => call.pathname?.endsWith('/cancel')).length, 1);
+});
+
+test('checkpoint preview-revert sends the strict sliceRef body and previews only', async (t) => {
+  const cp = await startReadonlyMock();
+  t.after(cp.close);
+  const result = await runCommand(['checkpoint', 'preview-revert', 'ws-1', 'slice-1'], { env: cp.env, promptSecret: noPrompt, stdout: sink(), stderr: sink() });
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.data.kind, 'checkpoint-preview');
+  assert.equal(result.data.sliceRef, 'slice-1');
+  assert.equal(result.data.entries.length, 2);
+  assert.equal(result.data.truncated, false);
+  const previewCall = cp.state.headers.find((call) => call.pathname === '/api/v1/workspaces/ws-1/checkpoints/revert/preview');
+  assert.equal(previewCall.method, 'POST');
+  assert.equal(previewCall.workspaceId, 'ws-1');
+  assert.deepEqual(previewCall.body, { sliceRef: 'slice-1' });
+  const human = captureStdout(() => printResult(result));
+  assert.equal(human, 'preview: slice-1 entries=2 truncated=false opaqueNestedRepos=0\n');
+  const printedPreview = JSON.parse(captureStdout(() => printResult({ exitCode: 0, json: true, data: result.data })));
+  assert.equal(printedPreview.ok, true);
+  assert.equal(printedPreview.data.kind, 'checkpoint-preview');
+  assert.deepEqual(printedPreview.data.entries, [{ path: 'a.txt' }, { path: 'b.txt' }]);
+});
+
+test('checkpoint preview-revert validates arguments locally and maps CP error codes', async (t) => {
+  const cp = await startReadonlyMock();
+  t.after(cp.close);
+  const missing = await runCommand(['checkpoint', 'preview-revert', 'ws-1'], { env: cp.env, promptSecret: noPrompt, stdout: sink(), stderr: sink() });
+  assert.equal(missing.error.code, 'INVALID_ARGUMENT');
+  assert.equal(cp.state.headers.filter((call) => call.pathname?.includes('/revert/preview')).length, 0);
+
+  const busy = await startReadonlyMock({
+    previewResponse: { status: 409, body: { code: 'RUN_ACTIVE', requestId: 'req-p-409' } },
+  });
+  t.after(busy.close);
+  const conflict = await runCommand(['checkpoint', 'preview-revert', 'ws-1', 'slice-1', '--json'], { env: busy.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(conflict.exitCode, 1);
+  assert.equal(conflict.error.code, 'RUN_ACTIVE');
+  assert.equal(conflict.error.details.requestId, 'req-p-409');
+  const printedConflict = JSON.parse(captureStdout(() => printResult(conflict)));
+  assert.equal(printedConflict.ok, false);
+  assert.equal(printedConflict.error.code, 'RUN_ACTIVE');
+
+  const invalid = await startReadonlyMock({
+    previewResponse: { status: 400, body: { code: 'CHECKPOINT_INVALID_REQUEST', requestId: 'req-p-400' } },
+  });
+  t.after(invalid.close);
+  const badRequest = await runCommand(['checkpoint', 'preview-revert', 'ws-1', 'slice-1', '--json'], { env: invalid.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(badRequest.error.code, 'CHECKPOINT_INVALID_REQUEST');
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// PLAN-0574 M4: launcher --set bootstrap overrides (stack-run + lib/stack-set)
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('stack --set parses allowed keys, normalizes ports, and injects over the derived env', () => {
+  const parsed = parseStackSetArgs({
+    args: ['--stack', '2', '--set', 'XIHE_CP_PORT=12699', '--stack=2'],
+    target: 'cp',
+    env: {},
+  });
+  assert.deepEqual(parsed.values, { XIHE_CP_PORT: '12699' });
+  assert.deepEqual(parsed.warnings, []);
+
+  const agentParsed = parseStackSetArgs({
+    args: ['--set=XIHE_AGENT_PORT=080'],
+    target: 'agent',
+    env: {},
+  });
+  assert.deepEqual(agentParsed.values, { XIHE_AGENT_PORT: '80' });
+
+  const base = { XIHE_CP_PORT: '12631', PATH: 'keep' };
+  applySetToEnv(base, { XIHE_CP_PORT: '12699' });
+  assert.equal(base.XIHE_CP_PORT, '12699');
+  assert.equal(base.PATH, 'keep');
+});
+
+test('stack --set rejects unknown keys, duplicates, and invalid values without echoing them', () => {
+  const sentinel = 'SHOULD_NOT_ECHO_9f2';
+  const expectReject = (args, target, message) => {
+    assert.throws(() => parseStackSetArgs({ args, target, env: {} }), (error) => {
+      assert.match(error.message, message);
+      assert.equal(error.message.includes(sentinel), false);
+      return true;
+    });
+  };
+
+  expectReject(['--set', 'XIHE_DEV_ADMIN_PASSWORD=1'], 'cp', /not on the bootstrap allowlist/);
+  expectReject([`--set=XIHE_CP_PORT=${sentinel}`], 'cp', /decimal ASCII integer/);
+  expectReject(['--set', 'XIHE_CP_PORT=12699', '--set=XIHE_CP_PORT=12700'], 'cp', /more than once/);
+  for (const bad of ['', ' 80', '80 ', '+80', '-1', 'abc', '0', '65536', '123456', '12 34']) {
+    expectReject(['--set', `XIHE_CP_PORT=${bad}`], 'cp', /(decimal ASCII integer|out of range|requires a decimal port)/);
+  }
+  expectReject(['--set'], 'cp', /requires KEY=VALUE/);
+  expectReject(['--set', 'NOVALUE'], 'cp', /requires KEY=VALUE/);
+});
+
+test('stack --set only injects into targets that consume the key (listening or connection side)', () => {
+  // Connection-side consumption is allowed by the design port matrix.
+  assert.deepEqual(
+    parseStackSetArgs({ args: ['--set', 'XIHE_CP_PORT=12699'], target: 'agent', env: {}, userEnv: {} }).values,
+    { XIHE_CP_PORT: '12699' },
+  );
+  assert.deepEqual(
+    parseStackSetArgs({ args: ['--set', 'XIHE_AGENT_PORT=12698'], target: 'cp', env: {}, userEnv: {} }).values,
+    { XIHE_AGENT_PORT: '12698' },
+  );
+  assert.deepEqual(
+    parseStackSetArgs({ args: ['--set', 'XIHE_RUNTIME_PORT=13000'], target: 'cp', env: {}, userEnv: {} }).values,
+    { XIHE_RUNTIME_PORT: '13000' },
+  );
+  // Targets with no listening or connection-side consumption are refused.
+  assert.throws(
+    () => parseStackSetArgs({ args: ['--set', 'XIHE_AGENT_PORT=12698'], target: 'runtime', env: {}, userEnv: {} }),
+    /not consumed by target "runtime"/,
+  );
+  for (const target of ['pg', 'ui', 'watch', 'dev-host', 'env-json', 'slots-json']) {
+    assert.throws(
+      () => parseStackSetArgs({ args: ['--set', 'XIHE_CP_PORT=12699'], target, env: {}, userEnv: {} }),
+      new RegExp(`not consumed by target "${target}"`),
+    );
+  }
+  const empty = parseStackSetArgs({ args: ['--stack', '2'], target: 'ui', env: {}, userEnv: {} });
+  assert.deepEqual(empty.values, {});
+  assert.deepEqual(empty.warnings, []);
+  assert.deepEqual(empty.urlSyncs, []);
+});
+
+test('stack --set re-points launcher-derived connection URLs and keeps user-provided ones', () => {
+  // Derived URLs (absent from the user env) follow the new port, path preserved.
+  const derived = parseStackSetArgs({
+    args: ['--set', 'XIHE_AGENT_PORT=12698'],
+    target: 'cp',
+    env: { XIHE_AGENT_URL: 'http://localhost:12632/internal/v1/agent/chat' },
+    userEnv: {},
+  });
+  assert.deepEqual(derived.urlSyncs, [
+    { key: 'XIHE_AGENT_URL', value: 'http://localhost:12698/internal/v1/agent/chat' },
+  ]);
+  assert.deepEqual(derived.warnings, []);
+
+  const runtimeDerived = parseStackSetArgs({
+    args: ['--set', 'XIHE_RUNTIME_PORT=13000'],
+    target: 'cp',
+    env: { XIHE_RUNTIME_URL: 'http://localhost:12633' },
+    userEnv: {},
+  });
+  assert.deepEqual(runtimeDerived.urlSyncs, [{ key: 'XIHE_RUNTIME_URL', value: 'http://localhost:13000' }]);
+
+  const cpDerived = parseStackSetArgs({
+    args: ['--set', 'XIHE_CP_PORT=12699'],
+    target: 'agent',
+    env: {
+      XIHE_CP_URL: 'http://localhost:12631',
+      XIHE_CP_BASE_URL: 'http://localhost:12631',
+      XIHE_AGENT_URL: 'http://localhost:12632/internal/v1/agent/chat',
+    },
+    userEnv: {},
+  });
+  assert.deepEqual(cpDerived.urlSyncs, [
+    { key: 'XIHE_CP_URL', value: 'http://localhost:12699' },
+    { key: 'XIHE_CP_BASE_URL', value: 'http://localhost:12699' },
+  ]);
+
+  // User-provided URLs are kept and produce warnings instead of syncs.
+  const explicit = parseStackSetArgs({
+    args: ['--set', 'XIHE_CP_PORT=12699'],
+    target: 'agent',
+    env: { XIHE_CP_URL: 'http://127.0.0.1:12345', XIHE_CP_BASE_URL: 'http://localhost:12631' },
+    userEnv: { XIHE_CP_URL: 'http://127.0.0.1:12345' },
+  });
+  assert.deepEqual(explicit.urlSyncs, [{ key: 'XIHE_CP_BASE_URL', value: 'http://localhost:12699' }]);
+  assert.equal(explicit.warnings.length, 1);
+  assert.match(explicit.warnings[0], /XIHE_CP_URL is set explicitly/);
+
+  const explicitAgent = parseStackSetArgs({
+    args: ['--set', 'XIHE_AGENT_PORT=12698'],
+    target: 'cp',
+    env: { XIHE_AGENT_URL: 'http://localhost:12632/internal/v1/agent/chat', XIHE_AGENT_BASE_URL: 'http://localhost:1' },
+    userEnv: { XIHE_AGENT_URL: 'http://localhost:12632/internal/v1/agent/chat', XIHE_AGENT_BASE_URL: 'http://localhost:1' },
+  });
+  assert.deepEqual(explicitAgent.urlSyncs, []);
+  assert.equal(explicitAgent.warnings.length, 2);
+  assert.match(explicitAgent.warnings[0], /XIHE_AGENT_URL is set explicitly/);
+  assert.match(explicitAgent.warnings[1], /XIHE_AGENT_BASE_URL is set explicitly/);
+
+  // XIHE_AGENT_BASE_URL is never launcher-derived; when only the user sets it,
+  // the port override must warn about the silent break instead of rewriting it.
+  const explicitBaseOnly = parseStackSetArgs({
+    args: ['--set', 'XIHE_AGENT_PORT=12698'],
+    target: 'cp',
+    env: { XIHE_AGENT_URL: 'http://localhost:12632/internal/v1/agent/chat', XIHE_AGENT_BASE_URL: 'http://localhost:1' },
+    userEnv: { XIHE_AGENT_BASE_URL: 'http://localhost:1' },
+  });
+  assert.deepEqual(explicitBaseOnly.urlSyncs, [{ key: 'XIHE_AGENT_URL', value: 'http://localhost:12698/internal/v1/agent/chat' }]);
+  assert.equal(explicitBaseOnly.warnings.length, 1);
+  assert.match(explicitBaseOnly.warnings[0], /XIHE_AGENT_BASE_URL is set explicitly/);
+});
+
+test('applyUrlSyncToEnv rewrites only the computed derived URLs', () => {
+  const env = { XIHE_AGENT_URL: 'http://localhost:12632/internal/v1/agent/chat', OTHER: 'x' };
+  applyUrlSyncToEnv(env, [{ key: 'XIHE_AGENT_URL', value: 'http://localhost:12698/internal/v1/agent/chat' }]);
+  assert.equal(env.XIHE_AGENT_URL, 'http://localhost:12698/internal/v1/agent/chat');
+  assert.equal(env.OTHER, 'x');
+});
+
+test('stack-run refuses --set misuses before launching any process', () => {
+  const workdir = path.resolve(import.meta.dirname ?? '.', '..');
+  const run = (args) => spawnSync(process.execPath, ['scripts/stack-run.mjs', ...args], {
+    cwd: workdir,
+    encoding: 'utf8',
+    timeout: 30000,
+    windowsHide: true,
+  });
+  const invalid = run(['cp', '--set', 'XIHE_CP_PORT=abc']);
+  assert.equal(invalid.status, 2);
+  assert.match(invalid.stderr ?? '', /decimal ASCII integer/);
+  assert.equal((invalid.stderr ?? '').includes('abc'), false);
+
+  const wrongTarget = run(['ui', '--set', 'XIHE_CP_PORT=12699']);
+  assert.equal(wrongTarget.status, 2);
+  assert.match(wrongTarget.stderr ?? '', /not consumed by target "ui"/);
+
+  // Argument-order combinations: --stack (space and inline forms) before and
+  // after --set must not affect validation, and nothing is ever launched.
+  const stackThenSet = run(['cp', '--stack', '2', '--set', 'XIHE_CP_PORT=abc']);
+  assert.equal(stackThenSet.status, 2);
+  assert.match(stackThenSet.stderr ?? '', /decimal ASCII integer/);
+
+  const inlineStackThenSet = run(['agent', '--stack=2', '--set', 'XIHE_CP_PORT=abc']);
+  assert.equal(inlineStackThenSet.status, 2);
+  assert.match(inlineStackThenSet.stderr ?? '', /decimal ASCII integer/);
+
+  const setThenStack = run(['agent', '--set', 'XIHE_CP_PORT=abc', '--stack', '2']);
+  assert.equal(setThenStack.status, 2);
+  assert.match(setThenStack.stderr ?? '', /decimal ASCII integer/);
+
+  const unconsumed = run(['runtime', '--stack', '2', '--set', 'XIHE_AGENT_PORT=13000']);
+  assert.equal(unconsumed.status, 2);
+  assert.match(unconsumed.stderr ?? '', /not consumed by target "runtime"/);
+});
+test('job cancel and checkpoint preview reject contract-breaking 2xx responses explicitly', async (t) => {
+  const emptyCancel = await startReadonlyMock({
+    cancelResponse: { status: 200, body: {} },
+  });
+  t.after(emptyCancel.close);
+  const empty = await runCommand(['job', 'cancel', 'ws-1', 'job-1', '--json'], { env: emptyCancel.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(empty.exitCode, 1);
+  assert.equal(empty.error.code, 'CP_RESPONSE_INVALID');
+
+  const noContent = await startReadonlyMock({
+    cancelResponse: { status: 204, body: null },
+  });
+  t.after(noContent.close);
+  const absent = await runCommand(['job', 'cancel', 'ws-1', 'job-1', '--json'], { env: noContent.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(absent.exitCode, 1);
+  assert.equal(absent.error.code, 'CP_RESPONSE_INVALID');
+
+  const partialPreview = await startReadonlyMock({
+    previewResponse: { status: 200, body: { sliceRef: 'slice-1' } },
+  });
+  t.after(partialPreview.close);
+  const broken = await runCommand(['checkpoint', 'preview-revert', 'ws-1', 'slice-1', '--json'], { env: partialPreview.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(broken.exitCode, 1);
+  assert.equal(broken.error.code, 'CP_RESPONSE_INVALID');
+
+  const preview204 = await startReadonlyMock({
+    previewResponse: { status: 204, body: null },
+  });
+  t.after(preview204.close);
+  const absentPreview = await runCommand(['checkpoint', 'preview-revert', 'ws-1', 'slice-1', '--json'], { env: preview204.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(absentPreview.exitCode, 1);
+  assert.equal(absentPreview.error.code, 'CP_RESPONSE_INVALID');
 });

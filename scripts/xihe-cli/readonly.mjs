@@ -239,6 +239,72 @@ export async function runScheduledTaskList({ apiBase, fetchImpl, token, workspac
   };
 }
 
+// T3.1: POST with no body; the server's idempotency (`changed:false` for an
+// already-terminal job) is passed through untouched (I7). A lost connection or
+// a post-write 5xx surfaces as OPERATION_OUTCOME_UNKNOWN and is never replayed.
+// The contract requires jobId/status/changed on 2xx; anything else is a broken
+// response and must fail explicitly instead of synthesizing `changed:false`.
+export async function runJobCancel({ apiBase, fetchImpl, token, workspaceId, jobId }) {
+  const body = await requestJson(
+    `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/jobs/${encodeURIComponent(jobId)}/cancel`,
+    {
+      apiBase,
+      fetchImpl,
+      token,
+      method: 'POST',
+      headers: { 'X-Workspace-Id': workspaceId },
+    },
+  );
+  if (!body
+    || typeof body.jobId !== 'string' || body.jobId === ''
+    || typeof body.status !== 'string' || body.status === ''
+    || typeof body.changed !== 'boolean') {
+    throw new CliError('CP_RESPONSE_INVALID', 'CP returned an unexpected job cancel response shape.', {}, 1);
+  }
+  return {
+    kind: 'job-cancel',
+    jobId: body.jobId,
+    status: body.status,
+    changed: body.changed,
+  };
+}
+
+// T3.2: preview only. The request body is strictly {"sliceRef": "..."} (extra
+// keys are rejected by CP with 400) and nothing is reverted by this command.
+// The contract requires sliceRef/counts/entries/truncated on 2xx; anything else
+// (204, null, empty object) fails explicitly instead of synthesizing a preview.
+export async function runCheckpointPreviewRevert({ apiBase, fetchImpl, token, workspaceId, sliceRef }) {
+  if (typeof sliceRef !== 'string' || sliceRef.trim() === '') {
+    throw new CliError('INVALID_ARGUMENT', 'A sliceRef is required.', {}, 1);
+  }
+  const body = await requestJson(
+    `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/checkpoints/revert/preview`,
+    {
+      apiBase,
+      fetchImpl,
+      token,
+      method: 'POST',
+      body: { sliceRef: sliceRef.trim() },
+      headers: { 'X-Workspace-Id': workspaceId },
+    },
+  );
+  if (!body
+    || typeof body.sliceRef !== 'string' || body.sliceRef === ''
+    || body.counts === null || typeof body.counts !== 'object'
+    || !Array.isArray(body.entries)
+    || typeof body.truncated !== 'boolean') {
+    throw new CliError('CP_RESPONSE_INVALID', 'CP returned an unexpected checkpoint preview response shape.', {}, 1);
+  }
+  return {
+    kind: 'checkpoint-preview',
+    sliceRef: body.sliceRef,
+    counts: body.counts,
+    entries: body.entries,
+    truncated: body.truncated,
+    opaqueNestedRepos: typeof body.opaqueNestedRepos === 'number' ? body.opaqueNestedRepos : null,
+  };
+}
+
 export async function runAuditList({ apiBase, fetchImpl, token, options }) {
   const page = optionalInteger(options, '--page', { min: 0, fallback: 0 });
   const size = optionalInteger(options, '--size', { min: 1, max: 100, fallback: 20 });

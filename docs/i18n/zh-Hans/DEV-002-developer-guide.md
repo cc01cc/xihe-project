@@ -118,6 +118,27 @@ mise run test:e2e:host:real -- e2e/real/real-tool-roundtrip.spec.ts --route open
 
 CLI 与 UI 并列调用 CP API；Agent 不调用运维 CLI。Provider Key 经 CP 加密保存。real E2E 通过 Agent 的独立环境变量路径运行，不代表验证了 Provider Connection lease。
 
+### 运维 CLI 命令面（PLAN-0574）
+
+```bash
+mise run xihe -- status                                              # /status + /health + /version 聚合
+mise run xihe -- workspace list
+mise run xihe -- workspace get <wsId>                                # 含 environment
+mise run xihe -- job list <wsId>
+mise run xihe -- job output <wsId> <jobId> [--stream stdout|stderr] [--offset N] [--limit N]
+mise run xihe -- job cancel <wsId> <jobId>                           # 幂等语义透传（changed:false）
+mise run xihe -- checkpoint list <wsId>                              # 含 retention（失败显式报告）
+mise run xihe -- checkpoint preview-revert <wsId> <sliceRef>         # 仅预览，不执行 revert
+mise run xihe -- scheduled-task list <wsId> [--page N] [--size N]
+mise run xihe -- audit list [--type T] [--page N] [--size N]
+mise run xihe -- config export [--include-secrets] [--out <file>] [--force]   # 默认不含密
+mise run xihe -- provider delete <id> [--yes]                        # 先展示 delete-impact
+mise run xihe -- version [--check]
+```
+
+- 全命令支持 `--json`（stdout 单对象 `{ok:true,data}` / `{ok:false,error:{code,message}}`），人类输出为单行/表格摘要；详见 `mise run xihe -- --help`。
+- stack 端口覆盖（bootstrap 白名单）：`node scripts/stack-run.mjs <cp|agent|runtime> --set XIHE_CP_PORT|XIHE_AGENT_PORT|XIHE_RUNTIME_PORT=<1..65535>`——仅白名单三键、仅注入实际消费该键的目标；重复/未知/敏感/非法值在启动任何进程前拒绝且不回显输入值；`XIHE_CP_URL` / `XIHE_AGENT_URL(_BASE_URL)` / `XIHE_RUNTIME_URL` 已显式设置时端口只改监听端并提示断链风险。机制详见 DEV-003 §2 与 `spec/configuration/env-effective.md`。
+
 `--api-key-env` 指向当前进程已注入的变量；交互终端缺少变量时 CLI 会以无回显方式提示，非交互任务则失败。CLI 不自行读取 `.env.local`；无人值守时由调用方安全注入环境变量。
 
 `real-tool-roundtrip` 最多提交两轮模型提示，可能产生相应费用；Playwright 整条用例自动重试已关闭，失败后需操作者决定是否重跑。

@@ -26,6 +26,8 @@ import {
   collectStatus,
   runAuditList,
   runCheckpointList,
+  runCheckpointPreviewRevert,
+  runJobCancel,
   runJobList,
   runJobOutput,
   runScheduledTaskList,
@@ -67,7 +69,9 @@ function helpText() {
     '  node scripts/xihe.mjs workspace get <wsId>',
     '  node scripts/xihe.mjs job list <wsId>',
     '  node scripts/xihe.mjs job output <wsId> <jobId> [--stream stdout|stderr] [--offset <n>] [--limit <n>]',
+    '  node scripts/xihe.mjs job cancel <wsId> <jobId>',
     '  node scripts/xihe.mjs checkpoint list <wsId>',
+    '  node scripts/xihe.mjs checkpoint preview-revert <wsId> <sliceRef>',
     '  node scripts/xihe.mjs scheduled-task list <wsId> [--page <n>] [--size <n>]',
     '  node scripts/xihe.mjs audit list [--type <type>] [--page <n>] [--size <n>]',
     '  node scripts/xihe.mjs provider add <id> --scope <USER|WORKSPACE> --label <label> [--models <id,id>] [--api-key-env <name>]',
@@ -174,8 +178,10 @@ export async function runCommand(argv, dependencies = {}) {
         parsed = parseCommandOptions(rest, ['--email'], []);
       } else if (command === 'output') {
         parsed = parseCommandOptions(rest, ['--stream', '--offset', '--limit', '--email'], []);
+      } else if (command === 'cancel') {
+        parsed = parseCommandOptions(rest, ['--email'], []);
       } else {
-        throw new CliError('INVALID_ARGUMENT', 'Unknown job command; use list/output.');
+        throw new CliError('INVALID_ARGUMENT', 'Unknown job command; use list/output/cancel.');
       }
       if (command === 'list' && parsed.positionals.length !== 1) {
         throw new CliError('INVALID_ARGUMENT', 'job list requires one workspace ID.');
@@ -183,10 +189,23 @@ export async function runCommand(argv, dependencies = {}) {
       if (command === 'output' && parsed.positionals.length !== 2) {
         throw new CliError('INVALID_ARGUMENT', 'job output requires a workspace ID and a job ID.');
       }
+      if (command === 'cancel' && parsed.positionals.length !== 2) {
+        throw new CliError('INVALID_ARGUMENT', 'job cancel requires a workspace ID and a job ID.');
+      }
       const apiBase = getApiBase(env);
       const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
       if (command === 'list') {
         return { exitCode: 0, json, data: await runJobList({ apiBase, fetchImpl, token, workspaceId: parsed.positionals[0] }) };
+      }
+      if (command === 'cancel') {
+        const data = await runJobCancel({
+          apiBase,
+          fetchImpl,
+          token,
+          workspaceId: parsed.positionals[0],
+          jobId: parsed.positionals[1],
+        });
+        return { exitCode: 0, json, data };
       }
       const data = await runJobOutput({
         apiBase,
@@ -199,13 +218,35 @@ export async function runCommand(argv, dependencies = {}) {
       return { exitCode: 0, json, data };
     }
 
-    if (group === 'checkpoint' && command === 'list') {
-      const parsed = parseCommandOptions(rest, ['--email'], []);
-      if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'checkpoint list requires one workspace ID.');
+    if (group === 'checkpoint') {
+      let parsed;
+      if (command === 'list') {
+        parsed = parseCommandOptions(rest, ['--email'], []);
+      } else if (command === 'preview-revert') {
+        parsed = parseCommandOptions(rest, ['--email'], []);
+      } else {
+        throw new CliError('INVALID_ARGUMENT', 'Unknown checkpoint command; use list/preview-revert.');
+      }
+      if (command === 'list' && parsed.positionals.length !== 1) {
+        throw new CliError('INVALID_ARGUMENT', 'checkpoint list requires one workspace ID.');
+      }
+      if (command === 'preview-revert' && parsed.positionals.length !== 2) {
+        throw new CliError('INVALID_ARGUMENT', 'checkpoint preview-revert requires a workspace ID and a sliceRef.');
+      }
       const apiBase = getApiBase(env);
       const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
-      const data = await runCheckpointList({ apiBase, fetchImpl, token, workspaceId: parsed.positionals[0] });
-      return { exitCode: data.partial ? 1 : 0, json, data };
+      if (command === 'list') {
+        const data = await runCheckpointList({ apiBase, fetchImpl, token, workspaceId: parsed.positionals[0] });
+        return { exitCode: data.partial ? 1 : 0, json, data };
+      }
+      const data = await runCheckpointPreviewRevert({
+        apiBase,
+        fetchImpl,
+        token,
+        workspaceId: parsed.positionals[0],
+        sliceRef: parsed.positionals[1],
+      });
+      return { exitCode: 0, json, data };
     }
 
     if (group === 'scheduled-task' && command === 'list') {
@@ -515,6 +556,15 @@ export function printResult(result) {
     } else {
       out.write(`retention: maxRuns=${retention?.maxRuns ?? '?'} ttlDays=${retention?.ttlDays ?? '?'} currentRuns=${retention?.currentRuns ?? '?'}\n`);
     }
+    return;
+  }
+  if (result.data?.kind === 'job-cancel') {
+    out.write(`cancel: ${result.data.jobId} status=${result.data.status ?? '?'} changed=${result.data.changed}\n`);
+    return;
+  }
+  if (result.data?.kind === 'checkpoint-preview') {
+    out.write(`preview: ${result.data.sliceRef} entries=${result.data.entries.length}`
+      + ` truncated=${result.data.truncated} opaqueNestedRepos=${result.data.opaqueNestedRepos ?? '?'}\n`);
     return;
   }
   if (result.data?.kind === 'scheduled-task-list') {

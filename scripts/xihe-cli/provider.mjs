@@ -109,8 +109,11 @@ function isSafeConnectFailure(error) {
 function apiErrorCode(status, body) {
   if (status === 401) return 'AUTHENTICATION_FAILED';
   if (status === 403) return 'ACCESS_DENIED';
-  if (status === 404) return 'NOT_FOUND';
+  // PLAN-0574 I7: the server's own error code is passed through (e.g.
+  // JOB_ARCHIVE_NOT_FOUND, WORKSPACE_NOT_FOUND) so idempotency and retry
+  // semantics survive the CLI boundary. 401/403 keep their stable CLI codes.
   if (typeof body?.code === 'string' && /^[A-Z0-9_]{1,80}$/.test(body.code)) return body.code;
+  if (status === 404) return 'NOT_FOUND';
   return `HTTP_${status}`;
 }
 

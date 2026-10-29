@@ -472,6 +472,27 @@ XIHE_VERIFY_PASSWORD=<admin password> mise run xihe -- verify \
 - **Cleanup and residue**: on completion or failure the CLI closes SSE first and then `DELETE /api/v1/sessions/{sessionId}` for the session it created. A principal created by this run has no confirmed delete API and is retained and reported (`cleanup.principal`); pre-existing principals are never modified or deleted. Audit and provider-side records may persist.
 - **Agent principal**: creating a session requires `agentPrincipalId`. The CLI resolves it as explicit `XIHE_VERIFY_AGENT_PRINCIPAL_ID` → first principal already bound to the workspace → newly created one. It only calls `PUT …/agents/{id}` right after creating a principal — that call **narrows** the workspace cap of an existing principal. Diagnostics only print whitelisted status fields, never raw agent logs.
 
+### 4.8. Operator CLI surface (PLAN-0574)
+
+```bash
+mise run xihe -- status                                              # /status + /health + /version aggregate
+mise run xihe -- workspace list
+mise run xihe -- workspace get <wsId>                                # includes environment
+mise run xihe -- job list <wsId>
+mise run xihe -- job output <wsId> <jobId> [--stream stdout|stderr] [--offset N] [--limit N]
+mise run xihe -- job cancel <wsId> <jobId>                           # idempotent `changed:false` passthrough
+mise run xihe -- checkpoint list <wsId>                              # includes retention (failures reported explicitly)
+mise run xihe -- checkpoint preview-revert <wsId> <sliceRef>         # preview only, never reverts
+mise run xihe -- scheduled-task list <wsId> [--page N] [--size N]
+mise run xihe -- audit list [--type T] [--page N] [--size N]
+mise run xihe -- config export [--include-secrets] [--out <file>] [--force]   # secrets off by default
+mise run xihe -- provider delete <id> [--yes]                        # shows delete-impact first
+mise run xihe -- version [--check]
+```
+
+- Every command supports `--json` (a single stdout object `{ok:true,data}` or `{ok:false,error:{code,message}}`); human output is a one-line/table summary. See `mise run xihe -- --help`.
+- Stack port overrides (bootstrap allowlist): `node scripts/stack-run.mjs <cp|agent|runtime> --set XIHE_CP_PORT|XIHE_AGENT_PORT|XIHE_RUNTIME_PORT=<1..65535>` — the three allowlisted keys only, injected into the target that actually consumes the key; duplicates, unknown keys, secrets and invalid values are refused before any process starts, without echoing the input. When `XIHE_CP_URL` / `XIHE_AGENT_URL(_BASE_URL)` / `XIHE_RUNTIME_URL` is set explicitly, the port only changes the listening side and the launcher warns about a possible broken link. Mechanism details: DEV-003 §2 and `spec/configuration/env-effective.md`.
+
 ## 5. Deployment
 
 ### 5.1. Docker Compose (Recommended)
