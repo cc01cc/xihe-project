@@ -1351,6 +1351,22 @@ async function runPlaywright() {
       // PLAN-0372 decisions #A/#B: the real-lane cases read the selected route
       // fixture (no secrets; mock lane ignores it).
       XIHE_E2E_REAL_ROUTE: realRoute,
+      // BL-148: the real lane starts no fake-LLM fixture, so specs cannot build
+      // the mock-lane chat connection. Expose the real provider identity to THIS
+      // node test process only (never logged, never persisted, never forwarded to
+      // the browser by our helpers) so `ensureChatBinding` can create a
+      // manual-discovery connection that verifies READY without a network call.
+      ...(realXiaomiKey
+        ? {
+            XIHE_E2E_REAL_KEY: realXiaomiKey,
+            XIHE_E2E_REAL_PROVIDER: realRoute === 'openai-compat' ? 'openai' : 'xiaomi',
+            XIHE_E2E_REAL_API_TYPE_ID: realRoute === 'openai-compat' ? 'openai-chat-completions' : 'mimo-responses',
+            XIHE_E2E_REAL_API_TYPE_VERSION: '1',
+            // Both route fixtures use the same MiMo endpoint (PLAN-0372 #B).
+            XIHE_E2E_REAL_BASE_URL: 'https://api.xiaomimimo.com/v1',
+            XIHE_E2E_REAL_MODEL: 'mimo-v2.6-flash',
+          }
+        : {}),
       XIHE_E2E_HEADED: process.env.XIHE_E2E_HEADED ?? '0',
       XIHE_E2E_BROWSER_CHANNEL: process.env.XIHE_E2E_BROWSER_CHANNEL ?? 'chrome-beta',
       ...(reportPath ? { PLAYWRIGHT_JSON_OUTPUT_NAME: reportPath } : {}),

@@ -145,13 +145,8 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
         page,
         request,
     }) => {
-        // BL-148: the probe run needs a usable chat connection; in the real lane
-        // the runner only provides env-keyed identity, so the probe run ends
-        // `ambiguous` instead of `succeeded` (mock lane green).
-        test.skip(
-            process.env.XIHE_E2E_LLM_MODE === "real",
-            "BL-148: real lane has no usable ProviderConnection → probe run is ambiguous (mock lane green)",
-        );
+        // BL-148: the probe run needs a usable chat connection; `ensureChatBinding`
+        // builds the real-lane one from the runner-provided identity (node side).
         seedPage(page, ctx);
         await page.goto("/workspace/" + ctx.workspaceId, { waitUntil: "load" });
         await ensureChatReady(page);

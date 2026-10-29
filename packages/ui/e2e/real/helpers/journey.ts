@@ -344,6 +344,158 @@ export function seedPage(page: Page, ctx: JourneyContext): void {
 }
 
 /**
+ * BL-148: real-lane connection identity injected by `scripts/e2e-host.mjs` into
+ * the node test process only. The key never reaches the browser context — every
+ * credential-bearing request below runs through Playwright's APIRequestContext.
+ */
+export interface RealLaneConnectionConfig {
+    apiKey: string;
+    provider: string;
+    apiTypeId: string;
+    apiTypeVersion: number;
+    baseUrl: string;
+    model: string;
+}
+
+export function realLaneConnectionConfig(): RealLaneConnectionConfig | null {
+    const apiKey = process.env.XIHE_E2E_REAL_KEY;
+    if (!apiKey) return null;
+    return {
+        apiKey,
+        provider: process.env.XIHE_E2E_REAL_PROVIDER ?? "xiaomi",
+        apiTypeId: process.env.XIHE_E2E_REAL_API_TYPE_ID ?? "mimo-responses",
+        apiTypeVersion: Number(process.env.XIHE_E2E_REAL_API_TYPE_VERSION ?? "1"),
+        baseUrl: process.env.XIHE_E2E_REAL_BASE_URL ?? "https://api.xiaomimimo.com/v1",
+        model: process.env.XIHE_E2E_REAL_MODEL ?? "mimo-v2.6-flash",
+    };
+}
+
+type ConnectionView = {
+    id: string;
+    providerId: string;
+    revision: number;
+    enabled: boolean;
+    status: string;
+    operation?: string;
+    manualModels?: string[];
+};
+
+/**
+ * BL-148: the real lane starts no fake-LLM fixture, so the mock branch below
+ * cannot bind a reachable endpoint. A real connection with manual model
+ * discovery verifies READY without a network call
+ * (ProviderConnectionService.verify: manual + manualModels → READY), and the
+ * node-side APIRequestContext keeps the real key out of the page context.
+ */
+async function ensureRealChatBinding(
+    page: Page,
+    sessionId: string,
+    cfg: RealLaneConnectionConfig,
+): Promise<void> {
+    const token = await page.evaluate(() => localStorage.getItem("xihe-token") ?? "");
+    if (!token) {
+        throw new Error("BL-148: real chat binding needs an authenticated page (no xihe-token)");
+    }
+    const api = page.context().request;
+    const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+    const sessionResponse = await api.get(`${CP_URL}/api/v1/sessions/${sessionId}`, { headers });
+    if (!sessionResponse.ok()) {
+        throw new Error(`BL-148: read session failed ${sessionResponse.status()}`);
+    }
+    const session = (await sessionResponse.json()) as {
+        providerConnectionId?: string | null;
+        modelName?: string | null;
+    };
+    const modelName = session.modelName || cfg.model;
+
+    const listResponse = await api.get(`${CP_URL}/api/v1/provider-connections`, { headers });
+    if (!listResponse.ok()) {
+        throw new Error(`BL-148: list provider connections failed ${listResponse.status()}`);
+    }
+    const connections =
+        ((await listResponse.json()) as { connections?: ConnectionView[] }).connections ?? [];
+    let connection: ConnectionView | undefined;
+    if (session.providerConnectionId) {
+        connection = connections.find((item) => item.id === session.providerConnectionId);
+        if (!connection) {
+            throw new Error(
+                `BL-148: bound connection ${session.providerConnectionId} is not visible`,
+            );
+        }
+        if (connection.status !== "READY") {
+            throw new Error(`BL-148: bound connection not READY (${connection.status})`);
+        }
+    } else {
+        connection = connections.find(
+            (item) => item.enabled && item.status === "READY" && item.operation === "chat",
+        );
+    }
+
+    if (!connection) {
+        const created = await api.post(`${CP_URL}/api/v1/provider-connections`, {
+            headers,
+            data: {
+                providerId: cfg.provider,
+                apiTypeId: cfg.apiTypeId,
+                apiTypeVersion: cfg.apiTypeVersion,
+                apiKey: cfg.apiKey,
+                connectionKey: "e2e-real-chat",
+                label: "E2E real chat",
+                scope: "USER",
+                modelDiscovery: "manual",
+                manualModels: [modelName],
+                baseUrl: cfg.baseUrl,
+            },
+        });
+        if (!created.ok()) {
+            throw new Error(`BL-148: create provider connection failed ${created.status()}`);
+        }
+        const createdBody = (await created.json()) as ConnectionView;
+        const verifiedResponse = await api.post(
+            `${CP_URL}/api/v1/provider-connections/${createdBody.id}/verify`,
+            { headers },
+        );
+        if (!verifiedResponse.ok()) {
+            throw new Error(
+                `BL-148: verify provider connection failed ${verifiedResponse.status()}`,
+            );
+        }
+        connection = ((await verifiedResponse.json()) as { connection: ConnectionView }).connection;
+        if (connection.status !== "READY") {
+            throw new Error(`BL-148: provider connection not READY (${connection.status})`);
+        }
+    }
+
+    if (!(connection.manualModels ?? []).includes(modelName)) {
+        const patched = await api.patch(`${CP_URL}/api/v1/provider-connections/${connection.id}`, {
+            headers,
+            data: {
+                manualModels: [...(connection.manualModels ?? []), modelName],
+                expectedRevision: connection.revision,
+            },
+        });
+        if (!patched.ok()) {
+            throw new Error(`BL-148: append model failed ${patched.status()}`);
+        }
+        connection = (await patched.json()) as ConnectionView;
+    }
+
+    const bound = await api.patch(`${CP_URL}/api/v1/sessions/${sessionId}`, {
+        headers,
+        data: {
+            providerConnectionId: connection.id,
+            modelProvider: cfg.provider,
+            modelName,
+            connectionRevision: connection.revision,
+        },
+    });
+    if (!bound.ok()) {
+        throw new Error(`BL-148: bind session failed ${bound.status()}`);
+    }
+}
+
+/**
  * PLAN-0439: chat admission requires an explicit Session binding — a visible
  * READY chat connection at the pinned revision plus the template pin triple.
  * Specs written before the API-native runtime created raw Sessions, so the
@@ -351,6 +503,13 @@ export function seedPage(page: Page, ctx: JourneyContext): void {
  * left untouched, and the fixture connection is created once per workspace.
  */
 export async function ensureChatBinding(page: Page, sessionId: string): Promise<void> {
+    // BL-148: real lane — no fake LLM fixture exists, so build the equivalent
+    // real connection from the runner-provided identity (node-side only).
+    const realLane = realLaneConnectionConfig();
+    if (realLane) {
+        await ensureRealChatBinding(page, sessionId, realLane);
+        return;
+    }
     // PLAN-0439: bound sessions dispatch through the connection, so the
     // fixture connection must point at a reachable OpenAI-compatible endpoint.
     // The host runner serves one for every mode (fake-llm fixture).
