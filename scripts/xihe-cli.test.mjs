@@ -2355,3 +2355,585 @@ test('job cancel and checkpoint preview reject contract-breaking 2xx responses e
   assert.equal(absentPreview.exitCode, 1);
   assert.equal(absentPreview.error.code, 'CP_RESPONSE_INVALID');
 });
+
+// ── PLAN-0575: credential CLI (M1 read surface + M2 write surface) ──
+
+const CREDENTIAL_ID = '11111111-2222-3333-4444-555555555555';
+const CREDENTIAL_WORKSPACE = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+const CREDENTIAL_AGENT = '99999999-8888-7777-6666-555555555555';
+const CREDENTIAL_AGENT_TWO = '77777777-6666-5555-4444-333333333333';
+const CREDENTIAL_TOKEN = 'sk-test-credential-0575';
+const CREDENTIAL_ACCESS_KEY = 'AK-test-access-0575';
+const CREDENTIAL_SECRET_KEY = 'SK-test-secret-0575';
+const CREDENTIAL_REVEAL_PASSWORD = 'step-up-password-0575';
+const CREDENTIAL_REVEAL_VALUE = JSON.stringify({ token: 'sk-test-reveal-0575' });
+const CREDENTIAL_SENTINEL = 'TEST_SENTINEL_DETAIL_0575';
+
+function credentialBody(patch = {}) {
+  return {
+    id: CREDENTIAL_ID,
+    label: 'ops-token',
+    kind: 'token',
+    deliveryTier: 'lease',
+    ownerType: 'USER',
+    ownerId: 'user-1',
+    status: 'active',
+    fingerprint: 'fp-abc123',
+    revision: 1,
+    referenceCount: 0,
+    createdAt: '2026-10-29T00:00:00Z',
+    replacedAt: null,
+    ...patch,
+  };
+}
+
+async function startCredentialMock(overrides = {}) {
+  const state = {
+    calls: [],
+    listQueries: [],
+    createBodies: [],
+    replaceBodies: [],
+    precheckBodies: [],
+    bindingsBodies: [],
+    revealBodies: [],
+    deleteRequests: 0,
+    listResponse: { credentials: [credentialBody()], count: 1 },
+    referencesResponse: {
+      references: [
+        { source: 'grant', subjectType: 'agent_principal', subjectId: CREDENTIAL_AGENT, actionClass: 'credential_use', resource: `credential:${CREDENTIAL_ID}` },
+      ],
+    },
+    eventsResponse: { events: [{ id: 'evt-1', eventType: 'created', actor: 'user-1', createdAt: '2026-10-29T00:00:00Z' }] },
+    precheckResponse: { uncovered: ['credential_reveal@credential:*'] },
+    createResponse: { status: 201, body: credentialBody() },
+    replaceResponse: { status: 200, body: credentialBody({ revision: 2 }) },
+    referencesResponseOverride: null,
+    deleteResponse: { status: 200, body: { id: CREDENTIAL_ID, deleted: true, references: [] } },
+    bindingsResponse: { status: 200, body: { credentialId: CREDENTIAL_ID, agentPrincipalIds: [CREDENTIAL_AGENT], bound: true } },
+    revealResponse: { status: 200, body: { credentialId: CREDENTIAL_ID, revision: 3, value: CREDENTIAL_REVEAL_VALUE } },
+    ...overrides,
+  };
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    const method = request.method;
+    const pathname = url.pathname;
+    const workspaceHeader = request.headers['x-workspace-id'] ?? null;
+    const note = (extra = {}) => state.calls.push({ method, pathname, workspaceHeader, ...extra });
+
+    if (pathname === '/api/v1/auth/login' && method === 'POST') {
+      await requestBody(request);
+      json(response, 200, { accessToken: 'credential-access-token' });
+      return;
+    }
+    if (pathname === '/api/v1/credentials' && method === 'GET') {
+      state.listQueries.push(url.searchParams);
+      note();
+      json(response, 200, state.listResponse);
+      return;
+    }
+    if (pathname === '/api/v1/credentials' && method === 'POST') {
+      const body = await requestBody(request);
+      state.createBodies.push(body);
+      note();
+      json(response, state.createResponse.status, state.createResponse.body);
+      return;
+    }
+    if (pathname === '/api/v1/credentials/precheck' && method === 'POST') {
+      const body = await requestBody(request);
+      state.precheckBodies.push(body);
+      note();
+      json(response, 200, state.precheckResponse);
+      return;
+    }
+    const references = pathname.match(/^\/api\/v1\/credentials\/([^/]+)\/references$/);
+    if (references && method === 'GET') {
+      note();
+      json(response, 200, state.referencesResponseOverride ?? state.referencesResponse);
+      return;
+    }
+    const events = pathname.match(/^\/api\/v1\/credentials\/([^/]+)\/events$/);
+    if (events && method === 'GET') {
+      note();
+      json(response, 200, state.eventsResponse);
+      return;
+    }
+    const replace = pathname.match(/^\/api\/v1\/credentials\/([^/]+)\/replace$/);
+    if (replace && method === 'POST') {
+      const body = await requestBody(request);
+      state.replaceBodies.push(body);
+      note();
+      json(response, state.replaceResponse.status, state.replaceResponse.body);
+      return;
+    }
+    const bindings = pathname.match(/^\/api\/v1\/credentials\/([^/]+)\/bindings$/);
+    if (bindings && (method === 'POST' || method === 'DELETE')) {
+      const body = await requestBody(request);
+      state.bindingsBodies.push(body);
+      note();
+      const bound = method === 'POST';
+      json(response, state.bindingsResponse.status, {
+        ...state.bindingsResponse.body,
+        bound,
+        agentPrincipalIds: Array.isArray(body?.agentPrincipalIds) ? body.agentPrincipalIds : state.bindingsResponse.body.agentPrincipalIds,
+      });
+      return;
+    }
+    const reveal = pathname.match(/^\/api\/v1\/credentials\/([^/]+)\/reveal$/);
+    if (reveal && method === 'POST') {
+      const body = await requestBody(request);
+      state.revealBodies.push(body);
+      note();
+      json(response, state.revealResponse.status, state.revealResponse.body);
+      return;
+    }
+    const deletion = pathname.match(/^\/api\/v1\/credentials\/([^/]+)$/);
+    if (deletion && method === 'DELETE') {
+      state.deleteRequests += 1;
+      note();
+      json(response, state.deleteResponse.status, state.deleteResponse.body);
+      return;
+    }
+    json(response, 404, { code: 'NOT_FOUND' });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    state,
+    env: { XIHE_CP_PORT: String(server.address().port), XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD },
+    close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
+  };
+}
+
+function printedText(result) {
+  return captureStdout(() => printResult(result));
+}
+
+test('credential list requires a paired owner filter and returns metadata only', async (t) => {
+  const cp = await startCredentialMock();
+  t.after(cp.close);
+
+  const unpaired = await runCommand(['credential', 'list', '--owner-type', 'USER'], {
+    env: cp.env, promptSecret: noPrompt, stdout: sink(),
+  });
+  assert.equal(unpaired.error.code, 'INVALID_ARGUMENT');
+  assert.equal(cp.state.listQueries.length, 0);
+
+  const badType = await runCommand(['credential', 'list', '--owner-type', 'TEAM', '--owner-id', 'x'], {
+    env: cp.env, promptSecret: noPrompt, stdout: sink(),
+  });
+  assert.equal(badType.error.code, 'INVALID_ARGUMENT');
+
+  const paired = await runCommand(['credential', 'list', '--owner-type', 'user', '--owner-id', 'user-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stdout: sink(),
+  });
+  assert.equal(paired.exitCode, 0);
+  assert.equal(paired.data.kind, 'credential-list');
+  assert.equal(paired.data.count, 1);
+  assert.equal(paired.data.credentials[0].id, CREDENTIAL_ID);
+  const query = cp.state.listQueries[0];
+  assert.equal(query.get('ownerType'), 'USER');
+  assert.equal(query.get('ownerId'), 'user-1');
+  assert.equal(JSON.stringify(paired).includes(CREDENTIAL_TOKEN), false);
+
+  cp.state.listResponse = { credentials: [], count: 0 };
+  const empty = await runCommand(['credential', 'list', '--json'], { env: cp.env, promptSecret: noPrompt, stdout: sink() });
+  assert.equal(empty.exitCode, 0);
+  assert.equal(empty.data.count, 0);
+  assert.deepEqual(empty.data.credentials, []);
+});
+
+test('credential references and events require an explicit workspace and keep CP codes', async (t) => {
+  const cp = await startCredentialMock();
+  t.after(cp.close);
+
+  for (const command of ['references', 'events']) {
+    const missing = await runCommand(['credential', command, CREDENTIAL_ID], {
+      env: cp.env, promptSecret: noPrompt, stdout: sink(),
+    });
+    assert.equal(missing.error.code, 'INVALID_ARGUMENT');
+  }
+  assert.equal(cp.state.calls.filter((call) => call.pathname.includes('/references')).length, 0);
+
+  const references = await runCommand(
+    ['credential', 'references', CREDENTIAL_ID, '--workspace', CREDENTIAL_WORKSPACE, '--json'],
+    { env: cp.env, promptSecret: noPrompt, stdout: sink() },
+  );
+  assert.equal(references.exitCode, 0);
+  assert.equal(references.data.kind, 'credential-references');
+  assert.equal(references.data.references[0].source, 'grant');
+  assert.equal(cp.state.calls.find((call) => call.pathname.endsWith('/references')).workspaceHeader, CREDENTIAL_WORKSPACE);
+
+  const events = await runCommand(
+    ['credential', 'events', CREDENTIAL_ID, '--workspace', CREDENTIAL_WORKSPACE, '--json'],
+    { env: cp.env, promptSecret: noPrompt, stdout: sink() },
+  );
+  assert.equal(events.exitCode, 0);
+  assert.equal(events.data.events[0].eventType, 'created');
+
+  cp.state.referencesResponseOverride = { references: 'not-a-list' };
+  const invalid = await runCommand(
+    ['credential', 'references', CREDENTIAL_ID, '--workspace', CREDENTIAL_WORKSPACE, '--json'],
+    { env: cp.env, promptSecret: noPrompt, stdout: sink() },
+  );
+  assert.equal(invalid.error.code, 'CP_RESPONSE_INVALID');
+});
+
+test('credential precheck sends the permission atoms and returns uncovered entries', async (t) => {
+  const cp = await startCredentialMock();
+  t.after(cp.close);
+
+  const missing = await runCommand(['credential', 'precheck'], { env: cp.env, promptSecret: noPrompt, stdout: sink() });
+  assert.equal(missing.error.code, 'INVALID_ARGUMENT');
+  assert.equal(cp.state.precheckBodies.length, 0);
+
+  const result = await runCommand(
+    ['credential', 'precheck', '--permissions', 'credential_reveal@credential:*, credential_use@credential:*', '--json'],
+    { env: cp.env, promptSecret: noPrompt, stdout: sink() },
+  );
+  assert.equal(result.exitCode, 0);
+  assert.deepEqual(cp.state.precheckBodies[0], {
+    permissions: [
+      { actionClass: 'credential_reveal', resource: 'credential:*' },
+      { actionClass: 'credential_use', resource: 'credential:*' },
+    ],
+  });
+  assert.deepEqual(result.data.uncovered, ['credential_reveal@credential:*']);
+});
+
+test('credential create injects token and key_pair only from environment names or TTY', async (t) => {
+  const cp = await startCredentialMock();
+  t.after(cp.close);
+  const env = { ...cp.env, CRED_TOKEN_0575: CREDENTIAL_TOKEN, CRED_ACCESS_0575: CREDENTIAL_ACCESS_KEY, CRED_SECRET_0575: CREDENTIAL_SECRET_KEY };
+
+  const tokenResult = await runCommand([
+    'credential', 'create', '--kind', 'token', '--owner-type', 'USER', '--owner-id', 'user-1',
+    '--label', 'ops-token', '--delivery-tier', 'lease', '--secret-env', 'CRED_TOKEN_0575', '--json',
+  ], { env, promptSecret: noPrompt, stdout: sink() });
+  assert.equal(tokenResult.exitCode, 0);
+  assert.equal(tokenResult.data.kind, 'credential-created');
+  assert.equal(cp.state.createBodies[0].token, CREDENTIAL_TOKEN);
+  assert.equal(cp.state.createBodies[0].kind, 'token');
+  assert.equal(cp.state.createBodies[0].label, 'ops-token');
+  assert.equal(cp.state.createBodies[0].deliveryTier, 'lease');
+  assert.equal(JSON.stringify(tokenResult).includes(CREDENTIAL_TOKEN), false);
+  assert.equal(printedText(tokenResult).includes(CREDENTIAL_TOKEN), false);
+
+  const pairResult = await runCommand([
+    'credential', 'create', '--kind', 'key_pair', '--owner-type', 'USER', '--owner-id', 'user-1', '--label', 'ops-pair',
+    '--access-key-env', 'CRED_ACCESS_0575', '--secret-key-env', 'CRED_SECRET_0575', '--json',
+  ], { env, promptSecret: noPrompt, stdout: sink() });
+  assert.equal(pairResult.exitCode, 0);
+  assert.equal(cp.state.createBodies[1].accessKey, CREDENTIAL_ACCESS_KEY);
+  assert.equal(cp.state.createBodies[1].secretKey, CREDENTIAL_SECRET_KEY);
+  assert.equal(cp.state.createBodies[1].token, undefined);
+  assert.equal(cp.state.createBodies[1].deliveryTier, 'lease', 'omitted delivery tier defaults to lease (UI parity)');
+
+  const mixed = await runCommand([
+    'credential', 'create', '--kind', 'token', '--owner-type', 'USER', '--owner-id', 'user-1', '--label', 'bad',
+    '--secret-env', 'CRED_TOKEN_0575', '--access-key-env', 'CRED_ACCESS_0575',
+  ], { env, promptSecret: noPrompt, stdout: sink() });
+  assert.equal(mixed.error.code, 'INVALID_ARGUMENT');
+  assert.equal(cp.state.createBodies.length, 2);
+
+  const missingSecret = await runCommand([
+    'credential', 'create', '--kind', 'token', '--owner-type', 'USER', '--owner-id', 'user-1', '--label', 'bad',
+    '--secret-env', 'CRED_NOT_SET_0575',
+  ], { env, promptSecret: noPrompt, stdout: sink() });
+  assert.equal(missingSecret.error.code, 'SECRET_INPUT_REQUIRED');
+  assert.equal(missingSecret.error.details.envVar, 'CRED_NOT_SET_0575');
+  assert.equal(JSON.stringify(missingSecret).includes(CREDENTIAL_TOKEN), false);
+
+  const ttyResult = await runCommand([
+    'credential', 'create', '--kind', 'token', '--owner-type', 'USER', '--owner-id', 'user-1', '--label', 'tty-token',
+  ], {
+    env: cp.env,
+    promptSecret: async () => CREDENTIAL_TOKEN,
+    stdin: { isTTY: true },
+    stdout: sink(),
+  });
+  assert.equal(ttyResult.exitCode, 0);
+  assert.equal(cp.state.createBodies[2].token, CREDENTIAL_TOKEN);
+
+  const workspaceMismatch = await runCommand([
+    'credential', 'create', '--kind', 'token', '--owner-type', 'WORKSPACE', '--owner-id', CREDENTIAL_AGENT,
+    '--label', 'ws-token', '--workspace', CREDENTIAL_WORKSPACE, '--secret-env', 'CRED_TOKEN_0575',
+  ], { env, promptSecret: noPrompt, stdout: sink() });
+  assert.equal(workspaceMismatch.error.code, 'INVALID_ARGUMENT');
+
+  const workspaceScoped = await runCommand([
+    'credential', 'create', '--kind', 'token', '--owner-type', 'WORKSPACE', '--owner-id', CREDENTIAL_WORKSPACE,
+    '--label', 'ws-token', '--workspace', CREDENTIAL_WORKSPACE, '--secret-env', 'CRED_TOKEN_0575', '--json',
+  ], { env, promptSecret: noPrompt, stdout: sink() });
+  assert.equal(workspaceScoped.exitCode, 0);
+  const workspaceCall = cp.state.calls.filter((call) => call.method === 'POST' && call.pathname === '/api/v1/credentials').at(-1);
+  assert.equal(workspaceCall.workspaceHeader, CREDENTIAL_WORKSPACE);
+});
+
+test('credential replace sends only the shape fields and hints on mismatch', async (t) => {
+  const cp = await startCredentialMock();
+  t.after(cp.close);
+  const env = { ...cp.env, CRED_TOKEN_0575: CREDENTIAL_TOKEN, CRED_ACCESS_0575: CREDENTIAL_ACCESS_KEY, CRED_SECRET_0575: CREDENTIAL_SECRET_KEY };
+
+  const missingWorkspace = await runCommand(
+    ['credential', 'replace', CREDENTIAL_ID, '--kind', 'token', '--secret-env', 'CRED_TOKEN_0575'],
+    { env, promptSecret: noPrompt, stdout: sink() },
+  );
+  assert.equal(missingWorkspace.error.code, 'INVALID_ARGUMENT');
+  assert.equal(cp.state.replaceBodies.length, 0);
+
+  const tokenReplace = await runCommand([
+    'credential', 'replace', CREDENTIAL_ID, '--kind', 'token', '--workspace', CREDENTIAL_WORKSPACE, '--secret-env', 'CRED_TOKEN_0575', '--json',
+  ], { env, promptSecret: noPrompt, stdout: sink() });
+  assert.equal(tokenReplace.exitCode, 0);
+  assert.deepEqual(cp.state.replaceBodies[0], { token: CREDENTIAL_TOKEN });
+  assert.equal(JSON.stringify(tokenReplace).includes(CREDENTIAL_TOKEN), false);
+
+  const pairReplace = await runCommand([
+    'credential', 'replace', CREDENTIAL_ID, '--kind', 'key_pair', '--workspace', CREDENTIAL_WORKSPACE,
+    '--access-key-env', 'CRED_ACCESS_0575', '--secret-key-env', 'CRED_SECRET_0575', '--json',
+  ], { env, promptSecret: noPrompt, stdout: sink() });
+  assert.equal(pairReplace.exitCode, 0);
+  assert.deepEqual(cp.state.replaceBodies[1], { accessKey: CREDENTIAL_ACCESS_KEY, secretKey: CREDENTIAL_SECRET_KEY });
+
+  cp.state.replaceResponse = { status: 400, body: { code: 'INVALID_REQUEST', detail: CREDENTIAL_SENTINEL } };
+  const mismatch = await runCommand([
+    'credential', 'replace', CREDENTIAL_ID, '--kind', 'token', '--workspace', CREDENTIAL_WORKSPACE, '--secret-env', 'CRED_TOKEN_0575', '--json',
+  ], { env, promptSecret: noPrompt, stdout: sink() });
+  assert.equal(mismatch.error.code, 'INVALID_REQUEST');
+  assert.match(mismatch.error.message, /credential list/);
+  assert.equal(JSON.stringify(mismatch).includes(CREDENTIAL_SENTINEL), false);
+
+  cp.state.replaceResponse = { status: 422, body: { code: 'CREDENTIAL_TIER_MISMATCH', detail: CREDENTIAL_SENTINEL } };
+  const tier = await runCommand([
+    'credential', 'replace', CREDENTIAL_ID, '--kind', 'token', '--workspace', CREDENTIAL_WORKSPACE, '--secret-env', 'CRED_TOKEN_0575', '--json',
+  ], { env, promptSecret: noPrompt, stdout: sink() });
+  assert.equal(tier.error.code, 'CREDENTIAL_TIER_MISMATCH');
+  assert.equal(JSON.stringify(tier).includes(CREDENTIAL_SENTINEL), false);
+});
+
+test('credential delete previews references before confirmation and passes 409 through', async (t) => {
+  const cp = await startCredentialMock();
+  t.after(cp.close);
+
+  const declined = await runCommand(
+    ['credential', 'delete', CREDENTIAL_ID, '--workspace', CREDENTIAL_WORKSPACE],
+    { env: cp.env, promptSecret: noPrompt, stderr: sink(), stdout: sink() },
+  );
+  assert.equal(declined.error.code, 'CONFIRMATION_REQUIRED');
+  assert.equal(cp.state.deleteRequests, 0);
+
+  cp.state.referencesResponseOverride = {
+    references: [
+      { source: 'grant', subjectType: 'agent_principal', subjectId: CREDENTIAL_AGENT, actionClass: 'credential_use', resource: `credential:${CREDENTIAL_ID}` },
+      { source: 'provider_connection', subjectType: 'provider_connection', subjectId: 'conn-1', actionClass: 'credential_use', resource: `credential:${CREDENTIAL_ID}` },
+    ],
+  };
+  cp.state.deleteResponse = {
+    status: 200,
+    body: { id: CREDENTIAL_ID, deleted: true, references: [{ source: 'grant', subjectType: 'agent_principal', subjectId: CREDENTIAL_AGENT, actionClass: 'credential_use', resource: `credential:${CREDENTIAL_ID}` }] },
+  };
+  const deleted = await runCommand(
+    ['credential', 'delete', CREDENTIAL_ID, '--workspace', CREDENTIAL_WORKSPACE, '--yes', '--json'],
+    { env: cp.env, promptSecret: noPrompt, stderr: sink(), stdout: sink() },
+  );
+  assert.equal(deleted.exitCode, 0);
+  assert.equal(deleted.data.deleted, true);
+  assert.equal(deleted.data.previewReferences.length, 2);
+  assert.equal(deleted.data.references.length, 1);
+  assert.equal(cp.state.deleteRequests, 1);
+
+  cp.state.deleteResponse = { status: 409, body: { code: 'CREDENTIAL_IN_USE', detail: CREDENTIAL_SENTINEL } };
+  const inUse = await runCommand(
+    ['credential', 'delete', CREDENTIAL_ID, '--workspace', CREDENTIAL_WORKSPACE, '--yes', '--json'],
+    { env: cp.env, promptSecret: noPrompt, stderr: sink(), stdout: sink() },
+  );
+  assert.equal(inUse.error.code, 'CREDENTIAL_IN_USE');
+  assert.match(inUse.error.message, /credential references/);
+  assert.equal(JSON.stringify(inUse).includes(CREDENTIAL_SENTINEL), false);
+});
+
+test('credential bind and unbind send the workspace plus principal list', async (t) => {
+  const cp = await startCredentialMock();
+  t.after(cp.close);
+  const agents = `${CREDENTIAL_AGENT},${CREDENTIAL_AGENT_TWO}`;
+
+  const bind = await runCommand(
+    ['credential', 'bind', CREDENTIAL_ID, '--workspace', CREDENTIAL_WORKSPACE, '--agent', agents, '--json'],
+    { env: cp.env, promptSecret: noPrompt, stdout: sink() },
+  );
+  assert.equal(bind.exitCode, 0);
+  assert.deepEqual(cp.state.bindingsBodies[0], {
+    workspaceId: CREDENTIAL_WORKSPACE,
+    agentPrincipalIds: [CREDENTIAL_AGENT, CREDENTIAL_AGENT_TWO],
+  });
+  assert.equal(bind.data.bound, true);
+  assert.equal(cp.state.calls.find((call) => call.pathname.endsWith('/bindings')).workspaceHeader, CREDENTIAL_WORKSPACE);
+
+  const unbind = await runCommand(
+    ['credential', 'unbind', CREDENTIAL_ID, '--workspace', CREDENTIAL_WORKSPACE, '--agent', agents, '--json'],
+    { env: cp.env, promptSecret: noPrompt, stdout: sink() },
+  );
+  assert.equal(unbind.exitCode, 0);
+  assert.equal(unbind.data.bound, false);
+  const unbindCall = cp.state.calls.filter((call) => call.pathname.endsWith('/bindings')).at(-1);
+  assert.equal(unbindCall.method, 'DELETE');
+  assert.deepEqual(cp.state.bindingsBodies[1].agentPrincipalIds, [CREDENTIAL_AGENT, CREDENTIAL_AGENT_TWO]);
+
+  const missingAgents = await runCommand(
+    ['credential', 'bind', CREDENTIAL_ID, '--workspace', CREDENTIAL_WORKSPACE],
+    { env: cp.env, promptSecret: noPrompt, stdout: sink() },
+  );
+  assert.equal(missingAgents.error.code, 'INVALID_ARGUMENT');
+});
+
+test('credential reveal enforces explicit workspace, secure password input, and output boundaries', async (t) => {
+  const cp = await startCredentialMock();
+  t.after(cp.close);
+  const env = { ...cp.env, CRED_REVEAL_PW_0575: CREDENTIAL_REVEAL_PASSWORD };
+  const dir = fs.mkdtempSync(path.join(tmpdir(), 'xihe-reveal-0575-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const missingWorkspace = await runCommand(
+    ['credential', 'reveal', CREDENTIAL_ID, '--password-env', 'CRED_REVEAL_PW_0575'],
+    { env, promptSecret: noPrompt, stdout: sink(), stderr: sink() },
+  );
+  assert.equal(missingWorkspace.error.code, 'INVALID_ARGUMENT');
+  assert.equal(cp.state.revealBodies.length, 0);
+
+  const missingPassword = await runCommand(
+    ['credential', 'reveal', CREDENTIAL_ID, '--workspace', CREDENTIAL_WORKSPACE],
+    { env, promptSecret: noPrompt, stdout: sink(), stderr: sink() },
+  );
+  assert.equal(missingPassword.error.code, 'SECRET_INPUT_REQUIRED');
+  assert.equal(cp.state.revealBodies.length, 0);
+
+  const stdoutResult = await runCommand(
+    ['credential', 'reveal', CREDENTIAL_ID, '--workspace', CREDENTIAL_WORKSPACE, '--password-env', 'CRED_REVEAL_PW_0575'],
+    { env, promptSecret: noPrompt, stdout: sink(), stderr: sink() },
+  );
+  assert.equal(stdoutResult.exitCode, 0);
+  assert.equal(stdoutResult.data.mode, 'stdout');
+  assert.equal(stdoutResult.data.value, CREDENTIAL_REVEAL_VALUE);
+  assert.deepEqual(cp.state.revealBodies[0], { password: CREDENTIAL_REVEAL_PASSWORD });
+  assert.equal(cp.state.calls.find((call) => call.pathname.endsWith('/reveal')).workspaceHeader, CREDENTIAL_WORKSPACE);
+  // The explicit terminal request is the one allowed plaintext output.
+  assert.equal(printedText(stdoutResult).includes(CREDENTIAL_REVEAL_VALUE), true);
+
+  const jsonResult = await runCommand(
+    ['credential', 'reveal', CREDENTIAL_ID, '--workspace', CREDENTIAL_WORKSPACE, '--password-env', 'CRED_REVEAL_PW_0575', '--json'],
+    { env, promptSecret: noPrompt, stdout: sink(), stderr: sink() },
+  );
+  assert.equal(jsonResult.data.mode, 'stdout');
+  const parsedJson = JSON.parse(printedText(jsonResult));
+  assert.equal(parsedJson.ok, true);
+  assert.equal(parsedJson.data.value, CREDENTIAL_REVEAL_VALUE);
+
+  const outFile = path.join(dir, 'revealed.txt');
+  const fileResult = await runCommand(
+    ['credential', 'reveal', CREDENTIAL_ID, '--workspace', CREDENTIAL_WORKSPACE, '--password-env', 'CRED_REVEAL_PW_0575', '--out', outFile, '--json'],
+    { env, promptSecret: noPrompt, stdout: sink(), stderr: sink() },
+  );
+  assert.equal(fileResult.exitCode, 0);
+  assert.equal(fileResult.data.mode, 'file');
+  assert.equal(fileResult.data.value, undefined);
+  assert.equal(fs.readFileSync(outFile, 'utf8'), CREDENTIAL_REVEAL_VALUE);
+  assert.equal(JSON.stringify(fileResult).includes(CREDENTIAL_REVEAL_VALUE), false);
+
+  const existing = await runCommand(
+    ['credential', 'reveal', CREDENTIAL_ID, '--workspace', CREDENTIAL_WORKSPACE, '--password-env', 'CRED_REVEAL_PW_0575', '--out', outFile, '--json'],
+    { env, promptSecret: noPrompt, stdout: sink(), stderr: sink() },
+  );
+  assert.equal(existing.error.code, 'CONFIRMATION_REQUIRED');
+  assert.equal(fs.readFileSync(outFile, 'utf8'), CREDENTIAL_REVEAL_VALUE);
+
+  const forced = await runCommand(
+    ['credential', 'reveal', CREDENTIAL_ID, '--workspace', CREDENTIAL_WORKSPACE, '--password-env', 'CRED_REVEAL_PW_0575', '--out', outFile, '--force', '--json'],
+    { env, promptSecret: noPrompt, stdout: sink(), stderr: sink() },
+  );
+  assert.equal(forced.exitCode, 0);
+  assert.equal(fs.readFileSync(outFile, 'utf8'), CREDENTIAL_REVEAL_VALUE);
+
+  const linkPath = path.join(dir, 'link.txt');
+  fs.symlinkSync(outFile, linkPath);
+  const linked = await runCommand(
+    ['credential', 'reveal', CREDENTIAL_ID, '--workspace', CREDENTIAL_WORKSPACE, '--password-env', 'CRED_REVEAL_PW_0575', '--out', linkPath, '--force'],
+    { env, promptSecret: noPrompt, stdout: sink(), stderr: sink() },
+  );
+  assert.equal(linked.error.code, 'REVEAL_TARGET_UNSAFE');
+
+  const ttyResult = await runCommand(
+    ['credential', 'reveal', CREDENTIAL_ID, '--workspace', CREDENTIAL_WORKSPACE],
+    {
+      env: cp.env,
+      promptSecret: async () => CREDENTIAL_REVEAL_PASSWORD,
+      stdin: { isTTY: true },
+      stdout: sink(),
+      stderr: sink(),
+    },
+  );
+  assert.equal(ttyResult.exitCode, 0);
+  assert.deepEqual(cp.state.revealBodies.at(-1), { password: CREDENTIAL_REVEAL_PASSWORD });
+});
+
+test('credential reveal maps every CP refusal branch without printing the value', async (t) => {
+  const cp = await startCredentialMock();
+  t.after(cp.close);
+  const env = { ...cp.env, CRED_REVEAL_PW_0575: CREDENTIAL_REVEAL_PASSWORD };
+  const branches = [
+    { status: 401, code: 'CREDENTIAL_REVEAL_STEP_UP_FAILED' },
+    { status: 403, code: 'CREDENTIAL_DISABLED' },
+    { status: 404, code: 'CREDENTIAL_NOT_FOUND' },
+    { status: 422, code: 'CREDENTIAL_TIER_MISMATCH' },
+    { status: 429, code: 'CREDENTIAL_REVEAL_RATE_LIMITED' },
+  ];
+  for (const branch of branches) {
+    cp.state.revealResponse = { status: branch.status, body: { code: branch.code, detail: CREDENTIAL_SENTINEL } };
+    const result = await runCommand(
+      ['credential', 'reveal', CREDENTIAL_ID, '--workspace', CREDENTIAL_WORKSPACE, '--password-env', 'CRED_REVEAL_PW_0575', '--json'],
+      { env, promptSecret: noPrompt, stdout: sink(), stderr: sink() },
+    );
+    assert.equal(result.error.code, branch.code);
+    assert.equal(JSON.stringify(result).includes(CREDENTIAL_SENTINEL), false);
+    assert.equal(JSON.stringify(result).includes(CREDENTIAL_REVEAL_VALUE), false);
+  }
+  assert.equal(cp.state.revealBodies.every((body) => JSON.stringify(body) === JSON.stringify({ password: CREDENTIAL_REVEAL_PASSWORD })), true);
+});
+
+test('credential write failures are reported as unknown without replaying the request', async (t) => {
+  const cp = await startCredentialMock();
+  t.after(cp.close);
+  const env = { ...cp.env, CRED_TOKEN_0575: CREDENTIAL_TOKEN };
+  cp.state.createResponse = { status: 502, body: { code: 'INTERNAL_ERROR', detail: CREDENTIAL_SENTINEL } };
+
+  const result = await runCommand([
+    'credential', 'create', '--kind', 'token', '--owner-type', 'USER', '--owner-id', 'user-1', '--label', 'ops',
+    '--secret-env', 'CRED_TOKEN_0575', '--json',
+  ], { env, promptSecret: noPrompt, stdout: sink() });
+  assert.equal(result.error.code, 'OPERATION_OUTCOME_UNKNOWN');
+  assert.equal(cp.state.createBodies.length, 1);
+  assert.equal(JSON.stringify(result).includes(CREDENTIAL_SENTINEL), false);
+});
+
+test('credential commands keep a single parseable --json envelope', async (t) => {
+  const cp = await startCredentialMock();
+  t.after(cp.close);
+  const env = { ...cp.env, CRED_TOKEN_0575: CREDENTIAL_TOKEN };
+  const invocations = [
+    ['credential', 'list', '--json'],
+    ['credential', 'references', CREDENTIAL_ID, '--workspace', CREDENTIAL_WORKSPACE, '--json'],
+    ['credential', 'events', CREDENTIAL_ID, '--workspace', CREDENTIAL_WORKSPACE, '--json'],
+    ['credential', 'precheck', '--permissions', 'credential_use@credential:*', '--json'],
+    ['credential', 'create', '--kind', 'token', '--owner-type', 'USER', '--owner-id', 'user-1', '--label', 'ops', '--secret-env', 'CRED_TOKEN_0575', '--json'],
+    ['credential', 'bind', CREDENTIAL_ID, '--workspace', CREDENTIAL_WORKSPACE, '--agent', CREDENTIAL_AGENT, '--json'],
+  ];
+  const expectedKinds = [
+    'credential-list', 'credential-references', 'credential-events', 'credential-precheck',
+    'credential-created', 'credential-bindings',
+  ];
+  for (const [index, argv] of invocations.entries()) {
+    const result = await runCommand(argv, { env, promptSecret: noPrompt, stdout: sink(), stderr: sink() });
+    assert.equal(result.exitCode, 0, argv.join(' '));
+    const parsed = JSON.parse(printedText(result));
+    assert.equal(parsed.ok, true, argv.join(' '));
+    assert.equal(parsed.data.kind, expectedKinds[index], argv.join(' '));
+  }
+});

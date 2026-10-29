@@ -493,6 +493,28 @@ mise run xihe -- version [--check]
 - Every command supports `--json` (a single stdout object `{ok:true,data}` or `{ok:false,error:{code,message}}`); human output is a one-line/table summary. See `mise run xihe -- --help`.
 - Stack port overrides (bootstrap allowlist): `node scripts/stack-run.mjs <cp|agent|runtime> --set XIHE_CP_PORT|XIHE_AGENT_PORT|XIHE_RUNTIME_PORT=<1..65535>` — the three allowlisted keys only, injected into the target that actually consumes the key; duplicates, unknown keys, secrets and invalid values are refused before any process starts, without echoing the input. When `XIHE_CP_URL` / `XIHE_AGENT_URL(_BASE_URL)` / `XIHE_RUNTIME_URL` is set explicitly, the port only changes the listening side and the launcher warns about a possible broken link. Mechanism details: DEV-003 §2 and `spec/configuration/env-effective.md`.
 
+### 4.9. Credential CLI (PLAN-0575)
+
+```bash
+mise run xihe -- credential list [--owner-type USER|WORKSPACE --owner-id <id>]
+mise run xihe -- credential references <id> --workspace <wsId>
+mise run xihe -- credential events <id> --workspace <wsId>
+mise run xihe -- credential precheck --permissions <atom[,atom...]>
+mise run xihe -- credential create --kind token --owner-type <USER|WORKSPACE> --owner-id <id> --label <label> [--delivery-tier lease|reveal] --secret-env <NAME>
+mise run xihe -- credential create --kind key_pair --owner-type <USER|WORKSPACE> --owner-id <id> --label <label> --access-key-env <NAME> --secret-key-env <NAME>
+mise run xihe -- credential replace <id> --kind token|key_pair --workspace <wsId> (--secret-env <NAME> | --access-key-env <NAME> --secret-key-env <NAME>)
+mise run xihe -- credential delete <id> --workspace <wsId> [--yes]   # references preview, then confirmed delete
+mise run xihe -- credential bind <id> --workspace <wsId> --agent <principalId[,principalId...]>
+mise run xihe -- credential unbind <id> --workspace <wsId> --agent <principalId[,principalId...]>
+mise run xihe -- credential reveal <id> --workspace <wsId> (--password-env <NAME> | TTY) [--out <file> [--force]]
+```
+
+- **Secret channels**: `create`/`replace` read the token or key pair only from `--*-env <NAME>` environment variable names or a no-echo TTY prompt. Values are never accepted as arguments, read from JSONC or taken from input files; errors and logs only name the variable.
+- **Explicit workspace**: every credential command except `list` and `create --owner-type USER` requires `--workspace`, and `X-Workspace-Id` matches it. `create --owner-type WORKSPACE` requires `--owner-id` to equal `--workspace`; the CLI never falls back to the token claim or first membership.
+- **reveal**: on an explicit request it performs an independent step-up with the login password (`--password-env` or TTY) and prints to stdout or an `--out` regular file (existing files need confirmation or `--force`; symlinks/directories are refused). Terminal/file output is the only plaintext path; errors, progress and logs never carry the password or value. CP audit: `credential_revealed` on success, only `credential_reveal_failed` on a wrong password; other refusal branches write no event/audit.
+- **delete gate**: fetch `…/references` and show it before `--yes`/interactive confirmation; `409 CREDENTIAL_IN_USE` is passed through with a re-query hint, never described as a complete report.
+- CP error codes are preserved (`CREDENTIAL_NOT_FOUND`/`CREDENTIAL_IN_USE`/`CREDENTIAL_TIER_MISMATCH`/`CREDENTIAL_REVEAL_STEP_UP_FAILED`/`CREDENTIAL_REVEAL_RATE_LIMITED`, ...). Write 5xx/timeouts report an unknown outcome and are **never replayed**. All commands support `--json` (I8 shape).
+
 ## 5. Deployment
 
 ### 5.1. Docker Compose (Recommended)

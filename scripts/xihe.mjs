@@ -20,7 +20,19 @@ import {
   verifyConnection,
 } from './xihe-cli/provider.mjs';
 import { checkDevelopmentEnvironment, runConfigImport, runRealTest } from './xihe-cli/host.mjs';
-import { rotateCredentials } from './xihe-cli/credential.mjs';
+import {
+  formatCredentialResult,
+  rotateCredentials,
+  runCredentialBindings,
+  runCredentialCreate,
+  runCredentialDelete,
+  runCredentialEvents,
+  runCredentialList,
+  runCredentialPrecheck,
+  runCredentialReferences,
+  runCredentialReplace,
+  runCredentialReveal,
+} from './xihe-cli/credential.mjs';
 import { runConfigExport } from './xihe-cli/config-export.mjs';
 import {
   collectStatus,
@@ -80,10 +92,21 @@ function helpText() {
     '  node scripts/xihe.mjs provider verify <id>',
     '  node scripts/xihe.mjs provider delete <id> [--yes]',
     '  node scripts/xihe.mjs credential rotate [--batch-size <n>] [--max-batches <n>] [--dry-run]',
+    '  node scripts/xihe.mjs credential list [--owner-type USER|WORKSPACE --owner-id <id>]',
+    '  node scripts/xihe.mjs credential references <id> --workspace <wsId>',
+    '  node scripts/xihe.mjs credential events <id> --workspace <wsId>',
+    '  node scripts/xihe.mjs credential precheck --permissions <atom[,atom...]>',
+    '  node scripts/xihe.mjs credential create --kind token|key_pair --owner-type <USER|WORKSPACE> --owner-id <id> --label <label> [--delivery-tier <tier>] (--secret-env <NAME> | --access-key-env <NAME> --secret-key-env <NAME>)',
+    '  node scripts/xihe.mjs credential replace <id> --kind token|key_pair --workspace <wsId> (--secret-env <NAME> | --access-key-env <NAME> --secret-key-env <NAME>)',
+    '  node scripts/xihe.mjs credential delete <id> --workspace <wsId> [--yes]',
+    '  node scripts/xihe.mjs credential bind <id> --workspace <wsId> --agent <principalId[,principalId...]>',
+    '  node scripts/xihe.mjs credential unbind <id> --workspace <wsId> --agent <principalId[,principalId...]>',
+    '  node scripts/xihe.mjs credential reveal <id> --workspace <wsId> (--password-env <NAME> | TTY) [--out <file> [--force]]',
     '  node scripts/xihe.mjs test real <e2e/real/spec.spec.ts> [--route <native|openai-compat>]',
     '',
     'Secrets are read from environment variables or a no-echo TTY prompt; never pass secret values as arguments.',
     'credential rotate authenticates with XIHE_CP_API_TOKEN (CP service Bearer) and never prints credential values.',
+    'credential create/replace/reveal read secrets only from --*-env <NAME> or a no-echo TTY prompt; reveal prints plaintext only on explicit request (stdout or --out file).',
     'verify writes a principal/session/chat run into the target stack and calls the model provider; use an isolated stack and workspace.',
     'Real E2E uses XIHE_E2E_REAL_XIAOMI_KEY and does not test Provider Connection leases.',
   ].join('\n');
@@ -402,18 +425,155 @@ export async function runCommand(argv, dependencies = {}) {
       return { exitCode: 0, json, data: { connection } };
     }
 
-    if (group === 'credential' && command === 'rotate') {
-      const parsed = parseCommandOptions(rest, ['--batch-size', '--max-batches'], ['--dry-run']);
-      if (parsed.positionals.length !== 0) {
-        throw new CliError('INVALID_ARGUMENT', 'credential rotate takes no positional arguments.');
+    if (group === 'credential') {
+      if (command === 'rotate') {
+        const parsed = parseCommandOptions(rest, ['--batch-size', '--max-batches'], ['--dry-run']);
+        if (parsed.positionals.length !== 0) {
+          throw new CliError('INVALID_ARGUMENT', 'credential rotate takes no positional arguments.');
+        }
+        const data = await rotateCredentials({
+          env,
+          fetchImpl,
+          options: parsed.values,
+          stdout: dependencies.stdout ?? process.stdout,
+        });
+        return { exitCode: 0, json, data };
       }
-      const data = await rotateCredentials({
-        env,
-        fetchImpl,
-        options: parsed.values,
-        stdout: dependencies.stdout ?? process.stdout,
-      });
-      return { exitCode: 0, json, data };
+
+      const credentialApi = async (values) => {
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: values, promptSecret: prompt });
+        return { apiBase, token };
+      };
+
+      if (command === 'list') {
+        const parsed = parseCommandOptions(rest, ['--owner-type', '--owner-id']);
+        if (parsed.positionals.length !== 0) throw new CliError('INVALID_ARGUMENT', 'credential list takes no positional arguments.');
+        const { apiBase, token } = await credentialApi(parsed.values);
+        return { exitCode: 0, json, data: await runCredentialList({ apiBase, fetchImpl, token, options: parsed.values }) };
+      }
+      if (command === 'references' || command === 'events') {
+        const parsed = parseCommandOptions(rest, ['--workspace']);
+        const { apiBase, token } = await credentialApi(parsed.values);
+        const runner = command === 'references' ? runCredentialReferences : runCredentialEvents;
+        return {
+          exitCode: 0,
+          json,
+          data: await runner({ apiBase, fetchImpl, token, options: parsed.values, positionals: parsed.positionals }),
+        };
+      }
+      if (command === 'precheck') {
+        const parsed = parseCommandOptions(rest, ['--permissions']);
+        if (parsed.positionals.length !== 0) throw new CliError('INVALID_ARGUMENT', 'credential precheck takes no positional arguments.');
+        const { apiBase, token } = await credentialApi(parsed.values);
+        return { exitCode: 0, json, data: await runCredentialPrecheck({ apiBase, fetchImpl, token, options: parsed.values }) };
+      }
+      if (command === 'create') {
+        const parsed = parseCommandOptions(rest, [
+          '--kind', '--owner-type', '--owner-id', '--label', '--delivery-tier',
+          '--secret-env', '--access-key-env', '--secret-key-env', '--workspace',
+        ]);
+        const { apiBase, token } = await credentialApi(parsed.values);
+        return {
+          exitCode: 0,
+          json,
+          data: await runCredentialCreate({
+            apiBase,
+            fetchImpl,
+            env,
+            token,
+            options: parsed.values,
+            positionals: parsed.positionals,
+            promptSecret: prompt,
+            stdin: dependencies.stdin ?? process.stdin,
+          }),
+        };
+      }
+      if (command === 'replace') {
+        const parsed = parseCommandOptions(rest, [
+          '--kind', '--workspace', '--secret-env', '--access-key-env', '--secret-key-env',
+        ]);
+        const { apiBase, token } = await credentialApi(parsed.values);
+        return {
+          exitCode: 0,
+          json,
+          data: await runCredentialReplace({
+            apiBase,
+            fetchImpl,
+            env,
+            token,
+            options: parsed.values,
+            positionals: parsed.positionals,
+            promptSecret: prompt,
+            stdin: dependencies.stdin ?? process.stdin,
+          }),
+        };
+      }
+      if (command === 'delete') {
+        const parsed = parseCommandOptions(rest, ['--workspace'], ['--yes']);
+        const { apiBase, token } = await credentialApi(parsed.values);
+        return {
+          exitCode: 0,
+          json,
+          data: await runCredentialDelete({
+            apiBase,
+            fetchImpl,
+            token,
+            options: parsed.values,
+            positionals: parsed.positionals,
+            yes: parsed.values['--yes'] === true,
+            confirm: dependencies.confirmAction ?? confirmAction,
+            stdin: dependencies.stdin ?? process.stdin,
+            stderr: dependencies.stderr ?? process.stderr,
+            json,
+          }),
+        };
+      }
+      if (command === 'bind' || command === 'unbind') {
+        const parsed = parseCommandOptions(rest, ['--workspace', '--agent']);
+        const { apiBase, token } = await credentialApi(parsed.values);
+        return {
+          exitCode: 0,
+          json,
+          data: await runCredentialBindings({
+            apiBase,
+            fetchImpl,
+            token,
+            options: parsed.values,
+            positionals: parsed.positionals,
+            bind: command === 'bind',
+          }),
+        };
+      }
+      if (command === 'reveal') {
+        const parsed = parseCommandOptions(rest, ['--workspace', '--password-env', '--out'], ['--force']);
+        const { apiBase, token } = await credentialApi(parsed.values);
+        return {
+          exitCode: 0,
+          json,
+          data: await runCredentialReveal({
+            apiBase,
+            fetchImpl,
+            env,
+            token,
+            options: parsed.values,
+            positionals: parsed.positionals,
+            promptSecret: prompt,
+            stdin: dependencies.stdin ?? process.stdin,
+            json,
+            stdout: dependencies.stdout ?? process.stdout,
+            stderr: dependencies.stderr ?? process.stderr,
+            confirm: dependencies.confirmAction ?? confirmAction,
+            fsImpl: dependencies.fsImpl,
+            force: parsed.values['--force'] === true,
+            outPath: parsed.values['--out'],
+          }),
+        };
+      }
+      throw new CliError(
+        'INVALID_ARGUMENT',
+        'Unknown credential command; use list/references/events/precheck/create/replace/delete/bind/unbind/reveal/rotate.',
+      );
     }
 
     if (group === 'test' && command === 'real') {
@@ -477,6 +637,18 @@ export function printResult(result) {
       for (const failure of result.data.check.failures) process.stdout.write(`  ${failure}\n`);
     }
     return;
+  }
+  if (typeof result.data?.kind === 'string' && result.data.kind.startsWith('credential-')) {
+    if (result.data.kind === 'credential-reveal' && result.data.mode === 'stdout') {
+      const value = String(result.data.value);
+      process.stdout.write(value.endsWith('\n') ? value : `${value}\n`);
+      return;
+    }
+    const formatted = formatCredentialResult(result.data);
+    if (formatted !== null) {
+      process.stdout.write(`${formatted}\n`);
+      return;
+    }
   }
   if (result.data?.mode === 'stdout' && typeof result.data.content === 'string') {
     const content = result.data.content;

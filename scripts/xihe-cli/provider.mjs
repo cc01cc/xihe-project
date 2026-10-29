@@ -106,7 +106,14 @@ function isSafeConnectFailure(error) {
   ].includes(code);
 }
 
-function apiErrorCode(status, body) {
+function apiErrorCode(status, body, preserveServerCodes = false) {
+  // PLAN-0575 T2.7: credential commands must keep the CP-provided code
+  // (CREDENTIAL_REVEAL_STEP_UP_FAILED, CREDENTIAL_DISABLED, CREDENTIAL_TIER_MISMATCH,
+  // CREDENTIAL_REVEAL_RATE_LIMITED, CREDENTIAL_IN_USE, CREDENTIAL_NOT_FOUND, ...)
+  // distinguishable even on 401/403. Provider commands keep their frozen mapping.
+  if (preserveServerCodes && typeof body?.code === 'string' && /^[A-Z0-9_]{1,80}$/.test(body.code)) {
+    return body.code;
+  }
   if (status === 401) return 'AUTHENTICATION_FAILED';
   if (status === 403) return 'ACCESS_DENIED';
   // PLAN-0574 I7: the server's own error code is passed through (e.g.
@@ -166,6 +173,7 @@ export async function requestJson(pathname, {
   problemFields = [],
   maxBytes = 1_000_000,
   headers: extraHeaders,
+  preserveServerCodes = false,
 }) {
   const headers = { Accept: 'application/json', ...extraHeaders };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -219,7 +227,7 @@ export async function requestJson(pathname, {
         path: pathname,
       });
     }
-    throw new CliError(apiErrorCode(response.status, parsed), `CP request failed (HTTP ${response.status}).`, {
+    throw new CliError(apiErrorCode(response.status, parsed, preserveServerCodes), `CP request failed (HTTP ${response.status}).`, {
       status: response.status,
       requestId: typeof parsed?.requestId === 'string' ? parsed.requestId : undefined,
       ...safeProblemFields(parsed, problemFields),
