@@ -1,4 +1,5 @@
 import { generateE2EPassword } from "./helpers/password";
+import { waitForPageErrorWindow, waitForRequestQuiescence } from "./helpers/ui-stability";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
@@ -133,8 +134,11 @@ test.describe("UI Health — Console, Overflow, Hit-Test", () => {
                     .first()
                     .waitFor({ state: "visible", timeout: 10000 });
             }
-            await page.waitForLoadState("load");
-            await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+            await waitForRequestQuiescence(page);
+            // Delayed pageerror observation window (event-driven): resolves immediately on
+            // an error and otherwise expires after 1.5 s — same guarantee as the previous
+            // fixed wait, proven by the one-shot negative probe (review round-1 #2).
+            await waitForPageErrorWindow(page);
 
             expect(pageErrors, `pageerrors on ${path}: ${pageErrors.join("; ")}`).toHaveLength(0);
 

@@ -268,17 +268,20 @@ test.describe("@host Workspace — File Panel & Delete Flow", () => {
                 name: "WsEmpty",
             },
         });
-        const token = (await r.json()).accessToken;
-        await page.addInitScript((t) => localStorage.setItem("xihe-token", t), token);
-        await page.goto("/workspace/" + wsId, { waitUntil: "load" });
-        // PLAN-0586: replace the fixed 1.5 s wait with an explicit "SPA rendered" signal;
-        // this test's assertion is the screenshot itself, so accept toolbar or empty state.
-        await expect(
-            page
-                .getByTestId("workspace-toolbar-settings")
-                .or(page.getByText("工作区暂无文件"))
-                .or(page.getByText("暂无工作区")),
-        ).toBeVisible({ timeout: 10000 });
+        const registered = (await r.json()) as { accessToken: string; workspaceId: string };
+        await page.addInitScript(
+            (t) => localStorage.setItem("xihe-token", t),
+            registered.accessToken,
+        );
+        await page.goto("/workspace/" + registered.workspaceId, { waitUntil: "load" });
+        // PLAN-0586 (review round-1 #1): the fixed 1.5 s wait is replaced by the toolbar as
+        // a *ready* signal only; the actual pass condition is the real empty-state marker
+        // rendered by FileTreePanel.vue ("工作区暂无文件"), not the page-level "暂无工作区"
+        // branch (unreachable with a workspace URL) and not the toolbar itself.
+        await expect(page.getByTestId("workspace-toolbar-settings")).toBeVisible({
+            timeout: 10000,
+        });
+        await expect(page.getByText("工作区暂无文件")).toBeVisible({ timeout: 10000 });
         await expectPlatformScreenshot(page, "workspace-empty-state.png");
     });
 });

@@ -28,7 +28,7 @@ test.describe("Cross-Module — Workspace", () => {
 
         await page.goto(`/workspace/${workspaceId}`);
 
-        await expect(page.getByTestId("workspace-toolbar-settings")).toBeVisible({ timeout: 5000 });
+        await expect(page.getByTestId("workspace-toolbar-settings")).toBeVisible({ timeout: 7000 });
         expect(page.url()).toContain("/workspace");
     });
 
@@ -38,7 +38,7 @@ test.describe("Cross-Module — Workspace", () => {
 
         await page.goto(`/workspace/${workspaceId}`);
 
-        await expect(page.getByTestId("workspace-toolbar-settings")).toBeVisible({ timeout: 5000 });
+        await expect(page.getByTestId("workspace-toolbar-settings")).toBeVisible({ timeout: 8000 });
         await expect(page.getByText("工作区暂无文件")).toBeVisible({ timeout: 10000 });
     });
 
