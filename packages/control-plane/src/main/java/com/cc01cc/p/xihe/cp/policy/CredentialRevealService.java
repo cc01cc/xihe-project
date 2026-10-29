@@ -3,13 +3,11 @@ package com.cc01cc.p.xihe.cp.policy;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.auth.AuthService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
-import com.cc01cc.p.xihe.cp.credentials.CredentialAad;
-import com.cc01cc.p.xihe.cp.crypto.EnvelopeEncryptionService;
+import com.cc01cc.p.xihe.cp.credentials.CredentialEnvelope;
 import com.cc01cc.p.xihe.cp.entity.Credential;
 import com.cc01cc.p.xihe.cp.entity.CredentialEvent;
 import com.cc01cc.p.xihe.cp.repository.CredentialEventRepository;
 import com.cc01cc.p.xihe.cp.repository.CredentialRepository;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -41,7 +39,7 @@ public class CredentialRevealService {
 
     private final CredentialRepository credentialRepository;
     private final CredentialEventRepository credentialEventRepository;
-    private final EnvelopeEncryptionService credentialEncryption;
+    private final CredentialEnvelope credentialEnvelope;
     private final GrantAuthorizationService grantAuthorizationService;
     private final AuthService authService;
     private final AuditLogger auditLogger;
@@ -49,13 +47,13 @@ public class CredentialRevealService {
 
     public CredentialRevealService(CredentialRepository credentialRepository,
             CredentialEventRepository credentialEventRepository,
-            @Qualifier("credentialEncryption") EnvelopeEncryptionService credentialEncryption,
+            CredentialEnvelope credentialEnvelope,
             GrantAuthorizationService grantAuthorizationService,
             AuthService authService,
             AuditLogger auditLogger) {
         this.credentialRepository = credentialRepository;
         this.credentialEventRepository = credentialEventRepository;
-        this.credentialEncryption = credentialEncryption;
+        this.credentialEnvelope = credentialEnvelope;
         this.grantAuthorizationService = grantAuthorizationService;
         this.authService = authService;
         this.auditLogger = auditLogger;
@@ -84,9 +82,7 @@ public class CredentialRevealService {
                     "reveal only serves the reveal delivery tier (decision #7)");
         }
         requireStepUp(actorId, credential, password);
-        String plaintext = credentialEncryption.decrypt(credential.getSecretCiphertext(),
-                CredentialAad.format(credential.getId().toString(), credential.getOwnerType(),
-                        credential.getOwnerId()));
+        String plaintext = credentialEnvelope.decrypt(credential);
         recordRevealed(credential, actorId);
         return new RevealedCredential(credential.getId().toString(), credential.getRevision(), plaintext);
     }

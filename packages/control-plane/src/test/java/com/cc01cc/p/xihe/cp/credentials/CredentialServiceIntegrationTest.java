@@ -1,7 +1,6 @@
 package com.cc01cc.p.xihe.cp.credentials;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
-import com.cc01cc.p.xihe.cp.crypto.EnvelopeEncryptionService;
 import com.cc01cc.p.xihe.cp.entity.Credential;
 import com.cc01cc.p.xihe.cp.entity.CredentialEvent;
 import com.cc01cc.p.xihe.cp.repository.CredentialEventRepository;
@@ -42,8 +41,11 @@ class CredentialServiceIntegrationTest extends AbstractIntegrationTest {
     private CredentialEventRepository credentialEventRepository;
 
     @Autowired
-    @Qualifier("credentialEncryption")
-    private EnvelopeEncryptionService credentialEncryption;
+    private CredentialEnvelope credentialEnvelope;
+
+    @Autowired
+    @Qualifier("credentialFingerprint")
+    private CredentialFingerprint credentialFingerprint;
 
     private ch.qos.logback.core.read.ListAppender<
             ch.qos.logback.classic.spi.ILoggingEvent> auditAppender;
@@ -86,9 +88,10 @@ class CredentialServiceIntegrationTest extends AbstractIntegrationTest {
         assertTrue(row.getSecretCiphertext().startsWith("v1:"));
         assertFalse(row.getSecretCiphertext().contains(secret));
         assertEquals(64, row.getFingerprint().length());
+        assertEquals(Credential.AAD_VERSION_V2, row.getAadVersion());
+        assertEquals(Credential.FINGERPRINT_VERSION_HMAC_SHA256_V1, row.getFingerprintVersion());
 
-        String decrypted = credentialEncryption.decrypt(row.getSecretCiphertext(),
-                CredentialAad.format(row.getId().toString(), row.getOwnerType(), row.getOwnerId()));
+        String decrypted = credentialEnvelope.decrypt(row);
         assertEquals("{\"token\":\"" + secret + "\"}", decrypted);
 
         List<CredentialEvent> events = credentialEventRepository
@@ -145,8 +148,9 @@ class CredentialServiceIntegrationTest extends AbstractIntegrationTest {
         assertEquals(2, replaced.getRevision());
         assertNotNull(replaced.getReplacedAt());
         assertNotEquals(created.getFingerprint(), replaced.getFingerprint());
-        String decrypted = credentialEncryption.decrypt(replaced.getSecretCiphertext(),
-                CredentialAad.format(replaced.getId().toString(), "USER", ownerId));
+        assertEquals(Credential.AAD_VERSION_V2, replaced.getAadVersion());
+        assertEquals(Credential.FINGERPRINT_VERSION_HMAC_SHA256_V1, replaced.getFingerprintVersion());
+        String decrypted = credentialEnvelope.decrypt(replaced);
         assertEquals("{\"token\":\"second-secret-value-2\"}", decrypted);
 
         List<CredentialEvent> events = credentialEventRepository
@@ -233,16 +237,22 @@ class CredentialServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void fingerprintIsDeterministicAndDistinct() {
-        String a1 = CredentialService.fingerprint("token", CredentialService.SecretPayload.ofToken("abc"));
-        String a2 = CredentialService.fingerprint("token", CredentialService.SecretPayload.ofToken("abc"));
-        String b = CredentialService.fingerprint("token", CredentialService.SecretPayload.ofToken("abd"));
-        String pair = CredentialService.fingerprint("key_pair",
-                CredentialService.SecretPayload.ofKeyPair("abc", "def"));
+        String tokenCanonical = CredentialSecretCodec.canonical("token",
+                CredentialService.SecretPayload.ofToken("abc"));
+        String a1 = credentialFingerprint.fingerprint(tokenCanonical);
+        String a2 = credentialFingerprint.fingerprint(CredentialSecretCodec.canonical("token",
+                CredentialService.SecretPayload.ofToken("abc")));
+        String b = credentialFingerprint.fingerprint(CredentialSecretCodec.canonical("token",
+                CredentialService.SecretPayload.ofToken("abd")));
+        String pair = credentialFingerprint.fingerprint(CredentialSecretCodec.canonical("key_pair",
+                CredentialService.SecretPayload.ofKeyPair("abc", "def")));
 
         assertEquals(a1, a2);
         assertNotEquals(a1, b);
         assertNotEquals(a1, pair);
         assertEquals(64, a1.length());
+        assertNotEquals(CredentialFingerprint.legacySha256(tokenCanonical), a1,
+                "the keyed fingerprint must differ from the legacy bare SHA-256 (V5)");
     }
 
     @Test
@@ -252,11 +262,13 @@ class CredentialServiceIntegrationTest extends AbstractIntegrationTest {
                 CredentialService.SecretPayload.ofToken("fence-secret-1")), null);
 
         int stale = credentialRepository.replaceSecretIfRevisionMatches(created.getId(), 99,
-                "v1:stale:write", "fp-stale", "v1", Instant.now());
+                "v1:stale:write", "fp-stale", "v1", Credential.AAD_VERSION_LEGACY,
+                Credential.FINGERPRINT_VERSION_SHA256, Instant.now());
         assertEquals(0, stale, "a stale revision must never overwrite a concurrent change");
 
         int fresh = credentialRepository.replaceSecretIfRevisionMatches(created.getId(), 1,
-                "v1:fresh:write", "fp-fresh", "v1", Instant.now());
+                "v1:fresh:write", "fp-fresh", "v1", Credential.AAD_VERSION_LEGACY,
+                Credential.FINGERPRINT_VERSION_SHA256, Instant.now());
         assertEquals(1, fresh);
         assertEquals(2, credentialRepository.findById(created.getId()).orElseThrow().getRevision());
     }
@@ -285,14 +297,12 @@ class CredentialServiceIntegrationTest extends AbstractIntegrationTest {
         assertEquals(Credential.KIND_KEY_PAIR, row.getKind());
         assertEquals(Credential.TIER_REVEAL, row.getDeliveryTier());
         assertEquals("{\"accessKey\":\"AKIA-example-access\",\"secretKey\":\"pair-secret-x9\"}",
-                credentialEncryption.decrypt(row.getSecretCiphertext(),
-                        CredentialAad.format(row.getId().toString(), row.getOwnerType(), row.getOwnerId())));
+                credentialEnvelope.decrypt(row));
 
         Credential replaced = credentialService.replaceSecret(created.getId(),
                 CredentialService.SecretPayload.ofKeyPair("AKIA-rotated-access", "pair-secret-y7"), null);
         assertEquals("{\"accessKey\":\"AKIA-rotated-access\",\"secretKey\":\"pair-secret-y7\"}",
-                credentialEncryption.decrypt(replaced.getSecretCiphertext(),
-                        CredentialAad.format(replaced.getId().toString(), "WORKSPACE", ownerId)));
+                credentialEnvelope.decrypt(replaced));
         assertEquals(2, replaced.getRevision());
     }
 

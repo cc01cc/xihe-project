@@ -851,7 +851,7 @@ class ConfigServiceTest {
         credential.setFingerprint("fingerprint");
         credential.setSecretCiphertext(credentialEncryption.encrypt(
                 "{\"token\":\"sk-export-secret\"}",
-                com.cc01cc.p.xihe.cp.credentials.CredentialAad.format(credentialId.toString(),
+                com.cc01cc.p.xihe.cp.credentials.CredentialAad.formatV1(credentialId.toString(),
                         Credential.OWNER_USER, ownerId)));
         credentials.save(credential);
 

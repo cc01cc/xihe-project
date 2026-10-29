@@ -2,14 +2,12 @@ package com.cc01cc.p.xihe.cp.credentials;
 
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
-import com.cc01cc.p.xihe.cp.crypto.EnvelopeEncryptionService;
 import com.cc01cc.p.xihe.cp.entity.Credential;
 import com.cc01cc.p.xihe.cp.entity.CredentialEvent;
 import com.cc01cc.p.xihe.cp.entity.CredentialLease;
 import com.cc01cc.p.xihe.cp.repository.CredentialEventRepository;
 import com.cc01cc.p.xihe.cp.repository.CredentialLeaseRepository;
 import com.cc01cc.p.xihe.cp.repository.CredentialRepository;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,19 +40,19 @@ public class CredentialLeaseService {
     private final CredentialLeaseRepository credentialLeaseRepository;
     private final CredentialRepository credentialRepository;
     private final CredentialEventRepository credentialEventRepository;
-    private final EnvelopeEncryptionService credentialEncryption;
+    private final CredentialEnvelope credentialEnvelope;
     private final AuditLogger auditLogger;
     private final SecureRandom random = new SecureRandom();
 
     public CredentialLeaseService(CredentialLeaseRepository credentialLeaseRepository,
             CredentialRepository credentialRepository,
             CredentialEventRepository credentialEventRepository,
-            @Qualifier("credentialEncryption") EnvelopeEncryptionService credentialEncryption,
+            CredentialEnvelope credentialEnvelope,
             AuditLogger auditLogger) {
         this.credentialLeaseRepository = credentialLeaseRepository;
         this.credentialRepository = credentialRepository;
         this.credentialEventRepository = credentialEventRepository;
-        this.credentialEncryption = credentialEncryption;
+        this.credentialEnvelope = credentialEnvelope;
         this.auditLogger = auditLogger;
     }
 
@@ -74,9 +72,7 @@ public class CredentialLeaseService {
         redeemLease(issued.token(), principalId, sessionId, runId, workspaceId);
 
         Credential credential = requireCredential(credentialId);
-        String plaintext = credentialEncryption.decrypt(credential.getSecretCiphertext(),
-                CredentialAad.format(credential.getId().toString(), credential.getOwnerType(),
-                        credential.getOwnerId()));
+        String plaintext = credentialEnvelope.decrypt(credential);
         return new AcquiredCredential(issued.leaseId().toString(), issued.expiresAt(),
                 issued.expectedRevision(), plaintext);
     }

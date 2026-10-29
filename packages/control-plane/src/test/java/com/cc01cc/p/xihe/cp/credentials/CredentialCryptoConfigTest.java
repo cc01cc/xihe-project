@@ -31,7 +31,7 @@ class CredentialCryptoConfigTest {
     @Test
     void singleKeyRoundTripsAndUsesCurrentVersion() {
         var service = config.credentialEncryption(base64(KEY_V1), "", "v1", true);
-        String aad = CredentialAad.format("c-1", "USER", "u-1");
+        String aad = CredentialAad.formatV1("c-1", "USER", "u-1");
         String envelope = service.encrypt("{\"token\":\"secret\"}", aad);
 
         assertTrue(envelope.startsWith("v1:"));
@@ -41,15 +41,15 @@ class CredentialCryptoConfigTest {
     @Test
     void ciphertextBoundToCredentialAndOwnerFailsWhenReused() {
         var service = config.credentialEncryption(base64(KEY_V1), "", "v1", true);
-        String envelope = service.encrypt("payload", CredentialAad.format("c-1", "USER", "u-1"));
+        String envelope = service.encrypt("payload", CredentialAad.formatV1("c-1", "USER", "u-1"));
 
         assertNotEquals(
-                CredentialAad.format("c-1", "USER", "u-1"),
-                CredentialAad.format("c-2", "USER", "u-1"));
+                CredentialAad.formatV1("c-1", "USER", "u-1"),
+                CredentialAad.formatV1("c-2", "USER", "u-1"));
         assertThrows(IllegalArgumentException.class,
-                () -> service.decrypt(envelope, CredentialAad.format("c-2", "USER", "u-1")));
+                () -> service.decrypt(envelope, CredentialAad.formatV1("c-2", "USER", "u-1")));
         assertThrows(IllegalArgumentException.class,
-                () -> service.decrypt(envelope, CredentialAad.format("c-1", "WORKSPACE", "u-1")));
+                () -> service.decrypt(envelope, CredentialAad.formatV1("c-1", "WORKSPACE", "u-1")));
     }
 
     @Test
@@ -162,5 +162,49 @@ class CredentialCryptoConfigTest {
         String ring = "{\"v1:x\":\"" + base64(KEY_V1) + "\"}";
         assertThrows(IllegalStateException.class,
                 () -> config.credentialEncryption("", ring, "v1:x", true));
+    }
+
+    @Test
+    void fingerprintKeyIsStableAcrossInstances() {
+        CredentialFingerprint first = config.credentialFingerprint(base64(KEY_V1), true);
+        CredentialFingerprint second = config.credentialFingerprint(base64(KEY_V1), true);
+
+        String one = first.fingerprint("token-value");
+        assertEquals(one, second.fingerprint("token-value"));
+        assertEquals(64, one.length());
+    }
+
+    @Test
+    void fingerprintKeyMissingWithoutDevFallbackRefusesStartup() {
+        assertThrows(IllegalStateException.class,
+                () -> config.credentialFingerprint("", false));
+    }
+
+    @Test
+    void fingerprintKeyMustBe32Bytes() {
+        assertThrows(IllegalStateException.class,
+                () -> config.credentialFingerprint(base64(new byte[16]), true));
+    }
+
+    @Test
+    void fingerprintDevFallbackWarnsAndIsStable() {
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(CredentialCryptoConfig.class);
+        logger.addAppender(appender);
+        try {
+            CredentialFingerprint dev = config.credentialFingerprint("", true);
+            CredentialFingerprint devAgain = config.credentialFingerprint("", true);
+            assertEquals(dev.fingerprint("token-value"), devAgain.fingerprint("token-value"));
+            assertTrue(appender.list.stream()
+                            .map(event -> event.getFormattedMessage())
+                            .anyMatch(message -> message.contains("credential fingerprint dev key active")),
+                    "the fingerprint dev fallback must WARN (V5)");
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
     }
 }
