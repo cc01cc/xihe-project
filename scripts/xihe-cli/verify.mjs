@@ -65,8 +65,15 @@ function deriveStackEnv({ stack, root, spawnSyncImpl }) {
     throw new CliError('VERIFY_STACK_DERIVATION_FAILED', `stack-run returned invalid environment JSON for stack ${stack}.`, {}, 2);
   }
   const bag = parsed?.env ?? {};
-  const port = (key, fallback) => {
-    const raw = String(bag[key] ?? fallback);
+  // PLAN-0574 A-class fix (real stack-2 acceptance): `stack-run env-json` fills the
+  // env bag with gaps only, so an inherited XIHE_*_PORT (OS env or the CLI .env
+  // chain) removes the key from the bag. Reading the bag alone then silently fell
+  // back to the stack-1 defaults and pointed verify at another stack. The derived
+  // `ports` object is the stack truth and must win; the bag stays as a fallback
+  // for older/doubles fixtures.
+  const derivedPorts = parsed?.ports && typeof parsed.ports === 'object' ? parsed.ports : {};
+  const port = (derivedName, key, fallback) => {
+    const raw = String(derivedPorts[derivedName] ?? bag[key] ?? fallback);
     if (!/^\d{1,5}$/.test(raw)) {
       throw new CliError('VERIFY_STACK_DERIVATION_FAILED', `stack ${stack} derived an invalid ${key}.`, {}, 2);
     }
@@ -76,7 +83,7 @@ function deriveStackEnv({ stack, root, spawnSyncImpl }) {
     }
     return value;
   };
-  return { cpPort: port('XIHE_CP_PORT', '12631'), agentPort: port('XIHE_AGENT_PORT', '12632') };
+  return { cpPort: port('cp', 'XIHE_CP_PORT', '12631'), agentPort: port('agent', 'XIHE_AGENT_PORT', '12632') };
 }
 
 function createClient({ apiBase, fetchImpl, auth, workspaceId }) {

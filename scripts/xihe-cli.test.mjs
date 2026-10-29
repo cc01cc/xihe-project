@@ -1119,6 +1119,8 @@ async function startVerifyCpMock({
   const agentPort = agent.address().port;
   return {
     state,
+    cpPort,
+    agentPort,
     env: {
       XIHE_CP_PORT: String(cpPort),
       XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD,
@@ -1235,6 +1237,31 @@ test('verify timeout cancels the run before deleting the session and exits 5', a
   assert.equal(result.data.cleanup.runCancel.status, 'cancelled');
   const methods = cp.state.calls.map((call) => `${call.method} ${call.pathname}`);
   assert.ok(methods.indexOf('POST /api/v1/chat/runs/run-1/cancel') < methods.indexOf('DELETE /api/v1/sessions/session-1'));
+});
+
+test('verify prefers stack-derived ports when the env bag omits inherited port keys', async (t) => {
+  const cp = await startVerifyCpMock();
+  t.after(cp.close);
+  const result = await runCommand([
+    'verify', '--stack', 'stack-2', '--email', 'admin@xihe.local', '--workspace', 'ws-1', '--yes',
+  ], {
+    env: cp.env,
+    // Real `stack-run env-json --stack 2` under an inherited XIHE_CP_PORT emits the
+    // derived `ports` object but drops the port keys from the fill-gap `env` bag.
+    spawnSyncImpl: () => ({
+      status: 0,
+      stdout: JSON.stringify({ ports: { cp: cp.cpPort, agent: cp.agentPort }, env: {} }),
+      stderr: '',
+    }),
+    promptSecret: noPrompt,
+    stdout: sink(),
+    stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.data.cpBase, `http://127.0.0.1:${cp.cpPort}`);
+  assert.equal(result.data.agentPort, cp.agentPort);
+  assert.ok(cp.state.calls.length > 0, 'verify must reach the stack-derived CP, not a default port');
 });
 
 test('verify maps a chat precondition failure to exit 4 and still deletes the session', async (t) => {
