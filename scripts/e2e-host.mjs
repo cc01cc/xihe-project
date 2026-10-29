@@ -1333,6 +1333,10 @@ async function runPlaywright() {
       XIHE_E2E_PG_USER: pgUser,
       XIHE_E2E_PG_PORT: pgPort,
       XIHE_E2E_LLM_MODE: llmMode,
+      // PLAN-0566 D6: expose the selected auth lane so auth-lane specs can gate
+      // themselves (skip in the default `exempt` full-matrix lane instead of
+      // failing on thresholds that only the `ratelimit` lane lowers).
+      XIHE_E2E_AUTH_LANE: authLane,
       XIHE_E2E_ADMIN_PASSWORD: e2eAdminPassword,
       XIHE_E2E_AGENT_RESTART_ENV: JSON.stringify(agentRestartEnv),
       XIHE_E2E_AGENT_DB_CONFIG_PRESENT: agentDatabaseConfigPresent === false ? 'false' : 'unknown',

@@ -10,6 +10,16 @@ const PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
  * XIHE_CP_AUTH_LOGIN_ACCOUNT_LOCK_SECONDS=6.
  */
 test.describe("@host Auth lockout — Real Backend", () => {
+    // PLAN-0566 D6 / DEV-020 §3.3: the lockout contract needs the CP booted in
+    // the `ratelimit` lane (XIHE_CP_AUTH_LOGIN_ACCOUNT_MAX_FAILURES=3,
+    // XIHE_CP_AUTH_LOGIN_ACCOUNT_LOCK_SECONDS=6). The default `exempt`
+    // full-matrix lane disables the register dimension, so this case can never
+    // observe 429 there — gate it instead of failing the whole batch.
+    test.skip(
+        process.env.XIHE_E2E_AUTH_LANE !== "ratelimit",
+        "requires the ratelimit auth lane (node scripts/e2e-host.mjs --auth-lane=ratelimit ...); current lane=" +
+            (process.env.XIHE_E2E_AUTH_LANE ?? "exempt"),
+    );
     test("locks after repeated failures, shows localized copy, then unlocks", async ({ page }) => {
         const email = `real-lockout-${Date.now()}@test.com`;
         const registered = await fetch(`${CP_URL}/api/v1/auth/register`, {

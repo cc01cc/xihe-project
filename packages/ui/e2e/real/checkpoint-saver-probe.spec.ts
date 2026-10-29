@@ -204,6 +204,16 @@ test("@host PLAN-0510 T0.5 — Agent BaseCheckpointSaver persists through CP", a
 }) => {
     test.setTimeout(240_000);
 
+    // PLAN-0510 T0.5: this probe only runs in the runner's dedicated saver-probe
+    // lane (the spec is passed explicitly, so e2e-host.mjs wires the probe
+    // control server + Agent profile). In a directory-expanded batch the flag is
+    // false and the probe cannot assert anything — gate it instead of failing.
+    test.skip(
+        process.env.XIHE_E2E_CHECKPOINT_PROBE_ACTIVE !== "true",
+        "requires the dedicated checkpoint saver probe lane (node scripts/e2e-host.mjs e2e/real/checkpoint-saver-probe.spec.ts); current=" +
+            (process.env.XIHE_E2E_CHECKPOINT_PROBE_ACTIVE ?? "false"),
+    );
+
     const runId = process.env.XIHE_E2E_RUN_ID,
         pgFixture = [
             process.env.XIHE_E2E_PG_CONTAINER,

@@ -186,8 +186,13 @@ test.describe("@host Workspace import", () => {
         await page.getByTestId("workspace-import-cancel").click();
 
         // PLAN-0384 V5: cancellation is reflected in the dialog and the durable record.
+        // 2026-10-29: on loaded full-matrix runs (mock-full + one isolated rerun)
+        // the docker import job's cancel acknowledgement sometimes took >30 s and
+        // the assertion flipped between 排队中/进行中; the same case passed in 9 s
+        // on a clean rerun. Keep the assertion unchanged, only widen the headroom
+        // so machine load does not turn it into a false red (no retry, no weaken).
         await expect(page.getByTestId("workspace-import-status")).toContainText("已取消", {
-            timeout: 30000,
+            timeout: 60000,
         });
         await expect(page.getByTestId("workspace-import-cancel")).toBeHidden();
     });

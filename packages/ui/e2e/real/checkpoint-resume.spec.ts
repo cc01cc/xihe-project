@@ -389,8 +389,16 @@ test("@host PLAN-0510 continuation resumes only an exact safe checkpoint", async
     request,
 }) => {
     test.setTimeout(600_000);
-    expect(process.env.XIHE_E2E_CHECKPOINT_RESUME_ACTIVE).toBe("true");
-    expect(process.env.XIHE_E2E_LLM_MODE).toBe("checkpoint_resume");
+    // PLAN-0510: this probe only runs through the runner's dedicated resume lane
+    // (the spec is passed explicitly and e2e-host.mjs derives
+    // XIHE_E2E_LLM_MODE=checkpoint_resume). A directory-expanded batch cannot
+    // satisfy that contract, so gate it instead of failing the whole lane.
+    test.skip(
+        process.env.XIHE_E2E_CHECKPOINT_RESUME_ACTIVE !== "true" ||
+            process.env.XIHE_E2E_LLM_MODE !== "checkpoint_resume",
+        "requires the dedicated checkpoint-resume lane (node scripts/e2e-host.mjs e2e/real/checkpoint-resume.spec.ts); current mode=" +
+            (process.env.XIHE_E2E_LLM_MODE ?? "unset"),
+    );
     expect(Boolean(process.env.XIHE_E2E_RUN_ID)).toBe(true);
     expect(Boolean(SERVICE_TOKEN)).toBe(true);
     expect(Boolean(process.env.XIHE_FAKE_MCP_ACCESS_TOKEN)).toBe(true);

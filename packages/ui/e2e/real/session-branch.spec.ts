@@ -91,6 +91,13 @@ test.describe("@host Session branch path", () => {
         page,
         request,
     }, testInfo) => {
+        // BL-148: real-lane prerequisite — chat goes through a ProviderConnection
+        // (PLAN-0439) and the real lane has no such fixture, so the composer /
+        // assistant message never renders (mock lane green).
+        test.skip(
+            process.env.XIHE_E2E_LLM_MODE === "real",
+            "BL-148: real lane has no usable ProviderConnection/model identity → assistant message not rendered",
+        );
         await ensureAgentWorkspaceBinding(journey.workspaceId);
         await waitForControlPlaneAgentReady(request, workspaceHeaders);
         seedPage(page, journey);

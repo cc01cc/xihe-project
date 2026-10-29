@@ -91,6 +91,14 @@ test("@host Guidance race: a held POST returns the frozen 409 after a real cance
     page,
     request,
 }) => {
+    // PLAN-0536 / DEV-020 §3.2: the race needs the approval lane so the
+    // guidance POST can be held behind the approval modal; a mock-mode batch
+    // never renders that modal and would time out. Gate instead of failing.
+    test.skip(
+        process.env.XIHE_E2E_LLM_MODE !== "approval",
+        "requires the approval lane (node scripts/e2e-host.mjs --llm-mode=approval e2e/real/plan0536-guidance-race.spec.ts); current mode=" +
+            (process.env.XIHE_E2E_LLM_MODE ?? "unset"),
+    );
     test.skip(
         !SERVICE_TOKEN || !E2E_RUN_ID,
         "requires the owned host run (service token + run id)",
@@ -165,6 +173,12 @@ test("@host Guidance race: an unreleased barrier fails explicitly and leaves no 
     page,
     request,
 }) => {
+    // Same approval-lane gate as the case above.
+    test.skip(
+        process.env.XIHE_E2E_LLM_MODE !== "approval",
+        "requires the approval lane (node scripts/e2e-host.mjs --llm-mode=approval e2e/real/plan0536-guidance-race.spec.ts); current mode=" +
+            (process.env.XIHE_E2E_LLM_MODE ?? "unset"),
+    );
     test.skip(
         !SERVICE_TOKEN || !E2E_RUN_ID,
         "requires the owned host run (service token + run id)",

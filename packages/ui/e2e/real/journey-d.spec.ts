@@ -131,6 +131,13 @@ test.describe("@host Journey D — context pipeline", () => {
             !process.env.XIHE_E2E_REAL_XIAOMI_KEY,
             "requires a real provider key (XIHE_E2E_REAL_XIAOMI_KEY)",
         );
+        // BL-148: same real-lane prerequisite as chat-availability — without a
+        // usable ProviderConnection the workspace composer never renders and the
+        // helper waits `chat-input` out (mock lane green).
+        test.skip(
+            process.env.XIHE_E2E_LLM_MODE === "real",
+            "BL-148: real lane has no usable ProviderConnection/model identity → chat input not rendered",
+        );
         // PLAN-0372 decision #A: this boundary case pins the native `xiaomi` route
         // under a workspace (tool-enabled) chat. PLAN-0364 M3 removed the silent
         // switch to an OpenAI-compatible route, so the run MUST fail with the

@@ -26,7 +26,11 @@ test.describe("@host PLAN-0384 MXC unavailable branch", () => {
         seedWs = "",
         hostRoot = "",
         targetDir = "",
-        pageErrors: string[] = [];
+        pageErrors: string[] = [],
+        // PLAN-0384 V4 covers the MXC-*unavailable* branch only. Probe the real
+        // backend and skip on hosts where windows-mxc is actually usable — the
+        // premise ("available=false + reason") cannot hold there.
+        mxcAvailable = false;
 
     test.beforeEach(async ({ page }) => {
         pageErrors = collectPageErrors(page);
@@ -55,6 +59,21 @@ test.describe("@host PLAN-0384 MXC unavailable branch", () => {
         hostRoot = process.env.XIHE_WORKSPACE_HOST_ROOT || os.tmpdir();
         targetDir = path.join(hostRoot, `xihe-e2e-0384-mxcoff-${Date.now()}`);
         mkdirSync(targetDir, { recursive: true });
+
+        const probe = await request.post(`${CP_URL}/api/v1/workspaces/capabilities/preflight`, {
+            headers: { Authorization: `Bearer ${auth}`, "Content-Type": "application/json" },
+            data: {
+                storageMode: "direct_attach",
+                hostPath: targetDir,
+                executionMode: "windows-mxc",
+            },
+        });
+        if (probe.ok()) {
+            mxcAvailable = Boolean(((await probe.json()) as { available?: boolean }).available);
+        }
+        console.log(
+            `[plan0384] windows-mxc available=${mxcAvailable}; unavailable-branch cases are skipped when true`,
+        );
 
         // Rebind the token so the seed workspace is the user's default context.
         await request.delete(`${CP_URL}/api/v1/workspaces/${body.workspaceId}`, {
@@ -106,6 +125,10 @@ test.describe("@host PLAN-0384 MXC unavailable branch", () => {
     }
 
     test("real preflight reports MXC unavailable with a reason", async ({ request }) => {
+        test.skip(
+            mxcAvailable,
+            "this host reports a usable windows-mxc backend; the spec covers the unavailable branch (boot with XIHE_MXC_EXECUTABLE pointing at a missing path)",
+        );
         const res = await request.post(`${CP_URL}/api/v1/workspaces/capabilities/preflight`, {
             headers: { Authorization: `Bearer ${auth}`, "Content-Type": "application/json" },
             data: {
@@ -126,6 +149,10 @@ test.describe("@host PLAN-0384 MXC unavailable branch", () => {
     test("UI disables MXC, never auto-switches, and creates only after an explicit host choice", async ({
         page,
     }) => {
+        test.skip(
+            mxcAvailable,
+            "this host reports a usable windows-mxc backend; the spec covers the unavailable branch",
+        );
         seedPage(page);
         await page.goto(`/workspace/${seedWs}`);
         await page.locator('[data-testid="workspace-toolbar-add"]').click();

@@ -67,7 +67,66 @@ const VIEWPORTS = [
     { tag: "mobile", width: 390, height: 844 },
 ] as const;
 
+async function adminAccessToken(request: APIRequestContext): Promise<string | null> {
+    const adminPassword = process.env.XIHE_E2E_ADMIN_PASSWORD ?? "";
+    if (!adminPassword) return null;
+    const login = await request.post(`${CP_URL}/api/v1/auth/login`, {
+        data: { identifier: "admin@xihe.local", password: adminPassword },
+    });
+    if (!login.ok()) return null;
+    return ((await login.json()) as { accessToken: string }).accessToken;
+}
+
+/** Read the instance-layer `llm-provider.profile` exactly as stored (null = absent). */
+async function readInstanceLlmProfile(request: APIRequestContext): Promise<string | null> {
+    const token = await adminAccessToken(request);
+    if (!token) return null;
+    const response = await request.get(
+        `${CP_URL}/api/v1/config/llm-provider?layer=instance&includeMeta=true`,
+        { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!response.ok()) return null;
+    const entries = ((await response.json()) as { entries?: Record<string, string> }).entries ?? {};
+    return entries.profile ?? null;
+}
+
+/** Restore the snapshot so later specs in the batch keep a resolvable profile. */
+async function restoreInstanceLlmProfile(
+    request: APIRequestContext,
+    originalProfile: string | null,
+): Promise<void> {
+    const token = await adminAccessToken(request);
+    expect(token, "admin login must succeed to restore the instance llm-provider profile").not.toBe(
+        null,
+    );
+    const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+    const response =
+        originalProfile === null
+            ? // The key was absent before the seed: remove it again (404 = already gone).
+              await request.delete(`${CP_URL}/api/v1/config/instance/llm-provider/profile`, {
+                  headers,
+              })
+            : await request.put(`${CP_URL}/api/v1/config/instance/llm-provider`, {
+                  headers,
+                  data: { profile: originalProfile },
+              });
+    expect(
+        [200, 204, 404],
+        `restore instance llm-provider: ${response.status()} ${await response.text()}`,
+    ).toContain(response.status());
+}
+
 test.describe.serial("@host PLAN-0505 delete impact and cascade (browser)", () => {
+    // Snapshot of the pre-test instance `llm-provider.profile` (null = absent).
+    let originalInstanceProfile: string | null = null;
+    let instanceProfileCaptured = false;
+
+    test.afterAll(async ({ request }) => {
+        if (!instanceProfileCaptured) return;
+        await restoreInstanceLlmProfile(request, originalInstanceProfile);
+        instanceProfileCaptured = false;
+    });
+
     test("preview counts, cancel keeps zero mutation, confirm cascades references away (desktop + mobile)", async ({
         page,
         request,
@@ -140,6 +199,15 @@ test.describe.serial("@host PLAN-0505 delete impact and cascade (browser)", () =
 
             // Seed: instance llm-provider profile pointing at this connection
             // (admin seed: instance writes skip the connection readiness check).
+            // State-leak guard (2026-10-29 mock-full finding): this write is
+            // global (instance layer) and used to survive the spec, so later
+            // Agent rebinds resolved a deleted connection and reported
+            // missing_credentials. Snapshot the pre-test value once and restore
+            // it in the describe-level afterAll.
+            if (!instanceProfileCaptured) {
+                originalInstanceProfile = await readInstanceLlmProfile(request);
+                instanceProfileCaptured = true;
+            }
             const adminPassword = process.env.XIHE_E2E_ADMIN_PASSWORD ?? "";
             expect(adminPassword, "XIHE_E2E_ADMIN_PASSWORD must be provided by e2e-host").not.toBe(
                 "",

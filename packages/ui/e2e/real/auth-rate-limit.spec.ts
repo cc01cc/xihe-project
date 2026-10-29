@@ -20,6 +20,15 @@ const PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
  * here.
  */
 test.describe("@host Auth register rate limit", () => {
+    // DEV-020 §3.3: the register bucket only exists in the `ratelimit` lane
+    // (XIHE_CP_AUTH_LOGIN_REGISTER_MAX_ATTEMPTS=6 + trusted loopback proxies).
+    // The default `exempt` full-matrix lane intentionally disables the
+    // dimension, so gate the case instead of failing the whole batch.
+    test.skip(
+        process.env.XIHE_E2E_AUTH_LANE !== "ratelimit",
+        "requires the ratelimit auth lane (node scripts/e2e-host.mjs --auth-lane=ratelimit ...); current lane=" +
+            (process.env.XIHE_E2E_AUTH_LANE ?? "exempt"),
+    );
     test("throttles registrations sharing one non-loopback XFF bucket", async ({ request }) => {
         const xff = "203.0.113.77";
         let throttled: Response | null = null;

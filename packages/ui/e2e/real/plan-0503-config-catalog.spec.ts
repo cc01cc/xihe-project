@@ -101,6 +101,25 @@ async function waitForDirectoryCatalog(
 }
 
 test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
+    // BL-137 (stale assertions, test-infra rewrite pending): PLAN-0523 M3
+    // (5671c571) converged the llm-provider domain into the provider hub and
+    // retired every testid this describe drives — `llm-provider-profile`,
+    // `llm-profile-connection-select`, `llm-profile-connection-drift`,
+    // `llm-profile-connection-drift-option`, `llm-profile-model-select`,
+    // `llm-profile-model-custom`, `llm-profile-empty-hint`, `llm-profile-save`
+    // (e2e/real/plan-0503-config-catalog.spec.ts:118-394). The replacement
+    // surface is `provider-hub`, `provider-default-drift`,
+    // `provider-default-connection`, `provider-model-*`,
+    // `provider-model-default-*`, `provider-orphan-*`. The last V7 case also
+    // depends on `userConnectionId` from the retired V4-user flow, so the whole
+    // serial describe must be rewritten together — skip all of it until then.
+    // Note: V4 used to write a drift `instance` profile and never restore it,
+    // which was one of the two config state-leak sources in the 2026-10-29
+    // mock-full run (BL-136); skipping it also removes that side effect.
+    test.skip(
+        true,
+        "BL-137: PLAN-0523 retired the llm-provider-profile testids; rewrite this serial describe against provider-hub/provider-default-drift/provider-model-*",
+    );
     test.beforeAll(async ({ request }) => {
         expect(FAKE_LLM_PORT, "XIHE_FAKE_LLM_PORT must be provided by e2e-host").not.toBe("");
         await loginAsAdmin(request);

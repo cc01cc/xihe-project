@@ -6,7 +6,11 @@ import {
     createSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
-import { ensureAgentWorkspaceBinding, waitForControlPlaneAgentReady } from "./helpers/journey";
+import {
+    ensureAgentWorkspaceBinding,
+    ensureChatBinding,
+    waitForControlPlaneAgentReady,
+} from "./helpers/journey";
 import { generateE2EPassword } from "./helpers/password";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
@@ -72,6 +76,16 @@ test.describe("@host PLAN-0470 checkpoint direct-attach MXC consumer", () => {
         page,
         request,
     }) => {
+        // Lane premise: the case sends a `XIHE-E2E-WRITE <file> <content>` prompt
+        // and expects the fake LLM to emit a write tool call plus an approval
+        // modal (approve → checkpoint capture). That fixture only exists in the
+        // write_file lane; in the mock lane the fake provider returns plain text
+        // and the flow cannot reach the approval/checkpoint assertions.
+        test.skip(
+            process.env.XIHE_E2E_LLM_MODE !== "write_file",
+            "requires the write_file fake-LLM lane (node scripts/e2e-host.mjs --llm-mode=write_file e2e/real/plan0470-checkpoint-mxc.spec.ts); current mode=" +
+                (process.env.XIHE_E2E_LLM_MODE ?? "unset"),
+        );
         const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
         const registration = await request.post(`${CP_URL}/api/v1/auth/register`, {
             data: {
@@ -183,7 +197,17 @@ test.describe("@host PLAN-0470 checkpoint direct-attach MXC consumer", () => {
                 ),
             workspace.id,
         );
-        await page.goto(`/chat/${sessionId}`, { waitUntil: "load" });
+        // Workspace IA convergence (PLAN-0560 / `cb5651a7`): chat now lives at
+        // `/workspace/:workspaceId/chat/:sessionId`; the flat `/chat/:sessionId`
+        // is a legacy redirect (src/router/index.ts:135).
+        await page.goto(`/workspace/${workspace.id}/chat/${sessionId}`, { waitUntil: "load" });
+        // Explicit Session binding: CP now rejects POST /api/v1/chat with 409
+        // API_TYPE_REBIND_REQUIRED ("Explicit Session binding is required",
+        // ApiRequestTemplateService.java:399-403) when the Session row has no
+        // providerConnectionId/contextTemplate binding. Sessions created through
+        // the API (this spec) never pass the composer's bind step, so bind it
+        // through the same helper the other host specs use.
+        await ensureChatBinding(page, sessionId);
         const input = page.locator('[data-testid="chat-input"]');
         const send = page.locator('[data-testid="chat-send-button"]');
         await expect(input).toBeVisible({ timeout: 30000 });

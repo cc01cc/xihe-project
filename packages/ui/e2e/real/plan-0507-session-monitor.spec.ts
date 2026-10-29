@@ -55,13 +55,12 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
     const shots: Array<{ name: string; bytes: number; viewport: string }> = [];
 
     test.beforeAll(async ({ request }) => {
-        // PLAN-0525: align this hook's own budget with `ensureAgentWorkspaceBinding`'s
-        // 180s readiness wait. A describe-scope `test.setTimeout` only widens the
-        // *test* timeout; called inside a hook it widens that hook. Without this the
-        // hook died at the 30s config default and masked the real reason, so a
-        // readiness delay now surfaces as the helper's descriptive error instead of
-        // an opaque beforeAll timeout.
-        test.setTimeout(200000);
+        // PLAN-0525 / BL-143: `ensureAgentWorkspaceBinding` now uses a 30s
+        // readiness budget (fast-fail on terminal `llmReady` states, 500ms poll)
+        // instead of 180s. Keep this hook's own budget above it (90s) so a
+        // describe-scope `test.setTimeout` still cannot mask the helper's
+        // descriptive error with an opaque beforeAll timeout.
+        test.setTimeout(90000);
         // Agent binds one workspace per process — register exactly once.
         ctx = await registerJourneyUser(request, "plan-0507-monitor");
         // AgentAuth uses `accessToken` while JourneyContext exposes `authToken`.
@@ -146,6 +145,13 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
         page,
         request,
     }) => {
+        // BL-148: the probe run needs a usable chat connection; in the real lane
+        // the runner only provides env-keyed identity, so the probe run ends
+        // `ambiguous` instead of `succeeded` (mock lane green).
+        test.skip(
+            process.env.XIHE_E2E_LLM_MODE === "real",
+            "BL-148: real lane has no usable ProviderConnection → probe run is ambiguous (mock lane green)",
+        );
         seedPage(page, ctx);
         await page.goto("/workspace/" + ctx.workspaceId, { waitUntil: "load" });
         await ensureChatReady(page);
@@ -297,11 +303,22 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
         seedPage(page, ctx);
         await page.goto("/workspace/" + ctx.workspaceId, { waitUntil: "load" });
 
-        const monitorButton = page.locator('[data-testid="workspace-toolbar-monitor-mobile"]');
-        await expect(monitorButton).toBeVisible({ timeout: 20000 });
-        await monitorButton.click();
+        // PLAN-0560 M3 (cb5651a7) converged the workspace toolbar entries: on
+        // mobile the monitor entry lives in the toolbar overflow menu
+        // (`workspace-toolbar-more-mobile` → `workspace-toolbar-more-monitor`),
+        // while the desktop row button (`workspace-toolbar-monitor`) is hidden
+        // below the md breakpoint. Opening it selects the monitor tab by default
+        // (`mobile-aux-tab-monitor`, aria-selected=true).
+        const overflow = page.locator('[data-testid="workspace-toolbar-more-mobile"]');
+        await expect(overflow).toBeVisible({ timeout: 20000 });
+        await overflow.click();
+        await page.locator('[data-testid="workspace-toolbar-more-monitor"]').click();
         const sheet = page.locator('[data-testid="mobile-changes-sheet"]');
         await expect(sheet).toBeVisible({ timeout: 10000 });
+        await expect(
+            sheet.locator('[data-testid="mobile-aux-tab-monitor"]'),
+            "monitor tab is the default mobile aux tab",
+        ).toHaveAttribute("aria-selected", "true");
         await expect(sheet.locator(PANEL), "monitor view inside the mobile sheet").toBeVisible({
             timeout: 20000,
         });

@@ -70,13 +70,11 @@ test.describe("@host PLAN-0508 transport telemetry relay and diagnostics", () =>
     const shots: Array<{ name: string; bytes: number; viewport: string }> = [];
 
     test.beforeAll(async ({ request }) => {
-        // PLAN-0525: align this hook's own budget with `ensureAgentWorkspaceBinding`'s
-        // 180s readiness wait. A describe-scope `test.setTimeout` only widens the
-        // *test* timeout; called inside a hook it widens that hook. Without this the
-        // hook died at the 30s config default and masked the real reason, so a
-        // readiness delay now surfaces as the helper's descriptive error instead of
-        // an opaque beforeAll timeout.
-        test.setTimeout(200000);
+        // PLAN-0525 / BL-143: `ensureAgentWorkspaceBinding` now uses a 30s
+        // readiness budget (fast-fail on terminal `llmReady` states, 500ms poll)
+        // instead of 180s. Keep this hook's budget above it (90s) so the helper's
+        // descriptive error is still not masked by an opaque beforeAll timeout.
+        test.setTimeout(90000);
         ctx = await registerJourneyUser(request, "plan-0508-transport");
         // AgentAuth uses `accessToken` while JourneyContext exposes `authToken`.
         const agentAuth = { accessToken: ctx.authToken, workspaceId: ctx.workspaceId };
