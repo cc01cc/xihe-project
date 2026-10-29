@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import {
   CliError,
   addProvider,
+  confirmAction,
+  deleteProvider,
   getApiBase,
   initProvider,
   listProviderConnections,
@@ -18,6 +21,21 @@ import {
 } from './xihe-cli/provider.mjs';
 import { checkDevelopmentEnvironment, runConfigImport, runRealTest } from './xihe-cli/host.mjs';
 import { rotateCredentials } from './xihe-cli/credential.mjs';
+import { runConfigExport } from './xihe-cli/config-export.mjs';
+import {
+  collectStatus,
+  runAuditList,
+  runCheckpointList,
+  runCheckpointPreviewRevert,
+  runJobCancel,
+  runJobList,
+  runJobOutput,
+  runScheduledTaskList,
+  runWorkspaceGet,
+  runWorkspaceList,
+} from './xihe-cli/readonly.mjs';
+import { runVerify } from './xihe-cli/verify.mjs';
+import { runVersion } from './xihe-cli/version.mjs';
 import { loadEnvFileChain } from './lib/env-file.mjs';
 
 function splitGlobalJsonFlag(args) {
@@ -43,15 +61,30 @@ function helpText() {
     '  node scripts/xihe.mjs dev check [--json]',
     '  node scripts/xihe.mjs dev init --provider <id> --scope <USER|WORKSPACE> --label <label> [--models <id,id>] [--api-key-env <name>]',
     '  node scripts/xihe.mjs config import [file]',
+    '  node scripts/xihe.mjs config export [--layer instance] [--include-secrets] [--out <file>] [--force]',
+    '  node scripts/xihe.mjs verify --stack <n> --email <account> --workspace <wsId> [--wait-seconds <n>] [--yes]',
+    '  node scripts/xihe.mjs version [--check]',
+    '  node scripts/xihe.mjs status',
+    '  node scripts/xihe.mjs workspace list',
+    '  node scripts/xihe.mjs workspace get <wsId>',
+    '  node scripts/xihe.mjs job list <wsId>',
+    '  node scripts/xihe.mjs job output <wsId> <jobId> [--stream stdout|stderr] [--offset <n>] [--limit <n>]',
+    '  node scripts/xihe.mjs job cancel <wsId> <jobId>',
+    '  node scripts/xihe.mjs checkpoint list <wsId>',
+    '  node scripts/xihe.mjs checkpoint preview-revert <wsId> <sliceRef>',
+    '  node scripts/xihe.mjs scheduled-task list <wsId> [--page <n>] [--size <n>]',
+    '  node scripts/xihe.mjs audit list [--type <type>] [--page <n>] [--size <n>]',
     '  node scripts/xihe.mjs provider add <id> --scope <USER|WORKSPACE> --label <label> [--models <id,id>] [--api-key-env <name>]',
     '  node scripts/xihe.mjs provider update <id> [--label <label>] [--base-url <url>] [--models <id,id>] [--api-key-env <name>]',
     '  node scripts/xihe.mjs provider list [--scope <USER|WORKSPACE>]',
     '  node scripts/xihe.mjs provider verify <id>',
+    '  node scripts/xihe.mjs provider delete <id> [--yes]',
     '  node scripts/xihe.mjs credential rotate [--batch-size <n>] [--max-batches <n>] [--dry-run]',
     '  node scripts/xihe.mjs test real <e2e/real/spec.spec.ts> [--route <native|openai-compat>]',
     '',
     'Secrets are read from environment variables or a no-echo TTY prompt; never pass secret values as arguments.',
     'credential rotate authenticates with XIHE_CP_API_TOKEN (CP service Bearer) and never prints credential values.',
+    'verify writes a principal/session/chat run into the target stack and calls the model provider; use an isolated stack and workspace.',
     'Real E2E uses XIHE_E2E_REAL_XIAOMI_KEY and does not test Provider Connection leases.',
   ].join('\n');
 }
@@ -74,7 +107,164 @@ export async function runCommand(argv, dependencies = {}) {
       return { exitCode: 0, json, data: { help: helpText() } };
     }
     if (group === '--version' || group === 'version') {
-      return { exitCode: 0, json, data: { version: 'development checkout' } };
+      const parsed = parseCommandOptions(args.slice(1), [], ['--check']);
+      if (parsed.positionals.length !== 0) throw new CliError('INVALID_ARGUMENT', 'version takes no positional arguments.');
+      const versionResult = runVersion({
+        check: parsed.values['--check'] === true,
+        root: dependencies.projectRoot,
+      });
+      return { exitCode: versionResult.exitCode, json, data: versionResult.data };
+    }
+
+    if (group === 'verify') {
+      const parsed = parseCommandOptions(
+        args.slice(1),
+        ['--stack', '--email', '--workspace', '--wait-seconds'],
+        ['--yes'],
+      );
+      if (parsed.positionals.length !== 0) {
+        throw new CliError('INVALID_ARGUMENT', 'verify takes no positional arguments; use --stack, --email, and --workspace.');
+      }
+      const verifyResult = await runVerify({
+        env,
+        fetchImpl,
+        options: parsed.values,
+        json,
+        stdout: dependencies.stdout ?? process.stdout,
+        stderr: dependencies.stderr ?? process.stderr,
+        promptSecret: prompt,
+        confirm: dependencies.confirmAction ?? confirmAction,
+        spawnSyncImpl: spawnSyncImpl ?? spawnSync,
+        stdin: dependencies.stdin ?? process.stdin,
+        nowImpl: dependencies.nowImpl,
+        sleepImpl: dependencies.sleepImpl,
+        root: dependencies.projectRoot,
+      });
+      return { exitCode: verifyResult.exitCode, json, data: verifyResult.data };
+    }
+
+    if (group === 'status') {
+      const parsed = parseCommandOptions(rest, [], []);
+      if (parsed.positionals.length !== 0) throw new CliError('INVALID_ARGUMENT', 'status takes no positional arguments.');
+      const apiBase = getApiBase(env);
+      const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+      const data = await collectStatus({ apiBase, fetchImpl, token });
+      return { exitCode: 0, json, data };
+    }
+
+    if (group === 'workspace') {
+      let parsed;
+      if (command === 'list') {
+        parsed = parseCommandOptions(rest, ['--email'], []);
+      } else if (command === 'get') {
+        parsed = parseCommandOptions(rest, ['--email'], []);
+      } else {
+        throw new CliError('INVALID_ARGUMENT', 'Unknown workspace command; use list/get.');
+      }
+      const apiBase = getApiBase(env);
+      const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+      if (command === 'list') {
+        if (parsed.positionals.length !== 0) throw new CliError('INVALID_ARGUMENT', 'workspace list takes no positional arguments.');
+        return { exitCode: 0, json, data: await runWorkspaceList({ apiBase, fetchImpl, token }) };
+      }
+      if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'workspace get requires one workspace ID.');
+      const data = await runWorkspaceGet({ apiBase, fetchImpl, token, workspaceId: parsed.positionals[0] });
+      return { exitCode: data.partial ? 1 : 0, json, data };
+    }
+
+    if (group === 'job') {
+      let parsed;
+      if (command === 'list') {
+        parsed = parseCommandOptions(rest, ['--email'], []);
+      } else if (command === 'output') {
+        parsed = parseCommandOptions(rest, ['--stream', '--offset', '--limit', '--email'], []);
+      } else if (command === 'cancel') {
+        parsed = parseCommandOptions(rest, ['--email'], []);
+      } else {
+        throw new CliError('INVALID_ARGUMENT', 'Unknown job command; use list/output/cancel.');
+      }
+      if (command === 'list' && parsed.positionals.length !== 1) {
+        throw new CliError('INVALID_ARGUMENT', 'job list requires one workspace ID.');
+      }
+      if (command === 'output' && parsed.positionals.length !== 2) {
+        throw new CliError('INVALID_ARGUMENT', 'job output requires a workspace ID and a job ID.');
+      }
+      if (command === 'cancel' && parsed.positionals.length !== 2) {
+        throw new CliError('INVALID_ARGUMENT', 'job cancel requires a workspace ID and a job ID.');
+      }
+      const apiBase = getApiBase(env);
+      const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+      if (command === 'list') {
+        return { exitCode: 0, json, data: await runJobList({ apiBase, fetchImpl, token, workspaceId: parsed.positionals[0] }) };
+      }
+      if (command === 'cancel') {
+        const data = await runJobCancel({
+          apiBase,
+          fetchImpl,
+          token,
+          workspaceId: parsed.positionals[0],
+          jobId: parsed.positionals[1],
+        });
+        return { exitCode: 0, json, data };
+      }
+      const data = await runJobOutput({
+        apiBase,
+        fetchImpl,
+        token,
+        workspaceId: parsed.positionals[0],
+        jobId: parsed.positionals[1],
+        options: parsed.values,
+      });
+      return { exitCode: 0, json, data };
+    }
+
+    if (group === 'checkpoint') {
+      let parsed;
+      if (command === 'list') {
+        parsed = parseCommandOptions(rest, ['--email'], []);
+      } else if (command === 'preview-revert') {
+        parsed = parseCommandOptions(rest, ['--email'], []);
+      } else {
+        throw new CliError('INVALID_ARGUMENT', 'Unknown checkpoint command; use list/preview-revert.');
+      }
+      if (command === 'list' && parsed.positionals.length !== 1) {
+        throw new CliError('INVALID_ARGUMENT', 'checkpoint list requires one workspace ID.');
+      }
+      if (command === 'preview-revert' && parsed.positionals.length !== 2) {
+        throw new CliError('INVALID_ARGUMENT', 'checkpoint preview-revert requires a workspace ID and a sliceRef.');
+      }
+      const apiBase = getApiBase(env);
+      const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+      if (command === 'list') {
+        const data = await runCheckpointList({ apiBase, fetchImpl, token, workspaceId: parsed.positionals[0] });
+        return { exitCode: data.partial ? 1 : 0, json, data };
+      }
+      const data = await runCheckpointPreviewRevert({
+        apiBase,
+        fetchImpl,
+        token,
+        workspaceId: parsed.positionals[0],
+        sliceRef: parsed.positionals[1],
+      });
+      return { exitCode: 0, json, data };
+    }
+
+    if (group === 'scheduled-task' && command === 'list') {
+      const parsed = parseCommandOptions(rest, ['--page', '--size', '--email'], []);
+      if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'scheduled-task list requires one workspace ID.');
+      const apiBase = getApiBase(env);
+      const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+      const data = await runScheduledTaskList({ apiBase, fetchImpl, token, workspaceId: parsed.positionals[0], options: parsed.values });
+      return { exitCode: 0, json, data };
+    }
+
+    if (group === 'audit' && command === 'list') {
+      const parsed = parseCommandOptions(rest, ['--type', '--page', '--size', '--email'], []);
+      if (parsed.positionals.length !== 0) throw new CliError('INVALID_ARGUMENT', 'audit list takes no positional arguments.');
+      const apiBase = getApiBase(env);
+      const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+      const data = await runAuditList({ apiBase, fetchImpl, token, options: parsed.values });
+      return { exitCode: 0, json, data };
     }
 
     if (group === 'dev' && command === 'check') {
@@ -116,6 +306,33 @@ export async function runCommand(argv, dependencies = {}) {
       return { exitCode: 0, json, data };
     }
 
+    if (group === 'config' && command === 'export') {
+      const parsed = parseCommandOptions(rest, ['--layer', '--out', '--email'], ['--include-secrets', '--force']);
+      if (parsed.positionals.length !== 0) throw new CliError('INVALID_ARGUMENT', 'config export takes no positional arguments.');
+      if (parsed.values['--layer'] !== undefined && parsed.values['--layer'] !== 'instance') {
+        throw new CliError('INVALID_ARGUMENT', 'Only the instance layer can be exported (--layer instance).');
+      }
+      if (parsed.values['--out'] !== undefined && parsed.values['--out'].trim() === '') {
+        throw new CliError('INVALID_ARGUMENT', '--out requires a file path.');
+      }
+      const apiBase = getApiBase(env);
+      const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+      const data = await runConfigExport({
+        apiBase,
+        fetchImpl,
+        options: parsed.values,
+        positionals: parsed.positionals,
+        token,
+        json,
+        stdout: dependencies.stdout ?? process.stdout,
+        stderr: dependencies.stderr ?? process.stderr,
+        confirm: dependencies.confirmAction ?? confirmAction,
+        stdin: dependencies.stdin ?? process.stdin,
+        fsImpl: dependencies.fsImpl,
+      });
+      return { exitCode: 0, json, data };
+    }
+
     if (group === 'provider') {
       const apiBase = getApiBase(env);
       let parsed;
@@ -127,8 +344,10 @@ export async function runCommand(argv, dependencies = {}) {
         parsed = parseCommandOptions(rest, ['--scope', '--email']);
       } else if (command === 'verify') {
         parsed = parseCommandOptions(rest, ['--email']);
+      } else if (command === 'delete') {
+        parsed = parseCommandOptions(rest, ['--email'], ['--yes']);
       } else {
-        throw new CliError('INVALID_ARGUMENT', 'Unknown provider command; use add/update/list/verify.');
+        throw new CliError('INVALID_ARGUMENT', 'Unknown provider command; use add/update/list/verify/delete.');
       }
 
       if (command === 'add') {
@@ -144,6 +363,8 @@ export async function runCommand(argv, dependencies = {}) {
       } else if (command === 'list') {
         if (parsed.positionals.length !== 0) throw new CliError('INVALID_ARGUMENT', 'provider list takes no positional arguments.');
         if (parsed.values['--scope']) normalizeScope(parsed.values['--scope']);
+      } else if (command === 'delete') {
+        if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'provider delete requires one connection ID.');
       } else if (parsed.positionals.length !== 1) {
         throw new CliError('INVALID_ARGUMENT', 'provider verify requires one connection ID.');
       }
@@ -162,6 +383,21 @@ export async function runCommand(argv, dependencies = {}) {
         return { exitCode: 0, json, data };
       }
       const id = parsed.positionals[0];
+      if (command === 'delete') {
+        const data = await deleteProvider({
+          apiBase,
+          fetchImpl,
+          token,
+          id,
+          yes: parsed.values['--yes'] === true,
+          confirm: dependencies.confirmAction ?? confirmAction,
+          stdin: dependencies.stdin ?? process.stdin,
+          stdout: dependencies.stdout ?? process.stdout,
+          stderr: dependencies.stderr ?? process.stderr,
+          json,
+        });
+        return { exitCode: 0, json, data };
+      }
       const connection = await verifyConnection({ apiBase, fetchImpl, token, id });
       return { exitCode: 0, json, data: { connection } };
     }
@@ -209,7 +445,7 @@ export async function runCommand(argv, dependencies = {}) {
   }
 }
 
-function printResult(result) {
+export function printResult(result) {
   if (result.json) {
     const value = result.error
       ? { ok: false, error: result.error }
@@ -226,6 +462,123 @@ function printResult(result) {
   }
   if (result.data?.help) {
     process.stdout.write(`${result.data.help}\n`);
+    return;
+  }
+  if (result.data?.version === 'development checkout' && Array.isArray(result.data.modules)) {
+    process.stdout.write(`CLI: ${result.data.version}\n`);
+    for (const module of result.data.modules) {
+      process.stdout.write(module.version
+        ? `${module.name}: ${module.version} (${module.manifest})\n`
+        : `${module.name}: ERROR ${module.error.code} (${module.manifest}) ${module.error.message}\n`);
+    }
+    if (result.data.check) {
+      process.stdout.write(`Consistency: ${result.data.check.ok ? 'PASS' : 'FAIL'} `
+        + `(${result.data.check.failureCount} failure(s))\n`);
+      for (const failure of result.data.check.failures) process.stdout.write(`  ${failure}\n`);
+    }
+    return;
+  }
+  if (result.data?.mode === 'stdout' && typeof result.data.content === 'string') {
+    const content = result.data.content;
+    process.stdout.write(content.endsWith('\n') ? content : `${content}\n`);
+    return;
+  }
+  if (result.data?.mode === 'file') return;
+  if (result.data?.cleanup && result.data?.a) {
+    const verify = result.data;
+    process.stdout.write(`RESULT: A=${verify.a.status} B=${verify.b.status} RUN=${verify.run.status} (${verify.result})\n`);
+    if (verify.b.detail) process.stdout.write(`B detail: ${verify.b.detail}\n`);
+    process.stdout.write(`cleanup: sse=${verify.cleanup.sse} session=${verify.cleanup.session.status}\n`);
+    if (verify.cleanup.runCancel) {
+      process.stdout.write(`run cancel: ${verify.cleanup.runCancel.status}`
+        + `${verify.cleanup.runCancel.code ? ` (${verify.cleanup.runCancel.code})` : ''}\n`);
+    }
+    if (verify.cleanup.session.status === 'unknown') {
+      process.stdout.write('residual: session create outcome is unknown; check the target stack manually\n');
+    }
+    if (verify.cleanup.principal.status === 'retained') {
+      process.stdout.write(`residual: agent principal ${verify.cleanup.principal.principalId} retained (no principal delete API)\n`);
+    }
+    if (verify.cleanup.principal.status === 'unknown') {
+      process.stdout.write('residual: agent principal create outcome is unknown; check the target stack manually\n');
+    }
+    return;
+  }
+  if (result.data?.action === 'deleted' && result.data?.connectionId) {
+    process.stdout.write(`deleted: ${result.data.connectionId}\n`);
+    return;
+  }
+  const out = process.stdout;
+  const endpointLabel = (view) => view?.status === 'ok' ? 'ok' : `failed(${view?.code ?? `HTTP ${view?.httpStatus ?? '?'}`})`;
+  if (result.data?.kind === 'status') {
+    const e = result.data.endpoints;
+    out.write(`STATUS: ${result.data.overall} | status=${endpointLabel(e.status)} health=${endpointLabel(e.health)} version=${endpointLabel(e.version)}\n`);
+    return;
+  }
+  if (result.data?.kind === 'workspace-list') {
+    out.write(`workspaces: ${result.data.items.length}\n`);
+    for (const item of result.data.items) {
+      out.write(`${item.id}  ${item.name ?? ''}  ${item.workspaceRole ?? ''}${item.canWrite === false ? ' (readonly)' : ''}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'workspace') {
+    const item = result.data.workspace ?? {};
+    out.write(`${item.id ?? ''}  ${item.name ?? ''}  ${item.workspaceRole ?? ''}\n`);
+    const env = result.data.environment;
+    if (env?.retrieved === false) {
+      out.write(`environment: failed(${env.code ?? `HTTP ${env.httpStatus ?? '?'}`})\n`);
+    } else {
+      out.write(`environment: status=${env?.status ?? '?'} executionMode=${env?.executionMode ?? '?'} backend=${env?.storageBackend ?? '?'}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'job-list') {
+    out.write(`jobs: ${result.data.items.length}\n`);
+    for (const item of result.data.items) {
+      out.write(`${item.jobId}  ${item.status ?? ''}  ${item.startedAt ?? ''}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'job-output') {
+    const text = result.data.text ?? '';
+    out.write(text.endsWith('\n') || text === '' ? text : `${text}\n`);
+    return;
+  }
+  if (result.data?.kind === 'checkpoint-list') {
+    out.write(`checkpoints: ${result.data.items.length}\n`);
+    for (const item of result.data.items) {
+      out.write(`${item.sliceRef ?? item.id ?? ''}  ${item.state ?? ''}  ${item.capturedAt ?? ''}\n`);
+    }
+    const retention = result.data.retention;
+    if (retention?.retrieved === false) {
+      out.write(`retention: failed(${retention.code ?? `HTTP ${retention.httpStatus ?? '?'}`})\n`);
+    } else {
+      out.write(`retention: maxRuns=${retention?.maxRuns ?? '?'} ttlDays=${retention?.ttlDays ?? '?'} currentRuns=${retention?.currentRuns ?? '?'}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'job-cancel') {
+    out.write(`cancel: ${result.data.jobId} status=${result.data.status ?? '?'} changed=${result.data.changed}\n`);
+    return;
+  }
+  if (result.data?.kind === 'checkpoint-preview') {
+    out.write(`preview: ${result.data.sliceRef} entries=${result.data.entries.length}`
+      + ` truncated=${result.data.truncated} opaqueNestedRepos=${result.data.opaqueNestedRepos ?? '?'}\n`);
+    return;
+  }
+  if (result.data?.kind === 'scheduled-task-list') {
+    out.write(`scheduled tasks: ${result.data.items.length} (page ${result.data.page}, size ${result.data.size})\n`);
+    for (const item of result.data.items) {
+      out.write(`${item.id}  ${item.status ?? ''}  ${item.triggerKind ?? ''}${item.cronExpr ? ` ${item.cronExpr}` : ''}  next=${item.nextFireAt ?? ''}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'audit-list') {
+    out.write(`audit entries: ${result.data.entries.length} (page ${result.data.page}/${result.data.totalPages ?? '?'}, total ${result.data.totalElements ?? '?'})\n`);
+    for (const item of result.data.entries) {
+      out.write(`${item.createdAt ?? ''}  ${item.type ?? ''}  ${item.status ?? ''}  ${item.id ?? ''}\n`);
+    }
     return;
   }
   if (Array.isArray(result.data?.checks)) {

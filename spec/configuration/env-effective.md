@@ -4,12 +4,16 @@
 > 实现状态：`partial`  
 > Owner：CP ConfigService + process-specific consumers  
 > 消费者：CP、Agent、Runtime、UI、Audit  
-> 来源：PLAN-0389、DEV-003、ConfigService、config-management  
-> 更新日期：2026-09-21
+> 来源：PLAN-0389、DEV-003、ConfigService、config-management、PLAN-0574
+> 更新日期：2026-10-29
 
 ## 层与优先级
 
-目标 effective chain：`per-call > CLI --set > env > workspace > user > instance > code default`。`env` 命中后锁定对应 key；workspace/user/instance 仍可展示原值和被覆盖原因，不静默合并。
+目标 effective chain：`per-call > CLI --set > env > workspace > user > instance > code default`。`env` 命中后锁定对应 key；workspace/user/instance 仍可展示原值和被覆盖原因，不静默合并。**业务链 `CLI --set` 为 deferred（PLAN-0574 裁定）**：该层当前没有消费方语义（业务域键以 DB 为权威，env 兜底已单独登记），先在 spec 定义语义再实现，CLI 不提供业务域 `--set` 入口。
+
+## bootstrap `--set`（已实现，PLAN-0574 M4）
+
+bootstrap 基础设施键的 `CLI --set` 与上述业务链是**两个不同的面**：实际机制为 launcher（`scripts/stack-run.mjs`）在白名单校验后把值直接写入被启动子进程的环境变量，优先级 `CLI --set > 进程已有 env（OS env / mise / 派生默认） > .env 文件链 > 代码默认`。首批白名单仅 `XIHE_CP_PORT` / `XIHE_AGENT_PORT` / `XIHE_RUNTIME_PORT`（十进制 1..65535），只注入实际消费该键的目标；未知键、敏感键与不合法值在 launcher 侧拒绝，错误不回显输入值；显式 URL（`XIHE_CP_URL` / `XIHE_AGENT_URL(_BASE_URL)` / `XIHE_RUNTIME_URL`）已设置时端口覆盖只改监听端，launcher 打印断链风险提示。三模块内置 loader 不解析 CLI argv，其 `--set` 解析器保留但当前无 argv 通道。映射与消费点详见 `../config-env-target.md` §1.2 与 DEV-003 §2。
 
 Credentials 不等于普通 config KV：API key/token 由 provider connection/lease/secret boundary 管理，UI/Agent 只收到必要的 opaque lease/metadata，audit 不记录原文。
 

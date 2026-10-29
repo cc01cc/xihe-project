@@ -12,7 +12,7 @@
 //   loadEnvFileChain();                          // fills process.env gaps, returns count
 //   const { values } = loadEnvFileChain({ env: new Map(...) });  // custom target
 //
-// CLI (for bash consumers like verify-stack/reset-admin wrappers):
+// CLI (for bash consumers like the reset-admin wrapper):
 //   node scripts/lib/env-file.mjs --print XIHE_DEV_ADMIN_PASSWORD
 //   Prints exactly the resolved value (empty line when unset); never logs the value
 //   with any other text, so `$(...)` capture stays clean.

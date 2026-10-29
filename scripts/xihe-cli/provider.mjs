@@ -1,15 +1,17 @@
 import { spawnSync } from 'node:child_process';
+import { createInterface } from 'node:readline/promises';
 
 const DEFAULT_CP_PORT = '12631';
 const CP_REQUEST_TIMEOUT_MS = 10_000;
 const CP_VERIFY_TIMEOUT_MS = 15_000;
 
 export class CliError extends Error {
-  constructor(code, message, details = {}) {
+  constructor(code, message, details = {}, exitCode) {
     super(message);
     this.name = 'CliError';
     this.code = code;
     this.details = details;
+    if (Number.isInteger(exitCode)) this.exitCode = exitCode;
   }
 }
 
@@ -65,6 +67,29 @@ export function normalizeScope(value) {
   return scope;
 }
 
+// Interactive confirmation for destructive operations (PLAN-0574 T1.2/T1.3).
+// Non-interactive callers must pass an explicit --yes/--force instead; the CLI
+// never assumes consent.
+export async function confirmAction({ message, stdin = process.stdin, output = process.stderr }) {
+  if (!stdin?.isTTY) {
+    throw new CliError(
+      'CONFIRMATION_REQUIRED',
+      'This operation needs confirmation; re-run with --yes (or --force where supported) in a non-interactive session.',
+      {},
+      1,
+    );
+  }
+  const readline = createInterface({ input: stdin, output });
+  try {
+    const answer = await readline.question(`${message} [y/N] `);
+    if (!/^y(es)?$/i.test(answer.trim())) {
+      throw new CliError('CONFIRMATION_DECLINED', 'The operation was not confirmed; nothing was changed.', {}, 1);
+    }
+  } finally {
+    readline.close();
+  }
+}
+
 export function getApiBase(env) {
   const rawPort = env.XIHE_CP_PORT ?? DEFAULT_CP_PORT;
   if (!/^\d{1,5}$/.test(rawPort)) throw new CliError('INVALID_CP_PORT', 'XIHE_CP_PORT must be a valid local TCP port');
@@ -84,31 +109,34 @@ function isSafeConnectFailure(error) {
 function apiErrorCode(status, body) {
   if (status === 401) return 'AUTHENTICATION_FAILED';
   if (status === 403) return 'ACCESS_DENIED';
-  if (status === 404) return 'NOT_FOUND';
+  // PLAN-0574 I7: the server's own error code is passed through (e.g.
+  // JOB_ARCHIVE_NOT_FOUND, WORKSPACE_NOT_FOUND) so idempotency and retry
+  // semantics survive the CLI boundary. 401/403 keep their stable CLI codes.
   if (typeof body?.code === 'string' && /^[A-Z0-9_]{1,80}$/.test(body.code)) return body.code;
+  if (status === 404) return 'NOT_FOUND';
   return `HTTP_${status}`;
 }
 
-export async function requestJson(pathname, {
-  apiBase,
-  fetchImpl = fetch,
-  method = 'GET',
-  token,
-  body,
-  timeoutMs = CP_REQUEST_TIMEOUT_MS,
-}) {
-  const headers = { Accept: 'application/json' };
-  if (token) headers.Authorization = `Bearer ${token}`;
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
-  let retriedBeforeSend = false;
+// Only structural, non-free-text fields are ever copied out of a Problem Details
+// body (PLAN-0574 I6): `detail` and any unknown keys are dropped.
+export function safeProblemFields(body, fields = []) {
+  const details = {};
+  for (const field of fields) {
+    const value = body?.[field];
+    if (typeof value === 'number' && Number.isSafeInteger(value)) details[field] = value;
+    else if (typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(value)) details[field] = value;
+  }
+  return details;
+}
 
+async function fetchWithConnectRetry(url, { fetchImpl, method, headers, body, timeoutMs, path: pathLabel = url }) {
+  let retriedBeforeSend = false;
   for (;;) {
-    let response;
     try {
-      response = await fetchImpl(`${apiBase}${pathname}`, {
+      return await fetchImpl(url, {
         method,
         headers,
-        body: body === undefined ? undefined : JSON.stringify(body),
+        body,
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (error) {
@@ -122,56 +150,129 @@ export async function requestJson(pathname, {
         writing
           ? 'The request may have reached CP; the operation outcome is unknown and was not replayed.'
           : 'Cannot connect to the local Control Plane.',
-        { method, path: pathname },
+        { method, path: pathLabel },
       );
     }
+  }
+}
 
-    if (response.status === 204) return null;
-    let text;
+export async function requestJson(pathname, {
+  apiBase,
+  fetchImpl = fetch,
+  method = 'GET',
+  token,
+  body,
+  timeoutMs = CP_REQUEST_TIMEOUT_MS,
+  problemFields = [],
+  maxBytes = 1_000_000,
+  headers: extraHeaders,
+}) {
+  const headers = { Accept: 'application/json', ...extraHeaders };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+
+  const response = await fetchWithConnectRetry(`${apiBase}${pathname}`, {
+    fetchImpl,
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+    timeoutMs,
+    path: pathname,
+  });
+
+  if (response.status === 204) return null;
+  let text;
+  try {
+    text = await response.text();
+  } catch {
+    if (method !== 'GET' && method !== 'HEAD') {
+      throw new CliError('OPERATION_OUTCOME_UNKNOWN', 'CP accepted the request but its response could not be read.');
+    }
+    throw new CliError('CP_RESPONSE_INVALID', 'CP response could not be read.');
+  }
+  if (text.length > maxBytes) throw new CliError('CP_RESPONSE_TOO_LARGE', 'CP response exceeded the CLI response limit.');
+
+  let parsed = null;
+  if (text.trim() !== '') {
     try {
-      text = await response.text();
+      parsed = JSON.parse(text);
     } catch {
-      if (method !== 'GET' && method !== 'HEAD') {
-        throw new CliError('OPERATION_OUTCOME_UNKNOWN', 'CP accepted the request but its response could not be read.');
-      }
-      throw new CliError('CP_RESPONSE_INVALID', 'CP response could not be read.');
-    }
-    if (text.length > 1_000_000) throw new CliError('CP_RESPONSE_TOO_LARGE', 'CP response exceeded the CLI response limit.');
-
-    let parsed = null;
-    if (text.trim() !== '') {
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        if (response.ok && method !== 'GET' && method !== 'HEAD') {
-          throw new CliError('OPERATION_OUTCOME_UNKNOWN', 'CP accepted the write but returned invalid JSON; reconcile before retrying.', {
-            method,
-            path: pathname,
-          });
-        }
-        if (response.ok) throw new CliError('CP_RESPONSE_INVALID', 'CP returned invalid JSON.');
-      }
-    } else if (response.ok && method !== 'GET' && method !== 'HEAD' && response.status !== 204) {
-      throw new CliError('OPERATION_OUTCOME_UNKNOWN', 'CP accepted the write but returned an empty response; reconcile before retrying.', {
-        method,
-        path: pathname,
-      });
-    }
-    if (!response.ok) {
-      if (response.status >= 500 && method !== 'GET' && method !== 'HEAD') {
-        throw new CliError('OPERATION_OUTCOME_UNKNOWN', 'CP returned a server error after the write; reconcile the operation before retrying.', {
-          status: response.status,
+      if (response.ok && method !== 'GET' && method !== 'HEAD') {
+        throw new CliError('OPERATION_OUTCOME_UNKNOWN', 'CP accepted the write but returned invalid JSON; reconcile before retrying.', {
           method,
           path: pathname,
         });
       }
-      throw new CliError(apiErrorCode(response.status, parsed), `CP request failed (HTTP ${response.status}).`, {
+      if (response.ok) throw new CliError('CP_RESPONSE_INVALID', 'CP returned invalid JSON.');
+    }
+  } else if (response.ok && method !== 'GET' && method !== 'HEAD' && response.status !== 204) {
+    throw new CliError('OPERATION_OUTCOME_UNKNOWN', 'CP accepted the write but returned an empty response; reconcile before retrying.', {
+      method,
+      path: pathname,
+    });
+  }
+  if (!response.ok) {
+    if (response.status >= 500 && method !== 'GET' && method !== 'HEAD') {
+      throw new CliError('OPERATION_OUTCOME_UNKNOWN', 'CP returned a server error after the write; reconcile the operation before retrying.', {
         status: response.status,
-        requestId: typeof parsed?.requestId === 'string' ? parsed.requestId : undefined,
+        method,
+        path: pathname,
       });
     }
-    return parsed;
+    throw new CliError(apiErrorCode(response.status, parsed), `CP request failed (HTTP ${response.status}).`, {
+      status: response.status,
+      requestId: typeof parsed?.requestId === 'string' ? parsed.requestId : undefined,
+      ...safeProblemFields(parsed, problemFields),
+    });
   }
+  return parsed;
+}
+
+// Text response variant for `GET /api/v1/config/export`, whose body is JSONC
+// text (not guaranteed to be JSON.parse-able) and must never be parsed as JSON.
+export async function requestText(pathname, {
+  apiBase,
+  fetchImpl = fetch,
+  method = 'GET',
+  token,
+  timeoutMs = CP_REQUEST_TIMEOUT_MS,
+  maxBytes = 8_000_000,
+  problemFields = [],
+}) {
+  const headers = { Accept: 'application/json, text/plain' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const response = await fetchWithConnectRetry(`${apiBase}${pathname}`, {
+    fetchImpl,
+    method,
+    headers,
+    timeoutMs,
+    path: pathname,
+  });
+
+  let text;
+  try {
+    text = await response.text();
+  } catch {
+    throw new CliError('CP_RESPONSE_INVALID', 'CP response could not be read.');
+  }
+  if (text.length > maxBytes) {
+    throw new CliError('CP_RESPONSE_TOO_LARGE', 'CP response exceeded the CLI response limit.');
+  }
+  if (!response.ok) {
+    let parsed = null;
+    try { parsed = JSON.parse(text); } catch { /* problem body is best-effort */ }
+    throw new CliError(apiErrorCode(response.status, parsed), `CP request failed (HTTP ${response.status}).`, {
+      status: response.status,
+      requestId: typeof parsed?.requestId === 'string' ? parsed.requestId : undefined,
+      ...safeProblemFields(parsed, problemFields),
+    });
+  }
+  return {
+    text,
+    contentType: response.headers?.get?.('content-type') ?? null,
+    cacheControl: response.headers?.get?.('cache-control') ?? null,
+  };
 }
 
 export async function login({ apiBase, fetchImpl, env, options, promptSecret }) {
@@ -558,4 +659,73 @@ export async function initProvider({ apiBase, fetchImpl, env, options, positiona
       providerErrorCode: error.details?.providerErrorCode ?? error.code,
     });
   }
+}
+
+// PLAN-0574 T1.3: delete-impact first, explicit confirmation, then DELETE.
+// Only structural fields are projected from the impact view so arbitrary CP
+// internals never reach the terminal.
+export function deleteImpactView(impact) {
+  const view = {};
+  for (const field of ['connectionId', 'providerId', 'connectionKey', 'bindingCount', 'profileCount', 'sessionCount', 'blocked']) {
+    const value = impact?.[field];
+    if (typeof value === 'string' && value.length <= 128) view[field] = value;
+    else if (typeof value === 'number' && Number.isSafeInteger(value)) view[field] = value;
+    else if (typeof value === 'boolean') view[field] = value;
+  }
+  if (Array.isArray(impact?.bindingUserScopes)) view.bindingUserScopeCount = impact.bindingUserScopes.length;
+  if (Array.isArray(impact?.profileScopes)) view.profileScopeCount = impact.profileScopes.length;
+  return view;
+}
+
+export async function deleteProvider({
+  apiBase,
+  fetchImpl,
+  token,
+  id,
+  yes = false,
+  confirm = confirmAction,
+  stdin,
+  stderr = process.stderr,
+  stdout = process.stdout,
+  json = false,
+}) {
+  const impact = await requestJson(`/api/v1/provider-connections/${encodeURIComponent(id)}/delete-impact`, {
+    apiBase,
+    fetchImpl,
+    token,
+  });
+  const view = deleteImpactView(impact);
+  if (!json) {
+    stdout.write(`Delete impact ${view.connectionId ?? id}: provider=${view.providerId ?? 'unknown'} `
+      + `bindings=${view.bindingCount ?? 0} profiles=${view.profileCount ?? 0} `
+      + `sessions=${view.sessionCount ?? 0} blocked=${view.blocked === true}\n`);
+  }
+  if (!yes) {
+    await confirm({
+      message: `Delete provider connection ${view.connectionId ?? id} `
+        + `(bindings=${view.bindingCount ?? 0}, sessions=${view.sessionCount ?? 0})?`,
+      stdin,
+      output: stderr,
+    });
+  }
+  try {
+    await requestJson(`/api/v1/provider-connections/${encodeURIComponent(id)}`, {
+      apiBase,
+      fetchImpl,
+      token,
+      method: 'DELETE',
+      problemFields: ['sessionCount', 'connectionId'],
+    });
+  } catch (error) {
+    if (error.code === 'CONNECTION_IN_USE') {
+      throw new CliError('CONNECTION_IN_USE', 'The provider connection is still referenced; nothing was deleted.', {
+        status: error.details?.status,
+        requestId: error.details?.requestId,
+        sessionCount: error.details?.sessionCount,
+        connectionId: error.details?.connectionId,
+      });
+    }
+    throw error;
+  }
+  return { action: 'deleted', connectionId: id, impact: view };
 }

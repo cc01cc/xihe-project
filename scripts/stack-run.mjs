@@ -19,6 +19,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveHostRoot } from "./host-root.mjs";
+import { applySetToEnv, applyUrlSyncToEnv, parseStackSetArgs } from "./lib/stack-set.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDir, "..");
@@ -131,15 +132,42 @@ const targets = {
 const [target, ...rest] = process.argv.slice(2);
 
 if (!target || target === "--help" || target === "-h") {
-  console.log("usage: stack-run.mjs <pg|cp|agent|runtime|ui|watch|dev-host> [--stack N]");
+  console.log("usage: stack-run.mjs <pg|cp|agent|runtime|ui|watch|dev-host> [--stack N] [--set KEY=VALUE ...]");
   console.log("       stack-run.mjs env-json [--stack N]");
   console.log("       stack-run.mjs slots-json");
+  console.log("       --set accepts only XIHE_CP_PORT / XIHE_AGENT_PORT / XIHE_RUNTIME_PORT (1..65535),");
+  console.log("       injected into the subprocess env of the target that consumes the key.");
   process.exit(target ? 0 : 2);
 }
 
 let derived;
 try {
   derived = resolveStack(rest);
+} catch (error) {
+  console.error(`[stack] ERROR: ${error.message}`);
+  process.exit(2);
+}
+
+// PLAN-0574 M4: `--set KEY=VALUE` bootstrap overrides. The base env (OS env +
+// derived stack defaults) is assembled first so the parser can tell launcher
+// derived connection URLs (re-pointed to the new port) from user-provided ones
+// (kept, with a warning). Every check runs before anything is launched; an
+// unsupported key/value/target combination exits without starting a process,
+// and error messages never echo the provided value.
+const baseEnv = { ...process.env, ...stackEnvDefaults(derived, process.env) };
+const hostRootResolved = resolveStackHostRoot(derived, baseEnv);
+baseEnv.XIHE_WORKSPACE_HOST_ROOT = hostRootResolved;
+
+let setValues = {};
+let setWarnings = [];
+let setUrlSyncs = [];
+try {
+  ({ values: setValues, warnings: setWarnings, urlSyncs: setUrlSyncs } = parseStackSetArgs({
+    args: rest,
+    target,
+    env: baseEnv,
+    userEnv: process.env,
+  }));
 } catch (error) {
   console.error(`[stack] ERROR: ${error.message}`);
   process.exit(2);
@@ -169,9 +197,25 @@ if (!factory) {
   process.exit(2);
 }
 
-const env = { ...process.env, ...stackEnvDefaults(derived, process.env) };
-const hostRootResolved = resolveStackHostRoot(derived, env);
-env.XIHE_WORKSPACE_HOST_ROOT = hostRootResolved;
+const env = baseEnv;
+
+// CLI --set wins over the OS env and the derived stack defaults (priority:
+// CLI --set > OS env > .env chain > defaults). The value travels as the
+// subprocess's own environment variable, so every consumer (Spring placeholder
+// or pure getenv, Agent import-time constant, Rust env::var) sees it. Derived
+// connection URLs are re-pointed to the new port so the consuming side follows;
+// user-provided URLs are kept and reported via warnings.
+if (Object.keys(setValues).length > 0) {
+  applySetToEnv(env, setValues);
+  console.error(`[stack] --set injected into ${target}: ${Object.keys(setValues).map((key) => `${key}=***`).join(", ")}`);
+}
+if (setUrlSyncs.length > 0) {
+  applyUrlSyncToEnv(env, setUrlSyncs);
+  console.error(`[stack] --set re-pointed derived URLs for ${target}: ${setUrlSyncs.map((sync) => sync.key).join(", ")}`);
+}
+for (const warning of setWarnings) {
+  console.error(`[stack] WARNING: ${warning}`);
+}
 
 // The agent's httpx builds URLPatterns from NO_PROXY; a bracketed IPv6 entry such
 // as `[::1]` is parsed as a URL and aborts startup (`Invalid port: ':1]'`).
