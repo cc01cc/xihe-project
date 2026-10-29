@@ -301,10 +301,19 @@ export async function ensureAgentWorkspaceBinding(workspaceId: string): Promise<
     console.log(`[journey] Agent restarted for workspace ${workspaceId} (log: ${logFile})`);
 
     const deadline = Date.now() + AGENT_READY_TIMEOUT_MS;
+    const readyStartedAt = Date.now();
     let lastState = "not ready";
     while (Date.now() < deadline) {
         const health = await agentHealthOk();
         if (health.ok && health.llmReady === "ready") {
+            const waitedMs = Date.now() - readyStartedAt;
+            if (waitedMs > 3000) {
+                // PLAN-0586: expose the real agent-ready budget under batch load so the
+                // timeout can be tuned from measurements instead of guesses.
+                console.log(
+                    `[journey] agent-ready waited ${waitedMs}ms (workspace ${workspaceId}, log ${logFile})`,
+                );
+            }
             writeFileSync(
                 BINDING_STATE_FILE,
                 JSON.stringify({ workspaceId, restartedAt: new Date().toISOString() }, null, 2),
@@ -325,7 +334,8 @@ export async function ensureAgentWorkspaceBinding(workspaceId: string): Promise<
         await new Promise((resolve) => setTimeout(resolve, AGENT_READY_POLL_INTERVAL_MS));
     }
     throw new Error(
-        `Agent did not become ready within ${AGENT_READY_TIMEOUT_MS}ms (${lastState}); ` +
+        `Agent did not become ready within ${AGENT_READY_TIMEOUT_MS}ms ` +
+            `(waited ${Date.now() - readyStartedAt}ms, last state: ${lastState}, agent log: ${logFile}); ` +
             "override with XIHE_E2E_AGENT_READY_TIMEOUT_MS for cold starts",
     );
 }
