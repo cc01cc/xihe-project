@@ -6,7 +6,7 @@
 > Owner：PLAN-0374（canonical binding；spawn caller amendment per PLAN-0407 #53）
 > 消费者：CP 授权/Session/Chat admission、Workspace Agent 管理 API、UI Agent 管理与 Session 选择、PLAN-0407/0409/0410  
 > 来源：PLAN-0374（原承接 BL-18/BL-29；2026-09-23 G2 已冻结入 PLAN-0407 承接，执行中；本地稿 `plans/PLAN-0374-XH-agent-workspace-scope/spec/agent/principal-workspace-binding.md`）  
-> 更新日期：2026-10-08
+> 更新日期：2026-10-30
 
 ## 范围
 
@@ -36,11 +36,11 @@ Fork 实现归属：0374 定义并验证 stable principal 与独立授权 root �
 1. Agent action 判定 = principal grants ∩ 当前 Workspace binding cap ∩ Session cap ∩ spawn ancestor 链上每个 Session cap；fork 不沿 spawn ancestor 链（fork 是授权 root）。任一环缺失/撤销/非法路径 fail-closed。
 2. `user_id` 不参与 Agent grants；user-only 路径与 Agent 路径互不替代，WorkspaceUser 成员关系与 WorkspaceAgent binding 独立生效。
 3. cap 写入 subset 判据：actionClass 一致；ceiling resource `*` 可覆盖具体 resource，其余 resource pattern 必须全等；不推断一般 glob 包含。写入同时受操作者当前 grants 与 principal grants 限定。
-4. `CREATE_ACCOUNT`、`CREATE_TEMPLATE`、`MANAGE_WORKSPACE_AGENTS` 是三个独立授权 action，默认 deny，不得别名合并或由模板 config 写权限替代。
+4. `CREATE_ACCOUNT`、`CREATE_TEMPLATE`、`MANAGE_WORKSPACE_AGENTS` 是三个独立授权 action，默认 deny，不得别名合并或由模板 config 写权限替代。人类 USER 的 `CREATE_ACCOUNT`/`MANAGE_WORKSPACE_AGENTS` 授予只经 PLAN-0585 管理员最小写面（`GET/PATCH /api/v1/principal-grants/{username}`）：仅 instance ADMIN 可调用，允许 self-grant，写只落该 USER 的 `source='direct'` 行（`uq_grants_direct_subject`），**不改 `source='default'` 默认集**；`CREATE_TEMPLATE` 不在该写面（仍无授予路径）。
 5. CP internal spawn service route（`POST /internal/v1/agents/spawn`）仅认 service Bearer；请求严格 `{parentRunId, toolCallId}`，principal/owner/workspace/tool 由 durable parent run + 匹配的 MCP invocation（`source='agent'`、`run_id=parentRunId`、`tool_call_id`）派生；忽略/拒绝任何注入字段（400/401/403/404/409）。该 route 不是 Agent 的 tool caller。
 6. Agent 生产 spawn caller 必须是 CP logical MCP endpoint 发布的 CP-owned `spawn_agent` tool；`LCToolAdapter` 以 LangChain callback `run_manager.run_id` 贯通 EventStore、Agent SSE 和 MCP `X-Tool-Call-Id` header。provider ToolMessage ID 仅是 LangGraph 内部关联，不作为 CP MCP invocation key。CP 在 grant/approval gate 后本地派发，禁止 Agent 直调 internal spawn route。
 7. `POST /api/v1/sessions` 必须显式 `agentPrincipalId` 并校验 binding；Chat admission 只接受已绑定 Session，无 lazy-create。principal-null 空 Session 首绑条件：显式 `agentPrincipalId` + 无 ChatRun/message/MCP invocation/ContextEvent，row CAS 与 ChatRun/Message/MCP invocation 检查同事务；已绑定 Session 换 principal → 409。
-8. 每项变更写 `audit_logs`（`agent_principal_created`、`workspace_agent_bound`/`workspace_agent_cap_updated`/`workspace_agent_unbound`），含 actor、authorizationAction、object 与 permission diff；snapshot/API/audit 不含 systemPrompt 原文、provider secret 或 token。
+8. 每项变更写 `audit_logs`（`agent_principal_created`、`workspace_agent_bound`/`workspace_agent_cap_updated`/`workspace_agent_unbound`，以及授权写面的 `principal_grant_added`/`principal_grant_removed`），含 actor、authorizationAction、object 与 permission diff；授权行审计以 `resource_id=<目标 userId>` 定位、`workspace_id` 对实例级 `CREATE_ACCOUNT` 为 null、对 `MANAGE_WORKSPACE_AGENTS` 为目标 Workspace；snapshot/API/audit 不含 systemPrompt 原文、provider secret 或 token。
 9. 人类创建账户与创建模板是分离授权/审计的两种操作；可创建权限不得超出操作者当前权限子集。V1 仅 human 执行；Agent 自助与多层审批按 BL-71/BL-70 后置，不得由模板 CRUD、spawn 或 config 写权限旁路。
 
 ## 状态、失败与恢复
@@ -58,7 +58,7 @@ Fork 实现归属：0374 定义并验证 stable principal 与独立授权 root �
 
 ## 跨模块数据流
 
-UI → `POST /api/v1/agent-principals`、`GET/PUT/DELETE /api/v1/workspaces/{id}/agents`；Agent → CP logical MCP tool `spawn_agent`（MCPProxy gate 后 CP 本地执行）；`POST /internal/v1/agents/spawn` 保留为 CP internal service surface，不是 Agent caller。wire 字段、错误码与 schema 以 `docs/api/openapi.yaml` 与 `docs/api/inventory.md` 为准；本文件不复制字段表。
+UI → `POST /api/v1/agent-principals`、`GET/PUT/DELETE /api/v1/workspaces/{id}/agents`、`GET/PATCH /api/v1/principal-grants/{username}`（仅 ADMIN 的授权写面，PLAN-0585）；Agent → CP logical MCP tool `spawn_agent`（MCPProxy gate 后 CP 本地执行）；`POST /internal/v1/agents/spawn` 保留为 CP internal service surface，不是 Agent caller。wire 字段、错误码与 schema 以 `docs/api/openapi.yaml` 与 `docs/api/inventory.md` 为准；本文件不复制字段表。
 
 ## 兼容与迁移
 
@@ -69,7 +69,7 @@ UI → `POST /api/v1/agent-principals`、`GET/PUT/DELETE /api/v1/workspaces/{id}
 
 - 授权交集/链/独立性：`GrantAuthorizationServiceIntegrationTest`（真实 PostgreSQL；含多级 spawn 链、fork root、WorkspaceUser/WorkspaceAgent 双向独立、user_id-only deny、撤权边界）。
 - Migration/schema：`DomainSchemaMigrationTest`、`AgentPrincipalMigrationTest`。
-- Spawn route：`AgentSpawnPrincipalContractTest`；管理/创建 API：`WorkspaceAgentControllerContractTest`、`AgentPrincipalControllerContractTest`；Session entrypoint：`ChatSubmissionServiceIntegrationTest`、`ChatIntegrationTest`、`SessionIntegrationTest`。
+- Spawn route：`AgentSpawnPrincipalContractTest`；管理/创建 API：`WorkspaceAgentControllerContractTest`、`AgentPrincipalControllerContractTest`；授权写面：`PrincipalGrantAdminControllerContractTest`（读/写/幂等/审计/越权/并发）、`PrincipalGrantAuthorizationIntegrationTest`（授权后 create 201 + 绑定成功、撤销后 403）；Session entrypoint：`ChatSubmissionServiceIntegrationTest`、`ChatIntegrationTest`、`SessionIntegrationTest`。
 - 真实浏览器：`packages/ui/e2e/real/workspace-agent-management.spec.ts`（PLAN-0374 evidence `t4-4-workspace-agent-browser.md`）。
 
 ## 来源与变更关系
