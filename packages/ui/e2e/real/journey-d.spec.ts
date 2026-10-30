@@ -2,10 +2,14 @@ import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { test, expect } from "@playwright/test";
 import {
+    createSessionWithPrincipal,
+    provisionWorkspaceAgentPrincipal,
+} from "./helpers/agent-principal";
+import {
     CP_URL,
     awaitLatestChatRunCompleted,
     ensureAgentWorkspaceBinding,
-    ensureChatReady,
+    ensureChatBinding,
     evidenceDir,
     getRootBranchId,
     registerJourneyUser,
@@ -96,7 +100,11 @@ test.describe("@host Journey D — context pipeline", () => {
             lastAssistant,
             "turn-1 reply echoes the fake LLM marker envelope",
         ).toContainText("XIHE-HIST-SEEN: none", { timeout: 120000 });
-        await page.screenshot({ scale: "css", path: path.join(EVIDENCE_DIR, "d1-turn1.png"), fullPage: false });
+        await page.screenshot({
+            scale: "css",
+            path: path.join(EVIDENCE_DIR, "d1-turn1.png"),
+            fullPage: false,
+        });
 
         await awaitLatestChatRunCompleted(page.request, sharedHeaders);
 
@@ -117,7 +125,8 @@ test.describe("@host Journey D — context pipeline", () => {
             reply,
             "turn-2 request must carry turn-1 marker (conversation memory)",
         ).toContainText(`XIHE-HIST-SEEN: ${marker1}`, { timeout: 30000 });
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: path.join(EVIDENCE_DIR, "d1-turn2-memory.png"),
             fullPage: false,
         });
@@ -131,13 +140,6 @@ test.describe("@host Journey D — context pipeline", () => {
             !process.env.XIHE_E2E_REAL_XIAOMI_KEY,
             "requires a real provider key (XIHE_E2E_REAL_XIAOMI_KEY)",
         );
-        // BL-148: same real-lane prerequisite as chat-availability — without a
-        // usable ProviderConnection the workspace composer never renders and the
-        // helper waits `chat-input` out (mock lane green).
-        test.skip(
-            process.env.XIHE_E2E_LLM_MODE === "real",
-            "BL-148: real lane has no usable ProviderConnection/model identity → chat input not rendered",
-        );
         // PLAN-0372 decision #A: this boundary case pins the native `xiaomi` route
         // under a workspace (tool-enabled) chat. PLAN-0364 M3 removed the silent
         // switch to an OpenAI-compatible route, so the run MUST fail with the
@@ -145,6 +147,13 @@ test.describe("@host Journey D — context pipeline", () => {
         test.skip(
             REAL_ROUTE !== "native",
             "native-route boundary case only runs with XIHE_E2E_REAL_ROUTE=native",
+        );
+        // BL-148: real lane — the composer only renders with an explicitly
+        // provisioned + bound Session; the runner-provided identity builds the
+        // real connection (node-side, key never enters the page).
+        test.skip(
+            LLM_MODE === "real" && !process.env.XIHE_E2E_REAL_KEY,
+            "BL-148: real lane requires the runner-provided provider identity (XIHE_E2E_REAL_KEY)",
         );
         // PLAN-0372 (BL-28): the real lane restarts the Agent through the same
         // contract as mock now — rebind its single MCP workspace to this spec's
@@ -156,9 +165,23 @@ test.describe("@host Journey D — context pipeline", () => {
         mkdirSync(EVIDENCE_DIR, { recursive: true });
         const fileName = `xh-real-boundary-${Date.now().toString(36)}.txt`;
 
+        const principalId = await provisionWorkspaceAgentPrincipal(
+            request,
+            { accessToken: authToken, workspaceId: wsId },
+            { name: "Journey D Real Agent" },
+        );
+        const realSessionId = await createSessionWithPrincipal(
+            request,
+            { accessToken: authToken, workspaceId: wsId },
+            { principalId, title: "Journey D real boundary" },
+        );
         seedPage(page, { authToken, workspaceId: wsId, headers });
-        await page.goto("/workspace/" + wsId, { waitUntil: "load" });
-        await ensureChatReady(page);
+        await page.goto(`/workspace/${wsId}/chat/${realSessionId}`, { waitUntil: "load" });
+        await ensureChatBinding(page, realSessionId);
+        await page.reload({ waitUntil: "load" });
+        await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({
+            timeout: 30000,
+        });
 
         // Pin the session binding to the native route explicitly (chat-availability
         // real uses the same popover flow) so "no silent route switch" has a
@@ -216,7 +239,8 @@ test.describe("@host Journey D — context pipeline", () => {
             page.getByText(/LLM_TOOL_ROUTE_UNSUPPORTED/).first(),
             "explicit route-unsupported error visible in the UI",
         ).toBeVisible({ timeout: 120000 });
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: path.join(EVIDENCE_DIR, "d1-real-native-boundary.png"),
             fullPage: false,
         });
@@ -367,7 +391,8 @@ test.describe("@host Journey D — context pipeline", () => {
             reply,
             "post-compaction turn must still see pre-compaction marker (summary + kept tail)",
         ).toContainText(markerA, { timeout: 30000 });
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: path.join(EVIDENCE_DIR, "d2-post-compaction-memory.png"),
             fullPage: false,
         });

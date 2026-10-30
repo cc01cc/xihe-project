@@ -10,6 +10,8 @@ const viewport = (() => {
     if (match) return { width: Number(match[1]), height: Number(match[2]) };
     return { width: 1920, height: 1080 };
 })();
+// BL-148: traces can capture APIRequestContext request bodies; turn them off
+// whenever real provider credentials are present in the test process.
 
 export default defineConfig({
     testDir: "..",
@@ -23,7 +25,10 @@ export default defineConfig({
         viewport,
         deviceScaleFactor: 2,
         screenshot: "only-on-failure",
-        trace: "retain-on-failure",
+        trace:
+            process.env.XIHE_E2E_REAL_KEY || process.env.XIHE_E2E_REAL_XIAOMI_KEY
+                ? "off"
+                : "retain-on-failure",
     },
     expect: {
         toHaveScreenshot: {

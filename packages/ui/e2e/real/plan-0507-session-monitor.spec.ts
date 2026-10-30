@@ -17,6 +17,7 @@ import {
     registerJourneyUser,
     seedPage,
     sendChat,
+    waitForControlPlaneAgentReady,
     type JourneyContext,
 } from "./helpers/journey";
 
@@ -145,13 +146,8 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
         page,
         request,
     }) => {
-        // BL-148: the probe run needs a usable chat connection; in the real lane
-        // the runner only provides env-keyed identity, so the probe run ends
-        // `ambiguous` instead of `succeeded` (mock lane green).
-        test.skip(
-            process.env.XIHE_E2E_LLM_MODE === "real",
-            "BL-148: real lane has no usable ProviderConnection → probe run is ambiguous (mock lane green)",
-        );
+        // BL-148: the probe run needs a usable chat connection; `ensureChatBinding`
+        // builds the real-lane one from the runner-provided identity (node side).
         seedPage(page, ctx);
         await page.goto("/workspace/" + ctx.workspaceId, { waitUntil: "load" });
         await ensureChatReady(page);
@@ -161,6 +157,11 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
         // PLAN-0525: readiness is checked per layer before the first send — Agent
         // direct health here, Session Provider connection inside ensureChatBinding.
         await assertAgentLlmReady();
+        // BL-148: chat admission reads CP's cached Agent health; the direct health
+        // check above can pass while that cache is still "unknown" right after the
+        // rebind (observed 503 AGENT_UNAVAILABLE in both lanes). Wait for the CP
+        // cache explicitly instead of failing the send.
+        await waitForControlPlaneAgentReady(request, ctx.headers);
 
         // The Monitor is the default right-panel view on desktop.
         const panel = page.locator(PANEL);
