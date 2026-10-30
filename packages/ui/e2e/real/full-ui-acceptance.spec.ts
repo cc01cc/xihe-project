@@ -229,7 +229,7 @@ test.describe("@host PLAN-269 full UI acceptance: real mobile flows", () => {
             timeout: 15000,
         });
         await expect(filesSheet.getByText("工作区暂无文件")).toBeVisible();
-        await page.screenshot({ path: testInfo.outputPath("plan-269-real-mobile-files-full.png") });
+        await page.screenshot({ scale: "css", path: testInfo.outputPath("plan-269-real-mobile-files-full.png") });
         await expectPlatformScreenshot(filesSheet, "plan-269-real-mobile-files-sheet-empty.png");
         await page.getByRole("button", { name: /close/i }).last().click();
         await page.getByRole("button", { name: "Open chat" }).click();

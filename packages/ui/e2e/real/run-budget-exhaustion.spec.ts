@@ -130,7 +130,7 @@ test.describe("@host PLAN-0492 run-budget exhaustion", () => {
             "可在下方输入框继续发送，接续本次会话",
         );
         await expect(page.locator('[data-testid="message-retry-button"]')).toHaveCount(0);
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: test.info().outputPath("run-budget-exhausted.png"),
             fullPage: true,
         });
@@ -142,7 +142,7 @@ test.describe("@host PLAN-0492 run-budget exhaustion", () => {
         await page.keyboard.press("Enter");
         await expect(page.getByText(secondMarker, { exact: true })).toBeVisible({ timeout: 15000 });
         await expect(error).toHaveCount(2, { timeout: 30000 });
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: test.info().outputPath("run-budget-exhausted-takeover.png"),
             fullPage: true,
         });
@@ -180,7 +180,7 @@ test.describe("@host PLAN-0492 run-budget exhaustion", () => {
         const errorBox = await latest.boundingBox();
         expect(errorBox).not.toBeNull();
         expect(errorBox!.x + errorBox!.width).toBeLessThanOrEqual(390 + 1);
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: test.info().outputPath("run-budget-exhausted-mobile.png"),
             fullPage: true,
         });

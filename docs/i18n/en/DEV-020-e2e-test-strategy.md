@@ -171,6 +171,13 @@ node scripts/e2e-host.mjs --llm-mode=disconnect e2e/real/chat-availability.spec.
 
 `missing` omits credentials, `invalid` makes the fake provider return 401, `success` emits at least two SSE tokens, and `disconnect` closes after the first token. Set `XIHE_E2E_HEADED=1` and `XIHE_E2E_BROWSER_CHANNEL=chrome-beta` for Chrome Beta headed runs. Each run uses isolated database, host root, ports, and evidence output.
 
+### 3.2 Time Budget and Network Classification (PLAN-0586)
+
+- **Batch budget**: the mock-full wall clock baseline moved from 7.5 min to 6.7 min after PLAN-0586 (402.8 s, 82 passed / 0 unexpected / 0 flaky; evidence `plans/PLAN-0586-XH-e2e-runtime-slim/evidence/m4-final-ab.md`). New changes must not push the batch back above 7.5 min.
+- **Network classification**: waits in E2E fall into three buckets — (1) deterministic HTTP/SSE waits (`waitForResponse` / event assertions); (2) process readiness (Agent restart, Runtime heartbeat) via `expect.poll` with an explicit terminal state; (3) uncertain external dependencies, which must use explicit timeouts or mocks, never fixed sleeps. A fixed `waitForTimeout` is a defect (V4).
+- **Agent readiness measurement**: under full-batch load `spawn → health+llmReady` measured 5.1–7.6 s across 6 samples (with n=6, p95 equals the max 7.6 s); the 30 s default budget stays (override with `XIHE_E2E_AGENT_READY_TIMEOUT_MS`), and failures must report waited time + last state + agent log path.
+- **Cleanup cost**: a workspace DELETE with an import job takes ≈11 s (29 ms when idle); batch cleanups must run concurrently, not serially. The runner's zero-residue teardown check is unchanged.
+
 ## 4. References
 
 - Test strategy decision framework is maintained as a workspace skill.

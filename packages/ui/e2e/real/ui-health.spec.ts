@@ -1,4 +1,5 @@
 import { generateE2EPassword } from "./helpers/password";
+import { startRequestTracker, waitForPageErrorWindow } from "./helpers/ui-stability";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
@@ -125,15 +126,31 @@ test.describe("UI Health — Console, Overflow, Hit-Test", () => {
                     { token: authToken, wsId: workspaceId },
                 );
             }
-            const resp = await page.goto(path, { waitUntil: "load", timeout: 15000 });
-            expect(resp?.status()).toBe(200);
-            if (p.keySelector) {
-                await page
-                    .locator(p.keySelector)
-                    .first()
-                    .waitFor({ state: "visible", timeout: 10000 });
+            // PLAN-0586 (round-2 P1): attach the request tracker BEFORE navigation so
+            // requests already in flight during `goto` are tracked; dispose afterwards.
+            const requestTracker = startRequestTracker(page);
+            try {
+                const resp = await page.goto(path, { waitUntil: "load", timeout: 15000 });
+                expect(resp?.status()).toBe(200);
+                if (p.keySelector) {
+                    await page
+                        .locator(p.keySelector)
+                        .first()
+                        .waitFor({ state: "visible", timeout: 10000 });
+                }
+                await requestTracker.waitForQuiescence();
+                // Evidence for review round-2 P1: the tracker must have observed the
+                // navigation-time requests (attaching after goto would report 0).
+                console.log(
+                    `[ui-health] ${path} trackedRequests=${requestTracker.observedCount()}`,
+                );
+                // Delayed pageerror observation window (event-driven): resolves immediately
+                // on an error and otherwise expires after 1.5 s — same guarantee as the
+                // previous fixed wait, proven by the negative probe (review round-1 #2).
+                await waitForPageErrorWindow(page);
+            } finally {
+                requestTracker.dispose();
             }
-            await page.waitForTimeout(1500);
 
             expect(pageErrors, `pageerrors on ${path}: ${pageErrors.join("; ")}`).toHaveLength(0);
 

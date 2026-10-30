@@ -245,7 +245,7 @@ test("@host PLAN-0466 Audit read view serves the four-domain entry stream", asyn
     expect(consoleErrors).toEqual([]);
     expect(requestFailures).toEqual([]);
 
-    await page.screenshot({
+    await page.screenshot({ scale: "css",
         path: testInfo.outputPath("plan-0466-real-audit-after-detail.png"),
         fullPage: true,
     });

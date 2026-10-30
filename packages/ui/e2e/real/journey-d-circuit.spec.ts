@@ -132,7 +132,7 @@ test.describe("@host Journey D — compaction circuit (U4)", () => {
             expect(body).toContain("open");
         }
 
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "u4-circuit-open.png"),
             fullPage: true,
         });

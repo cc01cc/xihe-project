@@ -235,7 +235,7 @@ test.describe("@host PLAN-0493 loop guard", () => {
         await expect(banner).toBeVisible({ timeout: 60000 });
         await expect(banner).toContainText("检测到重复或无进展动作，运行已停止");
         await expect(banner).toContainText("接续本次会话");
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: `${EVIDENCE_DIR}/loop-guard-no-progress.png`,
             fullPage: true,
         });
@@ -255,7 +255,7 @@ test.describe("@host PLAN-0493 loop guard", () => {
             timeout: 60000,
         });
         await expect.poll(async () => forwardedGlobCalls(), { timeout: 30000 }).toBe(4);
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: `${EVIDENCE_DIR}/loop-guard-takeover.png`,
             fullPage: true,
         });
@@ -292,7 +292,7 @@ test.describe("@host PLAN-0493 loop guard", () => {
         const bannerBox = await banner.boundingBox();
         expect(bannerBox).not.toBeNull();
         expect(bannerBox!.x + bannerBox!.width).toBeLessThanOrEqual(390 + 1);
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: `${EVIDENCE_DIR}/loop-guard-mobile.png`,
             fullPage: true,
         });

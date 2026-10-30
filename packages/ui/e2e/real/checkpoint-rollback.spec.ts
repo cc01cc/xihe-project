@@ -586,7 +586,7 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         expect(view.changedFiles.find((file) => file.path === fileName)?.status).toBe("A");
 
         const { previewBodies } = await revertThroughUi(page, flow, hostDir);
-        await page.screenshot({ path: path.join(EVIDENCE_DIR, "s1-reverted-marker.png") });
+        await page.screenshot({ scale: "css", path: path.join(EVIDENCE_DIR, "s1-reverted-marker.png") });
 
         // Restoring the captured slice preserves its original file; the extra file created
         // immediately before the dialog was deleted by revertThroughUi.
@@ -713,7 +713,7 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         await expect(page.getByTestId("revert-preview-type-conflict-count")).toHaveText("0");
         await expect(page.getByTestId("revert-preview-restore-count")).toHaveText("1");
         await expect(page.getByTestId("revert-preview-paths")).toContainText(fileName);
-        await page.screenshot({ path: path.join(EVIDENCE_DIR, "s3-conflict-preview.png") });
+        await page.screenshot({ scale: "css", path: path.join(EVIDENCE_DIR, "s3-conflict-preview.png") });
 
         const confirm = page.getByTestId("revert-preview-confirm");
         await expect(confirm).toBeEnabled();

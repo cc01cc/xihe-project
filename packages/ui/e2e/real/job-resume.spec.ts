@@ -220,7 +220,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
         expect(await finalRun.json()).toMatchObject({ status: "cancelled", pendingApprovals: [] });
 
         mkdirSync(EVIDENCE_DIR, { recursive: true });
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "chat-run-cancelled-from-browser.png"),
             fullPage: false,
         });
@@ -260,7 +260,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
 
         // follow-up 流结束（run 收尾）后再刷新，避免半态
         await expect(page.getByText("Background job started.")).toBeVisible({ timeout: 60000 });
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "job-started-live.png"),
             fullPage: false,
         });
@@ -314,7 +314,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
         const output = panel.locator('[data-testid="job-output-data"]');
         await expect(output).toContainText("job-line-1", { timeout: 30000 });
         await expect(output).toContainText("job-line-2");
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "resume-after-reload.png"),
             fullPage: false,
         });
@@ -358,7 +358,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
         const error = panel.locator('[data-testid="job-output-error"]');
         await expect(error).toBeVisible({ timeout: 30000 });
         await expect(error).toContainText(/not found|未找到|不存在/i);
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "destroy-denied.png"),
             fullPage: false,
         });

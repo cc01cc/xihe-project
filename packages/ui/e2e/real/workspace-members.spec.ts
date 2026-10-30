@@ -130,7 +130,7 @@ test.describe("@host PLAN-0565 workspace members", () => {
         const ownerRow = page.getByTestId("ws-members-row").filter({ hasText: owner.username });
         await expect(ownerRow.locator("select")).toBeDisabled();
 
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: "test-results/members-owner-list.png",
             fullPage: true,
         });

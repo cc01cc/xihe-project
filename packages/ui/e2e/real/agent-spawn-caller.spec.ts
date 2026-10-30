@@ -549,7 +549,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
             JSON.stringify(sessionRunsResponses, null, 2),
         ).toBeTruthy();
         const waitingOnScreenshot = test.info().outputPath("tool-call-waiting-on-active.png");
-        await page.screenshot({ path: waitingOnScreenshot, fullPage: false });
+        await page.screenshot({ scale: "css", path: waitingOnScreenshot, fullPage: false });
         await test.info().attach("tool-call-waiting-on-active.png", {
             path: waitingOnScreenshot,
             contentType: "image/png",
@@ -641,7 +641,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         await expect(page.getByTestId("derived-active-child")).toHaveCount(0);
         await expect(page.getByTestId("tool-call-waiting-on")).toHaveCount(0);
         const terminalScreenshotPath = test.info().outputPath("derived-state-terminal-visible.png");
-        await page.screenshot({ path: terminalScreenshotPath, fullPage: false });
+        await page.screenshot({ scale: "css", path: terminalScreenshotPath, fullPage: false });
         await test.info().attach("derived-state-terminal-visible.png", {
             path: terminalScreenshotPath,
             contentType: "image/png",
@@ -805,7 +805,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
             .toBe("succeeded");
         await expect(page.getByText("SPAWN_CHILD_READY", { exact: true })).toBeVisible();
         const inboxClaimScreenshotPath = test.info().outputPath("inbox-claim-run-completed.png");
-        await page.screenshot({ path: inboxClaimScreenshotPath, fullPage: false });
+        await page.screenshot({ scale: "css", path: inboxClaimScreenshotPath, fullPage: false });
         await test.info().attach("inbox-claim-run-completed.png", {
             path: inboxClaimScreenshotPath,
             contentType: "image/png",
@@ -863,7 +863,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         expect(deleteButtonStyle.pointerEvents).toBe("auto");
         expect(deleteButtonStyle.color).not.toBe(deleteButtonStyle.backgroundColor);
         const deleteWarningScreenshotPath = test.info().outputPath("parent-delete-warning.png");
-        await page.screenshot({ path: deleteWarningScreenshotPath, fullPage: false });
+        await page.screenshot({ scale: "css", path: deleteWarningScreenshotPath, fullPage: false });
         await test.info().attach("parent-delete-warning.png", {
             path: deleteWarningScreenshotPath,
             contentType: "image/png",
@@ -892,7 +892,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         const childAfterDeleteScreenshotPath = test
             .info()
             .outputPath("child-after-parent-delete.png");
-        await page.screenshot({ path: childAfterDeleteScreenshotPath, fullPage: false });
+        await page.screenshot({ scale: "css", path: childAfterDeleteScreenshotPath, fullPage: false });
         await test.info().attach("child-after-parent-delete.png", {
             path: childAfterDeleteScreenshotPath,
             contentType: "image/png",

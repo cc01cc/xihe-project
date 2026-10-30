@@ -191,7 +191,7 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
                 .then(() => true)
                 .catch(() => false);
             if (approved) {
-                await page.screenshot({
+                await page.screenshot({ scale: "css",
                     path: path.join(EVIDENCE_DIR, `b-approval-attempt${attempt}.png`),
                     fullPage: false,
                 });
@@ -329,7 +329,7 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
                 2,
             ),
         );
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "b-roundtrip.png"),
             fullPage: false,
         });

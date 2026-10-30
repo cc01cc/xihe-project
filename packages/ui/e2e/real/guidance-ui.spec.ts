@@ -10,7 +10,7 @@ const evidenceDir = path.resolve(process.cwd(), "../../.local/evidence");
 async function captureEvidence(page: import("@playwright/test").Page, name: string) {
     await mkdir(evidenceDir, { recursive: true });
     const path = `${evidenceDir}/${name}`;
-    await page.screenshot({ path, fullPage: true });
+    await page.screenshot({ scale: "css", path, fullPage: true });
     return path;
 }
 

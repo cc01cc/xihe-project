@@ -125,6 +125,6 @@ test.describe("Auth — Real Backend", () => {
             () => document.documentElement.scrollWidth > window.innerWidth,
         );
         expect(overflows).toBe(false);
-        await page.screenshot({ path: "plan-0558-login-mobile.png", fullPage: true });
+        await page.screenshot({ scale: "css", path: "plan-0558-login-mobile.png", fullPage: true });
     });
 });

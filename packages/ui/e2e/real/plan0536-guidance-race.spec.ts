@@ -24,7 +24,7 @@ const evidenceDir = path.resolve(process.cwd(), "../../.local/evidence");
 async function captureEvidence(page: Page, name: string): Promise<string> {
     await mkdir(evidenceDir, { recursive: true });
     const target = `${evidenceDir}/${name}`;
-    await page.screenshot({ path: target, fullPage: true });
+    await page.screenshot({ scale: "css", path: target, fullPage: true });
     return target;
 }
 

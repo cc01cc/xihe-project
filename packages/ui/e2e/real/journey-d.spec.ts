@@ -96,7 +96,7 @@ test.describe("@host Journey D — context pipeline", () => {
             lastAssistant,
             "turn-1 reply echoes the fake LLM marker envelope",
         ).toContainText("XIHE-HIST-SEEN: none", { timeout: 120000 });
-        await page.screenshot({ path: path.join(EVIDENCE_DIR, "d1-turn1.png"), fullPage: false });
+        await page.screenshot({ scale: "css", path: path.join(EVIDENCE_DIR, "d1-turn1.png"), fullPage: false });
 
         await awaitLatestChatRunCompleted(page.request, sharedHeaders);
 
@@ -117,7 +117,7 @@ test.describe("@host Journey D — context pipeline", () => {
             reply,
             "turn-2 request must carry turn-1 marker (conversation memory)",
         ).toContainText(`XIHE-HIST-SEEN: ${marker1}`, { timeout: 30000 });
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "d1-turn2-memory.png"),
             fullPage: false,
         });
@@ -216,7 +216,7 @@ test.describe("@host Journey D — context pipeline", () => {
             page.getByText(/LLM_TOOL_ROUTE_UNSUPPORTED/).first(),
             "explicit route-unsupported error visible in the UI",
         ).toBeVisible({ timeout: 120000 });
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "d1-real-native-boundary.png"),
             fullPage: false,
         });
@@ -367,7 +367,7 @@ test.describe("@host Journey D — context pipeline", () => {
             reply,
             "post-compaction turn must still see pre-compaction marker (summary + kept tail)",
         ).toContainText(markerA, { timeout: 30000 });
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "d2-post-compaction-memory.png"),
             fullPage: false,
         });

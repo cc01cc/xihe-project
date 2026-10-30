@@ -274,7 +274,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
             /取消|cancel/i,
             { timeout: 20000 },
         );
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "host-job-cancelled.png"),
             fullPage: true,
         });
@@ -480,7 +480,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
             /取消|cancel/i,
             { timeout: 30000 },
         );
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(M3_EVIDENCE_DIR, "mxc-job-cancelled.png"),
             fullPage: false,
         });

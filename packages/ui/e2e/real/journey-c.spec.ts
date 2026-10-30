@@ -62,17 +62,26 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
         });
     }
 
-    // 新建对话 switches sessions asynchronously and clears the input — fill with
-    // a retry until the send button reflects the non-empty input.
+    // 新建对话 switches sessions asynchronously and clears the input — keep the text
+    // filled until the send button reflects this exact input (event-driven poll, no
+    // millisecond-timescale refill loop).
     async function sendChat(page: Page, text: string) {
         const input = page.locator('[data-testid="chat-input"]');
         const send = page.locator('[data-testid="chat-send-button"]');
-        for (let i = 0; i < 6; i++) {
-            await input.fill(text);
-            if (await send.isEnabled().catch(() => false)) break;
-            await page.waitForTimeout(1000);
-        }
-        await expect(send).toBeEnabled({ timeout: 15000 });
+        await expect
+            .poll(
+                async () => {
+                    const current = await input.inputValue().catch(() => "");
+                    if (current !== text) await input.fill(text).catch(() => undefined);
+                    const value = await input.inputValue().catch(() => "");
+                    return value === text && (await send.isEnabled().catch(() => false));
+                },
+                { timeout: 15000, intervals: [250, 500, 1000, 2000] },
+            )
+            .toBe(true);
+        // Explicit proof (review round-2 evidence): the async new-chat session switch must
+        // not clear the input between the poll succeeding and the click.
+        await expect(input).toHaveValue(text);
         await send.click();
     }
 
@@ -112,6 +121,7 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
             timeout: 30000,
         });
         await page.screenshot({
+            scale: "css",
             path: path.join(EVIDENCE_DIR, "t6-image-preview.png"),
             fullPage: false,
         });
@@ -152,6 +162,7 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
         await page.locator('[data-testid="chat-send-button"]').click();
         await expect(modal, "approval modal for large write_file").toBeVisible({ timeout: 120000 });
         await page.screenshot({
+            scale: "css",
             path: path.join(EVIDENCE_DIR, "h2-modal-truncated.png"),
             fullPage: false,
         });
@@ -172,6 +183,7 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
             )
             .toContain(content);
         await page.screenshot({
+            scale: "css",
             path: path.join(EVIDENCE_DIR, "h2-after-approve.png"),
             fullPage: false,
         });
@@ -222,6 +234,7 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
             timeout: 60000,
         });
         await page.screenshot({
+            scale: "css",
             path: path.join(EVIDENCE_DIR, "c1-recovered-modal.png"),
             fullPage: false,
         });
@@ -282,6 +295,7 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
             timeout: 60000,
         });
         await page.screenshot({
+            scale: "css",
             path: path.join(EVIDENCE_DIR, "c2-after-reject.png"),
             fullPage: false,
         });

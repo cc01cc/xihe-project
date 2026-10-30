@@ -75,7 +75,7 @@ test.describe("@host PLAN-0340 U1/U2 context sources", () => {
 
         const toggle = page.locator('[data-testid="u1-toggle"]');
         await expect(toggle, "U1 toggle visible").toBeVisible({ timeout: 15000 });
-        await page.screenshot({ path: path.join(EVIDENCE_DIR, "u1-toggle.png"), fullPage: false });
+        await page.screenshot({ scale: "css", path: path.join(EVIDENCE_DIR, "u1-toggle.png"), fullPage: false });
 
         await toggle.click();
         const body = page.locator('[data-testid="u1-body"]');
@@ -83,7 +83,7 @@ test.describe("@host PLAN-0340 U1/U2 context sources", () => {
         await expect(body).toContainText("AGENTS.md");
         const bodyText = (await body.innerText()) || "";
         expect(bodyText, "U1 must not leak rules body").not.toContain("Be concise.");
-        await page.screenshot({
+        await page.screenshot({ scale: "css",
             path: path.join(EVIDENCE_DIR, "u1-expanded.png"),
             fullPage: false,
         });

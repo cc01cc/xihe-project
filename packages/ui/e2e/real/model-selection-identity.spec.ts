@@ -115,7 +115,7 @@ test.describe("@host PLAN-0438 model selection connection identity", () => {
 
         const info = test.info();
         const screenshot = info.outputPath("plan-0438-model-selection-identity.png");
-        await page.screenshot({ path: screenshot, fullPage: true });
+        await page.screenshot({ scale: "css", path: screenshot, fullPage: true });
         await info.attach("plan-0438-model-selection-identity.png", {
             path: screenshot,
             contentType: "image/png",
