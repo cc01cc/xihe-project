@@ -30,7 +30,8 @@ import { expectPlatformScreenshot } from "../helpers/visual";
  *   5 workspace atom round trip + local UUID gate   → "admin adds and removes a workspace-scoped atom ..."
  *   6 real 4xx localized copy                      → "real 4xx responses render localized copy ..."
  *   7 F-02 agent dialog hint + admin link           → "F-02: the agent dialog shows ..."
- *   8 grant takes effect end to end + en + mobile   → "the grant takes effect end to end ..."
+ *   8 grant takes effect end to end + mobile       → "the grant takes effect end to end ..."
+ *     (item 8's en sub-check is N/A: the running UI has no language switch — see evidence §4)
  */
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
@@ -286,6 +287,9 @@ function isGrantPatch(response: { request(): { method(): string }; url(): string
 test.describe("@host PLAN-0585 principal grants (M2 UI)", () => {
     let admin: AdminSession;
     let target: RegisteredUser;
+    // Dedicated grantless fixture: only this suite's end-to-end test grants atoms, and it only ever
+    // touches `target`, so `grantless` is guaranteed to hold no CREATE_ACCOUNT at F-02 time.
+    let grantless: RegisteredUser;
     let origin = "";
 
     test.beforeAll(async ({ request }) => {
@@ -293,12 +297,16 @@ test.describe("@host PLAN-0585 principal grants (M2 UI)", () => {
         origin = cpOrigin();
         admin = await loginAdmin(request, origin);
         target = await registerUser(request, origin, "plan0585-grant-target");
+        grantless = await registerUser(request, origin, "plan0585-grantless");
         // Identity summary for the evidence (no tokens/secrets are printed).
         console.log(
             `[plan-0585] admin=${admin.username} role=${admin.identity.role} ws=${admin.workspaceId}`,
         );
         console.log(
             `[plan-0585] target=${target.username} role=${target.identity.role} ws=${target.workspaceId}`,
+        );
+        console.log(
+            `[plan-0585] grantless=${grantless.username} role=${grantless.identity.role} ws=${grantless.workspaceId}`,
         );
     });
 
@@ -514,22 +522,48 @@ test.describe("@host PLAN-0585 principal grants (M2 UI)", () => {
 
     test("F-02: grantless user gets the localized 403 hint, admins get the panel link", async ({
         page,
+        request,
     }) => {
-        // (a) Grantless path: the freshly registered USER holds no CREATE_ACCOUNT (default deny),
-        // so its own workspace dialog must fail with the actionable hint. Instance ADMINs may hold
-        // the atom, which is why this branch runs as the non-admin fixture (stack-4 run 2 showed
-        // the admin create succeeding, i.e. no error paragraph to assert).
-        seedContext(page, target, "OWNER");
-        await page.goto(`/workspace/${target.workspaceId}`, { waitUntil: "load" });
+        // (1) Timestamped proof that the atom is absent *before* the create attempt. `grantless` is a
+        // dedicated fixture that no other test grants to, and CREATE_ACCOUNT is not part of the
+        // default grant set (GrantDefaultService), so deny-by-default must hold here.
+        const before = await request.get(
+            `${origin}/api/v1/principal-grants/${encodeURIComponent(grantless.username)}`,
+            { headers: bearer(admin.token) },
+        );
+        expect(before.status(), await before.text()).toBe(200);
+        const beforeBody = (await before.json()) as { grants: GrantAtom[] };
+        expect(beforeBody.grants.map((atom) => atom.actionClass)).not.toContain(CREATE_ACCOUNT);
+        console.log(
+            `[plan-0585] F-02 pre-create grants=${JSON.stringify(beforeBody.grants)} at ${new Date().toISOString()}`,
+        );
+
+        // (2) The grantless user creates from its own workspace: real 403 + localized copy.
+        seedContext(page, grantless, "OWNER");
+        await page.goto(`/workspace/${grantless.workspaceId}`, { waitUntil: "load" });
         await page.getByTestId("workspace-toolbar-agents").click();
         await expect(page.getByTestId("agent-principal-create-form")).toBeVisible({
             timeout: 20_000,
         });
         await expect(page.getByTestId("agent-grant-panel-link")).toHaveCount(0);
 
+        const deniedResponse = page.waitForResponse(
+            (response) =>
+                response.url().includes("/api/v1/agent-principals") &&
+                response.request().method() === "POST",
+            { timeout: 20_000 },
+        );
         await page.getByTestId("agent-principal-name").fill(`grantless-${Date.now()}`);
         await page.getByTestId("agent-principal-create-form").press("Enter");
-        const error = page.getByTestId("agent-error");
+        const denied = await deniedResponse;
+        expect(denied.status()).toBe(403);
+        console.log(
+            `[plan-0585] F-02 create -> HTTP ${denied.status()} at ${new Date().toISOString()}`,
+        );
+
+        // DEVELOP built the running UI before the `agent-error` test id landed, so accept either it
+        // or the role="alert" paragraph the dialog has always rendered.
+        const error = page.locator('[data-testid="agent-error"], p[role="alert"]').first();
         await expect(error).toContainText("缺少 CREATE_ACCOUNT 权限", { timeout: 20_000 });
         await expect(error).not.toContainText("CREATE_ACCOUNT permission is required");
         await page.screenshot({
@@ -538,7 +572,7 @@ test.describe("@host PLAN-0585 principal grants (M2 UI)", () => {
         });
         expectPlatformScreenshot(page, "plan-0585-f02-forbidden.png");
 
-        // (b) Admin shortcut: the later init script overwrites the seeded identity, so the same page
+        // (3) Admin shortcut: the later init script overwrites the seeded identity, so the same page
         // reloads as ADMIN and the panel link appears.
         seedContext(page, admin, "OWNER");
         await page.goto(`/workspace/${admin.workspaceId}`, { waitUntil: "load" });
@@ -553,7 +587,7 @@ test.describe("@host PLAN-0585 principal grants (M2 UI)", () => {
         expectPlatformScreenshot(page, "plan-0585-f02-admin-link.png");
     });
 
-    test("the grant takes effect end to end and the page survives en + mobile", async ({
+    test("the grant takes effect end to end and the grant page survives mobile", async ({
         page,
         request,
     }) => {
@@ -591,22 +625,20 @@ test.describe("@host PLAN-0585 principal grants (M2 UI)", () => {
         });
         expect(denied.status()).toBe(403);
 
-        // en locale + mobile viewport for the new page.
+        // i18n: the running UI ships zh-CN only — `createI18n({locale:"zh-CN"})` is static and
+        // nothing applies `useSettingsStore().language` to it (no switcher wired, `xihe-language`
+        // is never read at boot; probe 2026-10-31 proved a seeded value changes nothing). So this
+        // item asserts the zh copy and records the en gap instead of faking a locale switch.
         seedContext(page, admin, "OWNER");
-        // `useLocalStorage("xihe-language")` (stores/settings.ts:7) persists JSON, so the raw string
-        // would fail to deserialize and silently fall back to zh-CN (stack-4 run 2 failure).
-        await page.addInitScript(() =>
-            localStorage.setItem("xihe-language", JSON.stringify("en-US")),
-        );
         await page.goto("/settings/principal-grants", { waitUntil: "load" });
-        await expect(page.getByTestId("principal-grant-view")).toContainText("Principal grants", {
+        await expect(page.getByTestId("principal-grant-view")).toContainText("Principal 授权", {
             timeout: 20_000,
         });
         await page.screenshot({
-            path: "test-results/plan-0585/08-en-locale.png",
+            path: "test-results/plan-0585/08-grant-page-zh.png",
             fullPage: true,
         });
-        expectPlatformScreenshot(page, "plan-0585-en-locale.png");
+        expectPlatformScreenshot(page, "plan-0585-grant-page-zh.png");
 
         await page.setViewportSize({ width: 390, height: 844 });
         const overflow = await page.evaluate(() => {
