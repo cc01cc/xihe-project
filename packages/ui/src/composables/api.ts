@@ -128,6 +128,30 @@ export interface ApiWorkspaceMember {
 
 export type MemberAssignableRole = "EDITOR" | "VIEWER";
 
+/** PLAN-0585: one manageable grant atom of the admin principal-grant surface. */
+export interface ApiPrincipalGrantAtom {
+    actionClass: "CREATE_ACCOUNT" | "MANAGE_WORKSPACE_AGENTS" | string;
+    resource: string;
+}
+
+/** PLAN-0585: read view (no self flag — self only appears in the CP audit row). */
+export interface ApiPrincipalGrantView {
+    userId: string;
+    username: string;
+    grants: ApiPrincipalGrantAtom[];
+}
+
+/** PLAN-0585: PATCH回显; `changed:false` is an idempotent replay (no new audit row). */
+export interface ApiPrincipalGrantMutation extends ApiPrincipalGrantView {
+    changed: boolean;
+}
+
+/** PLAN-0585: difference-set body; unknown fields are ignored by CP. */
+export interface PrincipalGrantPatch {
+    add?: ApiPrincipalGrantAtom[];
+    remove?: ApiPrincipalGrantAtom[];
+}
+
 export interface ApiSession {
     id: string;
     title: string;
@@ -2089,6 +2113,18 @@ export const api = {
             method: "POST",
             body: JSON.stringify({ name, ...(templateId ? { templateId } : {}) }),
         });
+    },
+    getPrincipalGrants(username: string): Promise<ApiPrincipalGrantView> {
+        return request<ApiPrincipalGrantView>(`/principal-grants/${encodeURIComponent(username)}`);
+    },
+    patchPrincipalGrants(
+        username: string,
+        patch: PrincipalGrantPatch,
+    ): Promise<ApiPrincipalGrantMutation> {
+        return request<ApiPrincipalGrantMutation>(
+            `/principal-grants/${encodeURIComponent(username)}`,
+            { method: "PATCH", body: JSON.stringify(patch) },
+        );
     },
     updateWorkspaceAgentCap(
         workspaceId: string,

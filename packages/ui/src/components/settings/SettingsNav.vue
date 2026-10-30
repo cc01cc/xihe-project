@@ -24,6 +24,12 @@ const tabs = computed(() => {
             label: "settings.configLockNav",
             path: "/settings/config-locks",
         });
+        items.push({
+            // PLAN-0585 M2: the principal grant surface is instance-ADMIN only.
+            name: "settings-principal-grants",
+            label: "settings.principalGrantsNav",
+            path: "/settings/principal-grants",
+        });
     }
     return items;
 });

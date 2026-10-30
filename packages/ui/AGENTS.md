@@ -69,3 +69,4 @@ pnpm run build
 
 - 配置页来源展示（PLAN-0554）：使用 GET /config/{domain}/meta，只读展示 source/继承/env 锁定；不出现锁定开关；Provider 连接的新建只在 User/Workspace 层。
 - 管理员锁定（PLAN-0556）：锁定页是独立 ADMIN 路由 `/settings/config-locks`，导航项仅 ADMIN 可见，非 ADMIN 直链渲染 403 视图；普通配置页只显示「由管理员锁定」徽标与原因并禁用控件，不提供锁定/解锁入口；env 锁定与管理员锁定必须用不同徽标与文案。
+- 管理员 Principal 授权（PLAN-0585）：`/settings/principal-grants` 是独立 ADMIN 路由（nav 仅 ADMIN 可见，非 ADMIN 直链渲染 403 视图）；按 **username 精确匹配**（不折叠大小写）寻址，只写目标账号的 `source='direct'` 授权行；`CREATE_ACCOUNT` 的 resource 固定 `*`，`MANAGE_WORKSPACE_AGENTS` 必须填具体 workspace UUID（禁 `*`，UI 负责格式校验与去重）；保存走 PATCH 差集，按回显 `changed:true|false` 展示（false = 幂等重放、无新审计）；错误按 `ApiError.problem.code` 映射本地化文案，**不得直显 CP 英文 detail**；无权限的 Agent 创建/绑定入口必须给出指向本页的可操作提示（F-02）。
