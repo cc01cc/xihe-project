@@ -27,3 +27,5 @@ CP 当前按以下顺序评估（PLAN-0407 T2.8 之后）：
 - Policy verdict **MUST** 携带足以审计和重新评估的 source layer 与 reason；规则裁决退役后 `matchedRule` 恒为空。
 - `ALLOW` 不等于 approval；approval 和 capability check 必须保持独立 gate。
 - Policy rule 存储写入（审批复用路径）**MUST** 执行层级归属、locked deny/ask 约束、scope 唯一性和 revision 失效规则。
+- **grant 写入只有唯一受审计管理面**（PLAN-0585）：`GET/PATCH /api/v1/principal-grants/{username}`，仅 instance ADMIN 可调用、按 username 精确寻址、差集 `{add, remove}` 写入目标 USER 的 `source='direct'` 行；**MUST NOT** 改 `source='default'` 默认集，**MUST NOT** 恢复 `/api/v1/policy/rules` 或通用 grants CRUD，也**MUST NOT** 把 opt-in action 放进注册默认集。
+- 可经该写面授予的 action **MUST** 限于 `CREATE_ACCOUNT`（resource 恒 `*`）与 `MANAGE_WORKSPACE_AGENTS`（resource **MUST** 是具体 workspace UUID，禁 `*`）；其余 action（含 `CREATE_TEMPLATE`）一律 fail-closed，默认 deny 与三者独立性不变。

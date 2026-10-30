@@ -18,3 +18,5 @@ CP `AuditLogger` 写入专用 AUDIT JSONL logger，并保留有界的 recent-mem
 - 脱敏发生在 serialization boundary，不能只依赖调用点自觉处理。
 - Authentication failure、authorization denial、capability rejection、approval decision、credential refresh/scope mismatch、凭据交付动作（`credential_lease_issued` / `credential_lease_redeemed` / `credential_revealed` / `credential_reveal_failed`，均不含值）和 operation 终态 **MUST** 可区分。
 - Log/audit scan 测试使用固定 fake credentials，断言原文不存在，同时保留安全 code/requestId。
+- 授权数据变更（PLAN-0585 管理面）**MUST** 逐条落 durable `audit_logs`：动作名固定为 `principal_grant_added` / `principal_grant_removed`，`resource_type=principal_grant`，`resource_id=<目标 userId>`，`user_id=<actor>`，`workspace_id` 对实例级 `CREATE_ACCOUNT` 为 null、对 `MANAGE_WORKSPACE_AGENTS` 为目标 workspace；`details` 为 key=value 摘要（`subjectType=user subjectId=… atom=<ACTION>@<resource> self=<bool>`），幂等重放不重复记审计。
+- 拒绝路径（403/404/400 越权或非法目标）**MUST NOT** 写 durable audit（只进 JSONL 可观测通道），避免给攻击者提供刷库面；该选择与既有 `AuditLogger` 裁定一致。

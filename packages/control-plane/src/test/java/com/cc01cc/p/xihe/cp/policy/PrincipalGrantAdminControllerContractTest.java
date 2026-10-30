@@ -25,14 +25,21 @@ import org.springframework.web.client.DefaultResponseErrorHandler;
 import org.springframework.web.client.RestTemplate;
 
 import java.io.IOException;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import javax.sql.DataSource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -42,9 +49,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * PLAN-0585 T1.1/T1.2/T1.3: the admin-only principal-grant surface over real HTTP + PostgreSQL.
  *
- * <p>Covers the read view, the PATCH difference set, the idempotent replay, the audit row contract,
- * the rejection matrix (403/404/400), preservation of unrelated direct atoms, and the target-user
- * row lock that serializes concurrent writes.</p>
+ * <p>Covers the read view (no {@code self} on the wire), the PATCH difference set, the idempotent
+ * replay, the audit row contract, the rejection matrix (403/404/400), preservation of unrelated
+ * direct atoms, the target-user row lock that serializes two concurrent writers, and the V65
+ * insert race that maps to 409 only for {@code uq_grants_direct_subject}.</p>
  */
 class PrincipalGrantAdminControllerContractTest extends AbstractIntegrationTest {
 
@@ -55,6 +63,7 @@ class PrincipalGrantAdminControllerContractTest extends AbstractIntegrationTest 
     @Autowired private WorkspaceRepository workspaceRepository;
     @Autowired private AuthorizationGrantRepository grantRepository;
     @Autowired private JdbcTemplate jdbcTemplate;
+    @Autowired private DataSource dataSource;
 
     private UUID adminId;
     private UUID targetId;
@@ -110,7 +119,7 @@ class PrincipalGrantAdminControllerContractTest extends AbstractIntegrationTest 
         assertEquals(HttpStatus.OK, before.getStatusCode(), String.valueOf(before.getBody()));
         assertEquals(targetId.toString(), before.getBody().get("userId"));
         assertEquals(targetUsername, before.getBody().get("username"));
-        assertEquals(false, before.getBody().get("self"));
+        assertFalse(before.getBody().containsKey("self"), "the read view carries no self field");
         assertEquals(List.of(), before.getBody().get("grants"));
 
         ResponseEntity<Map> granted = patch(adminToken, targetUsername,
@@ -197,7 +206,8 @@ class PrincipalGrantAdminControllerContractTest extends AbstractIntegrationTest 
                 Map.of("add", List.of(Map.of("actionClass", CREATE_ACCOUNT))));
         assertEquals(HttpStatus.OK, granted.getStatusCode(), String.valueOf(granted.getBody()));
         assertEquals(true, granted.getBody().get("changed"));
-        assertEquals(true, granted.getBody().get("self"), "an admin granting itself is self=true");
+        assertFalse(granted.getBody().containsKey("self"),
+                "self-grant is allowed but the response carries no self field (audit only)");
         assertEquals(adminId.toString(), granted.getBody().get("userId"));
         assertEquals(List.of(Map.of("actionClass", CREATE_ACCOUNT, "resource", "*")),
                 grantsOf(granted));
@@ -254,9 +264,25 @@ class PrincipalGrantAdminControllerContractTest extends AbstractIntegrationTest 
     }
 
     @Test
+    void uppercasedUsernameIsNotFound() {
+        fixture();
+        // Decision #12: exact match, no case folding — an upper-case spelling is an unknown user
+        // (login already normalizes to lower case), never a silent hit on the real account.
+        String uppercased = targetUsername.toUpperCase(java.util.Locale.ROOT);
+        ResponseEntity<Map> read = get(adminToken, uppercased);
+        assertEquals(HttpStatus.NOT_FOUND, read.getStatusCode(), String.valueOf(read.getBody()));
+        assertEquals("USER_NOT_FOUND", read.getBody().get("code"));
+
+        ResponseEntity<Map> write = patch(adminToken, uppercased,
+                Map.of("add", List.of(Map.of("actionClass", CREATE_ACCOUNT))));
+        assertEquals(HttpStatus.NOT_FOUND, write.getStatusCode(), String.valueOf(write.getBody()));
+        assertEquals(0, directRowCount(targetId));
+    }
+
+    @Test
     void unmanageableActionsAndMalformedResourcesAreRejected() {
         fixture();
-        UUID workspaceId = UUID.randomUUID();
+        UUID probeWorkspaceId = UUID.randomUUID();
 
         assertRejected(patch(adminToken, targetUsername,
                 Map.of("add", List.of(Map.of("actionClass", "CREATE_TEMPLATE")))),
@@ -266,7 +292,7 @@ class PrincipalGrantAdminControllerContractTest extends AbstractIntegrationTest 
                 "UNKNOWN_ACTION_CLASS");
         assertRejected(patch(adminToken, targetUsername,
                 Map.of("add", List.of(Map.of("actionClass", CREATE_ACCOUNT,
-                        "resource", workspaceId.toString())))),
+                        "resource", probeWorkspaceId.toString())))),
                 "INVALID_GRANT_RESOURCE");
         assertRejected(patch(adminToken, targetUsername,
                 Map.of("add", List.of(Map.of("actionClass", MANAGE_WORKSPACE_AGENTS,
@@ -382,26 +408,102 @@ class PrincipalGrantAdminControllerContractTest extends AbstractIntegrationTest 
     @Test
     void concurrentPatchesSerializeOnTheTargetUser() throws Exception {
         fixture();
+        UUID grantWorkspaceId = workspaceRepository.saveAndFlush(
+                new Workspace("Grant concurrency workspace", targetId.toString())).getId();
+        workspaceId = grantWorkspaceId;
+
+        CountDownLatch start = new CountDownLatch(1);
+        Callable<ResponseEntity<Map>> createAccount = () -> {
+            start.await();
+            return patch(adminToken, targetUsername,
+                    Map.of("add", List.of(Map.of("actionClass", CREATE_ACCOUNT))));
+        };
+        Callable<ResponseEntity<Map>> manageAgents = () -> {
+            start.await();
+            return patch(adminToken, targetUsername, Map.of("add",
+                    List.of(Map.of("actionClass", MANAGE_WORKSPACE_AGENTS,
+                            "resource", grantWorkspaceId.toString()))));
+        };
+
         ExecutorService pool = Executors.newFixedThreadPool(2);
         try {
-            Callable<ResponseEntity<Map>> write = () -> patch(adminToken, targetUsername,
-                    Map.of("add", List.of(Map.of("actionClass", CREATE_ACCOUNT))));
-            List<Future<ResponseEntity<Map>>> futures = pool.invokeAll(List.of(write, write), 60,
-                    TimeUnit.SECONDS);
-            int changed = 0;
-            for (Future<ResponseEntity<Map>> future : futures) {
-                ResponseEntity<Map> response = future.get();
-                assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
-                if (Boolean.TRUE.equals(response.getBody().get("changed"))) {
-                    changed++;
-                }
+            Future<ResponseEntity<Map>> first = pool.submit(createAccount);
+            Future<ResponseEntity<Map>> second = pool.submit(manageAgents);
+            start.countDown();
+            for (Future<ResponseEntity<Map>> future : List.of(first, second)) {
+                ResponseEntity<Map> response = future.get(60, TimeUnit.SECONDS);
+                assertEquals(HttpStatus.OK, response.getStatusCode(),
+                        String.valueOf(response.getBody()));
+                assertEquals(true, response.getBody().get("changed"),
+                        "each writer adds its own atom, so both report a change");
             }
-            assertEquals(1, changed, "exactly one serialized write reports changed:true");
-            assertEquals(1, directRowCount(targetId));
-            assertEquals(1, auditCount(targetId, "principal_grant_added"));
         } finally {
             pool.shutdownNow();
         }
+
+        // Both writes land in the one direct row: the union, never a lost update, one row.
+        assertEquals(1, directRowCount(targetId));
+        assertEquals(List.of(
+                        Map.of("actionClass", CREATE_ACCOUNT, "resource", "*"),
+                        Map.of("actionClass", MANAGE_WORKSPACE_AGENTS,
+                                "resource", grantWorkspaceId.toString())),
+                grantsOf(get(adminToken, targetUsername)));
+        assertEquals(1, auditCountForAtom(targetId, CREATE_ACCOUNT + "@*"));
+        assertEquals(1, auditCountForAtom(targetId,
+                MANAGE_WORKSPACE_AGENTS + "@" + grantWorkspaceId));
+    }
+
+    @Test
+    void directRowInsertRaceReturnsConflict() throws Exception {
+        fixture();
+
+        // Hold an uncommitted direct row on a second connection: the PATCH cannot see it, so its
+        // own insert waits on the V65 unique index and fails once the holder commits.
+        //
+        // Isolation: the connection comes fresh from this test class's own pool (never a shared
+        // static connection), the holder transaction is rolled back in the finally block, and the
+        // scheduled commit is cancelled there, so no uncommitted state or late commit can leak into
+        // the following test in this class.
+        try (Connection holder = dataSource.getConnection()) {
+            holder.setAutoCommit(false);
+            try (PreparedStatement insert = holder.prepareStatement(
+                    "INSERT INTO grants (id, subject_type, subject_id, permissions, source, read_state) "
+                            + "VALUES (gen_random_uuid(), 'user', ?::uuid, ?::jsonb, 'direct', 'read')")) {
+                insert.setString(1, targetId.toString());
+                insert.setString(2, "[{\"actionClass\":\"read\"}]");
+                insert.executeUpdate();
+            }
+            ScheduledExecutorService committer = Executors.newSingleThreadScheduledExecutor();
+            ScheduledFuture<?> pendingCommit = null;
+            try {
+                pendingCommit = committer.schedule(() -> {
+                    try {
+                        holder.commit();
+                    } catch (SQLException e) {
+                        throw new IllegalStateException("held direct row commit failed", e);
+                    }
+                }, 600, TimeUnit.MILLISECONDS);
+                ResponseEntity<Map> response = patch(adminToken, targetUsername,
+                        Map.of("add", List.of(Map.of("actionClass", CREATE_ACCOUNT))));
+                assertEquals(HttpStatus.CONFLICT, response.getStatusCode(),
+                        String.valueOf(response.getBody()));
+                assertEquals("DIRECT_GRANT_CONFLICT", response.getBody().get("code"));
+            } finally {
+                if (pendingCommit != null) {
+                    pendingCommit.cancel(false);
+                }
+                committer.shutdownNow();
+                holder.rollback();
+            }
+        }
+
+        // The retry recomputes the difference set from the persisted row, so it converges.
+        ResponseEntity<Map> retry = patch(adminToken, targetUsername,
+                Map.of("add", List.of(Map.of("actionClass", CREATE_ACCOUNT))));
+        assertEquals(HttpStatus.OK, retry.getStatusCode(), String.valueOf(retry.getBody()));
+        assertEquals(true, retry.getBody().get("changed"));
+        assertEquals(1, directRowCount(targetId));
+        assertTrue(permissionsJson(targetId).contains("\"actionClass\":\"CREATE_ACCOUNT\""));
     }
 
     // --- helpers ---------------------------------------------------------------------------
@@ -492,5 +594,13 @@ class PrincipalGrantAdminControllerContractTest extends AbstractIntegrationTest 
                 "SELECT count(*) FROM audit_logs WHERE resource_type = 'principal_grant' "
                         + "AND action = ? AND resource_id = ?",
                 Integer.class, action, targetUserId.toString());
+    }
+
+    private int auditCountForAtom(UUID targetUserId, String atom) {
+        return jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM audit_logs WHERE resource_type = 'principal_grant' "
+                        + "AND action = 'principal_grant_added' AND resource_id = ? "
+                        + "AND details LIKE ?",
+                Integer.class, targetUserId.toString(), "%atom=" + atom + "%");
     }
 }

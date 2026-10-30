@@ -15,6 +15,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -59,6 +60,8 @@ public class PrincipalGrantAdminService {
     private static final String AUDIT_RESOURCE_TYPE = "principal_grant";
     private static final String ACTION_ADDED = "principal_grant_added";
     private static final String ACTION_REMOVED = "principal_grant_removed";
+    /** V65 partial unique index {@code uq_grants_direct_subject} — the only 409 trigger. */
+    private static final String DIRECT_GRANT_CONSTRAINT = "uq_grants_direct_subject";
 
     private final AuthorizationGrantRepository grantRepository;
     private final UserRepository userRepository;
@@ -90,22 +93,22 @@ public class PrincipalGrantAdminService {
     /** One requested {@code {actionClass, resource?}} atom from the PATCH body. */
     public record AtomInput(String actionClass, String resource) {}
 
-    /** One manageable atom as returned by the read view and the write回显. */
+    /** One manageable atom as returned by the read view and the PATCH response. */
     public record AtomView(String actionClass, String resource) {}
 
-    /** Read view: the target identity, whether the caller is granting itself, and the atoms. */
-    public record GrantView(String userId, String username, boolean self, List<AtomView> grants) {}
+    /** Read view: the target identity and the atoms this surface manages (no self flag on the wire). */
+    public record GrantView(String userId, String username, List<AtomView> grants) {}
 
     /** Write result: the persisted view plus whether this request actually changed anything. */
-    public record GrantMutation(String userId, String username, boolean self, List<AtomView> grants,
+    public record GrantMutation(String userId, String username, List<AtomView> grants,
                                 boolean changed) {}
 
     @Transactional(readOnly = true)
-    public GrantView read(String actorUserId, String username) {
+    public GrantView read(String username) {
         User target = requireTargetUser(username);
         DirectGrantState state = readDirectGrantState(target.getId());
         return new GrantView(target.getId().toString(), target.getUsername(),
-                isSelf(actorUserId, target), views(state.managed()));
+                views(state.managed()));
     }
 
     @Transactional
@@ -147,8 +150,7 @@ public class PrincipalGrantAdminService {
 
         if (merged.equals(state.managed())) {
             // Decision #7: idempotent replay — 200 changed:false, no save, no additional audit.
-            return new GrantMutation(targetUserId, locked.getUsername(), self,
-                    views(merged), false);
+            return new GrantMutation(targetUserId, locked.getUsername(), views(merged), false);
         }
 
         persist(row, locked, actorUserId, merged, state.preserved());
@@ -158,7 +160,7 @@ public class PrincipalGrantAdminService {
         for (GrantIntersectionEvaluator.PermissionAtom atom : effectiveRemoved) {
             audit(actorUserId, targetUserId, ACTION_REMOVED, atom, self);
         }
-        return new GrantMutation(targetUserId, locked.getUsername(), self, views(merged), true);
+        return new GrantMutation(targetUserId, locked.getUsername(), views(merged), true);
     }
 
     // --- read side -------------------------------------------------------------------------
@@ -228,12 +230,27 @@ public class PrincipalGrantAdminService {
         direct.setPermissions(toJson(merged, preserved));
         try {
             grantRepository.saveAndFlush(direct);
-        } catch (org.springframework.dao.DataIntegrityViolationException e) {
-            // V65 fence: only reachable when a writer bypassed the user row lock; the retry is
-            // idempotent because the difference set is computed from the persisted row.
+        } catch (DataIntegrityViolationException e) {
+            // V65 fence: only the direct-row uniqueness race becomes 409. Every other integrity
+            // failure (FK, CHECK, serialization) keeps its normal mapping — disguising those as a
+            // retryable conflict would hide a real bug behind an idempotent retry.
+            if (!mentionsConstraint(e, DIRECT_GRANT_CONSTRAINT)) {
+                throw e;
+            }
             throw new CpApiException(HttpStatus.CONFLICT, "DIRECT_GRANT_CONFLICT",
                     "The direct grant changed concurrently; retry the request", e);
         }
+    }
+
+    /** True when the failure chain names the given database constraint. */
+    static boolean mentionsConstraint(Throwable failure, String constraint) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            String message = cause.getMessage();
+            if (message != null && message.contains(constraint)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -321,6 +338,7 @@ public class PrincipalGrantAdminService {
         }
     }
 
+    /** Audit-only self marker (decision #8): the response carries no self field. */
     private static boolean isSelf(String actorUserId, User target) {
         return actorUserId != null && actorUserId.equals(target.getId().toString());
     }

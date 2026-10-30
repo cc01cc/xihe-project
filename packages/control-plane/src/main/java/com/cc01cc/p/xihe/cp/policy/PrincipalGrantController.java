@@ -53,13 +53,12 @@ public class PrincipalGrantController {
 
     @GetMapping("/{username}")
     public ResponseEntity<?> read(@PathVariable String username) {
-        String actorUserId = TenantContext.getUserId();
-        if (actorUserId == null || actorUserId.isBlank()) {
+        if (!authenticated()) {
             return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED,
                     "AUTHORIZATION_REQUIRED", "Authentication required");
         }
         try {
-            return ResponseEntity.ok(adminService.read(actorUserId, username));
+            return ResponseEntity.ok(adminService.read(username));
         } catch (CpApiException e) {
             return problem(e);
         }
@@ -83,6 +82,11 @@ public class PrincipalGrantController {
         } catch (CpApiException e) {
             return problem(e);
         }
+    }
+
+    private static boolean authenticated() {
+        String actorUserId = TenantContext.getUserId();
+        return actorUserId != null && !actorUserId.isBlank();
     }
 
     private static List<PrincipalGrantAdminService.AtomInput> toInputs(List<AtomBody> atoms) {
