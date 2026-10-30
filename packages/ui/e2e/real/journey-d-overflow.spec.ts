@@ -87,6 +87,10 @@ test.describe("@host Journey D — overflow retry (CTX-1)", () => {
             "OVERFLOW-RETRY-OK",
         );
 
-        await page.screenshot({ scale: "css", path: `${EVIDENCE_DIR}/u3-overflow-retry.png`, fullPage: true });
+        await page.screenshot({
+            scale: "css",
+            path: `${EVIDENCE_DIR}/u3-overflow-retry.png`,
+            fullPage: true,
+        });
     });
 });

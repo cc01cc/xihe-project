@@ -115,7 +115,8 @@ test.describe("@host PLAN-0550 checkpoint reason GIT_FAILED", () => {
             const marker = page.locator('[data-testid="run-checkpoint-marker"]').last();
             await expect(marker).toBeVisible({ timeout: 30000 });
             await expect(marker).toContainText(/git 操作失败|Git failed/i, { timeout: 30000 });
-            await page.screenshot({ scale: "css",
+            await page.screenshot({
+                scale: "css",
                 path: path.join(
                     PROJECT_DIR,
                     ".local",

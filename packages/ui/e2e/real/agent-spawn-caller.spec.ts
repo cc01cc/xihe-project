@@ -892,7 +892,11 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         const childAfterDeleteScreenshotPath = test
             .info()
             .outputPath("child-after-parent-delete.png");
-        await page.screenshot({ scale: "css", path: childAfterDeleteScreenshotPath, fullPage: false });
+        await page.screenshot({
+            scale: "css",
+            path: childAfterDeleteScreenshotPath,
+            fullPage: false,
+        });
         await test.info().attach("child-after-parent-delete.png", {
             path: childAfterDeleteScreenshotPath,
             contentType: "image/png",

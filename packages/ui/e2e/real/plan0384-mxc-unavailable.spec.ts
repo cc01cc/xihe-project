@@ -170,7 +170,8 @@ test.describe("@host PLAN-0384 MXC unavailable branch", () => {
             /不可用/,
         );
         await expect(page.locator('[data-testid="workspace-mxc-guidance"]')).toBeVisible();
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: path.join(EVIDENCE_DIR, "mxc-unavailable-cards.png"),
             fullPage: true,
         });
@@ -200,7 +201,8 @@ test.describe("@host PLAN-0384 MXC unavailable branch", () => {
         await expect(page.locator('[data-testid="workspace-create-dialog"]')).toBeHidden({
             timeout: 20000,
         });
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: path.join(EVIDENCE_DIR, "host-fallback-created.png"),
             fullPage: true,
         });

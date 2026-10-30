@@ -120,7 +120,8 @@ test.describe("@host PLAN-0572 tool card refresh", () => {
             "Tool result withheld",
             { timeout: 15000 },
         );
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: path.join(EVIDENCE_DIR, "tool-card-live.png"),
             fullPage: false,
         });
@@ -141,7 +142,8 @@ test.describe("@host PLAN-0572 tool card refresh", () => {
             "Tool result withheld",
             { timeout: 15000 },
         );
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: path.join(EVIDENCE_DIR, "tool-card-refreshed.png"),
             fullPage: false,
         });
@@ -166,7 +168,8 @@ test.describe("@host PLAN-0572 tool card refresh", () => {
         await expect(
             mobileCard.locator("xpath=..").locator('[data-testid="raw-arguments"]'),
         ).toContainText("README.md", { timeout: 15000 });
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: path.join(EVIDENCE_DIR, "tool-card-refreshed-mobile.png"),
             fullPage: false,
         });

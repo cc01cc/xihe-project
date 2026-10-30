@@ -135,7 +135,8 @@ test.describe("@host PLAN-0470 MCP configuration UI consumer", () => {
             mcpServers: Record<string, { command?: string; args?: string[] }>;
         };
         expect(reloaded.mcpServers[serverName]).toEqual({ command: "node", args: ["--version"] });
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: test.info().outputPath("plan0470-mcp-config-reloaded.png"),
             fullPage: true,
         });

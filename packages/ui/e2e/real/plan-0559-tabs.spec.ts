@@ -147,8 +147,16 @@ test.describe("PLAN-0559 workspace tabs", () => {
             workspaceB,
         );
 
-        await page.screenshot({ scale: "css", path: "test-results/plan-0559-tab-a.png", fullPage: true });
-        await pageB.screenshot({ scale: "css", path: "test-results/plan-0559-tab-b.png", fullPage: true });
+        await page.screenshot({
+            scale: "css",
+            path: "test-results/plan-0559-tab-a.png",
+            fullPage: true,
+        });
+        await pageB.screenshot({
+            scale: "css",
+            path: "test-results/plan-0559-tab-b.png",
+            fullPage: true,
+        });
 
         // Logout in one tab terminates the other tab through BroadcastChannel.
         await page.getByRole("button", { name: /退出登录|Log out/ }).click();
@@ -248,7 +256,8 @@ test.describe("PLAN-0559 workspace tabs", () => {
         });
         expect(ownerManage.ok()).toBeTruthy();
 
-        await viewerPage.screenshot({ scale: "css",
+        await viewerPage.screenshot({
+            scale: "css",
             path: "test-results/plan-0559-viewer.png",
             fullPage: true,
         });

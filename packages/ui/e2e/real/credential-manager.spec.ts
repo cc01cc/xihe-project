@@ -238,7 +238,11 @@ test("@host credential manager — UI registration, role block, binding, lease u
     expect(await page.content(), "列表/页面不得出现明文").not.toContain(revealSecret);
     expect(await page.content(), "列表/页面不得出现明文").not.toContain(pairAccessKey);
     expect(await page.content(), "列表/页面不得出现明文").not.toContain(pairSecretKey);
-    await page.screenshot({ scale: "css", path: path.join(EVIDENCE_DIR, "s1-list.png"), fullPage: true });
+    await page.screenshot({
+        scale: "css",
+        path: path.join(EVIDENCE_DIR, "s1-list.png"),
+        fullPage: true,
+    });
 
     const listResponse = await request.get(`${CP_URL}/api/v1/credentials`, {
         headers: authHeaders,
@@ -280,7 +284,8 @@ test("@host credential manager — UI registration, role block, binding, lease u
     const ceilingWarning = panel.getByTestId("agent-role-ceiling-warning");
     await expect(ceilingWarning, "未覆盖凭据阻止保存").toBeVisible({ timeout: 20000 });
     await expect(ceilingWarning).toContainText(revealCredentialId!);
-    await page.screenshot({ scale: "css",
+    await page.screenshot({
+        scale: "css",
         path: path.join(EVIDENCE_DIR, "s2-ceiling-warning.png"),
         fullPage: true,
     });
@@ -297,7 +302,11 @@ test("@host credential manager — UI registration, role block, binding, lease u
             .filter({ hasText: "E2E Credential Role" })
             .first(),
     ).toContainText("credential_use", { timeout: 20000 });
-    await page.screenshot({ scale: "css", path: path.join(EVIDENCE_DIR, "s3-role-block.png"), fullPage: true });
+    await page.screenshot({
+        scale: "css",
+        path: path.join(EVIDENCE_DIR, "s3-role-block.png"),
+        fullPage: true,
+    });
 
     // 模板与 principal 走 API（引用 UI 保存出的 roleId），绑定在 UI 完成。
     const templatesResponse = await request.get(
@@ -379,7 +388,11 @@ test("@host credential manager — UI registration, role block, binding, lease u
         page.locator(`[data-testid="credential-bind-bound"]`),
         "批量绑定后两个 principal 均有已绑定标记",
     ).toHaveCount(2, { timeout: 20000 });
-    await page.screenshot({ scale: "css", path: path.join(EVIDENCE_DIR, "s4-bindings.png"), fullPage: true });
+    await page.screenshot({
+        scale: "css",
+        path: path.join(EVIDENCE_DIR, "s4-bindings.png"),
+        fullPage: true,
+    });
     await page.getByTestId("credentials-detail-close").click();
 
     // --- T4.2 删除引用报告（绑定后引用可查；此处只验证并取消）---
@@ -389,7 +402,8 @@ test("@host credential manager — UI registration, role block, binding, lease u
     await expect(referenceList).toBeVisible({ timeout: 20000 });
     await expect(referenceList).toContainText(principalId);
     await expect(referenceList).toContainText(secondPrincipalId);
-    await page.screenshot({ scale: "css",
+    await page.screenshot({
+        scale: "css",
         path: path.join(EVIDENCE_DIR, "s5-delete-references.png"),
         fullPage: true,
     });
@@ -436,7 +450,10 @@ test("@host credential manager — UI registration, role block, binding, lease u
     await expect(revealDialog.getByTestId("credentials-reveal-error")).toContainText("密码错误", {
         timeout: 20000,
     });
-    await page.screenshot({ scale: "css", path: path.join(EVIDENCE_DIR, "s6-reveal-wrong-password.png") });
+    await page.screenshot({
+        scale: "css",
+        path: path.join(EVIDENCE_DIR, "s6-reveal-wrong-password.png"),
+    });
     await revealDialog.getByTestId("credentials-reveal-password").fill(password);
     await revealDialog.getByTestId("credentials-reveal-submit").click();
     await expect(revealDialog.getByTestId("credentials-reveal-value")).toContainText(revealSecret, {
@@ -468,7 +485,10 @@ test("@host credential manager — UI registration, role block, binding, lease u
         rateLimited = (await error.textContent())?.includes("过于频繁") ?? false;
     }
     expect(rateLimited, "5 次失败后必须进入限流态").toBe(true);
-    await page.screenshot({ scale: "css", path: path.join(EVIDENCE_DIR, "s8-reveal-rate-limited.png") });
+    await page.screenshot({
+        scale: "css",
+        path: path.join(EVIDENCE_DIR, "s8-reveal-rate-limited.png"),
+    });
     await revealDialog.getByTestId("credentials-reveal-cancel").click();
     await page.getByTestId("credentials-detail-close").click();
 
@@ -479,7 +499,11 @@ test("@host credential manager — UI registration, role block, binding, lease u
     await expect(events).toContainText("租约签发", { timeout: 20000 });
     await expect(events).toContainText("租约兑换");
     await expect(events).not.toContainText(leaseSecret);
-    await page.screenshot({ scale: "css", path: path.join(EVIDENCE_DIR, "s9-audit-trail.png"), fullPage: true });
+    await page.screenshot({
+        scale: "css",
+        path: path.join(EVIDENCE_DIR, "s9-audit-trail.png"),
+        fullPage: true,
+    });
     await page.getByTestId("credentials-detail-close").click();
 
     // --- V5 批量解绑：两个 principal 一次提交 → 已绑定标记消失 ---

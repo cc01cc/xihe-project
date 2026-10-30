@@ -201,7 +201,8 @@ test.describe("@host PLAN-0350 workspace file events", () => {
         expect(events).not.toContain(hostPath);
         expect(events).not.toMatch(/[A-Za-z]:\\\\/);
         expect(events).toMatch(/sequence/);
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: path.join(EVIDENCE_DIR, "sse-file-changed.png"),
             fullPage: true,
         });
@@ -224,7 +225,8 @@ test.describe("@host PLAN-0350 workspace file events", () => {
         await expect(page.getByText(liveName, { exact: true }).first()).toBeVisible({
             timeout: 30000,
         });
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: path.join(EVIDENCE_DIR, "tree-refresh.png"),
             fullPage: true,
         });

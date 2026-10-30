@@ -422,15 +422,23 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
 
         await panel.scrollIntoViewIfNeeded();
         await expect(panel).toBeInViewport();
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: path.join(EVIDENCE_DIR, "s1-stdio-badges-desktop.png"),
             fullPage: false,
         });
-        await panel.screenshot({ scale: "css", path: path.join(EVIDENCE_DIR, "s1-mcp-panel-desktop.png") });
+        await panel.screenshot({
+            scale: "css",
+            path: path.join(EVIDENCE_DIR, "s1-mcp-panel-desktop.png"),
+        });
         await page.setViewportSize({ width: 390, height: 844 });
         await expect(panel).toBeVisible();
-        await panel.screenshot({ scale: "css", path: path.join(EVIDENCE_DIR, "s1-mcp-panel-mobile.png") });
-        await page.screenshot({ scale: "css",
+        await panel.screenshot({
+            scale: "css",
+            path: path.join(EVIDENCE_DIR, "s1-mcp-panel-mobile.png"),
+        });
+        await page.screenshot({
+            scale: "css",
             path: path.join(EVIDENCE_DIR, "s1-stdio-badges-mobile.png"),
             fullPage: false,
         });
@@ -498,7 +506,8 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         await expect(cardB.locator('[data-testid="job-status"]')).toHaveText(/运行中|Running/, {
             timeout: 30000,
         });
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: path.join(EVIDENCE_DIR, "s2-before-cancel.png"),
             fullPage: false,
         });
@@ -527,7 +536,8 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         });
         await expect(cardA.locator('[data-testid="job-cancel-success"]')).toBeVisible();
         await expect(cardB.locator('[data-testid="job-status"]')).toHaveText(/运行中|Running/);
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: path.join(EVIDENCE_DIR, "s2-after-cancel.png"),
             fullPage: false,
         });
@@ -571,7 +581,8 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         });
         await expect(cardB.locator('[data-testid="job-status"]')).toHaveText(/运行中|Running/);
         await expect(cardB.locator('[data-testid="job-cancel-button"]')).toBeEnabled();
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: path.join(EVIDENCE_DIR, "s3-cancel-unconfirmed.png"),
             fullPage: false,
         });
@@ -626,7 +637,8 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         await expect(page.getByText("Session continues after cancel.")).toBeVisible({
             timeout: 120000,
         });
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: path.join(EVIDENCE_DIR, "s2-conversation-continues.png"),
             fullPage: false,
         });

@@ -82,7 +82,10 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     await page.goto("/settings/policy", { waitUntil: "load" });
     await expect(page).toHaveURL(/\/settings\/config$/);
     await expect(page.locator('a[href="/settings/policy"]')).toHaveCount(0);
-    await page.screenshot({ scale: "css", path: testInfo.outputPath("settings-policy-deep-link-redirect.png") });
+    await page.screenshot({
+        scale: "css",
+        path: testInfo.outputPath("settings-policy-deep-link-redirect.png"),
+    });
     await page.getByTestId("config-tab-user").click();
     const templatePanel = page.getByTestId("agent-templates-panel");
     await expect(templatePanel).toBeVisible();
@@ -136,7 +139,10 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     await expect(templatePanel.getByTestId(`agent-template-${templateId}`)).toContainText(
         "Browser Workspace Reader",
     );
-    await page.screenshot({ scale: "css", path: testInfo.outputPath("agent-template-created-in-settings.png") });
+    await page.screenshot({
+        scale: "css",
+        path: testInfo.outputPath("agent-template-created-in-settings.png"),
+    });
 
     await page.goto(`/workspace/${workspaceA}`, { waitUntil: "load" });
 
@@ -243,7 +249,10 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     await bindingA.getByTestId(`workspace-agent-save-cap-${principalId}`).click();
     expect((await capSavePromise).status()).toBe(200);
     await expect(bindingA).toContainText("reports/*");
-    await page.screenshot({ scale: "css", path: testInfo.outputPath("workspace-agent-cap-persisted.png") });
+    await page.screenshot({
+        scale: "css",
+        path: testInfo.outputPath("workspace-agent-cap-persisted.png"),
+    });
 
     await page.getByTestId("workspace-agent-refresh").click();
     await expect(bindingA).toContainText("reports/*");
@@ -522,5 +531,8 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
 
     expect(pageErrors).toEqual([]);
     expect(apiRequestFailures).toEqual([]);
-    await page.screenshot({ scale: "css", path: testInfo.outputPath("workspace-agent-unbound.png") });
+    await page.screenshot({
+        scale: "css",
+        path: testInfo.outputPath("workspace-agent-unbound.png"),
+    });
 });
