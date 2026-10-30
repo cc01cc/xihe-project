@@ -22,7 +22,7 @@ public class ProviderCatalogController {
     @GetMapping
     public ResponseEntity<?> list() {
         return ResponseEntity.ok(Map.of(
-                "catalogRevision", "v1",
+                "catalogRevision", "v2",
                 "providers", catalog.list()));
     }
 }

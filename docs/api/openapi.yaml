@@ -3621,7 +3621,7 @@ components:
        type: object
        required: [catalogRevision, providers]
        properties:
-         catalogRevision: { type: string }
+         catalogRevision: { type: string, enum: [v1, v2], description: 'PLAN-0591: v2 adds per-API-Type tool capability and provider supports.toolsPartial.' }
          providers: { type: array, items: { $ref: '#/components/schemas/ProviderDefinition' } }
     ProviderDefinition:
        type: object
@@ -3636,7 +3636,7 @@ components:
          modelDiscovery: { type: string, enum: [remote-models, litellm-catalog, curated, manual] }
          credential: { $ref: '#/components/schemas/ProviderCredentialDefinition' }
          supports: { $ref: '#/components/schemas/ProviderSupports' }
-         supportedApiTypes: { type: array, minItems: 1, items: { $ref: '#/components/schemas/ApiTypePair' } }
+         supportedApiTypes: { type: array, minItems: 1, items: { $ref: '#/components/schemas/SupportedApiTypeEntry' } }
          defaultApiType: { $ref: '#/components/schemas/ApiTypePair' }
     ApiTypePair:
        type: object
@@ -3646,6 +3646,19 @@ components:
           version: { type: integer, minimum: 1 }
           defaultBaseUrl: { type: [string, 'null'], format: uri, description: 'Supported pair override; omitted uses provider default.' }
           modelDiscovery: { type: string, enum: [remote-models, litellm-catalog, curated, manual], description: 'Supported pair override; omitted uses provider default.' }
+    SupportedApiTypeEntry:
+       type: object
+       required: [apiTypeId, version]
+       properties:
+          apiTypeId: { type: string }
+          version: { type: integer, minimum: 1 }
+          defaultBaseUrl: { type: [string, 'null'], format: uri, description: 'Supported pair override; omitted uses provider default.' }
+          modelDiscovery: { type: string, enum: [remote-models, litellm-catalog, curated, manual], description: 'Supported pair override; omitted uses provider default.' }
+          capability: { $ref: '#/components/schemas/ProviderApiTypeCapability' }
+    ProviderApiTypeCapability:
+       type: object
+       properties:
+          tools: { type: boolean, description: 'PLAN-0591 decision source per (providerId, apiTypeId, version); omitted is treated as unsupported (fail-closed) at runtime.' }
     ProviderCredentialDefinition:
        type: object
        required: [type, required]
@@ -3659,7 +3672,8 @@ components:
        properties:
          customBaseUrl: { type: boolean }
          streaming: { type: boolean }
-         tools: { type: boolean }
+         tools: { type: boolean, description: 'PLAN-0591: boolean any-route rollup (provider-level display only; decision source is supportedApiTypes[].capability.tools).' }
+         toolsPartial: { type: boolean, description: 'PLAN-0591: true when at least one API Type supports tools and another does not.' }
          vision: { type: boolean }
     ProviderConnectionListResponse:
        type: object
@@ -3817,6 +3831,7 @@ components:
          apiTypeId: { type: string }
          apiTypeVersion: { type: integer, minimum: 1 }
          operation: { type: string, enum: [chat, embedding] }
+         toolsSupported: { type: boolean, description: 'PLAN-0591: per connection API Type capability; absent means unsupported (Agent fails closed).' }
     CredentialRotationStatus:
        type: object
        required: [currentVersion, ringVersions, countsByVersion, pendingByVersion, pendingTotal]

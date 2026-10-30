@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from xihe_agent.adapters.api_chat_model import ApiChatModel
 from xihe_agent.llm.api_request import ApiRequestError, chat_type, render_request, strict_json, validate_snapshot
 from xihe_agent.llm.api_sender import ApiSender
+from xihe_agent.llm.transport_metrics import STAGE_ATTEMPT_STARTED, TransportMetricsCollector
 
 TYPES = ["openai-chat-completions", "anthropic-messages", "mimo-responses"]
 
@@ -42,7 +43,14 @@ VALUES = {
 
 
 def grant(type_id, base):
-    return {"apiTypeId": type_id, "apiTypeVersion": 1, "operation": "chat", "apiKey": "fixture-only", "baseUrl": base}
+    return {
+        "apiTypeId": type_id,
+        "apiTypeVersion": 1,
+        "operation": "chat",
+        "apiKey": "fixture-only",
+        "baseUrl": base,
+        "toolsSupported": True,
+    }
 
 
 @pytest.mark.parametrize("type_id", TYPES)
@@ -1085,3 +1093,238 @@ async def test_sampling_overrides_absent_keeps_template_body(type_id):
             assert captures[0][2]["max_tokens"] == 64
         else:
             assert "max_tokens" not in captures[0][2]
+
+
+# PLAN-0591 T1.4/T1.5: capability gate (deterministic, loopback recorder).
+def _tool_for(type_id):
+    if type_id == "anthropic-messages":
+        return {"name": "read_file", "description": "d", "input_schema": {"type": "object"}}
+    if type_id == "mimo-responses":
+        return {"type": "function", "name": "read_file", "description": "d", "parameters": {"type": "object"}, "strict": False}
+    return {"type": "function", "function": {"name": "read_file", "description": "d", "parameters": {"type": "object"}}}
+
+
+def _rendered(type_id, tools, stream=False):
+    values = {**VALUES, "tools": tools}
+    return render_request(json.dumps(body(type_id, stream)), chat_type(type_id, 1), values)
+
+
+@pytest.mark.parametrize("type_id", TYPES)
+async def test_capability_gate_rejects_before_transport_attempt(type_id):
+    events = []
+    async with recorder(response(type_id, False)) as (base, captures):
+        collector = TransportMetricsCollector(lambda event, payload: events.append((event, payload)))
+        unsupported = {**grant(type_id, base), "toolsSupported": False}
+        sender = ApiSender(chat_type(type_id, 1), unsupported, "request-1", 3, collector=collector)
+        with pytest.raises(ApiRequestError, match="LLM_TOOL_ROUTE_UNSUPPORTED"):
+            _ = [part async for part in sender.stream(_rendered(type_id, [_tool_for(type_id)]))]
+        assert captures == []
+    assert events == []
+    assert all(event != STAGE_ATTEMPT_STARTED for event, _payload in events)
+
+
+async def test_missing_tools_supported_logs_warning_to_loguru_sink():
+    """PLAN-0591 M2 P2: loguru sink capture (caplog does not see loguru)."""
+    from loguru import logger
+
+    messages = []
+    sink_id = logger.add(lambda message: messages.append(str(message)), level="WARNING")
+    try:
+        missing = grant(TYPES[0], "http://fixture.invalid/v1")
+        missing.pop("toolsSupported")
+        ApiSender(chat_type(TYPES[0], 1), missing, "request-1", 3)
+    finally:
+        logger.remove(sink_id)
+    assert any("toolsSupported" in message for message in messages)
+
+
+def test_missing_tools_supported_defaults_to_unsupported_and_code_passes_through():
+    missing = grant(TYPES[0], "http://fixture.invalid/v1")
+    missing.pop("toolsSupported")
+    no_capability = ApiSender(chat_type(TYPES[0], 1), missing, "request-1", 3)
+    assert no_capability.tools_supported is False
+    assert ApiRequestError("LLM_TOOL_ROUTE_UNSUPPORTED").terminal_code == "LLM_TOOL_ROUTE_UNSUPPORTED"
+
+
+@pytest.mark.parametrize("type_id", TYPES)
+async def test_capability_gate_allows_empty_tools_when_unsupported(type_id):
+    async with recorder(response(type_id, False)) as (base, captures):
+        unsupported = {**grant(type_id, base), "toolsSupported": False}
+        sender = ApiSender(chat_type(type_id, 1), unsupported, "request-1", 3)
+        parts = [part async for part in sender.stream(_rendered(type_id, []))]
+        assert parts[-1][2] is not None
+        assert len(captures) == 1
+
+
+async def test_validate_body_error_precedes_capability_gate():
+    events = []
+    async with recorder(response(TYPES[0], False)) as (base, captures):
+        collector = TransportMetricsCollector(lambda event, payload: events.append((event, payload)))
+        unsupported = {**grant(TYPES[0], base), "toolsSupported": False}
+        sender = ApiSender(chat_type(TYPES[0], 1), unsupported, "request-1", 3, collector=collector)
+        malformed = {"model": "fixture", "messages": "not-a-list", "tools": [_tool_for(TYPES[0])], "stream": False}
+        with pytest.raises(ApiRequestError) as exc:
+            _ = [part async for part in sender.stream(malformed)]
+        assert exc.value.code == "INVALID_REQUEST_SHAPE"
+        assert exc.value.code != "LLM_TOOL_ROUTE_UNSUPPORTED"
+        assert captures == []
+    assert events == []
+    assert all(event != STAGE_ATTEMPT_STARTED for event, _payload in events)
+
+
+async def test_provider_400_maps_request_rejected_when_tools_supported():
+    async with recorder("bad request", status=400) as (base, captures):
+        sender = ApiSender(chat_type(TYPES[0], 1), grant(TYPES[0], base), "request-1", 3)
+        with pytest.raises(ApiRequestError) as exc:
+            _ = [part async for part in sender.stream(_rendered(TYPES[0], [_tool_for(TYPES[0])]))]
+        assert exc.value.code == "LLM_REQUEST_REJECTED"
+        assert len(captures) == 1
+
+
+@pytest.mark.parametrize("type_id", TYPES)
+async def test_fake_executor_writes_file_not_assistant_text(tmp_path, type_id):
+    """PLAN-0591 T2.3/V2a: custom `WriteTool` fake executor writes a file, not assistant text."""
+    from unittest.mock import AsyncMock
+
+    from xihe_agent.adapters.api_chat_model import native_tools
+    from xihe_agent.agent_runner import LangGraphRunner
+    from xihe_agent.interfaces.agent_runner import RunnerConfig
+    from xihe_agent.interfaces.context import AgentContext
+    from xihe_agent.interfaces.message import TextMessage
+    from xihe_agent.interfaces.tool import ToolSpec
+
+    target = tmp_path / "tool-output.txt"
+
+    class WriteTool:
+        spec = ToolSpec("read_file", "write fixture", {"type": "object", "properties": {}})
+        calls = 0
+
+        async def execute(self, input, context):
+            self.calls += 1
+            target.write_text("written-by-tool", encoding="utf-8")
+            return {"content": "tool-result"}
+
+    tool = WriteTool()
+    async with recorder(lambda index: response(type_id, index == 1)) as (base, captures):
+        model = ApiChatModel(
+            api_type=chat_type(type_id, 1),
+            grant=grant(type_id, base),
+            body_source=json.dumps(body(type_id, False)),
+            values={**VALUES, "tools": native_tools([tool], chat_type(type_id, 1))},
+            request_id="request-fixture",
+            timeout=3,
+        )
+        context = AgentContext.empty("session-fixture")
+        context.metadata.update(runId="run-fixture")
+        store = type("Store", (), {"append": AsyncMock()})()
+        runner = LangGraphRunner(model_factory=lambda name: model, event_store=store)
+        events = [
+            event
+            async for event in runner.stream(
+                [TextMessage("human", "write it")],
+                RunnerConfig(
+                    model="fixture",
+                    system_prompt="",
+                    tools=[tool],
+                    context=context,
+                    template_context=True,
+                    admitted_prompt="write it",
+                    prune_window_chars=80000,
+                ),
+            )
+        ]
+    assert not [event for event in events if event.type == "error"]
+    assert tool.calls == 1
+    assert target.read_text(encoding="utf-8") == "written-by-tool"
+    assert len([event for event in events if event.type == "tool_call"]) == 1
+    responded = [call.args[0] for call in store.append.await_args_list if call.args[0].type == "assistant.responded"]
+    assert len(responded) == 1
+    assert responded[0].payload["message"]["content"] != "written-by-tool"
+    assert len(captures) == 2
+
+
+@pytest.mark.parametrize("type_id", TYPES)
+@pytest.mark.parametrize("tools_supported", [True, False])
+@pytest.mark.parametrize("with_tools", [True, False])
+async def test_capability_matrix_dispatch_or_reject(type_id, tools_supported, with_tools):
+    """PLAN-0591 T2.1/T2.2: apiType x capability x tools -> dispatch or pre-attempt reject."""
+    events = []
+    async with recorder(response(type_id, False)) as (base, captures):
+        collector = TransportMetricsCollector(lambda event, payload: events.append((event, payload)))
+        capability = {**grant(type_id, base), "toolsSupported": tools_supported}
+        sender = ApiSender(chat_type(type_id, 1), capability, "request-1", 3, collector=collector)
+        tools = [_tool_for(type_id)] if with_tools else []
+        if tools_supported or not with_tools:
+            parts = [part async for part in sender.stream(_rendered(type_id, tools))]
+            assert parts[-1][2] is not None
+            assert len(captures) == 1
+            sent_tools = captures[0][2].get("tools")
+            if with_tools:
+                assert isinstance(sent_tools, list) and len(sent_tools) == 1
+            else:
+                assert not sent_tools
+        else:
+            with pytest.raises(ApiRequestError, match="LLM_TOOL_ROUTE_UNSUPPORTED"):
+                _ = [part async for part in sender.stream(_rendered(type_id, tools))]
+            assert captures == []
+            assert events == []
+
+
+async def test_unknown_grant_fields_are_tolerated():
+    """PLAN-0591 T2.4: forward-compatible grants (extra keys) keep the capability decision."""
+    sender = ApiSender(
+        chat_type(TYPES[0], 1),
+        {**grant(TYPES[0], "http://fixture.invalid/v1"), "futureField": "ignored"},
+        "request-1",
+        3,
+    )
+    assert sender.tools_supported is True
+
+
+@pytest.mark.parametrize("type_id", TYPES)
+async def test_chat_route_surfaces_capability_gate_terminal(monkeypatch, type_id):
+    """PLAN-0591 T2.5: gate rejection stays visible and exact on the Agent SSE wire."""
+    from unittest.mock import AsyncMock
+
+    import httpx
+
+    from xihe_agent.api import chat as route
+    from xihe_agent.app_state import CP_API_TOKEN
+    from xihe_agent.interfaces.context import AgentContext
+    from xihe_agent.main import app
+
+    monkeypatch.setattr(route, "retrieve_chat_context", AsyncMock(side_effect=AssertionError("no RAG")))
+    monkeypatch.setattr(route, "_get_tools_for_mode", AsyncMock(return_value=[]))
+    async with recorder(response(type_id, False)) as (base, captures):
+        lease = AsyncMock(
+            return_value={
+                **grant(type_id, base),
+                "toolsSupported": False,
+                "provider": "fixture-provider",
+                "model": "fixture",
+                "connectionRevision": 2,
+            }
+        )
+        monkeypatch.setattr(route.config_client, "redeem_provider_lease", lease)
+        monkeypatch.setattr(
+            route.context_provider, "load", AsyncMock(return_value=AgentContext.empty("session-fixture"))
+        )
+        monkeypatch.setattr(route.cp_event_store_client, "append", AsyncMock())
+        request = {**snapshot_request(type_id), "toolMode": "workspace", "workspaceId": "ws-fixture"}
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://agent-fixture") as client:
+            result = await client.post(
+                "/internal/v1/agent/chat",
+                json=request,
+                headers={"Authorization": f"Bearer {CP_API_TOKEN}", "X-Request-Id": "request-fixture"},
+            )
+        assert result.status_code == 200, result.text[:400]
+        events = {}
+        for line in result.text.splitlines():
+            if line.startswith("event:"):
+                name = line.split(":", 1)[1].strip()
+            elif line.startswith("data:"):
+                events[name] = json.loads(line.split(":", 1)[1].strip())
+        assert events["error"]["code"] == "LLM_TOOL_ROUTE_UNSUPPORTED"
+        assert events["done"]["errorCode"] == "LLM_TOOL_ROUTE_UNSUPPORTED"
+        assert events["done"]["outcome"] == "error"
+        assert captures == []

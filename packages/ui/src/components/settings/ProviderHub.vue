@@ -1842,6 +1842,12 @@ onMounted(() => {
                                         >{{ t("settings.providerHub.supportsTools") }}</span
                                     >
                                     <span
+                                        v-if="provider.supports.toolsPartial"
+                                        class="rounded bg-muted px-1 text-[10px] text-muted-foreground"
+                                        :data-testid="`provider-supports-tools-partial-${provider.id}`"
+                                        >{{ t("settings.providerHub.supportsToolsPartial") }}</span
+                                    >
+                                    <span
                                         v-if="provider.supports.vision"
                                         class="rounded bg-muted px-1 text-[10px] text-muted-foreground"
                                         >{{ t("settings.providerHub.supportsVision") }}</span
@@ -1932,6 +1938,25 @@ onMounted(() => {
                                 </option>
                             </select>
                         </label>
+                        <div
+                            v-if="
+                                selectedProvider.supportedApiTypes.some((pair) => pair.capability)
+                            "
+                            class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground"
+                            data-testid="connection-api-type-capabilities"
+                        >
+                            <span
+                                v-for="pair in selectedProvider.supportedApiTypes"
+                                :key="'cap-' + pair.apiTypeId + '@' + pair.version"
+                            >
+                                {{ pair.apiTypeId }}@{{ pair.version }} ·
+                                {{
+                                    pair.capability?.tools
+                                        ? t("settings.providerHub.apiTypeToolsSupported")
+                                        : t("settings.providerHub.apiTypeToolsUnsupported")
+                                }}
+                            </span>
+                        </div>
                         <div
                             v-if="typeImpact"
                             class="mt-3 space-y-2 rounded border p-3 text-xs"

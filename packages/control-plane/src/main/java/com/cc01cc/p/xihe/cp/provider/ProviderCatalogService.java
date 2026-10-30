@@ -5,7 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -25,10 +27,16 @@ public class ProviderCatalogService {
     private final ObjectMapper objectMapper;
     private final ApiInputTypeService apiTypes;
 
+    @Autowired
     public ProviderCatalogService(ObjectMapper objectMapper, ApiInputTypeService apiTypes) {
+        this(objectMapper, apiTypes, new ClassPathResource("provider-catalog/providers.json"));
+    }
+
+    /** PLAN-0591 T1.2: test-only seam; production wiring keeps the classpath catalog. */
+    ProviderCatalogService(ObjectMapper objectMapper, ApiInputTypeService apiTypes, Resource catalogResource) {
         this.objectMapper = objectMapper;
         this.apiTypes = apiTypes;
-        try (var input = new ClassPathResource("provider-catalog/providers.json").getInputStream()) {
+        try (var input = catalogResource.getInputStream()) {
             JsonNode root = objectMapper.readTree(input);
             if (!root.isArray()) {
                 throw new IllegalStateException("Provider catalog must be a JSON array");
@@ -60,6 +68,9 @@ public class ProviderCatalogService {
                 throw new IllegalStateException("Provider default API Type is not registered: " + providerId);
             }
             boolean defaultAllowed = false;
+            int declared = 0;
+            boolean anyTools = false;
+            boolean allTools = true;
             for (JsonNode pair : supported) {
                 String typeId = pair.path("apiTypeId").asText();
                 int version = pair.path("version").asInt();
@@ -69,9 +80,49 @@ public class ProviderCatalogService {
                 if (typeId.equals(defaultId) && version == defaultVersion) {
                     defaultAllowed = true;
                 }
+                JsonNode capability = pair.get("capability");
+                if (capability == null || capability.isNull()) {
+                    logger.warn("Provider capability.tools missing; treated as unsupported provider={} apiType={}@{}",
+                            providerId, typeId, version);
+                    allTools = false;
+                    continue;
+                }
+                if (!capability.isObject()) {
+                    throw new IllegalStateException("Provider capability must be an object: " + providerId);
+                }
+                JsonNode tools = capability.get("tools");
+                if (tools == null || tools.isNull()) {
+                    logger.warn("Provider capability.tools missing; treated as unsupported provider={} apiType={}@{}",
+                            providerId, typeId, version);
+                    allTools = false;
+                    continue;
+                }
+                if (!tools.isBoolean()) {
+                    throw new IllegalStateException("Provider capability.tools must be boolean: " + providerId);
+                }
+                declared++;
+                anyTools |= tools.asBoolean();
+                allTools &= tools.asBoolean();
             }
             if (!defaultAllowed) {
                 throw new IllegalStateException("Provider default API Type is not supported: " + providerId);
+            }
+            if (declared == supported.size()) {
+                JsonNode supports = definition.get("supports");
+                JsonNode supportsTools = supports == null ? null : supports.get("tools");
+                if (supportsTools != null && supportsTools.isBoolean() && supportsTools.asBoolean() != anyTools) {
+                    throw new IllegalStateException(
+                            "Provider supports.tools disagrees with capabilities: " + providerId);
+                }
+                JsonNode partial = supports == null ? null : supports.get("toolsPartial");
+                boolean expectedPartial = anyTools && !allTools;
+                if (partial != null && partial.isBoolean() && partial.asBoolean() != expectedPartial) {
+                    throw new IllegalStateException(
+                            "Provider supports.toolsPartial disagrees with capabilities: " + providerId);
+                }
+            } else if (declared > 0) {
+                logger.warn("Provider capability.tools partially declared; aggregate check skipped provider={} declared={}/{}",
+                        providerId, declared, supported.size());
             }
         }
     }
@@ -119,6 +170,15 @@ public class ProviderCatalogService {
             }
         }
         throw new IllegalArgumentException("Unsupported provider API Type pair: " + providerId);
+    }
+
+    /**
+     * PLAN-0591: the single capability decision source. Missing/explicit-null
+     * {@code capability.tools} is treated as unsupported at runtime.
+     */
+    public boolean toolsSupported(String providerId, String apiTypeId, int version) {
+        JsonNode tools = supportedPair(providerId, apiTypeId, version).path("capability").get("tools");
+        return tools != null && tools.isBoolean() && tools.asBoolean();
     }
 
     public boolean requiresCredential(String providerId) {
