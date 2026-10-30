@@ -15,6 +15,8 @@ export interface ApiTypePair {
     version: number;
     defaultBaseUrl?: string | null;
     modelDiscovery?: ProviderDefinition["modelDiscovery"];
+    /** PLAN-0591: per-API-Type tool capability (decision source); omitted means unsupported. */
+    capability?: { tools?: boolean };
 }
 
 export interface ApiInputType {
@@ -46,6 +48,7 @@ export interface ProviderDefinition {
         customBaseUrl: boolean;
         streaming: boolean;
         tools?: boolean;
+        toolsPartial?: boolean;
         vision?: boolean;
     };
     supportedApiTypes: ApiTypePair[];

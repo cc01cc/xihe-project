@@ -890,3 +890,34 @@ describe("ProviderHub label rules (PLAN-0555)", () => {
         wrapper.unmount();
     });
 });
+
+describe("PLAN-0591 tool capability visibility", () => {
+    it("shows the provider partial badge and per-API-Type capability detail", async () => {
+        vi.mocked(listProviderCatalog).mockResolvedValue({
+            catalogRevision: "v2",
+            providers: [
+                {
+                    ...provider,
+                    supports: { ...provider.supports, tools: true, toolsPartial: true },
+                    supportedApiTypes: [
+                        { apiTypeId: "openai-chat", version: 1, capability: { tools: true } },
+                        { apiTypeId: "legacy-responses", version: 1, capability: { tools: false } },
+                    ],
+                },
+            ],
+        });
+        const wrapper = await mountHub();
+        await wrapper.get('[data-testid="provider-hub-connect"]').trigger("click");
+        expect(
+            wrapper.find('[data-testid="provider-supports-tools-partial-example"]').exists(),
+        ).toBe(true);
+        await wrapper.get('[data-testid="provider-picker-example"]').trigger("click");
+        const modal = wrapper.get('[data-testid="provider-connection-modal"]');
+        const detail = modal.get('[data-testid="connection-api-type-capabilities"]').text();
+        expect(detail).toContain("openai-chat@1");
+        expect(detail).toContain(i18n.global.t("settings.providerHub.apiTypeToolsSupported"));
+        expect(detail).toContain("legacy-responses@1");
+        expect(detail).toContain(i18n.global.t("settings.providerHub.apiTypeToolsUnsupported"));
+        wrapper.unmount();
+    });
+});
