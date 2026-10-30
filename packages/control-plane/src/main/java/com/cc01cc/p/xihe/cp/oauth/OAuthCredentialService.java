@@ -13,7 +13,7 @@ import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.annotation.Lazy;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -40,7 +40,16 @@ public class OAuthCredentialService {
     private final HttpClient httpClient;
     private final McpProxyCatalogService mcpProxyCatalogService;
     private final DbLockTimeout dbLockTimeout;
-    private final OAuthTokenBroker broker;
+    /**
+     * PLAN-0584: {@code OAuthTokenBroker} depends on this service, so a plain
+     * constructor injection would cycle. The former {@code @Lazy} parameter made
+     * Spring build a CGLIB lazy-resolution proxy at runtime, which GraalVM Native
+     * Image cannot register (MissingReflectionRegistrationError on
+     * {@code CGLIB$FACTORY_DATA}); Spring recommends the lightweight
+     * {@link ObjectProvider} arrangement instead. Resolution stays deferred to the
+     * first broker call, preserving the original lazy semantics.
+     */
+    private final ObjectProvider<OAuthTokenBroker> brokerProvider;
     private final OAuthRevocationClient revocationClient;
 
     @org.springframework.beans.factory.annotation.Value("${cp.oauth.allowed-hosts:}")
@@ -53,7 +62,7 @@ public class OAuthCredentialService {
             ObjectMapper objectMapper,
             McpProxyCatalogService mcpProxyCatalogService,
             DbLockTimeout dbLockTimeout,
-            @Lazy OAuthTokenBroker broker,
+            ObjectProvider<OAuthTokenBroker> brokerProvider,
             OAuthRevocationClient revocationClient) {
         this.pkce = pkce;
         this.repository = repository;
@@ -61,7 +70,7 @@ public class OAuthCredentialService {
         this.objectMapper = objectMapper;
         this.mcpProxyCatalogService = mcpProxyCatalogService;
         this.dbLockTimeout = dbLockTimeout;
-        this.broker = broker;
+        this.brokerProvider = brokerProvider;
         this.revocationClient = revocationClient;
         this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
     }
@@ -109,7 +118,7 @@ public class OAuthCredentialService {
         credential.setStatus("AUTHORIZED");
         repository.save(credential);
         // Re-authorization supersedes any token cached before; drop it defensively.
-        broker.invalidate(session.userId(), session.workspaceId(), session.serverId());
+        brokerProvider.getObject().invalidate(session.userId(), session.workspaceId(), session.serverId());
         long expiresIn = token.expiresIn() == null ? OAuthTokenBroker.DEFAULT_TTL_SECONDS : token.expiresIn();
         return new AccessGrant(token.accessToken(), expiresIn, credential.getScope());
     }
@@ -120,7 +129,7 @@ public class OAuthCredentialService {
      * used by {@link OAuthController}.
      */
     public AccessGrant issueAccessToken(String userId, String workspaceId, String serverId, String requestedScope) {
-        return broker.getAccessToken(userId, workspaceId, serverId, requestedScope);
+        return brokerProvider.getObject().getAccessToken(userId, workspaceId, serverId, requestedScope);
     }
 
     /**
@@ -179,7 +188,7 @@ public class OAuthCredentialService {
         Optional<OAuthCredential> credential = repository.findForUpdate(userId, workspaceId, serverId);
         // Cache invalidation + revocation epoch happen before any early return so a
         // stale cache entry can never outlive the revocation.
-        broker.invalidate(userId, workspaceId, serverId);
+        brokerProvider.getObject().invalidate(userId, workspaceId, serverId);
         if (credential.isEmpty()) {
             return false;
         }

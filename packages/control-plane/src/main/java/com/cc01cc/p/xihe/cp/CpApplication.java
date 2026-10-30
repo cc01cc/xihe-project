@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp;
 
+import com.cc01cc.p.xihe.cp.config.NativeAotRuntimeHints;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,11 +10,13 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.ImportRuntimeHints;
 
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication(exclude = UserDetailsServiceAutoConfiguration.class)
 @EnableScheduling
+@ImportRuntimeHints(NativeAotRuntimeHints.class)
 public class CpApplication {
 
     private static final Logger logger = LoggerFactory.getLogger(CpApplication.class);

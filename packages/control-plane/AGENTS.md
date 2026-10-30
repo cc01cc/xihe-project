@@ -40,6 +40,14 @@ mvn -o -q test "-Dtest=CpArchitectureTest"
 
 `-Dtest=...` 替换为具体测试类（必要时加 `#method`）。完整 `mvn -o test` 只在测试波次或里程碑执行；不要把全量测试当作每次小改的默认门禁。
 
+PLAN-0584 的 Native Image 组件探针仅在 Windows x64 portable GraalVM 环境中运行：
+
+```powershell
+mvn -PnativeTest,native-build,native-test-probe -Dtest=NativeImageCompatibilityProbeTest test
+```
+
+`native-test-probe` 只编译 probe，并让 Spring Test AOT 与 Native Build Tools 共用 probe-only test output；这验证组件兼容性，不替代 native-compat host lane。
+
 `mvn checkstyle:check` 对 `checkstyle.xml` 全部规则按 severity=error 阻断（POM `violationSeverity=error` + `failOnViolation=true`）；基线为 0 违规，任何新增违规都会使命令失败。规则与项目约定的对齐取舍（单行 getter、测试方法下划线命名、logger 常量白名单）见 PLAN-0458 evidence，不得未经裁定回退为 warning 或加全局抑制。
 
 ArchUnit 1.5.1 仅在 test scope。`CpArchitectureRuleProbeTest` 验证分类、正反向 bytecode 与逻辑归属，不代表生产边界已符合；`CpArchitectureTest` 严格检查实际生产类型，不使用存量忽略。当前重构基线会因既有违规失败，报告写入 `target/cp-architecture/baseline.json`；不得为求绿删除导入、冻结豁免或改为只跑探针。按领域切片修复后重新检查。归属图的类型循环诊断不直接宣称状态 writer 环，完整强连接分组与有上限的循环示例分开记录。

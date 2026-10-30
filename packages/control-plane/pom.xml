@@ -24,6 +24,7 @@
         <flyway.version>13.4.0</flyway.version>
         <testcontainers.version>2.0.5</testcontainers.version>
         <testcontainers-junit.version>1.21.4</testcontainers-junit.version>
+        <xihe.native.test.outputDirectory>${project.build.directory}/test-classes</xihe.native.test.outputDirectory>
     </properties>
     
     <dependencies>
@@ -208,6 +209,7 @@
     </dependencies>
     
     <build>
+        <testOutputDirectory>${xihe.native.test.outputDirectory}</testOutputDirectory>
         <!-- PLAN-0534: pom.properties is the runtime projection of <version>.
              Filter only this file; all other resources are copied verbatim. -->
         <resources>
@@ -264,4 +266,94 @@
             </plugin>
         </plugins>
     </build>
+    <profiles>
+        <profile>
+            <id>native-build</id>
+            <build>
+                <plugins>
+                    <!-- PLAN-0584: opt-in only; the Spring Boot parent manages plugin version and native profile configuration. -->
+                    <plugin>
+                        <groupId>org.graalvm.buildtools</groupId>
+                        <artifactId>native-maven-plugin</artifactId>
+                    </plugin>
+                    <!-- PLAN-0584 T1.6: Test AOT scans all Spring tests in this directory. Keep it aligned
+                         with Native Build Tools' project test output root; native-test-probe narrows that root. -->
+                    <plugin>
+                        <groupId>org.springframework.boot</groupId>
+                        <artifactId>spring-boot-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>process-test-aot</id>
+                                <configuration>
+                                    <testClassesDirectory>${project.build.testOutputDirectory}</testClassesDirectory>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>native-test-probe</id>
+            <properties>
+                <xihe.native.test.outputDirectory>${project.build.directory}/native-probe-test-classes</xihe.native.test.outputDirectory>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <configuration>
+                            <testIncludes>
+                                <testInclude>**/NativeImageCompatibilityProbeTest.java</testInclude>
+                            </testIncludes>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <profile>
+            <id>native-aot</id>
+            <build>
+                <plugins>
+                    <!-- PLAN-0584: process-aot activates Spring `native-aot`; DotenvLoader CLI overrides supply run-scoped XIHE values to the primary Hikari DataSource. Keep credentials environment-only and omit Jakarta JDBC URL/user overrides so Hibernate uses Hikari's no-arg connection; dialect remains explicit. -->
+                    <plugin>
+                        <groupId>org.springframework.boot</groupId>
+                        <artifactId>spring-boot-maven-plugin</artifactId>
+                        <configuration>
+                            <profiles>
+                                <profile>native-aot</profile>
+                            </profiles>
+                            <!-- process-aot exposes systemPropertyVariables (not the run goal's environmentVariables). -->
+                            <systemPropertyVariables>
+                                <XIHE_LOAD_DOTENV>0</XIHE_LOAD_DOTENV>
+                                <XIHE_PG_PORT>${env.XIHE_PG_PORT}</XIHE_PG_PORT>
+                                <spring.datasource.url>${env.XIHE_CP_DATASOURCE_URL}</spring.datasource.url>
+                                <spring.datasource.username>${env.XIHE_CP_DATASOURCE_USERNAME}</spring.datasource.username>
+                                <spring.jpa.database-platform>org.hibernate.dialect.PostgreSQLDialect</spring.jpa.database-platform>
+                                <spring.aot.jpa.repositories.use-entitymanager>true</spring.aot.jpa.repositories.use-entitymanager>
+                                <hibernate.dialect>org.hibernate.dialect.PostgreSQLDialect</hibernate.dialect>
+                                <xihe.channel.enabled>${env.XIHE_CHANNEL_ENABLED}</xihe.channel.enabled>
+                            </systemPropertyVariables>
+                            <arguments>
+                                <argument>--spring.datasource.url=${env.XIHE_CP_DATASOURCE_URL}</argument>
+                                <argument>--spring.datasource.username=${env.XIHE_CP_DATASOURCE_USERNAME}</argument>
+                                <argument>--spring.jpa.database-platform=org.hibernate.dialect.PostgreSQLDialect</argument>
+                                <argument>--spring.aot.jpa.repositories.use-entitymanager=true</argument>
+                                <argument>--hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect</argument>
+                                <argument>--xihe.channel.enabled=${env.XIHE_CHANNEL_ENABLED}</argument>
+                                <argument>--set=XIHE_LOAD_DOTENV=0</argument>
+                                <argument>--set=XIHE_CP_DATASOURCE_URL=${env.XIHE_CP_DATASOURCE_URL}</argument>
+                                <argument>--set=XIHE_CP_DATASOURCE_USERNAME=${env.XIHE_CP_DATASOURCE_USERNAME}</argument>
+                                <argument>--set=XIHE_CHANNEL_ENABLED=${env.XIHE_CHANNEL_ENABLED}</argument>
+                                <argument>--set=XIHE_PG_PORT=${env.XIHE_PG_PORT}</argument>
+                            </arguments>
+                            <jvmArguments>-DXIHE_LOAD_DOTENV=0 -DXIHE_PG_PORT=${env.XIHE_PG_PORT} -Dspring.datasource.url=${env.XIHE_CP_DATASOURCE_URL} -Dspring.datasource.username=${env.XIHE_CP_DATASOURCE_USERNAME} -Dspring.jpa.database-platform=org.hibernate.dialect.PostgreSQLDialect -Dspring.aot.jpa.repositories.use-entitymanager=true -Dhibernate.dialect=org.hibernate.dialect.PostgreSQLDialect -Dxihe.channel.enabled=${env.XIHE_CHANNEL_ENABLED}</jvmArguments>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

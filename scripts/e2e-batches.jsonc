@@ -130,6 +130,14 @@
       "description": "PLAN-0565 workspace members: settings UI journey (add/remove/role matrix) + real-chain permission matrix",
       "llmMode": "mock",
       "specs": ["e2e/real/workspace-members.spec.ts"]
+    },
+    "native-compat": {
+      "description": "PLAN-0584 native CP: config JSON Schema API plus CP→Agent→Runtime write_file/SSE flow",
+      "llmMode": "write_file",
+      "specs": [
+        "e2e/real/plan0584-native-config-schema.spec.ts",
+        "e2e/real/journey-a.spec.ts"
+      ]
     }
   }
 }

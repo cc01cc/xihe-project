@@ -536,13 +536,53 @@ Service ports (Docker internal / host mapping, stack-1; see "Parallel host stack
 - Runtime: 8001 → 12633
 - PostgreSQL: 5432 → 12634
 
-### 5.2. GraalVM Native Image (CP)
+### 5.2. GraalVM Native Image (CP, experimental)
 
-```bash
-cd packages/control-plane
-mvn -Pnative native:compile
-./target/control-plane
+The current compatibility effort targets Windows x64 only and uses GraalVM Community Edition 25.4.4.1.1 (JDK 25.0.4.1.1). Linux/macOS are unverified. This is not a supported release artifact; the ordinary `dev:cp` and `mvn spring-boot:run` commands remain JVM-based.
+
+Use a portable GraalVM installation and process-scoped environment in PowerShell (do not persistently replace the machine-wide Java configuration):
+
+```powershell
+$env:JAVA_HOME = '<portable GraalVM root>'
+$env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
+java -version
+native-image.cmd --version
+mvn -version
 ```
+
+Spring Boot `process-aot` starts the CP application context. Use a throwaway PostgreSQL project/database for AOT metadata discovery and enable the Runtime channel for the native host lane; never point it at the daily development database. Maven `native-aot` activates the matching Spring profile. `application-native-aot.properties` disables `.env` loading and only permits the explicit run-scoped `XIHE_CP_DATASOURCE_URL` or this run's `XIHE_PG_PORT`. The profile-only `NativeAotDataSourceConfiguration` creates the primary Hikari DataSource from the explicit URL, or from the isolated bootstrap database `xihe` on that run's port; it fails if both are absent, preventing embedded H2 and daily-port fallback. It enables `spring.aot.jpa.repositories.use-entitymanager=true` so Spring Data JPA builds metadata from the real `EntityManagerFactory`. The native host runner activates the same Spring profile; ordinary JVM/H2 tests do not. Database credentials remain process-environment-only. In the build PowerShell process, set the datasource URL/user/password from the temporary database:
+
+```powershell
+$env:XIHE_CP_DATASOURCE_URL = 'jdbc:postgresql://127.0.0.1:<port>/<throwaway-db>'
+$env:XIHE_CP_DATASOURCE_USERNAME = 'xihe'
+$env:XIHE_CP_DATASOURCE_PASSWORD = '<ephemeral password>'
+$env:XIHE_CHANNEL_ENABLED = 'true'
+$env:XIHE_LOAD_DOTENV = '0'
+```
+
+`process-aot` is bound at `prepare-package`; the Native Build Tools `native:compile` goal forks `package`, so use `native:compile-no-fork` after the lifecycle phase in the same Maven session to preserve the AOT configuration. Run from `packages/control-plane`:
+
+```powershell
+mvn -Pnative,native-build,native-aot -DskipTests prepare-package native:compile-no-fork
+```
+
+The Windows executable is `packages/control-plane/target/control-plane.exe`. The host E2E runner can use it explicitly with `node scripts/e2e-host.mjs --jar-mode=native --batch=native-compat`; this mode fails closed if the executable is missing/stale, enables the Runtime WebSocket channel, and uses a per-run isolated PostgreSQL database and host root. The runner self-starts its host stack, so stop the daily `dev:host` Runtime first to avoid a Windows binary lock; `--persistent` / `XIHE_E2E_EXTERNAL_SERVER=1` reuse is a separate explicit mode.
+
+Before compiling, record available RAM, target-disk space, an explicit heap/parallelism cap, reserve, and a total build deadline. GraalVM changes Native Image builder mode below 8 GiB of available RAM, and peak RSS exceeds the Java heap cap. Do not build until the resource envelope is confirmed. The complete runbook and current evidence are in PLAN-0584 under `plans/`.
+
+For bounded Native Test coverage, use the opt-in probe-only profile from `packages/control-plane`:
+
+```powershell
+mvn -PnativeTest,native-build,native-test-probe -Dtest=NativeImageCompatibilityProbeTest test
+```
+
+The profile compiles only the probe class and shares its output directory with Spring Test AOT and Native Build Tools. The four-test probe passed in the Windows native test image, covering JWT, AuthResponse JSON, ConfigDomainSchema, and PDFBox. The native-aot profile excludes `TomcatMetricsAutoConfiguration` because the tested GraalVM image cannot use the platform MBean path; JVM metrics remain enabled.
+
+The `native-compat` host lane was accepted on 2026-10-31 on an isolated stack: `node scripts/e2e-host.mjs --jar-mode=native --batch=native-compat` reported 2 passed / 1 skipped / 0 failed (`journey-a` + `plan0584-native-config-schema`), covering provider connections, CP→Agent chat, `write_file` approval, SSE terminal events, message read-back, checkpoint capture, Runtime MCP and the channel handshake (`channel_connected` + `heartbeat: suppressed`); the teardown reverse check found zero containers/volumes/networks/Sandboxes. The component probe remains component-level evidence and does not replace this lane.
+
+Native metadata maintenance: the record hints in `NativeAotRuntimeHints` come from a GraalVM tracing-agent capture on the JVM host lane (`plans/PLAN-0584-xh-cp-graalvm-native-image/evidence/agent-metadata-r5`). They register only `INVOKE_PUBLIC_METHODS` + `INVOKE_PUBLIC_CONSTRUCTORS`, live inside the `// BEGIN agent-captured records … // END` block, and must not be widened into a package-wide `TypeReference` pattern or all-declared reflection; the request-side records are defensive and may be trimmed once a host run proves them redundant. Capture note: an agent only flushes metadata on a graceful VM shutdown, so a forced service kill loses it — use `/actuator/shutdown` together with `spring.lifecycle.timeout-per-shutdown-phase=1s`.
+
+Native probe semantics for operators: the native CP exposes `/actuator/health` anonymously, but **`/ready` requires authentication** (an anonymous request returns 401) — do not read an anonymous `/ready` 401 as a readiness failure; send the run-scoped token when probing readiness.
 
 ## 6. Debugging
 

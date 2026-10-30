@@ -4,7 +4,7 @@ import { randomBytes, createHash, timingSafeEqual } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { stat as stat2, readdir, writeFile, readFile, mkdir } from 'node:fs/promises'
 import { rm } from 'node:fs/promises'
-import { createServer as createTcpServer } from 'node:net'
+import { createServer as createTcpServer, connect as connectTcp } from 'node:net'
 import { createServer as createHttpServer } from 'node:http'
 import { waitForAgentLlmReady } from './lib/agent-readiness.mjs'
 
@@ -36,8 +36,8 @@ const batchArg = process.argv.find((arg) => arg.startsWith('--batch='))
 const batchName = batchArg?.slice('--batch='.length) ?? ''
 const reportNameArg = process.argv.find((arg) => arg.startsWith('--report-name='))
 const reportName = reportNameArg?.slice('--report-name='.length) ?? ''
-if (!['auto', 'use', 'rebuild', 'run'].includes(jarMode)) {
-  console.error(`[e2e-host] invalid --jar-mode=${jarMode}; expected auto | use | rebuild | run`)
+if (!['auto', 'use', 'rebuild', 'run', 'native'].includes(jarMode)) {
+  console.error(`[e2e-host] invalid --jar-mode=${jarMode}; expected auto | use | rebuild | run | native`)
   process.exit(2)
 }
 const e2eBatchesFile = join(projectDir, 'scripts', 'e2e-batches.jsonc')
@@ -318,6 +318,23 @@ function resolveCpJarState() {
 // use = always boot the existing jar; rebuild = always rebuild first; run =
 // never boot a jar. A stale jar must never be used silently.
 async function resolveCpBootPlan() {
+  if (jarMode === 'native') {
+    const state = resolveCpJarState()
+    const executableName = process.platform === 'win32' ? 'control-plane.exe' : 'control-plane'
+    const executablePath = join(state.cpDir, 'target', executableName)
+    if (!existsSync(executablePath)) {
+      throw new Error(`--jar-mode=native requires ${executablePath}; build with mvn -Pnative,native-build native:compile`)
+    }
+    const executableStat = statSync(executablePath)
+    if (state.newestSource.mtimeMs > executableStat.mtimeMs) {
+      throw new Error(`native CP executable is stale vs ${state.newestSource.path}; rebuild before host E2E`)
+    }
+    return {
+      mode: 'native',
+      executable: { path: executablePath, name: executableName, mtimeMs: executableStat.mtimeMs },
+      reason: 'forced native executable',
+    }
+  }
   if (jarMode === 'run') return { mode: 'run', jar: null, reason: '--jar-mode=run' }
   const state = resolveCpJarState()
   if (!state.jar) return { mode: 'run', jar: null, reason: 'no CP jar in target/ (mvn spring-boot:run)' }
@@ -359,7 +376,7 @@ runner flags:
   --auth-lane=<lane>    CP auth env lane (PLAN-0566 D6): exempt (default, register dimension off) | ratelimit (lowered thresholds + loopback trusted proxies for auth-lockout / auth-rate-limit)
   --list-batches        list batch names, modes and spec counts, then exit
   --report-name=<file>  write the Playwright JSON report to .local/dev/<file> (adds the list,json reporter unless one is given)
-  --jar-mode=<mode>     CP boot artifact policy: auto (default) | use | rebuild | run
+  --jar-mode=<mode>     CP boot artifact policy: auto (default) | use | rebuild | run | native (fail-closed; enables the CP↔Runtime WebSocket channel)
   --skip-preflight      skip the read-only preflight (not recommended)
   --validate-at-end     run "mise run validate" once after the specs (batch closure; default off)
   --skip-runtime        boot without the Runtime service (chat-only paths)
@@ -417,6 +434,9 @@ async function writeArtifactsManifest(cpBootPlan) {
   const artifacts = []
   if (cpBootPlan?.mode === 'jar' && cpBootPlan.jar && existsSync(cpBootPlan.jar.path)) {
     artifacts.push(await fingerprintArtifact('control-plane-jar', cpBootPlan.jar.path, true))
+  }
+  if (cpBootPlan?.mode === 'native' && cpBootPlan.executable && existsSync(cpBootPlan.executable.path)) {
+    artifacts.push(await fingerprintArtifact('control-plane-native', cpBootPlan.executable.path, true))
   }
   const runtimeBinary = resolveRuntimeBinary()
   if (runtimeBinary.path) {
@@ -573,6 +593,45 @@ async function waitForHttp(name, url, timeoutMs = readinessTimeoutMs, headers = 
     await new Promise((resolve) => setTimeout(resolve, 1_000))
   }
   throw new Error(`${name} did not become ready within ${timeoutMs}ms (${lastError})`)
+}
+
+async function waitForRuntimeChannelHandshake(child, timeoutMs = readinessTimeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  let transportConnected = false
+  let channelActive = false
+  let lastError = 'Runtime has not logged channel transport or active state yet'
+  while (Date.now() < deadline) {
+    if (child && child.exitCode !== null) {
+      throw new Error(`Runtime exited before channel handshake (code=${child.exitCode})`)
+    }
+    if (existsSync(e2eLogDir)) {
+      const names = await readdir(e2eLogDir)
+      for (const name of names.filter((entry) => entry.startsWith('runtime.log'))) {
+        const path = join(e2eLogDir, name)
+        let contents
+        try {
+          contents = await readFile(path, 'utf8')
+        } catch (error) {
+          if (error?.code === 'ENOENT') {
+            lastError = 'Runtime log rotated during probe'
+            continue
+          }
+          throw error
+        }
+        transportConnected ||= contents.includes('channel_connected')
+        channelActive ||= contents.includes('heartbeat: suppressed (channel active)')
+        if (transportConnected && channelActive) {
+          console.log(`[e2e-host] Runtime received channel welcome and selected channel heartbeat in ${name}`)
+          return
+        }
+      }
+    }
+    lastError = transportConnected
+      ? 'channel transport is open but welcome/channel-active state is not confirmed'
+      : 'channel transport is not connected yet'
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+  throw new Error(`Runtime WebSocket hello/welcome was not confirmed within ${timeoutMs}ms (${lastError})`)
 }
 
 async function stopProcess(child) {
@@ -1109,6 +1168,13 @@ async function configureFakeLlm() {
   })
   if (!login.ok) throw new Error(`fake LLM admin login failed: HTTP ${login.status}`)
   const loginBody = await login.json()
+  if (typeof loginBody?.accessToken !== 'string' || loginBody.accessToken.length === 0) {
+    const responseKeys = loginBody && typeof loginBody === 'object'
+      ? Object.keys(loginBody).sort().join(',')
+      : '<non-object>'
+    throw new Error(`fake LLM admin login response omitted accessToken; responseKeys=${responseKeys}`)
+  }
+  console.log(`[e2e-host] fake LLM admin login responseKeys=${Object.keys(loginBody).sort().join(',')} accessTokenChars=${loginBody.accessToken.length} tokenType=${loginBody.tokenType ?? '<missing>'}`)
   if (realXiaomiKey) {
     // PLAN-0372 decision #A: the default native route (tools rejected by
     // design). PLAN-0372 decision #B: `openai-compat` reuses the same MiMo
@@ -1525,6 +1591,57 @@ async function waitPostgresReady() {
   throw new Error('PostgreSQL did not become ready in time (pg_isready)')
 }
 
+// PLAN-0584: pg_isready above runs inside the container and does not exercise
+// the host-published port CP actually uses. On this Windows host the fresh
+// port publish intermittently reset the first host-side connection during the
+// PostgreSQL SSLRequest exchange (SocketException: Connection reset from
+// ConnectionFactoryImpl.enableSSL), failing CP boot before any metadata path
+// ran. Probe the exact wire path CP will use and require two consecutive
+// answers before launching CP.
+function probePostgresSslRequestOnce() {
+  return new Promise((resolve) => {
+    let settled = false
+    const socket = connectTcp({ host: '127.0.0.1', port: pgPort })
+    const finish = (value) => {
+      if (settled) return
+      settled = true
+      socket.destroy()
+      resolve(value)
+    }
+    socket.setTimeout(2_000)
+    socket.on('connect', () => {
+      // SSLRequest: int32 length = 8, int32 request code = 80877103
+      socket.write(Buffer.from([0x00, 0x00, 0x00, 0x08, 0x04, 0xd2, 0x16, 0x2f]))
+    })
+    socket.on('data', (chunk) => {
+      // 'N' (0x4e) = SSL not supported, 'S' (0x53) = SSL requested; both prove
+      // a live PostgreSQL wire response on the published port.
+      finish(chunk.length > 0 && (chunk[0] === 0x4e || chunk[0] === 0x53))
+    })
+    socket.on('error', () => finish(false))
+    socket.on('timeout', () => finish(false))
+    socket.on('close', () => finish(false))
+  })
+}
+
+async function waitForPostgresWireReady() {
+  const deadline = Date.now() + 30_000
+  let consecutive = 0
+  while (Date.now() < deadline) {
+    if (await probePostgresSslRequestOnce()) {
+      consecutive += 1
+      if (consecutive >= 2) {
+        console.log('[e2e-host] PostgreSQL host port wire ready (SSLRequest probe x2)')
+        return
+      }
+    } else {
+      consecutive = 0
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+  throw new Error('PostgreSQL host port did not answer SSLRequest within 30s')
+}
+
 async function precheckDevRuntimeConflict() {
   if (skipRuntime || process.platform !== 'win32') return
   const result = await run('powershell.exe', [
@@ -1603,7 +1720,7 @@ async function runPreflightGate({ allowPorts = [], ownRunId = '', extraSelfPids 
   console.log('[e2e-host] preflight (read-only): node scripts/e2e-preflight.mjs')
   const selfPids = [process.pid, ...extraSelfPids.filter((pid) => Number.isInteger(pid) && pid > 0)]
   const preflightArgs = [join(projectDir, 'scripts', 'e2e-preflight.mjs'), `--self-pid=${selfPids.join(',')}`]
-  if (jarMode === 'run') preflightArgs.push('--ignore-build')
+  if (jarMode === 'run' || jarMode === 'native') preflightArgs.push('--ignore-build')
   if (allowPorts.length > 0) preflightArgs.push(`--allow-ports=${allowPorts.join(',')}`)
   if (ownRunId) preflightArgs.push(`--own-run-id=${ownRunId}`)
   const preflight = await runCapture(nodeCommand, preflightArgs)
@@ -1639,13 +1756,24 @@ async function main() {
     await teardownPersistent()
     return
   }
+  if (jarMode === 'native' && skipRuntime) {
+    throw new Error('--jar-mode=native requires Runtime; remove --skip-runtime to test the native compatibility lane')
+  }
+  if (externalServer && jarMode === 'native') {
+    throw new Error('--jar-mode=native owns the isolated stack and cannot be combined with XIHE_E2E_EXTERNAL_SERVER=1')
+  }
   // PLAN-0375 (R2): repair the artifact condition the runner owns *before* the
   // read-only preflight runs — preflight fails on a stale CP jar, so a
   // preflight-first order would make the rebuild unreachable.
   let cpBootPlan = null
   if (!externalServer) {
     cpBootPlan = await resolveCpBootPlan()
-    console.log(`[e2e-host] CP boot: ${cpBootPlan.mode === 'jar' ? `java -jar ${cpBootPlan.jar.name}` : 'mvn spring-boot:run'} (${cpBootPlan.reason})`)
+    const cpBootCommand = cpBootPlan.mode === 'jar'
+      ? `java -jar ${cpBootPlan.jar.name}`
+      : cpBootPlan.mode === 'native'
+        ? cpBootPlan.executable.name
+        : 'mvn spring-boot:run'
+    console.log(`[e2e-host] CP boot: ${cpBootCommand} (${cpBootPlan.reason})`)
   }
   console.log(`[e2e-host] runId=${e2eRunId} ports ui=${uiPort} cp=${cpPort} agent=${agentPort} runtime=${runtimePort} pg=${pgPort}`)
   console.log(`[e2e-host] isolated pg project=${pgProjectName} db=${pgDatabase} hostRoot=${hostRoot}`)
@@ -1733,20 +1861,25 @@ async function main() {
   // path's LLM readiness gate covers the remaining window). CP prefers the
   // pre-built fat jar (skips ~20s of Maven lifecycle per boot).
     const cpDatasource = `jdbc:postgresql://localhost:${pgPort}/${pgDatabase}`
+    const useCpNative = cpBootPlan?.mode === 'native'
+    const useCpJar = cpBootPlan?.mode === 'jar'
+    const cpJar = useCpJar ? cpBootPlan.jar.path : null
+    const cpNativeExecutable = useCpNative ? cpBootPlan.executable.path : null
     const commonCpEnv = {
       XIHE_CP_PORT: cpPort,
       XIHE_CP_DATASOURCE_URL: cpDatasource,
+      XIHE_PG_PORT: pgPort,
       XIHE_CP_DATASOURCE_USERNAME: pgUser,
       XIHE_CP_DATASOURCE_PASSWORD: pgPassword,
       XIHE_CP_JWT_SECRET: `e2e-${e2eRunId}-jwt-secret`,
-       XIHE_AGENT_URL: `http://127.0.0.1:${agentPort}/internal/v1/agent/chat`,
-       XIHE_AGENT_BASE_URL: `http://127.0.0.1:${agentPort}`,
-       XIHE_RUNTIME_URL: `http://127.0.0.1:${runtimePort}`,
-       XIHE_DEV_ADMIN_PASSWORD: e2eAdminPassword,
-     }
-    const useCpJar = cpBootPlan?.mode === 'jar'
-    const cpJar = useCpJar ? cpBootPlan.jar.path : null
+      XIHE_AGENT_URL: `http://127.0.0.1:${agentPort}/internal/v1/agent/chat`,
+      XIHE_AGENT_BASE_URL: `http://127.0.0.1:${agentPort}`,
+      XIHE_RUNTIME_URL: `http://127.0.0.1:${runtimePort}`,
+      XIHE_DEV_ADMIN_PASSWORD: e2eAdminPassword,
+      ...(useCpNative ? { XIHE_CHANNEL_ENABLED: 'true' } : {}),
+    }
     if (useCpJar) console.log(`[e2e-host] CP boot via fat jar ${cpBootPlan.jar.name} (${cpBootPlan.reason})`)
+    else if (useCpNative) console.log(`[e2e-host] CP boot via native executable ${cpBootPlan.executable.name} (${cpBootPlan.reason})`)
     else console.log(`[e2e-host] CP boot via mvn spring-boot:run (${cpBootPlan?.reason ?? 'external decision'})`)
 
     const bootTasks = [
@@ -1764,7 +1897,19 @@ async function main() {
         // readiness via pg_isready (PG speaks the wire protocol, not HTTP —
         // an HTTP probe here never succeeds).
         await waitPostgresReady()
-        if (!useCpJar) {
+        await waitForPostgresWireReady()
+        if (useCpNative) {
+          await launchNativeService({
+            name: 'control-plane',
+            cmd: cpNativeExecutable,
+            // Keep the native runtime graph aligned with the Spring profile used by process-aot.
+            args: ['--spring.profiles.active=native-aot'],
+            cwd: join(projectDir, 'packages', 'control-plane'),
+            extraEnv: { ...commonCpEnv, XIHE_CP_PORT: cpPort, XIHE_LOAD_DOTENV: '0', XIHE_LOG_DIR: e2eLogDir },
+            healthUrl: `http://127.0.0.1:${cpPort}/actuator/health`,
+          })
+          await configureFakeLlm()
+        } else if (!useCpJar) {
           await launchNativeService({
             name: 'control-plane',
             cmd: 'mvn.cmd',
@@ -1842,7 +1987,7 @@ async function main() {
         })
       })(),
       ...(skipRuntime ? [] : [(async () => {
-        await launchNativeService({
+        const runtimeProcess = await launchNativeService({
           name: 'runtime',
           cmd: 'cargo',
           args: ['run', '--bin', 'xihe-runtime'],
@@ -1851,11 +1996,13 @@ async function main() {
             XIHE_RUNTIME_PORT: runtimePort,
             XIHE_CP_URL: `http://127.0.0.1:${cpPort}`,
             XIHE_WORKSPACE_IMAGE: 'xihe/workspace:latest',
+            ...(useCpNative ? { XIHE_CHANNEL_URL: `http://127.0.0.1:${cpPort}` } : {}),
             ...(process.env.CARGO_TARGET_DIR ? { CARGO_TARGET_DIR: process.env.CARGO_TARGET_DIR } : {}),
           },
           healthUrl: `http://127.0.0.1:${runtimePort}/health`,
         })
-        if (!skipRuntime) await waitForHttp('Runtime readiness', `http://127.0.0.1:${runtimePort}/ready`)
+        await waitForHttp('Runtime readiness', `http://127.0.0.1:${runtimePort}/ready`)
+        if (useCpNative) await waitForRuntimeChannelHandshake(runtimeProcess)
       })()]),
       launchUIVite(),
     ]
