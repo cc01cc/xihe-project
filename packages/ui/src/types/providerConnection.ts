@@ -15,9 +15,29 @@ export interface ApiTypePair {
     version: number;
     defaultBaseUrl?: string | null;
     modelDiscovery?: ProviderDefinition["modelDiscovery"];
-    /** PLAN-0591: per-API-Type tool capability (decision source); omitted means unsupported. */
-    capability?: { tools?: boolean };
 }
+
+/**
+ * PLAN-0591 P2-1: capability lives only on the catalog `supportedApiTypes`
+ * entries (OpenAPI `SupportedApiTypeEntry`), never on `defaultApiType` or the
+ * API-Type change impact, which stay a plain `ApiTypePair`.
+ */
+export interface ProviderApiTypeCapability {
+    tools?: boolean;
+}
+
+export interface SupportedApiTypeEntry extends ApiTypePair {
+    /** Per-API-Type tool capability decision source; omitted means unsupported. */
+    capability?: ProviderApiTypeCapability;
+}
+
+type AssertNever<T extends never> = T;
+/**
+ * PLAN-0591 P2-1 compile-time guard (spec files are excluded from
+ * `vue-tsc`, so the assertion lives here): adding `capability` back to the
+ * shared `ApiTypePair` must break `pnpm run typecheck`.
+ */
+export type ApiTypePairHasNoCapability = AssertNever<Extract<keyof ApiTypePair, "capability">>;
 
 export interface ApiInputType {
     apiTypeId: string;
@@ -51,7 +71,7 @@ export interface ProviderDefinition {
         toolsPartial?: boolean;
         vision?: boolean;
     };
-    supportedApiTypes: ApiTypePair[];
+    supportedApiTypes: SupportedApiTypeEntry[];
     defaultApiType: ApiTypePair;
 }
 

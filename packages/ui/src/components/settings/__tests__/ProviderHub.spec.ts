@@ -1,8 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { config, flushPromises, mount } from "@vue/test-utils";
 import ProviderHub from "../ProviderHub.vue";
-import type { ProviderConnection, ProviderDefinition } from "../../../types/providerConnection";
+import type {
+    ApiTypePair,
+    ProviderConnection,
+    ProviderDefinition,
+    ProviderApiTypeCapability,
+    SupportedApiTypeEntry,
+} from "../../../types/providerConnection";
 import {
     deleteProviderConnection,
     getDeleteImpact,
@@ -919,5 +925,15 @@ describe("PLAN-0591 tool capability visibility", () => {
         expect(detail).toContain("legacy-responses@1");
         expect(detail).toContain(i18n.global.t("settings.providerHub.apiTypeToolsUnsupported"));
         wrapper.unmount();
+    });
+
+    it("PLAN-0591 P2-1: capability exists only on SupportedApiTypeEntry, never on ApiTypePair", () => {
+        // OpenAPI contract: SupportedApiTypeEntry = ApiTypePair + optional capability;
+        // defaultApiType and the change impact stay plain ApiTypePair.
+        expectTypeOf<SupportedApiTypeEntry>().toExtend<ApiTypePair>();
+        expectTypeOf<ProviderApiTypeCapability>().toEqualTypeOf<{ tools?: boolean }>();
+        expectTypeOf<ProviderDefinition["defaultApiType"]>().toEqualTypeOf<ApiTypePair>();
+        expectTypeOf<ApiTypePair>().not.toHaveProperty("capability");
+        expect("capability" in provider.defaultApiType).toBe(false);
     });
 });
