@@ -27,6 +27,11 @@ class ProviderCatalogControllerTest {
                 .findFirst()
                 .orElseThrow();
         Map<String, Object> supports = (Map<String, Object>) xiaomi.get("supports");
+        // PLAN-0591 T4.3 (decision C) — mixed-state semantics, pinned here on the public
+        // wire: one provider can support tools on some apiTypes and not others, so the
+        // rollup `supports.tools` is true while `supports.toolsPartial` marks it partial.
+        // capability.tools per apiType stays the only decision source; data changes must
+        // carry an evidence pointer in provider-catalog/README.md.
         assertEquals(Boolean.TRUE, supports.get("tools"));
         assertEquals(Boolean.TRUE, supports.get("toolsPartial"));
         List<Map<String, Object>> types = (List<Map<String, Object>>) xiaomi.get("supportedApiTypes");

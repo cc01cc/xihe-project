@@ -83,6 +83,11 @@ class ProviderCatalogServiceTest {
 
     @Test
     void xiaomiCapabilityIsPerApiTypeAndRolledUp() {
+        // PLAN-0591 T4.3 (decision C): pins the mixed-state semantics this test guards.
+        // capability.tools is the single decision source (per apiType); provider-level
+        // supports.tools is an any-route rollup and supports.toolsPartial is `any && !all`.
+        // Any change to these xiaomi values is catalog data and must carry an evidence
+        // pointer in provider-catalog/README.md (next to providers.json).
         assertFalse(catalog.toolsSupported("xiaomi", "mimo-responses", 1));
         assertTrue(catalog.toolsSupported("xiaomi", "openai-chat-completions", 1));
         var supports = catalog.require("xiaomi").path("supports");
