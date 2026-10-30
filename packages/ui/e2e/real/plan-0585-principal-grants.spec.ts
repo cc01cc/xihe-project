@@ -512,20 +512,20 @@ test.describe("@host PLAN-0585 principal grants (M2 UI)", () => {
         expectPlatformScreenshot(page, "plan-0585-error-resource.png");
     });
 
-    test("F-02: the agent dialog shows the localized 403 hint and the admin panel link", async ({
+    test("F-02: grantless user gets the localized 403 hint, admins get the panel link", async ({
         page,
     }) => {
-        // The admin itself has no CREATE_ACCOUNT grant on a fresh stack, so creation 403s.
-        seedContext(page, admin, "OWNER");
-        await page.goto(`/workspace/${admin.workspaceId}`, { waitUntil: "load" });
+        // (a) Grantless path: the freshly registered USER holds no CREATE_ACCOUNT (default deny),
+        // so its own workspace dialog must fail with the actionable hint. Instance ADMINs may hold
+        // the atom, which is why this branch runs as the non-admin fixture (stack-4 run 2 showed
+        // the admin create succeeding, i.e. no error paragraph to assert).
+        seedContext(page, target, "OWNER");
+        await page.goto(`/workspace/${target.workspaceId}`, { waitUntil: "load" });
         await page.getByTestId("workspace-toolbar-agents").click();
         await expect(page.getByTestId("agent-principal-create-form")).toBeVisible({
             timeout: 20_000,
         });
-
-        const link = page.getByTestId("agent-grant-panel-link");
-        await expect(link).toBeVisible();
-        await expect(link).toHaveAttribute("href", "/settings/principal-grants");
+        await expect(page.getByTestId("agent-grant-panel-link")).toHaveCount(0);
 
         await page.getByTestId("agent-principal-name").fill(`grantless-${Date.now()}`);
         await page.getByTestId("agent-principal-create-form").press("Enter");
@@ -537,6 +537,20 @@ test.describe("@host PLAN-0585 principal grants (M2 UI)", () => {
             fullPage: true,
         });
         expectPlatformScreenshot(page, "plan-0585-f02-forbidden.png");
+
+        // (b) Admin shortcut: the later init script overwrites the seeded identity, so the same page
+        // reloads as ADMIN and the panel link appears.
+        seedContext(page, admin, "OWNER");
+        await page.goto(`/workspace/${admin.workspaceId}`, { waitUntil: "load" });
+        await page.getByTestId("workspace-toolbar-agents").click();
+        const link = page.getByTestId("agent-grant-panel-link");
+        await expect(link).toBeVisible({ timeout: 20_000 });
+        await expect(link).toHaveAttribute("href", "/settings/principal-grants");
+        await page.screenshot({
+            path: "test-results/plan-0585/07b-f02-admin-link.png",
+            fullPage: true,
+        });
+        expectPlatformScreenshot(page, "plan-0585-f02-admin-link.png");
     });
 
     test("the grant takes effect end to end and the page survives en + mobile", async ({
@@ -579,7 +593,11 @@ test.describe("@host PLAN-0585 principal grants (M2 UI)", () => {
 
         // en locale + mobile viewport for the new page.
         seedContext(page, admin, "OWNER");
-        await page.addInitScript(() => localStorage.setItem("xihe-language", "en-US"));
+        // `useLocalStorage("xihe-language")` (stores/settings.ts:7) persists JSON, so the raw string
+        // would fail to deserialize and silently fall back to zh-CN (stack-4 run 2 failure).
+        await page.addInitScript(() =>
+            localStorage.setItem("xihe-language", JSON.stringify("en-US")),
+        );
         await page.goto("/settings/principal-grants", { waitUntil: "load" });
         await expect(page.getByTestId("principal-grant-view")).toContainText("Principal grants", {
             timeout: 20_000,
