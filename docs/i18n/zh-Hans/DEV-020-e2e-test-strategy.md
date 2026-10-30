@@ -87,7 +87,7 @@ e2e/
 
 ```typescript
 // playwright.config.ts 核心配置
-单 project（chromium 语义，配置无 projects 数组；viewport 1920×1080）+ `animations:disabled` + `trace: retain-on-failure`（real provider key `XIHE_E2E_REAL_KEY`/`XIHE_E2E_REAL_XIAOMI_KEY` 存在于测试进程时强制 `off`——trace 会捕获 `APIRequestContext` 请求体，2026-10-30 BL-148）+ 按 profile 的 `grep/grepInvert` + `webServer: pnpm dev`
+单 project（chromium 语义，配置无 projects 数组；viewport 1920×1080）+ `animations:disabled` + `trace: retain-on-failure`（**非空** real/embedding key `XIHE_E2E_REAL_KEY`/`XIHE_E2E_REAL_XIAOMI_KEY`/`XIHE_E2E_REAL_DASHSCOPE_KEY` 存在于测试进程时强制 `off`，空串回退 `retain-on-failure`——trace 会捕获 `APIRequestContext` 请求体，2026-10-30 BL-148）+ 按 profile 的 `grep/grepInvert` + `webServer: pnpm dev`
 timeout: 30000ms
 retries: 1
 screenshot: 'only-on-failure'  // 仅失败时保存实际截图

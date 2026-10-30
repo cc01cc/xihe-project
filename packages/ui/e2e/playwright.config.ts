@@ -26,7 +26,9 @@ export default defineConfig({
         deviceScaleFactor: 2,
         screenshot: "only-on-failure",
         trace:
-            process.env.XIHE_E2E_REAL_KEY || process.env.XIHE_E2E_REAL_XIAOMI_KEY
+            process.env.XIHE_E2E_REAL_KEY ||
+            process.env.XIHE_E2E_REAL_XIAOMI_KEY ||
+            process.env.XIHE_E2E_REAL_DASHSCOPE_KEY
                 ? "off"
                 : "retain-on-failure",
     },
