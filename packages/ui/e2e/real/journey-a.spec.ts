@@ -102,7 +102,8 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
         await expect(modal, "approval modal for write_file").toBeVisible({ timeout: 120000 });
         // Path preview should appear; avoid asserting secret material.
         await expect(modal).toContainText(approveFile, { timeout: 10000 });
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: testInfo.outputPath("journey-a-approve-modal.png"),
             fullPage: false,
         });
@@ -130,7 +131,8 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
             page.getByRole("treeitem", { name: approveFile, exact: true }),
             "Workspace Chat write_file result appears in the file tree without a page reload",
         ).toBeVisible({ timeout: 20000 });
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: testInfo.outputPath("journey-a-after-approve.png"),
             fullPage: false,
         });
@@ -181,7 +183,8 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
             page.locator("text=APPROVAL_REJECTED").first(),
             "terminal APPROVAL_REJECTED visible",
         ).toBeVisible({ timeout: 60000 });
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: testInfo.outputPath("journey-a-after-reject.png"),
             fullPage: false,
         });

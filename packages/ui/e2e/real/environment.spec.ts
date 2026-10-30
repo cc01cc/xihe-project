@@ -85,7 +85,10 @@ test.describe("Workspace environment status", () => {
             )
             .toMatch(/ready|blocked/);
         await expect(page.getByTestId("workspace-environment-status")).toContainText("ready");
-        await page.screenshot({ scale: "css", path: testInfo.outputPath("environment-desktop.png") });
+        await page.screenshot({
+            scale: "css",
+            path: testInfo.outputPath("environment-desktop.png"),
+        });
 
         await page.reload({ waitUntil: "load" });
         await expect(page.getByTestId("workspace-environment-heading")).toBeVisible({
@@ -110,11 +113,17 @@ test.describe("Workspace environment status", () => {
             return documentElement ? documentElement.scrollWidth - documentElement.clientWidth : 0;
         });
         expect(overflow).toBeLessThanOrEqual(2);
-        await page.screenshot({ scale: "css", path: testInfo.outputPath("environment-mobile.png") });
+        await page.screenshot({
+            scale: "css",
+            path: testInfo.outputPath("environment-mobile.png"),
+        });
         const runtimeHeading = page.getByRole("heading", { name: "运行时", exact: true });
         await runtimeHeading.scrollIntoViewIfNeeded();
         await expect(runtimeHeading).toBeInViewport();
-        await page.screenshot({ scale: "css", path: testInfo.outputPath("environment-mobile-runtime.png") });
+        await page.screenshot({
+            scale: "css",
+            path: testInfo.outputPath("environment-mobile-runtime.png"),
+        });
 
         expect(pageErrors.map((error) => error.message)).toEqual([]);
     });

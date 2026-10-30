@@ -82,7 +82,8 @@ test.describe("Mobile Viewport (390x844)", () => {
             .locator('[data-testid="mcp-config-textarea"]')
             .waitFor({ state: "visible", timeout: 10000 });
         await assertNoHorizontalOverflow(page);
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: test.info().outputPath("mobile-settings-config.png"),
             fullPage: true,
         });

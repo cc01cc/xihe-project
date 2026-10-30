@@ -167,7 +167,8 @@ test.describe("@host PLAN-0352 session delete closes SSE", () => {
             .toBe(true);
         await expectStableCount(() => eventsFor(trace, sessionId).length, 1, 2000);
         expect(trace.consoleLines.filter((line) => line.includes("chat_sse_error"))).toEqual([]);
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: path.join(EVIDENCE_DIR, "v5-1-active-delete.png"),
             fullPage: false,
         });
@@ -224,7 +225,8 @@ test.describe("@host PLAN-0352 session delete closes SSE", () => {
         expect(reconnects.length).toBe(1);
         await expect(page.getByTestId("chat-send-button")).toBeVisible({ timeout: 5000 });
         await expect(page.getByTestId("chat-stop-button")).toHaveCount(0);
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: path.join(EVIDENCE_DIR, "v5-2-passive-close.png"),
             fullPage: false,
         });

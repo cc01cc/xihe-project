@@ -105,7 +105,8 @@ test.describe("@host PLAN-0504 — UI profile reaches the Agent run payload", ()
             }),
         );
         await expect(page.getByText(/默认 LLM 配置已保存/)).toBeVisible({ timeout: 10000 });
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: test.info().outputPath("config-run-effective-saved.png"),
             fullPage: true,
         });
@@ -157,7 +158,8 @@ test.describe("@host PLAN-0504 — UI profile reaches the Agent run payload", ()
         };
         expect(payload.provider).toBe("openai");
         expect(payload.model).toBe(uniqueModel);
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: test.info().outputPath("config-run-effective-applied.png"),
             fullPage: true,
         });

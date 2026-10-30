@@ -365,7 +365,10 @@ test.describe.serial("@host PLAN-0416 context reliability", () => {
                 await expect(
                     page.getByText("context-wire-confirmed", { exact: true }),
                 ).toBeVisible();
-                await page.screenshot({ scale: "css", path: test.info().outputPath("disabled-persisted.png") });
+                await page.screenshot({
+                    scale: "css",
+                    path: test.info().outputPath("disabled-persisted.png"),
+                });
             } finally {
                 await closeProvider(fixture.provider);
             }
@@ -383,7 +386,10 @@ test.describe.serial("@host PLAN-0416 context reliability", () => {
             await expect(page.getByText(/RAG_PROFILE_UNAVAILABLE/).first()).toBeVisible();
             await expectPersistedRun(request, fixture, sessionId, "failed");
             expect(fixture.observed).toHaveLength(0);
-            await page.screenshot({ scale: "css", path: test.info().outputPath("rag-unavailable.png") });
+            await page.screenshot({
+                scale: "css",
+                path: test.info().outputPath("rag-unavailable.png"),
+            });
         } finally {
             await closeProvider(fixture.provider);
         }
@@ -403,7 +409,10 @@ test.describe.serial("@host PLAN-0416 context reliability", () => {
             });
             await expectPersistedRun(request, fixture, sessionId, "failed");
             expect(fixture.observed).toHaveLength(0);
-            await page.screenshot({ scale: "css", path: test.info().outputPath("rag-query-failed.png") });
+            await page.screenshot({
+                scale: "css",
+                path: test.info().outputPath("rag-query-failed.png"),
+            });
         } finally {
             await closeProvider(fixture.provider);
         }
@@ -445,7 +454,10 @@ test.describe.serial("@host PLAN-0416 context reliability", () => {
             await expect(page.getByText(/BASELINE_UNAUTHORIZED/).first()).toBeVisible();
             await expectPersistedRun(request, fixture, sessionId, "failed");
             expect(fixture.observed).toHaveLength(0);
-            await page.screenshot({ scale: "css", path: test.info().outputPath("baseline-unauthorized.png") });
+            await page.screenshot({
+                scale: "css",
+                path: test.info().outputPath("baseline-unauthorized.png"),
+            });
         } finally {
             await closeProvider(fixture.provider);
         }
@@ -516,7 +528,8 @@ test.describe.serial("@host PLAN-0416 context reliability", () => {
             expect(fixture.observed).toHaveLength(1);
             const secondWireBody = JSON.stringify(fixture.observed[0]);
             expect(secondWireBody).toContain(secondBaseline);
-            await page.screenshot({ scale: "css",
+            await page.screenshot({
+                scale: "css",
                 path: test.info().outputPath("security-second-principal.png"),
             });
 
@@ -687,7 +700,10 @@ test.describe.serial("@host PLAN-0416 context reliability", () => {
             expect(messages[1].role).toBe("user");
             expect(messages[1].content).toContain(marker);
             await expectPersistedRun(request, fixture, populatedSession, "succeeded");
-            await page.screenshot({ scale: "css", path: test.info().outputPath("rag-injected.png") });
+            await page.screenshot({
+                scale: "css",
+                path: test.info().outputPath("rag-injected.png"),
+            });
 
             // Same Workspace/owner/model/dimension, different connection: no adoption.
             await configureRealEmbedding(request, fixture);
@@ -707,7 +723,10 @@ test.describe.serial("@host PLAN-0416 context reliability", () => {
             await expect(page.getByText("context-wire-confirmed", { exact: true })).toBeVisible();
             expect(fixture.observed[0].messages).toContainEqual({ role: "user", content: "rag:" });
             await expectPersistedRun(request, fixture, isolatedSession, "succeeded");
-            await page.screenshot({ scale: "css", path: test.info().outputPath("rag-isolated-connection.png") });
+            await page.screenshot({
+                scale: "css",
+                path: test.info().outputPath("rag-isolated-connection.png"),
+            });
         } finally {
             await closeProvider(fixture.provider);
         }

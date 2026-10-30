@@ -193,7 +193,8 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
         await expect(page.getByTestId("config-domain-note-llm-provider")).toContainText(
             directoryRevision,
         );
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: test.info().outputPath("plan0504-instance-drift.png"),
             fullPage: true,
         });
@@ -231,7 +232,8 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
         await expect(page.getByTestId("llm-profile-connection-drift")).toBeVisible({
             timeout: 15000,
         });
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: test.info().outputPath("plan0504-instance-drift-mobile.png"),
             fullPage: true,
         });
@@ -295,7 +297,8 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
             .evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value));
         expect(optionValues).toEqual(["", "fake-openai", "__custom__"]);
         await modelSelect.selectOption("fake-openai");
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: test.info().outputPath("plan0504-user-candidates.png"),
             fullPage: true,
         });
@@ -424,7 +427,8 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
         await expect(page.getByTestId("provider-orphan-bindings")).toContainText(
             "已绑定但当前不可用",
         );
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: test.info().outputPath("plan0504-orphan-bindings.png"),
             fullPage: true,
         });

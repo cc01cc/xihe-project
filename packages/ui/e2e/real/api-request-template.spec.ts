@@ -194,7 +194,8 @@ for (const wire of cases) {
                 expect((await saved).status()).toBe(200);
                 await page.reload();
                 await expect(panel).toContainText(templateName);
-                await panel.screenshot({ scale: "css",
+                await panel.screenshot({
+                    scale: "css",
                     path: test.info().outputPath("template-editor-published.png"),
                     animations: "disabled",
                 });
@@ -246,7 +247,8 @@ for (const wire of cases) {
                 await hub.getByTestId(`provider-connection-${wire.providerId}`).click();
                 await expect(defaultSelect).toHaveValue(refKey);
                 await expect(modelSelect).toHaveValue("");
-                await hub.screenshot({ scale: "css",
+                await hub.screenshot({
+                    scale: "css",
                     path: test.info().outputPath("template-bindings-persisted.png"),
                     animations: "disabled",
                 });
@@ -291,7 +293,8 @@ for (const wire of cases) {
                 await expect(
                     page.getByText("template-wire-confirmed", { exact: true }),
                 ).toBeVisible();
-                await page.screenshot({ scale: "css",
+                await page.screenshot({
+                    scale: "css",
                     path: test.info().outputPath("template-wire-desktop.png"),
                     fullPage: true,
                     animations: "disabled",
@@ -302,7 +305,8 @@ for (const wire of cases) {
                 await expect(
                     page.getByText("template-wire-confirmed", { exact: true }),
                 ).toBeVisible();
-                await page.screenshot({ scale: "css",
+                await page.screenshot({
+                    scale: "css",
                     path: test.info().outputPath("template-wire-mobile.png"),
                     fullPage: true,
                     animations: "disabled",

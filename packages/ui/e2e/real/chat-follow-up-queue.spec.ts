@@ -329,7 +329,8 @@ test("@host Follow-up is durably admitted and dispatched after parent approval",
         "data-status",
         "admitted",
     );
-    await page.screenshot({ scale: "css",
+    await page.screenshot({
+        scale: "css",
         path: test.info().outputPath("follow-up-admitted-queue-desktop-1920x1080.png"),
     });
     await desktopReopen.click();
@@ -341,7 +342,8 @@ test("@host Follow-up is durably admitted and dispatched after parent approval",
     });
     await expect(approval).toBeVisible();
     await page.mouse.move(0, 0);
-    await page.screenshot({ scale: "css",
+    await page.screenshot({
+        scale: "css",
         path: test.info().outputPath("follow-up-child-admitted-desktop-1920x1080.png"),
     });
     const admittedMessagesResponse = await request.get(
@@ -451,7 +453,8 @@ test("@host Follow-up queue stays durable and reachable on a mobile viewport", a
     await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, { timeout: 10_000 });
     // Clear hover state so no tooltip overlays the composer in the evidence shot.
     await page.mouse.move(0, 0);
-    await page.screenshot({ scale: "css",
+    await page.screenshot({
+        scale: "css",
         path: test.info().outputPath("follow-up-queued-mobile-390x844.png"),
     });
 
@@ -513,7 +516,8 @@ test("@host Follow-up queue stays durable and reachable on a mobile viewport", a
         "data-status",
         "admitted",
     );
-    await page.screenshot({ scale: "css",
+    await page.screenshot({
+        scale: "css",
         path: test.info().outputPath("follow-up-admitted-queue-mobile-390x844.png"),
     });
     await mobileReopen.click();
@@ -524,7 +528,8 @@ test("@host Follow-up queue stays durable and reachable on a mobile viewport", a
         timeout: 5_000,
     });
     await expect(approval).toBeVisible();
-    await page.screenshot({ scale: "css",
+    await page.screenshot({
+        scale: "css",
         path: test.info().outputPath("follow-up-child-admitted-mobile-390x844.png"),
     });
     await approval.locator('[data-testid="approval-approve"]').click();

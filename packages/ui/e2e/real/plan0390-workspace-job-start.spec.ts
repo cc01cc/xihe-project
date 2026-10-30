@@ -156,7 +156,8 @@ test.describe("@host PLAN-0390 workspace job start", () => {
         await expect(page.locator('[data-testid="workspace-job-start-hint"]')).toContainText(
             "CONTAINER_JOBS_SERVED_BY_DOCKER",
         );
-        await page.screenshot({ scale: "css",
+        await page.screenshot({
+            scale: "css",
             path: path.join(EVIDENCE_DIR, "workspace-job-list.png"),
             fullPage: false,
         });
