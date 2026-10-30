@@ -193,7 +193,13 @@ const messages = {
             agentManagementDescription:
                 "创建 Agent principal，并管理其在此工作区的权限上限。创建与绑定分别授权。",
             createAgentPrincipal: "创建 Agent",
-            agentCreatePermissionNote: "需要 CREATE_ACCOUNT；创建本身不会自动绑定到工作区。",
+            agentCreatePermissionNote:
+                "需要 CREATE_ACCOUNT；创建本身不会自动绑定到工作区。无权限时请联系管理员在「设置 → Principal 授权」授予。",
+            agentCreateForbidden:
+                "缺少 CREATE_ACCOUNT 权限：请让管理员在「设置 → Principal 授权」为你的账号开启后重试。",
+            agentBindForbidden:
+                "缺少 MANAGE_WORKSPACE_AGENTS 权限：请让管理员在「设置 → Principal 授权」授予该工作区后重试。",
+            agentGrantPanelLink: "打开 Principal 授权",
             agentName: "Agent 名称",
             agentTemplateChoice: "模板快照",
             agentTemplateLoadFailed: "加载可见 Agent 模板失败",
@@ -1330,6 +1336,44 @@ const messages = {
             configSourceOverridable: "可被覆盖",
             configSourceInstanceOnly: "仅 instance",
             configLockNav: "配置锁定",
+            principalGrantsNav: "Principal 授权",
+            principalGrantsTitle: "Principal 授权",
+            principalGrantsSubtitle:
+                "为指定账号授予或收回 CREATE_ACCOUNT 与 MANAGE_WORKSPACE_AGENTS；写入只影响该账号的 direct 授权，不改默认 deny。",
+            principalGrantsForbiddenTitle: "需要管理员权限",
+            principalGrantsForbiddenBody: "该页面仅实例管理员可访问。",
+            principalGrantsUsername: "目标账号用户名",
+            principalGrantsUsernamePlaceholder: "输入用户名（精确匹配，区分大小写）",
+            principalGrantsUsernameRequired: "请先输入目标账号用户名。",
+            principalGrantsLoad: "读取授权",
+            principalGrantsLoading: "读取中…",
+            principalGrantsTarget: "当前目标：{username}",
+            principalGrantsCreateAccount: "CREATE_ACCOUNT（创建 Agent principal）",
+            principalGrantsCreateAccountHint:
+                "实例级权限，资源固定为 *；撤销后该账号立即无法创建 principal。",
+            principalGrantsManageAgents: "MANAGE_WORKSPACE_AGENTS（绑定 Agent 到工作区）",
+            principalGrantsManageAgentsHint:
+                "按工作区授予，资源必须是具体 workspace UUID；不支持 *。",
+            principalGrantsNoWorkspace: "尚未授予任何工作区。",
+            principalGrantsRemoveWorkspace: "移除",
+            principalGrantsWorkspacePlaceholder: "workspace UUID（可从下拉候选选择）",
+            principalGrantsAddWorkspace: "添加工作区",
+            principalGrantsWorkspaceRequired: "请先输入要授予的工作区 UUID。",
+            principalGrantsWorkspaceInvalid: "工作区 UUID 格式不正确。",
+            principalGrantsSave: "保存授权",
+            principalGrantsSaving: "保存中…",
+            principalGrantsSavedChanged: "授权已更新。",
+            principalGrantsSavedUnchanged: "没有实际变更（幂等重放，未新增审计）。",
+            principalGrantsErrorUserNotFound: "找不到该用户名对应的账号。",
+            principalGrantsErrorForbidden: "没有权限执行该操作（需要实例管理员）。",
+            principalGrantsErrorUnmanageable:
+                "该 action 不能在此页面授予（仅 CREATE_ACCOUNT / MANAGE_WORKSPACE_AGENTS）。",
+            principalGrantsErrorResource:
+                "资源不合法：CREATE_ACCOUNT 只能是 *，MANAGE_WORKSPACE_AGENTS 需要已存在的 workspace UUID。",
+            principalGrantsErrorConflict: "该账号授权刚被并发修改，请重新读取后再保存。",
+            principalGrantsErrorTimeout: "服务繁忙（锁等待超时），请稍后重试。",
+            principalGrantsErrorInvalid: "请求不合法，请检查填写内容。",
+            principalGrantsErrorGeneric: "操作失败，请稍后重试或查看服务端日志。",
             configLockTitle: "配置锁定",
             configLockSubtitle:
                 "锁定后 workspace 与 user 层不能再覆盖该键；顺序 env > 管理员锁定 > workspace > user > instance > code default。",
@@ -1965,7 +2009,12 @@ const messages = {
                 "Create Agent principals and manage their permission caps in this Workspace. Creation and binding require separate grants.",
             createAgentPrincipal: "Create Agent",
             agentCreatePermissionNote:
-                "Requires CREATE_ACCOUNT. Creation does not bind the principal to this Workspace.",
+                "Requires CREATE_ACCOUNT. Creation does not bind the principal to this Workspace. Without it, ask an administrator to grant it under Settings → Principal grants.",
+            agentCreateForbidden:
+                "CREATE_ACCOUNT is required: ask an administrator to enable it for your account under Settings → Principal grants, then retry.",
+            agentBindForbidden:
+                "MANAGE_WORKSPACE_AGENTS is required: ask an administrator to grant this workspace under Settings → Principal grants, then retry.",
+            agentGrantPanelLink: "Open principal grants",
             agentName: "Agent name",
             agentTemplateChoice: "Template snapshot",
             agentTemplateLoadFailed: "Failed to load visible Agent templates",
@@ -3167,6 +3216,46 @@ const messages = {
             configSourceOverridable: "Overridable",
             configSourceInstanceOnly: "Instance only",
             configLockNav: "Config locks",
+            principalGrantsNav: "Principal grants",
+            principalGrantsTitle: "Principal grants",
+            principalGrantsSubtitle:
+                "Grant or revoke CREATE_ACCOUNT and MANAGE_WORKSPACE_AGENTS for one account; only that account's direct grant changes, default deny is untouched.",
+            principalGrantsForbiddenTitle: "Administrator only",
+            principalGrantsForbiddenBody: "This page is available to instance administrators only.",
+            principalGrantsUsername: "Target username",
+            principalGrantsUsernamePlaceholder: "Enter a username (exact match, case-sensitive)",
+            principalGrantsUsernameRequired: "Enter the target username first.",
+            principalGrantsLoad: "Load grants",
+            principalGrantsLoading: "Loading…",
+            principalGrantsTarget: "Target: {username}",
+            principalGrantsCreateAccount: "CREATE_ACCOUNT (create Agent principals)",
+            principalGrantsCreateAccountHint:
+                "Instance-wide, resource is always *; revoking blocks principal creation immediately.",
+            principalGrantsManageAgents: "MANAGE_WORKSPACE_AGENTS (bind Agents to workspaces)",
+            principalGrantsManageAgentsHint:
+                "Granted per workspace; the resource must be a concrete workspace UUID (* is rejected).",
+            principalGrantsNoWorkspace: "No workspace granted yet.",
+            principalGrantsRemoveWorkspace: "Remove",
+            principalGrantsWorkspacePlaceholder: "workspace UUID (or pick a suggestion)",
+            principalGrantsAddWorkspace: "Add workspace",
+            principalGrantsWorkspaceRequired: "Enter the workspace UUID to grant first.",
+            principalGrantsWorkspaceInvalid: "That is not a valid workspace UUID.",
+            principalGrantsSave: "Save grants",
+            principalGrantsSaving: "Saving…",
+            principalGrantsSavedChanged: "Grants updated.",
+            principalGrantsSavedUnchanged: "Nothing changed (idempotent replay, no new audit row).",
+            principalGrantsErrorUserNotFound: "No account matches that username.",
+            principalGrantsErrorForbidden: "Not allowed (instance administrator required).",
+            principalGrantsErrorUnmanageable:
+                "This action cannot be granted here (only CREATE_ACCOUNT / MANAGE_WORKSPACE_AGENTS).",
+            principalGrantsErrorResource:
+                "Invalid resource: CREATE_ACCOUNT takes *, MANAGE_WORKSPACE_AGENTS needs an existing workspace UUID.",
+            principalGrantsErrorConflict:
+                "These grants were just changed concurrently; reload and retry.",
+            principalGrantsErrorTimeout: "Service busy (lock wait timed out); retry shortly.",
+            principalGrantsErrorInvalid: "Invalid request; check the values.",
+            principalGrantsErrorGeneric:
+                "The operation failed; retry later or check the server logs.",
             configLockTitle: "Config locks",
             configLockSubtitle:
                 "A locked key cannot be overridden by the workspace or user layer; order: env > admin lock > workspace > user > instance > code default.",

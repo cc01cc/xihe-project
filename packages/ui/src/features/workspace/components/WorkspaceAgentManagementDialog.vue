@@ -111,6 +111,18 @@ function setPermissionResource(actionClass: string, resource: string) {
     );
 }
 
+/**
+ * PLAN-0585 M2 / F-02: a missing grant must read as an actionable localized hint that points at
+ * the admin grant panel, never as the CP's raw English detail (`CREATE_ACCOUNT permission is
+ * required`).
+ */
+function agentErrorMessage(cause: unknown, forbiddenKey: string, fallbackKey: string): string {
+    if (cause instanceof ApiError && cause.problem.code === "FORBIDDEN") {
+        return t(forbiddenKey);
+    }
+    return t(fallbackKey);
+}
+
 async function createPrincipal() {
     if (!name.value.trim() || saving.value || createdPrincipal.value) return;
     saving.value = true;
@@ -125,7 +137,11 @@ async function createPrincipal() {
         permissions.value = [];
         status.value = t("workspace.agentPrincipalCreated");
     } catch (cause) {
-        error.value = cause instanceof ApiError ? cause.message : t("workspace.agentCreateFailed");
+        error.value = agentErrorMessage(
+            cause,
+            "workspace.agentCreateForbidden",
+            "workspace.agentCreateFailed",
+        );
     } finally {
         saving.value = false;
     }
@@ -147,7 +163,11 @@ async function bindCreatedPrincipal() {
         await loadAgents();
         status.value = t("workspace.agentBound");
     } catch (cause) {
-        error.value = cause instanceof ApiError ? cause.message : t("workspace.agentBindFailed");
+        error.value = agentErrorMessage(
+            cause,
+            "workspace.agentBindForbidden",
+            "workspace.agentBindFailed",
+        );
     } finally {
         saving.value = false;
     }
@@ -215,6 +235,16 @@ async function unbind(agent: WorkspaceAgentBinding) {
                     <p class="mt-1 text-xs text-muted-foreground">
                         {{ t("workspace.agentCreatePermissionNote") }}
                     </p>
+                    <!-- PLAN-0585 M2 / F-02: admins get a direct path to the grant panel instead of
+                         a dead end; non-admins keep the actionable text above. -->
+                    <router-link
+                        v-if="authStore.isAdmin"
+                        to="/settings/principal-grants"
+                        data-testid="agent-grant-panel-link"
+                        class="mt-1 inline-block text-xs text-primary underline"
+                    >
+                        {{ t("workspace.agentGrantPanelLink") }}
+                    </router-link>
                 </div>
                 <label class="block space-y-1 text-sm">
                     <span>{{ t("workspace.agentName") }}</span>
