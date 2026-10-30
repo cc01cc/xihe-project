@@ -303,8 +303,59 @@ XIHE_VERIFY_PASSWORD=<admin 密码> mise run xihe -- verify \
 - CP 静态检查：`mise run lint:cp` 对 `checkstyle.xml` **全部规则**按 error 阻断（基线 0 违规；规则与项目约定对齐后风格告警已清零，详见 PLAN-0458 evidence），不得回退为 warning 或全局抑制。
 - Agent 静态检查：`mise run lint:agent` 的 mypy 对 `src/` 真实阻断（`pyproject.toml` 已移除全局 `ignore_errors`，当前 0 error）；发现类型错误必须修复，不得以全局/整模块 ignore 换取绿灯。
 - 集成：`mise run test:integration`（T2；T3 需 Docker）。
-- E2E：`mise run test:e2e:compose`（**已冻结 2026-10-07，mise 已注释，勿用**；旧名 `test:e2e` 一并冻结）；`mise run test:e2e:host`（需先 `dev:host`，每轮隔离 DB/host root，成功/失败/中断必 teardown）。
+- E2E：`mise run test:e2e:compose`（**已冻结 2026-10-07，mise 已注释，勿用**；旧名 `test:e2e` 一并冻结）；`mise run test:e2e:host` 由 `scripts/e2e-host.mjs` 自举每轮隔离 PostgreSQL 与 CP/Agent/Runtime/UI host 服务、独立 DB/host root，并在成功/失败/中断时收尾。自举 E2E 前先停止日常 `dev:host`，避免 Runtime 可执行文件被占用；复用栈需显式使用 `--persistent` / `XIHE_E2E_EXTERNAL_SERVER=1`。PLAN-0584 Native Image lane 用 `--jar-mode=native`，不会静默退回 Jar/Maven。
+
 - 全量：`mise run validate:full`。策略详见 DEV-020/021/022/023。
+
+### CP GraalVM Native Image（实验性，Windows x64）
+
+当前兼容性工作只针对 Windows x64，工具链选择 GraalVM Community Edition 25.4.4.1.1（JDK 25.0.4.1.1）；Linux/macOS 未验证。该产物尚未成为受支持的发布产物；日常 `dev:cp` / `mvn spring-boot:run` 仍使用普通 JVM。
+
+在 PowerShell 中只对当前进程设置 portable GraalVM 环境（不要持久修改系统 Java 配置）：
+
+```powershell
+$env:JAVA_HOME = '<portable GraalVM root>'
+$env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
+java -version
+native-image.cmd --version
+mvn -version
+```
+
+Spring Boot `process-aot` 会启动 CP application context；Hibernate 需要 JDBC metadata，因此编译时必须连接每轮独立的临时 PostgreSQL，不要使用日常开发数据库。Maven `native-aot` profile 会激活同名 Spring profile。`application-native-aot.properties` 禁用 AOT 的 `.env` 文件加载，只允许每轮独立的 `XIHE_CP_DATASOURCE_URL` 或本轮 `XIHE_PG_PORT`。profile-only `NativeAotDataSourceConfiguration` 根据显式 URL 创建 primary Hikari DataSource；URL 缺失时只使用本轮端口上的隔离 bootstrap DB `xihe`，两者都缺失即失败，避免嵌入式 H2 或日常端口 fallback。它还启用 `spring.aot.jpa.repositories.use-entitymanager=true`，使 Spring Data JPA 使用真实 `EntityManagerFactory`。native host runner 使用同一 Spring profile；普通 JVM/H2 test 不受影响。数据库凭证仅通过进程环境传递。先在 PowerShell 设置：
+
+```powershell
+$env:XIHE_CP_DATASOURCE_URL = 'jdbc:postgresql://127.0.0.1:<port>/<throwaway-db>'
+$env:XIHE_CP_DATASOURCE_USERNAME = 'xihe'
+$env:XIHE_CP_DATASOURCE_PASSWORD = '<ephemeral password>'
+$env:XIHE_CHANNEL_ENABLED = 'true'
+$env:XIHE_LOAD_DOTENV = '0'
+```
+
+Boot `process-aot` 默认绑定 `prepare-package`；Native Build Tools 的 `native:compile` 会 fork `package` lifecycle，因此这里显式先执行 lifecycle phase，再调用 `native:compile-no-fork`，确保 AOT 与 Native Image 编译共用同一 session/profile。
+
+在 `packages/control-plane` 目录执行：
+
+```powershell
+mvn -Pnative,native-build,native-aot -DskipTests prepare-package native:compile-no-fork
+```
+
+Windows 原生产物为 `packages/control-plane/target/control-plane.exe`。隔离 host lane 使用 `node scripts/e2e-host.mjs --jar-mode=native --batch=native-compat`；该模式缺失/过期时失败关闭，自动启用 Runtime WebSocket channel，并为每轮创建独立数据库与 host root。
+
+编译前先记录可用 RAM、目标盘空间、heap/并行度上限、保留余量和总 deadline。GraalVM 在可用 RAM 低于 8 GiB 时会改变 Native Image builder 默认模式，实际峰值 RSS 也会高于 Java heap 上限。资源 envelope 未冻结前不要启动原生编译。详细命令与结果见 PLAN-0584 runbook。
+
+有界 Native Test 组件覆盖使用 `packages/control-plane` 的 opt-in probe-only profile：
+
+```powershell
+mvn -PnativeTest,native-build,native-test-probe -Dtest=NativeImageCompatibilityProbeTest test
+```
+
+该 profile 只编译 probe 测试类，并让 Spring Test AOT 与 Native Build Tools 共用其输出目录。Windows native test image 中四项测试通过，覆盖 JWT、AuthResponse JSON、ConfigDomainSchema 与 PDFBox。已测 GraalVM native image 不支持 platform MBean 路径，因此 `native-aot` profile 排除 `TomcatMetricsAutoConfiguration`；普通 JVM metrics 保持启用。
+
+`native-compat` host lane 已于 2026-10-31 在隔离栈上验收通过：`node scripts/e2e-host.mjs --jar-mode=native --batch=native-compat` 为 2 passed / 1 skipped / 0 failed（`journey-a` + `plan0584-native-config-schema`），覆盖 provider connection、CP→Agent chat、`write_file` 审批、SSE 终态、消息读回、checkpoint capture、Runtime MCP 与 channel handshake（`channel_connected` + `heartbeat: suppressed`），teardown 后容器/卷/网络/Sandbox 反查为 0。组件探针仍是组件级证据，不替代该 host lane。
+
+Native metadata 的维护约定：`NativeAotRuntimeHints` 中的 record hint 由 GraalVM tracing agent 在 JVM host lane 实测采集（`plans/PLAN-0584-xh-cp-graalvm-native-image/evidence/agent-metadata-r5`），只注册 `INVOKE_PUBLIC_METHODS` + `INVOKE_PUBLIC_CONSTRUCTORS`，集中在 `// BEGIN agent-captured records … // END` 区块内，禁止改成包级 `TypeReference` 通配或 all-declared；请求侧 record 属防御性注册，后续 host run 证明冗余即可裁剪。采集方法注意：runner 以强制终止结束服务时 agent 不会落盘元数据，需要优雅退出（`/actuator/shutdown`）并配合 `spring.lifecycle.timeout-per-shutdown-phase=1s`。
+
+Native 运行期的探针口径（运维注意）：native CP 的 `/actuator/health` 可匿名访问，但 **`/ready` 需要鉴权**（匿名请求返回 401），因此不要用匿名 `/ready` 探针判断 readiness 失败；如需 readiness 探针，请带本轮 token。
 
 ## 6. Rust 构建缓存策略
 
