@@ -1,6 +1,10 @@
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
+import {
+    createSessionWithPrincipal,
+    provisionWorkspaceAgentPrincipal,
+} from "./helpers/agent-principal";
 import { generateE2EPassword } from "./helpers/password";
-import { getRootBranchId } from "./helpers/journey";
+import { ensureChatBinding, getRootBranchId } from "./helpers/journey";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
@@ -61,7 +65,7 @@ async function messages(request: APIRequestContext, auth: Auth, id: string) {
     return response.ok() ? await response.json() : [];
 }
 
-async function openChat(page: Page, auth: Auth) {
+async function openChat(page: Page, auth: Auth, sessionId = "") {
     await page.addInitScript(
         ({ token, workspaceId }) => {
             localStorage.setItem("xihe-token", token);
@@ -73,7 +77,11 @@ async function openChat(page: Page, auth: Auth) {
         },
         { token: auth.accessToken, workspaceId: auth.workspaceId },
     );
-    await page.goto("/workspace", { waitUntil: "load" });
+    // BL-148: the real lane has no auto-created session, so open the Chat route
+    // for the Session the spec provisioned explicitly.
+    await page.goto(sessionId ? `/workspace/${auth.workspaceId}/chat/${sessionId}` : "/workspace", {
+        waitUntil: "load",
+    });
     await expect(page.locator("textarea")).toBeVisible({ timeout: 10000 });
 }
 
@@ -105,7 +113,8 @@ test.describe("PLAN-247 Chat availability @host", () => {
                 .poll(async () => (await messages(request, auth, id)).length, { timeout: 5000 })
                 .toBe(0);
             await expectNoHorizontalOverflow(page);
-            await page.screenshot({ scale: "css",
+            await page.screenshot({
+                scale: "css",
                 path: test.info().outputPath("PLAN-247-host-no-credentials.png"),
                 fullPage: true,
             });
@@ -133,7 +142,8 @@ test.describe("PLAN-247 Chat availability @host", () => {
                 false,
             );
             await expectNoHorizontalOverflow(page);
-            await page.screenshot({ scale: "css",
+            await page.screenshot({
+                scale: "css",
                 path: test.info().outputPath("PLAN-247-host-credential-error.png"),
                 fullPage: true,
             });
@@ -204,7 +214,8 @@ test.describe("PLAN-247 Chat availability @host", () => {
             await expect(page.getByText(/Thinking/)).not.toBeVisible({ timeout: 30000 });
             expect(mcpRequests).toEqual([]);
             await expectNoHorizontalOverflow(page);
-            await page.screenshot({ scale: "css",
+            await page.screenshot({
+                scale: "css",
                 path: test.info().outputPath("PLAN-247-host-fake-success.png"),
                 fullPage: true,
             });
@@ -223,18 +234,30 @@ test.describe("PLAN-247 Chat availability @host", () => {
             request,
         }) => {
             test.setTimeout(180000);
-            // BL-148 (real-lane environment prerequisite): in the real lane the
-            // runner provides only env-keyed identity (XIHE_LLM_PROVIDER=xiaomi
-            // + key); PLAN-0439 requires chat to go through a ProviderConnection,
-            // so the workspace composer is not rendered and `textarea` never
-            // appears (mock lane is green). Restore after the real-lane fixture
-            // creates a chat connection with the same key.
+            // BL-148: the real lane has no fake-LLM fixture and no auto-created
+            // Session. Provision the Agent principal + Session explicitly, open
+            // the Chat route and bind the runner-provided real connection. The
+            // key stays in the node test process (ensureChatBinding).
             test.skip(
-                process.env.XIHE_E2E_LLM_MODE === "real",
-                "BL-148: real lane has no usable ProviderConnection/model identity → composer not rendered (mock lane green)",
+                mode === "real" && !process.env.XIHE_E2E_REAL_KEY,
+                "BL-148: real lane requires the runner-provided provider identity (XIHE_E2E_REAL_KEY)",
             );
             const auth = await register(request, "real-xiaomi");
-            await openChat(page, auth);
+            const principalId = await provisionWorkspaceAgentPrincipal(
+                request,
+                { accessToken: auth.accessToken, workspaceId: auth.workspaceId },
+                { name: "Real Xiaomi Agent" },
+            );
+            const chatSessionId = await createSessionWithPrincipal(
+                request,
+                { accessToken: auth.accessToken, workspaceId: auth.workspaceId },
+                { principalId, title: "Real Xiaomi chat" },
+            );
+            await openChat(page, auth, chatSessionId);
+            await ensureChatBinding(page, chatSessionId);
+            // Re-enter the route so the store refetches the now-bound session.
+            await page.reload({ waitUntil: "load" });
+            await expect(page.locator("textarea")).toBeVisible({ timeout: 30000 });
 
             const trigger = page.getByTestId("model-popover-trigger");
             await expect(trigger).toBeVisible();
@@ -286,7 +309,8 @@ test.describe("PLAN-247 Chat availability @host", () => {
                 .toBeGreaterThan(0);
             await expect(page.getByText(/Thinking/)).not.toBeVisible({ timeout: 60000 });
             await expectNoHorizontalOverflow(page);
-            await page.screenshot({ scale: "css",
+            await page.screenshot({
+                scale: "css",
                 path: test.info().outputPath("PLAN-247-host-real-xiaomi.png"),
                 fullPage: true,
             });
@@ -317,7 +341,8 @@ test.describe("PLAN-247 Chat availability @host", () => {
                 )
                 .toBe(true);
             await expectNoHorizontalOverflow(page);
-            await page.screenshot({ scale: "css",
+            await page.screenshot({
+                scale: "css",
                 path: test.info().outputPath("PLAN-247-host-run-ambiguous.png"),
                 fullPage: true,
             });
