@@ -113,6 +113,12 @@ const router = createRouter({
                     name: "settings-audit",
                     component: () => import("../views/settings/AuditView.vue"),
                 },
+                {
+                    // PLAN-0585 M2: ADMIN-only principal grant surface (nav item is ADMIN-gated too).
+                    path: "principal-grants",
+                    name: "settings-principal-grants",
+                    component: () => import("../views/settings/PrincipalGrantsView.vue"),
+                },
             ],
         },
         {
