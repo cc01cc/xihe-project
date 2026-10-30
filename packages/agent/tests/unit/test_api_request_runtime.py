@@ -1123,6 +1123,21 @@ async def test_capability_gate_rejects_before_transport_attempt(type_id):
     assert all(event != STAGE_ATTEMPT_STARTED for event, _payload in events)
 
 
+async def test_missing_tools_supported_logs_warning_to_loguru_sink():
+    """PLAN-0591 M2 P2: loguru sink capture (caplog does not see loguru)."""
+    from loguru import logger
+
+    messages = []
+    sink_id = logger.add(lambda message: messages.append(str(message)), level="WARNING")
+    try:
+        missing = grant(TYPES[0], "http://fixture.invalid/v1")
+        missing.pop("toolsSupported")
+        ApiSender(chat_type(TYPES[0], 1), missing, "request-1", 3)
+    finally:
+        logger.remove(sink_id)
+    assert any("toolsSupported" in message for message in messages)
+
+
 def test_missing_tools_supported_defaults_to_unsupported_and_code_passes_through():
     missing = grant(TYPES[0], "http://fixture.invalid/v1")
     missing.pop("toolsSupported")
@@ -1166,9 +1181,9 @@ async def test_provider_400_maps_request_rejected_when_tools_supported():
         assert len(captures) == 1
 
 
-@pytest.mark.parametrize("type_id", [TYPES[0], TYPES[2]])
+@pytest.mark.parametrize("type_id", TYPES)
 async def test_fake_executor_writes_file_not_assistant_text(tmp_path, type_id):
-    """PLAN-0591 T2.3/V2a: supported route executes the tool; the fake executor writes a file."""
+    """PLAN-0591 T2.3/V2a: custom `WriteTool` fake executor writes a file, not assistant text."""
     from unittest.mock import AsyncMock
 
     from xihe_agent.adapters.api_chat_model import native_tools
@@ -1243,6 +1258,11 @@ async def test_capability_matrix_dispatch_or_reject(type_id, tools_supported, wi
             parts = [part async for part in sender.stream(_rendered(type_id, tools))]
             assert parts[-1][2] is not None
             assert len(captures) == 1
+            sent_tools = captures[0][2].get("tools")
+            if with_tools:
+                assert isinstance(sent_tools, list) and len(sent_tools) == 1
+            else:
+                assert not sent_tools
         else:
             with pytest.raises(ApiRequestError, match="LLM_TOOL_ROUTE_UNSUPPORTED"):
                 _ = [part async for part in sender.stream(_rendered(type_id, tools))]
