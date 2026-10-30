@@ -217,14 +217,18 @@ test.describe("@host PLAN-0585 principal grants (M2 UI)", () => {
 
     test.afterAll(async ({ request }) => {
         if (!admin || !target) return;
-        // Keep the shared stack clean: revoke everything this suite may have granted.
-        await patchGrants(request, origin, admin, target.username, {
+        // Keep the shared stack clean: revoke everything this suite may have granted. The status is
+        // logged (no secrets) so evidence can cite that the 0591 M3 lane inherits a clean state.
+        const cleanup = await patchGrants(request, origin, admin, target.username, {
             remove: [
                 { actionClass: CREATE_ACCOUNT, resource: "*" },
                 { actionClass: MANAGE_WORKSPACE_AGENTS, resource: target.workspaceId },
                 { actionClass: MANAGE_WORKSPACE_AGENTS, resource: admin.workspaceId },
             ],
         });
+        console.log(
+            `[plan-0585] afterAll revoke for ${target.username} -> HTTP ${cleanup.status()}`,
+        );
     });
 
     test("admin grants CREATE_ACCOUNT (changed:true, then changed:false, then persists)", async ({
