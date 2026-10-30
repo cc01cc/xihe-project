@@ -16,13 +16,21 @@ import { expectPlatformScreenshot } from "../helpers/visual";
  * Missing contract ⇒ every test skips with an actionable message, so `--list` and the rest of the
  * real lane stay runnable. No `waitForTimeout` anywhere: network assertions use `waitForResponse`.
  *
+ * Fixture pitfalls (first stack-4 run: 5 failures, all spec-assumption, see evidence/m2-browser.md):
+ *   1) seed localStorage["xihe-user"] with the REAL {id,email,name,role}. `stores/auth.ts:58`
+ *      derives isAdmin from user.role, so a role-less seed silently renders every ADMIN surface
+ *      (nav item, grant page, agent-dialog link) as its 403/hidden branch.
+ *   2) never derive a username from the email. CP truncates the derived name to 32 chars and
+ *      de-duplicates with a prefix/suffix (User#defaultUsernameFromEmail, User.java:78-84), so the
+ *      only authority is `GET /api/v1/workspaces/{ws}/members` → match `userId` → `username`.
+ *
  * Item → test mapping:
- *   1 reachability · 3 read+grant · 4 changed:false → grantsCreateAccountThroughTheSettingsPage
- *   2 non-admin isolation                          → nonAdminSeesNoEntryAndForbiddenView
- *   5 workspace atom round trip + local UUID gate   → workspaceScopedAtomRoundTrip
- *   6 real 4xx localized copy                      → realRejectionsRenderLocalizedCopy
- *   7 F-02 agent dialog hint + admin link           → agentDialogShowsGrantHint
- *   8 grant takes effect end to end + en + mobile   → grantTakesEffectAndPageSurvivesEnMobile
+ *   1 reachability · 3 read+grant · 4 changed:false → "admin grants CREATE_ACCOUNT (...)"
+ *   2 non-admin isolation                          → "non-admin sees no nav entry ..."
+ *   5 workspace atom round trip + local UUID gate   → "admin adds and removes a workspace-scoped atom ..."
+ *   6 real 4xx localized copy                      → "real 4xx responses render localized copy ..."
+ *   7 F-02 agent dialog hint + admin link           → "F-02: the agent dialog shows ..."
+ *   8 grant takes effect end to end + en + mobile   → "the grant takes effect end to end ..."
  */
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
@@ -34,6 +42,15 @@ interface AdminSession {
     userId: string;
     username: string;
     workspaceId: string;
+    identity: Identity;
+}
+
+/** The exact shape the UI auth store hydrates from localStorage["xihe-user"]. */
+interface Identity {
+    id: string;
+    email: string;
+    name: string;
+    role: string;
 }
 
 interface RegisteredUser {
@@ -42,6 +59,7 @@ interface RegisteredUser {
     username: string;
     email: string;
     workspaceId: string;
+    identity: Identity;
 }
 
 interface GrantAtom {
@@ -78,13 +96,48 @@ function bearer(token: string): Record<string, string> {
     return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 }
 
+/**
+ * Usernames are NOT derivable from the email: CP truncates the derived name to 32 chars, may add a
+ * `user` prefix and de-duplicates on collision (User#defaultUsernameFromEmail). The member list is
+ * the authoritative source, so every fixture resolves its username through it.
+ */
+async function resolveUsername(
+    request: APIRequestContext,
+    origin: string,
+    workspaceId: string,
+    token: string,
+    userId: string,
+): Promise<string> {
+    const response = await request.get(`${origin}/api/v1/workspaces/${workspaceId}/members`, {
+        headers: bearer(token),
+    });
+    expect(response.status(), `GET members -> ${response.status()} ${await response.text()}`).toBe(
+        200,
+    );
+    const rows = (await response.json()) as Array<{ userId: string; username: string }>;
+    const row = rows.find((candidate) => candidate.userId === userId);
+    expect(row, `member row for ${userId} must exist in workspace ${workspaceId}`).toBeTruthy();
+    return row!.username;
+}
+
 async function loginAdmin(request: APIRequestContext, origin: string): Promise<AdminSession> {
     const token = process.env.XIHE_E2E_ADMIN_TOKEN;
     const configuredWorkspace = process.env.XIHE_E2E_ADMIN_WORKSPACE_ID;
     if (token) {
         const me = await request.get(`${origin}/api/v1/auth/me`, { headers: bearer(token) });
         expect(me.status(), `GET /auth/me -> ${me.status()} ${await me.text()}`).toBe(200);
-        const user = (await me.json()) as { id: string; name?: string; email?: string };
+        const raw = (await me.json()) as {
+            id: string;
+            email?: string;
+            name?: string;
+            role?: string;
+        };
+        const identity: Identity = {
+            id: raw.id,
+            email: raw.email ?? "",
+            name: raw.name ?? "admin",
+            role: raw.role ?? "ADMIN",
+        };
         let workspaceId = configuredWorkspace;
         if (!workspaceId) {
             const list = await request.get(`${origin}/api/v1/workspaces`, {
@@ -99,27 +152,43 @@ async function loginAdmin(request: APIRequestContext, origin: string): Promise<A
         }
         return {
             token,
-            userId: user.id,
-            username: process.env.XIHE_E2E_ADMIN_USERNAME ?? user.name ?? "admin",
+            userId: raw.id,
+            username: await resolveUsername(request, origin, workspaceId, token, raw.id),
             workspaceId,
+            identity,
         };
     }
 
-    const username = process.env.XIHE_E2E_ADMIN_USERNAME ?? process.env.XIHE_E2E_ADMIN_EMAIL ?? "";
+    const identifier =
+        process.env.XIHE_E2E_ADMIN_USERNAME ?? process.env.XIHE_E2E_ADMIN_EMAIL ?? "";
     const login = await request.post(`${origin}/api/v1/auth/login`, {
-        data: { identifier: username, password: process.env.XIHE_E2E_ADMIN_PASSWORD },
+        data: { identifier, password: process.env.XIHE_E2E_ADMIN_PASSWORD },
     });
     expect(login.status(), `POST /auth/login -> ${login.status()} ${await login.text()}`).toBe(200);
     const body = (await login.json()) as {
         accessToken: string;
         workspaceId?: string;
-        user: { id: string; username?: string };
+        user: { id: string; email?: string; name?: string; role?: string };
     };
+    const workspaceId = configuredWorkspace ?? body.workspaceId ?? "";
+    expect(workspaceId, "the admin login must resolve a workspace").not.toBe("");
     return {
         token: body.accessToken,
         userId: body.user.id,
-        username: body.user.username ?? username,
-        workspaceId: configuredWorkspace ?? body.workspaceId ?? "",
+        username: await resolveUsername(
+            request,
+            origin,
+            workspaceId,
+            body.accessToken,
+            body.user.id,
+        ),
+        workspaceId,
+        identity: {
+            id: body.user.id,
+            email: body.user.email ?? "",
+            name: body.user.name ?? "admin",
+            role: body.user.role ?? "ADMIN",
+        },
     };
 }
 
@@ -136,30 +205,41 @@ async function registerUser(
     const body = (await response.json()) as {
         accessToken: string;
         workspaceId: string;
-        user: { id: string; username?: string };
+        user: { id: string; email?: string; name?: string; role?: string };
     };
     return {
         token: body.accessToken,
         userId: body.user.id,
-        username: body.user.username ?? email.split("@")[0].replace(/[^a-z0-9]/g, ""),
+        username: await resolveUsername(
+            request,
+            origin,
+            body.workspaceId,
+            body.accessToken,
+            body.user.id,
+        ),
         email,
         workspaceId: body.workspaceId,
+        identity: {
+            id: body.user.id,
+            email: body.user.email ?? email,
+            name: body.user.name ?? label,
+            role: body.user.role ?? "USER",
+        },
     };
 }
 
 /** Seeds the UI auth/workspace context without driving the login form (PLAN-0560 storage shape). */
 function seedContext(
     page: Page,
-    session: { token: string; workspaceId: string },
+    session: { token: string; workspaceId: string; identity: Identity },
     workspaceRole: string,
 ) {
     page.addInitScript(
-        ({ token, ws, role }) => {
+        ({ token, ws, role, identity }) => {
             localStorage.setItem("xihe-token", token);
-            localStorage.setItem(
-                "xihe-user",
-                JSON.stringify({ id: "bootstrap", email: "bootstrap@test.com", name: "B" }),
-            );
+            // The auth store derives isAdmin from user.role — seeding a role-less user made every
+            // ADMIN-only surface render its 403 view (first stack-4 run, 5 failures).
+            localStorage.setItem("xihe-user", JSON.stringify(identity));
             localStorage.setItem(
                 "xihe-workspace",
                 JSON.stringify({ id: ws, name: "Default Workspace" }),
@@ -174,7 +254,12 @@ function seedContext(
                 }),
             );
         },
-        { token: session.token, ws: session.workspaceId, role: workspaceRole },
+        {
+            token: session.token,
+            ws: session.workspaceId,
+            role: workspaceRole,
+            identity: session.identity,
+        },
     );
 }
 
@@ -208,6 +293,13 @@ test.describe("@host PLAN-0585 principal grants (M2 UI)", () => {
         origin = cpOrigin();
         admin = await loginAdmin(request, origin);
         target = await registerUser(request, origin, "plan0585-grant-target");
+        // Identity summary for the evidence (no tokens/secrets are printed).
+        console.log(
+            `[plan-0585] admin=${admin.username} role=${admin.identity.role} ws=${admin.workspaceId}`,
+        );
+        console.log(
+            `[plan-0585] target=${target.username} role=${target.identity.role} ws=${target.workspaceId}`,
+        );
     });
 
     test.beforeEach(() => {
