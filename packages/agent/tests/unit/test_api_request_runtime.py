@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from xihe_agent.adapters.api_chat_model import ApiChatModel
 from xihe_agent.llm.api_request import ApiRequestError, chat_type, render_request, strict_json, validate_snapshot
 from xihe_agent.llm.api_sender import ApiSender
+from xihe_agent.llm.transport_metrics import STAGE_ATTEMPT_STARTED, TransportMetricsCollector
 
 TYPES = ["openai-chat-completions", "anthropic-messages", "mimo-responses"]
 
@@ -42,7 +43,14 @@ VALUES = {
 
 
 def grant(type_id, base):
-    return {"apiTypeId": type_id, "apiTypeVersion": 1, "operation": "chat", "apiKey": "fixture-only", "baseUrl": base}
+    return {
+        "apiTypeId": type_id,
+        "apiTypeVersion": 1,
+        "operation": "chat",
+        "apiKey": "fixture-only",
+        "baseUrl": base,
+        "toolsSupported": True,
+    }
 
 
 @pytest.mark.parametrize("type_id", TYPES)
@@ -1085,3 +1093,58 @@ async def test_sampling_overrides_absent_keeps_template_body(type_id):
             assert captures[0][2]["max_tokens"] == 64
         else:
             assert "max_tokens" not in captures[0][2]
+
+
+# PLAN-0591 T1.4/T1.5: capability gate (deterministic, loopback recorder).
+def _tool_for(type_id):
+    if type_id == "anthropic-messages":
+        return {"name": "read_file", "description": "d", "input_schema": {"type": "object"}}
+    if type_id == "mimo-responses":
+        return {"type": "function", "name": "read_file", "description": "d", "parameters": {"type": "object"}, "strict": False}
+    return {"type": "function", "function": {"name": "read_file", "description": "d", "parameters": {"type": "object"}}}
+
+
+def _rendered(type_id, tools, stream=False):
+    values = {**VALUES, "tools": tools}
+    return render_request(json.dumps(body(type_id, stream)), chat_type(type_id, 1), values)
+
+
+@pytest.mark.parametrize("type_id", [TYPES[0], TYPES[2]])
+async def test_capability_gate_rejects_before_transport_attempt(type_id):
+    events = []
+    async with recorder(response(type_id, False)) as (base, captures):
+        collector = TransportMetricsCollector(lambda event, payload: events.append((event, payload)))
+        unsupported = {**grant(type_id, base), "toolsSupported": False}
+        sender = ApiSender(chat_type(type_id, 1), unsupported, "request-1", 3, collector=collector)
+        with pytest.raises(ApiRequestError, match="LLM_TOOL_ROUTE_UNSUPPORTED"):
+            _ = [part async for part in sender.stream(_rendered(type_id, [_tool_for(type_id)]))]
+        assert captures == []
+    assert events == []
+    assert all(event != STAGE_ATTEMPT_STARTED for event, _payload in events)
+
+
+def test_missing_tools_supported_defaults_to_unsupported_and_code_passes_through():
+    missing = grant(TYPES[0], "http://fixture.invalid/v1")
+    missing.pop("toolsSupported")
+    no_capability = ApiSender(chat_type(TYPES[0], 1), missing, "request-1", 3)
+    assert no_capability.tools_supported is False
+    assert ApiRequestError("LLM_TOOL_ROUTE_UNSUPPORTED").terminal_code == "LLM_TOOL_ROUTE_UNSUPPORTED"
+
+
+@pytest.mark.parametrize("type_id", [TYPES[0], TYPES[2]])
+async def test_capability_gate_allows_empty_tools_when_unsupported(type_id):
+    async with recorder(response(type_id, False)) as (base, captures):
+        unsupported = {**grant(type_id, base), "toolsSupported": False}
+        sender = ApiSender(chat_type(type_id, 1), unsupported, "request-1", 3)
+        parts = [part async for part in sender.stream(_rendered(type_id, []))]
+        assert parts[-1][2] is not None
+        assert len(captures) == 1
+
+
+async def test_provider_400_maps_request_rejected_when_tools_supported():
+    async with recorder("bad request", status=400) as (base, captures):
+        sender = ApiSender(chat_type(TYPES[0], 1), grant(TYPES[0], base), "request-1", 3)
+        with pytest.raises(ApiRequestError) as exc:
+            _ = [part async for part in sender.stream(_rendered(TYPES[0], [_tool_for(TYPES[0])]))]
+        assert exc.value.code == "LLM_REQUEST_REJECTED"
+        assert len(captures) == 1

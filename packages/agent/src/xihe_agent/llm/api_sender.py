@@ -14,6 +14,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
+from loguru import logger
 
 from xihe_agent.llm.api_request import ApiRequestError, ChatApiType, strict_json, validate_body
 from xihe_agent.llm.transport_metrics import TransportMetricsCollector
@@ -360,6 +361,12 @@ class StreamParser:
         return parse_response(self.response, self.api_type)
 
 
+def tools_non_empty(body: dict[str, Any]) -> bool:
+    """PLAN-0591 I1: rendered `tools` length > 0 (built-in tools included)."""
+    tools = body.get("tools")
+    return isinstance(tools, list) and len(tools) > 0
+
+
 class ApiSender:
     def __init__(
         self,
@@ -373,6 +380,15 @@ class ApiSender:
         self.request_id = request_id
         self.timeout = timeout
         self._collector = collector
+        # PLAN-0591: fail-closed capability gate. Missing key = unsupported.
+        if "toolsSupported" not in grant:
+            logger.warning(
+                "provider lease missing toolsSupported; treating as unsupported provider={} apiType={}@{}",
+                grant.get("provider"),
+                api_type.id,
+                api_type.version,
+            )
+        self.tools_supported = grant.get("toolsSupported") is True
         base = grant.get("baseUrl")
         key = grant.get("apiKey")
         if (
@@ -407,6 +423,11 @@ class ApiSender:
 
     async def stream(self, body: dict[str, Any]) -> AsyncIterator[tuple[str, str, NativeResponse | None]]:
         validate_body(body, self.api_type)
+        # PLAN-0591: capability gate BEFORE the transport attempt opens, so a
+        # rejected request never counts as an outbound attempt and never reaches
+        # the provider.
+        if tools_non_empty(body) and not self.tools_supported:
+            raise ApiRequestError("LLM_TOOL_ROUTE_UNSUPPORTED")
         # PLAN-0508: one bounded progress/terminal attempt per HTTP dispatch.
         probe = self._collector.begin_attempt() if self._collector is not None else None
         # No retry loop, redirect replay or SDK retry. Total deadline covers reading
