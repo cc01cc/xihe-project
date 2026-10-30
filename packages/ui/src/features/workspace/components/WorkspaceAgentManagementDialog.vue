@@ -521,6 +521,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
             <p
                 v-if="error"
                 role="alert"
+                data-testid="agent-error"
                 class="rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive"
             >
                 {{ error }}
