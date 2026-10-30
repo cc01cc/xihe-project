@@ -184,11 +184,14 @@ public class ProviderCredentialLeaseService {
                 .path("litellmProvider").asText(connection.getProviderId());
         List<String> manualModels = parseManualModels(connection.getManualModels());
         String operation = apiTypes.operation(connection.getApiTypeId(), connection.getApiTypeVersion());
+        boolean toolsSupported =
+                catalog.toolsSupported(connection.getProviderId(), connection.getApiTypeId(),
+                        connection.getApiTypeVersion());
         return new CredentialGrant(
                 connection.getProviderId(), routeProvider, request.model(), connection.getBaseUrl(),
                 apiKey, connection.getRevision(), connection.getModelDiscovery(), manualModels,
                 connection.getConnectionKey(), connection.getApiTypeId(),
-                connection.getApiTypeVersion(), operation);
+                connection.getApiTypeVersion(), operation, toolsSupported);
     }
 
     private String randomToken() {
@@ -229,7 +232,8 @@ public class ProviderCredentialLeaseService {
             String connectionKey,
             String apiTypeId,
             int apiTypeVersion,
-            String operation) {}
+            String operation,
+            boolean toolsSupported) {}
 
     private List<String> parseManualModels(String raw) {
         if (raw == null || raw.isBlank()) {

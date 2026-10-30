@@ -2,9 +2,14 @@ package com.cc01cc.p.xihe.cp.provider;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.io.ByteArrayResource;
+
+import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProviderCatalogServiceTest {
 
@@ -61,5 +66,58 @@ class ProviderCatalogServiceTest {
         org.junit.jupiter.api.Assertions.assertNull(catalog.defaultBaseUrl("deepseek"));
         assertThrows(IllegalArgumentException.class,
                 () -> catalog.supportedPair("deepseek", "anthropic-messages", 1));
+    }
+
+    // PLAN-0591 T1.2/T1.3: capability data, test-only resource seam and gate inputs.
+    private ProviderCatalogService catalogWith(String json) {
+        return new ProviderCatalogService(objectMapper, new ApiInputTypeService(objectMapper),
+                new ByteArrayResource(json.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private static final String PROVIDER_HEAD =
+            "[{\"id\":\"p\",\"supportedApiTypes\":[";
+
+    private static final String PROVIDER_TAIL =
+            "],\"defaultApiType\":{\"apiTypeId\":\"openai-chat-completions\",\"version\":1},"
+                    + "\"credential\":{\"type\":\"api-key\",\"required\":true},\"supports\":{\"tools\":true}}]";
+
+    @Test
+    void xiaomiCapabilityIsPerApiTypeAndRolledUp() {
+        assertFalse(catalog.toolsSupported("xiaomi", "mimo-responses", 1));
+        assertTrue(catalog.toolsSupported("xiaomi", "openai-chat-completions", 1));
+        var supports = catalog.require("xiaomi").path("supports");
+        assertTrue(supports.path("tools").asBoolean());
+        assertTrue(supports.path("toolsPartial").asBoolean());
+        assertFalse(catalog.toolsSupported("dashscope-qwen", "dashscope-multimodal-embedding", 1));
+    }
+
+    @Test
+    void missingCapabilityLoadsWithUnsupportedDefault() {
+        var service = catalogWith(PROVIDER_HEAD
+                + "{\"apiTypeId\":\"openai-chat-completions\",\"version\":1}" + PROVIDER_TAIL);
+        assertFalse(service.toolsSupported("p", "openai-chat-completions", 1));
+    }
+
+    @Test
+    void partiallyDeclaredCapabilitySkipsAggregateCheckAndLoads() {
+        var service = catalogWith(PROVIDER_HEAD
+                + "{\"apiTypeId\":\"openai-chat-completions\",\"version\":1,\"capability\":{\"tools\":true}},"
+                + "{\"apiTypeId\":\"dashscope-multimodal-embedding\",\"version\":1}" + PROVIDER_TAIL);
+        assertTrue(service.toolsSupported("p", "openai-chat-completions", 1));
+        assertFalse(service.toolsSupported("p", "dashscope-multimodal-embedding", 1));
+    }
+
+    @Test
+    void nonBooleanCapabilityFailsFast() {
+        assertThrows(IllegalStateException.class, () -> catalogWith(PROVIDER_HEAD
+                + "{\"apiTypeId\":\"openai-chat-completions\",\"version\":1,\"capability\":{\"tools\":\"yes\"}}"
+                + PROVIDER_TAIL));
+    }
+
+    @Test
+    void disagreesWithRollupFailsFastWhenAllDeclared() {
+        assertThrows(IllegalStateException.class, () -> catalogWith(PROVIDER_HEAD
+                + "{\"apiTypeId\":\"openai-chat-completions\",\"version\":1,\"capability\":{\"tools\":false}}"
+                + PROVIDER_TAIL));
     }
 }
