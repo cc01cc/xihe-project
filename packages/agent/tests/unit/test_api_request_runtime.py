@@ -1109,7 +1109,7 @@ def _rendered(type_id, tools, stream=False):
     return render_request(json.dumps(body(type_id, stream)), chat_type(type_id, 1), values)
 
 
-@pytest.mark.parametrize("type_id", [TYPES[0], TYPES[2]])
+@pytest.mark.parametrize("type_id", TYPES)
 async def test_capability_gate_rejects_before_transport_attempt(type_id):
     events = []
     async with recorder(response(type_id, False)) as (base, captures):
@@ -1131,7 +1131,7 @@ def test_missing_tools_supported_defaults_to_unsupported_and_code_passes_through
     assert ApiRequestError("LLM_TOOL_ROUTE_UNSUPPORTED").terminal_code == "LLM_TOOL_ROUTE_UNSUPPORTED"
 
 
-@pytest.mark.parametrize("type_id", [TYPES[0], TYPES[2]])
+@pytest.mark.parametrize("type_id", TYPES)
 async def test_capability_gate_allows_empty_tools_when_unsupported(type_id):
     async with recorder(response(type_id, False)) as (base, captures):
         unsupported = {**grant(type_id, base), "toolsSupported": False}
@@ -1139,6 +1139,22 @@ async def test_capability_gate_allows_empty_tools_when_unsupported(type_id):
         parts = [part async for part in sender.stream(_rendered(type_id, []))]
         assert parts[-1][2] is not None
         assert len(captures) == 1
+
+
+async def test_validate_body_error_precedes_capability_gate():
+    events = []
+    async with recorder(response(TYPES[0], False)) as (base, captures):
+        collector = TransportMetricsCollector(lambda event, payload: events.append((event, payload)))
+        unsupported = {**grant(TYPES[0], base), "toolsSupported": False}
+        sender = ApiSender(chat_type(TYPES[0], 1), unsupported, "request-1", 3, collector=collector)
+        malformed = {"model": "fixture", "messages": "not-a-list", "tools": [_tool_for(TYPES[0])], "stream": False}
+        with pytest.raises(ApiRequestError) as exc:
+            _ = [part async for part in sender.stream(malformed)]
+        assert exc.value.code == "INVALID_REQUEST_SHAPE"
+        assert exc.value.code != "LLM_TOOL_ROUTE_UNSUPPORTED"
+        assert captures == []
+    assert events == []
+    assert all(event != STAGE_ATTEMPT_STARTED for event, _payload in events)
 
 
 async def test_provider_400_maps_request_rejected_when_tools_supported():
