@@ -47,10 +47,10 @@ pnpm run build
 - E2E 必须覆盖代表性移动 viewport；响应式改动至少检查移动与桌面。截图断言只证明接近 baseline，不能不经 actual/diff 与 DOM/computed-style 复核就更新 snapshot。
 - 不得无审查执行 snapshot 更新；必须先做视觉 diff review，并记录为何接受差异。
 - 跨模块 API/SSE/持久化改动按 [`xc-cross-cutting-checklist`](../../../.agents/skills/xc-cross-cutting-checklist/SKILL.md) 对齐契约、实现、测试与证据。
-
 - 布局持久化（PLAN-0582）：键与语义固定 —— 全局 `xihe-layout-global` = `{ navOpen, navWidth }`；每 workspace `xihe-layout-ws:<id>` = `{ treeCollapsed, treeWidth, dockCollapsed, dockWidth, dockTabs, activeDockTab, dockMode, dockModeManual, openTabs }`。**折叠态与宽度分开存**（收起不改宽度、展开回原宽）；登出清理 workspace 键。唯一实现入口 `composables/useWorkspaceLayout.ts`（常量 `:24-46`、状态接口 `:58-79`），不要另建第二份布局状态。
 - dock 两模式（PLAN-0582 §1.5-B）：`dockMode: 'pinned' | 'floating'`，**默认按断点派生**（`deriveDockMode`：视口 ≥1800 → `pinned`，否则 `floating`）；`dockModeManual` 记录用户是否手选过，**手选优先于断点派生并持久化**。pinned 是 flex 子项（主列让位）；floating 是绝对定位覆盖（`WorkspaceDock.vue:61`：pinned `relative z-auto shadow-none` / floating `absolute inset-y-0 right-0 z-20 shadow-xl`）。**只有 floating 允许阴影**；floating **不是模态**——不加遮罩（会挡住用户正在编辑的主列），用 `Esc` 或点击主列关闭。
 - 三处栏宽（PLAN-0582 §1.5-A）：导航面板 **220–360**（默认 280）、文件树 **200–320**（默认 240、收起 40）、dock **320–480**（默认 360）——一律引用 `useWorkspaceLayout.ts` 常量（`:24-41`），不写字面量。分隔条统一：`role="separator"` + `aria-valuenow/min/max`、方向键 ±16（`*_KEYBOARD_STEP`）、`Home`/`End` 到边界、**双击复位默认宽**、拖拽时显示实时宽度浮标。窄屏夹取（`clampNavWidthForViewport`：<1280 → 240、<1440 → 260、否则 360）**只影响渲染，不得写回**用户原值。防挤压按 spec §1.5-C：主列硬底线 **640**（`MAIN_MIN_WIDTH`）最高优先 → pinned 且主列 <**720**（`MAIN_COMFORT_MIN_WIDTH`）先让**文件树**让位 → 仍不足再让**导航面板**（顺序固定）→ 仍 <640 时 dock 转 floating（**不关 dock**，用户 pinned 选择保留）并给一次性提示。
+- 工作区选择面（PLAN-0608 C′）：`/workspace` 在**无 tab 上下文**时渲染 `components/WorkspacePicker.vue`（角色取 `GET /workspaces` 权威值）；`WorkspaceView` 收到 `400 WORKSPACE_CONTEXT_CONFLICT` / `409 WORKSPACE_CONTEXT_REQUIRED` 时**回选择面**，不得只弹 toast 成死路。**I6：登录响应里的 workspace 只是 fallback**，绝不写进 tab 上下文——`stores/auth.ts` 的 `hydrateWorkspace` 不再用 `/workspaces/current` 回填（与上文「工作区上下文逐 tab 存取、`workspaceContext` 为唯一 SSOT」同源）；新建会话走路径形式 `POST /api/v1/workspaces/{workspaceId}/sessions`。
 
 ### Reka UI 交互陷阱
 
