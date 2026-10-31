@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -365,6 +366,101 @@ class OpenApiYamlContractTest {
             assertTrue(schemas.containsKey("UserCreatedResponse"), "UserCreatedResponse schema is contracted");
             assertTrue(schemas.containsKey("UserPasswordResetResponse"),
                     "UserPasswordResetResponse schema is contracted");
+        }
+    }
+
+    /**
+     * PLAN-0608 (C′): the workspace-addressed session creation route and its two new
+     * workspace-context error codes must be contracted, not just described in prose.
+     *
+     * <p>Why this test exists: the 0608 verify pass found <b>zero</b> test hits for
+     * {@code WORKSPACE_CONTEXT_CONFLICT} / {@code WORKSPACE_CONTEXT_REQUIRED} — the
+     * route and both codes were written into the OpenAPI document while nothing
+     * asserted them. This is the "documented but untested" gap in contract form.
+     *
+     * <p>Scope notes (deliberate, do not "fix" here):
+     * <ul>
+     *   <li>Both codes live in the operation's {@code description} because every
+     *       error response is a bare {@code $ref} to the shared {@code Problem}
+     *       response — so the assertion targets the description text, which is where
+     *       the document actually names them.</li>
+     *   <li>The legacy {@code POST /api/v1/sessions} declares a {@code 409} response
+     *       but does not repeat the code in its own body; the code is named on the new
+     *       route's description instead. The test therefore pins "409 is declared on
+     *       the legacy operation" + "WORKSPACE_CONTEXT_REQUIRED is named in the
+     *       document" rather than inventing a claim the file does not make.</li>
+     *   <li>{@code WORKSPACE_READ_ONLY} is <b>not</b> restated on the new route (its
+     *       403 is the shared {@code $ref}); it is asserted at document level
+     *       (workspace-context preamble) so a rename/removal still fails this test.</li>
+     * </ul>
+     */
+    @Test
+    void openApiContainsWorkspaceAddressedSessionRouteAndContextErrorCodes() throws Exception {
+        Path contract = Path.of("..", "..", "docs", "api", "openapi.yaml");
+        String raw = Files.readString(contract);
+        try (InputStream input = Files.newInputStream(contract)) {
+            Object parsed = new Yaml().load(input);
+            assertInstanceOf(Map.class, parsed);
+            Map<?, ?> document = (Map<?, ?>) parsed;
+            Map<?, ?> paths = (Map<?, ?>) document.get("paths");
+
+            // 1–2: the path and the operation exist.
+            assertTrue(paths.containsKey("/api/v1/workspaces/{workspaceId}/sessions"),
+                    "workspace-addressed session creation is contracted");
+            Map<?, ?> pathItem = (Map<?, ?>) paths.get("/api/v1/workspaces/{workspaceId}/sessions");
+            assertTrue(pathItem.containsKey("post"), "the create operation is contracted");
+
+            // 3: operationId is the stable handle clients/tests refer to.
+            Map<?, ?> post = (Map<?, ?>) pathItem.get("post");
+            assertEquals("createWorkspaceSession", post.get("operationId"),
+                    "operationId is the one the implementation registers");
+
+            // 4–8: the five documented outcomes (201 created; 400/401/403/404 failures).
+            Map<?, ?> responses = (Map<?, ?>) post.get("responses");
+            assertInstanceOf(Map.class, responses, "responses are contracted");
+            for (String status : List.of("201", "400", "401", "403", "404")) {
+                assertTrue(responses.containsKey(status),
+                        "the operation must contract " + status + ", got " + responses.keySet());
+            }
+
+            // 9: the path parameter is the ownership source (PLAN-0608 C′).
+            List<?> parameters = (List<?>) post.get("parameters");
+            boolean workspacePathParam = parameters.stream().anyMatch(parameter -> {
+                Map<?, ?> entry = (Map<?, ?>) parameter;
+                return "path".equals(entry.get("in")) && "workspaceId".equals(entry.get("name"));
+            });
+            assertTrue(workspacePathParam, "workspaceId must be a required path parameter");
+
+            // 10–11: both new workspace-context codes are named in the contract text.
+            String description = String.valueOf(post.get("description"));
+            assertTrue(description.contains("WORKSPACE_CONTEXT_CONFLICT"),
+                    "400 WORKSPACE_CONTEXT_CONFLICT must be named on the new route: " + description);
+            assertTrue(description.contains("WORKSPACE_CONTEXT_REQUIRED"),
+                    "409 WORKSPACE_CONTEXT_REQUIRED must be named in the document: " + description);
+
+            // 12: the legacy route keeps its explicit 409 (the fallback path's contract).
+            Map<?, ?> legacyPath = (Map<?, ?>) paths.get("/api/v1/sessions");
+            assertInstanceOf(Map.class, legacyPath, "the legacy sessions path is still contracted");
+            Map<?, ?> legacyPost = (Map<?, ?>) legacyPath.get("post");
+            assertInstanceOf(Map.class, legacyPost, "the legacy create operation is still contracted");
+            Map<?, ?> legacyResponses = (Map<?, ?>) legacyPost.get("responses");
+            assertTrue(legacyResponses.containsKey("409"),
+                    "the legacy create operation must declare the 409 fallback, got " + legacyResponses.keySet());
+
+            // 13: the write-guard code is still defined at document level.
+            assertTrue(raw.contains("WORKSPACE_READ_ONLY"),
+                    "WORKSPACE_READ_ONLY must stay documented (write guard contract)");
+
+            // 14: the 403 entry names BOTH codes, like every other workspace-scoped
+            // operation in this document (openapi.yaml:131/150/173). A bare $ref here
+            // would leave a reader unable to tell "not a member" (WORKSPACE_FORBIDDEN)
+            // from "VIEWER write" (WORKSPACE_READ_ONLY) — the inconsistency the review
+            // flagged.
+            Map<?, ?> forbidden = (Map<?, ?>) responses.get("403");
+            assertInstanceOf(Map.class, forbidden, "the 403 response is contracted");
+            String forbiddenText = String.valueOf(forbidden.get("description"));
+            assertTrue(forbiddenText.contains("WORKSPACE_FORBIDDEN") && forbiddenText.contains("WORKSPACE_READ_ONLY"),
+                    "403 must name both WORKSPACE_FORBIDDEN and WORKSPACE_READ_ONLY: " + forbiddenText);
         }
     }
 }

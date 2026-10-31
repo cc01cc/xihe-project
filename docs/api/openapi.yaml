@@ -466,7 +466,7 @@ paths:
         '201': { description: Created Agent Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
-        '403': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'WORKSPACE_FORBIDDEN (non-member or deleted workspace) / WORKSPACE_READ_ONLY (VIEWER write)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { $ref: '#/components/responses/Problem' }
   /api/v1/sessions/{sessionId}/follow-ups:
     get:
