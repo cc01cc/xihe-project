@@ -14,6 +14,10 @@ import java.io.IOException;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("h2")
+// PLAN-0612 M4: see AbstractWireMockTest — `.env.dev` sets the frozen default as a system property,
+// while the H2 lane needs the docker workspace backend available for its workspace fixtures.
+@org.springframework.test.context.TestPropertySource(
+        properties = "XIHE_WORKSPACE_DOCKER_BACKEND=enabled")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 public abstract class AbstractH2Test {
 

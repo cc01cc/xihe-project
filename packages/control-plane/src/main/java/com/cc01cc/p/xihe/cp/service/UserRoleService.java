@@ -9,6 +9,7 @@ import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.UserStatus;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
+import com.cc01cc.p.xihe.cp.policy.MaintenanceWriteFreeze;
 import com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import java.util.UUID;
@@ -42,6 +43,7 @@ public class UserRoleService {
     private final AuditLogger audit;
     private final DbLockTimeout dbLockTimeout;
     private final LocalModeService localModeService;
+    private final MaintenanceWriteFreeze writeFreeze;
     /**
      * Denials roll the guard transaction back (a 409 must not leave a partial
      * write), but the {@code user_role_change_denied} audit row is a durable
@@ -56,6 +58,7 @@ public class UserRoleService {
                            AuditLogger audit,
                            DbLockTimeout dbLockTimeout,
                            LocalModeService localModeService,
+                           MaintenanceWriteFreeze writeFreeze,
                            PlatformTransactionManager transactionManager) {
         this.users = users;
         this.owners = owners;
@@ -63,6 +66,7 @@ public class UserRoleService {
         this.audit = audit;
         this.dbLockTimeout = dbLockTimeout;
         this.localModeService = localModeService;
+        this.writeFreeze = writeFreeze;
         this.auditTransaction = new TransactionTemplate(transactionManager);
         this.auditTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -78,6 +82,7 @@ public class UserRoleService {
      */
     @Transactional
     public User changeRole(String actorUserId, UUID targetUserId, UserRole newRole) {
+        writeFreeze.requireWritable("user role change");
         if (newRole == null) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_ROLE",
                     "role must be ADMIN or USER");

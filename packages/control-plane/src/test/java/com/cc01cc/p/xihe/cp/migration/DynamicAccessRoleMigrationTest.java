@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.migration;
 
 import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -44,9 +45,14 @@ class DynamicAccessRoleMigrationTest {
 
     @BeforeAll
     static void applyMigrationsOnFreshDatabase() throws SQLException {
+        // PLAN-0610 W2: V87 is the intermediate shape of the one-shot window; its guarantees
+        // (legacy sources still writable, V38/V65 fences still present) only hold before V88.
+        // Pin this class to the V87 target; V88's end-state is asserted by
+        // AccessRoleDataBackfillMigrationTest.
         Flyway.configure()
                 .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
                 .locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("87"))
                 .load()
                 .migrate();
         connection = DriverManager.getConnection(

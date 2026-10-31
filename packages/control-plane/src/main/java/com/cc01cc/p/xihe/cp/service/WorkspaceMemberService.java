@@ -12,6 +12,7 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceUserId;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
+import com.cc01cc.p.xihe.cp.policy.MaintenanceWriteFreeze;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -48,15 +49,18 @@ public class WorkspaceMemberService {
     private final WorkspaceUserRepository workspaceUserRepository;
     private final UserRepository userRepository;
     private final AuditLogger auditLogger;
+    private final MaintenanceWriteFreeze writeFreeze;
 
     public WorkspaceMemberService(WorkspaceRepository workspaceRepository,
             WorkspaceUserRepository workspaceUserRepository,
             UserRepository userRepository,
-            AuditLogger auditLogger) {
+            AuditLogger auditLogger,
+            MaintenanceWriteFreeze writeFreeze) {
         this.workspaceRepository = workspaceRepository;
         this.workspaceUserRepository = workspaceUserRepository;
         this.userRepository = userRepository;
         this.auditLogger = auditLogger;
+        this.writeFreeze = writeFreeze;
     }
 
     /** spec §3: GET list — OWNER/EDITOR see the list; VIEWER and outsiders do not. */
@@ -76,6 +80,7 @@ public class WorkspaceMemberService {
     @Transactional
     public MemberView addMember(String workspaceId, String username, String role,
             String callerUserId, String callerInstanceRole) {
+        writeFreeze.requireWritable("workspace member add");
         Caller caller = authorize(workspaceId, callerUserId, callerInstanceRole);
         requireOwner(caller);
         WorkspaceRole targetRole = requireAssignableRole(role);
@@ -103,6 +108,7 @@ public class WorkspaceMemberService {
     @Transactional
     public MemberView updateMemberRole(String workspaceId, String targetUserId, String role,
             String callerUserId, String callerInstanceRole) {
+        writeFreeze.requireWritable("workspace member role change");
         Caller caller = authorize(workspaceId, callerUserId, callerInstanceRole);
         requireOwner(caller);
         WorkspaceRole newRole = requireAssignableRole(role);
@@ -129,6 +135,7 @@ public class WorkspaceMemberService {
     @Transactional
     public void removeMember(String workspaceId, String targetUserId, String callerUserId,
             String callerInstanceRole) {
+        writeFreeze.requireWritable("workspace member removal");
         Caller caller = authorize(workspaceId, callerUserId, callerInstanceRole);
         boolean owner = "OWNER".equals(caller.workspaceRole());
         if (!owner && !caller.instanceAdmin()) {

@@ -555,7 +555,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
         grant.setGranterId(userId);
         grant.setSubjectType(GrantPrincipalPathResolver.USER);
         grant.setSubjectId(userId);
-        grant.setSource("direct");
+        grant.setSource("role");
         grant.setReadState("read");
         ObjectNode atom = objectMapper.createObjectNode();
         atom.put("actionClass", actionClass);

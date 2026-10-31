@@ -402,10 +402,17 @@ class AgentPrincipalMigrationTest {
                 .migrate();
     }
 
+    /**
+     * PLAN-0610 W2: this class asserts the V42 window (V42 backfills {@code source='default'}
+     * grant rows). V88 retires and converts those rows, so the "current" target is pinned to the
+     * last version before the data copy; the V88 end-state is covered by
+     * {@code AccessRoleDataBackfillMigrationTest}.
+     */
     private static void migrateToCurrent(String jdbcUrl) {
         Flyway.configure()
                 .dataSource(jdbcUrl, postgres.getUsername(), postgres.getPassword())
                 .locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("87"))
                 .load()
                 .migrate();
     }

@@ -373,7 +373,7 @@ class TieredQueryIntegrationTest extends AbstractIntegrationTest {
         grant.setSubjectId(principalId);
         grant.setGranterType("user");
         grant.setGranterId(UUID.fromString(userId));
-        grant.setSource("direct");
+        grant.setSource("role");
         grant.setPermissions(readCapNode());
         grantIds.add(grantRepository.saveAndFlush(grant).getId());
     }

@@ -43,7 +43,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * PLAN-0496 M2 (T2.1/T2.2; contract: 0494 #12/#13 + 0496 §方案 5):
- * the direct-grant binding path — use atoms land on the principal direct grant and
+ * the credential-binding path — use atoms land on the principal credential_binding row and
  * the Workspace cap in one transaction under the credential_manage gate, the
  * operator ceiling and the existence check; unbind removes them; bindings apply to
  * new sessions only (existing snapshots stay frozen).
@@ -105,8 +105,8 @@ class CredentialBindingServiceIntegrationTest extends AbstractIntegrationTest {
         credentialBindingService.bindCredentialAtoms(creatorId.toString(), fixture.workspaceId,
                 fixture.principalId, List.of(fixture.credentialResource));
 
-        assertTrue(principalDirectGrantContains(fixture.principalId, fixture.credentialResource),
-                "the principal direct grant must carry credential_use@<id>");
+        assertTrue(principalCredentialBindingContains(fixture.principalId, fixture.credentialResource),
+                "the principal credential_binding row must carry credential_use@<id>");
         assertTrue(capContains(fixture.workspaceId, fixture.principalId, fixture.credentialResource),
                 "the Workspace cap must be synchronized in the same transaction");
         assertTrue(auditContains("credential_binding_added"),
@@ -176,7 +176,7 @@ class CredentialBindingServiceIntegrationTest extends AbstractIntegrationTest {
                 creatorId.toString(), fixture.workspaceId, fixture.principalId,
                 List.of(fixture.credentialResource, secondResource)));
 
-        assertFalse(principalDirectGrantContains(fixture.principalId, fixture.credentialResource),
+        assertFalse(principalCredentialBindingContains(fixture.principalId, fixture.credentialResource),
                 "a failed batch must not write any atom (all-or-nothing)");
         assertFalse(capContains(fixture.workspaceId, fixture.principalId, fixture.credentialResource));
     }
@@ -190,8 +190,8 @@ class CredentialBindingServiceIntegrationTest extends AbstractIntegrationTest {
         credentialBindingService.unbindCredentialAtoms(creatorId.toString(), fixture.workspaceId,
                 fixture.principalId, List.of(fixture.credentialResource));
 
-        assertFalse(principalDirectGrantContains(fixture.principalId, fixture.credentialResource),
-                "unbind removes the atom from the principal direct grant");
+        assertFalse(principalCredentialBindingContains(fixture.principalId, fixture.credentialResource),
+                "unbind removes the atom from the principal credential_binding row");
         assertFalse(capContains(fixture.workspaceId, fixture.principalId, fixture.credentialResource),
                 "unbind removes the atom from the cap");
         assertTrue(auditContains("credential_binding_removed"));
@@ -234,13 +234,13 @@ class CredentialBindingServiceIntegrationTest extends AbstractIntegrationTest {
         credentialBindingService.unbindCredentialAtoms(creatorId.toString(), fixture.workspaceId,
                 fixture.principalId, List.of(fixture.credentialResource));
 
-        assertFalse(principalDirectGrantContains(fixture.principalId, fixture.credentialResource),
+        assertFalse(principalCredentialBindingContains(fixture.principalId, fixture.credentialResource),
                 "unbind must clean a dangling atom after the credential is soft-deleted");
         assertFalse(capContains(fixture.workspaceId, fixture.principalId, fixture.credentialResource));
     }
 
     @Test
-    void duplicateDirectGrantRowIsRejectedByThePartialUniqueIndex() {
+    void duplicateCredentialBindingRowIsRejectedByThePartialUniqueIndex() {
         Fixture fixture = fixture("credential:*", "credential:*", true);
         credentialBindingService.bindCredentialAtoms(creatorId.toString(), fixture.workspaceId,
                 fixture.principalId, List.of(fixture.credentialResource));
@@ -251,13 +251,13 @@ class CredentialBindingServiceIntegrationTest extends AbstractIntegrationTest {
         duplicate.setSubjectId(fixture.principalId);
         duplicate.setGranterType("user");
         duplicate.setGranterId(creatorId);
-        duplicate.setSource("direct");
+        duplicate.setSource("credential_binding");
         duplicate.setPermissions(permissions(
                 "[{\"actionClass\":\"credential_use\",\"resource\":\"" + fixture.credentialResource + "\"}]"));
 
         assertThrows(org.springframework.dao.DataIntegrityViolationException.class,
                 () -> grantRepository.saveAndFlush(duplicate),
-                "V65: a second direct row per subject must be rejected instead of racing");
+                "V87 successor of V65: a second credential_binding row per subject must be rejected");
     }
 
     @Test
@@ -276,7 +276,7 @@ class CredentialBindingServiceIntegrationTest extends AbstractIntegrationTest {
                         List.of(fixture.credentialResource)),
                 "the unbound peer must fail the batch");
 
-        assertTrue(principalDirectGrantContains(fixture.principalId, fixture.credentialResource),
+        assertTrue(principalCredentialBindingContains(fixture.principalId, fixture.credentialResource),
                 "the failed batch must roll back the first unbind (all-or-nothing)");
         assertTrue(capContains(fixture.workspaceId, fixture.principalId, fixture.credentialResource));
     }
@@ -296,7 +296,7 @@ class CredentialBindingServiceIntegrationTest extends AbstractIntegrationTest {
 
         assertEquals(org.springframework.http.HttpStatus.FORBIDDEN, error.getStatus());
         assertTrue(error.getMessage().contains("membership"));
-        assertFalse(principalDirectGrantContains(fixture.principalId, fixture.credentialResource),
+        assertFalse(principalCredentialBindingContains(fixture.principalId, fixture.credentialResource),
                 "the rejected bind must not write anything");
     }
 
@@ -338,37 +338,37 @@ class CredentialBindingServiceIntegrationTest extends AbstractIntegrationTest {
         workspaceId = registered.getWorkspaceId();
     }
 
-    /** V65: a subject owns a single direct grant row — successive grants merge into it. */
+    /** PLAN-0610: user grants are materialized role rows; successive seeds merge into one row. */
     private void grantCreator(String permissionsJson) {
-        AuthorizationGrant direct = grantRepository.findBySubjectTypeAndSubjectId(
+        AuthorizationGrant roleGrant = grantRepository.findBySubjectTypeAndSubjectId(
                         GrantPrincipalPathResolver.USER, creatorId).stream()
-                .filter(grant -> "direct".equals(grant.getSource()))
+                .filter(grant -> GrantSources.ROLE.equals(grant.getSource()))
                 .findFirst()
                 .orElse(null);
         JsonNode newAtoms = permissions(permissionsJson);
-        if (direct == null) {
-            direct = new AuthorizationGrant();
-            direct.setId(UUID.randomUUID());
-            direct.setSubjectType("user");
-            direct.setSubjectId(creatorId);
-            direct.setGranterType("user");
-            direct.setGranterId(creatorId);
-            direct.setSource("direct");
-            direct.setPermissions(newAtoms);
-            grantRepository.save(direct);
+        if (roleGrant == null) {
+            roleGrant = new AuthorizationGrant();
+            roleGrant.setId(UUID.randomUUID());
+            roleGrant.setSubjectType("user");
+            roleGrant.setSubjectId(creatorId);
+            roleGrant.setGranterType("user");
+            roleGrant.setGranterId(creatorId);
+            roleGrant.setSource(GrantSources.ROLE);
+            roleGrant.setPermissions(newAtoms);
+            grantRepository.save(roleGrant);
             return;
         }
         com.fasterxml.jackson.databind.node.ArrayNode merged = objectMapper.createArrayNode();
-        direct.getPermissions().forEach(merged::add);
+        roleGrant.getPermissions().forEach(merged::add);
         newAtoms.forEach(merged::add);
-        direct.setPermissions(merged);
-        grantRepository.save(direct);
+        roleGrant.setPermissions(merged);
+        grantRepository.save(roleGrant);
     }
 
-    private boolean principalDirectGrantContains(UUID principalId, String resource) {
+    private boolean principalCredentialBindingContains(UUID principalId, String resource) {
         return grantRepository.findBySubjectTypeAndSubjectId(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId).stream()
-                .filter(grant -> "direct".equals(grant.getSource()))
+                .filter(grant -> GrantSources.CREDENTIAL_BINDING.equals(grant.getSource()))
                 .anyMatch(grant -> snapshotContains(grant.getPermissions(), resource));
     }
 

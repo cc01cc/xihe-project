@@ -177,20 +177,23 @@ class DomainSchemaMigrationTest {
     void v38GrantsDefaultUniquenessIsScopedToSubjectAndSource() throws SQLException {
         assertEquals(2, scalarInt(
                 "SELECT count(*) FROM pg_indexes WHERE schemaname = 'public' "
-                        + "AND indexname IN ('idx_grants_subject', 'uq_grants_default_subject')"),
-                "grant subject lookup and partial uniqueness indexes must be applied");
+                        + "AND indexname IN ('idx_grants_subject', 'uq_grants_role_atom')"),
+                "grant subject lookup and the per-atom role uniqueness index must be applied");
         assertEquals(1, scalarInt(
                 "SELECT count(*) FROM flyway_schema_history WHERE version = '38' AND success = true"),
                 "V38 must be recorded as applied");
 
+        // PLAN-0610 V88 retires the V38 default and V65 direct fences: after the copy the
+        // per-source fences are the V87 successors (credential bindings keep the V65 semantics
+        // "one row per subject").
         UUID subjectId = UUID.randomUUID();
-        insertGrant("default", subjectId);
+        insertGrant("credential_binding", subjectId);
+        assertThrows(SQLException.class, () -> insertGrant("credential_binding", subjectId),
+                "V87 successor of V65: a subject can have only one credential_binding row");
         assertThrows(SQLException.class, () -> insertGrant("default", subjectId),
-                "a subject can have only one default permission set");
-
-        insertGrant("direct", subjectId);
+                "V88 narrows the source allow-list: default is no longer writable");
         assertThrows(SQLException.class, () -> insertGrant("direct", subjectId),
-                "V65 (PLAN-0496 round-4): a subject can have only one direct grant row");
+                "V88 narrows the source allow-list: direct is no longer writable");
     }
 
     @Test
@@ -1283,7 +1286,9 @@ class DomainSchemaMigrationTest {
                     + "WHERE permissions @> '[{\"actionClass\":\"credential\"}]'::jsonb"),
                     "V64 must rewrite the retired word (0494 #9)");
             for (String atom : new String[] {"credential_use", "credential_reveal", "credential_manage"}) {
-                assertEquals(1, scalarInt(c, "SELECT count(*) FROM grants WHERE source = 'default' "
+                // PLAN-0610 V88: the legacy source='default' row is replaced by the materialized
+                // source='role' rows, so the V64 rewrite is observed there after the full chain.
+                assertEquals(1, scalarInt(c, "SELECT count(*) FROM grants WHERE source = 'role' "
                         + "AND subject_type = 'user' AND subject_id = '" + adminId + "'::uuid "
                         + "AND permissions @> '[{\"actionClass\":\"" + atom
                         + "\",\"resource\":\"credential:*\"}]'::jsonb"),

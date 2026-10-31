@@ -141,14 +141,25 @@ class CapabilityEnvelopeRefusalTest extends AbstractIntegrationTest {
 
     /** design #16: a maximal permission set — every vocabulary action class incl. the PLAN-0496 credential atoms. */
     private void grantMaximalRole() {
-        AuthorizationGrant direct = new AuthorizationGrant();
-        direct.setId(UUID.randomUUID());
-        direct.setSubjectType("user");
-        direct.setSubjectId(UUID.fromString(userId));
-        direct.setSource("direct");
-        direct.setPermissions(atoms("read", "write", "delete", "exec", "network",
-                "credential_use", "credential_reveal", "credential_manage"));
-        grantRepository.save(direct);
+        // PLAN-0610: registration already materializes the USER atoms as source='role' rows
+        // (one row per atom, uq_grants_role_atom); add only the missing credential atoms.
+        java.util.UUID subject = UUID.fromString(userId);
+        java.util.Set<String> existing = new java.util.HashSet<>();
+        grantRepository.findBySubjectTypeAndSubjectIdAndSource("user", subject, "role")
+                .forEach(row -> existing.add(row.getPermissions().get(0).get("actionClass").asText()));
+        for (String actionClass : List.of("read", "write", "delete", "exec", "network",
+                "credential_use", "credential_reveal", "credential_manage")) {
+            if (existing.contains(actionClass)) {
+                continue;
+            }
+            AuthorizationGrant row = new AuthorizationGrant();
+            row.setId(UUID.randomUUID());
+            row.setSubjectType("user");
+            row.setSubjectId(subject);
+            row.setSource("role");
+            row.setPermissions(atoms(actionClass));
+            grantRepository.save(row);
+        }
     }
 
     private void registerFixture() {

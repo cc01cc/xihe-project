@@ -348,7 +348,7 @@ class CredentialControllerIntegrationTest extends AbstractIntegrationTest {
             direct.setSubjectId(userId);
             direct.setGranterType("user");
             direct.setGranterId(userId);
-            direct.setSource("direct");
+            direct.setSource("role");
             direct.setPermissions(newAtoms);
             grantRepository.save(direct);
             return;

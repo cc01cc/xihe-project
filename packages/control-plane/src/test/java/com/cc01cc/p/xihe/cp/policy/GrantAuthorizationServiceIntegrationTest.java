@@ -160,9 +160,9 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
                 parentRunId.toString(), rootSession.getId().toString(), userId, workspaceId.toString(),
                 "root-run", "root-hash", "provider", "model", "workspace", "running"));
 
-        addGrant("user", UUID.fromString(userId), "default", null, null, atoms("read", "write"));
+        addGrant("user", UUID.fromString(userId), "role", null, null, atoms("read", "write"));
         UUID agentDefaultGrantId = addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL,
-                principalId, "default", null, null, atoms("read", "write"));
+                principalId, "role", null, null, atoms("read", "write"));
         assertTrue(policyEngine.allowsByGrant(PolicyContext.EMPTY, "write_file", writeBody,
                 rootSession.getId().toString(), userId, workspaceId.toString(), true),
                 "a member's own user grant permits a user-direct mutation");
@@ -213,7 +213,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
                         "write", "src/main.java")),
                 "User grants cannot authorize an Agent when its stable principal has no grant");
         addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL,
-                principalId, "default", null, null, atoms("read", "write"));
+                principalId, "role", null, null, atoms("read", "write"));
         setBindingCap(workspaceId, atomWithResource("write", "src/*"));
         assertTrue(grantAuthorizationService.allows(request(workspaceId, userId,
                         rootSession, "write", "src/main.java")));
@@ -257,7 +257,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
                         unboundWorkspaceSession, "write", "src/main.java")),
                 "removing Workspace binding denies the next Agent action");
 
-        UUID malformedGrantId = addGrant("user", UUID.fromString(userId), "direct",
+        UUID malformedGrantId = addGrant("user", UUID.fromString(userId), "role",
                 "admin", UUID.randomUUID(), atoms("unknown-action"));
         assertFalse(policyEngine.allowsByGrant(PolicyContext.EMPTY, "write_file", writeBody,
                 rootSession.getId().toString(), userId, workspaceId.toString(), true),
@@ -311,9 +311,9 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         principal.setCreatedByUserId(userId);
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
         principalId = agentPrincipalRepository.saveAndFlush(principal).getId();
-        addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "default", null, null,
+        addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "role", null, null,
                 atoms("read", "write"));
-        addGrant("user", UUID.fromString(userId), "default", null, null, atoms("read", "write"));
+        addGrant("user", UUID.fromString(userId), "role", null, null, atoms("read", "write"));
         bindPrincipal(workspaceId, atoms("read", "write"));
 
         Session memberSession = saveAgentSession(workspaceId, userId, "Member agent", atoms("read", "write"));
@@ -373,8 +373,8 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         Workspace workspace = workspaceRepository.save(new Workspace("Principal lifecycle", userId));
         workspaceId = workspace.getId();
         workspaceUserRepository.save(new WorkspaceUser(workspaceId.toString(), userId, WorkspaceRole.OWNER));
-        addGrant("user", UUID.fromString(userId), "default", null, null, atoms("read", "write"));
-        addGrant("user", UUID.fromString(userId), "direct", null, null,
+        addGrant("user", UUID.fromString(userId), "role", null, null, atoms("read", "write"));
+        addGrant("user", UUID.fromString(userId), "role", null, null,
                 atoms("MANAGE_WORKSPACE_AGENTS"));
 
         ObjectNode snapshot = objectMapper.createObjectNode();
@@ -463,7 +463,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         Workspace workspace = workspaceRepository.save(new Workspace("Template scope workspace", userId));
         workspaceId = workspace.getId();
         workspaceUserRepository.save(new WorkspaceUser(workspaceId.toString(), userId, WorkspaceRole.OWNER));
-        addGrant("user", UUID.fromString(userId), "default", null, null, atoms("read", "write"));
+        addGrant("user", UUID.fromString(userId), "role", null, null, atoms("read", "write"));
 
         String userRoleId = UUID.randomUUID().toString();
         String workspaceRoleId = UUID.randomUUID().toString();

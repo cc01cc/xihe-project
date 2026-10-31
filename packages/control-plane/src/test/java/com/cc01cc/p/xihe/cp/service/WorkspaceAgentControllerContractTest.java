@@ -12,6 +12,7 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
+import com.cc01cc.p.xihe.cp.policy.GrantSources;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
@@ -172,7 +173,7 @@ class WorkspaceAgentControllerContractTest extends AbstractIntegrationTest {
         grant.setGranterId(userId);
         grant.setSubjectType("user");
         grant.setSubjectId(userId);
-        grant.setSource("direct");
+        grant.setSource(GrantSources.ROLE);
         grant.setReadState("read");
         grant.setPermissions(objectMapper.readTree("[{\"actionClass\":\"" + actionClass
                 + "\",\"resource\":\"" + resource + "\"}]"));
