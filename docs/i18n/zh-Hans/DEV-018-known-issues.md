@@ -225,3 +225,11 @@ updated: 2026-10-25
 - **容器侧改动生效条件**：修改 `container_runtime.rs` 后必须重建 `xihe/workspace` 镜像，否则沙盒内仍是旧二进制（PLAN-0317 实测曾据此误判）。
 - **UI toast 基础样式缺失**（2026-09-13 由 PLAN-0323 验证发现；**2026-09-14 已修复，PLAN-0325**）：原状：`vue-sonner/style.css`（含 `[data-sonner-toaster]{position:fixed}`）从未被导入（全仓零引用；JS bundle 仅设置 `data-sonner-toaster` 属性、无内联 CSS）→ toaster 无定位样式，toast 以未样式化元素落文档流底部（实测 `rect.y=1080` 视口外、`position: static`），全应用 toast 反馈实际不可见。修复：`packages/ui/src/components/ui/sonner/Sonner.vue` 显式 `import "vue-sonner/style.css"`；浏览器复验 = 真实时间用例 `toBeInViewport()` 通过 + 截图可见（`sse-liveness.spec.ts`，`.local/plan-0323/` 留档）。
 - **存量盘点入口**：调用链/审批/物化/SSE 未闭环项与去向以 workspace `plans/PLAN-0318-XH-call-chain-audit/evidence/call-chain-audit-2026-09.md` §9 活表为准；跨来源（审计/缺口审计/挂起项/架构收敛）统一总表见 `internal/A03-xihe/docs/xh-backlog-and-debt.md`（本文件技术债段为项目侧入口，三者互为补充）。
+
+## 工具能力门与多模态输入残余（PLAN-0591 收尾登记，2026-10-31）
+
+- **能力门已闭环（BL-149）**：工具能力下沉为 catalog `supportedApiTypes[].capability.tools`（`catalogRevision=v2`），不支持的 apiType 在 dispatch 前以 `LLM_TOOL_ROUTE_UNSUPPORTED` 显式失败（`attempt=0`、0 `tools/call`、0 文件）；契约见 `spec/capability-gate.md` 与 `spec/protocol/provider-api-types.md`，证据见 `plans/PLAN-0591-XH-provider-tool-capability/evidence/`。
+- **模型级 capability 残余（未立项，需新 BL）**：同一 apiType 下个别模型不支持工具的情况不在能力门内，仍由 provider 400 → `LLM_REQUEST_REJECTED` 兜底；翻转或细分到模型级需先跑 PLAN-0591 `evidence/m0-hypotheses.md` 的 E2/E3 实验。
+- **多模态图像输入未实现（功能缺口，非回归；建议新立 BL/PLAN）**：Agent 侧无「附件 → 图像 content part」渲染路径（`git grep -rni 'attachment' -- packages/agent/src` = 0 命中），CP 只把附件引用序列化为 `attachmentsJson` 转给 Agent；因此即使路由 `supports.vision=true` 且附件已上传，provider 请求仍只有文本。实证见 PLAN-0591 `evidence/m4-real-lane.md` §4（vision=true 路由 + stub 捕获，messages 无 `image_url`/base64）。
+- **多 provider 真实覆盖缺口（环境阻塞，非代码）**：2026-10-31 M4 实测 Bailian key 可列模型（`/compatible-mode/v1/models` 200，184 条）但所有 chat 调用直连返回 `403 Model.AccessDenied`，产品侧正确映射为 `LLM_CREDENTIALS_INVALID`；故 dashscope 的多 provider / vision / embedding 三项真实覆盖记为「环境权限阻塞、未取证」，需换 key 后补跑（证据同上 §3）。
+- **e2e 用例体格式漂移（存量，非 0591）**：`packages/ui/e2e/real/*.spec.ts` 在 0591 分支基线（`72a2d542`）上有 45 个文件未过 `oxfmt --check`，均非本计划改动文件（本计划 UI 改动 4 文件定向 `oxfmt --check` 通过）；漂移来自分支相对 develop 落后（develop 的 0586/0602 已重排用例体），合并后自然收敛。
