@@ -179,6 +179,9 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
 
         String targetToken = register("epoch-target@test.com");
         String targetId = userIdOf(targetToken);
+        // The target's refresh token, so the recovery path under test is
+        // POST /auth/refresh (V4 wording), not a fresh login.
+        String targetRefresh = tokens("epoch-target@test.com").get("refreshToken").asText();
 
         assertEquals(HttpStatus.OK, patchRole(ownerToken, targetId, "ADMIN").getStatusCode());
         assertEquals(1, jdbc.queryForObject("SELECT token_version FROM users WHERE id = CAST(? AS UUID)",
@@ -189,9 +192,18 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
                 "a token carrying the old epoch must be rejected: " + stale.getBody());
         assertTrue(stale.getBody().contains("AUTHORIZATION_REQUIRED"));
 
-        String refreshed = login("epoch-target@test.com");
-        assertEquals(HttpStatus.OK, get(refreshed, "/api/v1/auth/me").getStatusCode());
-        assertEquals(HttpStatus.OK, get(refreshed, "/api/v1/instance/owner").getStatusCode());
+        // V4: refresh re-reads the user row, so the new token carries both the new
+        // role and the new epoch; the pre-change access token stays dead.
+        ResponseEntity<String> refreshed = api.postForEntity(url("/api/v1/auth/refresh"),
+                Map.of("refreshToken", targetRefresh), String.class);
+        assertEquals(HttpStatus.OK, refreshed.getStatusCode(), refreshed.getBody());
+        String newToken = objectMapper.readTree(refreshed.getBody()).path("accessToken").asText();
+        assertEquals("ADMIN", jwtTokenProvider.getRoleFromToken(newToken),
+                "the refreshed token must carry the new role claim");
+        assertEquals(HttpStatus.OK, get(newToken, "/api/v1/auth/me").getStatusCode());
+        assertEquals(HttpStatus.OK, get(newToken, "/api/v1/instance/owner").getStatusCode());
+        assertEquals(HttpStatus.UNAUTHORIZED, get(targetToken, "/api/v1/auth/me").getStatusCode(),
+                "the pre-change access token must stay dead after refresh");
     }
 
     /** V4.1 / decision #14: all three fail-closed states answer 401, never 500. */
@@ -461,6 +473,14 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
 
     private String userIdOf(String token) {
         return jwtTokenProvider.getUserIdFromToken(token);
+    }
+
+    /** Fresh login response as JSON (access token, refresh token, workspaceId). */
+    private JsonNode tokens(String email) throws Exception {
+        ResponseEntity<String> response = api.postForEntity(url("/api/v1/auth/login"),
+                Map.of("identifier", email, "password", PASSWORD), String.class);
+        assertEquals(HttpStatus.OK, response.getStatusCode(), response.getBody());
+        return objectMapper.readTree(response.getBody());
     }
 
     private String workspaceOfMember(String userId) {
