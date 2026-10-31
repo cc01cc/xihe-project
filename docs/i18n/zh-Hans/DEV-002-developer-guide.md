@@ -404,6 +404,10 @@ Native 运行期的探针口径（运维注意）：native CP 的 `/actuator/hea
 
 水位线（`target/`）：正常 ≤12GB，12–15GB 观察，≥15GB 告警，≥20GB 强制；H 余量 <5GB 直接走强制。巡检入口：`mise run check:runtime-target`（输出占用与判定，exit 1 = 强制线、exit 2 = 检查不完整；脚本 `scripts/check-runtime-target.mjs`），双周先跑它、超线再按下面顺序清理。
 
+- **worktree 隔离（PLAN-0596，默认策略）**：每个 worktree 使用独立 `CARGO_TARGET_DIR`（`. scripts/worktree-env.ps1 -Worktree <name>` 外置到 `one/.local/cargo-target/<name>`），不共享同一 target。2026-10-31 scratch 对照：同一源码/profile 的两个 checkout 共享 target 时，第二 checkout 冷构建 48.9s → 0.3s、磁盘从 2×2.606GB 降为 2.606GB；但真实并行 worktree 的分支/工具链/profile 常不同，且并发构建会串行、Windows 服务占用 exe 会让另一 worktree 构建失败，故不采纳共享，保留隔离。
+- **sweep 作用域**：`clean:runtime-sweep` 只作用于当前 `cargo metadata` 解析出的单个 target（普通 shell = in-tree；dot-source `worktree-env.ps1` 后 = 该 worktree 的外置目录），不枚举 `.local/cargo-target` 下其他项目；`--maxsize 12GB` 无单位按 MiB 计（≈11.18 GiB）。
+- **永久删除入口**：`mise run clean` 执行 `rm -rf logs packages/*/target packages/*/dist packages/*/coverage`，**不进回收站、无二次确认**；先停服务/构建，并确认这些目录确属可重建产物。
+
 日常（双周，无重编代价）：`mise run clean:runtime-sweep`（`cargo sweep --time 7 && cargo sweep --maxsize 12GB`，只删孤儿 rlib/pdb/rmeta，活指纹保留）。前提一次性 `cargo install cargo-sweep`。注意 `--time 14` 在高频构建下可能清零（孤儿全部 <14 天），以 `--maxsize` 为准。
 
 月度/告警（小代价）：删 `target/debug/incremental`（sweep 不处理增量目录，它是最大头，实测 20.3GB/286 个残留目录）。代价下次本地增量构建 +1~2min，deps 指纹不受影响，不触发全量重编。
