@@ -15,8 +15,6 @@ const messages = {
             admin: "管理",
             collapse: "收起侧边栏",
             expand: "展开侧边栏",
-            collapseRail: "收起导航栏",
-            expandRail: "展开导航栏",
         },
     },
 };
@@ -68,106 +66,112 @@ function patchAuth(options: { role?: string; workspace?: boolean } = {}) {
     return auth;
 }
 
-async function mountRail(props: { collapsed?: boolean; navOpen?: boolean } = {}) {
-    const wrapper = mount(NavRail, {
-        props: { collapsed: true, navOpen: true, ...props },
-        global: { plugins: [i18n] },
-    });
+async function mountRail() {
+    const wrapper = mount(NavRail, { global: { plugins: [i18n] } });
     await flushPromises();
     return wrapper;
 }
 
 beforeEach(() => {
     setActivePinia(createPinia());
+    localStorage.clear();
     pushSpy.mockClear();
     vi.restoreAllMocks();
     routeState.name = "workspace";
     routeState.path = "/workspace/ws-1";
 });
 
-describe("NavRail", () => {
-    it("renders icon-only global modules with accessible names when collapsed", async () => {
+describe("NavRail (PLAN-0582 S2: fixed 56px icon-only rail)", () => {
+    it("renders a fixed 56px icon-only strip with accessible names", async () => {
+        patchAuth();
+        const wrapper = await mountRail();
+        const rail = wrapper.get('[data-testid="nav-rail"]');
+
+        expect(rail.classes()).toContain("w-14");
+        expect(rail.classes()).not.toContain("w-44");
+        // Ruling #1: no expand/collapse state on the rail itself.
+        expect(wrapper.find('[data-testid="nav-rail-toggle"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="nav-rail-panel-toggle"]').exists()).toBe(false);
+
+        // Ruling #2: the workspace entry lives only in the navigation panel head.
+        expect(wrapper.find('[data-testid="nav-rail-workspace"]').exists()).toBe(false);
+
+        expect(wrapper.get('[data-testid="nav-rail-settings"]').attributes("aria-label")).toBe(
+            "设置",
+        );
+        expect(wrapper.get('[data-testid="nav-rail-settings"]').attributes("title")).toBe("设置");
+        expect(wrapper.get('[data-testid="nav-rail-logout"]').attributes("aria-label")).toBe(
+            "退出登录",
+        );
+    });
+
+    it("keeps every icon control reachable by name (sr-only labels, no visible text)", async () => {
         patchAuth();
         const wrapper = await mountRail();
 
-        expect(wrapper.get('[data-testid="nav-rail"]').classes()).toContain("w-12");
-        expect(wrapper.get('[data-testid="nav-rail-workspace"]').text()).toBe("工作区");
-        expect(wrapper.get('[data-testid="nav-rail-settings"]').text()).toBe("设置");
-        expect(wrapper.get('[data-testid="nav-rail-logout"]').text()).toBe("退出登录");
-        // Labels stay in the accessibility tree only while the rail is collapsed.
-        expect(wrapper.get('[data-testid="nav-rail-workspace"] span').classes()).toContain(
-            "sr-only",
-        );
+        // Icon-only: the label lives in an sr-only span so role/name queries and
+        // text-content matchers (e2e `filter({ hasText: /logout/ })`) both work.
+        for (const testid of ["nav-rail-settings", "nav-rail-logout"]) {
+            const button = wrapper.get(`[data-testid="${testid}"]`);
+            expect(button.find("span.sr-only").exists()).toBe(true);
+        }
     });
 
-    it("expands to icon + label without changing the navigation targets", async () => {
-        patchAuth();
-        const wrapper = await mountRail({ collapsed: false });
+    it("marks the active module with aria-current", async () => {
+        patchAuth({ role: "ADMIN" });
 
-        expect(wrapper.get('[data-testid="nav-rail"]').classes()).toContain("w-44");
-        expect(wrapper.get('[data-testid="nav-rail-workspace"] span').classes()).toContain(
-            "truncate",
+        const settingsRail = await mountRail();
+        routeState.path = "/settings/config";
+        const settingsWrapper = await mountRail();
+        expect(
+            settingsWrapper.get('[data-testid="nav-rail-settings"]').attributes("aria-current"),
+        ).toBe("page");
+        expect(settingsRail.get('[data-testid="nav-rail-settings"]').exists()).toBe(true);
+
+        routeState.path = "/settings/principal-grants";
+        const adminWrapper = await mountRail();
+        expect(adminWrapper.get('[data-testid="nav-rail-admin"]').attributes("aria-current")).toBe(
+            "page",
         );
-        await wrapper.get('[data-testid="nav-rail-settings"]').trigger("click");
-        expect(pushSpy).toHaveBeenCalledWith("/settings/config");
+        expect(
+            adminWrapper.get('[data-testid="nav-rail-settings"]').attributes("aria-current"),
+        ).toBeUndefined();
     });
 
-    it("shows the Admin module for instance admins only", async () => {
-        patchAuth();
+    it("hides the admin module from non-admin members", async () => {
+        patchAuth({ role: "USER" });
         const memberRail = await mountRail();
         expect(memberRail.find('[data-testid="nav-rail-admin"]').exists()).toBe(false);
 
         setActivePinia(createPinia());
         patchAuth({ role: "ADMIN" });
         const adminRail = await mountRail();
-        await adminRail.get('[data-testid="nav-rail-admin"]').trigger("click");
-        expect(pushSpy).toHaveBeenCalledWith("/settings/config-locks");
+        expect(adminRail.find('[data-testid="nav-rail-admin"]').exists()).toBe(true);
     });
 
-    it("marks the active module with aria-current", async () => {
-        patchAuth();
-        const workspaceRail = await mountRail();
-        expect(
-            workspaceRail.get('[data-testid="nav-rail-workspace"]').attributes("aria-current"),
-        ).toBe("page");
-
-        routeState.name = "settings-config";
-        routeState.path = "/settings/config";
-        const settingsRail = await mountRail();
-        expect(
-            settingsRail.get('[data-testid="nav-rail-settings"]').attributes("aria-current"),
-        ).toBe("page");
-        expect(
-            settingsRail.get('[data-testid="nav-rail-workspace"]').attributes("aria-current"),
-        ).toBeUndefined();
-    });
-
-    it("emits panel and rail toggle intents with aria-pressed state", async () => {
-        patchAuth();
-        const wrapper = await mountRail({ navOpen: false, collapsed: true });
-
-        const panelToggle = wrapper.get('[data-testid="nav-rail-panel-toggle"]');
-        expect(panelToggle.attributes("aria-pressed")).toBe("false");
-        await panelToggle.trigger("click");
-        expect(wrapper.emitted("toggle-nav")).toHaveLength(1);
-
-        const railToggle = wrapper.get('[data-testid="nav-rail-toggle"]');
-        expect(railToggle.attributes("aria-pressed")).toBe("true");
-        await railToggle.trigger("click");
-        expect(wrapper.emitted("toggle-rail")).toHaveLength(1);
-    });
-
-    it("navigates to the workspace and logs out from the rail", async () => {
+    it("navigates to settings and logs out from the rail", async () => {
         const auth = patchAuth();
-        const logout = vi.spyOn(auth, "logout").mockImplementation(() => {});
+        localStorage.setItem(
+            "xihe-layout-global",
+            JSON.stringify({ navOpen: true, navWidth: 300 }),
+        );
         const wrapper = await mountRail();
 
-        await wrapper.get('[data-testid="nav-rail-workspace"]').trigger("click");
-        await flushPromises();
-        expect(pushSpy).toHaveBeenCalledWith("/workspace/ws-1");
+        await wrapper.get('[data-testid="nav-rail-settings"]').trigger("click");
+        expect(pushSpy).toHaveBeenCalledWith("/settings/config");
 
         await wrapper.get('[data-testid="nav-rail-logout"]').trigger("click");
-        expect(logout).toHaveBeenCalled();
-        expect(pushSpy).toHaveBeenLastCalledWith("/login");
+        await flushPromises();
+        expect(auth.token).toBeNull();
+        expect(pushSpy).toHaveBeenCalledWith("/login");
+    });
+
+    it("does not navigate to a workspace (the panel head owns that entry)", async () => {
+        patchAuth();
+        const wrapper = await mountRail();
+        const pushesBefore = pushSpy.mock.calls.length;
+        await wrapper.get('[data-testid="nav-rail-settings"]').trigger("click");
+        expect(pushSpy.mock.calls.at(-1)).toEqual(["/settings/config"]);
+        expect(pushSpy.mock.calls.length).toBe(pushesBefore + 1);
     });
 });

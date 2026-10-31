@@ -15,7 +15,7 @@ const mobileMediaQuery =
         ? null
         : window.matchMedia("(max-width: 767px)");
 const isMobile = ref(mobileMediaQuery?.matches ?? false);
-const { railCollapsed, navOpen, navWidth, mainOffset } = useWorkspaceLayout({ isMobile });
+const { navOpen, navWidth, mainOffset } = useWorkspaceLayout({ isMobile });
 const route = useRoute();
 const router = useRouter();
 const { t } = useI18n();
@@ -135,12 +135,7 @@ onUnmounted(() => {
 
 <template>
     <div class="flex h-screen overflow-hidden bg-background text-foreground">
-        <Sidebar
-            v-model:open="navOpen"
-            v-model:width="navWidth"
-            v-model:rail-collapsed="railCollapsed"
-            :is-mobile="isMobile"
-        />
+        <Sidebar v-model:open="navOpen" v-model:width="navWidth" :is-mobile="isMobile" />
         <button
             v-if="!navOpen && isMobile"
             type="button"
@@ -153,7 +148,7 @@ onUnmounted(() => {
             <PanelLeftOpen class="size-4" />
         </button>
         <main
-            class="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto transition-[margin] duration-300"
+            class="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-surface-content transition-[margin] duration-300"
             :style="{ marginLeft: mainMargin }"
         >
             <div

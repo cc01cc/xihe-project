@@ -21,8 +21,7 @@ import {
     NAV_WIDTH_KEYBOARD_STEP,
     NAV_WIDTH_MAX,
     NAV_WIDTH_MIN,
-    RAIL_WIDTH_COLLAPSED,
-    RAIL_WIDTH_EXPANDED,
+    RAIL_WIDTH,
     clampNavWidth,
 } from "../../composables/useWorkspaceLayout";
 import { useSessionStore } from "../../stores/session";
@@ -31,13 +30,11 @@ const props = defineProps<{
     open: boolean;
     width: number;
     isMobile: boolean;
-    railCollapsed: boolean;
 }>();
 
 const emit = defineEmits<{
     "update:open": [value: boolean];
     "update:width": [value: number];
-    "update:railCollapsed": [value: boolean];
 }>();
 
 const router = useRouter(),
@@ -58,15 +55,13 @@ const isWorkspacePage = computed(() => {
     return (route?.path ?? "") === workspacePath(workspaceId);
 });
 
-const railWidth = computed(() =>
-    props.railCollapsed ? RAIL_WIDTH_COLLAPSED : RAIL_WIDTH_EXPANDED,
-);
-
+// S2 ruling #1: the rail is a fixed 56px icon strip, so the panel sits right
+// after it; collapsing the panel keeps that 56px offset (R-D).
 const asideStyle = computed(() => {
     if (props.isMobile) {
         return { width: props.open ? `min(${props.width}px, calc(100vw - 1rem))` : "0px" };
     }
-    const total = railWidth.value + (props.open ? props.width : 0);
+    const total = RAIL_WIDTH + (props.open ? props.width : 0);
     return { width: `${total}px` };
 });
 
@@ -151,17 +146,11 @@ function handleLogout() {
         data-testid="sidebar"
         :aria-hidden="isMobile && !open ? 'true' : undefined"
         :inert="isMobile && !open ? true : undefined"
-        class="fixed left-0 top-0 z-40 flex h-full overflow-hidden bg-sidebar-background border-r border-sidebar-border transition-[width] duration-300"
+        class="fixed left-0 top-0 z-40 flex h-full overflow-hidden bg-surface-canvas border-r border-sidebar-border transition-[width] duration-300"
         :class="{ 'shadow-lg': isMobile && open }"
         :style="asideStyle"
     >
-        <NavRail
-            v-if="!isMobile"
-            :collapsed="railCollapsed"
-            :nav-open="open"
-            @toggle-rail="emit('update:railCollapsed', !railCollapsed)"
-            @toggle-nav="toggleSidebar"
-        />
+        <NavRail v-if="!isMobile" />
         <div
             data-testid="sidebar-panel"
             :aria-hidden="!isMobile && !open ? 'true' : undefined"
@@ -173,22 +162,26 @@ function handleLogout() {
                 <button
                     type="button"
                     data-testid="sidebar-workspace"
-                    class="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
-                    :class="{ 'bg-sidebar-accent': isWorkspacePage }"
+                    class="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-base transition-colors"
+                    :class="
+                        isWorkspacePage
+                            ? 'bg-brand/10 font-semibold text-brand'
+                            : 'text-sidebar-foreground hover:bg-sidebar-accent'
+                    "
                     :aria-current="isWorkspacePage ? 'page' : undefined"
                     :title="workspaceLabel"
                     @click="navigateToWorkspace"
                 >
                     <FolderTree class="size-4 shrink-0" aria-hidden="true" />
-                    <span class="truncate font-medium">{{ workspaceLabel }}</span>
+                    <span class="truncate font-semibold">{{ workspaceLabel }}</span>
                 </button>
                 <button
-                    v-if="isMobile"
                     type="button"
-                    data-testid="sidebar-close"
+                    :data-testid="isMobile ? 'sidebar-close' : 'sidebar-collapse'"
                     :aria-label="t('sidebar.collapse')"
                     :title="t('sidebar.collapse')"
-                    class="shrink-0 rounded-md p-1.5 text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
+                    :aria-expanded="open"
+                    class="shrink-0 rounded-md p-1.5 text-sidebar-foreground transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     @click="toggleSidebar"
                 >
                     <PanelLeftClose class="size-4" aria-hidden="true" />
@@ -198,7 +191,7 @@ function handleLogout() {
             <div class="px-3 pb-2">
                 <button
                     data-testid="sidebar-new-chat"
-                    class="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-sidebar-border text-sm text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
+                    class="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-brand text-sm font-medium text-brand-foreground transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     @click="startNewChat"
                 >
                     <Plus class="size-4" aria-hidden="true" />

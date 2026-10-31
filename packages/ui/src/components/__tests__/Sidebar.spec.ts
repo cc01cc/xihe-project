@@ -102,7 +102,6 @@ async function mountSidebar(props: Partial<{ open: boolean; isMobile: boolean }>
             open: true,
             width: 280,
             isMobile: false,
-            railCollapsed: true,
             ...props,
         },
         global: {
@@ -247,12 +246,12 @@ describe("Sidebar", () => {
         expect(wrapper.find('[data-testid="session-pending-badge"]').text()).toContain("待审批");
     });
 
-    it("keeps the icon rail mounted and zero-width panel when collapsed on desktop", async () => {
+    it("keeps the 56px icon rail mounted and zero-width panel when collapsed on desktop", async () => {
         mockAuth();
         const wrapper = await mountSidebar({ open: false });
 
-        // R-D: collapsing the panel must keep the rail width as the main offset.
-        expect(wrapper.find("aside").attributes("style")).toContain("width: 48px");
+        // R-D / S2 ruling #1: collapsing the panel must keep the 56px rail offset.
+        expect(wrapper.find("aside").attributes("style")).toContain("width: 56px");
         expect(wrapper.find("[data-testid='sidebar-panel']").attributes("style")).toContain(
             "width: 0px",
         );
@@ -351,13 +350,19 @@ describe("Sidebar", () => {
         expect(wrapper.emitted("update:width")?.at(-1)).toEqual([264]);
     });
 
-    it("forwards rail collapse intent without touching panel state", async () => {
+    it("collapses the panel from its own header control (S2 ruling #1)", async () => {
         mockAuth();
         const wrapper = await mountSidebar();
 
-        await wrapper.get('[data-testid="nav-rail-toggle"]').trigger("click");
+        const collapse = wrapper.get('[data-testid="sidebar-collapse"]');
+        expect(collapse.attributes("aria-expanded")).toBe("true");
+        expect(collapse.attributes("aria-label")).toBe("收起侧边栏");
 
-        expect(wrapper.emitted("update:railCollapsed")?.at(-1)).toEqual([false]);
-        expect(wrapper.emitted("update:open")).toBeUndefined();
+        await collapse.trigger("click");
+
+        expect(wrapper.emitted("update:open")?.at(-1)).toEqual([false]);
+        // The rail no longer exposes any panel/collapse toggle.
+        expect(wrapper.find('[data-testid="nav-rail-panel-toggle"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="nav-rail-toggle"]').exists()).toBe(false);
     });
 });
