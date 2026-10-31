@@ -119,7 +119,7 @@ class AgentPrincipalControllerContractTest extends AbstractIntegrationTest {
         User user = userRepository.saveAndFlush(new User(
                 "principal-create-" + UUID.randomUUID() + "@test.com", "hash", UserRole.USER, "Principal create test"));
         userId = user.getId();
-        token = TestDataFactory.createGlobalToken(userId.toString(), user.getEmail(), "USER");
+        token = TestDataFactory.createGlobalToken(userId.toString(), user.getEmail(), "USER", 0);
     }
 
     private void addGrant(String actionClass, String resource) throws Exception {

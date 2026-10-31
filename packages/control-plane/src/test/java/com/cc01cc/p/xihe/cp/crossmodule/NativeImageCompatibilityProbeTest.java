@@ -154,7 +154,7 @@ class NativeImageCompatibilityProbeTest {
 
     @Test
     void jwtAccessTokenRoundTrips() {
-        String token = jwtTokenProvider.createAccessToken("native-probe-user", "probe@example.invalid", "ADMIN");
+        String token = jwtTokenProvider.createAccessToken("native-probe-user", "probe@example.invalid", "ADMIN", 0);
 
         assertTrue(jwtTokenProvider.validateToken(token));
         assertEquals("native-probe-user", jwtTokenProvider.getUserIdFromToken(token));

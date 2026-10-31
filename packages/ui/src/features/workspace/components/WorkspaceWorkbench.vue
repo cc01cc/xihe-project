@@ -1,17 +1,28 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useMediaQuery, useWindowSize } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
-import { FolderTree } from "@lucide/vue";
+import { toast } from "vue-sonner";
+import { FolderTree, GripVertical } from "@lucide/vue";
 import {
     DOCK_MAX_TABS,
+    DOCK_WIDTH_DEFAULT,
+    TREE_COLLAPSED_WIDTH,
+    TREE_WIDTH_DEFAULT,
+    TREE_WIDTH_KEYBOARD_STEP,
+    TREE_WIDTH_MAX,
+    TREE_WIDTH_MIN,
     clampDockWidth,
+    clampTreeWidth,
+    computeWorkbenchSqueeze,
+    createWorkspaceLayoutWriter,
     defaultWorkspaceLayout,
     defaultWorkspaceLayoutForViewport,
+    deriveDockMode,
     hasWorkspaceLayout,
     isDockTabId,
     readWorkspaceLayout,
-    writeWorkspaceLayout,
+    type DockMode,
     type DockTabId,
     type WorkspaceLayoutState,
 } from "../../../composables/useWorkspaceLayout";
@@ -67,6 +78,10 @@ const { width: viewportWidth } = useWindowSize();
  */
 function initialLayout(workspaceId: string): WorkspaceLayoutState {
     if (!workspaceId) return defaultWorkspaceLayout();
+    // "≥1800 opens the monitor" is a **first-run** policy: it only applies while no
+    // geometry is stored. S3b P1-1 (audit): there is deliberately no dismissal latch
+    // — a stored `dockCollapsed` is already the user's own choice, and a latch would
+    // keep overriding an explicit re-open on every reload.
     if (!hasWorkspaceLayout(workspaceId)) {
         return defaultWorkspaceLayoutForViewport(viewportWidth.value);
     }
@@ -74,16 +89,23 @@ function initialLayout(workspaceId: string): WorkspaceLayoutState {
 }
 
 const layout = ref<WorkspaceLayoutState>(initialLayout(props.workspaceId));
+let layoutWriter = createWorkspaceLayoutWriter(props.workspaceId || "");
 
 // Switching workspace swaps the whole per-workspace set (V11: "切 workspace 换一套").
 watch(
     () => props.workspaceId,
     (workspaceId) => {
+        // Persist the outgoing workspace's pending drag before rebinding the writer.
+        layoutWriter.flush();
+        layoutWriter = createWorkspaceLayoutWriter(workspaceId || "");
         layout.value = initialLayout(workspaceId);
         // P0-1/P1-2 (S2 audit): never carry open file buffers or a stale tree
-        // across workspaces, and reload the tree for the new workspace.
-        if (props.isMobile) return;
+        // across workspaces. S3a audit P0: this reset must run on mobile too — the
+        // mobile sheet renders the tree and the editor, so skipping it would save
+        // workspace A's buffer into workspace B. Only the tree prefetch is
+        // desktop-only (the mobile sheet loads the tree on demand).
         ws.resetWorkspaceScoped();
+        if (props.isMobile) return;
         void ws.loadTree();
     },
 );
@@ -92,10 +114,22 @@ watch(
     layout,
     (value) => {
         if (!props.workspaceId || props.isMobile) return;
-        writeWorkspaceLayout(props.workspaceId, value);
+        // P2-9: coalesce drag writes; `flush()` on unmount/switch keeps the last one.
+        layoutWriter.schedule(value);
     },
     { deep: true },
 );
+
+onBeforeUnmount(() => layoutWriter.flush());
+if (typeof window !== "undefined") {
+    // S3b P2 (audit): a reload/close within the coalescing window would drop the last
+    // write, which reads as "my close was treated as the default". Mirror the
+    // `beforeunload` flush pattern used for the logger (main.ts).
+    window.addEventListener("pagehide", () => layoutWriter.flush());
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") layoutWriter.flush();
+    });
+}
 
 /**
  * Yield order dock → file tree → nav panel (S2 ruling #3). The dock never takes
@@ -103,12 +137,6 @@ watch(
  * that has to give room is the file tree: below 1440px it starts collapsed and
  * the user can still expand it manually (a manual choice wins over the default).
  */
-const narrowViewport = useMediaQuery("(max-width: 1439px)");
-const treeExpandedManually = ref(false);
-const effectiveTreeCollapsed = computed(() => {
-    if (treeExpandedManually.value) return false;
-    return layout.value.treeCollapsed || narrowViewport.value;
-});
 
 const dockOpen = computed(
     () =>
@@ -124,6 +152,162 @@ const monitorOpen = computed(() => dockOpen.value && activeDockTab.value === "mo
 const dockTabs = computed<DockTab[]>(() =>
     layout.value.dockTabs.map((id) => ({ id, label: t(DOCK_TAB_LABEL_KEYS[id]) })),
 );
+
+const narrowViewport = useMediaQuery("(max-width: 1439px)");
+const treeExpandedManually = ref(false);
+
+// S3b §4: the anti-squeeze rules need the real row width, so measure the workbench
+// element instead of re-deriving it from the viewport (the nav panel offset is
+// owned by AppLayout and the dock width is user-dragged).
+const workbenchEl = ref<HTMLElement | null>(null);
+const workbenchWidth = ref(0);
+let workbenchObserver: ResizeObserver | null = null;
+
+watch(
+    workbenchEl,
+    (element) => {
+        workbenchObserver?.disconnect();
+        workbenchObserver = null;
+        if (!element || typeof ResizeObserver === "undefined") return;
+        workbenchObserver = new ResizeObserver((entries) => {
+            const entry = entries[0];
+            if (entry) workbenchWidth.value = entry.contentRect.width;
+        });
+        workbenchObserver.observe(element);
+        workbenchWidth.value = element.getBoundingClientRect().width;
+    },
+    { immediate: true },
+);
+
+onBeforeUnmount(() => workbenchObserver?.disconnect());
+
+const dockMode = computed<DockMode>(() =>
+    layout.value.dockModeManual ? layout.value.dockMode : deriveDockMode(viewportWidth.value),
+);
+
+/**
+ * S3b P1-2 (audit): the squeeze must consume the tree state **as rendered**. The
+ * previous version fed the persisted `treeCollapsed` while the manual expansion
+ * short-circuited outside of it, so the computed `mainWidth` assumed a 40px rail
+ * that was actually 240px — the toast lied and the 640 floor could be breached.
+ */
+const treeCollapsedForSqueeze = computed(() =>
+    treeExpandedManually.value ? false : layout.value.treeCollapsed || narrowViewport.value,
+);
+
+const squeeze = computed(() =>
+    computeWorkbenchSqueeze({
+        workbenchWidth: workbenchWidth.value || viewportWidth.value,
+        treeWidth: layout.value.treeWidth,
+        treeCollapsed: treeCollapsedForSqueeze.value,
+        dockWidth: layout.value.dockWidth,
+        dockOpen: dockOpen.value,
+        dockMode: dockMode.value,
+        // A manual expansion is an explicit choice: no automatic yielding, the dock
+        // goes floating instead (the hard floor still overrides if that is not enough).
+        allowTreeYield: !treeExpandedManually.value,
+    }),
+);
+
+/** Rendered dock mode: forced floating wins over the user's pinned choice. */
+const renderedDockMode = computed<DockMode>(() =>
+    squeeze.value.forceFloating ? "floating" : dockMode.value,
+);
+/** True when the pinned choice is being overruled so the UI can say why. */
+const dockModeOverruled = computed(
+    () => squeeze.value.forceFloating && dockMode.value === "pinned",
+);
+
+const effectiveTreeCollapsed = computed(
+    () => treeCollapsedForSqueeze.value || squeeze.value.treeYielded,
+);
+
+const treeWidth = computed(() => layout.value.treeWidth);
+const treeResizingWidth = ref<number | null>(null);
+
+function setTreeWidth(width: number): void {
+    layout.value.treeWidth = clampTreeWidth(width);
+}
+
+/** P2-1 (tree): double-clicking the handle restores the default width. */
+function resetTreeWidth(): void {
+    setTreeWidth(TREE_WIDTH_DEFAULT);
+}
+
+function handleTreeResizeStart(event: MouseEvent): void {
+    event.preventDefault();
+    const startX = event.clientX,
+        startWidth = layout.value.treeWidth;
+    treeResizingWidth.value = startWidth;
+
+    function onMouseMove(moveEvent: MouseEvent) {
+        const next = clampTreeWidth(startWidth + (moveEvent.clientX - startX));
+        treeResizingWidth.value = next;
+        setTreeWidth(next);
+    }
+
+    function onMouseUp() {
+        treeResizingWidth.value = null;
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+    }
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+}
+
+function handleTreeResizeKeydown(event: KeyboardEvent): void {
+    let next: number | null = null;
+    if (event.key === "ArrowRight") next = layout.value.treeWidth + TREE_WIDTH_KEYBOARD_STEP;
+    else if (event.key === "ArrowLeft") next = layout.value.treeWidth - TREE_WIDTH_KEYBOARD_STEP;
+    else if (event.key === "Home") next = TREE_WIDTH_MIN;
+    else if (event.key === "End") next = TREE_WIDTH_MAX;
+    if (next === null) return;
+    event.preventDefault();
+    setTreeWidth(next);
+}
+
+/** Pin/unpin is an explicit user choice: it wins over the breakpoint derivation. */
+function toggleDockMode(): void {
+    layout.value.dockMode = dockMode.value === "pinned" ? "floating" : "pinned";
+    layout.value.dockModeManual = true;
+}
+
+// §4 rule 3 must not be silent: one toast per transition into forced floating.
+// `immediate` matters — a window that is already too narrow on first paint would
+// otherwise be forced floating without any explanation.
+let squeezeToastShown = false;
+watch(
+    dockModeOverruled,
+    (overruled) => {
+        if (overruled && !squeezeToastShown) {
+            squeezeToastShown = true;
+            toast.warning(t("workspace.squeezeFloatingNotice"));
+            return;
+        }
+        if (!overruled) squeezeToastShown = false;
+    },
+    { immediate: true },
+);
+
+// Floating is not a modal (Lead ruling 2026-10-31): no backdrop, dismiss with Esc
+// or by clicking the main column instead.
+function handleWindowKeydown(event: KeyboardEvent): void {
+    if (event.key !== "Escape") return;
+    if (!dockOpen.value || renderedDockMode.value !== "floating") return;
+    collapseDock();
+}
+
+if (typeof window !== "undefined") {
+    window.addEventListener("keydown", handleWindowKeydown);
+    onBeforeUnmount(() => window.removeEventListener("keydown", handleWindowKeydown));
+}
+
+/** Clicking the main column dismisses a floating dock (no overlay to click). */
+function handleMainColumnPointerDown(): void {
+    if (!dockOpen.value || renderedDockMode.value !== "floating") return;
+    collapseDock();
+}
 
 function toggleTree(): void {
     // Below 1440px the tree yields by default; an explicit expand is session-scoped
@@ -173,6 +357,8 @@ function closeDockTab(id: string): void {
 
 /** Collapse keeps the tab set and the width: collapse and width are independent. */
 function collapseDock(): void {
+    // Collapsing is itself the stored truth: `initialLayout` only applies the
+    // "≥1800 opens the monitor" default while no geometry exists (S3b P1-1).
     layout.value.dockCollapsed = true;
 }
 
@@ -238,12 +424,19 @@ watch(
             <FileEditor />
         </div>
 
-        <div v-else class="relative flex min-h-0 min-w-0 flex-1" data-testid="workspace-workbench">
-            <!-- Left column: file tree (S3 moves this inside the workbench header). -->
+        <div
+            v-else
+            ref="workbenchEl"
+            class="relative flex min-h-0 min-w-0 flex-1"
+            data-testid="workspace-workbench"
+        >
+            <!-- Left column: the file tree. S3b: draggable 200-320 + keyboard + dblclick. -->
             <div
                 data-testid="workspace-file-rail"
-                class="flex shrink-0 flex-col border-r border-border-subtle bg-surface-canvas transition-[width] duration-200"
-                :class="effectiveTreeCollapsed ? 'w-10' : 'w-60'"
+                class="relative flex shrink-0 flex-col border-r border-border-subtle bg-surface-canvas"
+                :style="{
+                    width: `${effectiveTreeCollapsed ? TREE_COLLAPSED_WIDTH : treeWidth}px`,
+                }"
             >
                 <div v-if="effectiveTreeCollapsed" class="flex flex-col items-center gap-1 py-2">
                     <button
@@ -266,10 +459,45 @@ watch(
                     <!-- S3a: tree panel head (workspace name / file actions / collapse). -->
                     <FileTreePanel @collapse="toggleTree" />
                 </div>
+
+                <!-- P2-2: live width bubble (display-only; the write is throttled). -->
+                <span
+                    v-if="treeResizingWidth !== null"
+                    data-testid="tree-resize-bubble"
+                    aria-hidden="true"
+                    class="pointer-events-none absolute -right-1 top-1/2 z-30 translate-x-full -translate-y-1/2 rounded bg-foreground/85 px-1.5 py-0.5 text-[11px] tabular-nums text-background"
+                >
+                    {{ treeResizingWidth }}px
+                </span>
+                <div
+                    v-if="!effectiveTreeCollapsed"
+                    role="separator"
+                    aria-orientation="vertical"
+                    :aria-label="t('workspace.treeResize')"
+                    :aria-valuenow="treeWidth"
+                    :aria-valuemin="TREE_WIDTH_MIN"
+                    :aria-valuemax="TREE_WIDTH_MAX"
+                    tabindex="0"
+                    data-testid="tree-resizer"
+                    class="absolute -right-0.5 top-0 bottom-0 w-1 cursor-col-resize transition-colors hover:bg-primary/20 focus-visible:bg-primary/30 focus-visible:outline-none"
+                    @mousedown="handleTreeResizeStart"
+                    @dblclick="resetTreeWidth"
+                    @keydown="handleTreeResizeKeydown"
+                >
+                    <span
+                        class="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-muted-foreground/40"
+                        aria-hidden="true"
+                    >
+                        <GripVertical class="size-3" />
+                    </span>
+                </div>
             </div>
 
             <!-- Center: the routed main content (chat / environment / settings). -->
-            <div class="flex min-w-0 flex-1 flex-col bg-surface-content">
+            <div
+                class="flex min-w-0 flex-1 flex-col bg-surface-content"
+                @mousedown="handleMainColumnPointerDown"
+            >
                 <slot name="center" />
             </div>
 
@@ -278,10 +506,13 @@ watch(
                 :tabs="dockTabs"
                 :active-tab="activeDockTab"
                 :width="layout.dockWidth"
+                :mode="renderedDockMode"
+                :default-width="DOCK_WIDTH_DEFAULT"
                 @update:active-tab="setActiveDockTab"
                 @close-tab="closeDockTab"
                 @close="collapseDock"
                 @update:width="setDockWidth"
+                @toggle-mode="toggleDockMode"
             >
                 <template #code>
                     <FileEditor />

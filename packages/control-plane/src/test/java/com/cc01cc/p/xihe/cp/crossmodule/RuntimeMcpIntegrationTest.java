@@ -383,7 +383,7 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setBearerAuth(jwtTokenProvider.createAccessToken(
-                "no-workspace-user", "no-workspace@test.com", "USER", null));
+                "no-workspace-user", "no-workspace@test.com", "USER", null, 0));
         HttpEntity<String> entity = new HttpEntity<>(TOOLS_LIST_BODY, headers);
 
         ResponseEntity<String> response = restTemplate.postForEntity(

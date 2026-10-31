@@ -33,13 +33,16 @@ public class TenantContextInterceptor implements HandlerInterceptor {
     private static final Logger logger = LoggerFactory.getLogger(TenantContextInterceptor.class);
 
     private final JwtTokenProvider jwtTokenProvider;
+    private final AccessTokenAuthenticator tokenAuthenticator;
     private final WorkspaceService workspaceService;
     private final ObjectMapper objectMapper;
 
     public TenantContextInterceptor(JwtTokenProvider jwtTokenProvider,
+                                    AccessTokenAuthenticator tokenAuthenticator,
                                     WorkspaceService workspaceService,
                                     ObjectMapper objectMapper) {
         this.jwtTokenProvider = jwtTokenProvider;
+        this.tokenAuthenticator = tokenAuthenticator;
         this.workspaceService = workspaceService;
         this.objectMapper = objectMapper;
     }
@@ -52,13 +55,21 @@ public class TenantContextInterceptor implements HandlerInterceptor {
             return true;
         }
         String token = authHeader.substring(7);
-        if (!jwtTokenProvider.validateToken(token)) {
+        // PLAN-0580 decision #21: the tenant context is written only for a request
+        // whose access token passed the SAME epoch check as the security filter —
+        // including the `isTenantExempt` paths below, because userId/userRole are
+        // written before the exemption is evaluated. An internal service token is
+        // not a user access token, so it never reaches this branch and keeps
+        // "no tenant context" semantics (InternalTokenFilter owns it).
+        Optional<AccessTokenAuthenticator.AuthenticatedUser> authenticated =
+                tokenAuthenticator.authenticate(token);
+        if (authenticated.isEmpty()) {
             return true;
         }
 
-        String userId = jwtTokenProvider.getUserIdFromToken(token);
+        String userId = authenticated.get().userId();
         TenantContext.setUserId(userId);
-        TenantContext.setUserRole(jwtTokenProvider.getRoleFromToken(token));
+        TenantContext.setUserRole(authenticated.get().role());
 
         if (isTenantExempt(request.getRequestURI())) {
             return true;

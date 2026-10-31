@@ -166,7 +166,7 @@ class RunCheckpointControllerTest extends AbstractH2Test {
         Workspace workspace = workspaceRepository.save(new Workspace("cp-test-workspace", userId));
         workspaceId = workspace.getId().toString();
         workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
-        authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId);
+        authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId, 0);
 
         sessionId = UUID.randomUUID().toString();
         Session session = new Session(workspaceId, userId, "Checkpoint Test");

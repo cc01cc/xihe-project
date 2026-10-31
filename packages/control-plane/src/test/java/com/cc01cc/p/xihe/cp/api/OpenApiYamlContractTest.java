@@ -265,4 +265,53 @@ class OpenApiYamlContractTest {
                     "LoginRequest must carry the dual identifier (ruling #7)");
         }
     }
+
+    /**
+     * PLAN-0580 T3.1 / round-1 F13: the instance-ownership surface must be
+     * contracted in the same wave as the implementation — two path entries
+     * (three operations), the owner view (no account identifiers) and the role
+     * enum on both request and response sides.
+     */
+    @Test
+    void openApiContainsInstanceOwnershipRoutesAndRoleSchemas() throws Exception {
+        Path contract = Path.of("..", "..", "docs", "api", "openapi.yaml");
+        try (InputStream input = Files.newInputStream(contract)) {
+            Map<?, ?> parsed = new Yaml().load(input);
+            assertInstanceOf(Map.class, parsed);
+            Map<?, ?> document = (Map<?, ?>) parsed;
+            Map<?, ?> paths = (Map<?, ?>) document.get("paths");
+            assertTrue(paths.containsKey("/api/v1/instance/owner"),
+                    "GET/PUT /api/v1/instance/owner is contracted");
+            assertTrue(paths.containsKey("/api/v1/users/{userId}/role"),
+                    "PATCH /api/v1/users/{userId}/role is contracted");
+
+            Map<?, ?> ownerPath = (Map<?, ?>) paths.get("/api/v1/instance/owner");
+            assertTrue(ownerPath.containsKey("get"), "owner read is contracted");
+            assertTrue(ownerPath.containsKey("put"), "owner transfer is contracted");
+            Map<?, ?> rolePath = (Map<?, ?>) paths.get("/api/v1/users/{userId}/role");
+            assertTrue(rolePath.containsKey("patch"), "role change is contracted");
+
+            Map<?, ?> schemas = (Map<?, ?>) ((Map<?, ?>) document.get("components")).get("schemas");
+            Map<?, ?> ownerView = (Map<?, ?>) schemas.get("InstanceOwnerView");
+            assertInstanceOf(Map.class, ownerView, "InstanceOwnerView schema is contracted");
+            Map<?, ?> ownerProps = (Map<?, ?>) ownerView.get("properties");
+            for (String field : List.of("ownerUserId", "assignedAt", "isCurrentUser")) {
+                assertTrue(ownerProps.containsKey(field), "InstanceOwnerView must carry " + field);
+            }
+            for (String forbidden : List.of("username", "email", "name")) {
+                assertTrue(!ownerProps.containsKey(forbidden),
+                        "InstanceOwnerView must not expose " + forbidden + " (account enumeration)");
+            }
+
+            Map<?, ?> changeRequest = (Map<?, ?>) schemas.get("UserRoleChangeRequest");
+            assertInstanceOf(Map.class, changeRequest, "UserRoleChangeRequest schema is contracted");
+            Map<?, ?> roleSchema = (Map<?, ?>) ((Map<?, ?>) changeRequest.get("properties")).get("role");
+            String roleText = String.valueOf(roleSchema);
+            assertTrue(roleText.contains("ADMIN") && roleText.contains("USER"),
+                    "role enum is contracted: " + roleText);
+            assertTrue(schemas.containsKey("InstanceOwnerTransferRequest"),
+                    "InstanceOwnerTransferRequest schema is contracted");
+            assertTrue(schemas.containsKey("UserRoleView"), "UserRoleView schema is contracted");
+        }
+    }
 }

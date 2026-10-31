@@ -34,13 +34,16 @@ public class DataSeeder implements CommandLineRunner {
     private final PasswordEncoder passwordEncoder;
     private final GrantDefaultService grantDefaultService;
     private final LocalModeService localModeService;
+    private final com.cc01cc.p.xihe.cp.service.InstanceOwnershipService instanceOwnershipService;
 
     public DataSeeder(UserRepository userRepository, PasswordEncoder passwordEncoder,
-                      GrantDefaultService grantDefaultService, LocalModeService localModeService) {
+                      GrantDefaultService grantDefaultService, LocalModeService localModeService,
+                      com.cc01cc.p.xihe.cp.service.InstanceOwnershipService instanceOwnershipService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.grantDefaultService = grantDefaultService;
         this.localModeService = localModeService;
+        this.instanceOwnershipService = instanceOwnershipService;
     }
 
     static String seededAdminPassword() {
@@ -63,6 +66,18 @@ public class DataSeeder implements CommandLineRunner {
             admin = userRepository.save(admin);
             log.info("Seeded default admin user: admin@xihe.local");
         }
+        // PLAN-0580: V85's backfill runs before any account exists on a fresh
+        // database, so the seeded admin must claim ownership afterwards. The call
+        // is idempotent and never overwrites a pointer moved through the API.
+        //
+        // Order is frozen by spec `authorization.md` §4「实例级写互斥」: the lock
+        // order MUST be `instance_owner` -> target `users` row. `ensureUserDefault`
+        // locks the `users` row first, so claiming ownership afterwards would take
+        // the two locks in the opposite order and form a deadlock pair with
+        // `UserRoleService.changeRole`, which follows the frozen order. Swapping is
+        // safe: `ensureAssigned` only needs the persisted admin row, never the
+        // default grant.
+        instanceOwnershipService.ensureAssigned(admin, admin.getId().toString());
         grantDefaultService.ensureUserDefault(admin);
     }
 

@@ -170,7 +170,7 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
         Workspace ws = workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId)).stream().findFirst().orElseThrow();
         workspaceId = ws.getId().toString();
         workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
-        authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId);
+        authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId, 0);
 
         sessionId = UUID.randomUUID().toString();
         Session session = new Session(workspaceId, userId, "Approval Integration");
@@ -458,7 +458,7 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
                 baseUrl + "/api/v1/auth/register", register, AuthResponse.class);
         User otherUser = userRepository.findByEmail(otherEmail).orElseThrow();
         String otherTokenScoped = jwtTokenProvider.createAccessToken(
-                otherUser.getId().toString(), otherEmail, "USER", workspaceId);
+                otherUser.getId().toString(), otherEmail, "USER", workspaceId, 0);
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(otherTokenScoped);

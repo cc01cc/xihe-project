@@ -124,7 +124,7 @@ class PrincipalGrantLockTimeoutContractTest extends AbstractIntegrationTest {
                 UserRole.ADMIN, "Lock admin", "pglockadmin" + shortId());
         admin = userRepository.saveAndFlush(admin);
         adminId = admin.getId();
-        adminToken = TestDataFactory.createGlobalToken(adminId.toString(), admin.getEmail(), "ADMIN");
+        adminToken = TestDataFactory.createGlobalToken(adminId.toString(), admin.getEmail(), "ADMIN", 0);
 
         User target = userRepository.saveAndFlush(new User("pg-lock-target-" + UUID.randomUUID()
                 + "@test.com", "hash", UserRole.USER, "Lock target", "pglock" + shortId()));

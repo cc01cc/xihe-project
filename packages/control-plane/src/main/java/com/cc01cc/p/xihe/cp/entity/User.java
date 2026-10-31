@@ -46,6 +46,16 @@ public class User {
     @Column(length = 512)
     private String avatar;
 
+    /**
+     * PLAN-0580: access-token epoch. Bumped in the same transaction as any
+     * role change so already-issued access tokens stop authenticating on their
+     * next request (the {@code tv} claim must match this column). Primitive
+     * {@code int} is deliberate: a nullable wrapper would write NULL and trip
+     * the NOT NULL constraint (spec/migration-v85.md §5).
+     */
+    @Column(name = "token_version", nullable = false)
+    private int tokenVersion;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -124,4 +134,11 @@ public class User {
 
     public Instant getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
+
+    /** PLAN-0580: observed by {@code JwtAuthenticationFilter} against the token {@code tv} claim. */
+    public int getTokenVersion() { return tokenVersion; }
+    public void setTokenVersion(int tokenVersion) { this.tokenVersion = tokenVersion; }
+
+    /** PLAN-0580 I4: every role change bumps the epoch exactly once. */
+    public void bumpTokenVersion() { this.tokenVersion = this.tokenVersion + 1; }
 }

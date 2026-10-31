@@ -379,3 +379,22 @@ describe("PLAN-0582 S3a: workspace-scoped reset (S2 audit P0-1)", () => {
         expect(writeSpy).not.toHaveBeenCalled();
     });
 });
+
+describe("PLAN-0582 S3a audit P1-2: stale tree results", () => {
+    it("drops a load that arrives after the workspace changed", async () => {
+        setActivePinia(createPinia());
+        const store = useWorkspaceStore();
+        store.loadedWorkspaceId = null;
+        // Simulate: a load is already in flight for the current workspace, then the
+        // user switches (reset clears loadedWorkspaceId) and the stale result lands.
+        const pending = Promise.resolve([{ name: "from-a.md", path: "from-a.md", type: "file" }]);
+        mockedApi.listDirectory.mockReturnValueOnce(pending as never);
+        const first = store.loadTree();
+        store.resetWorkspaceScoped();
+        await first;
+
+        // The stale payload must not be painted for the new workspace.
+        expect(store.loadedWorkspaceId).toBeNull();
+        expect(store.fileTree).toEqual([]);
+    });
+});
