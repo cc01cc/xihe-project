@@ -6,7 +6,6 @@ import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
@@ -83,7 +82,7 @@ class TerminalTransactionCoreIntegrationTest extends AbstractIntegrationTest {
     @BeforeEach
     void createTenant() {
         User user = userRepository.save(new User("terminal-" + UUID.randomUUID() + "@test.com",
-                "hash", UserRole.USER, "Terminal transaction integration test"));
+                "hash", "Terminal transaction integration test"));
         userId = user.getId().toString();
         Workspace workspace = workspaceRepository.save(new Workspace("Terminal transaction test", userId));
         workspaceId = workspace.getId().toString();

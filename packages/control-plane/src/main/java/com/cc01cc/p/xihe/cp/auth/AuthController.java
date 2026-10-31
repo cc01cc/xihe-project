@@ -119,18 +119,19 @@ public class AuthController {
         }
         try {
             AuthResponse response = transactionTemplate.execute(status -> {
-                User user = authService.registerUser(request, localModeService.enabled());
+                User user = authService.registerUser(request);
                 // PLAN-0580 decision #10: in local single-user mode the first (and
                 // only) account is ADMIN, so it also becomes the instance owner in
                 // the same transaction. Idempotent: an existing pointer stays.
                 if (localModeService.enabled()) {
                     instanceOwnershipService.ensureAssigned(user, user.getId().toString());
-                    // PLAN-0610 W1c (round-3 P0-2): ADMIN alone leaves an empty instance with no
-                    // SUPER_ADMIN binding — the tier bridge maps users.role to ADMIN/USER only, and
-                    // DataSeeder (the other seed site) returns early in local mode. Seeding here, in
-                    // the same transaction and after the owner assignment (frozen lock order
-                    // instance_owner → users row), is the only path that makes I1/I5 true on a fresh
-                    // local instance. Idempotent and guarded against privilege resurrection.
+                    // PLAN-0610 W1c (round-3 P0-2): the USER tier alone leaves an empty instance with
+                    // no SUPER_ADMIN binding, and DataSeeder (the other seed site) returns early in
+                    // local mode. Seeding here, in the same transaction and after the owner
+                    // assignment (frozen lock order instance_owner → users row), is the only path
+                    // that makes I1/I5 true on a fresh local instance. Idempotent and guarded
+                    // against privilege resurrection. W4a: this is now the *only* elevation on the
+                    // registration path — no role column write exists any more.
                     grantDefaultService.ensureInstanceSuperAdmin(user);
                 }
                 return withDefaultWorkspace(user);

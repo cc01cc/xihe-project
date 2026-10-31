@@ -5,7 +5,6 @@ import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
@@ -105,8 +104,7 @@ class RoleMaterializationEpochTest extends AbstractH2Test {
     // ---------------------------------------------------------------- helpers
 
     private User user() {
-        return userRepository.save(new User("epoch-" + UUID.randomUUID() + "@test.local", "hash",
-                UserRole.USER, "Epoch"));
+        return userRepository.save(new User("epoch-" + UUID.randomUUID() + "@test.local", "hash", "Epoch"));
     }
 
     private int tokenVersion(UUID userId) {

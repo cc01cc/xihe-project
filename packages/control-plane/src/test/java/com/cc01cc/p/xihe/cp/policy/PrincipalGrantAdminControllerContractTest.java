@@ -2,7 +2,6 @@ package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
@@ -53,6 +52,9 @@ class PrincipalGrantAdminControllerContractTest extends AbstractIntegrationTest 
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @Autowired
+    private AuthzContext authzContext;
+
     private UUID adminId;
     private String adminUsername;
     private String adminToken;
@@ -71,17 +73,29 @@ class PrincipalGrantAdminControllerContractTest extends AbstractIntegrationTest 
     }
 
     private void fixture() {
-        User admin = userRepository.saveAndFlush(new User(
-                "pg-admin-" + UUID.randomUUID() + "@test.com", "hash", UserRole.ADMIN,
+        User admin = userRepository.saveAndFlush(new User("pg-admin-" + UUID.randomUUID() + "@test.com", "hash",
                 "Grant admin", "pgadmin" + shortId()));
         adminId = admin.getId();
+        grantInstanceAdmin(adminId);
         adminUsername = admin.getUsername();
-        User target = userRepository.saveAndFlush(new User(
-                "pg-target-" + UUID.randomUUID() + "@test.com", "hash", UserRole.USER,
+        User target = userRepository.saveAndFlush(new User("pg-target-" + UUID.randomUUID() + "@test.com", "hash",
                 "Grant target", "pgtarget" + shortId()));
         targetUsername = target.getUsername();
         adminToken = TestDataFactory.createGlobalToken(adminId.toString(), admin.getEmail(), "ADMIN", 0);
         targetToken = TestDataFactory.createGlobalToken(target.getId().toString(), target.getEmail(), "USER", 0);
+    }
+
+    /**
+     * PLAN-0610 W4a: an instance administrator is a binding holder (the retired {@code users.role}
+     * column never authorizes). Capability atoms are never materialized, so no grant row is needed
+     * for {@code cap:instance:admin} to reach the request authorities; the cache is dropped because
+     * the row is written behind {@code AuthzContext}'s back.
+     */
+    private void grantInstanceAdmin(UUID userId) {
+        jdbcTemplate.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+                + " granted_at) SELECT gen_random_uuid(), r.id, 'user', CAST(? AS UUID), 'instance',"
+                + " NOW() FROM roles r WHERE r.name = 'ADMIN'", userId);
+        authzContext.invalidateAll();
     }
 
     private static String shortId() {

@@ -5,7 +5,6 @@ import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
@@ -101,7 +100,7 @@ class BoundaryRecalcTest extends AbstractIntegrationTest {
     @Test
     void appendedDirectGrantTakesEffectAtNextToolCallAndRevocationRestoresDeny() {
         User user = userRepository.save(new User("boundary-grant-" + UUID.randomUUID() + "@test.com",
-                "hash", UserRole.USER, "Boundary recalc grant test"));
+                "hash", "Boundary recalc grant test"));
         userId = user.getId().toString();
         Workspace workspace = workspaceRepository.save(new Workspace("Boundary recalc grant test", userId));
         workspaceId = workspace.getId();
@@ -137,7 +136,7 @@ class BoundaryRecalcTest extends AbstractIntegrationTest {
     @Test
     void bindingCapChangeTakesEffectAtNextToolCall() {
         User user = userRepository.save(new User("boundary-cap-" + UUID.randomUUID() + "@test.com",
-                "hash", UserRole.USER, "Boundary recalc cap test"));
+                "hash", "Boundary recalc cap test"));
         userId = user.getId().toString();
         Workspace workspace = workspaceRepository.save(new Workspace("Boundary recalc cap test", userId));
         workspaceId = workspace.getId();

@@ -7,8 +7,9 @@ import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.ConfigAuditEntity;
 import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
 import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.entity.AccessRole;
+import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
@@ -22,6 +23,11 @@ import com.cc01cc.p.xihe.cp.repository.ConfigAuditRepository;
 import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
+import com.cc01cc.p.xihe.cp.policy.AccessScope;
+import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
+import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
+import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -66,6 +72,12 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
     @Autowired private AgentPrincipalRepository agentPrincipalRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;
+
+    @Autowired private AccessRoleRepository accessRoleRepository;
+
+    @Autowired private AccessRoleBindingRepository bindingRepository;
+
+    @Autowired private RoleGrantMaterializer materializer;
     @Autowired private WorkspaceUserRepository workspaceUserRepository;
     @Autowired private ConfigJpaRepository configJpaRepository;
     @Autowired private AuthorizationGrantRepository grantRepository;
@@ -477,18 +489,34 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
                 "the denied import must not partially write its earlier logging domain");
     }
 
+    /**
+     * PLAN-0610 W4a (round-3 P1-4): the instance template layer is gated by the
+     * {@code cap:instance:admin} capability, which comes from a role binding — the retired
+     * {@code users.role} column no longer authorizes anything.
+     */
+    private void grantInstanceAdmin(UUID userId) {
+        AccessRole adminRole = accessRoleRepository.findByName(SystemAccessRoleCatalog.ADMIN)
+                .orElseThrow();
+        // One instance tier per subject: replace whatever binding exists (the fixture's accounts are
+        // created directly, so this is normally empty) before materializing.
+        bindingRepository.deleteAll(bindingRepository.findBySubjectTypeAndSubjectIdAndScopeType(
+                "user", userId, AccessScope.INSTANCE));
+        bindingRepository.flush();
+        bindingRepository.save(new AccessRoleBinding(adminRole.getId(), "user", userId,
+                AccessScope.INSTANCE, null, userId));
+        materializer.materializeSubject("user", userId, userId, null);
+    }
+
     private void fixture() {
-        User member = userRepository.saveAndFlush(new User(
-                "tpl-snapshot-member-" + UUID.randomUUID() + "@test.com",
-                "hash", UserRole.USER, "Template read member"));
+        User member = userRepository.saveAndFlush(new User("tpl-snapshot-member-" + UUID.randomUUID() + "@test.com",
+                "hash", "Template read member"));
         memberUserId = member.getId();
-        User admin = userRepository.saveAndFlush(new User(
-                "tpl-snapshot-admin-" + UUID.randomUUID() + "@test.com",
-                "hash", UserRole.ADMIN, "Template read admin"));
+        User admin = userRepository.saveAndFlush(new User("tpl-snapshot-admin-" + UUID.randomUUID() + "@test.com",
+                "hash", "Template read admin"));
         adminUserId = admin.getId();
-        User outsider = userRepository.saveAndFlush(new User(
-                "tpl-snapshot-outsider-" + UUID.randomUUID() + "@test.com",
-                "hash", UserRole.USER, "Template read outsider"));
+        grantInstanceAdmin(adminUserId);
+        User outsider = userRepository.saveAndFlush(new User("tpl-snapshot-outsider-" + UUID.randomUUID() + "@test.com",
+                "hash", "Template read outsider"));
         outsiderUserId = outsider.getId();
 
         Workspace workspace = workspaceRepository.saveAndFlush(
@@ -548,7 +576,23 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
         return headers;
     }
 
+    /**
+     * One hand-written {@code source='role'} atom for the subject. PLAN-0610 W4a: the fixture's admin
+     * now holds a real ADMIN binding whose materialization already writes the same atoms, and
+     * {@code uq_grants_role_atom} is (subject, scope, atom) — so an atom that is already materialized is
+     * left alone instead of failing with a duplicate key.
+     */
     private void addUserGrant(UUID userId, String actionClass, String resource) throws Exception {
+        boolean exists = grantRepository.findBySubjectTypeAndSubjectId("user", userId).stream()
+                .filter(row -> "role".equals(row.getSource()))
+                .anyMatch(row -> {
+                    var atom = row.getPermissions().get(0);
+                    return actionClass.equals(atom.path("actionClass").asText())
+                            && resource.equals(atom.path("resource").asText("*"));
+                });
+        if (exists) {
+            return;
+        }
         AuthorizationGrant grant = new AuthorizationGrant();
         grant.setId(UUID.randomUUID());
         grant.setGranterType(GrantPrincipalPathResolver.USER);

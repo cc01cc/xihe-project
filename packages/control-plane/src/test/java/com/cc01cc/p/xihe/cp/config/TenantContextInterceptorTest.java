@@ -1,7 +1,6 @@
 package com.cc01cc.p.xihe.cp.config;
 
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
@@ -56,7 +55,7 @@ class TenantContextInterceptorTest {
         when(jwtTokenProvider.validateToken(TOKEN)).thenReturn(true);
         when(jwtTokenProvider.getUserIdFromToken(TOKEN)).thenReturn(USER_ID);
         when(jwtTokenProvider.getTokenVersionFromToken(TOKEN)).thenReturn(0);
-        User user = new User("user@test.com", "hash", UserRole.USER, "User", "user");
+        User user = new User("user@test.com", "hash", "User", "user");
         user.setId(UUID.fromString(USER_ID));
         when(userRepository.findById(UUID.fromString(USER_ID))).thenReturn(Optional.of(user));
         when(workspaceService.isWorkspaceMember(anyString(), eq(USER_ID))).thenReturn(true);

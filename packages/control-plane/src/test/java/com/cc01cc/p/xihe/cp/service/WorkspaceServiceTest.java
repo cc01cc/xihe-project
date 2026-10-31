@@ -93,9 +93,7 @@ class WorkspaceServiceTest {
     void getOrCreateDefault_returnsExisting() {
         String suffix = java.util.UUID.randomUUID().toString().substring(0, 8);
         com.cc01cc.p.xihe.cp.entity.User user = userRepository.save(
-                new com.cc01cc.p.xihe.cp.entity.User(
-                        "user-default-" + suffix + "@test.com", "hash",
-                        com.cc01cc.p.xihe.cp.entity.UserRole.USER, "Default"));
+                new com.cc01cc.p.xihe.cp.entity.User("user-default-" + suffix + "@test.com", "hash", "Default"));
         Workspace first = workspaceService.createWorkspace("default-test", user.getId().toString());
         Workspace second = workspaceService.getOrCreateDefaultWorkspace(user.getId().toString());
         assertEquals(first.getId(), second.getId());

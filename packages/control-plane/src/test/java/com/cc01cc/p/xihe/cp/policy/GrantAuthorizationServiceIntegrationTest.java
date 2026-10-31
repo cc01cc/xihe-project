@@ -6,9 +6,10 @@ import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.entity.AccessRole;
+import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
@@ -88,6 +89,18 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
     private ConfigJpaRepository configJpaRepository;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.repository.AccessRoleRepository accessRoleRepository;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository bindingRepository;
+
+    @Autowired
+    private RoleGrantMaterializer materializer;
+
+    @Autowired
+    private AuthzContext authzContext;
+
+    @Autowired
     private JdbcTemplate jdbcTemplate;
 
     private String userId;
@@ -131,7 +144,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
     @Test
     void stablePrincipalCapsAndWorkspaceBindingControlAgentActions() throws Exception {
         User user = userRepository.save(new User("grant-path-" + UUID.randomUUID() + "@test.com",
-                "hash", UserRole.USER, "Grant path test"));
+                "hash", "Grant path test"));
         userId = user.getId().toString();
         Workspace workspace = workspaceRepository.save(new Workspace("Grant path test", userId));
         workspaceId = workspace.getId();
@@ -299,7 +312,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
     @Test
     void spawnAncestorChainsAndWorkspaceMembershipStayIndependentPerSubject() {
         User user = userRepository.save(new User("grant-chain-" + UUID.randomUUID() + "@test.com",
-                "hash", UserRole.USER, "Grant chain test"));
+                "hash", "Grant chain test"));
         userId = user.getId().toString();
         Workspace workspace = workspaceRepository.save(new Workspace("Grant chain test", userId));
         workspaceId = workspace.getId();
@@ -368,7 +381,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
     @Test
     void principalLifecycleAndWorkspaceCapsAreAuditedWithoutChangingGlobalGrants() {
         User user = userRepository.save(new User("principal-lifecycle-" + UUID.randomUUID() + "@test.com",
-                "hash", UserRole.USER, "Principal lifecycle test"));
+                "hash", "Principal lifecycle test"));
         userId = user.getId().toString();
         Workspace workspace = workspaceRepository.save(new Workspace("Principal lifecycle", userId));
         workspaceId = workspace.getId();
@@ -458,7 +471,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
     @Test
     void agentTemplateResolverUsesAuthorizedRawLayersAndFreezesTheResolvedSnapshot() throws Exception {
         User user = userRepository.save(new User("template-scope-" + UUID.randomUUID() + "@test.com",
-                "hash", UserRole.USER, "Template scope test"));
+                "hash", "Template scope test"));
         userId = user.getId().toString();
         Workspace workspace = workspaceRepository.save(new Workspace("Template scope workspace", userId));
         workspaceId = workspace.getId();
@@ -585,12 +598,34 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
                         userId, workspaceId.toString(), userTemplateId),
                 "visible duplicate template IDs must fail rather than silently choose a layer");
 
-        User admin = userRepository.findById(UUID.fromString(userId)).orElseThrow();
-        admin.setRole(UserRole.ADMIN);
-        userRepository.saveAndFlush(admin);
+        // PLAN-0610 W4a: the instance template layer is readable with cap:instance:admin, which a
+        // binding provides (the retired users.role column no longer authorizes).
+        grantInstanceAdmin(UUID.fromString(userId));
         AgentTemplateService.ResolvedTemplate instanceTemplate = agentTemplateService.resolveForCreation(
                 userId, null, instanceTemplateId);
         assertEquals("instance", instanceTemplate.sourceLayer());
+    }
+
+    /**
+     * PLAN-0610 W4a (round-3 P1-4): the instance template layer is gated by the
+     * {@code cap:instance:admin} capability, which comes from a role binding — the retired
+     * {@code users.role} column no longer authorizes anything.
+     */
+    private void grantInstanceAdmin(UUID userId) {
+        AccessRole adminRole = accessRoleRepository.findByName(SystemAccessRoleCatalog.ADMIN)
+                .orElseThrow();
+        // One instance tier per subject: replace the registration USER binding before materializing,
+        // otherwise the union of two tiers re-materializes atoms that already exist.
+        bindingRepository.deleteAll(bindingRepository.findBySubjectTypeAndSubjectIdAndScopeType(
+                "user", userId, AccessScope.INSTANCE));
+        bindingRepository.flush();
+        bindingRepository.save(new AccessRoleBinding(adminRole.getId(), "user", userId,
+                AccessScope.INSTANCE, null, userId));
+        // No materialization: this fixture already owns hand-written rows for the same atoms, and
+        // uq_grants_role_atom (subject, scope, atom) ignores the source. The capability behind
+        // cap:instance:admin is resolved from the binding, never from a grant row (decision #23).
+        bindingRepository.flush();
+        authzContext.invalidate(userId);
     }
 
     private ArrayNode roleConfig(String id, String name, ArrayNode permissions) {

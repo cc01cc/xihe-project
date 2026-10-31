@@ -14,7 +14,6 @@ import com.cc01cc.p.xihe.cp.entity.CredentialEvent;
 import com.cc01cc.p.xihe.cp.entity.McpInvocation;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
@@ -165,8 +164,7 @@ class CredentialToolAcquisitionContractTest extends AbstractIntegrationTest {
         ((ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger("AUDIT"))
                 .addAppender(auditAppender);
 
-        User user = userRepository.save(new User(
-                "acquire-contract-" + UUID.randomUUID() + "@test.com", "hash", UserRole.USER,
+        User user = userRepository.save(new User("acquire-contract-" + UUID.randomUUID() + "@test.com", "hash",
                 "Acquire contract"));
         userId = user.getId().toString();
         Workspace workspace = workspaceRepository.save(new Workspace("Acquire contract", user.getId().toString()));

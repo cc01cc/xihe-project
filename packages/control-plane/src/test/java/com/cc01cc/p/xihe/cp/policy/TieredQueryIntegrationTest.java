@@ -6,7 +6,6 @@ import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
@@ -309,7 +308,7 @@ class TieredQueryIntegrationTest extends AbstractIntegrationTest {
             return;
         }
         User user = userRepository.save(new User("tier-query-" + UUID.randomUUID() + "@test.com",
-                "hash", UserRole.USER, "Tier query test"));
+                "hash", "Tier query test"));
         userId = user.getId().toString();
         workspaceId = workspaceRepository.save(
                 new Workspace("Tier query test", userId)).getId().toString();

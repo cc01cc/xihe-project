@@ -59,6 +59,7 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private com.cc01cc.p.xihe.cp.config.JwtTokenProvider jwtTokenProvider;
 
+
     /** The shared RestTemplate uses HttpURLConnection: no PATCH/DELETE and it drops 401 bodies. */
     private RestTemplate api;
 
@@ -85,7 +86,12 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
             }
         });
         emailAlias.clear();
-        emailAlias.clear();
+        // PLAN-0610 W4a: an administrator is an instance ADMIN/SUPER_ADMIN binding, so the per-test
+        // baseline is "no instance binding at all" (the seeded SUPER_ADMIN included). Each test then
+        // grants exactly the administrators it asserts about. The retired users.role column is still
+        // reset for the transition window, but nothing reads it.
+        jdbc.update("DELETE FROM role_bindings WHERE scope_type = 'instance'");
+        authzContext.invalidateAll();
         jdbc.update("UPDATE users SET role = 'USER', status = 'ACTIVE', deleted_at = NULL,"
                 + " token_version = 0, session_version = 0");
         jdbc.update("UPDATE instance_owner SET owner_user_id = NULL, assigned_at = NULL, assigned_by = NULL");
@@ -255,7 +261,8 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
     void removingAnAlreadyDisabledAdminIsNotBlockedAsLastAdmin() throws Exception {
         String adminToken = adminWithOwner();
         String disabledAdminId = userIdOf(register("dormant-admin@test.com"));
-        jdbc.update("UPDATE users SET role = 'ADMIN' WHERE id = CAST(? AS UUID)", disabledAdminId);
+        grantInstanceRole(disabledAdminId, "ADMIN");
+        assertEquals(2, usableAdminCount(), "the owner plus the freshly promoted administrator");
         assertEquals(HttpStatus.OK, patchStatus(adminToken, disabledAdminId, "DISABLED").getStatusCode());
         assertEquals(1, usableAdminCount(), "only the owner is usable now");
 
@@ -310,7 +317,7 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
         String first = userIdOf(register("list-a@test.com"));
         register("list-b@test.com");
         String promoted = userIdOf(register("list-admin@test.com"));
-        jdbc.update("UPDATE users SET role = 'ADMIN' WHERE id = CAST(? AS UUID)", promoted);
+        grantInstanceRole(promoted, "ADMIN");
 
         JsonNode all = listBody(adminToken, "?size=100");
         long expectedTotal = jdbc.queryForObject(
@@ -419,23 +426,17 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
         assertEquals(HttpStatus.CONFLICT, ownerGuard.getStatusCode());
         assertTrue(ownerGuard.getBody().contains("INSTANCE_OWNER_PROTECTED"), ownerGuard.getBody());
 
-        // Degenerate state for LAST_ADMIN: the actor's JWT says ADMIN (passes
-        // @PreAuthorize) but the row is USER, and the target is the only usable ADMIN.
-        jdbc.update("UPDATE users SET role = 'USER' WHERE id = CAST(? AS UUID)", ownerId);
-        jdbc.update("UPDATE users SET role = 'ADMIN', status = 'ACTIVE' WHERE id = CAST(? AS UUID)",
-                secondAdminId);
-        // The degenerate case needs an ADMIN-gated actor whose ADDRESSABLE row is USER: the
-        // capability now comes from the binding (W1b-2a), so grant it explicitly while the row
-        // stays USER.
-        grantInstanceRole(ownerId, "ADMIN");
-        String claimAdminToken = jwtTokenProvider.createAccessToken(
-                ownerId, "instance-owner-admin@test.com", "ADMIN", tokenVersion(ownerId));
-        ResponseEntity<String> lastAdmin = patchStatus(claimAdminToken, secondAdminId, "DISABLED");
-        assertEquals(HttpStatus.CONFLICT, lastAdmin.getStatusCode());
-        assertTrue(lastAdmin.getBody().contains("LAST_ADMIN"), lastAdmin.getBody());
-        assertEquals(1, usableAdminCount(), "the only usable ADMIN must survive");
+        // PLAN-0610 W4a: "usable administrator" is an instance ADMIN/SUPER_ADMIN binding count, and
+        // an active caller's own binding is part of it — so this API can no longer disable the last
+        // administrator (the caller always remains). 409 LAST_ADMIN stays as defence in depth for a
+        // stale capability or a lower-tier bypass; the reachable shape is the peer control below:
+        // disabling the *other* administrator succeeds and leaves exactly the caller usable.
+        assertEquals(2, usableAdminCount(), "owner + second administrator are both usable");
+        ResponseEntity<String> disablePeer = patchStatus(ownerToken, secondAdminId, "DISABLED");
+        assertEquals(HttpStatus.OK, disablePeer.getStatusCode(), disablePeer.getBody());
+        assertEquals(1, usableAdminCount(), "the caller remains the only usable administrator");
 
-        assertTrue(auditCount("user_admin_action_denied") >= denialsBefore + 3,
+        assertTrue(auditCount("user_admin_action_denied") >= denialsBefore + 2,
                 "every refusal writes a durable audit row");
     }
 
@@ -450,7 +451,7 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
         String ownerId = userIdOf(ownerToken);
         String otherToken = loginToken(promoteNewAdmin("race-admin@test.com"));
         String otherId = userIdOf(otherToken);
-        assertEquals(2, usableAdminCount());
+        assertEquals(2, usableAdminCount(), "owner + race administrator");
 
         String demoting = ownerToken;
         String disabling = otherToken;
@@ -544,9 +545,8 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
     private String adminWithOwner() throws Exception {
         String token = register("instance-owner-admin@test.com");
         String userId = userIdOf(token);
-        jdbc.update("UPDATE users SET role = 'ADMIN' WHERE id = CAST(? AS UUID)", userId);
-        // PLAN-0610 W1b: the owner must pass the capability gate on PUT /instance/owner, and the
-        // capability comes from the role binding, not from the legacy users.role column.
+        // PLAN-0610 W1b/W4a: the owner must pass the capability gate on PUT /instance/owner, and the
+        // capability comes from the role binding — users.role is not written (or read) any more.
         grantInstanceRole(userId, "ADMIN");
         jdbc.update("UPDATE instance_owner SET owner_user_id = CAST(? AS UUID), assigned_at = NOW()"
                 + " WHERE id = 1", userId);
@@ -566,10 +566,8 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
     /** Promotes a freshly registered account to ADMIN and returns its email (for a re-login). */
     private String promoteNewAdmin(String email) throws Exception {
         register(email);
-        jdbc.update("UPDATE users SET role = 'ADMIN' WHERE email = ?", actualEmail(email));
-        // PLAN-0610 W1b-2a: the instance-admin annotation gate reads cap:instance:admin, which
-        // comes from the role binding — a users.role UPDATE alone no longer authorizes (the claim
-        // role is a compatibility carrier only).
+        // PLAN-0610 W1b-2a/W4a: the instance-admin annotation gate reads cap:instance:admin, which
+        // comes from the role binding only.
         String userId = jdbc.queryForObject("SELECT CAST(id AS VARCHAR) FROM users WHERE email = ?",
                 String.class, actualEmail(email));
         grantInstanceRole(userId, "ADMIN");
@@ -619,9 +617,13 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
                 Integer.class, userId);
     }
 
+    /** PLAN-0610 W4a: usable administrators = ACTIVE accounts holding an instance admin tier binding. */
     private int usableAdminCount() {
-        return jdbc.queryForObject("SELECT COUNT(*) FROM users WHERE role = 'ADMIN'"
-                + " AND status = 'ACTIVE' AND deleted_at IS NULL", Integer.class);
+        return jdbc.queryForObject("SELECT COUNT(DISTINCT b.subject_id) FROM role_bindings b"
+                + " JOIN users u ON u.id = b.subject_id JOIN roles r ON r.id = b.role_id"
+                + " WHERE b.subject_type = 'user' AND b.scope_type = 'instance'"
+                + " AND r.name IN ('ADMIN', 'SUPER_ADMIN')"
+                + " AND u.status = 'ACTIVE' AND u.deleted_at IS NULL", Integer.class);
     }
 
     private int auditCount(String action) {

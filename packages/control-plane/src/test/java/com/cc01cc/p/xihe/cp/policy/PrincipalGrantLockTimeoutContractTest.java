@@ -2,7 +2,6 @@ package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -44,6 +43,13 @@ class PrincipalGrantLockTimeoutContractTest extends AbstractIntegrationTest {
     @Autowired
     private UserRepository userRepository;
 
+    @Autowired
+    private AuthzContext authzContext;
+
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
+
+
     private String adminToken;
     private String targetUsername;
 
@@ -59,14 +65,26 @@ class PrincipalGrantLockTimeoutContractTest extends AbstractIntegrationTest {
     }
 
     private void fixture() {
-        User admin = userRepository.saveAndFlush(new User(
-                "lock-admin-" + UUID.randomUUID() + "@test.com", "hash", UserRole.ADMIN,
+        User admin = userRepository.saveAndFlush(new User("lock-admin-" + UUID.randomUUID() + "@test.com", "hash",
                 "Lock admin", "lockadmin" + shortId()));
-        User target = userRepository.saveAndFlush(new User(
-                "lock-target-" + UUID.randomUUID() + "@test.com", "hash", UserRole.USER,
+        User target = userRepository.saveAndFlush(new User("lock-target-" + UUID.randomUUID() + "@test.com", "hash",
                 "Lock target", "locktarget" + shortId()));
         targetUsername = target.getUsername();
+        grantInstanceAdmin(admin.getId());
         adminToken = TestDataFactory.createGlobalToken(admin.getId().toString(), admin.getEmail(), "ADMIN", 0);
+    }
+
+    /**
+     * PLAN-0610 W4a: an instance administrator is a binding holder (the retired {@code users.role}
+     * column never authorizes). Capability atoms are never materialized, so no grant row is needed
+     * for {@code cap:instance:admin} to reach the request authorities; the cache is dropped because
+     * the row is written behind {@code AuthzContext}'s back.
+     */
+    private void grantInstanceAdmin(UUID userId) {
+        jdbc.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+                + " granted_at) SELECT gen_random_uuid(), r.id, 'user', CAST(? AS UUID), 'instance',"
+                + " NOW() FROM roles r WHERE r.name = 'ADMIN'", userId);
+        authzContext.invalidateAll();
     }
 
     private static String shortId() {

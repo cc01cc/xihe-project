@@ -3,7 +3,6 @@ package com.cc01cc.p.xihe.cp.auth;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import org.junit.jupiter.api.Test;
@@ -119,7 +118,7 @@ class AuthServiceUsernameTest {
 
     @Test
     void authenticate_byUsername_returnsUser() {
-        User user = new User("a@example.com", "stored-hash", UserRole.USER, "A", "zhangsan");
+        User user = new User("a@example.com", "stored-hash", "A", "zhangsan");
         UserRepository repository = repository();
         when(repository.findByUsername("zhangsan")).thenReturn(Optional.of(user));
         PasswordEncoder encoder = mock(PasswordEncoder.class);

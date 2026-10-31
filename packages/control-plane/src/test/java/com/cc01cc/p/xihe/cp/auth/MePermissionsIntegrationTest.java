@@ -61,8 +61,11 @@ class MePermissionsIntegrationTest extends AbstractIntegrationTest {
                 "the caller's own workspace must be listed: " + body);
         JsonNode own = workspaces.get(0);
         assertFalse(own.path("workspaceId").asText().isBlank());
-        assertFalse(own.path("workspaceAdmin").asBoolean(),
-                "a plain USER binding does not administer the workspace");
+        // PLAN-0610 W3-3: the workspace creator is bound to WS_OWNER, which carries
+        // workspace:admin, so the caller administers its own workspace while its instance
+        // capabilities stay plain-USER (asserted above / below).
+        assertTrue(own.path("workspaceAdmin").asBoolean(),
+                "the creator owns its own workspace (WS_OWNER): " + own);
     }
 
     @Test

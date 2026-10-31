@@ -2,7 +2,6 @@ package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
 import org.slf4j.Logger;
@@ -132,14 +131,6 @@ public class SystemAccessRoleCatalog {
             merged.addAll(part);
         }
         return List.copyOf(merged);
-    }
-
-    /** Legacy instance tier of a {@code users.role} value — the W1a bridge until V88 binds it. */
-    public static String instanceTierRoleName(UserRole role) {
-        return switch (role) {
-            case ADMIN -> ADMIN;
-            case USER -> USER;
-        };
     }
 
     public Optional<UUID> roleIdByName(String name) {

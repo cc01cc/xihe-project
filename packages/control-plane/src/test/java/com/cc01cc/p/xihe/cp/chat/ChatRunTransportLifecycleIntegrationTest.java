@@ -6,7 +6,6 @@ import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.ChatRunTransportAttempt;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
@@ -81,7 +80,7 @@ class ChatRunTransportLifecycleIntegrationTest extends AbstractIntegrationTest {
     void createTenant() {
         doNothing().when(checkpointService).requestCapture(any(String.class));
         User user = users.save(new User("transport-" + UUID.randomUUID() + "@test.com",
-                "hash", UserRole.USER, "Transport lifecycle integration test"));
+                "hash", "Transport lifecycle integration test"));
         userId = user.getId().toString();
 
         Workspace workspace = workspaces.save(new Workspace("Transport lifecycle test", userId));

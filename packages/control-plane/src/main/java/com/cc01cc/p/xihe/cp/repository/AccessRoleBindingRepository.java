@@ -48,6 +48,16 @@ public interface AccessRoleBindingRepository extends JpaRepository<AccessRoleBin
                                         @Param("status") UserStatus status);
 
     /**
+     * PLAN-0610 W4a: how many usable accounts hold one of these instance roles. Replaces the
+     * {@code users.role} counter the last-admin guard used before the column stopped being mapped.
+     */
+    @Query("select count(distinct b.subjectId) from AccessRoleBinding b join User u "
+            + "on u.id = b.subjectId where b.subjectType = 'user' and b.scopeType = 'instance' "
+            + "and b.roleId in :roleIds and u.status = :status and u.deletedAt is null")
+    long countActiveUsersWithInstanceRoles(@Param("roleIds") java.util.Collection<UUID> roleIds,
+                                           @Param("status") UserStatus status);
+
+    /**
      * PLAN-0610 W3-3: how many usable user subjects hold this role in <b>one workspace</b>. The
      * workspace-scope full-set replacement uses it for the {@code 409 LAST_OWNER} guard, so the
      * binding API cannot leave a workspace without an owner (the member API already refuses to

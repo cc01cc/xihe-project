@@ -24,7 +24,6 @@ import com.cc01cc.p.xihe.cp.entity.AuditLog;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceJob;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceJobHistory;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.event.WorkspaceEventManager;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.operation.JobStateService;
@@ -128,7 +127,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
 
     private String createWorkspaceOwner(String prefix) {
         String email = prefix + "-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
-        User owner = userRepository.save(new User(email, "hash", UserRole.USER, "Job Owner"));
+        User owner = userRepository.save(new User(email, "hash", "Job Owner"));
         createdOwnerId = owner.getId();
         return owner.getId().toString();
     }
@@ -181,8 +180,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
                                 + "\"executionMode\":\"windows-host\",\"available\":true}")));
 
         String ownerId = UUID.randomUUID().toString();
-        User owner = userRepository.save(new User("owner-" + ownerId + "@test.com", "hash",
-                UserRole.USER, "Owner"));
+        User owner = userRepository.save(new User("owner-" + ownerId + "@test.com", "hash", "Owner"));
         ownerId = owner.getId().toString();
         createdOwnerId = owner.getId();
         String idempotencyKey = "direct-attach-" + UUID.randomUUID();

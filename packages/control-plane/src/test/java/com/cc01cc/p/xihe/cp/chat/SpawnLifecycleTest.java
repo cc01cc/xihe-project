@@ -5,7 +5,6 @@ import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
@@ -367,7 +366,7 @@ class SpawnLifecycleTest extends AbstractIntegrationTest {
             return;
         }
         User user = userRepository.save(new User("spawn-lifecycle-" + UUID.randomUUID() + "@test.com",
-                "hash", UserRole.USER, "Spawn lifecycle test"));
+                "hash", "Spawn lifecycle test"));
         userId = user.getId().toString();
         Workspace workspace = workspaceRepository.save(new Workspace("Spawn lifecycle test", userId));
         workspaceId = workspace.getId().toString();

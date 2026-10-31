@@ -2,7 +2,6 @@ package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
@@ -321,8 +320,7 @@ class WorkspaceMemberControllerContractTest extends AbstractIntegrationTest {
     }
 
     private void fixture() {
-        User owner = userRepository.saveAndFlush(new User(
-                "member-owner-" + UUID.randomUUID() + "@test.com", "hash", UserRole.USER, "Owner"));
+        User owner = userRepository.saveAndFlush(new User("member-owner-" + UUID.randomUUID() + "@test.com", "hash", "Owner"));
         ownerId = owner.getId();
         ownerUsername = owner.getUsername();
         Workspace workspace = workspaceRepository.saveAndFlush(
@@ -343,8 +341,7 @@ class WorkspaceMemberControllerContractTest extends AbstractIntegrationTest {
     }
 
     private User newUser(String label) {
-        User user = userRepository.saveAndFlush(new User(
-                label + "-" + UUID.randomUUID() + "@test.com", "hash", UserRole.USER, label));
+        User user = userRepository.saveAndFlush(new User(label + "-" + UUID.randomUUID() + "@test.com", "hash", label));
         extraUsers.add(user.getId());
         return user;
     }

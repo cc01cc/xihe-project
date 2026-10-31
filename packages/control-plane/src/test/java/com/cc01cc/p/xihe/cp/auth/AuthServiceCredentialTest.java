@@ -2,7 +2,6 @@ package com.cc01cc.p.xihe.cp.auth;
 
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import org.junit.jupiter.api.Test;
@@ -36,7 +35,7 @@ class AuthServiceCredentialTest {
 
     @Test
     void wrongPassword_isCredentialFailure() {
-        User user = new User("a@test.com", "stored-hash", UserRole.USER, "A");
+        User user = new User("a@test.com", "stored-hash", "A");
         UserRepository repository = mock(UserRepository.class);
         PasswordEncoder encoder = mock(PasswordEncoder.class);
         when(repository.findByEmail("a@test.com")).thenReturn(Optional.of(user));
@@ -51,7 +50,7 @@ class AuthServiceCredentialTest {
 
     @Test
     void validPassword_returnsUser() {
-        User user = new User("a@test.com", "stored-hash", UserRole.USER, "A");
+        User user = new User("a@test.com", "stored-hash", "A");
         UserRepository repository = mock(UserRepository.class);
         PasswordEncoder encoder = mock(PasswordEncoder.class);
         when(repository.findByEmail("a@test.com")).thenReturn(Optional.of(user));

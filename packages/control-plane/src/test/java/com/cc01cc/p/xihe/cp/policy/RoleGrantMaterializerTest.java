@@ -307,9 +307,7 @@ class RoleGrantMaterializerTest {
     }
 
     private static com.cc01cc.p.xihe.cp.entity.User userWith(UUID userId) {
-        com.cc01cc.p.xihe.cp.entity.User user = new com.cc01cc.p.xihe.cp.entity.User(
-                "epoch-" + userId + "@test.local", "hash",
-                com.cc01cc.p.xihe.cp.entity.UserRole.USER, "Epoch");
+        com.cc01cc.p.xihe.cp.entity.User user = new com.cc01cc.p.xihe.cp.entity.User("epoch-" + userId + "@test.local", "hash", "Epoch");
         user.setId(userId);
         return user;
     }

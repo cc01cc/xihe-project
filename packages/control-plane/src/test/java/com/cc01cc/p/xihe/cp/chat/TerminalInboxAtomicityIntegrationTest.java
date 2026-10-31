@@ -6,7 +6,6 @@ import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
@@ -117,7 +116,7 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
     @BeforeEach
     void createTenant() {
         User user = userRepository.save(new User("t26b-" + UUID.randomUUID() + "@test.com",
-                "hash", UserRole.USER, "T2.6b inbox terminal integration"));
+                "hash", "T2.6b inbox terminal integration"));
         userId = user.getId().toString();
         Workspace workspace = workspaceRepository.save(new Workspace("T2.6b inbox test", userId));
         workspaceId = workspace.getId().toString();

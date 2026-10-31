@@ -8,7 +8,6 @@ import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
@@ -165,7 +164,7 @@ class CrossWorkspaceGrantGateTest extends AbstractH2Test {
      */
     private Fixture fixture(String tag) {
         User user = userRepository.save(new User("gate-" + tag + "-" + UUID.randomUUID() + "@test.local",
-                "hash", UserRole.USER, "Gate " + tag));
+                "hash", "Gate " + tag));
         String owner = user.getId().toString();
         Workspace workspaceA = workspaceRepository.save(new Workspace("gate-" + tag + "-a", owner));
         Workspace workspaceB = workspaceRepository.save(new Workspace("gate-" + tag + "-b", owner));

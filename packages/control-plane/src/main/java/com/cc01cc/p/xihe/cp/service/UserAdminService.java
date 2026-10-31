@@ -8,7 +8,6 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.entity.InstanceOwner;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.UserStatus;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository;
@@ -269,16 +268,16 @@ public class UserAdminService {
         if (users.existsByEmail(normalizedEmail)) {
             throw new CpApiException(HttpStatus.CONFLICT, "EMAIL_TAKEN", "Email already registered");
         }
-        // PLAN-0610 W3-2b: creation is "create account + assign the USER instance binding". The
-        // retired role field is not accepted; elevation is a role-binding write, not a create flag.
-        UserRole role = UserRole.USER;
+        // PLAN-0610 W3-2b/W4a: creation is "create account + assign the USER instance binding". The
+        // retired role field is not accepted, and {@code users.role} is no longer written at all —
+        // elevation is a role-binding write, not a create flag.
         String resolvedUsername = resolveUsername(username, normalizedEmail);
 
         String temporaryPassword = (rawPassword == null || rawPassword.isBlank())
                 ? generateTemporaryPassword() : null;
         String effectivePassword = temporaryPassword != null ? temporaryPassword : rawPassword;
 
-        User user = new User(normalizedEmail, passwordEncoder.encode(effectivePassword), role,
+        User user = new User(normalizedEmail, passwordEncoder.encode(effectivePassword),
                 name != null && !name.isBlank() ? name.trim() : normalizedEmail.split("@")[0],
                 resolvedUsername);
         User saved = users.save(user);
@@ -321,12 +320,13 @@ public class UserAdminService {
             deny(actorUserId, target, "OWNER", HttpStatus.CONFLICT, "INSTANCE_OWNER_PROTECTED",
                     "The instance owner cannot be disabled or deleted; transfer ownership first");
         }
-        if (removesAdmin && target.getRole() == UserRole.ADMIN
-                && users.countByRoleAndStatusAndDeletedAtIsNull(UserRole.ADMIN, UserStatus.ACTIVE)
-                <= (target.isUsable() ? 1 : 0)) {
-            // The count includes the target only when it is still usable; disabling an
-            // already-disabled/deleted ADMIN removes nothing from the usable set, so the
-            // threshold drops to 0 instead of rejecting a harmless request.
+        if (removesAdmin && grantDefaultService.holdsInstanceAdminCapability(target.getId())
+                && grantDefaultService.countActiveInstanceAdmins() <= (target.isUsable() ? 1 : 0)) {
+            // PLAN-0610 W4a: "administrator" is an instance ADMIN/SUPER_ADMIN binding, not the
+            // retired {@code users.role} column (R2-9). The count includes the target only when it
+            // is still usable; disabling an already-disabled/deleted administrator removes nothing
+            // from the usable set, so the threshold drops to 0 instead of rejecting a harmless
+            // request.
             deny(actorUserId, target, "LATEST_ADMIN", HttpStatus.CONFLICT, "LAST_ADMIN",
                     "The instance must keep at least one usable ADMIN");
         }

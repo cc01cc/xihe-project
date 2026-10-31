@@ -55,8 +55,9 @@ public class JwtTokenProvider {
 
     /**
      * Legacy/test-only overload. The {@code role} argument is ignored: W3-2b removed the claim, so
-     * a token issued through this shape is byte-identical to the two-argument form. Kept only so
-     * the many call sites that still pass {@code users.role} compile during the W3/W4 window.
+     * a token issued through this shape is byte-identical to the two-argument form. PLAN-0610 W4a
+     * removed the last {@code users.role} call sites; the slot now exists only for test fixtures
+     * that still mint a token positionally.
      */
     public String createAccessToken(String userId, String email, String role, int tokenVersion) {
         return buildAccessToken(userId, email, null, tokenVersion);

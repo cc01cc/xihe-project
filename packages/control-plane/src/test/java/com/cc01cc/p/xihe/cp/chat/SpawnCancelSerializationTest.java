@@ -7,7 +7,6 @@ import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
@@ -646,7 +645,7 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
             return;
         }
         User user = userRepository.save(new User("t25-" + UUID.randomUUID() + "@test.com",
-                "hash", UserRole.USER, "Spawn cancel serialization test"));
+                "hash", "Spawn cancel serialization test"));
         userId = user.getId().toString();
         Workspace workspace = workspaceRepository.save(new Workspace("T25 test", userId));
         workspaceId = workspace.getId().toString();

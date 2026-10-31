@@ -9,7 +9,6 @@ import org.springframework.http.HttpStatus;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 
@@ -48,23 +47,20 @@ public class AuthService {
         this.dummyPasswordHash = passwordEncoder.encode(UUID.randomUUID().toString());
     }
 
-    /** Creates the user row and its default grants; returns the persisted user. */
-    @Transactional
-    public User registerUser(RegisterRequest request) {
-        return registerUser(request, false);
-    }
-
     /**
      * Creates the user row and its default grants; returns the persisted user.
-     * PLAN-0526: local single-user registration grants the ADMIN role so the
-     * single-machine user has full capability.
+     * PLAN-0526: local single-user registration gives the single-machine user full capability by
+     * seeding the instance SUPER_ADMIN binding in {@code AuthController} (PLAN-0610 W1c), not by a
+     * role column write.
      * PLAN-0565 ruling #7: username is required and unique (letter-first);
      * a caller-supplied value is validated (400 USERNAME_INVALID / 409
      * USERNAME_TAKEN), a blank one is derived from the email local part with
      * automatic numeric de-duplication.
+     * PLAN-0610 W4a: the account is created without {@code users.role}; the tier is the USER
+     * binding written by {@link GrantDefaultService#ensureUserDefault(User)} below.
      */
     @Transactional
-    public User registerUser(RegisterRequest request, boolean adminRole) {
+    public User registerUser(RegisterRequest request) {
         if (userRepository.existsByEmail(request.getEmail())) {
             throw new IllegalArgumentException("Email already registered");
         }
@@ -73,15 +69,14 @@ public class AuthService {
         User user = new User(
                 request.getEmail(),
                 passwordEncoder.encode(request.getPassword()),
-                adminRole ? UserRole.ADMIN : UserRole.USER,
                 request.getName() != null ? request.getName() : request.getEmail().split("@")[0],
                 username
         );
         user = userRepository.save(user);
         grantDefaultService.ensureUserDefault(user);
 
-        logger.info("User registered: id={} email={} username={} role={}", user.getId(),
-                AuthLog.maskEmail(user.getEmail()), user.getUsername(), user.getRole());
+        logger.info("User registered: id={} email={} username={} tier=USER", user.getId(),
+                AuthLog.maskEmail(user.getEmail()), user.getUsername());
         return user;
     }
 

@@ -110,12 +110,12 @@ class AuthLocalModeTest {
     }
 
     @Test
-    void singleUser_adminAllowed() {
-        com.cc01cc.p.xihe.cp.entity.User admin = new com.cc01cc.p.xihe.cp.entity.User(
-                "admin@xihe.local", "hash", com.cc01cc.p.xihe.cp.entity.UserRole.ADMIN, "Admin");
+    void singleUser_singleAccount_passes() {
+        // PLAN-0610 W4a: the account has no users.role any more; the single-user gate is identity.
+        com.cc01cc.p.xihe.cp.entity.User admin =
+                new com.cc01cc.p.xihe.cp.entity.User("admin@xihe.local", "hash", "Admin");
         AuthService authService = AuthTestDoubles.authServiceWithUsers(List.of(admin));
-        assertEquals(com.cc01cc.p.xihe.cp.entity.UserRole.ADMIN,
-                authService.requireSingleUser().getRole());
+        assertEquals("admin@xihe.local", authService.requireSingleUser().getEmail());
     }
 
     @Test
@@ -147,7 +147,7 @@ class AuthLocalModeTest {
     }
 
     @Test
-    void register_localMode_grantsAdminRole() {
+    void register_createsTheAccountAndDefersTheTierToTheBinding() {
         com.cc01cc.p.xihe.cp.repository.UserRepository repo =
                 mock(com.cc01cc.p.xihe.cp.repository.UserRepository.class);
         when(repo.existsByEmail(anyString())).thenReturn(false);
@@ -161,15 +161,16 @@ class AuthLocalModeTest {
                 mock(CapabilityProjectionService.class));
         RegisterRequest request = new RegisterRequest("local@test.com", "pw-12345678", "Local");
 
-        assertEquals(com.cc01cc.p.xihe.cp.entity.UserRole.ADMIN,
-                service.registerUser(request, true).getRole());
-        assertEquals(com.cc01cc.p.xihe.cp.entity.UserRole.USER,
-                service.registerUser(request, false).getRole());
+        com.cc01cc.p.xihe.cp.entity.User created = service.registerUser(request);
+
+        // PLAN-0610 W4a: no role column write; the account is created and the USER instance
+        // binding (the tier) is written by the default-grant service in the same transaction.
+        assertEquals("local@test.com", created.getEmail());
+        assertEquals("Local", created.getName());
     }
 
     private static com.cc01cc.p.xihe.cp.entity.User oneUser() {
-        return new com.cc01cc.p.xihe.cp.entity.User(
-                "local@test.com", "hash", com.cc01cc.p.xihe.cp.entity.UserRole.USER, "Local");
+        return new com.cc01cc.p.xihe.cp.entity.User("local@test.com", "hash", "Local");
     }
 
     /** Shared stubs so each test stays a one-liner. */

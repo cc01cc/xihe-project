@@ -7,7 +7,6 @@ import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
@@ -78,8 +77,7 @@ class SessionDerivedStateIntegrationTest extends AbstractIntegrationTest {
         Session visibleChild = spawnSession(owner, workspace, "Visible child", parent, parentRun);
         ChatRun activeRun = newRun(visibleChild, "awaiting_approval", ChatRun.ORIGIN_SPAWN);
 
-        User other = users.save(new User("other-derived-" + UUID.randomUUID() + "@test.com", "hash",
-                UserRole.USER, "Other user"));
+        User other = users.save(new User("other-derived-" + UUID.randomUUID() + "@test.com", "hash", "Other user"));
         workspaceUsers.saveAndFlush(new WorkspaceUser(workspace.getId().toString(), other.getId().toString(),
                 WorkspaceRole.MEMBER));
         Session hiddenChild = spawnSession(other, workspace, "Must not leak", parent, parentRun);
@@ -151,8 +149,7 @@ class SessionDerivedStateIntegrationTest extends AbstractIntegrationTest {
     @Test
     void derivedStateDoesNotRevealAnotherUsersSession() {
         Session parent = newSession(owner, workspace, "Private parent");
-        User other = users.save(new User("invisible-" + UUID.randomUUID() + "@test.com", "hash",
-                UserRole.USER, "Invisible user"));
+        User other = users.save(new User("invisible-" + UUID.randomUUID() + "@test.com", "hash", "Invisible user"));
         String otherToken = jwtTokenProvider.createAccessToken(other.getId().toString(), other.getEmail(),
                 "USER", workspace.getId().toString(), 0);
 
@@ -171,17 +168,21 @@ class SessionDerivedStateIntegrationTest extends AbstractIntegrationTest {
         ResponseEntity<Map> unauthenticated = restTemplate.exchange(
                 baseUrl + "/api/v1/sessions/" + parent.getId() + "/derived-state",
                 HttpMethod.GET, new HttpEntity<>(new HttpHeaders()), Map.class);
-        String serviceToken = jwtTokenProvider.createAccessToken(owner.getId().toString(), owner.getEmail(),
-                "SERVICE", workspace.getId().toString(), 0);
-        ResponseEntity<Map> forbiddenRole = restTemplate.exchange(
+        // PLAN-0610 W3-2b removed the {@code role} claim from access tokens (a signed role string is
+        // a second vocabulary that can go stale), so the old "a SERVICE claim is forbidden" probe no
+        // longer exists: the argument is ignored and this is an ordinary owner token.
+        String legacyClaimToken = jwtTokenProvider.createAccessToken(owner.getId().toString(),
+                owner.getEmail(), "SERVICE", workspace.getId().toString(), 0);
+        ResponseEntity<Map> noRoleClaim = restTemplate.exchange(
                 baseUrl + "/api/v1/sessions/" + parent.getId() + "/derived-state",
-                HttpMethod.GET, bearer(serviceToken), Map.class);
+                HttpMethod.GET, bearer(legacyClaimToken), Map.class);
 
         assertEquals(HttpStatus.FORBIDDEN, notWorkspaceMember.getStatusCode());
         assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
         assertEquals(HttpStatus.NOT_FOUND, invalidId.getStatusCode());
         assertEquals(HttpStatus.UNAUTHORIZED, unauthenticated.getStatusCode());
-        assertEquals(HttpStatus.FORBIDDEN, forbiddenRole.getStatusCode());
+        assertEquals(HttpStatus.OK, noRoleClaim.getStatusCode(),
+                "no role claim is issued or honoured any more: the caller reads its own session");
     }
 
     private Session newSession(User user, Workspace ws, String title) {

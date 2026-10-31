@@ -5,7 +5,6 @@ import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
@@ -135,8 +134,7 @@ class AgentPrincipalControllerContractTest extends AbstractIntegrationTest {
     }
 
     private void fixture() {
-        User user = userRepository.saveAndFlush(new User(
-                "principal-create-" + UUID.randomUUID() + "@test.com", "hash", UserRole.USER, "Principal create test"));
+        User user = userRepository.saveAndFlush(new User("principal-create-" + UUID.randomUUID() + "@test.com", "hash", "Principal create test"));
         userId = user.getId();
         token = TestDataFactory.createGlobalToken(userId.toString(), user.getEmail(), "USER", 0);
     }

@@ -11,7 +11,6 @@ import com.cc01cc.p.xihe.cp.entity.McpDispatchHistory;
 import com.cc01cc.p.xihe.cp.entity.McpInvocation;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
@@ -93,11 +92,9 @@ class McpInvocationIntegrationTest extends AbstractIntegrationTest {
 
     @BeforeEach
     void setUpFixtures() {
-        User user = userRepository.save(new User(
-                "mcp-inv-" + UUID.randomUUID() + "@test.com", "hash", UserRole.USER, "MCP invocation test"));
+        User user = userRepository.save(new User("mcp-inv-" + UUID.randomUUID() + "@test.com", "hash", "MCP invocation test"));
         userId = user.getId().toString();
-        User other = userRepository.save(new User(
-                "mcp-inv-other-" + UUID.randomUUID() + "@test.com", "hash", UserRole.USER, "MCP other"));
+        User other = userRepository.save(new User("mcp-inv-other-" + UUID.randomUUID() + "@test.com", "hash", "MCP other"));
         otherUserId = other.getId().toString();
 
         Workspace ws = workspaceRepository.save(new Workspace("MCP invocation test", userId));

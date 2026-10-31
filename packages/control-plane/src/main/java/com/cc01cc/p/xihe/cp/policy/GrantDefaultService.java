@@ -10,7 +10,6 @@ import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.InstanceOwner;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.UserStatus;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
@@ -43,18 +42,19 @@ import java.util.stream.Collectors;
  * {@code ADMIN_ACTIONS}) and wrote one {@code source='default'} row. Now:</p>
  *
  * <ul>
- *   <li>{@link #ensureUserDefault(User)} / {@link #resyncUserDefault(User)} bind the user's
- *       instance tier role ({@code users.role} → {@code ADMIN} / {@code USER}; {@code SUPER_ADMIN}
- *       once V88 migrates the tier) and let {@link RoleGrantMaterializer} write the atom rows;</li>
+ *   <li>{@link #ensureUserDefault(User)} binds a freshly created account to the {@code USER}
+ *       instance tier and lets {@link RoleGrantMaterializer} write the atom rows; an existing tier
+ *       binding is never rewritten here — since PLAN-0610 W4a a tier change is a binding write
+ *       ({@code PUT /api/v1/bindings}) or an ownership transfer, never a column update;</li>
  *   <li>{@link #ensureAgentSessionDefault(Session)} keeps its frozen-snapshot semantics
  *       (PLAN-0580 #13: a Session's permission snapshot does not follow later role changes) and
  *       uses {@code source='agent_default'} — the materializer never touches that source
  *       (round-2 P1-1).</li>
  * </ul>
  *
- * <p>Until V88 copies {@code users.role} into bindings, the tier binding is derived from the
- * column here. That bridge is the only remaining reader of {@code users.role} in the grant path
- * and disappears with T2.1.</p>
+ * <p>PLAN-0610 W4a removed the last {@code users.role} bridge: the column is not mapped any more,
+ * so the instance tier is read from {@code role_bindings} only (V88 backfilled it, V89 drops the
+ * column).</p>
  */
 @Service
 public class GrantDefaultService {
@@ -113,56 +113,35 @@ public class GrantDefaultService {
     }
 
     /**
-     * PLAN-0580 #6/#13: re-derives the user's role atoms in the same transaction as a role change.
-     * The tier binding is moved to the new role and the materialized rows are reconciled in place
-     * (unchanged atoms keep their row id so the audit chain stays intact).
+     * Ensures a persisted account has exactly one instance tier binding, defaulting to {@code USER}.
+     *
+     * <p>PLAN-0610 W4a: the {@code users.role} bridge is gone, so this method <b>never moves</b> an
+     * existing tier — the binding is the truth (V88 backfilled it; W3-2a made it writable). It only
+     * fills the gap left by an account created before the binding existed, and collapses duplicate
+     * tiers left by earlier runs. Elevation/demotion stays a binding write or an ownership transfer,
+     * both of which own their audit/epoch semantics (W3-2a, I4/#29).</p>
      */
     @Transactional
-    public void resyncUserDefault(User user) {
-        requirePersistedUser(user);
-        dbLockTimeout.apply();
-        User lockedUser = userLock.lockAndFind(user.getId())
-                .orElseThrow(() -> new IllegalArgumentException("User not found"));
-        ensureInstanceTierBinding(lockedUser);
-        materializer.materializeSubject(SUBJECT_USER, lockedUser.getId(), lockedUser.getId(), null);
-    }
-
-    /** Locks the user row, then decides whether the instance tier binding must be (re)written. */
-    @Transactional
     public void ensureInstanceTierBinding(User user) {
-        if (user == null || user.getId() == null || user.getRole() == null) {
-            throw new IllegalArgumentException("A persisted user and role are required for default grants");
-        }
+        requirePersistedUser(user);
         Map<String, AccessRole> tierRoles = roleRepository
                 .findByNameIn(SystemAccessRoleCatalog.INSTANCE_TIER_ROLES).stream()
                 .collect(Collectors.toMap(AccessRole::getName, Function.identity()));
-        AccessRole target = tierRoles.get(SystemAccessRoleCatalog.instanceTierRoleName(user.getRole()));
-        if (target == null) {
-            throw new IllegalStateException("System role catalog is incomplete: "
-                    + SystemAccessRoleCatalog.instanceTierRoleName(user.getRole())
-                    + " is missing (V87 must have been applied)");
-        }
         List<AccessRoleBinding> tierBindings = tierBindings(user.getId(), tierRoles);
-        if (tierBindings.stream().anyMatch(binding -> isSuperAdmin(binding, tierRoles))) {
-            // PLAN-0610 W1b (T1.9): the SUPER_ADMIN tier is owned by instance ownership, not by the
-            // legacy users.role column — never downgrade it to ADMIN/USER here.
+        if (!tierBindings.isEmpty()) {
+            if (tierBindings.size() > 1) {
+                // One instance tier binding per user; drop duplicates left by earlier runs.
+                bindingRepository.deleteAll(tierBindings.subList(1, tierBindings.size()));
+            }
             return;
         }
-        if (tierBindings.isEmpty()) {
-            bindingRepository.save(new AccessRoleBinding(target.getId(), SUBJECT_USER, user.getId(),
-                    AccessScope.INSTANCE, null, user.getId()));
-            return;
+        AccessRole defaultTier = tierRoles.get(SystemAccessRoleCatalog.USER);
+        if (defaultTier == null) {
+            throw new IllegalStateException("System role catalog is incomplete: "
+                    + SystemAccessRoleCatalog.USER + " is missing (V87 must have been applied)");
         }
-        AccessRoleBinding primary = tierBindings.get(0);
-        boolean alreadyTarget = primary.getRoleId().equals(target.getId());
-        if (!alreadyTarget) {
-            primary.setRoleId(target.getId());
-            bindingRepository.save(primary);
-        }
-        if (tierBindings.size() > 1) {
-            // One instance tier binding per user; drop duplicates left by earlier runs.
-            bindingRepository.deleteAll(tierBindings.subList(1, tierBindings.size()));
-        }
+        bindingRepository.save(new AccessRoleBinding(defaultTier.getId(), SUBJECT_USER, user.getId(),
+                AccessScope.INSTANCE, null, user.getId()));
     }
 
     /**
@@ -258,12 +237,7 @@ public class GrantDefaultService {
         if (subjectId == null) {
             return false;
         }
-        Set<UUID> adminTierRoleIds = roleRepository
-                .findByNameIn(List.of(SystemAccessRoleCatalog.SUPER_ADMIN,
-                        SystemAccessRoleCatalog.ADMIN))
-                .stream()
-                .map(AccessRole::getId)
-                .collect(Collectors.toSet());
+        Set<UUID> adminTierRoleIds = adminTierRoleIds();
         if (adminTierRoleIds.isEmpty()) {
             return false;
         }
@@ -491,13 +465,33 @@ public class GrantDefaultService {
     }
 
     private static void requirePersistedUser(User user) {
-        if (user == null || user.getId() == null || user.getRole() == null) {
-            throw new IllegalArgumentException("A persisted user and role are required for default grants");
+        if (user == null || user.getId() == null) {
+            throw new IllegalArgumentException("A persisted user is required for default grants");
         }
     }
 
-    /** Kept for the tier mapping assertions in tests; the mapping itself lives in the catalog. */
-    public static String tierRoleName(UserRole role) {
-        return SystemAccessRoleCatalog.instanceTierRoleName(role);
+    /**
+     * PLAN-0610 W4a: number of ACTIVE, non-deleted accounts holding an instance {@code ADMIN} or
+     * {@code SUPER_ADMIN} tier binding. This is the "usable administrator" count the last-admin
+     * guard needs now that {@code users.role} is gone (R2-9: a capability/binding fact, never a
+     * column).
+     */
+    @Transactional(readOnly = true)
+    public long countActiveInstanceAdmins() {
+        Set<UUID> adminTierRoleIds = adminTierRoleIds();
+        if (adminTierRoleIds.isEmpty()) {
+            return 0;
+        }
+        return bindingRepository.countActiveUsersWithInstanceRoles(adminTierRoleIds,
+                UserStatus.ACTIVE);
+    }
+
+    private Set<UUID> adminTierRoleIds() {
+        return roleRepository
+                .findByNameIn(List.of(SystemAccessRoleCatalog.SUPER_ADMIN,
+                        SystemAccessRoleCatalog.ADMIN))
+                .stream()
+                .map(AccessRole::getId)
+                .collect(Collectors.toSet());
     }
 }

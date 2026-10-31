@@ -11,7 +11,6 @@ import static org.mockito.Mockito.when;
 import com.cc01cc.p.xihe.cp.config.AccessTokenAuthenticator;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import java.util.Optional;
 import java.util.UUID;
@@ -40,7 +39,7 @@ class AccessTokenAuthenticatorTest {
     }
 
     private static User persistedUser(int tokenVersion) {
-        User user = new User("owner@test.com", "hash", UserRole.ADMIN, "Owner", "owner");
+        User user = new User("owner@test.com", "hash", "Owner", "owner");
         user.setId(USER_ID);
         user.setTokenVersion(tokenVersion);
         return user;

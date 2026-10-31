@@ -36,10 +36,6 @@ public class User {
     @Column(name = "password_hash", nullable = false, length = 255)
     private String passwordHash;
 
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 20)
-    private UserRole role;
-
     @Column(length = 100)
     private String name;
 
@@ -93,15 +89,20 @@ public class User {
 
     public User() {}
 
-    public User(String email, String passwordHash, UserRole role, String name) {
-        this(email, passwordHash, role, name, defaultUsernameFromEmail(email));
+    /**
+     * PLAN-0610 W4a: {@code users.role} is no longer mapped. The instance tier lives in
+     * {@code role_bindings} (V88 copied it, W3-2a exposes the binding API) and V89 drops the
+     * column, so account creation no longer takes a role: {@code GrantDefaultService
+     * .ensureUserDefault} writes the USER binding in the same transaction.
+     */
+    public User(String email, String passwordHash, String name) {
+        this(email, passwordHash, name, defaultUsernameFromEmail(email));
     }
 
-    public User(String email, String passwordHash, UserRole role, String name, String username) {
+    public User(String email, String passwordHash, String name, String username) {
         this.email = email;
         this.username = username;
         this.passwordHash = passwordHash;
-        this.role = role;
         this.name = name;
     }
 
@@ -148,9 +149,6 @@ public class User {
 
     public String getPasswordHash() { return passwordHash; }
     public void setPasswordHash(String passwordHash) { this.passwordHash = passwordHash; }
-
-    public UserRole getRole() { return role; }
-    public void setRole(UserRole role) { this.role = role; }
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }

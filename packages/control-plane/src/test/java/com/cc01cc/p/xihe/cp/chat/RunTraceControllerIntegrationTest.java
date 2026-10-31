@@ -5,7 +5,6 @@ import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
@@ -53,9 +52,8 @@ class RunTraceControllerIntegrationTest extends AbstractIntegrationTest {
 
     @BeforeEach
     void createOwnerRunFixture() {
-        owner = userRepository.saveAndFlush(new User(
-                "run-trace-api-owner-" + UUID.randomUUID() + "@test.com",
-                "test-hash", UserRole.USER, "Run Trace API owner"));
+        owner = userRepository.saveAndFlush(new User("run-trace-api-owner-" + UUID.randomUUID() + "@test.com",
+                "test-hash", "Run Trace API owner"));
         workspace = workspaceRepository.saveAndFlush(
                 new Workspace("Run Trace API owner workspace", owner.getId().toString()));
         workspaceUserRepository.saveAndFlush(new WorkspaceUser(
@@ -130,9 +128,8 @@ class RunTraceControllerIntegrationTest extends AbstractIntegrationTest {
         assertProblem(getTrace("/api/v1/chat/runs/" + UUID.randomUUID() + "/trace", ownerToken),
                 HttpStatus.NOT_FOUND, "RUN_NOT_FOUND");
 
-        workspaceMember = userRepository.saveAndFlush(new User(
-                "run-trace-api-member-" + UUID.randomUUID() + "@test.com",
-                "test-hash", UserRole.USER, "Run Trace API workspace member"));
+        workspaceMember = userRepository.saveAndFlush(new User("run-trace-api-member-" + UUID.randomUUID() + "@test.com",
+                "test-hash", "Run Trace API workspace member"));
         workspaceUserRepository.saveAndFlush(new WorkspaceUser(
                 workspace.getId().toString(), workspaceMember.getId().toString(), WorkspaceRole.MEMBER));
         assertProblem(getTrace(tracePath, token(workspaceMember, workspace)),
@@ -152,8 +149,10 @@ class RunTraceControllerIntegrationTest extends AbstractIntegrationTest {
     }
 
     private String token(User user, Workspace tokenWorkspace) {
+        // PLAN-0610 W4a: no users.role to copy into the claim; the claim is a compatibility
+        // carrier only (W1b) and no decision reads it.
         return jwtTokenProvider.createAccessToken(user.getId().toString(), user.getEmail(),
-                user.getRole().name(), tokenWorkspace.getId().toString(), 0);
+                "USER", tokenWorkspace.getId().toString(), 0);
     }
 
     private ResponseEntity<Map> getTrace(String path, String bearerToken) {

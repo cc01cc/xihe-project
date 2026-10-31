@@ -6,7 +6,7 @@ import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.credentials.CredentialService;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
+import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
 import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
@@ -66,6 +66,7 @@ public class AgentTemplateService {
     private final ObjectMapper objectMapper;
     private final AuditLogger auditLogger;
     private final CredentialService credentialService;
+    private final AuthzContext authzContext;
 
     public AgentTemplateService(ConfigService configService,
                                 ConfigDomainSchema schemaValidator,
@@ -76,7 +77,8 @@ public class AgentTemplateService {
                                 GrantIntersectionEvaluator evaluator,
                                 ObjectMapper objectMapper,
                                 AuditLogger auditLogger,
-                                CredentialService credentialService) {
+                                CredentialService credentialService,
+                                AuthzContext authzContext) {
         this.configService = configService;
         this.schemaValidator = schemaValidator;
         this.userRepository = userRepository;
@@ -87,6 +89,7 @@ public class AgentTemplateService {
         this.objectMapper = objectMapper;
         this.auditLogger = auditLogger;
         this.credentialService = credentialService;
+        this.authzContext = authzContext;
     }
 
     @Transactional(readOnly = true)
@@ -107,7 +110,10 @@ public class AgentTemplateService {
             readableScopes.add(new ConfigScope("workspace", null, workspaceUuid));
         }
         readableScopes.add(new ConfigScope("user", actorId, null));
-        if (actor.getRole() == UserRole.ADMIN) {
+        // PLAN-0610 W4a (round-3 P1-4): the instance layer is a capability, not a role name. The
+        // legacy `users.role == ADMIN` read is gone; a SUPER_ADMIN holder satisfies instance:admin
+        // too (its role seed carries every capability atom).
+        if (authzContext.isInstanceAdmin(actorId)) {
             readableScopes.add(new ConfigScope("instance", null, null));
         }
 
@@ -151,7 +157,7 @@ public class AgentTemplateService {
         }
         switch (layer) {
             case "instance" -> {
-                if (actor.getRole() != UserRole.ADMIN) {
+                if (!authzContext.isInstanceAdmin(actorId)) {
                     logger.warn("Denied non-ADMIN Agent template instance layer read: actor={}", actorId);
                     throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
                             "Instance Agent templates are readable by ADMIN only");
@@ -237,7 +243,7 @@ public class AgentTemplateService {
         String actionResource = "*";
         switch (layer) {
             case "instance" -> {
-                if (actor.getRole() != UserRole.ADMIN || userId != null || workspaceId != null) {
+                if (!authzContext.isInstanceAdmin(actorId) || userId != null || workspaceId != null) {
                     throw new ConfigService.ConfigAccessException("Instance template write is not allowed");
                 }
             }

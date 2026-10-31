@@ -11,7 +11,6 @@ import static org.mockito.Mockito.doThrow;
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import java.util.List;
@@ -117,7 +116,7 @@ class InstanceOwnerTransferAtomicityTest extends AbstractIntegrationTest {
 
     private User newUser(String label) {
         User user = new User(label + "-" + UUID.randomUUID() + "@test.com",
-                passwordEncoder.encode(PASSWORD), UserRole.USER, label);
+                passwordEncoder.encode(PASSWORD), label);
         return userRepository.saveAndFlush(user);
     }
 

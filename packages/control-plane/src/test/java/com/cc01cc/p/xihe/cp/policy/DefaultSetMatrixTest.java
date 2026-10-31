@@ -10,7 +10,6 @@ import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;import com.cc01cc.p.xihe.cp.entity.AuditLog;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.repository.AuditLogRepository;
@@ -355,8 +354,7 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
 
     /** A workspace owned by someone else (the subject is not a member). */
     private String foreignWorkspaceId() {
-        User other = userRepository.saveAndFlush(new User(
-                "matrix-foreign-" + UUID.randomUUID() + "@test.com", "hash", UserRole.USER,
+        User other = userRepository.saveAndFlush(new User("matrix-foreign-" + UUID.randomUUID() + "@test.com", "hash",
                 "Matrix foreign owner"));
         return workspaceService.createWorkspace("Matrix foreign workspace", other.getId().toString())
                 .getId().toString();

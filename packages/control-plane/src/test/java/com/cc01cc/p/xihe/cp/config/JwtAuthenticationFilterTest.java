@@ -1,7 +1,6 @@
 package com.cc01cc.p.xihe.cp.config;
 
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.HttpServletRequest;
@@ -59,7 +58,7 @@ class JwtAuthenticationFilterTest {
     }
 
     private static User userWithVersion(int tokenVersion) {
-        User user = new User("user@test.com", "hash", UserRole.USER, "User", "user");
+        User user = new User("user@test.com", "hash", "User", "user");
         user.setId(java.util.UUID.fromString(USER_ID));
         user.setTokenVersion(tokenVersion);
         return user;

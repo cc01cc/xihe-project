@@ -68,8 +68,7 @@ public class DataSeeder implements CommandLineRunner {
         }
         User admin = userRepository.findByEmail("admin@xihe.local").orElse(null);
         if (admin == null) {
-            admin = new User("admin@xihe.local", passwordEncoder.encode(ADMIN_PASSWORD),
-                    com.cc01cc.p.xihe.cp.entity.UserRole.ADMIN, "Admin");
+            admin = new User("admin@xihe.local", passwordEncoder.encode(ADMIN_PASSWORD), "Admin");
             admin = userRepository.save(admin);
             log.info("Seeded default admin user: admin@xihe.local");
         }
@@ -81,7 +80,7 @@ public class DataSeeder implements CommandLineRunner {
         // order MUST be `instance_owner` -> target `users` row. `ensureUserDefault`
         // locks the `users` row first, so claiming ownership afterwards would take
         // the two locks in the opposite order and form a deadlock pair with
-        // `UserRoleService.changeRole`, which follows the frozen order. Swapping is
+        // the binding write paths, which follow the frozen order. Swapping is
         // safe: `ensureAssigned` only needs the persisted admin row, never the
         // default grant.
         instanceOwnershipService.ensureAssigned(admin, admin.getId().toString());

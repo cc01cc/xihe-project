@@ -6,7 +6,6 @@ import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
@@ -85,8 +84,7 @@ class ApprovalHistoryIntegrationTest extends AbstractIntegrationTest {
     private record Fixture(String sessionId, String runId) {}
 
     private Fixture fixture() {
-        User user = userRepository.save(new User(
-                "approval-history-" + UUID.randomUUID() + "@test.com", "hash", UserRole.USER, "Approval history"));
+        User user = userRepository.save(new User("approval-history-" + UUID.randomUUID() + "@test.com", "hash", "Approval history"));
         userId = user.getId().toString();
         Workspace workspace = workspaceRepository.save(new Workspace("Approval history workspace", userId));
         workspaceId = workspace.getId().toString();

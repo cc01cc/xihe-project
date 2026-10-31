@@ -192,9 +192,12 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
 
         roleRows("user", user.getId()).forEach(row -> grantIds.add(row.getId()));
         List<AuditLog> auditRows = auditRows(userId, MATERIALIZED_ACTION);
-        assertEquals(1, auditRows.size(),
-                "one audit row per materialization change (not one per atom); the Agent snapshot "
-                        + "only appears via an explicit ensure (PLAN-0374 T2.7)");
+        int auditsBeforeSecondEnsure = auditRows.size();
+        assertEquals(2, auditRows.size(),
+                "one audit row per materialization *change*, not one per atom: the USER tier on "
+                        + "registration and the workspace-owner binding written by the default "
+                        + "workspace creation (PLAN-0610 W3-3); the Agent snapshot only appears via "
+                        + "an explicit ensure (PLAN-0374 T2.7)");
         auditRows.forEach(row -> auditIds.add(row.getId()));
 
         grantDefaultService.ensureUserDefault(user);
@@ -211,9 +214,9 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         assertEquals("instance", agentDefault.getScopeType());
         assertEquals(1L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
                 "agent", session.getId(), GrantSources.AGENT_DEFAULT));
-        assertEquals(5L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
-                "user", user.getId(), GrantSources.ROLE));
-        assertEquals(1, auditRows(userId, MATERIALIZED_ACTION).size(),
+        assertEquals(5L, roleRows("user", user.getId()).size(),
+                "one instance-tier row per USER atom (the WS_OWNER workspace rows are a different tier)");
+        assertEquals(auditsBeforeSecondEnsure, auditRows(userId, MATERIALIZED_ACTION).size(),
                 "a second ensureUserDefault with an unchanged set writes no further audit row");
         assertEquals(1, auditRows(userId, AGENT_DEFAULT_ACTION).size());
     }
@@ -345,6 +348,7 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         // The registration materialization already wrote one audit row; the concurrent block is
         // measured on its own delta.
         auditRows(userId, MATERIALIZED_ACTION).forEach(row -> auditLogRepository.deleteById(row.getId()));
+        int materializationAuditsBefore = auditRows(userId, MATERIALIZED_ACTION).size();
         CountDownLatch start = new CountDownLatch(1);
 
         try (ExecutorService executor = Executors.newFixedThreadPool(4)) {
@@ -379,19 +383,27 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         assertEquals(1L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
                 "agent", session.getId(), GrantSources.AGENT_DEFAULT),
                 "concurrent ensures keep exactly one frozen Agent snapshot");
-        assertEquals(5L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
-                "user", user.getId(), GrantSources.ROLE),
-                "concurrent ensures keep exactly one row per atom (uq_grants_role_atom)");
-        assertEquals(1, auditRows(userId, MATERIALIZED_ACTION).size(),
-                "the concurrent second ensure changed nothing, so only one materialization audit row");
+        assertEquals(5L, roleRows("user", user.getId()).size(),
+                "concurrent ensures keep exactly one instance-tier row per atom (uq_grants_role_atom)");
+        // The grants were wiped above, so the first ensure re-creates the instance set (one audit
+        // row); the concurrent second ensure changes nothing (no further row).
+        assertEquals(materializationAuditsBefore + 1, auditRows(userId, MATERIALIZED_ACTION).size(),
+                "the re-materialization audits once and the concurrent second ensure nothing");
         assertEquals(1, auditRows(userId, AGENT_DEFAULT_ACTION).size());
     }
 
     // ---------------------------------------------------------------- helpers
 
+    /**
+     * The subject's <b>instance-tier</b> materialized rows. PLAN-0610 W3-3 binds the workspace creator
+     * to {@code WS_OWNER}, which materializes workspace-scope rows for the same subject; the default
+     * set assertions are about the instance tier, so the workspace scope is filtered out here.
+     */
     private List<AuthorizationGrant> roleRows(String subjectType, UUID subjectId) {
         return grantRepository.findBySubjectTypeAndSubjectIdAndSource(subjectType, subjectId,
-                GrantSources.ROLE);
+                        GrantSources.ROLE).stream()
+                .filter(grant -> "instance".equals(grant.getScopeType()))
+                .toList();
     }
 
     private Set<String> roleAtoms(String subjectType, UUID subjectId) {

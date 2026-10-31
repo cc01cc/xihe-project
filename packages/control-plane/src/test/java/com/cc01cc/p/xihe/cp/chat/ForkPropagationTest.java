@@ -8,7 +8,6 @@ import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.MessageRole;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
@@ -511,7 +510,7 @@ class ForkPropagationTest extends AbstractIntegrationTest {
             return;
         }
         User user = userRepository.save(new User("fork-propagation-" + UUID.randomUUID() + "@test.com",
-                "hash", UserRole.USER, "Fork propagation test"));
+                "hash", "Fork propagation test"));
         userId = user.getId().toString();
         Workspace workspace = workspaceRepository.save(new Workspace("Fork propagation test", userId));
         workspaceId = workspace.getId().toString();

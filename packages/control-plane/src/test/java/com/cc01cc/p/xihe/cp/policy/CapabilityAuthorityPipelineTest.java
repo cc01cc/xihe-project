@@ -75,8 +75,9 @@ class CapabilityAuthorityPipelineTest extends AbstractH2Test {
                 "control: a registered USER has no instance-administration capability");
 
         bindInstanceRole(session.userId(), SystemAccessRoleCatalog.ADMIN);
-        assertFalse(claimRoleIsAdmin(session.userId()),
-                "the JWT still carries role=USER: the capability, not a role name, must decide");
+        assertTrue(authzContext.isInstanceAdmin(session.userId()),
+                "PLAN-0610 W4a: cap:instance:admin comes from the binding — users.role is not "
+                        + "mapped any more, so the capability is the only decision input");
         assertEquals(HttpStatus.OK.value(), postLogs(session.token()),
                 "cap:instance:admin alone satisfies hasAuthority() on the URL layer");
     }
@@ -172,11 +173,6 @@ class CapabilityAuthorityPipelineTest extends AbstractH2Test {
         bindingRepository.save(new AccessRoleBinding(role.getId(), "user", userId,
                 AccessScope.INSTANCE, null, userId));
         materializer.materializeSubject("user", userId, userId, null);
-    }
-
-    private boolean claimRoleIsAdmin(UUID userId) {
-        return userRepository.findById(userId).orElseThrow().getRole()
-                == com.cc01cc.p.xihe.cp.entity.UserRole.ADMIN;
     }
 
     private int postLogs(String token) {

@@ -2,7 +2,6 @@ package com.cc01cc.p.xihe.cp.auth;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -28,7 +27,7 @@ class AuthControllerCredentialTest {
         LoginAttemptService attempts = mock(LoginAttemptService.class);
         ClientIpResolver resolver = mock(ClientIpResolver.class);
 
-        User user = new User("a@test.com", "hash", UserRole.USER, "A");
+        User user = new User("a@test.com", "hash", "A");
         user.setId(UUID.randomUUID());
         when(authService.authenticate(any(LoginRequest.class))).thenReturn(user);
         when(workspaceService.getOrCreateDefaultWorkspace(anyString()))

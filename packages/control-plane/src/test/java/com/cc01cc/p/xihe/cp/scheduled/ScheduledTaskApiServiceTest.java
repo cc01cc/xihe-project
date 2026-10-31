@@ -5,7 +5,6 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.event.WorkspaceEventManager;
@@ -539,7 +538,7 @@ class ScheduledTaskApiServiceTest {
     }
 
     private static User user() {
-        User user = new User("user@example.com", "hash", UserRole.USER, "User One");
+        User user = new User("user@example.com", "hash", "User One");
         user.setId(UUID.fromString(USER_ID));
         return user;
     }

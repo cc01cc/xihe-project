@@ -4,7 +4,6 @@ import com.cc01cc.p.xihe.cp.AbstractH2Test;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.UserStatus;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
@@ -182,7 +181,7 @@ class LocalModeSuperAdminBootstrapTest extends AbstractH2Test {
 
     /** A plain ADMIN account with no instance tier binding yet (the seeder's precondition). */
     private User freshAdmin(String email) {
-        return userRepository.save(new User(email, "hash", UserRole.ADMIN, "Bootstrap " + email));
+        return userRepository.save(new User(email, "hash", "Bootstrap " + email));
     }
 
     /** Points the single-owner row at {@code user} so the bootstrap guard sees a real owner. */

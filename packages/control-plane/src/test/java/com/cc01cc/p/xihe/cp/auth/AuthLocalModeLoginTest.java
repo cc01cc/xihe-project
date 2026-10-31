@@ -1,7 +1,6 @@
 package com.cc01cc.p.xihe.cp.auth;
 
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.junit.jupiter.api.Test;
@@ -26,7 +25,7 @@ class AuthLocalModeLoginTest {
         LoginAttemptService attempts = mock(LoginAttemptService.class);
         ClientIpResolver resolver = mock(ClientIpResolver.class);
 
-        User user = new User("local@test.com", "hash", UserRole.ADMIN, "Local");
+        User user = new User("local@test.com", "hash", "Local");
         user.setId(UUID.randomUUID());
         Workspace workspace = new Workspace();
         workspace.setId(UUID.randomUUID());

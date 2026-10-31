@@ -8,16 +8,17 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import jakarta.persistence.LockModeType;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
-import com.cc01cc.p.xihe.cp.entity.UserStatus;
 
 import java.util.Optional;
 
 /**
- * PLAN-0581 adds {@link JpaSpecificationExecutor}: the admin list endpoint takes
- * five optional filters ({@code q}/{@code role}/{@code status}/{@code
- * includeDeleted}/paging) and a Specification keeps the null-combinations out of
- * JPQL string concatenation.
+ * PLAN-0581 adds {@link JpaSpecificationExecutor}: the admin list endpoint takes optional
+ * filters ({@code q}/{@code status}/{@code includeDeleted}/paging) and a Specification keeps the
+ * null-combinations out of JPQL string concatenation.
+ *
+ * <p>PLAN-0610 W4a: the {@code users.role} counters are gone — the instance tier is a role binding,
+ * so "how many usable administrators are left" is a binding query
+ * ({@code GrantDefaultService#countActiveInstanceAdmins}).</p>
  */
 public interface UserRepository extends JpaRepository<User, UUID>, JpaSpecificationExecutor<User> {
     Optional<User> findByEmail(String email);
@@ -31,14 +32,4 @@ public interface UserRepository extends JpaRepository<User, UUID>, JpaSpecificat
     @Query("select u from User u where u.id = :id")
     Optional<User> findByIdForUpdate(UUID id);
 
-    /**
-     * PLAN-0580 I2 (as amended by PLAN-0581): the last-admin guard must count only
-     * <b>usable</b> ADMINs. A DISABLED or soft-deleted ADMIN cannot log in, so it
-     * must not act as the instance's remaining administrator — otherwise disabling
-     * one ADMIN and demoting the other leaves zero usable admins.
-     */
-    long countByRoleAndStatusAndDeletedAtIsNull(UserRole role, UserStatus status);
-
-    /** PLAN-0580 I2 (pre-0581 semantics), kept for callers that count every row. */
-    long countByRole(UserRole role);
 }

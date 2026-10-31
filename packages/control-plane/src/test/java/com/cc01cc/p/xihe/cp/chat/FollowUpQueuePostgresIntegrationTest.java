@@ -9,7 +9,6 @@ import com.cc01cc.p.xihe.cp.entity.File;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.SessionFollowUpItem;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
@@ -789,8 +788,7 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
     @Test
     void staleAttachmentOwnershipFailsClosedAndPausesQueue() {
         Fixture fixture = boundFixture();
-        User otherOwner = userRepository.saveAndFlush(new User(
-                "stale-owner-" + UUID.randomUUID() + "@test.com", "hash", UserRole.USER, "Stale owner"));
+        User otherOwner = userRepository.saveAndFlush(new User("stale-owner-" + UUID.randomUUID() + "@test.com", "hash", "Stale owner"));
         File file = new File(fixture.userId(), "stale.txt", "unused-test-path");
         file.setWorkspaceId(fixture.workspaceId());
         file.setSessionId(fixture.sessionId());
@@ -982,8 +980,7 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
     }
 
     private Fixture fixture() {
-        User user = userRepository.saveAndFlush(new User(
-                "follow-up-" + UUID.randomUUID() + "@test.com", "hash", UserRole.USER, "Follow-up test"));
+        User user = userRepository.saveAndFlush(new User("follow-up-" + UUID.randomUUID() + "@test.com", "hash", "Follow-up test"));
         String userId = user.getId().toString();
         Workspace workspace = workspaceRepository.saveAndFlush(new Workspace(
                 "Follow-up " + UUID.randomUUID(), userId));
@@ -996,8 +993,7 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
     }
 
     private Fixture boundFixture() {
-        User user = userRepository.saveAndFlush(new User(
-                "follow-up-bound-" + UUID.randomUUID() + "@test.com", "hash", UserRole.USER, "Follow-up test"));
+        User user = userRepository.saveAndFlush(new User("follow-up-bound-" + UUID.randomUUID() + "@test.com", "hash", "Follow-up test"));
         String userId = user.getId().toString();
         Workspace workspace = workspaceRepository.saveAndFlush(new Workspace(
                 "Follow-up " + UUID.randomUUID(), userId));

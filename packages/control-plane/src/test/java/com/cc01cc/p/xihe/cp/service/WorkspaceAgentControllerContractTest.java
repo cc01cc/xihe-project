@@ -4,7 +4,6 @@ import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
@@ -144,7 +143,7 @@ class WorkspaceAgentControllerContractTest extends AbstractIntegrationTest {
 
     private void fixture() throws Exception {
         User user = userRepository.saveAndFlush(new User("workspace-agents-" + UUID.randomUUID() + "@test.com",
-                "hash", UserRole.USER, "Workspace Agents Test"));
+                "hash", "Workspace Agents Test"));
         userId = user.getId();
         Workspace workspace = workspaceRepository.saveAndFlush(new Workspace("Agent binding test", userId.toString()));
         workspaceId = workspace.getId();

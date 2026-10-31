@@ -4,7 +4,6 @@ import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
@@ -56,8 +55,7 @@ class RunTraceSourceRepositoryPostgresIntegrationTest extends AbstractIntegratio
 
     @BeforeEach
     void createTenantFixture() {
-        User user = userRepository.saveAndFlush(new User(
-                "run-trace-" + UUID.randomUUID() + "@test.com", "hash", UserRole.USER,
+        User user = userRepository.saveAndFlush(new User("run-trace-" + UUID.randomUUID() + "@test.com", "hash",
                 "Run Trace repository test"));
         userId = user.getId();
 

@@ -4,7 +4,6 @@ import com.cc01cc.p.xihe.cp.AbstractH2Test;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
@@ -185,7 +184,7 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
 
     private Fixture fixture(String tag) {
         User user = userRepository.save(new User("scope-" + tag + "-" + UUID.randomUUID()
-                + "@test.local", "hash", UserRole.USER, "Scope " + tag));
+                + "@test.local", "hash", "Scope " + tag));
         String owner = user.getId().toString();
         Workspace workspaceA = workspaceRepository.save(new Workspace("scope-" + tag + "-a", owner));
         Workspace workspaceB = workspaceRepository.save(new Workspace("scope-" + tag + "-b", owner));
