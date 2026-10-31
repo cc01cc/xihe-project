@@ -10,10 +10,9 @@
 import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { api, type ApiWorkspace } from "../composables/api";
+import { api, ApiError, type ApiWorkspace } from "../composables/api";
 import { readTabWorkspaceId, writeTabWorkspace } from "../lib/workspaceContext";
 import { logger } from "../lib/logger";
-import { ApiError } from "../composables/api";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -49,8 +48,7 @@ onMounted(async () => {
     try {
         workspaces.value = await api.listWorkspaces();
     } catch (cause) {
-        const message =
-            cause instanceof ApiError ? cause.message : "Failed to load workspaces";
+        const message = cause instanceof ApiError ? cause.message : "Failed to load workspaces";
         logger.error("Load workspaces failed: " + message);
         error.value = message;
     } finally {
@@ -84,7 +82,9 @@ onMounted(async () => {
                     @click="openWorkspace(workspace)"
                 >
                     <span class="flex flex-col">
-                        <span class="text-sm font-medium">{{ workspace.name || workspace.id }}</span>
+                        <span class="text-sm font-medium">{{
+                            workspace.name || workspace.id
+                        }}</span>
                         <span class="text-xs text-muted-foreground">{{ workspace.id }}</span>
                     </span>
                     <span v-if="workspace.workspaceRole" class="text-xs text-muted-foreground">
@@ -95,4 +95,3 @@ onMounted(async () => {
         </ul>
     </div>
 </template>
-
