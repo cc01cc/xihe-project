@@ -4,6 +4,17 @@ import { createPinia, setActivePinia } from "pinia";
 import { createI18n } from "vue-i18n";
 import type { Router } from "vue-router";
 import WorkspaceWorkbench from "../WorkspaceWorkbench.vue";
+
+const { toastWarning } = vi.hoisted(() => ({ toastWarning: vi.fn<(message: string) => void>() }));
+
+vi.mock("vue-sonner", () => ({
+    toast: {
+        warning: toastWarning,
+        success: vi.fn<(message?: string) => void>(),
+        error: vi.fn<(message?: string) => void>(),
+        info: vi.fn<(message?: string) => void>(),
+    },
+}));
 import { useAuthStore } from "../../../../stores/auth";
 import { useWorkspaceStore } from "../../stores/workspace";
 
@@ -280,5 +291,38 @@ describe("WorkspaceWorkbench workspace switch (PLAN-0582 S3a audit P0)", () => {
 
         expect(ws.openFiles.size).toBe(0);
         expect(ws.activeFilePath).toBeNull();
+    });
+});
+describe("WorkspaceWorkbench anti-squeeze (PLAN-0582 S3b §4)", () => {
+    it("forces a pinned dock back to floating and says why, without rewriting the choice", async () => {
+        // A narrow row (jsdom reports 1024) cannot host tree 240 + pinned dock 360.
+        localStorage.setItem(
+            "xihe-layout-ws:workspace-1",
+            JSON.stringify({
+                treeCollapsed: false,
+                treeWidth: 240,
+                dockCollapsed: false,
+                dockWidth: 360,
+                dockTabs: ["monitor"],
+                activeDockTab: "monitor",
+                dockMode: "pinned",
+                dockModeManual: true,
+                dockPolicyDismissed: false,
+                openTabs: ["environment", "scheduled-tasks", "settings"],
+            }),
+        );
+        const wrapper = mountWorkbench();
+        await flushPromises();
+
+        // Rendered as floating so the main column keeps its floor...
+        expect(
+            wrapper.get('[data-testid="workspace-aux-panel"]').attributes("data-dock-mode"),
+        ).toBe("floating");
+        // ...and the fallback is never silent.
+        expect(toastWarning).toHaveBeenCalledTimes(1);
+        // The user's explicit choice is preserved (rendering only).
+        expect(storedLayout().dockMode).toBe("pinned");
+        expect(storedLayout().dockModeManual).toBe(true);
+        wrapper.unmount();
     });
 });

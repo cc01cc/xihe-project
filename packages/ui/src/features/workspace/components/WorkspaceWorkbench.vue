@@ -253,15 +253,21 @@ function toggleDockMode(): void {
 }
 
 // §4 rule 3 must not be silent: one toast per transition into forced floating.
+// `immediate` matters — a window that is already too narrow on first paint would
+// otherwise be forced floating without any explanation.
 let squeezeToastShown = false;
-watch(dockModeOverruled, (overruled) => {
-    if (overruled && !squeezeToastShown) {
-        squeezeToastShown = true;
-        toast.warning(t("workspace.squeezeFloatingNotice"));
-        return;
-    }
-    if (!overruled) squeezeToastShown = false;
-});
+watch(
+    dockModeOverruled,
+    (overruled) => {
+        if (overruled && !squeezeToastShown) {
+            squeezeToastShown = true;
+            toast.warning(t("workspace.squeezeFloatingNotice"));
+            return;
+        }
+        if (!overruled) squeezeToastShown = false;
+    },
+    { immediate: true },
+);
 
 // Floating is not a modal (Lead ruling 2026-10-31): no backdrop, dismiss with Esc
 // or by clicking the main column instead.
