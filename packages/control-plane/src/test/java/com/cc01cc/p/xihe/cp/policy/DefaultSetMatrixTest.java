@@ -32,22 +32,20 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * PLAN-0407 T2.9: the default permission matrix of {@code source=default} grants, asserted
- * against BOTH contract sources at once:
+ * PLAN-0407 T2.9 matrix, re-based on PLAN-0610 role materialization (W1a T1.5/T1.6).
  *
- * <ul>
- *   <li>spec §4.1/§4.2 ({@code plans/PLAN-0407-XH-principal-scope-derivation/spec/
- *       authorization-and-derivation.md}): {@code USER} = 注册最小集, {@code ADMIN} = 全 allow 的一个集;</li>
- *   <li>evidence matrix ({@code evidence/policy-domains-matrix.md}): the USER column allows
- *       read/write/delete/exec/network and denies credential; the ADMIN column is the
- *       full-allow column including credential.</li>
- * </ul>
+ * <p>The contract is unchanged — {@code USER} = 注册最小集, {@code ADMIN} = 全 allow 的一个集
+ * including the PLAN-0496 credential atoms — but the storage shape moved: the set is no longer one
+ * {@code source='default'} row, it is the union of {@code source='role'} rows (one row per atom,
+ * V87 {@code uq_grants_role_atom}) produced by {@link RoleGrantMaterializer}. Capability atoms are
+ * part of the role definition and are <b>not</b> materialized (design #23), which is why ADMIN's
+ * eight action atoms and not nine appear in {@code grants}.</p>
  *
  * <p>Deliberately NOT duplicated here: bootstrap idempotency and concurrency
- * ({@code GrantDefaultBootstrapIntegrationTest}), partial index schema conformance
- * ({@code SpecFieldConformanceTest#grantsColumnsSourceVocabularyAndDefaultIndexConformToSpec31}),
- * out-of-vocabulary fail-closed ({@code LookupAskGateTest#outOfVocabularyActionClassIsDeniedByTheLookup
- * EvenWithDefaultGrants}) and HardGuard L0 counter-proofs ({@code HardGuardTest}).</p>
+ * ({@code GrantDefaultBootstrapIntegrationTest}), scope isolation
+ * ({@code GrantScopeIsolationIntegrationTest}), schema conformance
+ * ({@code SpecFieldConformanceTest}), out-of-vocabulary fail-closed ({@code LookupAskGateTest}) and
+ * HardGuard L0 counter-proofs ({@code HardGuardTest}).</p>
  */
 class DefaultSetMatrixTest extends AbstractIntegrationTest {
 
@@ -105,7 +103,7 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
         UUID userUuid = UUID.fromString(userId);
         grantRepository.deleteAll(grantRepository.findBySubjectTypeAndSubjectId("user", userUuid));
         auditLogRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
-                .filter(row -> "authorization_default_grant_created".equals(row.getAction()))
+                .filter(row -> "authorization_role_grant_materialized".equals(row.getAction()))
                 .map(AuditLog::getId)
                 .forEach(auditLogRepository::deleteById);
         if (workspaceId != null) {
@@ -121,15 +119,14 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
     void registeredUserDefaultGrantMatchesSpec41AndTheEvidenceMatrixUserRow() {
         register();
 
-        AuthorizationGrant userDefault = defaultGrant("user", UUID.fromString(userId));
-        assertEquals(USER_MATRIX, actionClassesOf(userDefault),
+        Set<String> userAtoms = materializedAtoms("user", UUID.fromString(userId));
+        assertEquals(USER_MATRIX, userAtoms,
                 "spec §4.1 USER row (注册最小集) and the evidence matrix USER column agree: "
                         + "read/write/delete/exec/network allow, credential absent");
-        assertTrue(actionClassesOf(userDefault).stream()
-                        .noneMatch(actionClass -> actionClass.startsWith("credential_")),
+        assertTrue(userAtoms.stream().noneMatch(actionClass -> actionClass.startsWith("credential_")),
                 "evidence matrix: credential = deny for USER, so no credential atom may exist "
                         + "(未列即 deny, spec §2.1)");
-        assertCanonicalAtoms(userDefault);
+        assertCanonicalAtoms("user", UUID.fromString(userId));
 
         for (String actionClass : USER_MATRIX) {
             assertTrue(grantAuthorizationService.allowsUserOnly(request(actionClass, "notes/today.md")),
@@ -151,13 +148,15 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
         register();
         User admin = userRepository.findByEmail("admin@xihe.local").orElseThrow();
 
-        AuthorizationGrant adminDefault = defaultGrant("user", admin.getId());
-        assertEquals(ADMIN_MATRIX, actionClassesOf(adminDefault),
+        Set<String> adminAtoms = materializedAtoms("user", admin.getId());
+        assertEquals(ADMIN_MATRIX, adminAtoms,
                 "spec §4.1 ADMIN row = 全 allow 的一个集: five rows plus the PLAN-0496 "
                         + "credential atoms (credential_use/reveal/manage)");
-        assertCanonicalAtoms(adminDefault);
-        assertFalse(actionClassesOf(adminDefault).contains("SPAWN_AGENT"),
+        assertCanonicalAtoms("user", admin.getId());
+        assertFalse(adminAtoms.contains("SPAWN_AGENT"),
                 "spec §2.1: SPAWN_AGENT stays out of the USER/ADMIN default sets even for ADMIN");
+        assertFalse(adminAtoms.contains(PermissionAtomCatalog.CAP_INSTANCE_ADMIN),
+                "PLAN-0610 #23: capability atoms are authorities, never grant rows");
 
         String adminUserId = admin.getId().toString();
         workspaceUserRepository.save(new WorkspaceUser(workspaceId, adminUserId, WorkspaceRole.MEMBER));
@@ -189,47 +188,45 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
                 "control: the listed classes of the same grant still evaluate allow");
     }
 
-    /** spec §3.1: many non-default grants per subject, at most one default row (G1 union). */
+    /** spec §3.1/G1: other sources still union with the materialized role rows. */
     @Test
-    void directGrantUnionsWithTheSingleDefaultGrantWithoutCreatingASecondDefault() {
+    void extraSourceAtomsUnionWithTheMaterializedRoleRows() {
         register();
         UUID userUuid = UUID.fromString(userId);
-        assertEquals(1L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
-                        "user", userUuid, "default"),
-                "spec §3.1: registration materializes exactly one default row per subject "
-                        + "(uq_grants_default_subject)");
+        assertEquals(USER_MATRIX.size(), roleRows("user", userUuid).size(),
+                "PLAN-0610: one materialized row per atom (uq_grants_role_atom)");
         String credentialId = "credential:" + UUID.randomUUID();
         assertFalse(grantAuthorizationService.allowsUserOnly(request("credential_use", credentialId)),
                 "control: the default matrix alone carries no credential");
 
         User admin = userRepository.findByEmail("admin@xihe.local").orElseThrow();
-        AuthorizationGrant direct = new AuthorizationGrant();
-        direct.setId(UUID.randomUUID());
-        direct.setSubjectType("user");
-        direct.setSubjectId(userUuid);
-        direct.setGranterType("user");
-        direct.setGranterId(admin.getId());
-        direct.setSource("direct");
+        AuthorizationGrant snapshot = new AuthorizationGrant();
+        snapshot.setId(UUID.randomUUID());
+        snapshot.setSubjectType("user");
+        snapshot.setSubjectId(userUuid);
+        snapshot.setGranterType("user");
+        snapshot.setGranterId(admin.getId());
+        // PLAN-0610 T1.6: `template` is one of the union sources; the retired `direct` source is
+        // no longer read (T1.13 moves credential bindings to `credential_binding`).
+        snapshot.setSource(GrantSources.TEMPLATE);
+        snapshot.setScopeType(AccessScope.INSTANCE);
         ArrayNode permissions = objectMapper.createArrayNode();
         ObjectNode credentialAtom = objectMapper.createObjectNode();
         credentialAtom.put("actionClass", "credential_use");
         credentialAtom.put("resource", credentialId);
         permissions.add(credentialAtom);
-        direct.setPermissions(permissions);
-        grantRepository.save(direct);
+        snapshot.setPermissions(permissions);
+        grantRepository.save(snapshot);
 
-        assertEquals(1L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
-                        "user", userUuid, "default"),
-                "spec §3.1: an extra direct grant must not create a second default row");
-        assertEquals(2, grantRepository.findBySubjectTypeAndSubjectId("user", userUuid).size(),
-                "spec §3.1: spawn/direct/template grants may be many for one subject");
+        assertEquals(USER_MATRIX.size(), roleRows("user", userUuid).size(),
+                "an extra source must not create additional role rows");
         assertTrue(grantAuthorizationService.allowsUserOnly(request("credential_use", credentialId)),
-                "G1: the current permission set is the union of all grants; source carries "
-                        + "no precedence, so the direct grant widens the union");
+                "G1: the current permission set is the union of all evaluation sources; the "
+                        + "source label carries no precedence");
         assertTrue(grantAuthorizationService.allowsUserOnly(request("read", "notes/today.md")),
-                "the default row still grants the USER classes after the direct grant is added");
+                "the role rows still grant the USER classes after the extra source is added");
         assertFalse(grantAuthorizationService.allowsUserOnly(request("SPAWN_AGENT", "*")),
-                "the direct grant only widened credential_use, never SPAWN_AGENT");
+                "the extra source only widened credential_use, never SPAWN_AGENT");
     }
 
     private void register() {
@@ -243,42 +240,50 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
         workspaceId = registered.getWorkspaceId();
     }
 
-    private AuthorizationGrant defaultGrant(String subjectType, UUID subjectId) {
-        return grantRepository.findBySubjectTypeAndSubjectId(subjectType, subjectId).stream()
-                .filter(grant -> "default".equals(grant.getSource()))
-                .findFirst()
-                .orElseThrow(() -> new AssertionError(
-                        "no source=default grant exists for " + subjectType + " " + subjectId));
+    private List<AuthorizationGrant> roleRows(String subjectType, UUID subjectId) {
+        return grantRepository.findBySubjectTypeAndSubjectIdAndSource(subjectType, subjectId,
+                GrantSources.ROLE);
     }
 
-    private static Set<String> actionClassesOf(AuthorizationGrant grant) {
-        Set<String> actionClasses = new LinkedHashSet<>();
-        for (JsonNode atom : grant.getPermissions()) {
-            actionClasses.add(atom.get("actionClass").asText());
+    private Set<String> materializedAtoms(String subjectType, UUID subjectId) {
+        Set<String> atoms = new LinkedHashSet<>();
+        for (AuthorizationGrant grant : roleRows(subjectType, subjectId)) {
+            for (JsonNode atom : grant.getPermissions()) {
+                atoms.add(atom.get("actionClass").asText());
+            }
         }
-        return actionClasses;
+        return atoms;
     }
 
     /** spec §2.1: atoms are {actionClass[, resource]} only — no effect/priority/locked fields. */
-    private static void assertCanonicalAtoms(AuthorizationGrant grant) {
+    private void assertCanonicalAtoms(String subjectType, UUID subjectId) {
         Set<String> allowedFields = Set.of("actionClass", "resource");
-        for (JsonNode atom : grant.getPermissions()) {
-            Set<String> fields = new LinkedHashSet<>();
-            atom.fieldNames().forEachRemaining(fields::add);
-            assertTrue(allowedFields.containsAll(fields),
-                    "permission atoms carry only {actionClass, resource}: " + atom);
-            JsonNode resource = atom.get("resource");
-            String actionClass = atom.get("actionClass").asText();
-            boolean canonical;
-            if (actionClass.startsWith("credential_")) {
-                canonical = resource != null
-                        && ToolFaceRegistry.isCanonicalCredentialResource(resource.asText());
-            } else {
-                canonical = resource == null || "*".equals(resource.asText());
+        for (AuthorizationGrant grant : grantRows(subjectType, subjectId)) {
+            for (JsonNode atom : grant.getPermissions()) {
+                Set<String> fields = new LinkedHashSet<>();
+                atom.fieldNames().forEachRemaining(fields::add);
+                assertTrue(allowedFields.containsAll(fields),
+                        "permission atoms carry only {actionClass, resource}: " + atom);
+                JsonNode resource = atom.get("resource");
+                String actionClass = atom.get("actionClass").asText();
+                boolean canonical;
+                if (actionClass.startsWith("credential_")) {
+                    canonical = resource != null
+                            && ToolFaceRegistry.isCanonicalCredentialResource(resource.asText());
+                } else {
+                    canonical = resource == null || "*".equals(resource.asText());
+                }
+                assertTrue(canonical,
+                        "atom carries a canonical resource (spec §3.1 / PLAN-0496 #2): " + atom);
             }
-            assertTrue(canonical,
-                    "atom carries a canonical resource (spec §3.1 / PLAN-0496 #2): " + atom);
         }
+    }
+
+    /** Every evaluation source of the subject, used by the canonical-atom assertion. */
+    private List<AuthorizationGrant> grantRows(String subjectType, UUID subjectId) {
+        return grantRepository.findBySubjectTypeAndSubjectId(subjectType, subjectId).stream()
+                .filter(grant -> GrantSources.EVALUATION_SOURCES.contains(grant.getSource()))
+                .toList();
     }
 
     private PolicyRequest request(String actionClass, String resource) {

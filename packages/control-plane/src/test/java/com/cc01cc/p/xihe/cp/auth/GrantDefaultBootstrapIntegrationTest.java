@@ -10,6 +10,7 @@ import com.cc01cc.p.xihe.cp.files.ChatAttachmentService;
 import com.cc01cc.p.xihe.cp.files.dto.BatchUploadResult;
 import com.cc01cc.p.xihe.cp.policy.GrantAuthorizationService;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
+import com.cc01cc.p.xihe.cp.policy.GrantSources;
 import com.cc01cc.p.xihe.cp.policy.PolicyContext;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
 import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
@@ -29,7 +30,9 @@ import org.springframework.mock.web.MockMultipartFile;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -42,7 +45,27 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * PLAN-0610 W1a: the bootstrap paths of {@link GrantDefaultService}, re-based on role
+ * materialization.
+ *
+ * <p>What changed versus PLAN-0470/PLAN-0580 and what is still frozen:</p>
+ *
+ * <ul>
+ *   <li>the user set is materialized as one {@code source='role'} row per atom (V87
+ *       {@code uq_grants_role_atom}) instead of one {@code source='default'} row;</li>
+ *   <li>the Session/principal default snapshot moved to {@code source='agent_default'} and is
+ *       still written once, frozen, and never reconciled by the materializer (round-2 P1-1);</li>
+ *   <li>a Session is still created without an Agent snapshot (PLAN-0374 T2.7) and the snapshot
+ *       only appears through an explicit {@code ensureAgentSessionDefault} call;</li>
+ *   <li>exactly one audit row per materialization change and one per Agent snapshot — the
+ *       concurrent-ensure case still yields one of each.</li>
+ * </ul>
+ */
 class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
+
+    private static final String MATERIALIZED_ACTION = "authorization_role_grant_materialized";
+    private static final String AGENT_DEFAULT_ACTION = "authorization_agent_default_grant_created";
 
     @Autowired
     private AuthService authService;
@@ -94,8 +117,15 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
     private final List<UUID> auditIds = new ArrayList<>();
     private final List<UUID> importedSessionIds = new ArrayList<>();
 
+    @Autowired
+    private org.springframework.transaction.support.TransactionTemplate cleanTransaction;
+
     @AfterEach
     void cleanFixtures() {
+        cleanTransaction.executeWithoutResult(status -> cleanup());
+    }
+
+    private void cleanup() {
         if (sessionId != null) {
             chatAttachmentService.deleteSessionAttachments(sessionId);
             grantRepository.deleteAll(grantRepository.findBySubjectTypeAndSubjectId(
@@ -110,7 +140,7 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
             grantRepository.deleteAll(grantRepository.findBySubjectTypeAndSubjectId(
                     "user", UUID.fromString(userId)));
             auditLogRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
-                    .filter(row -> "authorization_default_grant_created".equals(row.getAction()))
+                    .filter(row -> MATERIALIZED_ACTION.equals(row.getAction()))
                     .map(AuditLog::getId)
                     .forEach(auditLogRepository::deleteById);
         }
@@ -137,85 +167,67 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void userAndRootSessionCreationMaterializeAuditedDefaultGrantsIdempotently() {
-        String email = "grant-default-" + UUID.randomUUID() + "@test.com";
-        AuthResponse registered = register(new RegisterRequest(email, "grant-test-password", "Grant test"));
+        AuthResponse registered = register(new RegisterRequest(
+                "grant-default-" + UUID.randomUUID() + "@test.com", "grant-test-password", "Grant test"));
         userId = registered.getUser().getId();
         workspaceId = registered.getWorkspaceId();
         User user = userRepository.findById(UUID.fromString(userId)).orElseThrow();
         User seededAdmin = userRepository.findByEmail("admin@xihe.local").orElseThrow();
-        AuthorizationGrant adminDefault = grantRepository.findAll().stream()
-                .filter(grant -> "user".equals(grant.getSubjectType())
-                        && seededAdmin.getId().equals(grant.getSubjectId())
-                        && "default".equals(grant.getSource()))
-                .findFirst().orElseThrow();
-        assertEquals(8, adminDefault.getPermissions().size(),
-                "DataSeeder materializes the ADMIN default matrix (five rows + the PLAN-0496 "
-                        + "credential atoms)");
-        User admin = userRepository.findByEmail("admin@xihe.local").orElseThrow();
-        assertEquals(8, grantRepository.findAll().stream()
-                .filter(grant -> "user".equals(grant.getSubjectType())
-                        && admin.getId().equals(grant.getSubjectId())
-                        && "default".equals(grant.getSource()))
-                .findFirst().orElseThrow().getPermissions().size(),
-                "ADMIN default includes the three credential atoms (PLAN-0496 #1)");
+
+        assertEquals(8, roleAtoms("user", seededAdmin.getId()).size(),
+                "DataSeeder materializes the ADMIN matrix (five rows + the PLAN-0496 credential atoms)");
+        assertEquals(8, roleRows("user", seededAdmin.getId()).size(),
+                "PLAN-0610: one materialized row per ADMIN action atom; instance:admin is not a row");
 
         Session session = sessionService.create(userId, workspaceId, "Grant test Session", null, null);
         sessionId = session.getId().toString();
 
-        List<AuthorizationGrant> userDefaults = grantRepository.findAll().stream()
-                .filter(grant -> "user".equals(grant.getSubjectType())
-                        && user.getId().equals(grant.getSubjectId())
-                        && "default".equals(grant.getSource()))
-                .toList();
-        List<AuthorizationGrant> sessionDefaults = grantRepository.findAll().stream()
-                .filter(grant -> "agent".equals(grant.getSubjectType())
-                        && session.getId().equals(grant.getSubjectId())
-                        && "default".equals(grant.getSource()))
-                .toList();
-        assertEquals(1, userDefaults.size());
-        assertEquals(0, sessionDefaults.size(),
+        assertEquals(5, roleAtoms("user", user.getId()).size(), "USER default excludes credential");
+        assertEquals(5, roleRows("user", user.getId()).size(), "one row per USER atom");
+        assertEquals(0, grantRepository.findBySubjectTypeAndSubjectId("agent", session.getId()).size(),
                 "Session creation no longer materializes a Session-subject Agent default (PLAN-0374 T2.7)");
-        assertEquals("read", userDefaults.get(0).getReadState());
-        assertEquals(5, userDefaults.get(0).getPermissions().size(), "USER default excludes credential");
+        assertEquals("read", roleRows("user", user.getId()).get(0).getReadState());
 
-        grantIds.add(userDefaults.get(0).getId());
-        List<AuditLog> auditRows = auditLogRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
-                .filter(row -> "authorization_default_grant_created".equals(row.getAction()))
-                .toList();
+        roleRows("user", user.getId()).forEach(row -> grantIds.add(row.getId()));
+        List<AuditLog> auditRows = auditRows(userId, MATERIALIZED_ACTION);
         assertEquals(1, auditRows.size(),
-                "account default is audited; Agent default only appears via explicit ensure (PLAN-0374 T2.7)");
+                "one audit row per materialization change (not one per atom); the Agent snapshot "
+                        + "only appears via an explicit ensure (PLAN-0374 T2.7)");
         auditRows.forEach(row -> auditIds.add(row.getId()));
 
         grantDefaultService.ensureUserDefault(user);
         grantDefaultService.ensureAgentSessionDefault(session);
-        AuthorizationGrant agentDefault = grantRepository.findBySubjectTypeAndSubjectId("agent", session.getId())
-                .stream().filter(grant -> "default".equals(grant.getSource())).findFirst().orElseThrow();
+        AuthorizationGrant agentDefault = grantRepository.findBySubjectTypeAndSubjectId(
+                        "agent", session.getId()).stream()
+                .filter(grant -> GrantSources.AGENT_DEFAULT.equals(grant.getSource()))
+                .findFirst()
+                .orElseThrow();
         grantIds.add(agentDefault.getId());
         assertEquals("read", agentDefault.getReadState());
-        assertEquals(5, agentDefault.getPermissions().size());
+        assertEquals(5, agentDefault.getPermissions().size(),
+                "round-2 P1-1: the frozen Agent snapshot keeps the whole atom array in one row");
+        assertEquals("instance", agentDefault.getScopeType());
         assertEquals(1L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
-                "user", user.getId(), "default"));
-        assertEquals(1L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
-                "agent", session.getId(), "default"));
-        assertEquals(2, auditLogRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
-                .filter(row -> "authorization_default_grant_created".equals(row.getAction())).count());
+                "agent", session.getId(), GrantSources.AGENT_DEFAULT));
+        assertEquals(5L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
+                "user", user.getId(), GrantSources.ROLE));
+        assertEquals(1, auditRows(userId, MATERIALIZED_ACTION).size(),
+                "a second ensureUserDefault with an unchanged set writes no further audit row");
+        assertEquals(1, auditRows(userId, AGENT_DEFAULT_ACTION).size());
     }
 
     /** design #15: registration materializes the USER minimal set, scoped to the registrant's own resources. */
     @Test
     void registeredUserDefaultGrantIsMinimalAndEvaluatorScopesItToOwnWorkspaceOnly() {
-        String email = "grant-minimal-" + UUID.randomUUID() + "@test.com";
         AuthResponse registered = register(
-                new RegisterRequest(email, "grant-test-password", "Minimal set test"));
+                new RegisterRequest("grant-minimal-" + UUID.randomUUID() + "@test.com",
+                        "grant-test-password", "Minimal set test"));
         userId = registered.getUser().getId();
         workspaceId = registered.getWorkspaceId();
 
-        AuthorizationGrant userDefault = grantRepository
-                .findBySubjectTypeAndSubjectId("user", UUID.fromString(userId)).stream()
-                .filter(grant -> "default".equals(grant.getSource())).findFirst().orElseThrow();
-        grantIds.add(userDefault.getId());
-        assertEquals(5, userDefault.getPermissions().size(),
-                "the registered default set carries the five USER action classes only");
+        assertEquals(5, roleAtoms("user", UUID.fromString(userId)).size(),
+                "the materialized USER set carries the five action classes only");
+        roleRows("user", UUID.fromString(userId)).forEach(row -> grantIds.add(row.getId()));
 
         for (String actionClass : List.of("read", "write", "delete", "exec", "network")) {
             assertTrue(grantAuthorizationService.allowsUserOnly(
@@ -231,7 +243,7 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         assertFalse(grantAuthorizationService.allowsUserOnly(new PolicyRequest(
                         "read_file", List.of("read"), List.of("src/main.java"), ToolShape.STRUCTURED,
                         userId, foreignWorkspace.getId().toString(), null)),
-                "the default grant stays confined to workspaces where the registrant is a member");
+                "the materialized rows stay confined to workspaces where the registrant is a member");
 
         assertTrue(policyEngine.allowsByGrant(PolicyContext.EMPTY, "read_file",
                         "{\"params\":{\"arguments\":{\"path\":\"notes/today.md\"}}}",
@@ -244,9 +256,10 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void attachmentUploadCreatesRootSessionWithoutAgentDefaultGrant() throws IOException {
-        String email = "grant-attachment-" + UUID.randomUUID() + "@test.com";
-        AuthResponse registered = register(new RegisterRequest(email, "grant-test-password", "Attachment grant test"));
+    void attachmentUploadCreatesRootSessionWithoutAgentSnapshot() throws IOException {
+        AuthResponse registered = register(new RegisterRequest(
+                "grant-attachment-" + UUID.randomUUID() + "@test.com", "grant-test-password",
+                "Attachment grant test"));
         userId = registered.getUser().getId();
         workspaceId = registered.getWorkspaceId();
         sessionId = UUID.randomUUID().toString();
@@ -260,18 +273,16 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         Session session = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow();
         assertNull(session.getKind(), "attachment upload creates a root Session");
         assertEquals(0L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
-                "agent", session.getId(), "default"),
-                "attachment placeholder stays principal-null with no Agent default grant (PLAN-0374 T2.7)");
+                "agent", session.getId(), GrantSources.AGENT_DEFAULT),
+                "attachment placeholder stays principal-null with no Agent snapshot (PLAN-0374 T2.7)");
         grantRepository.findAll().stream()
                 .filter(grant -> ("user".equals(grant.getSubjectType())
                         && UUID.fromString(userId).equals(grant.getSubjectId())
                         || "agent".equals(grant.getSubjectType()) && session.getId().equals(grant.getSubjectId()))
-                        && "default".equals(grant.getSource()))
+                        && GrantSources.EVALUATION_SOURCES.contains(grant.getSource()))
                 .map(AuthorizationGrant::getId)
                 .forEach(grantIds::add);
-        auditLogRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
-                .filter(row -> "authorization_default_grant_created".equals(row.getAction()))
-                .forEach(row -> auditIds.add(row.getId()));
+        auditRows(userId, MATERIALIZED_ACTION).forEach(row -> auditIds.add(row.getId()));
     }
 
     @Test
@@ -309,19 +320,18 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
                 "messages saved before a later message failure must roll back");
         assertTrue(sessionRepository.findById(laterSessionId).isPresent(),
                 "a failed chat must not prevent later chats from importing");
-        assertEquals(0L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
-                "agent", goodSessionId, "default"),
-                "imported Sessions stay principal-null with no Agent default grant (PLAN-0374 T2.7)");
-        assertEquals(0L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
-                "agent", badSessionId, "default"));
-        assertEquals(0L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
-                "agent", laterSessionId, "default"));
+        for (UUID session : List.of(goodSessionId, badSessionId, laterSessionId)) {
+            assertEquals(0L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
+                    "agent", session, GrantSources.AGENT_DEFAULT),
+                    "imported Sessions stay principal-null with no Agent snapshot (PLAN-0374 T2.7)");
+        }
     }
 
     @Test
-    void concurrentDefaultEnsureCreatesOneGrantAndOneAudit() throws Exception {
+    void concurrentDefaultEnsureCreatesOneMaterializationAndOneAudit() throws Exception {
         AuthResponse registered = register(new RegisterRequest(
-                "grant-concurrent-" + UUID.randomUUID() + "@test.com", "grant-test-password", "Concurrent grant test"));
+                "grant-concurrent-" + UUID.randomUUID() + "@test.com", "grant-test-password",
+                "Concurrent grant test"));
         userId = registered.getUser().getId();
         workspaceId = registered.getWorkspaceId();
         Session session = new Session(workspaceId, userId, "Concurrent default grant Session");
@@ -330,6 +340,9 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         sessionId = session.getId().toString();
         User user = userRepository.findById(UUID.fromString(userId)).orElseThrow();
         grantRepository.deleteAll(grantRepository.findBySubjectTypeAndSubjectId("user", user.getId()));
+        // The registration materialization already wrote one audit row; the concurrent block is
+        // measured on its own delta.
+        auditRows(userId, MATERIALIZED_ACTION).forEach(row -> auditLogRepository.deleteById(row.getId()));
         CountDownLatch start = new CountDownLatch(1);
 
         try (ExecutorService executor = Executors.newFixedThreadPool(4)) {
@@ -362,21 +375,35 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         }
 
         assertEquals(1L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
-                "agent", session.getId(), "default"));
-        AuthorizationGrant sessionGrant = grantRepository.findBySubjectTypeAndSubjectId("agent", session.getId())
-                .stream().filter(grant -> "default".equals(grant.getSource())).findFirst().orElseThrow();
-        assertEquals(1, auditLogRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
-                .filter(row -> "authorization_default_grant_created".equals(row.getAction()))
-                .filter(row -> sessionGrant.getId().toString().equals(row.getResourceId()))
-                .count());
-        assertEquals(1L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
-                "user", user.getId(), "default"));
-        AuthorizationGrant userGrant = grantRepository.findBySubjectTypeAndSubjectId("user", user.getId())
-                .stream().filter(grant -> "default".equals(grant.getSource())).findFirst().orElseThrow();
-        assertEquals(1, auditLogRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
-                .filter(row -> "authorization_default_grant_created".equals(row.getAction()))
-                .filter(row -> userGrant.getId().toString().equals(row.getResourceId()))
-                .count());
+                "agent", session.getId(), GrantSources.AGENT_DEFAULT),
+                "concurrent ensures keep exactly one frozen Agent snapshot");
+        assertEquals(5L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
+                "user", user.getId(), GrantSources.ROLE),
+                "concurrent ensures keep exactly one row per atom (uq_grants_role_atom)");
+        assertEquals(1, auditRows(userId, MATERIALIZED_ACTION).size(),
+                "the concurrent second ensure changed nothing, so only one materialization audit row");
+        assertEquals(1, auditRows(userId, AGENT_DEFAULT_ACTION).size());
+    }
+
+    // ---------------------------------------------------------------- helpers
+
+    private List<AuthorizationGrant> roleRows(String subjectType, UUID subjectId) {
+        return grantRepository.findBySubjectTypeAndSubjectIdAndSource(subjectType, subjectId,
+                GrantSources.ROLE);
+    }
+
+    private Set<String> roleAtoms(String subjectType, UUID subjectId) {
+        Set<String> atoms = new LinkedHashSet<>();
+        for (AuthorizationGrant grant : roleRows(subjectType, subjectId)) {
+            grant.getPermissions().forEach(atom -> atoms.add(atom.get("actionClass").asText()));
+        }
+        return atoms;
+    }
+
+    private List<AuditLog> auditRows(String actorUserId, String action) {
+        return auditLogRepository.findByUserIdOrderByCreatedAtDesc(actorUserId).stream()
+                .filter(row -> action.equals(row.getAction()))
+                .toList();
     }
 
     private PolicyRequest request(String actionClass, String resource) {
@@ -384,3 +411,4 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
                 ToolShape.STRUCTURED, userId, workspaceId, null);
     }
 }
+

@@ -39,7 +39,11 @@ import java.util.UUID;
 @Service
 public class CredentialBindingService {
 
-    private static final String SOURCE_DIRECT = "direct";
+    // PLAN-0610 T1.6/T1.13: the credential binding owns its own grant source. `direct` is being
+    // retired and is no longer part of the evaluation union, so the writer and the reader move to
+    // `credential_binding` together. V87 keeps both values valid for the migration window, and
+    // uq_grants_credential_binding_subject preserves V65's one-row-per-subject fence.
+    private static final String SOURCE_CREDENTIAL_BINDING = GrantSources.CREDENTIAL_BINDING;
     private static final String ACTION_BINDING_ADDED = "credential_binding_added";
     private static final String ACTION_BINDING_REMOVED = "credential_binding_removed";
 
@@ -87,7 +91,7 @@ public class CredentialBindingService {
             }
         }
 
-        mergePrincipalDirectGrant(plan.principalId(), plan.actorId(), useAtoms, Set.of());
+        mergePrincipalCredentialBindingGrant(plan.principalId(), plan.actorId(), useAtoms, Set.of());
         writeCap(plan.binding(), capNew);
         recordBinding(plan.actorId(), plan.workspaceId(), plan.principalId(), plan.resources(),
                 ACTION_BINDING_ADDED);
@@ -107,7 +111,7 @@ public class CredentialBindingService {
         BindingPlan plan = plan(actorUserId, workspaceId, principalId, credentialResources, false);
         Set<GrantIntersectionEvaluator.PermissionAtom> useAtoms = useAtoms(plan.resources());
 
-        mergePrincipalDirectGrant(plan.principalId(), plan.actorId(), Set.of(), useAtoms);
+        mergePrincipalCredentialBindingGrant(plan.principalId(), plan.actorId(), Set.of(), useAtoms);
         Set<GrantIntersectionEvaluator.PermissionAtom> capNew = new LinkedHashSet<>(plan.cap());
         capNew.removeAll(useAtoms);
         writeCap(plan.binding(), capNew);
@@ -228,47 +232,48 @@ public class CredentialBindingService {
         }
     }
 
-    private void mergePrincipalDirectGrant(UUID principalId, UUID actorId,
+    private void mergePrincipalCredentialBindingGrant(UUID principalId, UUID actorId,
             Set<GrantIntersectionEvaluator.PermissionAtom> additions,
             Set<GrantIntersectionEvaluator.PermissionAtom> removals) {
-        AuthorizationGrant direct = grantRepository.findBySubjectTypeAndSubjectId(
+        AuthorizationGrant bindingGrant = grantRepository.findBySubjectTypeAndSubjectId(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId).stream()
-                .filter(grant -> SOURCE_DIRECT.equals(grant.getSource()))
+                .filter(grant -> SOURCE_CREDENTIAL_BINDING.equals(grant.getSource()))
                 .findFirst()
                 .orElse(null);
-        Set<GrantIntersectionEvaluator.PermissionAtom> current = direct == null
+        Set<GrantIntersectionEvaluator.PermissionAtom> current = bindingGrant == null
                 ? Set.of()
-                : evaluator.parse(direct.getPermissions());
+                : evaluator.parse(bindingGrant.getPermissions());
         Set<GrantIntersectionEvaluator.PermissionAtom> merged = new LinkedHashSet<>(current);
         merged.addAll(additions);
         merged.removeAll(removals);
 
         if (merged.isEmpty()) {
-            if (direct != null) {
-                grantRepository.delete(direct);
+            if (bindingGrant != null) {
+                grantRepository.delete(bindingGrant);
             }
             return;
         }
-        if (direct == null) {
-            direct = new AuthorizationGrant();
-            direct.setId(UUID.randomUUID());
-            direct.setSubjectType(GrantPrincipalPathResolver.AGENT_PRINCIPAL);
-            direct.setSubjectId(principalId);
-            direct.setGranterType(GrantPrincipalPathResolver.USER);
-            direct.setGranterId(actorId);
-            direct.setSource(SOURCE_DIRECT);
-            direct.setReadState("read");
+        if (bindingGrant == null) {
+            bindingGrant = new AuthorizationGrant();
+            bindingGrant.setId(UUID.randomUUID());
+            bindingGrant.setSubjectType(GrantPrincipalPathResolver.AGENT_PRINCIPAL);
+            bindingGrant.setSubjectId(principalId);
+            bindingGrant.setGranterType(GrantPrincipalPathResolver.USER);
+            bindingGrant.setGranterId(actorId);
+            bindingGrant.setSource(SOURCE_CREDENTIAL_BINDING);
+            bindingGrant.setScopeType(AccessScope.INSTANCE);
+            bindingGrant.setReadState("read");
         }
-        direct.setPermissions(toJson(merged));
+        bindingGrant.setPermissions(toJson(merged));
         try {
-            grantRepository.saveAndFlush(direct);
+            grantRepository.saveAndFlush(bindingGrant);
         } catch (org.springframework.dao.DataIntegrityViolationException e) {
-            // Round-4: the V64 partial unique index raced a concurrent first-time bind.
-            // Fail loud with an idempotent retry path instead of leaving two direct rows
-            // behind (a duplicate would make findFirst non-deterministic and an unbind
-            // could leave the atom in the other row).
+            // V65 fence (now uq_grants_credential_binding_subject): a concurrent first-time bind
+            // raced. Fail loud with an idempotent retry path instead of leaving two rows behind
+            // (a duplicate would make findFirst non-deterministic and an unbind could leave the
+            // atom in the other row).
             throw new CpApiException(HttpStatus.CONFLICT, "DIRECT_GRANT_CONFLICT",
-                    "The direct grant changed concurrently; retry the binding", e);
+                    "The credential binding grant changed concurrently; retry the binding", e);
         }
     }
 
@@ -350,3 +355,4 @@ public class CredentialBindingService {
             Set<GrantIntersectionEvaluator.PermissionAtom> actorPermissions,
             Set<GrantIntersectionEvaluator.PermissionAtom> cap) {}
 }
+

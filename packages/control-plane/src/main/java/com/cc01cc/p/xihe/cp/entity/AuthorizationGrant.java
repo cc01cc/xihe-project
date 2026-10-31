@@ -37,7 +37,7 @@ public class AuthorizationGrant {
     @Column(name = "permissions", nullable = false, columnDefinition = "jsonb")
     private JsonNode permissions;
 
-    @Column(name = "source", nullable = false, length = 16)
+    @Column(name = "source", nullable = false, length = 24)
     private String source;
 
     @Column(name = "role_name", columnDefinition = "TEXT")
@@ -45,6 +45,19 @@ public class AuthorizationGrant {
 
     @Column(name = "template_name", columnDefinition = "TEXT")
     private String templateName;
+
+    /**
+     * PLAN-0610 (V87): the scope this materialized atom belongs to. {@code instance} rows always
+     * participate in evaluation; {@code workspace} rows only when the request resolves to that
+     * workspace. Defaults to {@code instance} so every pre-V87 row keeps its (instance-wide)
+     * meaning.
+     */
+    @Column(name = "scope_type", nullable = false, length = 16)
+    private String scopeType = "instance";
+
+    /** NULL for {@code instance} scope; the workspace id for {@code workspace} scope (V87 CHECK). */
+    @Column(name = "scope_id", columnDefinition = "uuid")
+    private UUID scopeId;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -88,6 +101,12 @@ public class AuthorizationGrant {
 
     public String getTemplateName() { return templateName; }
     public void setTemplateName(String templateName) { this.templateName = templateName; }
+
+    public String getScopeType() { return scopeType; }
+    public void setScopeType(String scopeType) { this.scopeType = scopeType; }
+
+    public UUID getScopeId() { return scopeId; }
+    public void setScopeId(UUID scopeId) { this.scopeId = scopeId; }
 
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
