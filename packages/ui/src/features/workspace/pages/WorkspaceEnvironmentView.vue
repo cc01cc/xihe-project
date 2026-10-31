@@ -266,6 +266,14 @@ const DIRECT_ATTACH_EXECUTION_MODES = ["windows-mxc", "windows-host"] as const;
 const currentExecutionMode = computed(() => environment.value?.executionMode ?? "");
 const isDirectAttachStorage = computed(() => environment.value?.storageMode === "direct_attach");
 const managedExecutionModeIsDocker = computed(() => currentExecutionMode.value === "docker");
+/**
+ * PLAN-0612 M4.3: the workspace Docker execution backend is frozen (2026-10-31 ruling). Any
+ * workspace still on it — either a `managed_import` workspace (docker-only) or a direct_attach one
+ * that was switched to docker — gets the banner.
+ */
+const executionBackendFrozen = computed(
+    () => managedExecutionModeIsDocker.value || environment.value?.storageMode === "managed_import",
+);
 const hasLegacyExecutionMode = computed(
     () =>
         isDirectAttachStorage.value &&
@@ -443,6 +451,19 @@ onBeforeUnmount(stopPolling);
                 {{ error }}
             </div>
             <div v-else-if="environment" class="space-y-5">
+                <!-- PLAN-0612 M4.3 / 2026-10-31 裁定: an existing workspace on the Docker execution
+                     backend must say up front that the backend is frozen and point at direct_attach,
+                     instead of failing later at container creation. -->
+                <div
+                    v-if="executionBackendFrozen"
+                    class="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm"
+                    data-testid="workspace-execution-backend-frozen"
+                >
+                    <p class="font-medium">{{ t("workspace.executionBackendFrozenTitle") }}</p>
+                    <p class="mt-1 text-xs text-muted-foreground">
+                        {{ t("workspace.executionBackendFrozenHint") }}
+                    </p>
+                </div>
                 <div
                     class="flex flex-wrap items-center justify-between gap-4 rounded-lg border p-5"
                 >

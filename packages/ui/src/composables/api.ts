@@ -116,6 +116,26 @@ export interface ApiWorkspace {
     updatedAt?: string;
 }
 
+/**
+ * PLAN-0610 W3-2b decision #22: capability projection carried by `/auth/me` and the auth responses
+ * (`CapabilitiesView` on the wire). The retired `role` string is never read by the UI again.
+ */
+export interface ApiUserCapabilities {
+    isInstanceAdmin: boolean;
+    isInstanceSuper: boolean;
+    workspaceAdminOf: string[];
+}
+
+/** `/auth/me`, the login/register/local-login `user` object. */
+export interface ApiAuthUser {
+    id: string;
+    email: string;
+    username?: string;
+    name?: string;
+    workspaceId?: string;
+    capabilities?: ApiUserCapabilities;
+}
+
 /** PLAN-0565: member view from /workspaces/{id}/members (spec §2; role is canonical). */
 export interface ApiWorkspaceMember {
     userId: string;
@@ -1953,7 +1973,7 @@ export const api = {
         return request<{
             accessToken: string;
             refreshToken: string;
-            user: { id: string; email: string; workspaceId?: string };
+            user: ApiAuthUser;
             workspaceId?: string;
             workspace?: ApiWorkspace;
         }>("/auth/login", {
@@ -1973,13 +1993,17 @@ export const api = {
         return request<{
             accessToken: string;
             refreshToken: string;
-            user: { id: string; email: string; workspaceId?: string };
+            user: ApiAuthUser;
             workspaceId?: string;
             workspace?: ApiWorkspace;
         }>("/auth/register", {
             method: "POST",
             body: JSON.stringify(body),
         });
+    },
+    /** PLAN-0610 W3-2b: the caller's own projection (capabilities replace the retired role). */
+    me() {
+        return request<ApiAuthUser>("/auth/me");
     },
     // PLAN-0526: loopback-only local mode entry.
     bootstrapStatus() {
@@ -1989,7 +2013,7 @@ export const api = {
         return request<{
             accessToken: string;
             refreshToken: string;
-            user: { id: string; email: string; workspaceId?: string };
+            user: ApiAuthUser;
             workspaceId?: string;
             workspace?: ApiWorkspace;
         }>("/auth/local-login", { method: "POST" });

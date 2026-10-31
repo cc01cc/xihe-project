@@ -62,8 +62,20 @@ function environment(executionMode: "docker" | "windows-mxc" | "windows-host") {
     };
 }
 
-function setPrincipal(user: { id: string; role?: string }, ownerId: string) {
-    localStorage.setItem("xihe-user", JSON.stringify(user));
+/** PLAN-0610: the instance-admin projection is `capabilities.isInstanceAdmin` (no role string). */
+function setPrincipal(user: { id: string; isInstanceAdmin?: boolean }, ownerId: string) {
+    localStorage.setItem(
+        "xihe-user",
+        JSON.stringify({
+            id: user.id,
+            email: `${user.id}@xihe.local`,
+            capabilities: {
+                isInstanceAdmin: user.isInstanceAdmin === true,
+                isInstanceSuper: false,
+                workspaceAdminOf: [],
+            },
+        }),
+    );
     sessionStorage.setItem(
         "xihe-workspace",
         JSON.stringify({ id: "workspace-1", name: "Workspace", ownerId }),
@@ -273,6 +285,42 @@ describe("WorkspaceEnvironmentView job-start capability (PLAN-0396)", () => {
     });
 });
 
+describe("WorkspaceEnvironmentView frozen execution backend (PLAN-0612 M4.3)", () => {
+    it("shows the freeze banner for a docker-execution workspace", async () => {
+        const wrapper = await mountView();
+
+        const banner = wrapper.get('[data-testid="workspace-execution-backend-frozen"]');
+        expect(banner.text()).toContain(i18n.global.t("workspace.executionBackendFrozenTitle"));
+        expect(banner.text()).toContain(i18n.global.t("workspace.executionBackendFrozenHint"));
+        // The banner must name the way out (create a direct_attach workspace).
+        expect(banner.text()).toContain("直接挂载");
+    });
+
+    it("shows the banner for a managed workspace even when the mode value is legacy", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("windows-mxc"),
+            storageMode: "managed_import",
+        } as never);
+
+        const wrapper = await mountView();
+        expect(wrapper.find('[data-testid="workspace-execution-backend-frozen"]').exists()).toBe(
+            true,
+        );
+    });
+
+    it("does not show the banner for a direct-attach MXC/host workspace", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("windows-mxc"),
+            storageMode: "direct_attach",
+        } as never);
+
+        const wrapper = await mountView();
+        expect(wrapper.find('[data-testid="workspace-execution-backend-frozen"]').exists()).toBe(
+            false,
+        );
+    });
+});
+
 describe("WorkspaceEnvironmentView execution mode entry (PLAN-0551)", () => {
     it("shows a managed workspace as read-only docker with a reason", async () => {
         const wrapper = await mountView();
@@ -409,7 +457,7 @@ describe("WorkspaceEnvironmentView execution mode entry (PLAN-0551)", () => {
 
 describe("WorkspaceEnvironmentView hostPath disclosure", () => {
     it("hides a raw host path from a regular member", async () => {
-        setPrincipal({ id: "member-1", role: "USER" }, "owner-1");
+        setPrincipal({ id: "member-1" }, "owner-1");
         mockedApi.getWorkspaceEnvironment.mockResolvedValue({
             ...environment("windows-host"),
             storageMode: "direct_attach",
@@ -423,7 +471,7 @@ describe("WorkspaceEnvironmentView hostPath disclosure", () => {
     });
 
     it("shows a raw host path to the workspace owner", async () => {
-        setPrincipal({ id: "owner-1", role: "USER" }, "owner-1");
+        setPrincipal({ id: "owner-1" }, "owner-1");
         mockedApi.getWorkspaceEnvironment.mockResolvedValue({
             ...environment("windows-host"),
             storageMode: "direct_attach",
@@ -438,7 +486,7 @@ describe("WorkspaceEnvironmentView hostPath disclosure", () => {
     });
 
     it("shows a raw host path to an instance admin", async () => {
-        setPrincipal({ id: "admin-1", role: "ADMIN" }, "owner-1");
+        setPrincipal({ id: "admin-1", isInstanceAdmin: true }, "owner-1");
         mockedApi.getWorkspaceEnvironment.mockResolvedValue({
             ...environment("windows-host"),
             storageMode: "direct_attach",
@@ -453,7 +501,7 @@ describe("WorkspaceEnvironmentView hostPath disclosure", () => {
     });
 
     it("does not invent a host path when the server sends a safe null projection", async () => {
-        setPrincipal({ id: "owner-1", role: "USER" }, "owner-1");
+        setPrincipal({ id: "owner-1" }, "owner-1");
         mockedApi.getWorkspaceEnvironment.mockResolvedValue({
             ...environment("windows-host"),
             storageMode: "direct_attach",

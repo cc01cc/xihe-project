@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useAuthStore } from "../../stores/auth";
 import { useConfigStore } from "../../stores/config";
+import { api } from "../../composables/api";
+import { logger } from "../../lib/logger";
+import { Button } from "../../components/ui/button";
 import { Sun } from "@lucide/vue";
 
 const { t } = useI18n(),
@@ -19,24 +22,32 @@ const identifier = ref(""),
     phase = ref<"idle" | "submitting" | "entering">("idle"),
     busy = computed(() => phase.value !== "idle");
 
+/**
+ * BL-150 A: the passwordless entry only exists on a local (loopback single-user) instance. The
+ * bootstrap signal is the CP's own answer, so the button can never appear on a normal deployment.
+ */
+const localMode = ref(false);
+const localLoginBusy = ref(false);
+
+onMounted(async () => {
+    try {
+        const status = await api.bootstrapStatus();
+        localMode.value = status.localMode === true;
+    } catch (e) {
+        // Fail closed: no signal means no passwordless button.
+        logger.warn("Failed to read bootstrap status: " + (e instanceof Error ? e.message : e));
+        localMode.value = false;
+    }
+});
+
 function rateLimitMessage(): string | null {
     if (auth.lastError?.code !== "AUTH_RATE_LIMITED") return null;
     const seconds = auth.lastError.retryAfterSeconds;
     return seconds ? t("login.rateLimitedSeconds", { seconds }) : t("login.rateLimited");
 }
 
-async function handleSubmit() {
-    if (phase.value !== "idle" || !identifier.value || !password.value) return;
-    phase.value = "submitting";
-    errorMsg.value = null;
-    const ok = await auth.login(identifier.value, password.value);
-    if (!ok) {
-        errorMsg.value = rateLimitMessage() ?? auth.error;
-        phase.value = "idle";
-        return;
-    }
-    // Keep the form locked through the route transition: the old code cleared
-    // `loading` before the un-awaited push, which reopened the submit window.
+/** Shared post-authentication transition so both entries behave identically. */
+async function enterWorkspace() {
     phase.value = "entering";
     config.loadAllDomains({ isAdmin: auth.isAdmin }).catch(() => {
         // 后端不可用时使用本地持久化配置；错误已在 store 中记录
@@ -52,6 +63,38 @@ async function handleSubmit() {
         phase.value = "idle";
         errorMsg.value = t("login.navigationFailed");
     }
+}
+
+async function handleSubmit() {
+    if (phase.value !== "idle" || !identifier.value || !password.value) return;
+    phase.value = "submitting";
+    errorMsg.value = null;
+    const ok = await auth.login(identifier.value, password.value);
+    if (!ok) {
+        errorMsg.value = rateLimitMessage() ?? auth.error;
+        phase.value = "idle";
+        return;
+    }
+    // Keep the form locked through the route transition: the old code cleared
+    // `loading` before the un-awaited push, which reopened the submit window.
+    await enterWorkspace();
+}
+
+/** BL-150 A: passwordless re-entry; CP answers 409 when the instance is not single-user. */
+async function handleLocalLogin() {
+    if (phase.value !== "idle" || localLoginBusy.value) return;
+    localLoginBusy.value = true;
+    errorMsg.value = null;
+    const ok = await auth.localLogin();
+    localLoginBusy.value = false;
+    if (!ok) {
+        errorMsg.value =
+            auth.lastError?.code === "LOCAL_SINGLE_USER_REQUIRED"
+                ? t("login.localSingleUserRequired")
+                : auth.error;
+        return;
+    }
+    await enterWorkspace();
 }
 </script>
 
@@ -113,6 +156,24 @@ async function handleSubmit() {
                 </button>
 
                 <p v-if="errorMsg" class="text-sm text-destructive text-center">{{ errorMsg }}</p>
+
+                <!-- BL-150 A: local single-user instance → passwordless entry (never on a normal deployment). -->
+                <div v-if="localMode" class="space-y-2 border-t pt-4">
+                    <Button
+                        type="button"
+                        variant="outline"
+                        class="w-full"
+                        data-testid="login-local-mode"
+                        :disabled="busy || localLoginBusy"
+                        @click="handleLocalLogin"
+                    >
+                        {{ localLoginBusy ? t("login.localLoggingIn") : t("login.localLogin") }}
+                    </Button>
+                    <p class="text-xs text-center text-muted-foreground">
+                        {{ t("login.localModeHint") }}
+                    </p>
+                </div>
+
                 <p class="text-sm text-center text-muted-foreground">
                     {{ t("login.noAccount") }}
                     <router-link to="/register" class="text-primary hover:underline font-medium">{{

@@ -300,8 +300,14 @@ const messages = {
             addStorageMode: "存储方式",
             managedImport: "托管副本",
             managedImportDesc: "由 Runtime 管理 WorkspaceStorage",
+            managedImportFrozen: "执行后端已冻结，暂不可用",
+            managedImportFrozenHint:
+                "托管副本固定使用 Docker 执行后端；该后端按 2026-10-31 裁定冻结。请选择「直接挂载」：需要一个已存在的宿主机目录，由 Runtime 在创建前校验。",
             directAttach: "直接挂载",
-            directAttachDesc: "使用已存在的宿主机目录",
+            directAttachDesc: "使用已存在的宿主机目录（当前唯一可用方式）",
+            executionBackendFrozenTitle: "该工作区的执行后端已冻结",
+            executionBackendFrozenHint:
+                "Docker 执行后端按 2026-10-31 裁定冻结，无法在此工作区运行任务。请新建一个「直接挂载」工作区继续使用。",
             hostDirectory: "宿主机目录",
             chooseDirectory: "选择目录",
             chooseDirectoryPlaceholder: "请选择目录",
@@ -1711,6 +1717,10 @@ const messages = {
             register: "注册",
             noAccount: "没有账号？",
             hasAccount: "已有账号？",
+            localLogin: "本机模式免密登录",
+            localLoggingIn: "正在登录…",
+            localModeHint: "本机单用户模式：回环访问可直接进入，无需密码",
+            localSingleUserRequired: "本机实例不是单用户状态，请使用账号密码登录",
         },
         register: {
             title: "注册",
@@ -2174,8 +2184,14 @@ const messages = {
             addStorageMode: "Storage mode",
             managedImport: "Managed copy",
             managedImportDesc: "Runtime manages WorkspaceStorage",
+            managedImportFrozen: "backend frozen, unavailable",
+            managedImportFrozenHint:
+                "Managed copy is docker-execution only, and that backend was frozen on 2026-10-31. Choose “Direct attach”: it needs an existing host directory, which Runtime verifies before creating the workspace.",
             directAttach: "Direct attach",
-            directAttachDesc: "Use an existing host directory",
+            directAttachDesc: "Use an existing host directory (currently the only option)",
+            executionBackendFrozenTitle: "This workspace's execution backend is frozen",
+            executionBackendFrozenHint:
+                "The Docker execution backend was frozen on 2026-10-31, so tasks cannot run in this workspace. Create a new “Direct attach” workspace to continue.",
             hostDirectory: "Host directory",
             chooseDirectory: "Choose directory",
             chooseDirectoryPlaceholder: "Choose a directory",
@@ -3664,6 +3680,11 @@ const messages = {
             register: "Register",
             noAccount: "Don't have an account?",
             hasAccount: "Already have an account?",
+            localLogin: "Enter without a password",
+            localLoggingIn: "Signing in…",
+            localModeHint: "Local single-user mode: loopback access needs no password",
+            localSingleUserRequired:
+                "This local instance is not single-user; sign in with an account",
         },
         register: {
             title: "Register",

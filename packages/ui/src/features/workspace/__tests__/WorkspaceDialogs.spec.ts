@@ -138,28 +138,23 @@ describe("WorkspaceCreateDialog (PLAN-0384)", () => {
         document.body.innerHTML = "";
     });
 
-    it("submits a managed_import workspace payload without hostPath, executionMode or profile", async () => {
-        mockedApi.createWorkspace.mockResolvedValue({ id: "ws-managed", name: "Managed" });
+    it("does not offer the frozen managed_import backend and defaults to direct_attach", async () => {
         await mountCreateDialog(wrappers);
 
-        // Managed import has no host path to probe and is docker-only on the
-        // implemented backend contract, so it skips the execution-mode step.
-        await clickBody('[data-testid="workspace-storage-managed"]');
-        await setBodyValue('[data-testid="workspace-create-name"]', "Managed");
-        await clickBody('[data-testid="workspace-create-submit"]');
-        await vi.waitFor(() => expect(mockedApi.createWorkspace).toHaveBeenCalled());
-
-        const payload = mockedApi.createWorkspace.mock.calls[0]?.[0];
-        expect(payload).toEqual({
-            name: "Managed",
-            description: null,
-            storageMode: "managed_import",
-            idempotencyKey: expect.any(String),
-        });
-        expect(payload?.executionMode).toBeUndefined();
-        expect(payload?.hostPath).toBeUndefined();
-        expect(payload?.profile).toBeUndefined();
-        expect(toast.success).toHaveBeenCalled();
+        // PLAN-0612 M4.3: the Docker execution backend is frozen, so the managed card is hidden
+        // (not just disabled) and a frozen explanation replaces it.
+        expect(document.body.querySelector('[data-testid="workspace-storage-managed"]')).toBeNull();
+        expect(
+            document.body.querySelector('[data-testid="workspace-storage-managed-frozen"]'),
+        ).toBeTruthy();
+        expect(document.body.textContent).toContain(
+            i18n.global.t("workspace.managedImportFrozenHint"),
+        );
+        // The only selectable mode is direct_attach, and it states the host-directory requirement.
+        expect(
+            document.body.querySelector('[data-testid="workspace-storage-direct"]'),
+        ).toBeTruthy();
+        expect(document.body.textContent).toContain(i18n.global.t("workspace.directAttachDesc"));
     });
 
     it("selects a directory via the source browser and submits a direct_attach payload with a stable idempotency key", async () => {

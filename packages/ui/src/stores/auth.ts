@@ -21,7 +21,7 @@ import { useConfigStore } from "./config";
 import { useAgentStore } from "./agent";
 import { usePolicyStore } from "./policy";
 import { useCheckpointStore } from "./checkpoint";
-import type { User } from "../types";
+import { EMPTY_USER_CAPABILITIES, type User, type UserCapabilities } from "../types";
 // PLAN-0546: SPA-route logout. router/index.ts does not import stores, so this is acyclic.
 import router from "../router";
 
@@ -54,8 +54,30 @@ export const useAuthStore = defineStore("auth", () => {
         lastError = ref<{ code: string; retryAfterSeconds?: number } | null>(null);
 
     const isAuthenticated = computed(() => !!token.value),
-        userName = computed(() => user.value?.name ?? user.value?.email ?? "User"),
-        isAdmin = computed(() => user.value?.role === "ADMIN");
+        userName = computed(() => user.value?.name ?? user.value?.email ?? "User");
+    /**
+     * PLAN-0610 W3-2b (decision #22): authority comes from the capability projection, never from a
+     * role string. A cached pre-upgrade user carries no capabilities until
+     * {@link refreshCapabilities} runs, so the default is "no capability" — CP stays authoritative
+     * either way (a hidden entry is a UX affordance, not an authorization decision).
+     */
+    const capabilities = computed<UserCapabilities>(
+            () => user.value?.capabilities ?? EMPTY_USER_CAPABILITIES,
+        ),
+        isAdmin = computed(() => capabilities.value.isInstanceAdmin),
+        /** `cap:instance:super` — the full-permission system role (implies {@link isAdmin}). */
+        isInstanceSuper = computed(() => capabilities.value.isInstanceSuper);
+
+    /**
+     * `workspace:admin` for one workspace. An instance administrator administers every workspace
+     * (CP's `AuthzContext.canWorkspaceAdmin` resolves the same way), so the local check includes the
+     * instance capability on top of the explicit id list.
+     */
+    function canWorkspaceAdmin(workspaceId: string | null | undefined): boolean {
+        if (isAdmin.value) return true;
+        if (!workspaceId) return false;
+        return capabilities.value.workspaceAdminOf.includes(workspaceId);
+    }
     /**
      * PLAN-0559 role matrix. Legacy responses without `workspaceRole` fall back
      * to owner/EDITOR inference so an old CP build does not hide every write
@@ -86,7 +108,7 @@ export const useAuthStore = defineStore("auth", () => {
      * CP remains authoritative and returns 403 otherwise.
      */
     const canClassifyTools = computed(() => {
-        if (user.value?.role === "ADMIN") return true;
+        if (isAdmin.value) return true;
         return canManageWorkspace.value;
     });
 
@@ -187,9 +209,35 @@ export const useAuthStore = defineStore("auth", () => {
             const msg = e instanceof Error ? e.message : "Local login failed";
             logger.warn("Local login failed: " + msg);
             error.value = msg;
+            // BL-150 A: the login page needs the stable Problem code to localize
+            // 409 LOCAL_SINGLE_USER_REQUIRED instead of echoing the English detail.
+            lastError.value = errorDetails(e);
             return false;
         } finally {
             loading.value = false;
+        }
+    }
+
+    /**
+     * PLAN-0610 W5a: refresh the caller's capability projection from `GET /auth/me`.
+     *
+     * <p>Capabilities ride on the login/register/local-login response, so a fresh sign-in is already
+     * correct. This exists for the two cases where the cached `xihe-user` is stale: a reload with a
+     * user object written by a pre-upgrade build (no `capabilities` field at all), and a capability
+     * change made by another administrator. Failure is soft — the cached user stays and CP remains
+     * authoritative.</p>
+     */
+    async function refreshCapabilities(): Promise<boolean> {
+        if (!token.value) return false;
+        try {
+            const me = await api.me();
+            if (!me?.id) return false;
+            user.value = { ...(user.value ?? { id: me.id, email: me.email }), ...me };
+            localStorage.setItem("xihe-user", JSON.stringify(user.value));
+            return true;
+        } catch (e) {
+            logger.warn("Failed to refresh capabilities: " + (e instanceof Error ? e.message : e));
+            return false;
         }
     }
 
@@ -353,7 +401,10 @@ export const useAuthStore = defineStore("auth", () => {
         lastError,
         isAuthenticated,
         userName,
+        capabilities,
         isAdmin,
+        isInstanceSuper,
+        canWorkspaceAdmin,
         canClassifyTools,
         workspaceRole,
         canWriteWorkspace,
@@ -363,6 +414,7 @@ export const useAuthStore = defineStore("auth", () => {
         login,
         register,
         localLogin,
+        refreshCapabilities,
         logout,
         hydrateWorkspace,
         selectWorkspace,

@@ -75,13 +75,17 @@ const conflictedRule: PolicyRuleView = {
     conflict: '该 allow 不会生效：存在更具体的 deny "pnpm test *"',
 };
 
-function seedUser(role?: string) {
+function seedUser(isInstanceAdmin = false) {
     localStorage.setItem(
         "xihe-user",
         JSON.stringify({
             id: WORKSPACE_OWNER,
             email: "test@xihe.local",
-            ...(role ? { role } : {}),
+            capabilities: {
+                isInstanceAdmin,
+                isInstanceSuper: isInstanceAdmin,
+                workspaceAdminOf: [],
+            },
         }),
     );
 }
@@ -203,7 +207,7 @@ describe("PolicyRulesView", () => {
     });
 
     it("creates a rule for the active layer and sends the locked draft only for admins", async () => {
-        seedUser("ADMIN");
+        seedUser(true);
         vi.mocked(api.createPolicyRule).mockResolvedValue({
             id: RULE_ID,
             layer: "instance",

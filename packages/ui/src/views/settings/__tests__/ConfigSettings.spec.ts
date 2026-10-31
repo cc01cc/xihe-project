@@ -85,16 +85,25 @@ async function mountView() {
     return wrapper;
 }
 
+/**
+ * PLAN-0610 W5a: instance administration is the `cap:instance:admin` capability carried by
+ * `/auth/me`; the retired `role` string must not grant anything.
+ */
+function userWithCapabilities(isInstanceAdmin: boolean, email: string) {
+    return JSON.stringify({
+        id: "u1",
+        email,
+        capabilities: { isInstanceAdmin, isInstanceSuper: false, workspaceAdminOf: [] },
+    });
+}
+
 beforeEach(() => {
     setActivePinia(createPinia());
     localStorage.clear();
     sessionStorage.clear();
     vi.clearAllMocks();
     localStorage.setItem("xihe-token", "test-token");
-    localStorage.setItem(
-        "xihe-user",
-        JSON.stringify({ id: "u1", email: "admin@xihe.local", role: "ADMIN" }),
-    );
+    localStorage.setItem("xihe-user", userWithCapabilities(true, "admin@xihe.local"));
     localStorage.setItem("xihe-workspace", JSON.stringify({ id: WORKSPACE_ID, name: "Workspace" }));
     mockConfigFetch();
 });
@@ -267,10 +276,7 @@ describe("ConfigSettings 模型提供方分区 (PLAN-0523 T3.1)", () => {
     });
 
     it("层 tab 只剩个人（非管理员不渲染实例层）", async () => {
-        localStorage.setItem(
-            "xihe-user",
-            JSON.stringify({ id: "u1", email: "user@xihe.local", role: "USER" }),
-        );
+        localStorage.setItem("xihe-user", userWithCapabilities(false, "user@xihe.local"));
         const wrapper = await mountView();
         const tabs = wrapper
             .findAll("[data-testid^='config-tab-']")

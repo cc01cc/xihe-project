@@ -952,13 +952,35 @@ export interface LangChainEvent {
     run_id?: string;
 }
 
+/**
+ * PLAN-0610 W3-2b decision #22: the wire no longer carries a `role` string. `/auth/me`, the login /
+ * register / local-login responses and `GET /api/v1/me/permissions` all use this projection, so the
+ * UI decides "who may administer" from capabilities instead of comparing role names.
+ */
+export interface UserCapabilities {
+    /** `cap:instance:admin` — instance administration (settings, instance config layers, ...). */
+    isInstanceAdmin: boolean;
+    /** `cap:instance:super` — the full-permission system role (implies {@link isInstanceAdmin}). */
+    isInstanceSuper: boolean;
+    /** Workspace ids the subject administers (`workspace:admin` bindings, stable sorted). */
+    workspaceAdminOf: string[];
+}
+
+export const EMPTY_USER_CAPABILITIES: UserCapabilities = {
+    isInstanceAdmin: false,
+    isInstanceSuper: false,
+    workspaceAdminOf: [],
+};
+
 export interface User {
     id: string;
     email: string;
+    /** PLAN-0581: stable handle shown by the admin surface. */
+    username?: string;
     name?: string;
     workspaceId?: string;
-    /** CP role name (`ADMIN` / `USER`); drives the instance settings entry (PLAN-0307 T2.17). */
-    role?: string;
+    /** PLAN-0610: capability projection; absent on a cached pre-upgrade user until refreshed. */
+    capabilities?: UserCapabilities;
 }
 
 export interface FileNode {

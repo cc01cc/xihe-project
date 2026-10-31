@@ -42,7 +42,11 @@ function navigateAdmin() {
 
 function handleLogout() {
     auth.logout();
-    void router.push("/login");
+    // BL-150 B: hand the post-logout decision to the router guard instead of hard-coding `/login`.
+    // On a local (loopback single-user) instance the guard re-enters passwordlessly and stays on the
+    // workspace; on a normal deployment there is no token, so the guard lands on `/login` exactly as
+    // before. The store does not know the bootstrap mode, so it must not decide here.
+    void router.push("/workspace");
 }
 </script>
 

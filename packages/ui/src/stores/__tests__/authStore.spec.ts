@@ -10,6 +10,7 @@ vi.mock("../../composables/api", () => ({
     api: {
         login: vi.fn<typeof apiModule.login>(),
         register: vi.fn<typeof apiModule.register>(),
+        me: vi.fn<typeof apiModule.api.me>(),
         getWorkspace: vi.fn<typeof apiModule.api.getWorkspace>(),
         getCurrentWorkspace: vi.fn<typeof apiModule.api.getCurrentWorkspace>(),
     },
@@ -245,5 +246,106 @@ describe("useAuthStore", () => {
         sessionStorage.setItem("xihe-workspace", JSON.stringify({ id: WORKSPACE_ID }));
         store.logout();
         expect(sessionStorage.getItem("xihe-workspace")).toBeNull();
+    });
+});
+
+describe("useAuthStore capabilities (PLAN-0610 W5a)", () => {
+    it("derives isAdmin / isInstanceSuper from the capability projection, not from a role string", () => {
+        const store = useAuthStore();
+        store.$patch({
+            user: {
+                id: "u1",
+                email: "a@test.com",
+                capabilities: {
+                    isInstanceAdmin: true,
+                    isInstanceSuper: true,
+                    workspaceAdminOf: [],
+                },
+            },
+        });
+        expect(store.isAdmin).toBe(true);
+        expect(store.isInstanceSuper).toBe(true);
+        expect(store.canClassifyTools).toBe(true);
+    });
+
+    it("treats a missing projection as 'no capability' (stale cached user)", () => {
+        const store = useAuthStore();
+        store.$patch({ user: { id: "u1", email: "a@test.com" } });
+        expect(store.isAdmin).toBe(false);
+        expect(store.isInstanceSuper).toBe(false);
+        expect(store.canWorkspaceAdmin(WORKSPACE_ID)).toBe(false);
+        // The retired wire field must not resurrect authority.
+        expect((store.user as unknown as { role?: string })?.role).toBeUndefined();
+    });
+
+    it("canWorkspaceAdmin follows the explicit id list and the instance capability", () => {
+        const store = useAuthStore();
+        store.$patch({
+            user: {
+                id: "u1",
+                email: "a@test.com",
+                capabilities: {
+                    isInstanceAdmin: false,
+                    isInstanceSuper: false,
+                    workspaceAdminOf: [WORKSPACE_ID],
+                },
+            },
+        });
+        expect(store.canWorkspaceAdmin(WORKSPACE_ID)).toBe(true);
+        expect(store.canWorkspaceAdmin("55555555-5555-4555-8555-555555555555")).toBe(false);
+        expect(store.canWorkspaceAdmin(null)).toBe(false);
+
+        store.$patch({
+            user: {
+                id: "u1",
+                email: "a@test.com",
+                capabilities: {
+                    isInstanceAdmin: true,
+                    isInstanceSuper: false,
+                    workspaceAdminOf: [],
+                },
+            },
+        });
+        // CP resolves canWorkspaceAdmin the same way: an instance admin administers every workspace.
+        expect(store.canWorkspaceAdmin("55555555-5555-4555-8555-555555555555")).toBe(true);
+    });
+
+    it("refreshCapabilities replaces the cached user and persists it", async () => {
+        localStorage.setItem("xihe-token", "token");
+        localStorage.setItem(
+            "xihe-user",
+            JSON.stringify({ id: "u1", email: "a@test.com", capabilities: undefined }),
+        );
+        const { api } = await import("../../composables/api");
+        vi.mocked(api.me).mockResolvedValue({
+            id: "u1",
+            email: "a@test.com",
+            username: "tester",
+            capabilities: { isInstanceAdmin: true, isInstanceSuper: false, workspaceAdminOf: [] },
+        });
+        const store = useAuthStore();
+        expect(store.isAdmin).toBe(false);
+
+        expect(await store.refreshCapabilities()).toBe(true);
+        expect(store.isAdmin).toBe(true);
+        expect(store.user?.username).toBe("tester");
+        expect(
+            JSON.parse(localStorage.getItem("xihe-user") ?? "{}").capabilities.isInstanceAdmin,
+        ).toBe(true);
+    });
+
+    it("refreshCapabilities is a soft no-op without a token or on failure", async () => {
+        const { api } = await import("../../composables/api");
+        vi.mocked(api.me).mockReset();
+        const store = useAuthStore();
+        expect(await store.refreshCapabilities()).toBe(false);
+        expect(api.me).not.toHaveBeenCalled();
+
+        localStorage.setItem("xihe-token", "token");
+        const authed = useAuthStore();
+        authed.$patch({ token: "token" });
+        vi.mocked(api.me).mockRejectedValue(new Error("offline"));
+        expect(await authed.refreshCapabilities()).toBe(false);
+        expect(authed.token).toBe("token");
     });
 });

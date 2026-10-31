@@ -78,13 +78,18 @@ const unclassifiedFace: PolicyToolFaceView = {
     shape: "opaque",
 };
 
+/** PLAN-0610 W5a: instance administration is the capability projection, not a role string. */
 function seedIdentity(options: { admin?: boolean; workspaceOwner?: boolean } = {}) {
     localStorage.setItem(
         "xihe-user",
         JSON.stringify({
             id: USER_ID,
             email: "test@xihe.local",
-            ...(options.admin ? { role: "ADMIN" } : {}),
+            capabilities: {
+                isInstanceAdmin: options.admin === true,
+                isInstanceSuper: false,
+                workspaceAdminOf: [],
+            },
         }),
     );
     sessionStorage.setItem(

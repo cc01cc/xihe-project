@@ -49,14 +49,19 @@ const i18n = createI18n({
     messages,
 });
 
-function patchAuth(options: { role?: string; workspace?: boolean } = {}) {
+/** PLAN-0610: authority is the capability projection of `/auth/me`, not a role string. */
+function patchAuth(options: { isInstanceAdmin?: boolean; workspace?: boolean } = {}) {
     const auth = useAuthStore();
     auth.$patch({
         token: "token",
         user: {
             id: "u-1",
             email: "tester@xihe.local",
-            ...(options.role ? { role: options.role } : {}),
+            capabilities: {
+                isInstanceAdmin: options.isInstanceAdmin === true,
+                isInstanceSuper: false,
+                workspaceAdminOf: [],
+            },
         },
         workspace:
             options.workspace === false
@@ -118,7 +123,7 @@ describe("NavRail (PLAN-0582 S2: fixed 56px icon-only rail)", () => {
     });
 
     it("marks the active module with aria-current", async () => {
-        patchAuth({ role: "ADMIN" });
+        patchAuth({ isInstanceAdmin: true });
 
         const settingsRail = await mountRail();
         routeState.path = "/settings/config";
@@ -139,12 +144,12 @@ describe("NavRail (PLAN-0582 S2: fixed 56px icon-only rail)", () => {
     });
 
     it("hides the admin module from non-admin members", async () => {
-        patchAuth({ role: "USER" });
+        patchAuth();
         const memberRail = await mountRail();
         expect(memberRail.find('[data-testid="nav-rail-admin"]').exists()).toBe(false);
 
         setActivePinia(createPinia());
-        patchAuth({ role: "ADMIN" });
+        patchAuth({ isInstanceAdmin: true });
         const adminRail = await mountRail();
         expect(adminRail.find('[data-testid="nav-rail-admin"]').exists()).toBe(true);
     });
@@ -163,7 +168,11 @@ describe("NavRail (PLAN-0582 S2: fixed 56px icon-only rail)", () => {
         await wrapper.get('[data-testid="nav-rail-logout"]').trigger("click");
         await flushPromises();
         expect(auth.token).toBeNull();
-        expect(pushSpy).toHaveBeenCalledWith("/login");
+        // BL-150 B: logout hands the decision to the router guard, which re-enters passwordlessly
+        // on a local instance and falls back to /login when there is no token. The rail therefore
+        // targets /workspace instead of hard-coding the login page.
+        expect(pushSpy).toHaveBeenCalledWith("/workspace");
+        expect(pushSpy).not.toHaveBeenCalledWith("/login");
     });
 
     it("does not navigate to a workspace (the panel head owns that entry)", async () => {

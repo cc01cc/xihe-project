@@ -58,7 +58,13 @@ const { t } = useI18n();
 const auth = useAuthStore();
 
 const step = ref<Step>("select_storage_mode"),
-    storageMode = ref<WorkspaceStorageMode>("managed_import");
+    /**
+     * PLAN-0612 M4.3: `managed_import` runs only on the workspace Docker backend, which the
+     * 2026-10-31 ruling treats as frozen/unavailable. It is therefore not offered, and
+     * `direct_attach` is the default so a user who clicks straight through gets a usable workspace.
+     */
+    managedImportAvailable = false,
+    storageMode = ref<WorkspaceStorageMode>("direct_attach");
 const executionMode = ref<WorkspaceDirectAttachExecutionMode>("windows-mxc"),
     name = ref(""),
     description = ref("");
@@ -158,7 +164,7 @@ function maturityLabel(maturity: WorkspaceBackendMaturity | undefined | null): s
 
 function reset() {
     step.value = "select_storage_mode";
-    storageMode.value = "managed_import";
+    storageMode.value = managedImportAvailable ? "managed_import" : "direct_attach";
     executionMode.value = "windows-mxc";
     name.value = "";
     description.value = "";
@@ -178,6 +184,9 @@ function reset() {
 }
 
 function selectStorageMode(mode: WorkspaceStorageMode) {
+    // Defense in depth: even if a stale template binding or a test drives the frozen mode, the
+    // dialog cannot select it (the card is hidden, this keeps the state machine honest).
+    if (mode === "managed_import" && !managedImportAvailable) return;
     storageMode.value = mode;
     submitError.value = "";
     if (mode === "direct_attach") {
@@ -408,7 +417,26 @@ watch(
                 data-testid="workspace-step-storage"
                 class="grid gap-3"
             >
+                <!-- PLAN-0612 M4.3 / 2026-10-31 裁定: the workspace Docker execution backend counts
+                     as frozen, so the product surface must not offer it at all. The entry is hidden
+                     (not merely disabled): an unavailable option with a live click handler invites
+                     the user to reach the container-creation error. `direct_attach` is the default
+                     and the explanation names the host-directory requirement. -->
+                <div
+                    v-if="!managedImportAvailable"
+                    data-testid="workspace-storage-managed-frozen"
+                    class="rounded-md border border-dashed p-3"
+                >
+                    <span class="block text-sm font-semibold text-muted-foreground">
+                        {{ t("workspace.managedImport") }}
+                        <span class="font-normal">· {{ t("workspace.managedImportFrozen") }}</span>
+                    </span>
+                    <span class="mt-1 block text-xs text-muted-foreground">
+                        {{ t("workspace.managedImportFrozenHint") }}
+                    </span>
+                </div>
                 <button
+                    v-else
                     type="button"
                     data-testid="workspace-storage-managed"
                     class="rounded-md border p-3 text-left transition-colors hover:bg-accent"

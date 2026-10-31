@@ -15,6 +15,11 @@ const authStore = useAuthStore(),
     sessionStore = useSessionStore();
 onMounted(async () => {
     if (!authStore.isAuthenticated) return;
+    // PLAN-0610 W5a: the cached user may predate the capability projection (no `capabilities`
+    // field) or its capabilities may have been changed by another administrator. Refresh once
+    // before the first `isAdmin`-sensitive load so instance settings entries and instance config
+    // layers neither flash nor disappear. Failure is soft: the cached user stays.
+    await authStore.refreshCapabilities();
     configStore.loadAllDomains({ isAdmin: authStore.isAdmin }).catch(() => {
         // 后端不可用时使用本地持久化配置；错误已在 store 中记录
     });

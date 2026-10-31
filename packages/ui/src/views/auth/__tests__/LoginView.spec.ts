@@ -1,12 +1,16 @@
 import { mount, flushPromises } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import LoginView from "../LoginView.vue";
+import { api } from "../../../composables/api";
+import type * as apiModule from "../../../composables/api";
 
 const { authMock, pushMock, configMock } = vi.hoisted(() => ({
     authMock: {
         login: vi.fn<(email: string, password: string) => Promise<boolean>>(),
+        localLogin: vi.fn<() => Promise<boolean>>(),
         error: null as string | null,
         lastError: null as { code: string; retryAfterSeconds?: number } | null,
+        isAdmin: false,
     },
     pushMock: vi.fn<(location: unknown) => Promise<unknown>>(),
     configMock: { loadAllDomains: vi.fn<() => Promise<void>>(() => Promise.resolve()) },
@@ -14,6 +18,16 @@ const { authMock, pushMock, configMock } = vi.hoisted(() => ({
 
 vi.mock("../../../stores/auth", () => ({ useAuthStore: () => authMock }));
 vi.mock("../../../stores/config", () => ({ useConfigStore: () => configMock }));
+vi.mock("../../../composables/api", async (importOriginal) => {
+    const actual = await importOriginal<typeof apiModule>();
+    return {
+        ...actual,
+        api: {
+            ...actual.api,
+            bootstrapStatus: vi.fn<typeof apiModule.api.bootstrapStatus>(),
+        },
+    };
+});
 vi.mock("vue-router", () => ({
     useRouter: () => ({ push: pushMock }),
     useRoute: () => ({ query: {} }),
@@ -36,6 +50,14 @@ function mountView() {
     });
 }
 
+/** Local-mode presence comes from CP's bootstrap status, not from a build flag. */
+async function mountWithLocalMode(localMode: boolean) {
+    vi.mocked(api.bootstrapStatus).mockResolvedValue({ initialized: true, localMode });
+    const wrapper = mountView();
+    await flushPromises();
+    return wrapper;
+}
+
 async function fillAndSubmit(wrapper: ReturnType<typeof mountView>) {
     // PLAN-0565 ruling #7: the login field is the dual identifier (email or username).
     await wrapper.find("#identifier").setValue("a@test.com");
@@ -45,10 +67,14 @@ async function fillAndSubmit(wrapper: ReturnType<typeof mountView>) {
 
 beforeEach(() => {
     authMock.login.mockReset();
+    authMock.localLogin.mockReset();
     authMock.error = null;
     authMock.lastError = null;
+    authMock.isAdmin = false;
     pushMock.mockReset();
     configMock.loadAllDomains.mockClear();
+    vi.mocked(api.bootstrapStatus).mockReset();
+    vi.mocked(api.bootstrapStatus).mockResolvedValue({ initialized: true, localMode: false });
 });
 
 describe("LoginView submission lock", () => {
@@ -96,5 +122,50 @@ describe("LoginView submission lock", () => {
 
         expect(wrapper.text()).toContain("login.rateLimitedSeconds");
         expect(wrapper.text()).toContain("12");
+    });
+});
+
+describe("LoginView local-mode entry (BL-150 A)", () => {
+    it("renders the passwordless entry only when CP reports localMode", async () => {
+        const local = await mountWithLocalMode(true);
+        expect(local.find('[data-testid="login-local-mode"]').exists()).toBe(true);
+
+        const hosted = await mountWithLocalMode(false);
+        expect(hosted.find('[data-testid="login-local-mode"]').exists()).toBe(false);
+    });
+
+    it("stays hidden when the bootstrap status cannot be read", async () => {
+        vi.mocked(api.bootstrapStatus).mockRejectedValue(new Error("offline"));
+        const wrapper = mountView();
+        await flushPromises();
+        expect(wrapper.find('[data-testid="login-local-mode"]').exists()).toBe(false);
+    });
+
+    it("signs in passwordlessly and enters the workspace", async () => {
+        authMock.localLogin.mockResolvedValue(true);
+        pushMock.mockResolvedValue(undefined);
+        const wrapper = await mountWithLocalMode(true);
+
+        await wrapper.get('[data-testid="login-local-mode"]').trigger("click");
+        await flushPromises();
+
+        expect(authMock.localLogin).toHaveBeenCalledTimes(1);
+        expect(pushMock).toHaveBeenCalledWith("/workspace");
+        // The config load must run after the capability-aware sign-in, not before it.
+        expect(configMock.loadAllDomains).toHaveBeenCalledWith({ isAdmin: false });
+    });
+
+    it("localizes the 409 LOCAL_SINGLE_USER_REQUIRED outcome instead of echoing CP detail", async () => {
+        authMock.localLogin.mockResolvedValue(false);
+        authMock.error = "local mode requires exactly one user";
+        authMock.lastError = { code: "LOCAL_SINGLE_USER_REQUIRED" };
+        const wrapper = await mountWithLocalMode(true);
+
+        await wrapper.get('[data-testid="login-local-mode"]').trigger("click");
+        await flushPromises();
+
+        expect(wrapper.text()).toContain("login.localSingleUserRequired");
+        expect(wrapper.text()).not.toContain("local mode requires exactly one user");
+        expect(pushMock).not.toHaveBeenCalled();
     });
 });
