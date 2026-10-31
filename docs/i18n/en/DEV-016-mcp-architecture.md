@@ -44,6 +44,8 @@ MCP (Model Context Protocol) requests from Agent to tool execution pass through 
 │  1. Verify Bearer + resolve workspace claim (403 on sid)    │
 │  2. tools/list: Merge system tools + STDIO server tools     │
 │     Record tool_name → server_id mapping (5min TTL cache)   │
+│     Only tools/list writes it; a tools/call miss rebuilds   │
+│     once per workspace (single-flight)                      │
 │  3. tools/call: Lookup table routing by tool name           │
 │  4. System tools take priority (same-name user tools skipped + warned) │
 │                                                             │
@@ -101,12 +103,27 @@ Agent → CP /mcp
 ```
 Agent → CP /mcp (tool_name, args)
   CP: Lookup tool_name → server_id mapping
+  CP: Miss (mapping cleared by the 5min TTL or never filled) → refill __system__
+      → still missing → rebuild the stdio/remote catalog once per workspace
+      (single-flight, same merge routine as tools/list)
   ├─ System tools → Runtime: POST /internal/v1/runtime/workspaces/{workspaceId}/mcp
   │               → XiheRuntime executes Rust function
   └─ User tools → Runtime: POST /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId}
                   → xihe-mcp-bridge: STDIN → STDOUT → Result returned
   CP → Agent: Passthrough result
 ```
+
+### 3.3. Tool mapping lifecycle (PLAN-0583 / BL-124)
+
+The `tool_name → server_id` mapping is an in-process cache with exactly three rules:
+
+1. **Write**: the `tools/list` merge routine (system catalog + every STDIO server + every remote server + sticky aliases) persists the whole table once, at the end.
+2. **One single-flight rebuild per workspace on a miss**: `tools/call` first tops up the `__system__`/CP-owned catalog; only if the name is **still** missing does it rebuild the stdio/remote catalog, reusing the **same** merge routine as `tools/list` (alias stickiness and `generation` semantics unchanged, issued names never drift). Rebuilds are serialized per workspace (in-process per-workspace lock + double check) so concurrent misses fan out once; a repeated true absence within one mapping epoch does not rebuild again and answers 400 directly — this bounds the fan-out caused by hallucinated tool names.
+3. **5-minute expiry**: the next read (run dispatch / `tools/list` / `tools/call`) clears the whole table and stamps a fresh timestamp. A `tools/call` therefore never observes an "expired" flag — the trigger must be the **miss**, never "expired".
+
+Error semantics stay as established by PLAN-0557: rebuilt but still absent → `400 UNKNOWN_TOOL` (audit reason `after_refresh`); dependency unavailable during the rebuild → dependency problem body (503 family), never `UNKNOWN_TOOL`.
+Evidence logs: `event=tool_map_miss` and `event=tool_map_refresh` (`rebuilt` / `outcome` / `durationMs` / fan-out counts).
+The TTL defaults to 300s; `cp.mcp.toolmap.ttl-seconds` is a test/stack override channel only — not a business config key, not surfaced in the UI.
 
 ## 4. Key Technical Decisions
 

@@ -87,6 +87,12 @@ public class McpProxyController {
             "X-Chat-Run-Id", "X-Tool-Call-Id", "X-Mcp-Invocation-Id");
 
     private static final String REMOTE_SCOPE = "mcp:tools";
+    /**
+     * PLAN-0583：CP 自己发起的目录探测体（`populateSystemTools` 与未命中重建共用）。
+     * 未命中重建发生在 `tools/call` 上下文里，必须显式换成 `tools/list` 才能拉目录。
+     */
+    private static final String TOOLS_LIST_PROBE_BODY =
+            "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1,\"params\":{}}";
     /** T1.7/T1.9 post-gate approval lifetime: the durable row expires after five minutes. */
     private static final long APPROVAL_REQUEST_TTL_SECONDS = ApprovalService.DEFAULT_GATE_TTL_SECONDS;
     /**
@@ -150,6 +156,11 @@ public class McpProxyController {
     private final ToolTimeoutPolicy toolTimeoutPolicy;
     private final org.springframework.core.env.Environment environment;
     private final Map<String, AtomicLong> toolGenerations = new ConcurrentHashMap<>();
+    /**
+     * PLAN-0583 T1.2：per-workspace 重建监视器（`ConcurrentHashMap` 取 key + `synchronized`
+     * + 双检，对齐 {@code WorkspaceEventManager} 的按 key 加锁惯例；不新建通用 single-flight 类）。
+     */
+    private final Map<String, Object> refreshMonitors = new ConcurrentHashMap<>();
 
     /**
      * PLAN-0559: VIEWER may call read-only tools (file tree, previews) but not
@@ -304,100 +315,9 @@ public class McpProxyController {
             List<Map<String, Object>> allTools = new ArrayList<>(surface.tools());
             mapping = toolTimeoutService.mappingFor(wsId);
 
-            // 2. Call each STDIO server's tools/list
-            Set<String> seenNames = new HashSet<>();
-            for (Map.Entry<String, String> entry : mapping.entrySet()) {
-                if ("__system__".equals(entry.getValue()) || CP_MCP_SERVER_ID.equals(entry.getValue())) {
-                    seenNames.add(entry.getKey());
-                }
-            }
-
-            // PLAN-0307 decision #27: stdio carriers come from mcp_stdio_servers.
-            List<McpProxyCatalogService.StdioServerView> stdio = new ArrayList<>();
-            try {
-                stdio.addAll(catalogService.listStdioServers(wsId));
-            } catch (Exception e) {
-                logger.warn("Stdio server list failed, skipping stdio merge: {}", e.getMessage());
-            }
-            for (McpProxyCatalogService.StdioServerView server : stdio) {
-                if (!server.enabled()) {
-                    continue;
-                }
-                String serverId = server.name();
-                ResponseEntity<String> stdioResp = forwardToRuntime(
-                        wsId, serverId, body, headers, sessionId, access);
-                mergeStdioServerTools(wsId, serverId, stdioResp, mapping, allTools, seenNames);
-            }
-
-            // PLAN-242 M2: merge enabled remote servers (sorted for determinism),
-            // then sticky-issue names and persist alias rows (never promoted).
-            long generation = nextGeneration(wsId);
-            Map<String, McpProxyCatalogService.ToolAliasView> known = new HashMap<>();
-            try {
-                for (McpProxyCatalogService.ToolAliasView alias : catalogService.listAliases(wsId)) {
-                    known.put(alias.serverId() + "\0" + alias.backendName(), alias);
-                }
-            } catch (Exception e) {
-                logger.warn("Tool alias load failed, continuing without stickiness: {}", e.getMessage());
-            }
-            List<McpProxyCatalogService.RemoteServerView> remotes = new ArrayList<>();
-            try {
-                remotes.addAll(catalogService.listEnabledRemoteServers(wsId));
-            } catch (Exception e) {
-                logger.warn("Remote server list failed, skipping remote merge: {}", e.getMessage());
-            }
-            remotes.sort(Comparator.comparing(McpProxyCatalogService.RemoteServerView::id));
-            for (McpProxyCatalogService.RemoteServerView server : remotes) {
-                for (Map<String, Object> tool : fetchRemoteTools(wsId, server, sessionId, access)) {
-                    String backend = (String) tool.get("name");
-                    if (backend == null || backend.isEmpty()) {
-                        continue;
-                    }
-                    String key = server.id() + "\0" + backend;
-                    McpProxyCatalogService.ToolAliasView alias = known.get(key);
-                    String issued = alias == null ? null : alias.issuedName();
-                    // Sticky reuse only when the bare name is still ours; otherwise
-                    // re-issue (a newer stdio/system tool claimed the bare name).
-                    if (issued != null && !issued.contains("__")
-                            && mapping.containsKey(issued) && !server.id().equals(mapping.get(issued))) {
-                        issued = null;
-                    }
-                    if (issued == null) {
-                        issued = stickyIssuedName(server.id(), backend, !seenNames.contains(backend));
-                        try {
-                            McpProxyCatalogService.ToolAliasView row = new McpProxyCatalogService.ToolAliasView(
-                                    wsId, issued, server.id(), backend, generation);
-                            catalogService.saveAlias(row);
-                            known.put(key, row);
-                        } catch (Exception e) {
-                            logger.warn("Tool alias persist failed, continuing in-memory: {}", e.getMessage());
-                        }
-                    } else if (alias != null) {
-                        try {
-                            catalogService.saveAlias(new McpProxyCatalogService.ToolAliasView(
-                                    alias.workspaceId(), alias.issuedName(), alias.serverId(),
-                                    alias.backendName(), generation));
-                        } catch (Exception e) {
-                            logger.warn("Tool alias touch failed: {}", e.getMessage());
-                        }
-                    }
-                    // The persisted mapping remembers aliases across requests, so
-                    // `mapping.containsKey(issued)` must not gate publication: on
-                    // the second and later tools/list calls the tool would vanish.
-                    if (!seenNames.contains(issued)) {
-                        Map<String, Object> published = new HashMap<>(tool);
-                        published.put("name", issued);
-                        allTools.add(published);
-                    }
-                    if (!mapping.containsKey(issued)) {
-                        mapping.put(issued, server.id());
-                    }
-                    seenNames.add(issued);
-                    seenNames.add(backend);
-                }
-            }
-
-            toolTimeoutService.putMapping(wsId, mapping);
+            // PLAN-0583 T1.1: stdio/remote 合并抽成 refreshToolMapping，与 tools/call 的
+            // 未命中兜底共用**同一**合并例程（I1/I4：别名粘滞与 generation 只有一套实现）。
+            refreshToolMapping(wsId, body, headers, sessionId, access, mapping, allTools);
 
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("tools", allTools);
@@ -417,6 +337,136 @@ public class McpProxyController {
             logger.error("tools/list merge failed: {}", e.getMessage(), e);
             return problem(HttpStatus.BAD_GATEWAY, "MCP_TOOLS_UNAVAILABLE", "MCP tools unavailable");
         }
+    }
+
+    /**
+     * PLAN-0583 T1.1：把 stdio/remote 目录合并进工作区映射并整表固化。
+     *
+     * <p>`tools/list` 与 `tools/call` 的未命中兜底共用本方法——只有一套命名规则，
+     * remote 别名粘滞（`mcp_tool_aliases`）与 `generation` 语义因此在两条入口上一致（I1/I4）。
+     * 合并以**调用方持有的当前映射实例**为增量基础（不清表重建），因此
+     * {@code populateSystemTools} 刚写入的 `__system__`/CP-owned 条目不会被丢掉。
+     *
+     * <p>返回本代的失败摘要：`tools/list` 沿用「部分失败照常合并、不整体 503」的既有语义；
+     * `tools/call` 兜底据此把「重建期间依赖不可用」与「重建后确实缺席」分开（I2/V3/V4）。
+     */
+    private MappingRefresh refreshToolMapping(
+            String wsId, String listBody, HttpHeaders headers, String sessionId, AccessContext access,
+            Map<String, String> mapping, List<Map<String, Object>> allTools) {
+        // 2. Call each STDIO server's tools/list
+        Set<String> seenNames = new HashSet<>();
+        for (Map.Entry<String, String> entry : mapping.entrySet()) {
+            if ("__system__".equals(entry.getValue()) || CP_MCP_SERVER_ID.equals(entry.getValue())) {
+                seenNames.add(entry.getKey());
+            }
+        }
+
+        // PLAN-0307 decision #27: stdio carriers come from mcp_stdio_servers.
+        int stdioMerged = 0;
+        int stdioFailed = 0;
+        DependencyFailure failure = null;
+        List<McpProxyCatalogService.StdioServerView> stdio = new ArrayList<>();
+        try {
+            stdio.addAll(catalogService.listStdioServers(wsId));
+        } catch (Exception e) {
+            logger.warn("Stdio server list failed, skipping stdio merge: {}", e.getMessage());
+        }
+        for (McpProxyCatalogService.StdioServerView server : stdio) {
+            if (!server.enabled()) {
+                continue;
+            }
+            String serverId = server.name();
+            ResponseEntity<String> stdioResp = forwardToRuntime(
+                    wsId, serverId, listBody, headers, sessionId, access);
+            if (stdioResp.getStatusCode().is2xxSuccessful()) {
+                stdioMerged++;
+            } else {
+                stdioFailed++;
+                if (failure == null) {
+                    failure = dependencyFailureFromResponse(stdioResp);
+                }
+            }
+            mergeStdioServerTools(wsId, serverId, stdioResp, mapping, allTools, seenNames);
+        }
+
+        // PLAN-242 M2: merge enabled remote servers (sorted for determinism),
+        // then sticky-issue names and persist alias rows (never promoted).
+        long generation = nextGeneration(wsId);
+        Map<String, McpProxyCatalogService.ToolAliasView> known = new HashMap<>();
+        try {
+            for (McpProxyCatalogService.ToolAliasView alias : catalogService.listAliases(wsId)) {
+                known.put(alias.serverId() + "\0" + alias.backendName(), alias);
+            }
+        } catch (Exception e) {
+            logger.warn("Tool alias load failed, continuing without stickiness: {}", e.getMessage());
+        }
+        List<McpProxyCatalogService.RemoteServerView> remotes = new ArrayList<>();
+        try {
+            remotes.addAll(catalogService.listEnabledRemoteServers(wsId));
+        } catch (Exception e) {
+            logger.warn("Remote server list failed, skipping remote merge: {}", e.getMessage());
+        }
+        remotes.sort(Comparator.comparing(McpProxyCatalogService.RemoteServerView::id));
+        int remoteFailed = 0;
+        for (McpProxyCatalogService.RemoteServerView server : remotes) {
+            RemoteToolFetch fetch = fetchRemoteTools(wsId, server, sessionId, access);
+            if (fetch.failure() != null) {
+                remoteFailed++;
+                if (failure == null) {
+                    failure = fetch.failure();
+                }
+            }
+            for (Map<String, Object> tool : fetch.tools()) {
+                String backend = (String) tool.get("name");
+                if (backend == null || backend.isEmpty()) {
+                    continue;
+                }
+                String key = server.id() + "\0" + backend;
+                McpProxyCatalogService.ToolAliasView alias = known.get(key);
+                String issued = alias == null ? null : alias.issuedName();
+                // Sticky reuse only when the bare name is still ours; otherwise
+                // re-issue (a newer stdio/system tool claimed the bare name).
+                if (issued != null && !issued.contains("__")
+                        && mapping.containsKey(issued) && !server.id().equals(mapping.get(issued))) {
+                    issued = null;
+                }
+                if (issued == null) {
+                    issued = stickyIssuedName(server.id(), backend, !seenNames.contains(backend));
+                    try {
+                        McpProxyCatalogService.ToolAliasView row = new McpProxyCatalogService.ToolAliasView(
+                                wsId, issued, server.id(), backend, generation);
+                        catalogService.saveAlias(row);
+                        known.put(key, row);
+                    } catch (Exception e) {
+                        logger.warn("Tool alias persist failed, continuing in-memory: {}", e.getMessage());
+                    }
+                } else if (alias != null) {
+                    try {
+                        catalogService.saveAlias(new McpProxyCatalogService.ToolAliasView(
+                                alias.workspaceId(), alias.issuedName(), alias.serverId(),
+                                alias.backendName(), generation));
+                    } catch (Exception e) {
+                        logger.warn("Tool alias touch failed: {}", e.getMessage());
+                    }
+                }
+                // The persisted mapping remembers aliases across requests, so
+                // `mapping.containsKey(issued)` must not gate publication: on
+                // the second and later tools/list calls the tool would vanish.
+                if (!seenNames.contains(issued)) {
+                    Map<String, Object> published = new HashMap<>(tool);
+                    published.put("name", issued);
+                    allTools.add(published);
+                }
+                if (!mapping.containsKey(issued)) {
+                    mapping.put(issued, server.id());
+                }
+                seenNames.add(issued);
+                seenNames.add(backend);
+            }
+        }
+
+        toolTimeoutService.putMapping(wsId, mapping);
+        return new MappingRefresh(generation, stdioMerged, stdioFailed, remoteFailed, failure);
     }
 
     /**
@@ -476,7 +526,7 @@ public class McpProxyController {
             mapping.put(ACQUIRE_CREDENTIAL_TOOL, CP_MCP_SERVER_ID);
             result.add(acquireCredentialToolDefinition());
         }
-        String listBody = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1,\"params\":{}}";
+        String listBody = TOOLS_LIST_PROBE_BODY;
         ResponseEntity<String> sysResp = forwardToRuntime(
                 wsId, null, listBody, headers, access.auditSessionId(), access);
         if (!sysResp.getStatusCode().is2xxSuccessful()) {
@@ -663,9 +713,26 @@ public class McpProxyController {
                         failure.dependency() + ":" + failure.reason());
                 return dependencyProblem(failure);
             }
-            audit.record(sessionId, toolName, "unknown_tool", "not present after catalog refresh");
-            return problem(HttpStatus.BAD_REQUEST, "UNKNOWN_TOOL",
-                    "Requested tool is not available in this workspace");
+            // PLAN-0583 T1.2（决策 #2）：stdio/remote 名字只由合并例程写入，populateSystemTools
+            // 只恢复 __system__/CP-owned。仍未命中 ⇒ 该 ws 的映射已被 TTL 清空或从未填充 →
+            // 按 ws 单飞重建**一次**（每世代一次）。触发条件是「未命中」而非「已过期」：
+            // tools/call 到达时过期标志已被 Run 派发的 refreshCacheIfNeeded 消费（见 m0-recon §T0.2）。
+            logger.info("[LIFECYCLE] service=cp event=tool_map_miss wsId={} tool={}", wsId, toolName);
+            RebuildOutcome rebuild = rebuildMappingOnMiss(wsId, toolName, headers, sessionId, access);
+            serverId = rebuild.serverId();
+            if (serverId == null && rebuild.failure() != null) {
+                DependencyFailure failure = rebuild.failure();
+                audit.record(sessionId, toolName, "dependency_unavailable",
+                        failure.dependency() + ":" + failure.reason());
+                return dependencyProblem(failure);
+            }
+            if (serverId == null) {
+                audit.record(sessionId, toolName, "unknown_tool",
+                        "after_refresh: tool absent from the rebuilt stdio/remote mapping ("
+                                + "rebuilt=" + rebuild.rebuilt() + ")");
+                return problem(HttpStatus.BAD_REQUEST, "UNKNOWN_TOOL",
+                        "Requested tool is not available in this workspace");
+            }
         }
         // PLAN-0463 T1.2/T1.3 (gate order): the agent-source invocation must exist
         // BEFORE grant context validation, so the new ChatRun+invocation verdict
@@ -893,6 +960,61 @@ public class McpProxyController {
         body = rewritten;
         return forwardToRuntime(wsId, serverId, body, headers, sessionId, access,
                 forwardWait, policySummary, lineageReservation);
+    }
+
+    /**
+     * PLAN-0583 T1.2（决策 #2/#3，I6）：`tools/call` 未命中的按工作区单飞重建。
+     *
+     * <p>三个判据同时成立才扇出，其余路径零额外请求：
+     * <ol>
+     *   <li>锁内双检——等待者可能已经是重建后的命中（`waiter_hit`）；</li>
+     *   <li>同一映射世代只重建一次——目录刚重建过且名字仍缺席时直接放弃，抑制
+     *       幻觉/误调工具名导致的「每次调用全量扇出 N 个 stdio + M 个 remote」（`skipped_same_epoch`）；</li>
+     *   <li>重建复用 {@code tools/list} 的同一合并例程（别名粘滞、generation、`__system__` 条目全保留）。</li>
+     * </ol>
+     * 锁只覆盖「判定 + 一次扇出」，不引入固定等待；单次扇出时长仍受既有 `forwardTimeoutS` 约束。
+     */
+    private RebuildOutcome rebuildMappingOnMiss(
+            String wsId, String toolName, HttpHeaders headers, String sessionId, AccessContext access) {
+        long startedMs = System.currentTimeMillis();
+        Object monitor = refreshMonitors.computeIfAbsent(wsId, key -> new Object());
+        synchronized (monitor) {
+            // 双检：持锁者刚完成重建时，等待者只读结果，不再扇出。
+            Map<String, String> current = toolTimeoutService.mappingFor(wsId);
+            String hit = current.get(toolName);
+            if (hit != null) {
+                logMappingRefresh(wsId, toolName, false, "waiter_hit", startedMs, null);
+                return new RebuildOutcome(hit, false, null);
+            }
+            if (toolTimeoutService.rebuiltForCurrentEpoch(wsId)) {
+                logMappingRefresh(wsId, toolName, false, "skipped_same_epoch", startedMs, null);
+                return new RebuildOutcome(null, false, null);
+            }
+            MappingRefresh refresh = refreshToolMapping(wsId, TOOLS_LIST_PROBE_BODY, headers, sessionId,
+                    access, current, new ArrayList<>());
+            toolTimeoutService.markRebuiltForCurrentEpoch(wsId);
+            Map<String, String> rebuilt = toolTimeoutService.mappingFor(wsId);
+            String rebuiltHit = rebuilt.get(toolName);
+            logMappingRefresh(wsId, toolName, true,
+                    rebuiltHit == null ? "absent_after_refresh" : "routed", startedMs, refresh);
+            return new RebuildOutcome(rebuiltHit, true, refresh.failure());
+        }
+    }
+
+    /** PLAN-0583 T1.3（设计 §2.6）：未命中重建的结构化取证行，M2/E2E 断言的唯一入口。 */
+    private void logMappingRefresh(String wsId, String toolName, boolean rebuilt, String outcome,
+                                   long startedMs, MappingRefresh refresh) {
+        logger.info("[LIFECYCLE] service=cp event=tool_map_refresh wsId={} tool={} rebuilt={} outcome={}"
+                        + " durationMs={} epoch={} generation={} stdio={} stdioFailed={} remoteFailed={}"
+                        + " dependency={}",
+                wsId, toolName, rebuilt, outcome, System.currentTimeMillis() - startedMs,
+                toolTimeoutService.mappingEpoch(wsId),
+                refresh == null ? 0L : refresh.generation(),
+                refresh == null ? 0 : refresh.stdioMerged(),
+                refresh == null ? 0 : refresh.stdioFailed(),
+                refresh == null ? 0 : refresh.remoteFailed(),
+                refresh == null || refresh.failure() == null
+                        ? "-" : refresh.failure().dependency() + ":" + refresh.failure().reason());
     }
 
     private ResponseEntity<String> dispatchCpOwnedSpawn(
@@ -2036,28 +2158,37 @@ public class McpProxyController {
         }
     }
 
+    /**
+     * PLAN-0583 T1.1：remote 目录读取。失败时返回 {@code failure}（供 `tools/call` 兜底判定
+     * 依赖不可用），工具列表仍为空——`tools/list` 既有「跳过该 server」语义不变。
+     */
     @SuppressWarnings("unchecked")
-    private List<Map<String, Object>> fetchRemoteTools(
+    private RemoteToolFetch fetchRemoteTools(
             String wsId, McpProxyCatalogService.RemoteServerView server, String sessionId, AccessContext access) {
-        String listBody = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1,\"params\":{}}";
         ResponseEntity<String> resp = forwardRemoteToRuntime(
-                wsId, server, listBody, new HttpHeaders(), sessionId, access);
+                wsId, server, TOOLS_LIST_PROBE_BODY, new HttpHeaders(), sessionId, access);
         if (resp == null || !resp.getStatusCode().is2xxSuccessful() || resp.getBody() == null) {
+            int status = resp == null ? 0 : resp.getStatusCode().value();
             logger.warn("Remote tools/list failed: wsId={} server={} status={}",
                     wsId, server.id(), resp == null ? "null" : resp.getStatusCode());
-            return Collections.emptyList();
+            return new RemoteToolFetch(Collections.emptyList(),
+                    resp == null ? dependencyFailure("runtime", "unreachable", true)
+                            : classifyUpstreamStatus("runtime", status));
         }
         try {
             JsonNode root = objectMapper.readTree(resp.getBody());
             JsonNode tools = root.has("tools") ? root.get("tools") : root.path("result").path("tools");
             if (tools != null && tools.isArray()) {
-                return objectMapper.convertValue(tools, List.class);
+                return new RemoteToolFetch(objectMapper.convertValue(tools, List.class), null);
             }
         } catch (Exception e) {
             logger.warn("Remote tools/list parse failed: wsId={} server={}: {}",
                     wsId, server.id(), e.getMessage());
+            return new RemoteToolFetch(Collections.emptyList(),
+                    dependencyFailure("runtime", "upstream_error", true));
         }
-        return Collections.emptyList();
+        return new RemoteToolFetch(Collections.emptyList(),
+                dependencyFailure("runtime", "upstream_error", true));
     }
 
     private String normalizeRuntimeBody(String body, String protocolVersion) {
@@ -2365,6 +2496,23 @@ public class McpProxyController {
 
     /** PLAN-0557: either a usable catalog or the reason it could not be loaded. */
     private record SystemToolSurface(List<Map<String, Object>> tools, DependencyFailure failure) {
+    }
+
+    /**
+     * PLAN-0583 T1.1：一次目录重建的摘要。{@code failure} 只用于 `tools/call` 兜底分流
+     * （重建期间依赖不可用 → 503 族），`tools/list` 仍按既有语义部分失败照常合并。
+     */
+    private record MappingRefresh(
+            long generation, int stdioMerged, int stdioFailed, int remoteFailed,
+            DependencyFailure failure) {
+    }
+
+    /** PLAN-0583：remote 目录读取结果（工具面 + 依赖失败事实）。 */
+    private record RemoteToolFetch(List<Map<String, Object>> tools, DependencyFailure failure) {
+    }
+
+    /** PLAN-0583：未命中重建结果（命中到的 serverId + 是否真的重建过 + 依赖失败事实）。 */
+    private record RebuildOutcome(String serverId, boolean rebuilt, DependencyFailure failure) {
     }
 
     private record AuthorizationResult(AccessContext context, ResponseEntity<String> failure) {

@@ -13,8 +13,10 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
@@ -29,13 +31,25 @@ import org.springframework.stereotype.Component;
 public class McpToolTimeoutService {
 
     private static final Logger logger = LoggerFactory.getLogger(McpToolTimeoutService.class);
-    private static final Duration CACHE_TTL = Duration.ofMinutes(5);
+    /** PLAN-0583 决策 #5：默认 5 分钟；覆盖通道只给测试/栈（不进 ConfigService 域、不进 UI）。 */
+    static final long DEFAULT_CACHE_TTL_SECONDS = 300L;
+
+    @Value("${cp.mcp.toolmap.ttl-seconds:300}")
+    private long cacheTtlSeconds = DEFAULT_CACHE_TTL_SECONDS;
 
     private final McpServerRepository mcpServers;
     private final ConfigService configService;
     private final ToolTimeoutPolicy toolTimeoutPolicy;
     private final Map<String, Map<String, String>> toolServerCache = new ConcurrentHashMap<>();
     private final Map<String, Instant> cacheTimestamps = new ConcurrentHashMap<>();
+    /**
+     * PLAN-0583 T1.2：映射世代。整表被替换（TTL 清空或 {@link #putMapping}）即 +1，
+     * 供「每 ws 每世代最多一次未命中重建」判定（抑制幻觉工具名的全量扇出放大）。
+     * 用 epoch 而非复算时间戳：TTL 清空会把时间戳刷成 now，时间戳无法表达「表被换过」。
+     */
+    private final Map<String, AtomicLong> mappingEpochs = new ConcurrentHashMap<>();
+    /** 该 ws 最近一次未命中重建所锚定的世代；仅与当前世代比较，不参与 TTL 计算。 */
+    private final Map<String, Long> rebuiltEpochs = new ConcurrentHashMap<>();
     private final Set<String> warnedRemoteTimeouts = ConcurrentHashMap.newKeySet();
 
     public McpToolTimeoutService(McpServerRepository mcpServers,
@@ -60,6 +74,27 @@ public class McpToolTimeoutService {
     void putMapping(String wsId, Map<String, String> mapping) {
         toolServerCache.put(wsId, mapping);
         cacheTimestamps.put(wsId, Instant.now());
+        mappingEpochs.computeIfAbsent(wsId, key -> new AtomicLong()).incrementAndGet();
+    }
+
+    /**
+     * PLAN-0583 T1.2：当前映射世代——`tools/list` 整表固化或 TTL 清空都会让它前进，
+     * 因此它标识「这一份映射内容」而不是「离上次刷新多久」。
+     */
+    long mappingEpoch(String wsId) {
+        AtomicLong epoch = mappingEpochs.get(wsId);
+        return epoch == null ? 0L : epoch.get();
+    }
+
+    /** 同一世代内是否已经做过一次未命中重建（串行与并发都只重建一次）。 */
+    boolean rebuiltForCurrentEpoch(String wsId) {
+        Long rebuilt = rebuiltEpochs.get(wsId);
+        return rebuilt != null && rebuilt == mappingEpoch(wsId);
+    }
+
+    /** 记录「当前世代已完成一次未命中重建」；须在重建的 {@link #putMapping} 之后调用。 */
+    void markRebuiltForCurrentEpoch(String wsId) {
+        rebuiltEpochs.put(wsId, mappingEpoch(wsId));
     }
 
     /**
@@ -178,10 +213,13 @@ public class McpToolTimeoutService {
 
     private void refreshCacheIfNeeded(String wsId) {
         Instant lastRefresh = cacheTimestamps.get(wsId);
-        if (lastRefresh == null || Duration.between(lastRefresh, Instant.now()).compareTo(CACHE_TTL) > 0) {
+        Duration ttl = Duration.ofSeconds(cacheTtlSeconds);
+        if (lastRefresh == null || Duration.between(lastRefresh, Instant.now()).compareTo(ttl) > 0) {
             toolServerCache.remove(wsId);
             toolServerCache.put(wsId, new ConcurrentHashMap<>());
             cacheTimestamps.put(wsId, Instant.now());
+            // 表被换成空表也是一代（PLAN-0583）：未命中重建的「每世代一次」判据随之重置。
+            mappingEpochs.computeIfAbsent(wsId, key -> new AtomicLong()).incrementAndGet();
         }
     }
 }
