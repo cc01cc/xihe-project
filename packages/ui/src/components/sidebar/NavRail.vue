@@ -20,7 +20,8 @@ const currentPath = computed(() => route?.path ?? "");
 const isAdminRoute = computed(
     () =>
         currentPath.value.startsWith("/settings/config-locks") ||
-        currentPath.value.startsWith("/settings/principal-grants"),
+        // PLAN-0610 W5c: `/settings/principal-grants` is retired (it now redirects to `/settings/roles`).
+        currentPath.value.startsWith("/settings/roles"),
 );
 const isSettingsRoute = computed(
     () => currentPath.value.startsWith("/settings") && !isAdminRoute.value,

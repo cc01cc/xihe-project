@@ -25,13 +25,8 @@ const tabs = computed(() => {
             path: "/settings/config-locks",
         });
         items.push({
-            // PLAN-0585 M2: the principal grant surface is instance-ADMIN only.
-            name: "settings-principal-grants",
-            label: "settings.principalGrantsNav",
-            path: "/settings/principal-grants",
-        });
-        items.push({
-            // PLAN-0610 W5b: access-role definitions + bindings (instance-ADMIN only too).
+            // PLAN-0610 W5b/W5c: access-role definitions + bindings replaced the retired
+            // principal-grant page (instance-ADMIN only).
             name: "settings-roles",
             label: "settings.rolesNav",
             path: "/settings/roles",

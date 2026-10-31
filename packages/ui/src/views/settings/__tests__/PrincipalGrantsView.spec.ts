@@ -1,224 +1,150 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { flushPromises, mount } from "@vue/test-utils";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
+import { createPinia, setActivePinia } from "pinia";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { i18n } from "../../../i18n";
+import { api } from "../../../composables/api";
+import type * as apiModule from "../../../composables/api";
+import RolesView from "../RolesView.vue";
 
-const TARGET = "grant-target";
-const TARGET_ID = "11111111-1111-4111-8111-111111111111";
-const WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
-
-const apiMock = vi.hoisted(() => ({
-    getPrincipalGrants: vi.fn<(username: string) => Promise<unknown>>(),
-    patchPrincipalGrants: vi.fn<(username: string, patch: unknown) => Promise<unknown>>(),
-    listWorkspaces: vi.fn<() => Promise<unknown[]>>(),
-}));
-
+/**
+ * PLAN-0610 W5c — **retirement spec** (this file used to exercise `PrincipalGrantsView`).
+ *
+ * CP retired `/api/v1/principal-grants/*` with `410 PRINCIPAL_GRANTS_RETIRED` (W2 / decision #28) and
+ * the admin page is gone as well: component deleted, nav entry deleted, i18n copy deleted, and the
+ * old path became a redirect to `/settings/roles` so an existing bookmark does not hit a blank route.
+ *
+ * The file is **kept and rewritten** rather than deleted (removing a tracked spec needs wave
+ * approval), and it is now the executable statement that the surface stays retired: every assertion
+ * below fails if the page, its API client methods, its nav entry, its copy or the redirect return.
+ */
 vi.mock("../../../composables/api", async (importOriginal) => {
-    const actual = (await importOriginal()) as Record<string, unknown>;
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
-        api: apiMock,
-        // Minimal ApiError stand-in: `message` is the CP's English detail, which the view must
-        // never render for a known problem code.
-        ApiError: class MockApiError extends Error {
-            problem: { code: string; detail?: string };
-            constructor(code: string) {
-                super("server english detail that must never surface");
-                this.name = "ApiError";
-                this.problem = { code, detail: "server english detail that must never surface" };
-            }
+        api: {
+            ...actual.api,
+            rolesCatalog: vi.fn<typeof apiModule.api.rolesCatalog>(),
+            listRoles: vi.fn<typeof apiModule.api.listRoles>(),
+            listWorkspaces: vi.fn<typeof apiModule.api.listWorkspaces>(),
+            getBindings: vi.fn<typeof apiModule.api.getBindings>(),
+            listAdminUsers: vi.fn<typeof apiModule.api.listAdminUsers>(),
         },
     };
 });
 
-const admin = { value: true };
+const authState = vi.hoisted(() => ({ isAdmin: true }));
 vi.mock("../../../stores/auth", () => ({
-    useAuthStore: () => ({ isAdmin: admin.value }),
+    useAuthStore: () => ({
+        get isAdmin() {
+            return authState.isAdmin;
+        },
+    }),
 }));
 
-vi.mock("../../../lib/logger", () => ({
-    logger: { warn: vi.fn<() => void>(), info: vi.fn<() => void>() },
-}));
+const mockedApi = vi.mocked(api, true);
+const UI_SRC = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
-import { ApiError } from "../../../composables/api";
-import PrincipalGrantsView from "../PrincipalGrantsView.vue";
-
-type Wrapper = ReturnType<typeof mount>;
-
-async function mountView(): Promise<Wrapper> {
-    const wrapper = mount(PrincipalGrantsView, {
-        attachTo: document.body,
-        global: { plugins: [i18n] },
-    });
-    await flushPromises();
-    return wrapper;
-}
-
-async function loadTarget(wrapper: Wrapper, username = TARGET) {
-    await wrapper.find('[data-testid="principal-grant-username"]').setValue(username);
-    await wrapper.find('[data-testid="principal-grant-form"]').trigger("submit");
-    await flushPromises();
-}
-
-function emptyView() {
-    return { userId: TARGET_ID, username: TARGET, grants: [] };
-}
-
-function grantedView() {
-    return {
-        userId: TARGET_ID,
-        username: TARGET,
-        grants: [
-            { actionClass: "CREATE_ACCOUNT", resource: "*" },
-            { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: WORKSPACE_ID },
-        ],
-    };
-}
-
-function failWith(code: string) {
-    const ErrorCtor = ApiError as unknown as new (code: string) => Error;
-    return new ErrorCtor(code);
-}
+let wrappers: VueWrapper[] = [];
 
 beforeEach(() => {
-    admin.value = true;
-    apiMock.listWorkspaces.mockResolvedValue([{ id: WORKSPACE_ID, name: "Default Workspace" }]);
-    apiMock.getPrincipalGrants.mockResolvedValue(emptyView());
-    apiMock.patchPrincipalGrants.mockResolvedValue({ ...emptyView(), changed: true });
+    setActivePinia(createPinia());
+    localStorage.clear();
+    authState.isAdmin = true;
+    vi.clearAllMocks();
+    mockedApi.rolesCatalog.mockResolvedValue({ atoms: [], scopes: ["instance", "workspace"] });
+    mockedApi.listRoles.mockResolvedValue([]);
+    mockedApi.listWorkspaces.mockResolvedValue([]);
+    mockedApi.getBindings.mockResolvedValue({ scopeType: "instance", scopeId: null, bindings: [] });
 });
 
 afterEach(() => {
-    vi.clearAllMocks();
+    wrappers.forEach((wrapper) => wrapper.unmount());
+    wrappers = [];
     document.body.innerHTML = "";
 });
 
-describe("PrincipalGrantsView", () => {
-    it("renders a forbidden state for non-admins and never loads grants", async () => {
-        admin.value = false;
-        const wrapper = await mountView();
-        expect(wrapper.find('[data-testid="principal-grant-forbidden"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="principal-grant-username"]').exists()).toBe(false);
-        expect(apiMock.getPrincipalGrants).not.toHaveBeenCalled();
-        expect(apiMock.listWorkspaces).not.toHaveBeenCalled();
+describe("principal-grant retirement (PLAN-0610 W5c)", () => {
+    it("has no page component and no API client methods left", async () => {
+        // The component module must not resolve at all: it is deleted, not merely hidden. The
+        // specifier is assembled at runtime and marked `@vite-ignore` so Vite cannot rewrite this
+        // into a build-time import (which would fail the whole suite instead of this assertion).
+        const retired = ["..", "PrincipalGrantsView.vue"].join("/");
+        await expect(import(/* @vite-ignore */ retired)).rejects.toThrow(/PrincipalGrantsView/);
+
+        const client = api as unknown as Record<string, unknown>;
+        expect(client.getPrincipalGrants).toBeUndefined();
+        expect(client.patchPrincipalGrants).toBeUndefined();
     });
 
-    it("loads a target by exact username and mirrors the granted atoms", async () => {
-        apiMock.getPrincipalGrants.mockResolvedValue(grantedView());
-        const wrapper = await mountView();
-        await loadTarget(wrapper);
+    it("keeps no i18n copy for the retired surface", () => {
+        const translate = i18n.global.t as unknown as (key: string) => string;
+        // vue-i18n echoes the key when it cannot resolve it, so an unresolved key proves removal.
+        for (const key of [
+            "settings.principalGrantsTitle",
+            "settings.principalGrantsNav",
+            "settings.principalGrantsSave",
+            "settings.principalGrantsErrorGeneric",
+        ]) {
+            expect(translate(key)).toBe(key);
+        }
+        // The replacement surface's copy resolves (sanity check that the locale file did load).
+        expect(translate("settings.rolesTitle")).not.toBe("settings.rolesTitle");
+    });
 
-        expect(apiMock.getPrincipalGrants).toHaveBeenCalledWith(TARGET);
-        expect(wrapper.find('[data-testid="principal-grant-identity"]').text()).toContain(
-            TARGET_ID,
+    it("keeps no nav entry, only the role surface", () => {
+        const navSource = readFileSync(
+            resolve(UI_SRC, "components/settings/SettingsNav.vue"),
+            "utf8",
         );
-        const checkbox = wrapper.find('[data-testid="principal-grant-create-account"]');
-        expect((checkbox.element as HTMLInputElement).checked).toBe(true);
-        expect(wrapper.findAll('[data-testid="principal-grant-workspace-row"]')).toHaveLength(1);
-        expect(wrapper.text()).toContain(WORKSPACE_ID);
+        expect(navSource).not.toContain("principal-grants");
+        expect(navSource).toContain("/settings/roles");
     });
 
-    it("sends only the difference and reports changed:true", async () => {
-        const wrapper = await mountView();
-        await loadTarget(wrapper);
+    it("redirects the old path to the role surface instead of rendering a page", async () => {
+        const router = (await import("../../../router")).default;
+        const oldPathRoutes = router
+            .getRoutes()
+            .filter((route) => route.path === "/settings/principal-grants");
 
-        await wrapper.find('[data-testid="principal-grant-create-account"]').setValue(true);
-        await wrapper.find('[data-testid="principal-grant-save"]').trigger("click");
+        expect(oldPathRoutes).toHaveLength(1);
+        // A redirect route owns no component…
+        expect(oldPathRoutes[0]?.components).toBeUndefined();
+        expect(oldPathRoutes[0]?.redirect).toBeDefined();
+        // …and the route name of the retired page is gone entirely.
+        expect(router.hasRoute("settings-principal-grants")).toBe(false);
+        expect(router.resolve("/settings/roles").name).toBe("settings-roles");
+    });
+
+    it("renders the role surface in place of the retired page", async () => {
+        const wrapper = mount(RolesView, {
+            attachTo: document.body,
+            global: { plugins: [i18n] },
+        });
+        wrappers.push(wrapper);
         await flushPromises();
 
-        expect(apiMock.patchPrincipalGrants).toHaveBeenCalledTimes(1);
-        expect(apiMock.patchPrincipalGrants).toHaveBeenCalledWith(TARGET, {
-            add: [{ actionClass: "CREATE_ACCOUNT", resource: "*" }],
-            remove: [],
-        });
-        expect(wrapper.find('[data-testid="principal-grant-notice"]').text()).toContain(
-            "授权已更新",
+        expect(wrapper.find('[data-testid="roles-view"]').exists()).toBe(true);
+        // The retired page's whole test-id surface is gone.
+        for (const testId of [
+            "principal-grant-view",
+            "principal-grant-form",
+            "principal-grant-username",
+            "principal-grant-save",
+            "principal-grant-editor",
+        ]) {
+            expect(document.body.querySelector(`[data-testid="${testId}"]`)).toBeNull();
+        }
+    });
+
+    it("points the F-02 agent guidance link at the role surface", () => {
+        const dialogSource = readFileSync(
+            resolve(UI_SRC, "features/workspace/components/WorkspaceAgentManagementDialog.vue"),
+            "utf8",
         );
-    });
-
-    it("surfaces changed:false as an idempotent replay, not as an error", async () => {
-        apiMock.getPrincipalGrants.mockResolvedValue(grantedView());
-        apiMock.patchPrincipalGrants.mockResolvedValue({ ...grantedView(), changed: false });
-        const wrapper = await mountView();
-        await loadTarget(wrapper);
-
-        await wrapper.find('[data-testid="principal-grant-save"]').trigger("click");
-        await flushPromises();
-
-        expect(wrapper.find('[data-testid="principal-grant-notice"]').text()).toContain(
-            "没有实际变更",
-        );
-        expect(wrapper.find('[data-testid="principal-grant-error"]').exists()).toBe(false);
-    });
-
-    it("requires a valid workspace UUID before granting MANAGE_WORKSPACE_AGENTS", async () => {
-        const wrapper = await mountView();
-        await loadTarget(wrapper);
-
-        const input = wrapper.find('[data-testid="principal-grant-workspace-input"]');
-        await input.setValue("not-a-uuid");
-        await wrapper.find('[data-testid="principal-grant-workspace-add"]').trigger("click");
-        expect(wrapper.find('[data-testid="principal-grant-error"]').text()).toContain(
-            "UUID 格式不正确",
-        );
-        expect(wrapper.findAll('[data-testid="principal-grant-workspace-row"]')).toHaveLength(0);
-
-        await input.setValue(WORKSPACE_ID.toUpperCase());
-        await wrapper.find('[data-testid="principal-grant-workspace-add"]').trigger("click");
-        expect(wrapper.findAll('[data-testid="principal-grant-workspace-row"]')).toHaveLength(1);
-
-        await wrapper.find('[data-testid="principal-grant-save"]').trigger("click");
-        await flushPromises();
-        expect(apiMock.patchPrincipalGrants).toHaveBeenCalledWith(TARGET, {
-            add: [{ actionClass: "MANAGE_WORKSPACE_AGENTS", resource: WORKSPACE_ID }],
-            remove: [],
-        });
-    });
-
-    it("removes a previously granted workspace through the difference set", async () => {
-        apiMock.getPrincipalGrants.mockResolvedValue(grantedView());
-        const wrapper = await mountView();
-        await loadTarget(wrapper);
-
-        await wrapper.find('[data-testid="principal-grant-workspace-remove"]').trigger("click");
-        expect(wrapper.findAll('[data-testid="principal-grant-workspace-row"]')).toHaveLength(0);
-
-        await wrapper.find('[data-testid="principal-grant-save"]').trigger("click");
-        await flushPromises();
-        expect(apiMock.patchPrincipalGrants).toHaveBeenCalledWith(TARGET, {
-            add: [],
-            remove: [{ actionClass: "MANAGE_WORKSPACE_AGENTS", resource: WORKSPACE_ID }],
-        });
-    });
-
-    const errorCases: Array<[string, string]> = [
-        ["USER_NOT_FOUND", "找不到该用户名对应的账号"],
-        ["FORBIDDEN", "没有权限执行该操作"],
-        ["UNMANAGEABLE_ACTION_CLASS", "不能在此页面授予"],
-        ["INVALID_GRANT_RESOURCE", "资源不合法"],
-        ["DIRECT_GRANT_CONFLICT", "刚被并发修改"],
-        ["OPERATION_LOCK_TIMEOUT", "锁等待超时"],
-        ["INVALID_REQUEST", "请求不合法"],
-        ["SOMETHING_ELSE", "操作失败"],
-    ];
-
-    for (const [code, expected] of errorCases) {
-        it(`maps ${code} to localized copy without leaking the raw detail`, async () => {
-            apiMock.getPrincipalGrants.mockRejectedValue(failWith(code));
-            const wrapper = await mountView();
-            await loadTarget(wrapper);
-
-            const error = wrapper.find('[data-testid="principal-grant-error"]');
-            expect(error.exists()).toBe(true);
-            expect(error.text()).toContain(expected);
-            expect(error.text()).not.toContain("server english detail");
-        });
-    }
-
-    it("rejects an empty username before calling the API", async () => {
-        const wrapper = await mountView();
-        await wrapper.find('[data-testid="principal-grant-form"]').trigger("submit");
-        await flushPromises();
-
-        expect(apiMock.getPrincipalGrants).not.toHaveBeenCalled();
-        expect(wrapper.find('[data-testid="principal-grant-error"]').text()).toContain("请先输入");
+        expect(dialogSource).not.toContain("/settings/principal-grants");
+        expect(dialogSource).toContain('to="/settings/roles"');
     });
 });

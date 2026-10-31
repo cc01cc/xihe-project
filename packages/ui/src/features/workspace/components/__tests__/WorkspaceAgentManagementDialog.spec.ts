@@ -64,16 +64,17 @@ afterEach(() => {
     document.body.innerHTML = "";
 });
 
-describe("WorkspaceAgentManagementDialog F-02 grant hint (PLAN-0585 M2)", () => {
-    it("shows a localized actionable hint plus a grant-panel link to admins", async () => {
+describe("WorkspaceAgentManagementDialog F-02 grant hint (PLAN-0585 M2 / PLAN-0610 W5c)", () => {
+    it("shows a localized actionable hint plus a link to the role surface for admins", async () => {
         const wrapper = mountDialog();
         await flushPromises();
 
         const link = wrapper.find('[data-testid="agent-grant-panel-link"]');
         expect(link.exists()).toBe(true);
-        expect(link.attributes("href")).toBe("/settings/principal-grants");
-        // The static note now names the admin panel instead of only stating the requirement.
-        expect(wrapper.text()).toContain("Principal 授权");
+        // W5c: the retired principal-grant page is replaced by roles & bindings.
+        expect(link.attributes("href")).toBe("/settings/roles");
+        // The static note names the admin surface instead of only stating the requirement.
+        expect(wrapper.text()).toContain("角色与绑定");
     });
 
     it("replaces a 403 create failure with the localized hint, never the CP English detail", async () => {
@@ -88,7 +89,7 @@ describe("WorkspaceAgentManagementDialog F-02 grant hint (PLAN-0585 M2)", () => 
 
         const text = document.body.textContent ?? "";
         expect(text).toContain("缺少 CREATE_ACCOUNT 权限");
-        expect(text).toContain("Principal 授权");
+        expect(text).toContain("角色与绑定");
         expect(text).not.toContain("CREATE_ACCOUNT permission is required");
     });
 
@@ -98,6 +99,6 @@ describe("WorkspaceAgentManagementDialog F-02 grant hint (PLAN-0585 M2)", () => 
         await flushPromises();
 
         expect(wrapper.find('[data-testid="agent-grant-panel-link"]').exists()).toBe(false);
-        expect(wrapper.text()).toContain("Principal 授权");
+        expect(wrapper.text()).toContain("角色与绑定");
     });
 });
