@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -415,13 +416,24 @@ class OpenApiYamlContractTest {
             assertEquals("createWorkspaceSession", post.get("operationId"),
                     "operationId is the one the implementation registers");
 
-            // 4–8: the five documented outcomes (201 created; 400/401/403/404 failures).
+            // 4–7: the four documented outcomes (201 created; 400/401/403 failures).
             Map<?, ?> responses = (Map<?, ?>) post.get("responses");
             assertInstanceOf(Map.class, responses, "responses are contracted");
-            for (String status : List.of("201", "400", "401", "403", "404")) {
+            for (String status : List.of("201", "400", "401", "403")) {
                 assertTrue(responses.containsKey(status),
                         "the operation must contract " + status + ", got " + responses.keySet());
             }
+
+            // 8 (reverse, PLAN-0608 R3): the create surface never produces 404 — a
+            // missing workspace or a non-member is a 403 WORKSPACE_FORBIDDEN via
+            // requireContextWorkspace, and session lookup happens after creation. The
+            // contract therefore MUST NOT declare 404: a status code that can never
+            // happen makes clients write dead error branches, which is worse than an
+            // under-specified contract. This assertion is the regression net for that
+            // rule (see spec/session-workspace-contract.md: "创建面不产生 404").
+            assertFalse(responses.containsKey("404"),
+                    "the create operation must not declare 404 (it is unreachable), got "
+                            + responses.keySet());
 
             // 9: the path parameter is the ownership source (PLAN-0608 C′).
             List<?> parameters = (List<?>) post.get("parameters");
