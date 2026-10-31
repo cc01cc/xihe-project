@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { useMediaQuery } from "@vueuse/core";
+import { useMediaQuery, useWindowSize } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import { FolderTree } from "@lucide/vue";
 import {
     DOCK_MAX_TABS,
     clampDockWidth,
     defaultWorkspaceLayout,
+    defaultWorkspaceLayoutForViewport,
+    hasWorkspaceLayout,
     isDockTabId,
     readWorkspaceLayout,
     writeWorkspaceLayout,
@@ -45,7 +47,6 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-    upload: [];
     importSource: [];
     agents: [];
     addWorkspace: [];
@@ -57,15 +58,33 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const ws = useWorkspaceStore();
 
-const layout = ref<WorkspaceLayoutState>(
-    props.workspaceId ? readWorkspaceLayout(props.workspaceId) : defaultWorkspaceLayout(),
-);
+const { width: viewportWidth } = useWindowSize();
+
+/**
+ * P1-1 (S2 audit): a workspace that has no stored layout yet opens `monitor` by
+ * default on wide screens (≥1800); once the user collapses or switches, the
+ * persisted state wins and this default never overrides it again.
+ */
+function initialLayout(workspaceId: string): WorkspaceLayoutState {
+    if (!workspaceId) return defaultWorkspaceLayout();
+    if (!hasWorkspaceLayout(workspaceId)) {
+        return defaultWorkspaceLayoutForViewport(viewportWidth.value);
+    }
+    return readWorkspaceLayout(workspaceId);
+}
+
+const layout = ref<WorkspaceLayoutState>(initialLayout(props.workspaceId));
 
 // Switching workspace swaps the whole per-workspace set (V11: "切 workspace 换一套").
 watch(
     () => props.workspaceId,
     (workspaceId) => {
-        layout.value = workspaceId ? readWorkspaceLayout(workspaceId) : defaultWorkspaceLayout();
+        layout.value = initialLayout(workspaceId);
+        // P0-1/P1-2 (S2 audit): never carry open file buffers or a stale tree
+        // across workspaces, and reload the tree for the new workspace.
+        if (props.isMobile) return;
+        ws.resetWorkspaceScoped();
+        void ws.loadTree();
     },
 );
 
@@ -198,7 +217,6 @@ watch(
         <WorkspaceToolbar
             :workspace-id="workspaceId"
             :agent-principal-id="agentPrincipalId"
-            :tree-collapsed="effectiveTreeCollapsed"
             :code-open="isMobile ? false : codeOpen"
             :changes-open="
                 isMobile ? (mobileChangesOpen ?? false) && mobileAuxTab === 'changes' : changesOpen
@@ -206,12 +224,10 @@ watch(
             :monitor-open="
                 isMobile ? (mobileChangesOpen ?? false) && mobileAuxTab === 'monitor' : monitorOpen
             "
-            @upload="emit('upload')"
             @import-source="emit('importSource')"
             @agents="emit('agents')"
             @add-workspace="emit('addWorkspace')"
             @files="emit('files')"
-            @toggle-tree="toggleTree"
             @toggle-code="handleToggleCode"
             @toggle-changes="handleToggleChanges"
             @toggle-monitor="handleToggleMonitor"
@@ -236,6 +252,7 @@ watch(
                         class="rounded p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         :title="t('workspace.expandFiles')"
                         :aria-label="t('workspace.expandFiles')"
+                        :aria-pressed="false"
                         @click="toggleTree"
                     >
                         <FolderTree class="size-4" aria-hidden="true" />
@@ -246,7 +263,8 @@ watch(
                     class="flex h-full min-h-0 flex-1 flex-col"
                     data-testid="workspace-file-tree"
                 >
-                    <FileTreePanel />
+                    <!-- S3a: tree panel head (workspace name / file actions / collapse). -->
+                    <FileTreePanel @collapse="toggleTree" />
                 </div>
             </div>
 

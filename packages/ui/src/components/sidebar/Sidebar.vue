@@ -23,7 +23,9 @@ import {
     NAV_WIDTH_MIN,
     RAIL_WIDTH,
     clampNavWidth,
+    clampNavWidthForViewport,
 } from "../../composables/useWorkspaceLayout";
+import { useWindowSize } from "@vueuse/core";
 import { useSessionStore } from "../../stores/session";
 
 const props = defineProps<{
@@ -57,17 +59,22 @@ const isWorkspacePage = computed(() => {
 
 // S2 ruling #1: the rail is a fixed 56px icon strip, so the panel sits right
 // after it; collapsing the panel keeps that 56px offset (R-D).
+// P1-4 (S2 audit): clamp to the breakpoint table for rendering only; the stored
+// user width is untouched, so a wider window restores it.
+const { width: viewportWidth } = useWindowSize();
+const effectiveWidth = computed(() => clampNavWidthForViewport(props.width, viewportWidth.value));
+
 const asideStyle = computed(() => {
     if (props.isMobile) {
         return { width: props.open ? `min(${props.width}px, calc(100vw - 1rem))` : "0px" };
     }
-    const total = RAIL_WIDTH + (props.open ? props.width : 0);
+    const total = RAIL_WIDTH + (props.open ? effectiveWidth.value : 0);
     return { width: `${total}px` };
 });
 
 const panelStyle = computed(() => {
     if (props.isMobile) return { width: "100%" };
-    return { width: props.open ? `${props.width}px` : "0px" };
+    return { width: props.open ? `${effectiveWidth.value}px` : "0px" };
 });
 
 async function startNewChat() {

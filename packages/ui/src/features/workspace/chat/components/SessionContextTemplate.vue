@@ -163,7 +163,7 @@ async function handleChange(event: Event) {
         <select
             :id="`session-context-template-${sessionId}`"
             data-testid="session-context-template-select"
-            class="w-full min-w-0 truncate rounded-md border bg-background px-2 py-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+            class="w-full min-w-40 max-w-44 truncate rounded-md border bg-background px-2 py-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
             :value="current ? optionKey(current) : ''"
             :disabled="loading || busy || options.length === 0"
             :aria-label="t('chat.contextTemplateLabel')"

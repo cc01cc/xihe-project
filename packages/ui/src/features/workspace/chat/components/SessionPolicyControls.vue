@@ -85,7 +85,7 @@ function retry() {
         <select
             :id="`session-policy-mode-${sessionId}`"
             data-testid="session-policy-mode"
-            class="w-full min-w-0 truncate rounded-md border bg-background px-2 py-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+            class="w-full min-w-40 max-w-44 truncate rounded-md border bg-background px-2 py-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
             :value="mode ?? ''"
             :disabled="!mode || busy"
             :aria-label="t('chat.approvalModeLabel')"

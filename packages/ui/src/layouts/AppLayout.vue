@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { PanelLeftOpen } from "@lucide/vue";
 import Sidebar from "../components/sidebar/Sidebar.vue";
+import WorkspaceTabBar from "../features/workspace/components/WorkspaceTabBar.vue";
 import { useAgentStore } from "../stores/agent";
 import { useAuthStore } from "../stores/auth";
 import { useSessionStore } from "../stores/session";
@@ -26,6 +27,29 @@ const pendingPollIntervalMs = 10_000;
 let pendingPollTimer: ReturnType<typeof setInterval> | null = null;
 
 const mainMargin = computed(() => `${mainOffset.value}px`);
+
+/**
+ * S3a: the route tab bar is part of the workspace shell. It renders for the four
+ * sibling workspace routes only (`/workspace/:ws`, `/chat/:sid`, `/environment`,
+ * `/scheduled-tasks`, `/settings`), never for the global `/settings/config` pages
+ * or on mobile (the mobile flow keeps its sheets).
+ */
+const workspaceTabBarWorkspaceId = computed(() => {
+    const fromRoute = route.params.workspaceId;
+    if (typeof fromRoute === "string" && fromRoute) return fromRoute;
+    return auth.currentWorkspaceId ?? "";
+});
+const workspaceTabBarSessionId = computed(() => {
+    const fromRoute = route.params.sessionId;
+    if (typeof fromRoute === "string" && fromRoute) return fromRoute;
+    return sessionStore.currentSessionId;
+});
+const workspaceTabBarVisible = computed(
+    () =>
+        !isMobile.value &&
+        route.path.startsWith("/workspace") &&
+        Boolean(workspaceTabBarWorkspaceId.value),
+);
 
 const currentRouteSessionId = computed(() => {
     const sessionId = route.params.sessionId;
@@ -176,6 +200,13 @@ onUnmounted(() => {
             <div data-testid="pending-approval-live" aria-live="polite" class="sr-only">
                 {{ t("sidebar.pendingApprovalLive") }}: {{ totalPendingApprovalCount }}
             </div>
+            <!-- S3a: the middle route tab bar belongs to the workspace shell, so it
+               survives navigation between the four sibling workspace routes. -->
+            <WorkspaceTabBar
+                v-if="workspaceTabBarVisible"
+                :workspace-id="workspaceTabBarWorkspaceId"
+                :session-id="workspaceTabBarSessionId"
+            />
             <router-view />
         </main>
     </div>

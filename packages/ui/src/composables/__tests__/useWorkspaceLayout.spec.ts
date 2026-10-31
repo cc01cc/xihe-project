@@ -12,6 +12,9 @@ import {
     RAIL_WIDTH,
     WORKSPACE_LAYOUT_STORAGE_PREFIX,
     clampDockWidth,
+    clampNavWidthForViewport,
+    defaultWorkspaceLayoutForViewport,
+    hasWorkspaceLayout,
     clampNavWidth,
     clearLayoutStorage,
     defaultGlobalLayout,
@@ -114,6 +117,7 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             dockWidth: DOCK_WIDTH_DEFAULT,
             dockTabs: [],
             activeDockTab: null,
+            openTabs: ["environment", "scheduled-tasks", "settings"],
         });
         expect(readWorkspaceLayout("ws-1")).toEqual(defaultWorkspaceLayout());
     });
@@ -132,6 +136,7 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             dockWidth: 420,
             dockTabs: ["code", "monitor"],
             activeDockTab: "monitor",
+            openTabs: ["environment", "settings"],
         });
 
         expect(readStoredWorkspace("ws-1")).toEqual({
@@ -140,6 +145,7 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             dockWidth: 420,
             dockTabs: ["code", "monitor"],
             activeDockTab: "monitor",
+            openTabs: ["environment", "settings"],
         });
         expect(readWorkspaceLayout("ws-1")).toEqual({
             treeCollapsed: true,
@@ -147,6 +153,7 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             dockWidth: 420,
             dockTabs: ["code", "monitor"],
             activeDockTab: "monitor",
+            openTabs: ["environment", "settings"],
         });
         // Workspace-scoped: another workspace is untouched.
         expect(readWorkspaceLayout("ws-2")).toEqual(defaultWorkspaceLayout());
@@ -236,5 +243,32 @@ describe("useWorkspaceLayout", () => {
         expect(readStored()).toEqual({ navOpen: true, navWidth: 340 });
 
         scope.stop();
+    });
+});
+
+describe("PLAN-0582 S3a: breakpoint helpers (S2 audit P1-1/P1-4)", () => {
+    it("clamps the navigation panel per breakpoint without rewriting the stored value", () => {
+        expect(clampNavWidthForViewport(280, 1920)).toBe(280);
+        expect(clampNavWidthForViewport(280, 1440)).toBe(280);
+        expect(clampNavWidthForViewport(280, 1439)).toBe(260);
+        expect(clampNavWidthForViewport(360, 1280)).toBe(260);
+        expect(clampNavWidthForViewport(360, 1024)).toBe(240);
+        // The user value survives: the clamp is render-only.
+        expect(clampNavWidthForViewport(220, 1024)).toBe(220);
+    });
+
+    it("derives a monitor dock default only for wide screens with no stored layout", () => {
+        const wide = defaultWorkspaceLayoutForViewport(1920);
+        expect(wide.dockCollapsed).toBe(false);
+        expect(wide.dockTabs).toEqual(["monitor"]);
+        expect(wide.activeDockTab).toBe("monitor");
+
+        const narrow = defaultWorkspaceLayoutForViewport(1440);
+        expect(narrow.dockCollapsed).toBe(true);
+        expect(narrow.dockTabs).toEqual([]);
+
+        localStorage.setItem("xihe-layout-ws:ws-1", JSON.stringify({ openTabs: [] }));
+        expect(hasWorkspaceLayout("ws-1")).toBe(true);
+        expect(hasWorkspaceLayout("ws-2")).toBe(false);
     });
 });

@@ -9,6 +9,7 @@ export interface SessionPolicyState {
     loading: boolean;
     changing: boolean;
     loaded: boolean;
+    /** Raw diagnostic (logs / tooltip only — never rendered as user copy). */
     error: string | null;
 }
 

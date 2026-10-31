@@ -352,3 +352,30 @@ describe("workspace store external Workspace events (PLAN-0350)", () => {
         });
     });
 });
+
+describe("PLAN-0582 S3a: workspace-scoped reset (S2 audit P0-1)", () => {
+    it("clears open files and the active path so a workspace switch cannot save across workspaces", async () => {
+        setActivePinia(createPinia());
+        const store = useWorkspaceStore();
+        store.openFiles.set("/notes.md", {
+            path: "/notes.md",
+            content: "workspace A content",
+            originalContent: "workspace A content",
+            modified: true,
+            language: "markdown",
+        });
+        store.activeFilePath = "/notes.md";
+
+        expect(store.openFiles.size).toBe(1);
+
+        store.resetWorkspaceScoped();
+
+        expect(store.openFiles.size).toBe(0);
+        expect(store.activeFilePath).toBeNull();
+        // The stale buffer is gone, so a save with the old path is a no-op — it can
+        // never write workspace A's content into workspace B's same-named file.
+        const writeSpy = vi.spyOn(api, "writeFile");
+        await store.saveFile("/notes.md");
+        expect(writeSpy).not.toHaveBeenCalled();
+    });
+});
