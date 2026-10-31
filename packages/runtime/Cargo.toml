@@ -164,3 +164,11 @@ path = "tests/checkpoint_shadow_git_test.rs"
 [[test]]
 name = "checkpoint_api_flow_test"
 path = "tests/checkpoint_api_flow_test.rs"
+
+# PLAN-0596 M3（2026-10-31 采纳，体积 -24.7%）：只关闭第三方依赖的 debuginfo，
+# Runtime 自身 crate 保留完整调试信息（实测回溯含文件/行号）。
+[profile.dev.package."*"]
+debug = 0
+
+[profile.test.package."*"]
+debug = 0
