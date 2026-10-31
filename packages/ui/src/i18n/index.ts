@@ -1824,6 +1824,14 @@ const messages = {
             eventLeaseRedeemed: "租约兑换",
             eventRevealed: "查看",
         },
+        sessionSettings: {
+            title: "会话设置",
+            expand: "展开会话设置",
+            collapse: "收起会话设置",
+            templateUnbound: "模板未绑定",
+            templateSelectPlaceholder: "选择请求模板",
+            branchDetached: "非主路径分支",
+        },
     },
     "en-US": {
         files: {
@@ -3738,6 +3746,14 @@ const messages = {
             eventLeaseIssued: "Lease issued",
             eventLeaseRedeemed: "Lease redeemed",
             eventRevealed: "Revealed",
+        },
+        sessionSettings: {
+            title: "Session settings",
+            expand: "Expand session settings",
+            collapse: "Collapse session settings",
+            templateUnbound: "Template not bound",
+            templateSelectPlaceholder: "Select a request template",
+            branchDetached: "Non-main branch",
         },
     },
 };

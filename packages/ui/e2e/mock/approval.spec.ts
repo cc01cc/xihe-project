@@ -517,13 +517,16 @@ test.describe("Chat approval flow", () => {
         });
         await openApprovalChat(page);
 
-        await expect(page.locator('[data-testid="session-policy-mode-badge"]')).toContainText(
-            "自动放行",
-        );
+        // PLAN-0582 S4: the collapsed summary shows the current mode; the auto
+        // warning + its remediation stay visible without expanding the panel.
+        const settingsSummary = page.getByTestId("session-settings-summary");
+        await expect(settingsSummary).toContainText("自动放行");
         const autoBanner = page.locator('[data-testid="session-policy-auto-banner"]');
         await expect(autoBanner).toBeVisible();
         await autoBanner.locator('[data-testid="session-policy-auto-close"]').click();
         await expect(autoBanner).toBeHidden();
+        await expect(settingsSummary).toContainText("手动审批");
+        await settingsSummary.click();
         await expect(page.locator('[data-testid="session-policy-mode"]')).toHaveValue("manual");
         expect(postResponse).toEqual({ sessionId: SESSION_ID, mode: "manual", scope: "session" });
     });

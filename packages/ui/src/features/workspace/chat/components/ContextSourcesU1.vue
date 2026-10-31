@@ -43,7 +43,7 @@ watch(
 </script>
 
 <template>
-    <div class="px-3 pt-1" data-testid="u1-context-sources">
+    <div class="min-w-0" data-testid="u1-context-sources">
         <button
             type="button"
             class="text-xs text-muted-foreground hover:text-foreground"
