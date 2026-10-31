@@ -1555,6 +1555,319 @@ class McpProxyTest {
         }
     }
 
+    // ── PLAN-0583 M0/T0.2 复现：空映射 + 新鲜时间戳（真实时序同态） ────────────
+    // 真实时序见 evidence/m0-recon.md §T0.2：Run 派发的 toolTimeoutPayload 已经把
+    // 过期表清空并把时间戳刷成 now，因此 tools/call 到达时唯一可见的事实是「表为空」。
+    // 用 putMapping 造这个状态（而不是直接改两个 Map 字段），保证映射世代也随之前进，
+    // 与生产路径（TTL 清空 / tools/list 固化）同态。
+    private void seedEmptyMappingFreshTimestamp() {
+        toolTimeoutService.putMapping(TEST_WS_UUID, new ConcurrentHashMap<>());
+    }
+
+    /** 过期状态：表里仍有旧映射，但时间戳已超 TTL（下一次 mappingFor 会按真实逻辑清空）。 */
+    @SuppressWarnings("unchecked")
+    private void seedToolCacheExpired(String tool, String serverId) {
+        Map<String, Map<String, String>> cache =
+                (Map<String, Map<String, String>>) ReflectionTestUtils.getField(
+                        toolTimeoutService, "toolServerCache");
+        Map<String, Instant> timestamps =
+                (Map<String, Instant>) ReflectionTestUtils.getField(toolTimeoutService, "cacheTimestamps");
+        cache.put(TEST_WS_UUID, new ConcurrentHashMap<>(Map.of(tool, serverId)));
+        timestamps.put(TEST_WS_UUID, Instant.now().minusSeconds(301));
+    }
+
+    // T0.2 红证据（修复前）：同一构造返回 400 UNKNOWN_TOOL，见 evidence/m1-red-green.md。
+    // 修复后该断言反转为 Z3（200 + 路由到 stdio）。
+    @Test
+    void handleToolsCall_missingStdioToolRebuildsAndRoutes200() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger stdioListHits =
+                new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger stdioCallHits =
+                new java.util.concurrent.atomic.AtomicInteger();
+        var stub = stubRuntimeWith(stdioListHits, stdioCallHits, 200,
+                "{\"name\":\"e2e_echo\",\"description\":\"Echo\"}");
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            seedStdioServers();
+            when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                    .thenAnswer(inv -> inv.getArgument(1));
+            seedEmptyMappingFreshTimestamp();
+            String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"id\":36,"
+                    + "\"params\":{\"name\":\"e2e_echo\",\"arguments\":{}}}";
+
+            ResponseEntity<String> response = callTool(body);
+
+            assertEquals(HttpStatus.OK, response.getStatusCode(), response.getBody());
+            assertTrue(response.getBody().contains("stdio-ok"),
+                    "the rebuilt mapping must route the call to the stdio server, got: "
+                            + response.getBody());
+            assertEquals(1, stdioListHits.get(), "one rebuild fan-out for the miss");
+            assertEquals(1, stdioCallHits.get(), "the call itself is forwarded once to the stdio server");
+            Map<String, Map<String, String>> cache =
+                    (Map<String, Map<String, String>>) ReflectionTestUtils.getField(
+                            toolTimeoutService, "toolServerCache");
+            assertEquals(STDIO_SERVER_NAME, cache.get(TEST_WS_UUID).get("e2e_echo"),
+                    "the rebuilt mapping must be persisted via putMapping");
+            assertEquals("__system__", cache.get(TEST_WS_UUID).get("read_file"),
+                    "the rebuild must keep the __system__ entries populateSystemTools just wrote");
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    // Z2：过期与「空表 + 新鲜时间戳」必须得到同一结果——触发条件是 miss，不是 expired。
+    @Test
+    void handleToolsCall_expiredMappingRebuildsLikeEmptyMapping() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger stdioListHits =
+                new java.util.concurrent.atomic.AtomicInteger();
+        var stub = stubRuntimeWith(stdioListHits, null, 200, "{\"name\":\"e2e_echo\"}");
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            seedStdioServers();
+            when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                    .thenAnswer(inv -> inv.getArgument(1));
+            String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"id\":37,"
+                    + "\"params\":{\"name\":\"e2e_echo\",\"arguments\":{}}}";
+
+            // ① TTL 过期：表里还留着旧映射，时间戳超时 → mappingFor 会按真实逻辑清空。
+            seedToolCacheExpired("stale_tool", STDIO_SERVER_NAME);
+            ResponseEntity<String> expired = callTool(body);
+            assertEquals(HttpStatus.OK, expired.getStatusCode(), expired.getBody());
+            assertEquals(1, stdioListHits.get());
+
+            // ② 空表 + 新鲜时间戳（Run 派发刚清过表的状态）。
+            seedEmptyMappingFreshTimestamp();
+            ResponseEntity<String> empty = callTool(body);
+            assertEquals(HttpStatus.OK, empty.getStatusCode(), empty.getBody());
+            assertEquals(2, stdioListHits.get(),
+                    "both states must trigger exactly one rebuild with the same outcome");
+
+            assertEquals(expired.getStatusCode(), empty.getStatusCode(),
+                    "the trigger is the miss, not the expired flag");
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    // Z4（I1）：remote 工具在重建后拿到**完全相同**的对外名（别名粘滞），并照常路由到 Fake。
+    @Test
+    void handleToolsCall_missingRemoteToolRebuildsKeepingIssuedName() throws Exception {
+        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
+        java.util.UUID remoteServerId = java.util.UUID.nameUUIDFromBytes("deepwiki".getBytes());
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange ->
+                respond(exchange, "{\"jsonrpc\":\"2.0\",\"result\":{\"tools\":[]},\"id\":1}"));
+        final java.util.concurrent.atomic.AtomicInteger listCalls =
+                new java.util.concurrent.atomic.AtomicInteger();
+        stub.createContext("/internal/v1/runtime/remote-mcp/" + TEST_WS_UUID + "/"
+                + remoteServerId + "/call", exchange -> {
+                    String req = new String(exchange.getRequestBody().readAllBytes(),
+                            java.nio.charset.StandardCharsets.UTF_8);
+                    if (req.contains("\"listTools\":true")) {
+                        listCalls.incrementAndGet();
+                        respond(exchange, "{\"tools\":[{\"name\":\"fake_echo\",\"description\":\"Echo\","
+                                + "\"inputSchema\":{\"type\":\"object\"}}]}");
+                    } else {
+                        respond(exchange, "{\"content\":[{\"type\":\"text\",\"text\":\"wire-ok\"}]}");
+                    }
+                });
+        stub.start();
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            com.cc01cc.p.xihe.cp.entity.McpServer server =
+                    new com.cc01cc.p.xihe.cp.entity.McpServer(
+                            TEST_WS_UUID, "deepwiki", "https://mcp.deepwiki.com/mcp");
+            server.setId(remoteServerId);
+            server.setEnabled(true);
+            server.setAuthMode("no-auth");
+            when(mcpServerRepository.findByWorkspaceIdAndEnabledTrue(TEST_WS_UUID))
+                    .thenReturn(java.util.List.of(server));
+            when(mcpServerRepository.findById(remoteServerId)).thenReturn(java.util.Optional.of(server));
+            when(aliasRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            // ① tools/list 首次签发别名（落盘行）。
+            String listBody = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":2,\"params\":{}}";
+            ResponseEntity<String> listResp = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsList", TEST_WS_UUID, listBody,
+                    new HttpHeaders(), "sess-1", accessContext(TEST_WS_UUID, "u-1"));
+            assertNotNull(listResp);
+            assertTrue(listResp.getBody().contains("fake_echo"));
+            org.mockito.ArgumentCaptor<com.cc01cc.p.xihe.cp.entity.McpToolAlias> saved =
+                    org.mockito.ArgumentCaptor.forClass(com.cc01cc.p.xihe.cp.entity.McpToolAlias.class);
+            verify(aliasRepository, org.mockito.Mockito.atLeastOnce()).save(saved.capture());
+            String issuedBefore = saved.getValue().getIssuedName();
+            when(aliasRepository.findByWorkspaceId(java.util.UUID.fromString(TEST_WS_UUID)))
+                    .thenReturn(java.util.List.of(saved.getValue()));
+            int listCallsAfterList = listCalls.get();
+
+            // ② 模拟 TTL 清空（Run 派发刚清过表）后直接 tools/call：必须重建并按**同名**路由。
+            seedEmptyMappingFreshTimestamp();
+            String callBody = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                    + "\"params\":{\"name\":\"" + issuedBefore + "\",\"arguments\":{}},\"id\":2}";
+            ResponseEntity<String> callResp = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsCall", TEST_WS_UUID, callBody,
+                    new HttpHeaders(), "sess-1",
+                    internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
+
+            assertNotNull(callResp);
+            assertEquals(HttpStatus.OK, callResp.getStatusCode(), callResp.getBody());
+            assertTrue(callResp.getBody().contains("wire-ok"),
+                    "the rebuilt alias must reach the remote Fake, got: " + callResp.getBody());
+            assertEquals(listCallsAfterList + 1, listCalls.get(),
+                    "the rebuild must fetch the remote catalog exactly once");
+            org.mockito.ArgumentCaptor<com.cc01cc.p.xihe.cp.entity.McpToolAlias> rebuilt =
+                    org.mockito.ArgumentCaptor.forClass(com.cc01cc.p.xihe.cp.entity.McpToolAlias.class);
+            verify(aliasRepository, org.mockito.Mockito.atLeast(2)).save(rebuilt.capture());
+            assertEquals(issuedBefore, rebuilt.getAllValues().get(rebuilt.getAllValues().size() - 1)
+                            .getIssuedName(),
+                    "I1: the issued name must not change across a rebuild");
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    // Z5（V4）：目录重建成功但名字确实缺席 → 仍 400 UNKNOWN_TOOL，审计 reason 标 after_refresh，
+    // 且 stdio 目录确实被拉过一次（证明确实重建过，而非又一次空跑）。
+    @Test
+    void handleToolsCall_absentAfterRebuild_returnsUnknownToolAfterRefresh() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger stdioListHits =
+                new java.util.concurrent.atomic.AtomicInteger();
+        var stub = stubRuntimeWith(stdioListHits, null, 200, "{\"name\":\"e2e_echo\"}");
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            seedStdioServers();
+            when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                    .thenAnswer(inv -> inv.getArgument(1));
+            seedEmptyMappingFreshTimestamp();
+            String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"id\":38,"
+                    + "\"params\":{\"name\":\"ghost_tool\",\"arguments\":{}}}";
+
+            ResponseEntity<String> response = callTool(body);
+
+            assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+            assertEquals("UNKNOWN_TOOL", objectMapper.readTree(response.getBody()).path("code").asText());
+            assertEquals(1, stdioListHits.get(), "a real miss must rebuild once before answering 400");
+            verify(auditLogger).record(eq("sess-1"), eq("ghost_tool"),
+                    eq("unknown_tool"), org.mockito.ArgumentMatchers.contains("after_refresh"));
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    // Z6（V3/I2）：重建期间依赖不可用 → 依赖问题体（503），不得退化成 UNKNOWN_TOOL。
+    @Test
+    void handleToolsCall_rebuildDependencyFailure_returnsServiceUnavailable() throws Exception {
+        var stub = stubRuntimeWith(null, null, 500, "{\"name\":\"e2e_echo\"}");
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            seedStdioServers();
+            when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                    .thenAnswer(inv -> inv.getArgument(1));
+            seedEmptyMappingFreshTimestamp();
+            String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"id\":39,"
+                    + "\"params\":{\"name\":\"e2e_echo\",\"arguments\":{}}}";
+
+            ResponseEntity<String> response = callTool(body);
+
+            assertEquals(HttpStatus.SERVICE_UNAVAILABLE, response.getStatusCode());
+            JsonNode problem = objectMapper.readTree(response.getBody());
+            assertEquals("RUNTIME_UNAVAILABLE", problem.path("code").asText());
+            assertEquals("runtime", problem.path("dependency").asText());
+            assertFalse(response.getBody().contains("UNKNOWN_TOOL"));
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    // Z7（I6/V5）：同一工作区并发 8 次未命中 → 只重建一次，全部路由成功。
+    @Test
+    void concurrentMissesRebuildOncePerWorkspace() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger stdioListHits =
+                new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger stdioCallHits =
+                new java.util.concurrent.atomic.AtomicInteger();
+        var stub = stubRuntimeWith(stdioListHits, stdioCallHits, 200, "{\"name\":\"e2e_echo\"}");
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            seedStdioServers();
+            when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                    .thenAnswer(inv -> inv.getArgument(1));
+            seedEmptyMappingFreshTimestamp();
+            when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                    .thenAnswer(inv -> inv.getArgument(1));
+
+            int threads = 8;
+            java.util.concurrent.ExecutorService pool =
+                    java.util.concurrent.Executors.newFixedThreadPool(threads);
+            java.util.concurrent.CountDownLatch start =
+                    new java.util.concurrent.CountDownLatch(1);
+            java.util.List<java.util.concurrent.Future<ResponseEntity<String>>> futures =
+                    new java.util.ArrayList<>();
+            try {
+                String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"id\":40,"
+                        + "\"params\":{\"name\":\"e2e_echo\",\"arguments\":{}}}";
+                for (int i = 0; i < threads; i++) {
+                    futures.add(pool.submit(() -> {
+                        start.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                        return callTool(body);
+                    }));
+                }
+                start.countDown();
+                for (java.util.concurrent.Future<ResponseEntity<String>> future : futures) {
+                    ResponseEntity<String> response = future.get(20, java.util.concurrent.TimeUnit.SECONDS);
+                    assertEquals(HttpStatus.OK, response.getStatusCode(), response.getBody());
+                }
+            } finally {
+                pool.shutdownNow();
+            }
+
+            assertEquals(1, stdioListHits.get(),
+                    "single-flight: concurrent misses must fan out exactly once per workspace");
+            assertEquals(threads, stdioCallHits.get(),
+                    "every waiter dispatches its own call after the rebuild");
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    // Z8（T1.2 放大抑制）：同一世代内重复的真缺席不再全量扇出。
+    @Test
+    void repeatedUnknownToolDoesNotRebuildPerCall() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger stdioListHits =
+                new java.util.concurrent.atomic.AtomicInteger();
+        var stub = stubRuntimeWith(stdioListHits, null, 200, "{\"name\":\"e2e_echo\"}");
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            seedStdioServers();
+            when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                    .thenAnswer(inv -> inv.getArgument(1));
+            seedEmptyMappingFreshTimestamp();
+            String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"id\":41,"
+                    + "\"params\":{\"name\":\"ghost_tool\",\"arguments\":{}}}";
+
+            for (int attempt = 0; attempt < 3; attempt++) {
+                ResponseEntity<String> response = callTool(body);
+                assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+                assertEquals("UNKNOWN_TOOL",
+                        objectMapper.readTree(response.getBody()).path("code").asText());
+            }
+
+            assertEquals(1, stdioListHits.get(),
+                    "a hallucinated tool name must not fan out on every call within one mapping epoch");
+        } finally {
+            stub.stop(0);
+        }
+    }
+
     @Test
     @SuppressWarnings("unchecked")
     void handleToolsList_runtimeUnreachable_returnsDependencyUnavailable() throws Exception {
@@ -1661,6 +1974,75 @@ class McpProxyTest {
         });
         stub.start();
         return stub;
+    }
+
+    // ── PLAN-0583：stdio 侧 Fake Runtime（系统目录 + 一个 stdio server） ─────────
+    // 计数用于断言「重建扇出次数」：stdio tools/list = 重建扇出，stdio tools/call = 实际派发。
+
+    private static final String STDIO_SERVER_NAME = "e2e-stdio";
+
+    private static void respond(com.sun.net.httpserver.HttpExchange exchange, String body)
+            throws java.io.IOException {
+        byte[] bytes = body.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.sendResponseHeaders(200, bytes.length);
+        exchange.getResponseBody().write(bytes);
+        exchange.close();
+    }
+
+    private com.sun.net.httpserver.HttpServer stubRuntimeWithStdio(
+            java.util.concurrent.atomic.AtomicInteger stdioListHits,
+            java.util.concurrent.atomic.AtomicInteger stdioCallHits,
+            String stdioToolJson) throws java.io.IOException {
+        return stubRuntimeWith(stdioListHits, stdioCallHits, 200, stdioToolJson);
+    }
+
+    private com.sun.net.httpserver.HttpServer stubRuntimeWith(
+            java.util.concurrent.atomic.AtomicInteger stdioListHits,
+            java.util.concurrent.atomic.AtomicInteger stdioCallHits,
+            int stdioListStatus,
+            String stdioToolJson) throws java.io.IOException {
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange -> {
+            respond(exchange, "{\"jsonrpc\":\"2.0\",\"result\":{\"tools\":"
+                    + "[{\"name\":\"read_file\"}]},\"id\":1}");
+        });
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp/stdio/"
+                + STDIO_SERVER_NAME, exchange -> {
+                    String request = new String(exchange.getRequestBody().readAllBytes(),
+                            java.nio.charset.StandardCharsets.UTF_8);
+                    if (request.contains("\"method\":\"tools/list\"")) {
+                        if (stdioListHits != null) {
+                            stdioListHits.incrementAndGet();
+                        }
+                        if (stdioListStatus != 200) {
+                            byte[] failure = "{\"error\":\"unavailable\"}"
+                                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                            exchange.sendResponseHeaders(stdioListStatus, failure.length);
+                            exchange.getResponseBody().write(failure);
+                            exchange.close();
+                            return;
+                        }
+                        respond(exchange, "{\"jsonrpc\":\"2.0\",\"result\":{\"tools\":["
+                                + stdioToolJson + "]},\"id\":1}");
+                    } else {
+                        if (stdioCallHits != null) {
+                            stdioCallHits.incrementAndGet();
+                        }
+                        respond(exchange, "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":"
+                                + "[{\"type\":\"text\",\"text\":\"stdio-ok\"}]},\"id\":1}");
+                    }
+                });
+        stub.start();
+        return stub;
+    }
+
+    private void seedStdioServers() {
+        com.cc01cc.p.xihe.cp.entity.McpStdioServer row = new com.cc01cc.p.xihe.cp.entity.McpStdioServer(
+                TEST_WS_UUID, STDIO_SERVER_NAME, objectMapper.createObjectNode());
+        when(stdioServerRepository.findByWorkspaceIdOrderByNameAsc(TEST_WS_UUID))
+                .thenReturn(java.util.List.of(row));
     }
 
     @Test

@@ -41,7 +41,7 @@ flowchart TD
     end
     subgraph CP["CP McpProxyController (Java)"]
         C1["1. 校验 Bearer 身份 + 解析 workspace claim<br/>携带 mcp-session-id 直接 403"]
-        C2["2. tools/list: 合并系统工具 + 各 STDIO server 工具 + 各 remote server 工具<br/>tool_name → server_id 映射 (5min TTL) + sticky 别名表"]
+        C2["2. tools/list: 合并系统工具 + 各 STDIO server 工具 + 各 remote server 工具<br/>tool_name → server_id 映射 (5min TTL) + sticky 别名表<br/>写入点 = tools/list；tools/call 未命中按 ws 单飞重建一次"]
         C3["3. tools/call: 按 tool name 查表路由 (stdio / remote / 系统三路)"]
         C4["4. 命名 sticky: system 裸名优先, 冲突仅新者加 server 前缀<br/>映射落盘永不晋升 (mcp_tool_aliases)"]
     end
@@ -84,6 +84,9 @@ sequenceDiagram
 sequenceDiagram
   Agent->>CP: POST /api/v1/mcp (tool_name, args)
   CP->>CP: 查 tool→server 映射
+  opt 未命中（映射被 5min TTL 清空 / 从未填充）
+    CP->>CP: 补 __system__ 目录 → 仍缺失则按 ws 单飞重建一次（同 tools/list 合并例程）
+  end
   alt 系统工具
     CP->>RT: /mcp → exec 进 Sandbox 执行
   else STDIO 用户工具
@@ -106,6 +109,23 @@ CP 不得把**上游依赖故障**伪装成「未知工具」。`tools/list` 与
 | CP 服务凭据被 Runtime 拒绝（401/403） | 503 | `RUNTIME_UNAVAILABLE` | `reason=auth_failed`、`retryable=false` |
 | 其它上游非 2xx / 响应不可解析 | 503 | `RUNTIME_UNAVAILABLE` | `reason=upstream_error` |
 | 调用方自身未认证/无权限/待审批 | 现有 4xx | 不变 | — |
+
+### 3.4. 工具映射生命周期（PLAN-0583 / BL-124）
+
+`tool_name → server_id` 映射是进程内缓存，生命周期只有三条规则：
+
+1. **写入**：`tools/list` 的合并例程（系统目录 + 各 STDIO server + 各 remote server + sticky 别名）结束时整表固化一次。
+2. **未命中按工作区单飞重建一次**：`tools/call` 先补 `__system__`/CP-owned 目录；**仍未命中**才重建 stdio/remote 目录，
+   复用与 `tools/list` **同一个**合并例程（别名粘滞与 `generation` 语义不变，已签发名不漂移）。
+   重建按工作区串行化（进程内 per-workspace 锁 + 双检），并发未命中只扇出一次；
+   同一映射世代内重复的真缺席不再重建，直接 400——抑制幻觉工具名导致的放大。
+3. **5 分钟过期**：TTL 到期由后续读取（Run 派发 / `tools/list` / `tools/call`）清空整表并刷新时间戳。
+   因此 `tools/call` 到达时不存在「过期」标志，**触发条件只能是未命中**而不是「已过期」。
+
+错误口径在上述语义下保持 `§3.3` 不变：重建成功仍缺席 → `400 UNKNOWN_TOOL`（审计 reason 标 `after_refresh`）；
+重建期间依赖不可用 → 依赖问题体（503 族），不得退化为未知工具。
+取证日志：`event=tool_map_miss`（未命中）与 `event=tool_map_refresh`（`rebuilt` / `outcome` / `durationMs` / `fanout`）。
+TTL 默认 300s；`cp.mcp.toolmap.ttl-seconds` 只作为测试/栈的覆盖通道，不进业务配置域、不进 UI。
 
 - `reason` 枚举冻结为 `unreachable|timeout|auth_failed|upstream_error`；依赖故障审计 action 为 `dependency_unavailable`，与 `unknown_tool` 分账。
 - 系统目录不可达时 `tools/list` **整体 503**，不返回只含 CP-owned 工具的残缺 200；CP-owned `spawn_agent`/`acquire_credential` 的 `tools/call` 仍由 CP 本地派发。
@@ -190,7 +210,7 @@ stdio 配置的公开/内部契约（`generation` 乐观锁 + `hash`）见 `docs
 
 UI 设置页 workspace 标签以 `stdio-servers`（配置 name）∪ 本端点（快照 `server_id`）合并出行集合：五态徽章（starting/ready/restarting/failed/stopped）+「无记录」行 + 失败原因；打开拉取 + 手动刷新 + 30s 轮询（页面不可见暂停；失败保留上次状态并标注「状态可能过期」，不自动重试风暴）。
 
-同一波次修复 CP `toolServerCache` 失效处理：stdio `tools/list` 转发非 2xx 时移除该 serverId 的**全部旧映射**（warn 记录 wsId/serverId/status），部分失败不影响其他 server 的映射或工具合并——避免 `tools/call` 仍路由到不可用 server（调用侧宁可「未知工具」）。
+同一波次修复 CP `toolServerCache` 失效处理：stdio `tools/list` 转发非 2xx 时移除该 serverId 的**全部旧映射**（warn 记录 wsId/serverId/status），部分失败不影响其他 server 的映射或工具合并——避免 `tools/call` 仍路由到不可用 server（调用侧宁可「未知工具」）。该驱逐语义在规划重组（`§3.4`）中**原样复用**：重建失败的 server 不会留下旧路由。
 
 ## 7. 测试策略
 
