@@ -85,7 +85,9 @@ public class DataSeeder implements CommandLineRunner {
         // safe: `ensureAssigned` only needs the persisted admin row, never the
         // default grant.
         instanceOwnershipService.ensureAssigned(admin, admin.getId().toString());
-        grantDefaultService.ensureUserDefault(admin);
+        // PLAN-0610 T1.9: a fresh instance starts with a SUPER_ADMIN binding (invariant I1), not a
+        // plain ADMIN. Idempotent, and it materializes the role atoms in the same transaction.
+        grantDefaultService.ensureInstanceSuperAdmin(admin);
     }
 
     private static String generatePassword() {
@@ -108,3 +110,4 @@ public class DataSeeder implements CommandLineRunner {
         return configured == null || configured.isBlank() ? random.get() : configured;
     }
 }
+

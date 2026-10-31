@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.controller.MemberView;
@@ -150,7 +151,9 @@ public class WorkspaceMemberService {
 
     private Caller authorize(String workspaceId, String callerUserId, String callerInstanceRole) {
         requireWorkspaceId(workspaceId);
-        boolean instanceAdmin = "ADMIN".equals(callerInstanceRole);
+        // PLAN-0610 W1b (R2-9): the instance-level bypass is a capability. The
+        // compatibility parameter stays for the audit/echo contract only.
+        boolean instanceAdmin = CapabilityAuthorities.isInstanceAdmin();
         Optional<WorkspaceUser> membership = workspaceUserRepository
                 .findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId),
                         UUID.fromString(callerUserId));
@@ -267,3 +270,5 @@ public class WorkspaceMemberService {
     private record Caller(String workspaceRole, boolean instanceAdmin) {
     }
 }
+
+

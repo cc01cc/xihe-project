@@ -168,6 +168,8 @@ public class ToolFaceService {
 
     private static boolean workspaceManager() {
         String role = TenantContext.getWorkspaceRole();
-        return WorkspaceRole.canManage(role) || "ADMIN".equals(TenantContext.getUserRole());
+        // PLAN-0610 W1b (R2-9): capability projection, not the role string.
+        return WorkspaceRole.canManage(role) || CapabilityAuthorities.isInstanceAdmin();
     }
 }
+

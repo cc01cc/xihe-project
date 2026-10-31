@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.controller;
 
+import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
@@ -9,8 +10,6 @@ import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -157,10 +156,9 @@ public class WorkspaceController {
         return view;
     }
 
+    /** PLAN-0610 W1b (R2-9): capability projection, never the ROLE_ADMIN authority. */
     private boolean isAdmin() {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        return authentication != null && authentication.getAuthorities().stream()
-                .anyMatch(authority -> "ROLE_ADMIN".equals(authority.getAuthority()));
+        return CapabilityAuthorities.isInstanceAdmin();
     }
 
     public record CreateWorkspaceRequest(
@@ -173,3 +171,6 @@ public class WorkspaceController {
             String executionMode) {}
     public record UpdateWorkspaceRequest(String name, String description) {}
 }
+
+
+

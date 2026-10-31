@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
@@ -121,9 +122,64 @@ public class AuthzContext {
         return capabilitiesFor(subjectId).isInstanceAdmin();
     }
 
-    /** Round-2 P1-4: workspace administration is a service-level question, not an authority. */
+    /**
+     * Round-2 P1-4 / decision #15: workspace administration is a service-level question.
+     *
+     * <p>{@code instance:admin} holders administer every workspace (this is the pre-existing
+     * "instance ADMIN bypasses the membership gate" behaviour, now expressed as a capability);
+     * {@code workspace:admin} bound at instance scope covers every workspace; the same atom bound
+     * at workspace scope covers that workspace only.</p>
+     */
     public boolean canWorkspaceAdmin(UUID subjectId, UUID workspaceId) {
-        return capabilitiesFor(subjectId).canWorkspaceAdmin(workspaceId);
+        Capabilities capabilities = capabilitiesFor(subjectId);
+        return capabilities.isInstanceAdmin() || capabilities.canWorkspaceAdmin(workspaceId);
+    }
+
+    /** Current-request subject (from {@code TenantContext}); {@code false} without a subject. */
+    public boolean canWorkspaceAdmin(String workspaceId) {
+        UUID subjectId = currentSubjectId();
+        UUID workspace = parseWorkspaceId(workspaceId);
+        return subjectId != null && workspace != null && canWorkspaceAdmin(subjectId, workspace);
+    }
+
+    /** Current-request subject's instance-administration capability. */
+    public boolean isInstanceAdmin() {
+        UUID subjectId = currentSubjectId();
+        return subjectId != null && isInstanceAdmin(subjectId);
+    }
+
+    public boolean isInstanceSuper() {
+        UUID subjectId = currentSubjectId();
+        return subjectId != null && isInstanceSuper(subjectId);
+    }
+
+    /** Capabilities of the current request subject; empty without one. */
+    public Set<String> currentAuthorities() {
+        UUID subjectId = currentSubjectId();
+        return subjectId == null ? Set.of() : authoritiesFor(subjectId);
+    }
+
+    private static UUID currentSubjectId() {
+        String userId = TenantContext.getUserId();
+        if (userId == null || userId.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(userId);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    private static UUID parseWorkspaceId(String workspaceId) {
+        if (workspaceId == null || workspaceId.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(workspaceId.trim());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     /** Called by every binding/role write in the same transaction (I4). */
@@ -185,3 +241,4 @@ public class AuthzContext {
                 Set.copyOf(workspaceAdminWorkspaces));
     }
 }
+

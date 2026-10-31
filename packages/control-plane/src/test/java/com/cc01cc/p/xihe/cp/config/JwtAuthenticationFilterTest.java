@@ -23,8 +23,10 @@ class JwtAuthenticationFilterTest {
 
     private final JwtTokenProvider jwtProvider = mock(JwtTokenProvider.class);
     private final UserRepository userRepository = mock(UserRepository.class);
+    private final com.cc01cc.p.xihe.cp.policy.AuthzContext authzContext =
+            mock(com.cc01cc.p.xihe.cp.policy.AuthzContext.class);
     private final JwtAuthenticationFilter filter = new JwtAuthenticationFilter(
-            new AccessTokenAuthenticator(jwtProvider, userRepository));
+            new AccessTokenAuthenticator(jwtProvider, userRepository), authzContext);
 
     @AfterEach
     void tearDown() {
@@ -110,3 +112,4 @@ class JwtAuthenticationFilterTest {
         verify(chain).doFilter(request, response);
     }
 }
+

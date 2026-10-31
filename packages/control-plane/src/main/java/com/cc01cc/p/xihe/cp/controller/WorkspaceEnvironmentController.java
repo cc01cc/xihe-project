@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.controller;
 
+import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
@@ -72,8 +73,8 @@ public class WorkspaceEnvironmentController {
         }
 
         String userId = authentication == null ? TenantContext.getUserId() : authentication.getName();
-        boolean isAdmin = authentication != null && authentication.getAuthorities().stream()
-                .anyMatch(authority -> "ROLE_ADMIN".equals(authority.getAuthority()));
+        // PLAN-0610 W1b (R2-9): capability projection, never the ROLE_ADMIN authority.
+        boolean isAdmin = CapabilityAuthorities.isInstanceAdmin(authentication);
         if (!isAdmin && !workspaceService.isWorkspaceMember(workspaceId, userId)) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(Map.of("code", "WORKSPACE_NOT_FOUND", "detail", "Workspace not found"));
@@ -147,8 +148,8 @@ public class WorkspaceEnvironmentController {
             @RequestBody(required = false) ExecutionModeRequest request,
             Authentication authentication) {
         String userId = authentication == null ? TenantContext.getUserId() : authentication.getName();
-        boolean isAdmin = authentication != null && authentication.getAuthorities().stream()
-                .anyMatch(authority -> "ROLE_ADMIN".equals(authority.getAuthority()));
+        // PLAN-0610 W1b (R2-9): capability projection, never the ROLE_ADMIN authority.
+        boolean isAdmin = CapabilityAuthorities.isInstanceAdmin(authentication);
         try {
             Workspace workspace = workspaceService.changeExecutionMode(
                     workspaceId,
@@ -369,3 +370,5 @@ public class WorkspaceEnvironmentController {
         return ResponseEntity.accepted().body(body == null ? Map.of("status", "accepted") : body);
     }
 }
+
+

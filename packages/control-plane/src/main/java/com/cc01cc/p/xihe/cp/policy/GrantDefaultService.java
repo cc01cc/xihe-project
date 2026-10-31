@@ -131,13 +131,12 @@ public class GrantDefaultService {
                     + SystemAccessRoleCatalog.instanceTierRoleName(user.getRole())
                     + " is missing (V87 must have been applied)");
         }
-        List<AccessRoleBinding> tierBindings = bindingRepository
-                .findBySubjectTypeAndSubjectIdAndScopeType(SUBJECT_USER, user.getId(),
-                        AccessScope.INSTANCE)
-                .stream()
-                .filter(binding -> tierRoles.values().stream()
-                        .anyMatch(role -> role.getId().equals(binding.getRoleId())))
-                .toList();
+        List<AccessRoleBinding> tierBindings = tierBindings(user.getId(), tierRoles);
+        if (tierBindings.stream().anyMatch(binding -> isSuperAdmin(binding, tierRoles))) {
+            // PLAN-0610 W1b (T1.9): the SUPER_ADMIN tier is owned by instance ownership, not by the
+            // legacy users.role column — never downgrade it to ADMIN/USER here.
+            return;
+        }
         if (tierBindings.isEmpty()) {
             bindingRepository.save(new AccessRoleBinding(target.getId(), SUBJECT_USER, user.getId(),
                     AccessScope.INSTANCE, null, user.getId()));
@@ -153,6 +152,56 @@ public class GrantDefaultService {
             // One instance tier binding per user; drop duplicates left by earlier runs.
             bindingRepository.deleteAll(tierBindings.subList(1, tierBindings.size()));
         }
+    }
+
+    /**
+     * PLAN-0610 T1.9 / invariant I1: seed the instance-level {@code SUPER_ADMIN} binding so a fresh
+     * database starts with a super administrator instead of a plain ADMIN.
+     *
+     * <p>Idempotent: an existing SUPER_ADMIN binding is left untouched. Otherwise the lower tier
+     * binding (ADMIN/USER) is replaced, so a subject never accumulates two instance tiers. The
+     * materialization in the same transaction keeps «绑定并集 == 物化行集» (T1.10) true.</p>
+     */
+    @Transactional
+    public void ensureInstanceSuperAdmin(User user) {
+        requirePersistedUser(user);
+        dbLockTimeout.apply();
+        User lockedUser = userLock.lockAndFind(user.getId())
+                .orElseThrow(() -> new IllegalArgumentException("User not found"));
+        AccessRole superAdmin = roleRepository.findByName(SystemAccessRoleCatalog.SUPER_ADMIN)
+                .orElseThrow(() -> new IllegalStateException(
+                        "System role SUPER_ADMIN is missing (V87 must have been applied)"));
+        Map<String, AccessRole> tierRoles = roleRepository
+                .findByNameIn(SystemAccessRoleCatalog.INSTANCE_TIER_ROLES).stream()
+                .collect(Collectors.toMap(AccessRole::getName, Function.identity()));
+        List<AccessRoleBinding> tierBindings = tierBindings(lockedUser.getId(), tierRoles);
+        boolean alreadySuperAdmin = tierBindings.stream()
+                .anyMatch(binding -> superAdmin.getId().equals(binding.getRoleId()));
+        if (!alreadySuperAdmin) {
+            bindingRepository.deleteAll(tierBindings);
+            bindingRepository.save(new AccessRoleBinding(superAdmin.getId(), SUBJECT_USER,
+                    lockedUser.getId(), AccessScope.INSTANCE, null, lockedUser.getId()));
+            auditLogger.recordDurableChange(lockedUser.getId().toString(), null,
+                    "authorization_super_admin_binding_seeded", "user", lockedUser.getId().toString(),
+                    "role=" + SystemAccessRoleCatalog.SUPER_ADMIN + " scope=instance");
+            logger.info("[POLICY] event=super_admin_binding_seeded userId={}", lockedUser.getId());
+        }
+        materializer.materializeSubject(SUBJECT_USER, lockedUser.getId(), lockedUser.getId(), null);
+    }
+
+    private List<AccessRoleBinding> tierBindings(UUID userId, Map<String, AccessRole> tierRoles) {
+        return bindingRepository
+                .findBySubjectTypeAndSubjectIdAndScopeType(SUBJECT_USER, userId,
+                        AccessScope.INSTANCE)
+                .stream()
+                .filter(binding -> tierRoles.values().stream()
+                        .anyMatch(role -> role.getId().equals(binding.getRoleId())))
+                .toList();
+    }
+
+    private static boolean isSuperAdmin(AccessRoleBinding binding, Map<String, AccessRole> tierRoles) {
+        AccessRole superAdmin = tierRoles.get(SystemAccessRoleCatalog.SUPER_ADMIN);
+        return superAdmin != null && superAdmin.getId().equals(binding.getRoleId());
     }
 
     /**

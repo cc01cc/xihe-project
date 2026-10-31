@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
@@ -21,7 +22,6 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
 import org.springframework.http.HttpStatus;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -74,9 +74,9 @@ public class ApiRequestTemplateService {
         return new CpApiException(HttpStatus.CONFLICT, code, message);
     }
 
+    /** PLAN-0610 W1b (R2-9): capability projection, not the ROLE_ADMIN authority. */
     public static boolean admin() {
-        var auth = SecurityContextHolder.getContext().getAuthentication();
-        return auth != null && auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+        return CapabilityAuthorities.isInstanceAdmin();
     }
 
     private void access(String layer, UUID user, UUID workspace, boolean write) {
@@ -755,3 +755,6 @@ public class ApiRequestTemplateService {
         }
     }
 }
+
+
+

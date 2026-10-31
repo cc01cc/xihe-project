@@ -28,9 +28,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.GrantedAuthority;
-import org.springframework.security.core.context.SecurityContextHolder;
+import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
 import com.cc01cc.p.xihe.cp.mcp.McpProxyCatalogService;
 import com.cc01cc.p.xihe.cp.service.AgentTemplateService;
 import com.cc01cc.p.xihe.cp.service.ContextTemplateService;
@@ -76,14 +74,9 @@ public class ConfigController {
     /** Decision #33: agent-runtime (instructions / workersDir) is not readable by non-admins. */
     private static final Set<String> ADMIN_ONLY_READ_DOMAINS = Set.of("agent-runtime");
 
+    /** PLAN-0610 W1b (R2-9): instance administration is a capability, never a role name. */
     private static boolean isAdmin() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth == null) {
-            return false;
-        }
-        return auth.getAuthorities().stream()
-            .map(GrantedAuthority::getAuthority)
-            .anyMatch(r -> r.equals("ROLE_ADMIN"));
+        return CapabilityAuthorities.isInstanceAdmin();
     }
 
     private static String maskIfNotAdmin(String key, String value) {
@@ -794,3 +787,6 @@ public class ConfigController {
         }
     }
 }
+
+
+

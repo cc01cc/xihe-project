@@ -54,6 +54,9 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
     private ObjectMapper objectMapper;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.policy.AuthzContext authzContext;
+
+    @Autowired
     private com.cc01cc.p.xihe.cp.config.JwtTokenProvider jwtTokenProvider;
 
     /** The shared RestTemplate uses HttpURLConnection: no PATCH/DELETE and it drops 401 bodies. */
@@ -550,7 +553,11 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
                 new HttpEntity<>(Map.of("targetUserId", workspaceOwnerId, "password", PASSWORD),
                         authHeaders(workspaceOwnerToken)), String.class);
         assertEquals(HttpStatus.FORBIDDEN, ownerAttempt.getStatusCode());
-        assertTrue(ownerAttempt.getBody().contains("NOT_INSTANCE_OWNER"), ownerAttempt.getBody());
+        // PLAN-0610 W1b (R2-9): PUT /api/v1/instance/owner now requires cap:instance:admin at the
+        // URL layer, so a workspace OWNER without the instance capability is refused before the
+        // controller can answer NOT_INSTANCE_OWNER (that path stays covered by the instance
+        // ownership suite for admins that are not the owner).
+        assertTrue(ownerAttempt.getBody().contains("FORBIDDEN"), ownerAttempt.getBody());
 
         // instance ADMIN: may read the member list (0565 ruling #3) …
         assertEquals(HttpStatus.OK,
@@ -578,9 +585,22 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
         String token = register("instance-owner-admin@test.com");
         String userId = userIdOf(token);
         jdbc.update("UPDATE users SET role = 'ADMIN' WHERE id = CAST(? AS UUID)", userId);
+        // PLAN-0610 W1b: the owner must pass the capability gate on PUT /instance/owner, and the
+        // capability comes from the role binding, not from the legacy users.role column.
+        grantInstanceRole(userId, "ADMIN");
         jdbc.update("UPDATE instance_owner SET owner_user_id = CAST(? AS UUID), assigned_at = NOW()"
                 + " WHERE id = 1", userId);
         return loginToken("instance-owner-admin@test.com");
+    }
+
+    private void grantInstanceRole(String userId, String roleName) {
+        jdbc.update("DELETE FROM role_bindings WHERE subject_type = 'user'"
+                + " AND subject_id = CAST(? AS UUID) AND scope_type = 'instance'", userId);
+        jdbc.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+                + " granted_at) SELECT CAST(? AS UUID), r.id, 'user', CAST(? AS UUID), 'instance',"
+                + " NOW() FROM roles r WHERE r.name = ?",
+                UUID.randomUUID().toString(), userId, roleName);
+        authzContext.invalidate(UUID.fromString(userId));
     }
 
     /** Promotes a freshly registered account to ADMIN and returns its email (for a re-login). */
@@ -679,3 +699,4 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
         return api.exchange(url(path), HttpMethod.DELETE, new HttpEntity<>(authHeaders(token)), String.class);
     }
 }
+

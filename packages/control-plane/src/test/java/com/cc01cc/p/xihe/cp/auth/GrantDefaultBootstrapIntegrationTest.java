@@ -174,10 +174,12 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         User user = userRepository.findById(UUID.fromString(userId)).orElseThrow();
         User seededAdmin = userRepository.findByEmail("admin@xihe.local").orElseThrow();
 
-        assertEquals(8, roleAtoms("user", seededAdmin.getId()).size(),
-                "DataSeeder materializes the ADMIN matrix (five rows + the PLAN-0496 credential atoms)");
-        assertEquals(8, roleRows("user", seededAdmin.getId()).size(),
-                "PLAN-0610: one materialized row per ADMIN action atom; instance:admin is not a row");
+        // PLAN-0610 W1b T1.9: DataSeeder now seeds the SUPER_ADMIN instance binding (invariant I1),
+        // so the bootstrap admin materializes SUPER_ADMIN's 15 action atoms, not ADMIN's 8.
+        assertEquals(15, roleAtoms("user", seededAdmin.getId()).size(),
+                "the seeded admin owns SUPER_ADMIN: 15 action atoms materialized");
+        assertEquals(15, roleRows("user", seededAdmin.getId()).size(),
+                "one materialized row per action atom; capability atoms are never rows");
 
         Session session = sessionService.create(userId, workspaceId, "Grant test Session", null, null);
         sessionId = session.getId().toString();
@@ -411,4 +413,5 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
                 ToolShape.STRUCTURED, userId, workspaceId, null);
     }
 }
+
 
