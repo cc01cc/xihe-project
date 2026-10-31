@@ -1013,6 +1013,26 @@ async function startVerifyCpMock({
   workspaceStatus = 200,
   agentHealthStatus = 200,
   dropSessionResponse = false,
+  connections = [{
+    id: 'conn-1',
+    providerId: 'custom-openai-compatible',
+    apiTypeId: 'openai-compatible',
+    apiTypeVersion: 1,
+    operation: 'chat',
+    enabled: true,
+    status: 'READY',
+    connectionKey: 'default',
+    manualModels: ['fake-openai'],
+  }],
+  templatesByLayer = {
+    user: [{
+      id: 'tpl-user',
+      version: 2,
+      status: 'published',
+      apiTypeId: 'openai-compatible',
+      apiTypeVersion: 1,
+    }],
+  },
 } = {}) {
   const state = { calls: [], runIndex: 0 };
   const server = createServer(async (request, response) => {
@@ -1054,6 +1074,16 @@ async function startVerifyCpMock({
     }
     if (pathname === '/api/v1/workspaces/ws-1/agents/principal-new' && request.method === 'PUT') {
       json(response, 200, { principalId: 'principal-new', workspaceId: 'ws-1', permissions: [] });
+      return;
+    }
+    if (pathname === '/api/v1/provider-connections' && request.method === 'GET') {
+      json(response, 200, { connections });
+      return;
+    }
+    if (pathname === '/api/v1/config/api-request-templates' && request.method === 'GET') {
+      const layer = url.searchParams.get('layer') ?? 'user';
+      const entries = templatesByLayer[layer] ?? [];
+      json(response, 200, { templates: JSON.stringify(entries) });
       return;
     }
     if (pathname === '/api/v1/sessions' && request.method === 'POST') {
@@ -1201,6 +1231,64 @@ test('verify runs the full tier-A chain plus run terminal and cleans up its sess
   }
   const principalCall = cp.state.calls.find((item) => item.pathname === '/api/v1/agent-principals');
   assert.equal(principalCall.headers['x-workspace-id'], undefined);
+
+  // PLAN-0601: the Session must carry the explicit template + connection binding, otherwise CP
+  // rejects chat with 409 API_TYPE_REBIND_REQUIRED.
+  const sessionCall = cp.state.calls.find(
+    (item) => item.method === 'POST' && item.pathname === '/api/v1/sessions',
+  );
+  assert.equal(sessionCall.body.providerConnectionId, 'conn-1');
+  assert.equal(sessionCall.body.modelProvider, 'custom-openai-compatible');
+  assert.equal(sessionCall.body.modelName, 'fake-openai');
+  assert.equal(sessionCall.body.contextTemplateLayer, 'user');
+  assert.equal(sessionCall.body.contextTemplateId, 'tpl-user');
+  assert.equal(sessionCall.body.contextTemplateVersion, 2);
+  assert.ok(
+    methods.indexOf('GET /api/v1/config/api-request-templates') <
+      methods.indexOf('POST /api/v1/sessions'),
+  );
+});
+
+test('verify stops with an actionable error when no published api-request-template exists', async (t) => {
+  const cp = await startVerifyCpMock({ templatesByLayer: {} });
+  t.after(cp.close);
+  const result = await runCommand([
+    'verify', '--stack', 'stack-1', '--email', 'admin@xihe.local', '--workspace', 'ws-1', '--yes',
+  ], {
+    env: cp.env,
+    spawnSyncImpl: cp.spawnSyncImpl,
+    promptSecret: noPrompt,
+    stdout: sink(),
+    stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.error.code, 'VERIFY_TEMPLATE_MISSING');
+  assert.match(result.error.message, /No published api-request-template/);
+  assert.match(result.error.message, /Publish one first/);
+  assert.match(result.error.message, /API_TYPE_REBIND_REQUIRED/);
+  assert.equal(cp.state.calls.some((call) => call.pathname === '/api/v1/sessions'), false);
+  assert.equal(cp.state.calls.some((call) => call.pathname === '/api/v1/chat'), false);
+});
+
+test('verify stops with an actionable error when no READY chat connection exists', async (t) => {
+  const cp = await startVerifyCpMock({ connections: [] });
+  t.after(cp.close);
+  const result = await runCommand([
+    'verify', '--stack', 'stack-1', '--email', 'admin@xihe.local', '--workspace', 'ws-1', '--yes',
+  ], {
+    env: cp.env,
+    spawnSyncImpl: cp.spawnSyncImpl,
+    promptSecret: noPrompt,
+    stdout: sink(),
+    stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.error.code, 'VERIFY_CONNECTION_MISSING');
+  assert.match(result.error.message, /No READY chat provider connection/);
+  assert.match(result.error.message, /provider verify/);
+  assert.equal(cp.state.calls.some((call) => call.pathname === '/api/v1/sessions'), false);
 });
 
 test('verify requires explicit stack/email/workspace before any request', async () => {

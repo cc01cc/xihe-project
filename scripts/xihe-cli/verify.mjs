@@ -1,6 +1,11 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CliError, confirmAction } from './provider.mjs';
+import {
+  bindingRequestBody,
+  describeBinding,
+  resolveSessionBinding,
+} from './session-binding.mjs';
 
 const projectRoot = fileURLToPath(new URL('../../', import.meta.url));
 
@@ -379,8 +384,31 @@ export async function runVerify({
       step('A4 agent principal', 'PASS', 'pre-existing principal reused unchanged');
     }
 
+    // PLAN-0601: CP rejects chat on Sessions without an explicit template + connection binding
+    // (409 API_TYPE_REBIND_REQUIRED), so resolve that binding before creating the Session.
+    const resolved = await resolveSessionBinding({ client, stack });
+    if (resolved.error) {
+      step('A5 session binding', 'FAIL', resolved.error.code);
+      throw new CliError(resolved.error.code, resolved.error.message, { stack }, 2);
+    }
+    state.binding = resolved.binding;
+    data.binding = {
+      connectionId: resolved.binding.connectionId,
+      providerId: resolved.binding.providerId,
+      modelName: resolved.binding.modelName,
+      template: {
+        layer: resolved.binding.templateLayer,
+        id: resolved.binding.templateId,
+        version: resolved.binding.templateVersion,
+      },
+    };
+    step('A5 session binding', 'PASS', describeBinding(resolved.binding));
+
     const session = await client.call('POST', '/api/v1/sessions', {
-      body: { title: 'xihe-verify', agentPrincipalId: state.principalId },
+      body: bindingRequestBody(resolved.binding, {
+        title: 'xihe-verify',
+        agentPrincipalId: state.principalId,
+      }),
     });
     state.sessionId = typeof session.body?.id === 'string'
       ? session.body.id
