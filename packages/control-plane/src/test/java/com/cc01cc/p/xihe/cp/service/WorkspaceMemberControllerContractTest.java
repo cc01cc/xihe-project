@@ -203,7 +203,7 @@ class WorkspaceMemberControllerContractTest extends AbstractIntegrationTest {
         User target = newUser("admin-target");
         User admin = adminUser();
         String adminToken = TestDataFactory.createGlobalToken(admin.getId().toString(),
-                admin.getEmail(), "ADMIN");
+                admin.getEmail(), "ADMIN", 0);
 
         // Read without any workspace header (spec §7 API-only fallback path).
         assertEquals(HttpStatusCode.valueOf(200),
@@ -310,7 +310,7 @@ class WorkspaceMemberControllerContractTest extends AbstractIntegrationTest {
         workspaceId = workspace.getId();
         workspaceUserRepository.saveAndFlush(new WorkspaceUser(workspaceId.toString(),
                 ownerId.toString(), WorkspaceRole.OWNER));
-        ownerToken = TestDataFactory.createGlobalToken(ownerId.toString(), owner.getEmail(), "USER");
+        ownerToken = TestDataFactory.createGlobalToken(ownerId.toString(), owner.getEmail(), "USER", 0);
         // JDK HttpClient factory supports PATCH (the shared RestTemplate cannot).
         client = new RestTemplate(new JdkClientHttpRequestFactory());
         client.setErrorHandler(new org.springframework.web.client.DefaultResponseErrorHandler() {
@@ -335,7 +335,7 @@ class WorkspaceMemberControllerContractTest extends AbstractIntegrationTest {
             workspaceUserRepository.saveAndFlush(new WorkspaceUser(workspaceId.toString(),
                     user.getId().toString(), WorkspaceRole.valueOf(workspaceRole)));
         }
-        return TestDataFactory.createGlobalToken(user.getId().toString(), user.getEmail(), "USER");
+        return TestDataFactory.createGlobalToken(user.getId().toString(), user.getEmail(), "USER", 0);
     }
 
     private String path() {

@@ -126,13 +126,13 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
     void instanceUserWorkspaceLayerReadsEnforceFailClosedBoundaries() {
         fixture();
         String memberGlobal = TestDataFactory.createGlobalToken(
-                memberUserId.toString(), memberEmail(), "USER");
+                memberUserId.toString(), memberEmail(), "USER", 0);
         String memberWorkspace = TestDataFactory.createWorkspaceToken(
-                memberUserId.toString(), memberEmail(), "USER", workspaceId.toString());
+                memberUserId.toString(), memberEmail(), "USER", workspaceId.toString(), 0);
         String adminGlobal = TestDataFactory.createGlobalToken(
-                adminUserId.toString(), adminEmail(), "ADMIN");
+                adminUserId.toString(), adminEmail(), "ADMIN", 0);
         String outsiderGlobal = TestDataFactory.createGlobalToken(
-                outsiderUserId.toString(), outsiderEmail(), "USER");
+                outsiderUserId.toString(), outsiderEmail(), "USER", 0);
 
         ResponseEntity<Map> mergedConfigDenied = restTemplate.exchange(
                 url("/api/v1/config/agent-templates"), HttpMethod.GET,
@@ -233,9 +233,9 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
     void genericConfigLayerReadCannotExposeInstanceTemplatePromptToUser() {
         fixture();
         String memberGlobal = TestDataFactory.createGlobalToken(
-                memberUserId.toString(), memberEmail(), "USER");
+                memberUserId.toString(), memberEmail(), "USER", 0);
         String adminGlobal = TestDataFactory.createGlobalToken(
-                adminUserId.toString(), adminEmail(), "ADMIN");
+                adminUserId.toString(), adminEmail(), "ADMIN", 0);
 
         ResponseEntity<String> instanceDenied = getConfigLayer("instance", null, memberGlobal);
         assertEquals(HttpStatus.FORBIDDEN, instanceDenied.getStatusCode());
@@ -261,9 +261,9 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
     void crossLayerEnumerationIsDeniedWith403ProblemBodies() {
         fixture();
         String outsiderGlobal = TestDataFactory.createGlobalToken(
-                outsiderUserId.toString(), outsiderEmail(), "USER");
+                outsiderUserId.toString(), outsiderEmail(), "USER", 0);
         String memberGlobal = TestDataFactory.createGlobalToken(
-                memberUserId.toString(), memberEmail(), "USER");
+                memberUserId.toString(), memberEmail(), "USER", 0);
 
         ResponseEntity<String> instanceEnum = get("?layer=instance", outsiderGlobal);
         assertEquals(HttpStatus.FORBIDDEN, instanceEnum.getStatusCode());
@@ -370,8 +370,8 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
         addUserGrant(memberUserId, "read", "*");
         addUserGrant(memberUserId, "write", "*");
 
-        String adminToken = TestDataFactory.createGlobalToken(adminUserId.toString(), adminEmail(), "ADMIN");
-        String memberToken = TestDataFactory.createGlobalToken(memberUserId.toString(), memberEmail(), "USER");
+        String adminToken = TestDataFactory.createGlobalToken(adminUserId.toString(), adminEmail(), "ADMIN", 0);
+        String memberToken = TestDataFactory.createGlobalToken(memberUserId.toString(), memberEmail(), "USER", 0);
 
         UUID instanceRoleId = UUID.randomUUID();
         UUID instanceWriteTemplateId = UUID.randomUUID();
@@ -447,7 +447,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
         fixture();
         addUserGrant(outsiderUserId, ToolFaceRegistry.ACTION_CREATE_TEMPLATE, "*");
         addUserGrant(outsiderUserId, "read", "*");
-        String outsiderToken = TestDataFactory.createGlobalToken(outsiderUserId.toString(), outsiderEmail(), "USER");
+        String outsiderToken = TestDataFactory.createGlobalToken(outsiderUserId.toString(), outsiderEmail(), "USER", 0);
 
         int outsiderRowsBefore = configJpaRepository.findByUserIdAndDomain(outsiderUserId, "agent-templates").size();
         UUID roleId = UUID.randomUUID();
@@ -463,7 +463,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
         assertTrue(auditLogRepository.findByUserIdOrderByCreatedAtDesc(outsiderUserId.toString()).stream()
                 .noneMatch(audit -> audit.getAction().startsWith("agent_template_")));
 
-        String adminToken = TestDataFactory.createGlobalToken(adminUserId.toString(), adminEmail(), "ADMIN");
+        String adminToken = TestDataFactory.createGlobalToken(adminUserId.toString(), adminEmail(), "ADMIN", 0);
         Map<String, Object> importBody = Map.of(
                 "logging", Map.of("levelCp", "WARN"),
                 "agent-templates", Map.of("roles", List.of(), "templates", List.of()));

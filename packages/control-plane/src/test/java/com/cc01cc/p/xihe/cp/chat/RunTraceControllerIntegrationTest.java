@@ -153,7 +153,7 @@ class RunTraceControllerIntegrationTest extends AbstractIntegrationTest {
 
     private String token(User user, Workspace tokenWorkspace) {
         return jwtTokenProvider.createAccessToken(user.getId().toString(), user.getEmail(),
-                user.getRole().name(), tokenWorkspace.getId().toString());
+                user.getRole().name(), tokenWorkspace.getId().toString(), 0);
     }
 
     private ResponseEntity<Map> getTrace(String path, String bearerToken) {

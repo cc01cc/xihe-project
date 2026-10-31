@@ -97,7 +97,7 @@ class MessageControllerTest extends AbstractH2Test {
         workspaceId = ws.getId().toString();
         workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
 
-        authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId);
+        authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId, 0);
 
         sessionId = UUID.randomUUID().toString();
         Session session = new Session(workspaceId, userId, "Message Test");

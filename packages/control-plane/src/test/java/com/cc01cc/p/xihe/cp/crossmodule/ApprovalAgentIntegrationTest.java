@@ -89,7 +89,7 @@ class ApprovalAgentIntegrationTest extends AbstractWireMockTest {
         ws = workspaceRepository.save(ws);
         workspaceId = ws.getId().toString();
         workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
-        token = jwtTokenProvider.createAccessToken(userId, jwtTokenProvider.getEmailFromToken(token), "USER", workspaceId);
+        token = jwtTokenProvider.createAccessToken(userId, jwtTokenProvider.getEmailFromToken(token), "USER", workspaceId, 0);
 
         sessionId = UUID.randomUUID().toString();
         Session session = new Session(workspaceId, userId, "Approval Agent Test");

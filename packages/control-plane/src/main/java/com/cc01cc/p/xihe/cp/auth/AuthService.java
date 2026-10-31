@@ -148,8 +148,10 @@ public class AuthService {
 
     /** Pure token issuance for a caller-resolved workspace; no Workspace reads. */
     public AuthResponse issueTokens(User user, String workspaceId) {
+        // PLAN-0580: the access token stamps the current epoch; a role change bumps
+        // users.token_version so this token stops authenticating on its next use.
         String accessToken = jwtTokenProvider.createAccessToken(
-                user.getId().toString(), user.getEmail(), user.getRole().name());
+                user.getId().toString(), user.getEmail(), user.getRole().name(), user.getTokenVersion());
         String refreshToken = jwtTokenProvider.createRefreshToken(user.getId().toString());
 
         return new AuthResponse(accessToken, refreshToken, 900,

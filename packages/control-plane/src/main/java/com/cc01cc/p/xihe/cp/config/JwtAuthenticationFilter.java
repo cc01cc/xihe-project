@@ -12,14 +12,26 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Optional;
 
+/**
+ * PLAN-0580 decision #14: authentication requires a valid signature <b>and</b> a
+ * matching access-token epoch.
+ *
+ * <p>This filter has no try/catch of its own, so every rejection has to be a
+ * decision (no authentication) rather than an exception:
+ * {@link AccessTokenAuthenticator} owns the three fail-closed states (non-UUID
+ * subject / unknown user row / missing or stale {@code tv}) and returns empty
+ * for all of them. The security chain then answers 401
+ * {@code AUTHORIZATION_REQUIRED}.
+ */
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
-    private final JwtTokenProvider jwtTokenProvider;
+    private final AccessTokenAuthenticator tokenAuthenticator;
 
-    public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider) {
-        this.jwtTokenProvider = jwtTokenProvider;
+    public JwtAuthenticationFilter(AccessTokenAuthenticator tokenAuthenticator) {
+        this.tokenAuthenticator = tokenAuthenticator;
     }
 
     @Override
@@ -33,16 +45,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             token = authHeader.substring(7);
         }
 
-        if (token != null && jwtTokenProvider.validateToken(token)) {
-            String userId = jwtTokenProvider.getUserIdFromToken(token);
-            String role = jwtTokenProvider.getRoleFromToken(token);
-
+        Optional<AccessTokenAuthenticator.AuthenticatedUser> authenticated =
+                tokenAuthenticator.authenticate(token);
+        if (authenticated.isPresent()) {
+            AccessTokenAuthenticator.AuthenticatedUser user = authenticated.get();
             List<SimpleGrantedAuthority> authorities = List.of(
-                    new SimpleGrantedAuthority("ROLE_" + role)
+                    new SimpleGrantedAuthority("ROLE_" + user.role())
             );
 
             UsernamePasswordAuthenticationToken authentication =
-                    new UsernamePasswordAuthenticationToken(userId, null, authorities);
+                    new UsernamePasswordAuthenticationToken(user.userId(), null, authorities);
             SecurityContextHolder.getContext().setAuthentication(authentication);
         }
 

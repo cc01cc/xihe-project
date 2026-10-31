@@ -519,8 +519,8 @@ class PrincipalGrantAdminControllerContractTest extends AbstractIntegrationTest 
         target = userRepository.saveAndFlush(target);
         targetId = target.getId();
         targetUsername = target.getUsername();
-        adminToken = TestDataFactory.createGlobalToken(adminId.toString(), admin.getEmail(), "ADMIN");
-        targetToken = TestDataFactory.createGlobalToken(targetId.toString(), target.getEmail(), "USER");
+        adminToken = TestDataFactory.createGlobalToken(adminId.toString(), admin.getEmail(), "ADMIN", 0);
+        targetToken = TestDataFactory.createGlobalToken(targetId.toString(), target.getEmail(), "USER", 0);
     }
 
     private static String shortId() {

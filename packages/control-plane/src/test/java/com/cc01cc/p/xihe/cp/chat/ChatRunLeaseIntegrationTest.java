@@ -87,7 +87,7 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
         Workspace ws = workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId)).stream().findFirst().orElseThrow();
         workspaceId = ws.getId().toString();
         workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
-        jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId);
+        jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId, 0);
 
         sessionId = UUID.randomUUID().toString();
         Session session = new Session(workspaceId, userId, "Lease Integration");

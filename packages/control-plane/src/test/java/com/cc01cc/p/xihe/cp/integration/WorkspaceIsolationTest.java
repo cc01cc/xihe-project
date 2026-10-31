@@ -182,7 +182,7 @@ class WorkspaceIsolationTest {
     @Test
     void jwtTokenWithWorkspaceContextIsValid() {
         String token = TestDataFactory.createWorkspaceToken(
-                userA.getId().toString(), "user-a@test.com", "USER", ws1.getId().toString());
+                userA.getId().toString(), "user-a@test.com", "USER", ws1.getId().toString(), 0);
         assertNotNull(token);
         assertTrue(TestDataFactory.tokenProvider().validateToken(token));
         assertEquals(userA.getId().toString(), TestDataFactory.tokenProvider().getUserIdFromToken(token));

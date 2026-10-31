@@ -18,6 +18,9 @@ public class JwtTokenProvider {
 
     private static final Logger logger = LoggerFactory.getLogger(JwtTokenProvider.class);
 
+    /** PLAN-0580: access-token epoch claim name (matches {@code users.token_version}). */
+    public static final String TOKEN_VERSION_CLAIM = "tv";
+
     private final SecretKey accessKey;
     private final SecretKey refreshKey;
     private final long accessTokenValidity;
@@ -38,17 +41,23 @@ public class JwtTokenProvider {
      * resolved per request from {@code X-Workspace-Id} (or the legacy claim /
      * default workspace during the transition), so a token can never pin a
      * browser tab to one workspace.
+     *
+     * <p>PLAN-0580: every access token carries the epoch claim {@code tv} — the
+     * value of {@code users.token_version} at issue time. The single production
+     * issue point is {@code AuthService.issueTokens}; a token without {@code tv}
+     * is rejected by {@link AccessTokenAuthenticator} (decision #14).
      */
-    public String createAccessToken(String userId, String email, String role) {
-        return createAccessToken(userId, email, role, null);
+    public String createAccessToken(String userId, String email, String role, int tokenVersion) {
+        return createAccessToken(userId, email, role, null, tokenVersion);
     }
 
     /**
      * Legacy/test-only overload. Passing a workspaceId keeps the old
      * {@code workspace_id} claim so PLAN-0559 can exercise the transition and
-     * older client shapes; production code must call the three-argument form.
+     * older client shapes; production code must call the four-argument form.
      */
-    public String createAccessToken(String userId, String email, String role, String workspaceId) {
+    public String createAccessToken(String userId, String email, String role, String workspaceId,
+                                    int tokenVersion) {
         Date now = new Date();
         Date expiry = new Date(now.getTime() + accessTokenValidity);
 
@@ -56,6 +65,7 @@ public class JwtTokenProvider {
                 .subject(userId)
                 .claim("email", email)
                 .claim("role", role)
+                .claim(TOKEN_VERSION_CLAIM, tokenVersion)
                 .issuedAt(now)
                 .expiration(expiry);
         if (workspaceId != null && !workspaceId.isBlank()) {
@@ -151,5 +161,23 @@ public class JwtTokenProvider {
                 .parseSignedClaims(token)
                 .getPayload()
                 .get("workspace_id", String.class);
+    }
+
+    /**
+     * PLAN-0580: the {@code tv} claim, or {@code null} when the token predates
+     * the epoch (or carries a non-numeric value). A null result is a hard
+     * rejection — see {@link AccessTokenAuthenticator}.
+     */
+    public Integer getTokenVersionFromToken(String token) {
+        Object raw = Jwts.parser()
+                .verifyWith(accessKey)
+                .build()
+                .parseSignedClaims(token)
+                .getPayload()
+                .get(TOKEN_VERSION_CLAIM);
+        if (raw instanceof Number number) {
+            return number.intValue();
+        }
+        return null;
     }
 }
