@@ -26,9 +26,9 @@ updated: 2026-10-25
 ```bash
 mise install
 mise run setup
-cp .env.example .env.dev
+# .env.dev 等已入库，不要复制或覆盖；个人密钥写入 gitignored 的 .env.local
 # 在 UI 设置页或 ConfigService 中配置 LLM API key（如 DeepSeek）
-# 注：应用层配置走 ConfigService，不写入 .env.dev（见 DEV-003）
+# 注：应用层配置走 ConfigService，不写入 .env*（见 DEV-003）
 ```
 
 ### 1.3. 启动
@@ -159,7 +159,7 @@ Provider 可在设置页面的模型配置中管理，选择预设后自动填�
 | `XIHE_AGENT_PORT` | `12632` | Agent 端口（宿主机映射，Docker 内为 8000） |
 | `XIHE_RUNTIME_PORT` | `12633` | Runtime 端口（宿主机映射，Docker 内为 8001） |
 | `XIHE_UI_PORT` | `12630` | UI 端口（可通过环境变量覆盖） |
-| `XIHE_CP_DATASOURCE_URL` | `jdbc:postgresql://localhost:12634/xihe` | 数据库连接（宿主机映射，Docker 内为 5432） |
+| `XIHE_CP_DATASOURCE_URL` | `jdbc:postgresql://localhost:12634/xihe_1` | 数据库连接（宿主机映射，Docker 内为 5432；库名随栈位为 `xihe_<n>`，stack-1 即 `xihe_1`） |
 | `XIHE_STACK_ID` | `stack-1` | 栈槽位（`stack-1`..`stack-8`）；上表是 stack-1 的值，stack-2 起整体换段（ui 12640/12641/…），见 DEV-002「模式 D」 |
 | `XIHE_CP_JWT_SECRET` | — | JWT 签名密钥 |
 | `XIHE_LOG_LEVEL` | `info` | 日志等级 |

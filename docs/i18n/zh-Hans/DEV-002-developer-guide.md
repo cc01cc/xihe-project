@@ -44,8 +44,8 @@ xihe/
 ```bash
 mise install
 mise run setup
-cp .env.example .env.dev
-# 编辑 .env.dev（端口/DB/JWT/Workspace 根等，详见 DEV-003 §2）
+# .env / .env.dev / .env.test / .env.prod 均已入库（仅非敏感占位值），无需复制或覆盖
+# 本机个性化覆盖写 gitignored 的 .env.local（端口/DB/JWT/Workspace 根等见 DEV-003 §2）
 ```
 
 前置：Node 22+ / pnpm 10+ / Python 3.12+ + uv / Java 25+ + Maven 3.9 / Rust 1.97.1+ / Docker（Desktop for Windows 需 WSL2 集成）。

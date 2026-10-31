@@ -108,7 +108,8 @@ Running directly from the root directory is recommended:
 
 ```bash
 mise run setup
-cp .env.example .env.dev
+# .env / .env.dev / .env.test / .env.prod are committed with non-secret placeholders — do not copy or overwrite them.
+# Put machine-specific overrides (ports/DB/JWT/workspace root) in the gitignored .env.local.
 ```
 
 The root directory now uses `XIHE_ENV` to select environment files:

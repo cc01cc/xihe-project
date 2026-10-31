@@ -23,8 +23,8 @@ updated: 2026-10-25
 ```bash
 mise install
 mise run setup
-cp .env.example .env.dev
-# Edit .env.dev, set XIHE_DEEPSEEK_API_KEY
+# .env.dev and friends are committed — do not copy or overwrite them.
+# Put personal keys in the gitignored .env.local.
 ```
 
 ### 1.3. Startup
@@ -155,7 +155,7 @@ The model selector shows only verified, chat-capable models. ASR/TTS models are 
 | `XIHE_AGENT_PORT` | `12632` | Agent port (host mapping, Docker internal is 8000) |
 | `XIHE_RUNTIME_PORT` | `12633` | Runtime port (host mapping, Docker internal is 8001) |
 | `XIHE_UI_PORT` | `12630` | UI port (overridable by environment variable) |
-| `XIHE_CP_DATASOURCE_URL` | `jdbc:postgresql://localhost:12634/xihe` | Database connection (host mapping, Docker internal is 5432) |
+| `XIHE_CP_DATASOURCE_URL` | `jdbc:postgresql://localhost:12634/xihe_1` | Database connection (host mapping, Docker internal is 5432; database name follows the stack slot as `xihe_<n>`, so stack-1 is `xihe_1`) |
 | `XIHE_STACK_ID` | `stack-1` | Stack slot (`stack-1`..`stack-8`); the table above is stack-1, stack-2 shifts the whole block (ui 12640/12641/…), see DEV-002 "Parallel host stacks" |
 | `XIHE_CP_JWT_SECRET` | — | JWT signing key |
 | `XIHE_LOG_LEVEL` | `info` | Log level |
