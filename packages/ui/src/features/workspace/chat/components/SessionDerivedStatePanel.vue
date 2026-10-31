@@ -10,6 +10,10 @@ const props = defineProps<{
     error?: boolean;
 }>();
 
+const emit = defineEmits<{
+    retry: [];
+}>();
+
 const { t } = useI18n();
 const visible = computed(
     () =>
@@ -48,14 +52,24 @@ function formatTime(value: string): string {
             </span>
         </div>
 
-        <p
+        <div
             v-if="error"
-            class="mt-2 text-xs text-destructive"
+            class="mt-2 flex items-center gap-2 text-xs text-destructive"
             role="status"
             data-testid="derived-state-error"
         >
-            {{ t("chat.derivedStateRefreshError") }}
-        </p>
+            <span class="line-clamp-2 min-w-0 flex-1">{{
+                t("chat.derivedStateRefreshError")
+            }}</span>
+            <button
+                type="button"
+                data-testid="derived-state-retry"
+                class="shrink-0 rounded border border-destructive/40 px-1.5 py-0.5 text-[11px] font-medium transition hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                @click="emit('retry')"
+            >
+                {{ t("common.retry") }}
+            </button>
+        </div>
 
         <section v-if="activeChildren.length" class="mt-3" aria-labelledby="derived-active-heading">
             <h3 id="derived-active-heading" class="text-xs font-medium text-muted-foreground">

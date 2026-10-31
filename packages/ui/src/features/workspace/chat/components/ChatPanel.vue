@@ -29,9 +29,7 @@ import MessageList from "./MessageList.vue";
 import InputArea from "./InputArea.vue";
 import SSEStream from "./SSEStream.vue";
 import ApprovalModal from "./ApprovalModal.vue";
-import SessionPolicyControls from "./SessionPolicyControls.vue";
-import SessionContextTemplate from "./SessionContextTemplate.vue";
-import ContextSourcesU1 from "./ContextSourcesU1.vue";
+import SessionSettingsPanel from "./SessionSettingsPanel.vue";
 import SessionDerivedStatePanel from "./SessionDerivedStatePanel.vue";
 import FollowUpQueuePanel from "./FollowUpQueuePanel.vue";
 import GuidancePanel from "./GuidancePanel.vue";
@@ -103,6 +101,9 @@ const branchLabels = computed(() =>
     Object.fromEntries(
         branchOptions.value.map((branch) => [branch.branchId, branch.label] as const),
     ),
+);
+const mainBranchId = computed(
+    () => sessionBranches.value.find((branch) => branch.parentBranchId === null)?.branchId ?? null,
 );
 const followUpQueueMode = computed(
     () =>
@@ -712,9 +713,8 @@ async function handleRetry(messageId: string) {
     await handleSend(userMessage.content, userMessage.attachments, userMessage.branchId);
 }
 
-function handleBranchSelection(event: Event) {
-    if (isStreaming.value) return;
-    const branchId = (event.target as HTMLSelectElement).value;
+function selectBranch(branchId: string) {
+    if (isStreaming.value || !branchId) return;
     chatStore.selectBranch(props.sessionId, branchId);
 }
 
@@ -927,41 +927,19 @@ watch(
 
 <template>
     <div class="flex flex-col h-full min-h-0 overflow-hidden">
-        <SessionPolicyControls :session-id="sessionId" />
-        <SessionContextTemplate :session-id="sessionId" />
-        <ContextSourcesU1 :session-id="sessionId" />
-        <div
-            class="flex items-center gap-3 border-b px-4 py-2"
-            data-testid="session-branch-selector"
-        >
-            <label
-                :for="`session-branch-${sessionId}`"
-                class="text-xs font-medium text-muted-foreground"
-            >
-                {{ t("chat.branchSelectorLabel") }}
-            </label>
-            <select
-                :id="`session-branch-${sessionId}`"
-                :value="selectedBranchId"
-                :disabled="
-                    isStreaming ||
-                    branchOptions.length === 0 ||
-                    creatingBranchForMessageId !== null ||
-                    pendingSend !== null
-                "
-                data-testid="session-branch-select"
-                class="min-w-0 rounded-md border bg-background px-2 py-1 text-xs disabled:opacity-50"
-                @change="handleBranchSelection"
-            >
-                <option
-                    v-for="branch in branchOptions"
-                    :key="branch.branchId"
-                    :value="branch.branchId"
-                >
-                    {{ branch.label }}
-                </option>
-            </select>
-        </div>
+        <SessionSettingsPanel
+            :session-id="sessionId"
+            :branch-options="branchOptions"
+            :selected-branch-id="selectedBranchId"
+            :main-branch-id="mainBranchId"
+            :branch-disabled="
+                isStreaming ||
+                branchOptions.length === 0 ||
+                creatingBranchForMessageId !== null ||
+                pendingSend !== null
+            "
+            @select-branch="selectBranch"
+        />
 
         <div
             v-if="runRecovery"
@@ -985,6 +963,7 @@ watch(
             :terminal-notices="derivedState?.terminalNotices ?? []"
             :loading="derivedStateLoading"
             :error="derivedStateError"
+            @retry="handleDerivedStateRefresh"
         />
 
         <MessageList

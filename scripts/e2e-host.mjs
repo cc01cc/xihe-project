@@ -1355,6 +1355,12 @@ async function runPlaywright() {
               XIHE_DEEPSEEK_API_KEY: 'fake-deepseek-key',
             }),
       }
+  // PLAN-0588 T4.2a (M4 gate passed 2026-10-31): one Agent process keeps a
+  // per-workspace MCP shard, so a spec no longer needs a process restart to
+  // switch workspace. `disabled` turns journey.ensureAgentWorkspaceBinding into
+  // a no-op that logs once; deleting this single key restores rebinding
+  // (spec/e2e-rebind-exit.md §4 rollback).
+  agentRestartEnv.disabled = 'BL-141 fixed (0588 M1-M3)'
   if (checkpointSaverProbeRequested) {
     agentRestartEnv.XIHE_E2E_PROFILE = 'host'
     agentRestartEnv.XIHE_E2E_CHECKPOINT_PROBE = '1'

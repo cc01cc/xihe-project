@@ -98,9 +98,12 @@ describe("Session template identity", () => {
         await flushPromises();
         pending[0]!(session("a", "old-template"));
         await flushPromises();
-        expect(wrapper.get('[data-testid="session-context-template-current"]').text()).toContain(
-            "new-template",
-        );
+        expect(
+            wrapper.get('[data-testid="session-context-template-select"]').attributes("title"),
+        ).toContain("new-template");
+        const emittedSummaries = wrapper.emitted("update:summary") ?? [],
+            lastSummary = emittedSummaries.at(-1)?.[0] as { label: string | null } | undefined;
+        expect(lastSummary?.label).toContain("new-template");
         wrapper.unmount();
     });
 });
