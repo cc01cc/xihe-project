@@ -29,6 +29,15 @@ class DomainSyncResult(TypedDict):
     source: str
 
 
+class EffectiveDomainResult(TypedDict):
+    """One effective-domain pull result (PLAN-0590 run snapshot, spec §3)."""
+
+    status: str
+    entries: dict[str, str] | None
+    revision: str
+    source: str
+
+
 class SyncReport(TypedDict):
     ok: bool
     domains: dict[str, DomainSyncResult]
@@ -53,8 +62,10 @@ class ConfigClient:
     CP resolves `env > workspace > user > instance > code default` server-side and
     returns a single merged value set per domain (plus `revision` and `source`).
 
-    Workspace scope is bound per process (`workspace_id`, Agent is single-workspace);
-    user scope arrives per run via the `userOverrides` payload field (decision #3a).
+    Workspace scope: the process-level sync still binds one workspace (`workspace_id`)
+    for instance/readiness consumers; PLAN-0590 run config instead resolves a
+    per-run snapshot through `fetch_run_domains(workspace_id, user_id)` and never
+    uses the process binding as a run base (spec/run-config-snapshot.md).
 
     Credentials are deliberately absent from this client (decision #21): config
     `llm-provider` carries only non-secret parameters. Provider keys come from
@@ -96,6 +107,7 @@ class ConfigClient:
                     client,
                     domain,
                     headers,
+                    workspace_id=self.workspace_id,
                 )
                 domain_results[domain] = {
                     "status": status,
@@ -165,10 +177,14 @@ class ConfigClient:
         client: httpx.AsyncClient,
         domain: str,
         headers: dict[str, str],
+        workspace_id: str | None = None,
+        user_id: str | None = None,
     ) -> tuple[str, dict[str, str] | None, str, str]:
         params: dict[str, str] = {}
-        if self.workspace_id:
-            params["workspaceId"] = self.workspace_id
+        if workspace_id:
+            params["workspaceId"] = workspace_id
+        if user_id:
+            params["userId"] = user_id
         try:
             resp = await client.get(
                 f"{self.cp_url}/internal/v1/config/effective/{domain}",
@@ -278,6 +294,46 @@ class ConfigClient:
     def get_domain(self, domain: str) -> dict[str, str]:
         """Snapshot of the effective entries for one domain (empty when absent)."""
         return dict(self._effective_cache.get(domain, {}))
+
+    def effective_entries(self) -> dict[str, dict[str, str]]:
+        """Copy of the process-level effective cache (instance/readiness consumers)."""
+        return {domain: dict(entries) for domain, entries in self._effective_cache.items()}
+
+    async def fetch_run_domains(
+        self,
+        domains: "list[str] | tuple[str, ...]",
+        *,
+        workspace_id: str | None,
+        user_id: str | None,
+    ) -> dict[str, EffectiveDomainResult]:
+        """Pull `(workspaceId, userId)`-scoped effective domains in one pass (PLAN-0590).
+
+        Never falls back to the process-bound workspace: identity comes only from
+        the caller, which takes it from the CP run payload (spec §3, I2).
+        """
+        headers = {"Authorization": f"Bearer {self.api_token}"}
+        async with httpx.AsyncClient(trust_env=False) as client:
+            fetched = await asyncio.gather(
+                *[
+                    self._fetch_effective(
+                        client,
+                        domain,
+                        headers,
+                        workspace_id=workspace_id,
+                        user_id=user_id,
+                    )
+                    for domain in domains
+                ]
+            )
+        results: dict[str, EffectiveDomainResult] = {}
+        for domain, (status, entries, revision, source) in zip(domains, fetched):
+            results[domain] = {
+                "status": status,
+                "entries": entries,
+                "revision": revision,
+                "source": source,
+            }
+        return results
 
     def get(self, domain: str, key: str) -> str | None:
         entries = self._effective_cache.get(domain)

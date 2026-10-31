@@ -22,6 +22,11 @@ from xihe_agent.adapters.approval_tool import ApprovalAgentTool, ApprovalTool
 from xihe_agent.adapters.mcp_client import MCPClientManager
 from xihe_agent.cancel_registry import RunCancelRegistry
 from xihe_agent.config_client import ConfigClient, SyncReport
+from xihe_agent.config_snapshot import (
+    ConfigSnapshotUnavailableError,
+    RunConfigResolver,
+    RunConfigSnapshot,
+)
 from xihe_agent.context import (
     CPContextServiceClient,
     CPEventStoreClient,
@@ -54,8 +59,11 @@ __all__ = [
     "AGENT_PORT",
     "AGENT_USER_NAME",
     "USE_REGISTRY",
-    "USE_SUPERVISOR",
     "SyncReport",
+    "ConfigSnapshotUnavailableError",
+    "RunConfigResolver",
+    "RunConfigSnapshot",
+    "run_config_resolver",
     "approval_tool",
     "legacy_approval_tool",
     "mcp_manager",
@@ -159,6 +167,9 @@ config_client = ConfigClient(
     api_token=CP_API_TOKEN,
     workspace_id=get_env("XIHE_WORKSPACE_ID"),
 )
+# PLAN-0590: per-run `(workspaceId, userId)` config snapshots (spec §4). The
+# process-bound ConfigClient above stays for instance/readiness consumers only.
+run_config_resolver = RunConfigResolver(config_client)
 _models_router.bind(config_client)
 
 llm_config = LLMConfig.from_config_client(config_client)
@@ -227,7 +238,9 @@ _refresh_embedding_config()
 _token_counter = TokenCounter()
 
 AGENT_USER_NAME = config_client.get("agent-profile", "userName") or "User"
-USE_SUPERVISOR = config_client.get_bool("agent-runtime", "useSupervisor")
+# PLAN-0590: `useSupervisor` is a per-run decision resolved from the run snapshot
+# (`chat.py`), not a process global; `useRegistry` remains the process-level
+# worker-registry capability gate (read through `state.` to stay hot-reloadable).
 USE_REGISTRY = config_client.get_bool("agent-runtime", "useRegistry")
 
 worker_registry: WorkerRegistry | None = None
@@ -378,18 +391,17 @@ def _normalize_tool_timeouts(raw: Any) -> dict[str, int]:
 
 
 def _merge_run_domain(
+    snapshot: RunConfigSnapshot,
     domain: str,
     user_overrides: dict[str, dict[str, str]],
     workspace_overrides: dict[str, dict[str, str]],
 ) -> dict[str, str]:
-    """Run-local merge: pulled effective -> user -> workspace (PLAN-0307 T2.7).
+    """Run-local merge: run snapshot -> user -> workspace (PLAN-0307 T2.7).
 
-    Pure function (decision #24/G6): never writes back to the process snapshot.
+    PLAN-0590: the base is the run's own `(workspaceId, userId)` snapshot, never
+    the process-wide effective cache; this function must not read `config_client`.
     """
-    merged = dict(config_client.get_domain(domain))
-    merged.update(user_overrides.get(domain, {}))
-    merged.update(workspace_overrides.get(domain, {}))
-    return merged
+    return snapshot.merge(domain, user_overrides, workspace_overrides)
 
 
 def get_model_catalog() -> dict[str, Any]:
@@ -507,20 +519,19 @@ def get_llm_initialization_status() -> dict[str, Any]:
 
 def _resolve_policy_for_model(
     model: str | None,
+    snapshot: RunConfigSnapshot,
     user_overrides: dict[str, dict[str, str]] | None = None,
     workspace_overrides: dict[str, dict[str, str]] | None = None,
 ):
-    """PLAN-0341 T1.6: effective context-policy for this run."""
+    """PLAN-0341 T1.6 / PLAN-0590: effective context-policy for this run."""
     from xihe_agent.context_policy import resolve_context_policy
 
-    entries = dict(config_client.get_domain("context-policy"))
-    if user_overrides:
-        entries.update(user_overrides.get("context-policy", {}))
-    if workspace_overrides:
-        entries.update(workspace_overrides.get("context-policy", {}))
+    entries = snapshot.merge("context-policy", user_overrides, workspace_overrides)
     policy = resolve_context_policy(model, entries)
     logger.info(
-        "[LIFECYCLE] service=agent event=context_policy_resolved model={} source={} maxInputTokens={} pruneWindowChars={} recoveryBand={}",
+        "[LIFECYCLE] service=agent event=context_policy_resolved workspaceId={} userId={} model={} source={} maxInputTokens={} pruneWindowChars={} recoveryBand={}",
+        snapshot.workspace_id or "none",
+        snapshot.user_id or "none",
         model,
         policy.source,
         policy.max_input_tokens,
@@ -570,12 +581,13 @@ def _parse_budget_int(raw: str | None, fallback: int) -> int:
 
 
 def _resolve_run_budget(
+    snapshot: RunConfigSnapshot,
     user_overrides: dict[str, dict[str, str]] | None = None,
     workspace_overrides: dict[str, dict[str, str]] | None = None,
 ):
-    """PLAN-0492 T2.1: effective RunBudget for this run = clamped value keys.
+    """PLAN-0492 T2.1 / PLAN-0590: effective RunBudget for this run = clamped value keys.
 
-    Values resolve through the run merge chain (pulled effective -> user ->
+    Values resolve through the run merge chain (run snapshot -> user ->
     workspace) and are clamped by the instance-only ceilings:
     ``ceiling > 0 ? min(value, ceiling) : value`` (decision #19). Each clamp is
     logged as ``run_budget_clamp`` with the key origin (aligned with the
@@ -583,11 +595,7 @@ def _resolve_run_budget(
     """
     from xihe_agent.interfaces.agent_runner import RunBudget
 
-    entries = dict(config_client.get_domain("agent-runtime"))
-    if user_overrides:
-        entries.update(user_overrides.get("agent-runtime", {}))
-    if workspace_overrides:
-        entries.update(workspace_overrides.get("agent-runtime", {}))
+    entries = snapshot.merge("agent-runtime", user_overrides, workspace_overrides)
     resolved = {
         key: _parse_budget_int(entries.get(key), default)
         for key, default in _RUN_BUDGET_CODE_DEFAULTS.items()
@@ -666,14 +674,15 @@ def _parse_loop_int(raw: str | None, fallback: int) -> int:
 
 
 def _resolve_loop_guard(
+    snapshot: RunConfigSnapshot,
     user_overrides: dict[str, dict[str, str]] | None = None,
     workspace_overrides: dict[str, dict[str, str]] | None = None,
 ):
-    """PLAN-0493 T2.2: effective loop thresholds + exempt set for this run.
+    """PLAN-0493 T2.2 / PLAN-0590: effective loop thresholds + exempt set for this run.
 
-    Value keys resolve through the run merge chain (pulled effective -> user ->
+    Value keys resolve through the run merge chain (run snapshot -> user ->
     workspace) and are clamped by the instance-only ceilings
-    (``ceiling > 0 ? min(value, ceiling) : value``, mirroring run budgets; each
+    (``ceiling > 0 ? min(value, ceiling)``, mirroring run budgets; each
     clamp logs ``loop_guard_clamp``). ``loopExemptTools`` (JSON text array)
     appends to the builtin exempt set — builtin items are structurally
     irremovable (decision #12); an absent/invalid value falls back to the
@@ -681,11 +690,7 @@ def _resolve_loop_guard(
     """
     from xihe_agent.context.loop_detection import BUILTIN_EXEMPT_TOOLS, LoopThresholds
 
-    entries = dict(config_client.get_domain("agent-runtime"))
-    if user_overrides:
-        entries.update(user_overrides.get("agent-runtime", {}))
-    if workspace_overrides:
-        entries.update(workspace_overrides.get("agent-runtime", {}))
+    entries = snapshot.merge("agent-runtime", user_overrides, workspace_overrides)
     resolved = {
         key: (_parse_budget_int if key in _LOOP_CEILING_KEYS else _parse_loop_int)(
             entries.get(key), default
@@ -743,11 +748,12 @@ def _resolve_loop_guard(
 
 def _model_window_tokens(
     model: str | None,
+    snapshot: RunConfigSnapshot,
     user_overrides: dict[str, dict[str, str]] | None = None,
     workspace_overrides: dict[str, dict[str, str]] | None = None,
 ) -> int:
-    """PLAN-0341 T1.6: config maxInputTokens overrides litellm static table."""
-    policy = _resolve_policy_for_model(model, user_overrides, workspace_overrides)
+    """PLAN-0341 T1.6 / PLAN-0590: config maxInputTokens overrides litellm table."""
+    policy = _resolve_policy_for_model(model, snapshot, user_overrides, workspace_overrides)
     if policy.max_input_tokens:
         return policy.max_input_tokens
     if not model:

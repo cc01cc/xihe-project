@@ -10,12 +10,17 @@ Four frozen states:
 
 import xihe_agent.app_state as app_state
 from xihe_agent.app_state import _resolve_run_budget
+from xihe_agent.config_snapshot import process_config_snapshot
+
+
+def _snapshot():
+    return process_config_snapshot(app_state.config_client)
 
 
 def test_run_budget_defaults_when_nothing_configured(monkeypatch):
     monkeypatch.setattr(app_state.config_client, "_effective_cache", {})
 
-    budget = _resolve_run_budget({}, {})
+    budget = _resolve_run_budget(_snapshot(), {}, {})
 
     # Token defaults calibrated 2026-10-13 from real-provider runs
     # (p95=25535 over 15 runs; PLAN-0492 evidence/m0-token-calibration.md).
@@ -38,7 +43,7 @@ def test_run_budget_positive_ceiling_clamps_value(monkeypatch):
         },
     )
 
-    budget = _resolve_run_budget({}, {})
+    budget = _resolve_run_budget(_snapshot(), {}, {})
 
     assert budget.max_turns == 80
     assert budget.max_elapsed_seconds == 3600
@@ -54,7 +59,7 @@ def test_run_budget_positive_ceiling_clamps_value(monkeypatch):
             }
         },
     )
-    clamped = _resolve_run_budget({}, {})
+    clamped = _resolve_run_budget(_snapshot(), {}, {})
     assert clamped.max_turns == 100
 
 
@@ -72,7 +77,7 @@ def test_run_budget_zero_ceiling_means_no_clamp(monkeypatch):
         },
     )
 
-    budget = _resolve_run_budget({}, {})
+    budget = _resolve_run_budget(_snapshot(), {}, {})
 
     assert budget.max_turns == 500
     assert budget.max_elapsed_seconds == 99999
@@ -90,11 +95,12 @@ def test_run_budget_overrides_merge_and_still_clamp(monkeypatch):
         },
     )
 
-    budget = _resolve_run_budget({"agent-runtime": {"runMaxTurns": "60"}}, {})
+    budget = _resolve_run_budget(_snapshot(), {"agent-runtime": {"runMaxTurns": "60"}}, {})
 
     assert budget.max_turns == 60
 
     over_limit = _resolve_run_budget(
+        _snapshot(),
         {"agent-runtime": {"runMaxTurns": "250"}},
         {"agent-runtime": {"runMaxTurns": "300"}},
     )
@@ -113,7 +119,7 @@ def test_run_budget_invalid_values_fall_back_to_defaults(monkeypatch):
         },
     )
 
-    budget = _resolve_run_budget({}, {})
+    budget = _resolve_run_budget(_snapshot(), {}, {})
 
     assert budget.max_turns == 25
     assert budget.max_elapsed_seconds == 600

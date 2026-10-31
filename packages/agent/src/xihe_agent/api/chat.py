@@ -22,10 +22,8 @@ from xihe_agent.agent_runner.guidance import GuidanceConsumer
 from xihe_agent.agent_runner.langgraph_runner import prune_history_tool_results
 from xihe_agent.api.shared import problem_details, verify_api_token
 from xihe_agent.app_state import (
-    AGENT_USER_NAME,
     CP_API_TOKEN,
     CP_URL,
-    USE_SUPERVISOR,
     _classify_llm_exception,
     _content_length,
     _estimate_input_tokens,
@@ -45,8 +43,10 @@ from xihe_agent.app_state import (
     cp_event_store_client,
     generate_image_tool,
     run_cancel_registry,
+    run_config_resolver,
 )
 from xihe_agent.config_client import ProviderLeaseError
+from xihe_agent.config_snapshot import ConfigSnapshotUnavailableError, RunConfigSnapshot
 from xihe_agent.interfaces.agent_runner import AgentEvent, RunnerConfig
 from xihe_agent.interfaces.chat_run_context import ContextBuildError
 from xihe_agent.interfaces.event import Event
@@ -284,8 +284,30 @@ async def chat(request: Request):
     user_overrides = _normalize_run_overrides(raw_user_overrides)
     workspace_overrides = _normalize_run_overrides(raw_workspace_overrides)
 
-    profile_entries = _merge_run_domain("agent-profile", user_overrides, workspace_overrides)
-    user_name: str = data.get("userName") or profile_entries.get("userName") or AGENT_USER_NAME
+    # PLAN-0590 (spec §1/§3, I1/I2): resolve ONE frozen config snapshot for this
+    # run from the CP-supplied identity; never from the process workspace binding.
+    user_id: str | None = data.get("userId") if isinstance(data.get("userId"), str) else None
+    config_snapshot: RunConfigSnapshot
+    try:
+        config_snapshot = await run_config_resolver.resolve(workspace_id, user_id)
+    except ConfigSnapshotUnavailableError as exc:
+        logger.error(
+            "[LIFECYCLE] service=agent event=config_snapshot_unavailable requestId={} sessionId={} workspaceId={} userId={} reason={}",
+            request_id,
+            session_id,
+            workspace_id or "none",
+            user_id or "none",
+            exc.detail,
+        )
+        return problem_details(
+            request_id,
+            503,
+            "AGENT_CONFIG_SNAPSHOT_UNAVAILABLE",
+            "Run configuration is unavailable",
+        )
+
+    profile_entries = _merge_run_domain(config_snapshot, "agent-profile", user_overrides, workspace_overrides)
+    user_name: str = data.get("userName") or profile_entries.get("userName") or "User"
 
     if tool_mode not in {"none", "workspace"}:
         return problem_details(request_id, 400, "INVALID_REQUEST", "toolMode must be none or workspace")
@@ -330,7 +352,9 @@ async def chat(request: Request):
         rag_context, rag_matches = "", 0
         rag_state: str | None = "disabled"
         if uses_rag_context(template_snapshot["template"]["bodySource"]):
-            rag_context, rag_state, rag_matches = await retrieve_chat_context(data, content, run_id, request_id)
+            rag_context, rag_state, rag_matches = await retrieve_chat_context(
+                data, content, run_id, request_id, config_snapshot
+            )
     except (ApiRequestError, ProviderLeaseError) as exc:
         code = exc.terminal_code if isinstance(exc, ApiRequestError) else exc.code
         logger.warning("Chat rejected requestId={} runId={} code={}", request_id, run_id, exc.code)
@@ -358,7 +382,7 @@ async def chat(request: Request):
         )
         return problem_details(request_id, 503, "PROVIDER_CONNECTION_UNAVAILABLE", "Provider connection unavailable")
 
-    run_llm_entries = _merge_run_domain("llm-provider", user_overrides, workspace_overrides)
+    run_llm_entries = _merge_run_domain(config_snapshot, "llm-provider", user_overrides, workspace_overrides)
     # PLAN-0523 decisions #9/#12: per-model sampling overrides from the layer
     # modelParams map. T3.6 (决策 #13): the legacy layer-global `timeout` key
     # is retired with the CP schema/migration — the default stays 60s.
@@ -418,7 +442,9 @@ async def chat(request: Request):
                 rag_observation["state"] = rag_state
             yield render_sse("status", correlated_data(rag_observation))
             mcp_tools = await _get_tools_for_mode(tool_mode, workspace_id)
-            if USE_SUPERVISOR and tool_mode == "workspace":
+            # PLAN-0590 (decision #4): supervisor support is a run-scoped decision,
+            # read from the frozen snapshot instead of an import-time global.
+            if config_snapshot.get_bool("agent-runtime", "useSupervisor") and tool_mode == "workspace":
                 raise ApprovalExecutorUnsupportedError("Approval is not supported by the buffered supervisor executor")
             else:
                 # PLAN-0410 T2.3: the snapshot is scoped to this Run's branch;
@@ -444,7 +470,8 @@ async def chat(request: Request):
                 if mcp_tools:
                     all_tools = list(mcp_tools) + all_tools
 
-                user_id = data.get("userId")
+                # PLAN-0590: owner identity comes from the same CP payload key
+                # used for the run config snapshot (I2; no local derivation).
                 has_owner_context = isinstance(user_id, str) and bool(workspace_id)
                 if continuation is not None and not has_owner_context:
                     # 续跑必须有 owner 归属才能重验 lineage/owner：缺失即 fail closed。
@@ -496,7 +523,7 @@ async def chat(request: Request):
                     )
 
                 policy = _resolve_policy_for_model(
-                    model_override or request_config.model, user_overrides, workspace_overrides
+                    model_override or request_config.model, config_snapshot, user_overrides, workspace_overrides
                 )
                 pruned = (
                     prune_history_tool_results(context.messages, policy.prune_window_chars)
@@ -581,7 +608,9 @@ async def chat(request: Request):
                 messages = [] if resume_pending else [TextMessage(role="human", content=content)]
                 has_template = True
 
-                loop_thresholds, loop_exempt_tools = _resolve_loop_guard(user_overrides, workspace_overrides)
+                loop_thresholds, loop_exempt_tools = _resolve_loop_guard(
+                    config_snapshot, user_overrides, workspace_overrides
+                )
                 guidance_consumer = GuidanceConsumer(
                     base_url=CP_URL,
                     service_token=CP_API_TOKEN,
@@ -595,7 +624,7 @@ async def chat(request: Request):
                     cancel_event=cancel_event,
                     # PLAN-0492 T2.1: CP-resolved cumulative budget (ceiling-clamped
                     # observation-only when 0); the runner only enforces.
-                    budget=_resolve_run_budget(user_overrides, workspace_overrides),
+                    budget=_resolve_run_budget(config_snapshot, user_overrides, workspace_overrides),
                     # PLAN-0493 T2.1/T2.2: CP-resolved loop/no-progress guard
                     # (thresholds ceiling-clamped; exempt = builtin ∪ configured).
                     loop=loop_thresholds,
@@ -688,7 +717,7 @@ async def chat(request: Request):
                         # along so the CP compaction gate can evaluate the
                         # percentage threshold without a config dependency.
                         usage_data["windowTokens"] = _model_window_tokens(
-                            request_config.model, user_overrides, workspace_overrides
+                            request_config.model, config_snapshot, user_overrides, workspace_overrides
                         )
                         # PLAN-0343 decision #10: the model string is the
                         # aggregation key and the CP pricing lookup key.

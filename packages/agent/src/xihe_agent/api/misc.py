@@ -19,12 +19,37 @@ from xihe_agent.app_state import (
     get_llm_initialization_status,
     mcp_manager,
     run_cancel_registry,
+    run_config_resolver,
 )
-from xihe_agent.llm.base import LLMConfig
+from xihe_agent.config_snapshot import ConfigSnapshotUnavailableError, RunConfigSnapshot
+from xihe_agent.llm.base import LLMConfig, parse_model_params
 from xihe_agent.llm.summarize import summarize_with_llm
 from xihe_agent.version import agent_version, build_commit
 
 router = APIRouter()
+
+
+async def _summarize_config_snapshot(workspace_id: str | None, user_id: str | None) -> RunConfigSnapshot | None:
+    """PLAN-0590 spec §7: summarize resolves its own (ws,user) snapshot.
+
+    A compaction summary must never block the run (PLAN-0354 I1), so an absent
+    identity or an unavailable snapshot degrades to code defaults with a WARN
+    instead of failing. The process-wide effective cache is NOT used: it is
+    bound to the process workspace and would reintroduce cross-workspace bleed.
+    """
+    if not workspace_id and not user_id:
+        logger.warning("[LIFECYCLE] service=agent event=summarize_config_unscoped reason=identity_absent")
+        return None
+    try:
+        return await run_config_resolver.resolve(workspace_id, user_id)
+    except ConfigSnapshotUnavailableError as exc:
+        logger.warning(
+            "[LIFECYCLE] service=agent event=summarize_config_unavailable workspaceId={} userId={} reason={}",
+            workspace_id or "none",
+            user_id or "none",
+            exc.detail,
+        )
+        return None
 
 
 @router.post("/internal/v1/agent/runs/{run_id}/cancel", dependencies=[Depends(verify_api_token)])
@@ -105,6 +130,9 @@ async def summarize(request: Request):
     connection_revision = data.get("connectionRevision")
     text: str = data.get("text") or ""
     prior_summary: str | None = data.get("priorSummary") or None
+    # PLAN-0590 spec §8: CP sends the run identity with the summarize hop.
+    workspace_id: str | None = data.get("workspaceId") if isinstance(data.get("workspaceId"), str) else None
+    user_id: str | None = data.get("userId") if isinstance(data.get("userId"), str) else None
 
     if not credential_lease:
         return problem_details(request_id, 400, "INVALID_REQUEST", "credentialLease is required")
@@ -132,17 +160,23 @@ async def summarize(request: Request):
             request_id, 503, "PROVIDER_CONNECTION_UNAVAILABLE",
             "The selected provider connection is unavailable", retryable=True)
 
-    run_llm_entries = config_client.get_domain("llm-provider")
+    summarize_snapshot = await _summarize_config_snapshot(workspace_id, user_id)
+    run_llm_entries = summarize_snapshot.domain_entries("llm-provider") if summarize_snapshot else {}
     run_llm_config = LLMConfig.from_entries(run_llm_entries)
+    # PLAN-0590 spec §7: sampling values come from the run snapshot's per-model
+    # `modelParams` (the only live sampling source since PLAN-0523 T3.6), with
+    # the code defaults as fallback — never from the process-bound cache.
+    summarize_model = str(grant.get("model") or model_override or "")
+    model_params = parse_model_params(run_llm_entries, summarize_model) or {}
     request_config = LLMConfig(
         provider=str(grant.get("provider", provider_override or "")),
         route_provider=str(grant.get("routeProvider", grant.get("provider", ""))),
         api_key=str(grant.get("apiKey") or ""),
         api_base=str(grant.get("baseUrl") or ""),
-        model=str(grant.get("model") or model_override or ""),
-        timeout=run_llm_config.timeout,
-        max_tokens=min(run_llm_config.max_tokens, 2048),
-        temperature=run_llm_config.temperature,
+        model=summarize_model,
+        timeout=float(model_params.get("timeout", run_llm_config.timeout)),
+        max_tokens=min(int(model_params.get("maxTokens", run_llm_config.max_tokens)), 2048),
+        temperature=float(model_params.get("temperature", run_llm_config.temperature)),
     )
     # Late-bound through app_state so config-refresh replacement (and tests)
     # keep the pre-split `main.create_llm` semantics.
