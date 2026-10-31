@@ -53,12 +53,15 @@ public class AuthController {
     private final ClientIpResolver clientIpResolver;
     private final TransactionTemplate transactionTemplate;
     private final com.cc01cc.p.xihe.cp.service.InstanceOwnershipService instanceOwnershipService;
+    /** PLAN-0581 §6: bootstrap env switch for public self-registration (default open). */
+    private final RegistrationPolicy registrationPolicy;
 
     public AuthController(AuthService authService, WorkspaceService workspaceService,
                           LocalModeService localModeService,
                           LoginAttemptService loginAttemptService,
                           ClientIpResolver clientIpResolver,
                           com.cc01cc.p.xihe.cp.service.InstanceOwnershipService instanceOwnershipService,
+                          RegistrationPolicy registrationPolicy,
                           PlatformTransactionManager transactionManager) {
         this.authService = authService;
         this.workspaceService = workspaceService;
@@ -66,6 +69,7 @@ public class AuthController {
         this.loginAttemptService = loginAttemptService;
         this.clientIpResolver = clientIpResolver;
         this.instanceOwnershipService = instanceOwnershipService;
+        this.registrationPolicy = registrationPolicy;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
@@ -87,6 +91,15 @@ public class AuthController {
             loginAttemptService.checkAndRecordRegister(clientIp.raw(), clientIp.bucketKey());
         } catch (LoginThrottledException e) {
             return rateLimited(e);
+        }
+        // PLAN-0581 §6: the registration policy is evaluated AFTER the 0558 IP
+        // throttle (a closed instance still throttles probes instead of handing out
+        // an unthrottled 403 oracle) and BEFORE any user row exists. Local
+        // single-user mode is exempt — otherwise a fresh instance with
+        // XIHE_LOCAL_MODE=true plus a closed policy could never create its first
+        // account (I5).
+        if (!localModeService.enabled()) {
+            registrationPolicy.requireOpen();
         }
         // PLAN-0526: local mode may omit the password (server generates an
         // unmemorized strong one); elsewhere the password stays mandatory (400).
