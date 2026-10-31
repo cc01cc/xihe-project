@@ -11,6 +11,9 @@ atomically (design §行为不变量).
 import asyncio
 import json
 import os
+import time
+from collections import OrderedDict
+from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
@@ -67,6 +70,11 @@ __all__ = [
     "approval_tool",
     "legacy_approval_tool",
     "mcp_manager",
+    "mcp_shard_registry",
+    "McpCompatView",
+    "McpShard",
+    "McpShardNotFoundError",
+    "ShardedMcpRegistry",
     "config_client",
     "llm_config",
     "image_provider_manager",
@@ -153,14 +161,259 @@ def _parse_recover_session_ids() -> list[str]:
 
 
 approval_tool = ApprovalAgentTool()
-mcp_manager = MCPClientManager(
-    cp_url=MCP_URL,
-    server_name="cp",
-    workspace_id=get_env("XIHE_WORKSPACE_ID"),
-    api_token=CP_API_TOKEN,
-    approval_tool=approval_tool,
-    retry_interval=MCP_RETRY_INTERVAL,
-)
+
+
+class McpShardNotFoundError(RuntimeError):
+    """`reinit`/`tools` addressed a workspace with no live shard (spec §7)."""
+
+    code = "MCP_SHARD_NOT_FOUND"
+
+    def __init__(self, workspace_id: str):
+        super().__init__(f"no MCP shard for workspace {workspace_id}")
+        self.workspace_id = workspace_id
+
+
+@dataclass
+class McpShard:
+    """One workspace's MCP tool context (spec/shard-registry-contract.md §2.1)."""
+
+    manager: MCPClientManager
+    last_used: float
+    initialized_at: float
+
+
+class ShardedMcpRegistry:
+    """Per-workspace MCP tool contexts (PLAN-0588, spec §2/§3).
+
+    I3a: one ``asyncio.Lock`` per workspace (``setdefault`` + double-check inside
+    the lock, same shape as ``config_snapshot.RunConfigResolver``); registry-level
+    critical sections are **synchronous dict operations only** and never span
+    ``await manager.initialize``. I3b: different workspaces discover in parallel.
+
+    Failure semantics ①: a failed discovery stores nothing — no entry, no failure
+    cache, no cooldown; the per-workspace lock already merges concurrent first
+    calls into one discovery, and later calls simply retry.
+    """
+
+    def __init__(
+        self,
+        *,
+        max_shards: int | None = None,
+        idle_ttl_s: int | None = None,
+        factory: Any = None,
+    ):
+        self._shards: OrderedDict[str, McpShard] = OrderedDict()
+        self._locks: dict[str, asyncio.Lock] = {}
+        self._max_shards = max(1, get_int_env("XIHE_AGENT_MCP_MAX_SHARDS", 16) if max_shards is None else max_shards)
+        self._idle_ttl_s = get_int_env("XIHE_AGENT_MCP_IDLE_TTL_S", 1800) if idle_ttl_s is None else idle_ttl_s
+        self._factory = factory or self._default_factory
+        self._init_failures = 0
+
+    # ── construction ───────────────────────────────────────────────────────
+    def _default_factory(self, workspace_id: str) -> MCPClientManager:
+        return MCPClientManager(
+            cp_url=MCP_URL,
+            server_name="cp",
+            workspace_id=workspace_id,
+            api_token=CP_API_TOKEN,
+            approval_tool=approval_tool,
+            retry_interval=MCP_RETRY_INTERVAL,
+            on_use=lambda: self.touch(workspace_id),
+        )
+
+    # ── synchronous views (never await) ────────────────────────────────────
+    @property
+    def max_shards(self) -> int:
+        return self._max_shards
+
+    @property
+    def idle_ttl_s(self) -> int:
+        return self._idle_ttl_s
+
+    def first_shard(self) -> McpShard | None:
+        for shard in self._shards.values():
+            return shard
+        return None
+
+    def shard_count(self) -> int:
+        return len(self._shards)
+
+    def workspace_ids(self) -> list[str]:
+        return list(self._shards)
+
+    def tool_names(self, workspace_id: str) -> list[str] | None:
+        """Tool names of one shard; ``None`` when the workspace has no shard."""
+        tools = self.tools_for(workspace_id)
+        if tools is None:
+            return None
+        return [tool.spec.name for tool in tools]
+
+    def tools_for(self, workspace_id: str) -> list[Any] | None:
+        """Tool objects of one shard; ``None`` when the workspace has no shard."""
+        shard = self._shards.get(workspace_id)
+        if shard is None:
+            return None
+        return list(shard.manager.tools)
+
+    def aggregate_tools(self) -> list[Any]:
+        """All shard tools, de-duplicated by name (counts only; no workspace ids)."""
+        seen: set[str] = set()
+        tools: list[Any] = []
+        for shard in self._shards.values():
+            for tool in shard.manager.tools:
+                if tool.spec.name in seen:
+                    continue
+                seen.add(tool.spec.name)
+                tools.append(tool)
+        return tools
+
+    def aggregate_tool_names(self) -> list[str]:
+        """All shard tool names, de-duplicated (counts only; no workspace ids)."""
+        names: list[str] = []
+        for shard in self._shards.values():
+            for tool in shard.manager.tools:
+                if tool.spec.name not in names:
+                    names.append(tool.spec.name)
+        return names
+
+    def stats(self) -> dict[str, Any]:
+        return {
+            "shards": len(self._shards),
+            "maxShards": self._max_shards,
+            "idleTtlSeconds": self._idle_ttl_s,
+            "initFailures": self._init_failures,
+        }
+
+    def touch(self, workspace_id: str) -> None:
+        """Refresh ``last_used`` (run-path pickup and ``call_tool`` path)."""
+        shard = self._shards.get(workspace_id)
+        if shard is None:
+            return
+        shard.last_used = time.monotonic()
+        self._shards.move_to_end(workspace_id)
+
+    # ── lifecycle ──────────────────────────────────────────────────────────
+    async def get_or_create(self, workspace_id: str) -> McpShard:
+        """Return this workspace's shard, discovering it under its own lock (R1)."""
+        self._evict_idle()
+        shard = self._shards.get(workspace_id)
+        if shard is not None:
+            self.touch(workspace_id)
+            return shard
+
+        lock = self._locks.setdefault(workspace_id, asyncio.Lock())
+        async with lock:  # R1: only this workspace serializes here
+            shard = self._shards.get(workspace_id)  # double-check inside the lock
+            if shard is not None:
+                self.touch(workspace_id)
+                return shard
+            manager = self._factory(workspace_id)
+            started = time.monotonic()
+            try:
+                # R2: no registry-level lock is held across this await.
+                await manager.initialize(workspace_id=workspace_id)
+            except Exception:
+                # Failure semantics ①: nothing stored, cached or throttled.
+                self._init_failures += 1
+                raise
+            now = time.monotonic()
+            self._store(workspace_id, McpShard(manager=manager, last_used=now, initialized_at=now))
+            logger.info(
+                "[LIFECYCLE] service=agent event=mcp_shard_created workspaceId={} toolsCount={} elapsedMs={}",
+                workspace_id,
+                len(manager.tools),
+                int((now - started) * 1000),
+            )
+            return self._shards[workspace_id]
+
+    async def reinitialize(self, workspace_id: str | None = None) -> list[str]:
+        """Re-discover one shard (given) or every shard (spec §3.5)."""
+        if workspace_id:
+            lock = self._locks.setdefault(workspace_id, asyncio.Lock())
+            async with lock:
+                shard = self._shards.get(workspace_id)
+                if shard is None:
+                    raise McpShardNotFoundError(workspace_id)
+                await shard.manager.reinitialize()
+                self.touch(workspace_id)
+            return [workspace_id]
+
+        reinitialized: list[str] = []
+        for target in list(self._shards):
+            lock = self._locks.setdefault(target, asyncio.Lock())
+            async with lock:
+                shard = self._shards.get(target)
+                if shard is None:
+                    continue
+                await shard.manager.reinitialize()
+                self.touch(target)
+                reinitialized.append(target)
+        return reinitialized
+
+    # ── internals (synchronous dict operations only) ───────────────────────
+    def _store(self, workspace_id: str, shard: McpShard) -> None:
+        self._shards[workspace_id] = shard
+        self._shards.move_to_end(workspace_id)
+        while len(self._shards) > self._max_shards:
+            evicted, _ = self._shards.popitem(last=False)
+            self._locks.pop(evicted, None)  # R3: lock entries never outlive shards
+            logger.info(
+                "[LIFECYCLE] service=agent event=mcp_shard_evicted reason=max_shards workspaceId={} shards={}",
+                evicted,
+                len(self._shards),
+            )
+
+    def _evict_idle(self) -> None:
+        if self._idle_ttl_s <= 0:
+            return
+        cutoff = time.monotonic() - self._idle_ttl_s
+        stale = [workspace_id for workspace_id, shard in self._shards.items() if shard.last_used < cutoff]
+        for workspace_id in stale:
+            self._shards.pop(workspace_id, None)
+            self._locks.pop(workspace_id, None)
+            logger.info(
+                "[LIFECYCLE] service=agent event=mcp_shard_evicted reason=idle_ttl workspaceId={} shards={}",
+                workspace_id,
+                len(self._shards),
+            )
+
+
+class McpCompatView:
+    """Read-only compatibility view over the first live shard (spec §5).
+
+    ``app_state.mcp_manager`` keeps this name for residual readers and existing
+    tests. Only ``.tools`` / ``.initialized`` / ``.workspace_id`` may be read;
+    every lifecycle call goes through ``mcp_shard_registry``.
+    """
+
+    __slots__ = ("_registry",)
+
+    def __init__(self, registry: ShardedMcpRegistry):
+        self._registry = registry
+
+    @property
+    def _shard(self) -> McpShard | None:
+        return self._registry.first_shard()
+
+    @property
+    def workspace_id(self) -> str | None:
+        shard = self._shard
+        return shard.manager.workspace_id if shard is not None else None
+
+    @property
+    def initialized(self) -> bool:
+        return self._shard is not None
+
+    @property
+    def tools(self) -> list[Any]:
+        shard = self._shard
+        return list(shard.manager.tools) if shard is not None else []
+
+
+# PLAN-0588: one MCP tool context per workspace (replaces the process-bound
+# singleton). `mcp_manager` stays as the read-only compatibility view.
+mcp_shard_registry = ShardedMcpRegistry()
+mcp_manager = McpCompatView(mcp_shard_registry)
 legacy_approval_tool = ApprovalTool()
 config_client = ConfigClient(
     cp_url=CP_URL,
@@ -475,16 +728,12 @@ async def _enrich_with_rag_context(content: str, instructions: str) -> str:
 
 
 async def _get_mcp_tools(workspace_id: str | None) -> list[Any]:
-    """Load MCP tools only for a workspace-bound request."""
+    """Load the MCP tools of the run's own workspace shard (PLAN-0588 I2)."""
     if not workspace_id:
         return []
-    if mcp_manager.initialized and mcp_manager.workspace_id != workspace_id:
-        # This process owns one MCP workspace in the minimal boundary. Never
-        # reuse tools discovered for a different workspace.
-        raise RuntimeError("MCP workspace context cannot be reused across workspaces")
 
     try:
-        await mcp_manager.initialize(workspace_id=workspace_id)
+        shard = await mcp_shard_registry.get_or_create(workspace_id)
     except Exception as e:
         logger.warning(
             "[LIFECYCLE] service=agent event=mcp_request_init_failed workspaceId={} error={}",
@@ -492,7 +741,7 @@ async def _get_mcp_tools(workspace_id: str | None) -> list[Any]:
             e,
         )
         raise RuntimeError("MCP workspace initialization failed") from e
-    return mcp_manager.tools
+    return shard.manager.tools
 
 
 async def _get_tools_for_mode(tool_mode: str, workspace_id: str | None) -> list[Any]:

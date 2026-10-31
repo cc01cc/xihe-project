@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import warnings
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any, NamedTuple
 
@@ -581,6 +582,7 @@ class MCPClientManager:
         approval_tool: ApprovalAgentTool | None = None,
         retry_interval: float = DEFAULT_RETRY_INTERVAL,
         max_retries: float = DEFAULT_MAX_RETRIES,
+        on_use: Callable[[], None] | None = None,
     ):
         self.cp_url = cp_url
         self.server_name = server_name
@@ -589,6 +591,9 @@ class MCPClientManager:
         self.approval_tool = approval_tool
         self.retry_interval = retry_interval
         self.max_retries = max_retries
+        # PLAN-0588 §3.4: the shard registry touches `last_used` on every tool
+        # call so a hot shard is never reclaimed by the idle TTL mid-run.
+        self._on_use = on_use
         self._discovery_client: Client | None = None
         self._tools: list[BaseAgentTool] = []
         self._initialized = False
@@ -639,6 +644,9 @@ class MCPClientManager:
         与迁移前 langchain-mcp-adapters 的处置口径一致（spec S5.1）。
         """
         merged = self.request_headers(headers)
+        if self._on_use is not None:
+            # PLAN-0588 §3.4: tool calls keep the shard's `last_used` fresh.
+            self._on_use()
         async with self.new_client(merged) as client:
             return await client.call_tool(name, arguments, raise_on_error=False)
 
