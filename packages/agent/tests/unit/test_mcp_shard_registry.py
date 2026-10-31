@@ -197,6 +197,22 @@ async def test_concurrent_first_calls_after_a_failure_each_retry():
     assert registry.shard_count() == 1
 
 
+@pytest.mark.asyncio
+async def test_failure_of_one_workspace_does_not_affect_another():
+    bad = FakeManager("ws-bad")
+    bad.fail = True
+    good = FakeManager("ws-good")
+    registry, _ = build_registry({"ws-bad": bad, "ws-good": good})
+
+    with pytest.raises(OSError):
+        await registry.get_or_create("ws-bad")
+
+    shard = await registry.get_or_create("ws-good")
+
+    assert shard.manager is good
+    assert registry.workspace_ids() == ["ws-good"], "a failed workspace leaves no entry behind"
+
+
 # ── §3.3 reclamation ──────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_max_shards_evicts_lru_entry_and_its_lock():
