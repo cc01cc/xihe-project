@@ -13,9 +13,9 @@ import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.ToolShape;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
+import com.cc01cc.p.xihe.cp.policy.WorkspaceMembershipService;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -60,7 +60,7 @@ public class AgentTemplateService {
     private final ConfigDomainSchema schemaValidator;
     private final UserRepository userRepository;
     private final WorkspaceRepository workspaceRepository;
-    private final WorkspaceUserRepository workspaceUserRepository;
+    private final WorkspaceMembershipService memberships;
     private final AuthorizationGrantRepository grantRepository;
     private final GrantIntersectionEvaluator evaluator;
     private final ObjectMapper objectMapper;
@@ -71,7 +71,7 @@ public class AgentTemplateService {
                                 ConfigDomainSchema schemaValidator,
                                 UserRepository userRepository,
                                 WorkspaceRepository workspaceRepository,
-                                WorkspaceUserRepository workspaceUserRepository,
+                                WorkspaceMembershipService memberships,
                                 AuthorizationGrantRepository grantRepository,
                                 GrantIntersectionEvaluator evaluator,
                                 ObjectMapper objectMapper,
@@ -81,7 +81,7 @@ public class AgentTemplateService {
         this.schemaValidator = schemaValidator;
         this.userRepository = userRepository;
         this.workspaceRepository = workspaceRepository;
-        this.workspaceUserRepository = workspaceUserRepository;
+        this.memberships = memberships;
         this.grantRepository = grantRepository;
         this.evaluator = evaluator;
         this.objectMapper = objectMapper;
@@ -530,9 +530,10 @@ public class AgentTemplateService {
         workspaceRepository.findByIdAndDeletedAtIsNull(workspaceUuid)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND,
                         "WORKSPACE_NOT_FOUND", "Workspace not found"));
-        workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(workspaceUuid, actorId)
-                .orElseThrow(() -> new CpApiException(HttpStatus.FORBIDDEN,
-                        "WORKSPACE_ACCESS_DENIED", "Workspace membership is required"));
+        if (!memberships.isMember(workspaceUuid, actorId)) {
+            throw new CpApiException(HttpStatus.FORBIDDEN,
+                    "WORKSPACE_ACCESS_DENIED", "Workspace membership is required");
+        }
     }
 
     /** Raw single-layer load with the same fail-closed schema validation as resolveForCreation. */
@@ -729,3 +730,5 @@ public class AgentTemplateService {
     public record TemplateListView(String layer, UUID workspaceId, ArrayNode templates) {}
     private record ConfigScope(String layer, UUID userId, UUID workspaceId) {}
 }
+
+

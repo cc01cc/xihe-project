@@ -11,10 +11,11 @@ import static org.mockito.Mockito.when;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.context.service.ContextAccessService;
 import com.cc01cc.p.xihe.cp.entity.Session;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
-import com.cc01cc.p.xihe.cp.repository.SessionRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import java.util.Optional;
+
+import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.policy.WorkspaceMembershipService;
+
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -30,8 +31,8 @@ class ContextAccessServiceTest {
     private static final UUID WORKSPACE_ID = UUID.fromString("10000000-0000-4000-8000-000000000003");
 
     private final SessionRepository sessions = mock(SessionRepository.class);
-    private final WorkspaceUserRepository members = mock(WorkspaceUserRepository.class);
-    private final ContextAccessService service = new ContextAccessService(sessions, members);
+    private final WorkspaceMembershipService memberships = mock(WorkspaceMembershipService.class);
+    private final ContextAccessService service = new ContextAccessService(sessions, memberships);
 
     @BeforeEach
     void clearInitialContext() {
@@ -47,15 +48,14 @@ class ContextAccessServiceTest {
     void tenantContextTakesPriorityWithoutSessionOrOwnerLookup() {
         TenantContext.setUserId(USER_ID.toString());
         TenantContext.setWorkspaceId(WORKSPACE_ID.toString());
-        when(members.findByIdWorkspaceIdAndIdUserId(WORKSPACE_ID, USER_ID))
-                .thenReturn(Optional.of(new WorkspaceUser()));
+        when(memberships.isMember(WORKSPACE_ID, USER_ID)).thenReturn(true);
 
         assertThat(service.resolveUserId("not-a-uuid")).isEqualTo(USER_ID.toString());
         assertThat(service.resolveWorkspaceId("not-a-uuid")).isEqualTo(WORKSPACE_ID.toString());
         assertThat(service.verifyAccess("not-a-uuid")).isTrue();
         verifyNoInteractions(sessions);
-        var order = inOrder(members);
-        order.verify(members).findByIdWorkspaceIdAndIdUserId(WORKSPACE_ID, USER_ID);
+        var order = inOrder(memberships);
+        order.verify(memberships).isMember(WORKSPACE_ID, USER_ID);
         order.verifyNoMoreInteractions();
     }
 
@@ -68,17 +68,16 @@ class ContextAccessServiceTest {
         when(workspaceRead.getWorkspaceId()).thenReturn(WORKSPACE_ID.toString());
         when(sessions.findById(SESSION_ID))
                 .thenReturn(Optional.of(userRead), Optional.of(workspaceRead));
-        when(members.findByIdWorkspaceIdAndIdUserId(WORKSPACE_ID, USER_ID))
-                .thenReturn(member ? Optional.of(new WorkspaceUser()) : Optional.empty());
+        when(memberships.isMember(WORKSPACE_ID, USER_ID)).thenReturn(member);
 
         assertThat(service.verifyAccess(SESSION_ID.toString())).isEqualTo(member);
 
-        var order = inOrder(sessions, userRead, workspaceRead, members);
+        var order = inOrder(sessions, userRead, workspaceRead, memberships);
         order.verify(sessions).findById(SESSION_ID);
         order.verify(userRead).getUserId();
         order.verify(sessions).findById(SESSION_ID);
         order.verify(workspaceRead).getWorkspaceId();
-        order.verify(members).findByIdWorkspaceIdAndIdUserId(WORKSPACE_ID, USER_ID);
+        order.verify(memberships).isMember(WORKSPACE_ID, USER_ID);
         order.verifyNoMoreInteractions();
     }
 
@@ -91,7 +90,7 @@ class ContextAccessServiceTest {
         var order = inOrder(sessions);
         order.verify(sessions, times(2)).findById(SESSION_ID);
         order.verifyNoMoreInteractions();
-        verifyNoInteractions(members);
+        verifyNoInteractions(memberships);
     }
 
     @ParameterizedTest
@@ -106,7 +105,7 @@ class ContextAccessServiceTest {
         var order = inOrder(sessions);
         order.verify(sessions, times(2)).findById(SESSION_ID);
         order.verifyNoMoreInteractions();
-        verifyNoInteractions(members);
+        verifyNoInteractions(memberships);
     }
 
     @Test
@@ -115,14 +114,13 @@ class ContextAccessServiceTest {
         var otherOwner = UUID.fromString("10000000-0000-4000-8000-000000000004");
         when(sessions.findById(SESSION_ID)).thenReturn(Optional.of(
                 new Session(WORKSPACE_ID.toString(), otherOwner.toString(), "other owner")));
-        when(members.findByIdWorkspaceIdAndIdUserId(WORKSPACE_ID, USER_ID))
-                .thenReturn(Optional.of(new WorkspaceUser()));
+        when(memberships.isMember(WORKSPACE_ID, USER_ID)).thenReturn(true);
 
         assertThat(service.verifyAccess(SESSION_ID.toString())).isTrue();
 
-        var order = inOrder(sessions, members);
+        var order = inOrder(sessions, memberships);
         order.verify(sessions).findById(SESSION_ID);
-        order.verify(members).findByIdWorkspaceIdAndIdUserId(WORKSPACE_ID, USER_ID);
+        order.verify(memberships).isMember(WORKSPACE_ID, USER_ID);
         order.verifyNoMoreInteractions();
     }
 
@@ -131,14 +129,13 @@ class ContextAccessServiceTest {
         TenantContext.setWorkspaceId(WORKSPACE_ID.toString());
         when(sessions.findById(SESSION_ID)).thenReturn(Optional.of(
                 new Session(null, USER_ID.toString(), "user context")));
-        when(members.findByIdWorkspaceIdAndIdUserId(WORKSPACE_ID, USER_ID))
-                .thenReturn(Optional.of(new WorkspaceUser()));
+        when(memberships.isMember(WORKSPACE_ID, USER_ID)).thenReturn(true);
 
         assertThat(service.verifyAccess(SESSION_ID.toString())).isTrue();
 
-        var order = inOrder(sessions, members);
+        var order = inOrder(sessions, memberships);
         order.verify(sessions).findById(SESSION_ID);
-        order.verify(members).findByIdWorkspaceIdAndIdUserId(WORKSPACE_ID, USER_ID);
+        order.verify(memberships).isMember(WORKSPACE_ID, USER_ID);
         order.verifyNoMoreInteractions();
     }
 
@@ -150,7 +147,7 @@ class ContextAccessServiceTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> service.verifyAccess("not-a-uuid"))
                 .isInstanceOf(IllegalArgumentException.class);
-        verifyNoInteractions(sessions, members);
+        verifyNoInteractions(sessions, memberships);
     }
 
     @ParameterizedTest
@@ -161,7 +158,7 @@ class ContextAccessServiceTest {
 
         assertThatThrownBy(() -> service.verifyAccess(SESSION_ID.toString()))
                 .isInstanceOf(IllegalArgumentException.class);
-        verifyNoInteractions(sessions, members);
+        verifyNoInteractions(sessions, memberships);
     }
 
     @Test
@@ -170,7 +167,7 @@ class ContextAccessServiceTest {
                 .isEqualTo(HttpStatus.UNAUTHORIZED);
         assertThat(service.checkPublicAccess(USER_ID.toString(), null, SESSION_ID.toString()))
                 .isEqualTo(HttpStatus.UNAUTHORIZED);
-        verifyNoInteractions(sessions, members);
+        verifyNoInteractions(sessions, memberships);
     }
 
     @Test
@@ -180,7 +177,7 @@ class ContextAccessServiceTest {
         assertThat(service.checkPublicAccess(USER_ID.toString(), WORKSPACE_ID.toString(),
                 SESSION_ID.toString())).isEqualTo(HttpStatus.NOT_FOUND);
 
-        verifyNoInteractions(members);
+        verifyNoInteractions(memberships);
     }
 
     @ParameterizedTest
@@ -196,7 +193,7 @@ class ContextAccessServiceTest {
         assertThat(service.checkPublicAccess(USER_ID.toString(), WORKSPACE_ID.toString(),
                 SESSION_ID.toString())).isEqualTo(HttpStatus.NOT_FOUND);
 
-        verifyNoInteractions(members);
+        verifyNoInteractions(memberships);
     }
 
     @ParameterizedTest
@@ -204,15 +201,14 @@ class ContextAccessServiceTest {
     void publicAccessChecksMembershipOnlyAfterOwnershipAndWorkspaceMatch(boolean member) {
         when(sessions.findById(SESSION_ID)).thenReturn(Optional.of(
                 new Session(WORKSPACE_ID.toString(), USER_ID.toString(), "owned session")));
-        when(members.findByIdWorkspaceIdAndIdUserId(WORKSPACE_ID, USER_ID))
-                .thenReturn(member ? Optional.of(new WorkspaceUser()) : Optional.empty());
+        when(memberships.isMember(WORKSPACE_ID, USER_ID)).thenReturn(member);
 
         assertThat(service.checkPublicAccess(USER_ID.toString(), WORKSPACE_ID.toString(),
                 SESSION_ID.toString())).isEqualTo(member ? HttpStatus.OK : HttpStatus.FORBIDDEN);
 
-        var order = inOrder(sessions, members);
+        var order = inOrder(sessions, memberships);
         order.verify(sessions).findById(SESSION_ID);
-        order.verify(members).findByIdWorkspaceIdAndIdUserId(WORKSPACE_ID, USER_ID);
+        order.verify(memberships).isMember(WORKSPACE_ID, USER_ID);
         order.verifyNoMoreInteractions();
     }
 
@@ -221,6 +217,10 @@ class ContextAccessServiceTest {
         assertThatThrownBy(() -> service.checkPublicAccess(
                 USER_ID.toString(), WORKSPACE_ID.toString(), "not-a-uuid"))
                 .isInstanceOf(IllegalArgumentException.class);
-        verifyNoInteractions(sessions, members);
+        verifyNoInteractions(sessions, memberships);
     }
 }
+
+
+
+

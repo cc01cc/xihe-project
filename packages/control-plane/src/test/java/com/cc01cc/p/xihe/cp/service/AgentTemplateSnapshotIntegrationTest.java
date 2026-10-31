@@ -180,7 +180,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
 
         ResponseEntity<String> workspaceParam = get(
                 "?layer=workspace&workspaceId=" + workspaceId, memberGlobal);
-        assertEquals(HttpStatus.OK, workspaceParam.getStatusCode());
+        assertEquals(HttpStatus.OK, workspaceParam.getStatusCode(), workspaceParam.getBody());
         JsonNode workspaceBody = readTree(workspaceParam.getBody());
         assertEquals("workspace", workspaceBody.path("layer").asText());
         assertEquals(workspaceId.toString(), workspaceBody.path("workspaceId").asText());
@@ -252,7 +252,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
         assertFalse(userLayer.getBody().contains(INSTANCE_PROMPT));
 
         ResponseEntity<String> workspaceLayer = getConfigLayer("workspace", workspaceId, memberGlobal);
-        assertEquals(HttpStatus.OK, workspaceLayer.getStatusCode());
+        assertEquals(HttpStatus.OK, workspaceLayer.getStatusCode(), workspaceLayer.getBody());
         assertTrue(workspaceLayer.getBody().contains(WORKSPACE_PROMPT));
         assertFalse(workspaceLayer.getBody().contains(INSTANCE_PROMPT));
     }

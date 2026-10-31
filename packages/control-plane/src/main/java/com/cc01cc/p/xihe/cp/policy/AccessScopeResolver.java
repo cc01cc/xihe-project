@@ -3,7 +3,7 @@ package com.cc01cc.p.xihe.cp.policy;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -41,14 +41,14 @@ public class AccessScopeResolver {
     private static final Logger logger = LoggerFactory.getLogger(AccessScopeResolver.class);
 
     private final WorkspaceRepository workspaceRepository;
-    private final WorkspaceUserRepository workspaceUserRepository;
+    private final WorkspaceMembershipService memberships;
     private final AuthzContext authzContext;
 
     public AccessScopeResolver(WorkspaceRepository workspaceRepository,
-                               WorkspaceUserRepository workspaceUserRepository,
+                               WorkspaceMembershipService memberships,
                                AuthzContext authzContext) {
         this.workspaceRepository = workspaceRepository;
-        this.workspaceUserRepository = workspaceUserRepository;
+        this.memberships = memberships;
         this.authzContext = authzContext;
     }
 
@@ -97,8 +97,7 @@ public class AccessScopeResolver {
                     "Workspace access denied");
         }
         boolean active = workspaceRepository.findByIdAndDeletedAtIsNull(workspaceId).isPresent();
-        boolean member = workspaceUserRepository
-                .findByIdWorkspaceIdAndIdUserId(workspaceId, userUuid).isPresent();
+        boolean member = memberships.isMember(workspaceId, userUuid);
         // W3-2a (round-4 P2): an instance administrator is not a member of the workspaces it
         // administers, so the membership gate alone would contradict decision #15. The atom
         // evaluation that follows this resolver still decides whether the action is allowed.
@@ -148,3 +147,4 @@ public class AccessScopeResolver {
         }
     }
 }
+

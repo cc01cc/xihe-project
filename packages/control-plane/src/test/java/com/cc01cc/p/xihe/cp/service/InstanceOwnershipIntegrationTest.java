@@ -633,8 +633,11 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
     }
 
     private int atomRowCount(String subjectType, UUID subjectId) {
+        // PLAN-0610 W3-3: instance-tier atoms only — a personal workspace now adds workspace-scope
+        // rows for the same subject, which the workspace tests count separately.
         return jdbc.queryForObject("SELECT COUNT(*) FROM grants WHERE subject_type = ?"
-                + " AND subject_id = ? AND source = 'role'", Integer.class, subjectType, subjectId);
+                + " AND subject_id = ? AND source = 'role' AND scope_type = 'instance'",
+                Integer.class, subjectType, subjectId);
     }
 
     private HttpHeaders authHeaders(String token) {
@@ -660,6 +663,8 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
                         authHeaders(token)), String.class);
     }
 }
+
+
 
 
 

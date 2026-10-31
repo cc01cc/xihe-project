@@ -5,14 +5,11 @@ import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.controller.MemberView;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUserId;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.policy.MaintenanceWriteFreeze;
+import com.cc01cc.p.xihe.cp.policy.WorkspaceMembershipService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -34,11 +31,17 @@ import java.util.UUID;
  * WORKSPACE_READ_ONLY before reaching this service, and a non-member's request
  * is rejected with 403 WORKSPACE_FORBIDDEN at the tenant gate.</p>
  *
- * <p>All writes serialize on the workspace row lock
- * ({@code findByIdForUpdate}) before any membership read or mutation, so
- * last-owner checks, duplicate-add checks and mutations share one
- * serialization point (spec §4). Last-owner protection is server-authoritative
- * with no role exception, including instance-ADMIN emergency removal.</p>
+ * <p>PLAN-0610 W3-3: the <b>membership fact</b> is no longer read or written here — it comes from
+ * {@link WorkspaceMembershipService}, the single seam over
+ * {@code role_bindings(scope=workspace)} (bindings are the truth; the legacy
+ * {@code workspace_users} row is mirrored until V89). This class keeps only the 0565 policy matrix,
+ * the API shape and the audit rows, so the member surface, the tenant interceptor, D9 and the grant
+ * evaluation can no longer disagree about who a member is (round-4 P2-5).</p>
+ *
+ * <p>All writes serialize on the workspace row lock ({@code findByIdForUpdate}) before any
+ * membership read or mutation, so last-owner checks, duplicate-add checks and mutations share one
+ * serialization point (spec §4). Last-owner protection is server-authoritative with no role
+ * exception, including instance-ADMIN emergency removal.</p>
  */
 @Service
 public class WorkspaceMemberService {
@@ -46,19 +49,19 @@ public class WorkspaceMemberService {
     private static final Logger logger = LoggerFactory.getLogger(WorkspaceMemberService.class);
 
     private final WorkspaceRepository workspaceRepository;
-    private final WorkspaceUserRepository workspaceUserRepository;
     private final UserRepository userRepository;
+    private final WorkspaceMembershipService memberships;
     private final AuditLogger auditLogger;
     private final MaintenanceWriteFreeze writeFreeze;
 
     public WorkspaceMemberService(WorkspaceRepository workspaceRepository,
-            WorkspaceUserRepository workspaceUserRepository,
             UserRepository userRepository,
+            WorkspaceMembershipService memberships,
             AuditLogger auditLogger,
             MaintenanceWriteFreeze writeFreeze) {
         this.workspaceRepository = workspaceRepository;
-        this.workspaceUserRepository = workspaceUserRepository;
         this.userRepository = userRepository;
+        this.memberships = memberships;
         this.auditLogger = auditLogger;
         this.writeFreeze = writeFreeze;
     }
@@ -71,7 +74,7 @@ public class WorkspaceMemberService {
         if (caller.workspaceRole() != null && "VIEWER".equals(caller.workspaceRole())) {
             throw forbidden();
         }
-        return workspaceUserRepository.findMemberRows(UUID.fromString(workspaceId)).stream()
+        return memberships.members(UUID.fromString(workspaceId)).stream()
                 .map(WorkspaceMemberService::toView)
                 .toList();
     }
@@ -87,21 +90,21 @@ public class WorkspaceMemberService {
         String targetUsername = requireUsername(username);
 
         lockWorkspace(workspaceId);
+        UUID workspaceUuid = UUID.fromString(workspaceId);
         User target = userRepository.findByUsername(targetUsername)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "USER_NOT_FOUND",
                         "No registered account for this username"));
-        if (workspaceUserRepository.existsById(new WorkspaceUserId(workspaceId,
-                target.getId().toString()))) {
+        if (memberships.isMember(workspaceUuid, target.getId())) {
             throw new CpApiException(HttpStatus.CONFLICT, "MEMBER_ALREADY_EXISTS",
                     "User is already a member of this workspace");
         }
-        WorkspaceUser row = new WorkspaceUser(workspaceId, target.getId().toString(), targetRole);
-        workspaceUserRepository.save(row);
+        memberships.assign(workspaceUuid, target.getId(), targetRole, actor(callerUserId));
         auditLogger.recordDurableChange(callerUserId, workspaceId, "workspace_member_added",
                 "workspace_member", target.getId().toString(), "role=" + targetRole.name());
         logger.info("Member added: workspace={} user={} role={}", workspaceId,
                 target.getId(), targetRole);
-        return toView(row, target);
+        return toView(new WorkspaceMembershipService.Member(target.getId(), target.getUsername(),
+                target.getEmail(), target.getName(), targetRole, java.time.Instant.now()));
     }
 
     /** spec §3: PATCH role — OWNER only; unique OWNER downgrade is rejected. */
@@ -115,20 +118,20 @@ public class WorkspaceMemberService {
         UUID targetId = requireTargetUserId(targetUserId);
 
         lockWorkspace(workspaceId);
-        WorkspaceUser target = requireMemberRow(workspaceId, targetId);
-        if (target.getRole() == WorkspaceRole.OWNER && countOwners(workspaceId) <= 1) {
+        UUID workspaceUuid = UUID.fromString(workspaceId);
+        WorkspaceRole currentRole = requireMemberRole(workspaceUuid, targetId);
+        if (isOwner(currentRole) && memberships.countOwners(workspaceUuid) <= 1) {
             throw lastOwner();
         }
         User identity = requireIdentity(targetId);
-        String from = target.getRole().canonicalName();
-        target.setRole(newRole);
-        workspaceUserRepository.save(target);
+        memberships.assign(workspaceUuid, targetId, newRole, actor(callerUserId));
         auditLogger.recordDurableChange(callerUserId, workspaceId, "workspace_member_role_changed",
                 "workspace_member", targetId.toString(),
-                "role=" + from + "->" + newRole.canonicalName());
+                "role=" + currentRole.canonicalName() + "->" + newRole.canonicalName());
         logger.info("Member role changed: workspace={} user={} role={}->{}", workspaceId,
-                targetId, from, newRole.canonicalName());
-        return toView(target, identity);
+                targetId, currentRole.canonicalName(), newRole.canonicalName());
+        return toView(new WorkspaceMembershipService.Member(targetId, identity.getUsername(),
+                identity.getEmail(), identity.getName(), newRole, java.time.Instant.now()));
     }
 
     /** spec §3: DELETE — workspace OWNER, or instance-ADMIN emergency removal (ruling #3). */
@@ -144,16 +147,16 @@ public class WorkspaceMemberService {
         UUID targetId = requireTargetUserId(targetUserId);
 
         lockWorkspace(workspaceId);
-        WorkspaceUser target = requireMemberRow(workspaceId, targetId);
-        if (target.getRole() == WorkspaceRole.OWNER && countOwners(workspaceId) <= 1) {
+        UUID workspaceUuid = UUID.fromString(workspaceId);
+        WorkspaceRole currentRole = requireMemberRole(workspaceUuid, targetId);
+        if (isOwner(currentRole) && memberships.countOwners(workspaceUuid) <= 1) {
             throw lastOwner();
         }
-        String from = target.getRole().canonicalName();
-        workspaceUserRepository.delete(target);
+        memberships.remove(workspaceUuid, targetId, actor(callerUserId));
         auditLogger.recordDurableChange(callerUserId, workspaceId, "workspace_member_removed",
-                "workspace_member", targetId.toString(), "role=" + from);
+                "workspace_member", targetId.toString(), "role=" + currentRole.canonicalName());
         logger.info("Member removed: workspace={} user={} role={} emergency={}", workspaceId,
-                targetId, from, !owner);
+                targetId, currentRole.canonicalName(), !owner);
     }
 
     private Caller authorize(String workspaceId, String callerUserId, String callerInstanceRole) {
@@ -161,21 +164,21 @@ public class WorkspaceMemberService {
         // PLAN-0610 W1b (R2-9): the instance-level bypass is a capability. The
         // compatibility parameter stays for the audit/echo contract only.
         boolean instanceAdmin = CapabilityAuthorities.isInstanceAdmin();
-        Optional<WorkspaceUser> membership = workspaceUserRepository
-                .findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId),
-                        UUID.fromString(callerUserId));
+        UUID workspaceUuid = UUID.fromString(workspaceId);
+        Optional<WorkspaceRole> membership = callerUserId == null ? Optional.empty()
+                : memberships.roleOf(workspaceUuid, UUID.fromString(callerUserId));
         if (membership.isEmpty()) {
             if (!instanceAdmin) {
                 throw forbidden();
             }
             // Ruling #3: instance ADMIN bypasses the membership gate, but an
             // unknown or deleted workspace stays 404 (spec §3.2).
-            workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId))
+            workspaceRepository.findByIdAndDeletedAtIsNull(workspaceUuid)
                     .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND,
                             "WORKSPACE_NOT_FOUND", "Workspace not found"));
             return new Caller(null, true);
         }
-        return new Caller(membership.get().getRole().canonicalName(), instanceAdmin);
+        return new Caller(membership.get().canonicalName(), instanceAdmin);
     }
 
     private void requireOwner(Caller caller) {
@@ -184,9 +187,9 @@ public class WorkspaceMemberService {
         }
     }
 
-    private WorkspaceUser requireMemberRow(String workspaceId, UUID targetId) {
-        return workspaceUserRepository
-                .findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId), targetId)
+    /** The target's current workspace role, or 404 MEMBER_NOT_FOUND (the 0565 contract code). */
+    private WorkspaceRole requireMemberRole(UUID workspaceId, UUID targetId) {
+        return memberships.roleOf(workspaceId, targetId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "MEMBER_NOT_FOUND",
                         "Target user is not a member of this workspace"));
     }
@@ -197,15 +200,14 @@ public class WorkspaceMemberService {
                         "Target user is not a member of this workspace"));
     }
 
-    private Workspace lockWorkspace(String workspaceId) {
-        return workspaceRepository.findByIdForUpdate(UUID.fromString(workspaceId))
+    private void lockWorkspace(String workspaceId) {
+        workspaceRepository.findByIdForUpdate(UUID.fromString(workspaceId))
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "WORKSPACE_NOT_FOUND",
                         "Workspace not found"));
     }
 
-    private long countOwners(String workspaceId) {
-        return workspaceUserRepository.countByIdWorkspaceIdAndRole(
-                UUID.fromString(workspaceId), WorkspaceRole.OWNER);
+    private static boolean isOwner(WorkspaceRole role) {
+        return "OWNER".equals(role.canonicalName());
     }
 
     private WorkspaceRole requireAssignableRole(String role) {
@@ -248,15 +250,17 @@ public class WorkspaceMemberService {
         }
     }
 
-    private static MemberView toView(WorkspaceUser row, User identity) {
-        return new MemberView(row.getId().getUserId(), identity.getUsername(),
-                identity.getEmail(), identity.getName(), row.getRole().canonicalName(),
-                row.getCreatedAt());
+    private static UUID actor(String callerUserId) {
+        try {
+            return callerUserId == null ? null : UUID.fromString(callerUserId);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
-    private static MemberView toView(Object[] row) {
-        return new MemberView((UUID) row[0], (String) row[1], (String) row[2], (String) row[3],
-                ((WorkspaceRole) row[4]).canonicalName(), (java.time.Instant) row[5]);
+    private static MemberView toView(WorkspaceMembershipService.Member member) {
+        return new MemberView(member.userId(), member.username(), member.email(),
+                member.name(), member.role().canonicalName(), member.joinedAt());
     }
 
     private static CpApiException forbidden() {
@@ -277,5 +281,3 @@ public class WorkspaceMemberService {
     private record Caller(String workspaceRole, boolean instanceAdmin) {
     }
 }
-
-

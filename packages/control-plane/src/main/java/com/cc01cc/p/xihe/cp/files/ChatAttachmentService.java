@@ -18,7 +18,7 @@ import com.cc01cc.p.xihe.cp.files.dto.BatchUploadResult;
 import com.cc01cc.p.xihe.cp.files.dto.UploadFailure;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
+import com.cc01cc.p.xihe.cp.policy.WorkspaceMembershipService;
 
 import java.io.IOException;
 import java.nio.file.FileVisitResult;
@@ -88,7 +88,7 @@ public class ChatAttachmentService {
     private final FileRepository fileRepository;
     private final com.cc01cc.p.xihe.cp.service.SessionAttachmentAnchorService sessionAnchor;
     private final WorkspaceRepository workspaceRepository;
-    private final WorkspaceUserRepository workspaceUserRepository;
+    private final WorkspaceMembershipService memberships;
     private final ObjectMapper objectMapper;
 
     public ChatAttachmentService(
@@ -97,14 +97,14 @@ public class ChatAttachmentService {
             FileRepository fileRepository,
             com.cc01cc.p.xihe.cp.service.SessionAttachmentAnchorService sessionAnchor,
             WorkspaceRepository workspaceRepository,
-            WorkspaceUserRepository workspaceUserRepository,
+            WorkspaceMembershipService memberships,
             ObjectMapper objectMapper) {
         this.attachmentsBasePath = attachmentsBasePath;
         this.allowedExtensions = parseAllowedExtensions(allowedExtensionsConfig);
         this.fileRepository = fileRepository;
         this.sessionAnchor = sessionAnchor;
         this.workspaceRepository = workspaceRepository;
-        this.workspaceUserRepository = workspaceUserRepository;
+        this.memberships = memberships;
         this.objectMapper = objectMapper;
     }
 
@@ -192,8 +192,7 @@ public class ChatAttachmentService {
                 || !workspaceId.equals(file.getWorkspaceId())
                 || !userId.equals(file.getUserId())
                 || workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId)).isEmpty()
-                || workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(
-                        UUID.fromString(workspaceId), UUID.fromString(userId)).isEmpty()) {
+                || !memberships.isMember(UUID.fromString(workspaceId), UUID.fromString(userId))) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "File access denied");
         }
         return Optional.of(new WorkspaceAttachmentDownload(
@@ -501,7 +500,7 @@ public class ChatAttachmentService {
             throw new IllegalArgumentException("Workspace or user context missing");
         }
         if (workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId)).isEmpty()
-                || workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId), UUID.fromString(userId)).isEmpty()) {
+                || !memberships.isMember(UUID.fromString(workspaceId), UUID.fromString(userId))) {
             throw new IllegalArgumentException("User is not a member of the workspace");
         }
     }
@@ -650,3 +649,4 @@ public class ChatAttachmentService {
                 .collect(Collectors.toSet());
     }
 }
+

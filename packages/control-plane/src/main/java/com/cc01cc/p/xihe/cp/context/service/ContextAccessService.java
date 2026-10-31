@@ -2,7 +2,7 @@ package com.cc01cc.p.xihe.cp.context.service;
 
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
+import com.cc01cc.p.xihe.cp.policy.WorkspaceMembershipService;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -11,12 +11,12 @@ import org.springframework.stereotype.Service;
 public class ContextAccessService {
 
     private final SessionRepository sessionRepository;
-    private final WorkspaceUserRepository workspaceUserRepository;
+    private final WorkspaceMembershipService memberships;
 
     public ContextAccessService(SessionRepository sessionRepository,
-                                WorkspaceUserRepository workspaceUserRepository) {
+                                WorkspaceMembershipService memberships) {
         this.sessionRepository = sessionRepository;
-        this.workspaceUserRepository = workspaceUserRepository;
+        this.memberships = memberships;
     }
 
     public boolean verifyAccess(String sessionId) {
@@ -27,9 +27,7 @@ public class ContextAccessService {
         }
         // Workspace membership is required. Session ownership is not verified here
         // because the session may be created concurrently by the Agent module.
-        return workspaceUserRepository
-                .findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId), UUID.fromString(userId))
-                .isPresent();
+        return memberships.isMember(UUID.fromString(workspaceId), UUID.fromString(userId));
     }
 
     public String resolveUserId(String sessionId) {
@@ -61,8 +59,8 @@ public class ContextAccessService {
                 || !workspaceId.equals(session.getWorkspaceId())) {
             return HttpStatus.NOT_FOUND;
         }
-        return workspaceUserRepository
-                .findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId), UUID.fromString(userId))
-                .isPresent() ? HttpStatus.OK : HttpStatus.FORBIDDEN;
+        return memberships.isMember(UUID.fromString(workspaceId), UUID.fromString(userId))
+                ? HttpStatus.OK : HttpStatus.FORBIDDEN;
     }
 }
+

@@ -56,10 +56,12 @@ import java.util.UUID;
  *       ({@code 403 PRIVILEGE_ESCALATION}).</li>
  * </ol>
  *
- * <p>Every affected subject is re-materialized in the same transaction through
- * {@link RoleGrantMaterializer#materializeSubjectWithEpochBump}: {@code source='role'} atoms are
- * reconciled, the capability cache is invalidated immediately and after completion (R2-20), and the
- * epoch moves once per subject whose set actually changed (I4).</p>
+ * <p>Every affected subject is re-materialized in the same transaction: {@code source='role'} atoms
+ * are reconciled and the capability cache is invalidated immediately and after completion (R2-20).
+ * An instance-tier change additionally moves the subject's epoch once through
+ * {@link RoleGrantMaterializer#materializeSubjectWithEpochBump} (I4 — the access token carries the
+ * instance role claim); a workspace-tier change only materializes, because the token carries no
+ * workspace role and bumping would log the subject out for a claim the token never had (W3-3).</p>
  *
  * <p>Lock order: {@code instance_owner} (instance mutex, the same first lock as the user/role admin
  * paths) → {@code users} rows (materializer, ascending id order). No {@code roles} row lock is
@@ -208,10 +210,20 @@ public class BindingAdminService {
                     entry.getKey().subjectId(), scope.type(), scope.id(), actorUuid()));
         }
         bindings.flush();
-        requireInstanceStillHasASuperAdmin(scope);
+        requireScopeKeepsItsOwner(scope);
         for (UUID subjectId : orderedAffected) {
-            materializer.materializeSubject(SUBJECT_USER, subjectId, actorUuid(), null);
-            bumpEpoch(subjectId);
+            // PLAN-0610 W3-3: one epoch contract only — the materializer owns the bump. The bump is
+            // scoped to instance-tier changes (I4): an access token carries no workspace role, so a
+            // workspace binding is read per request from the materialized rows and only the capability
+            // cache has to be invalidated. Bumping there would log the subject (or the actor granting
+            // membership, or the creator of a workspace) out of every session for a change the token
+            // does not even carry.
+            if (scope.isInstance()) {
+                materializer.materializeSubjectWithEpochBump(SUBJECT_USER, subjectId, actorUuid(),
+                        null);
+            } else {
+                materializer.materializeSubject(SUBJECT_USER, subjectId, actorUuid(), null);
+            }
         }
         String scopeIdValue = scope.isInstance() ? null : scope.id().toString();
         audit.recordDurableChange(actorId(), scopeIdValue, "role_bindings_replaced", RESOURCE_TYPE,
@@ -232,20 +244,34 @@ public class BindingAdminService {
      * binding is refused and rolls the whole replacement back (I1/I5). A full-set PUT is the only
      * place that can express "nobody is a super administrator any more", so the guard lives here
      * next to the write it forbids rather than in a caller.
+     *
+     * <p>W3-3 adds the workspace analogue ({@code 409 LAST_OWNER}): the same full-set write can drop
+     * the last {@code WS_OWNER} of a workspace, which the member API refuses one row at a time.</p>
      */
-    private void requireInstanceStillHasASuperAdmin(AccessScope scope) {
-        if (!scope.isInstance()) {
+    private void requireScopeKeepsItsOwner(AccessScope scope) {
+        if (scope.isInstance()) {
+            AccessRole superAdmin = roles.findByName(SystemAccessRoleCatalog.SUPER_ADMIN)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "System role SUPER_ADMIN is missing (V87 must have been applied)"));
+            long holders = bindings.countActiveUserBindingsForRole(superAdmin.getId(),
+                    UserStatus.ACTIVE);
+            if (holders < 1) {
+                logger.warn("[POLICY] event=role_bindings_rejected reason=last_super_admin");
+                throw new CpApiException(HttpStatus.CONFLICT, "LAST_SUPER_ADMIN",
+                        "The instance must keep at least one usable SUPER_ADMIN binding");
+            }
             return;
         }
-        AccessRole superAdmin = roles.findByName(SystemAccessRoleCatalog.SUPER_ADMIN)
+        AccessRole workspaceOwner = roles.findByName(SystemAccessRoleCatalog.WS_OWNER)
                 .orElseThrow(() -> new IllegalStateException(
-                        "System role SUPER_ADMIN is missing (V87 must have been applied)"));
-        long holders = bindings.countActiveUserBindingsForRole(superAdmin.getId(),
-                UserStatus.ACTIVE);
-        if (holders < 1) {
-            logger.warn("[POLICY] event=role_bindings_rejected reason=last_super_admin");
-            throw new CpApiException(HttpStatus.CONFLICT, "LAST_SUPER_ADMIN",
-                    "The instance must keep at least one usable SUPER_ADMIN binding");
+                        "System role WS_OWNER is missing (V87 must have been applied)"));
+        long owners = bindings.countActiveUserBindingsForRoleInWorkspace(workspaceOwner.getId(),
+                scope.id(), UserStatus.ACTIVE);
+        if (owners < 1) {
+            logger.warn("[POLICY] event=role_bindings_rejected reason=last_owner workspaceId={}",
+                    scope.id());
+            throw new CpApiException(HttpStatus.CONFLICT, "LAST_OWNER",
+                    "The workspace must keep at least one usable WS_OWNER binding");
         }
     }
 
@@ -356,28 +382,10 @@ public class BindingAdminService {
         return actor == null ? null : UUID.fromString(actor);
     }
 
-    /**
-     * I4: the affected subject's access tokens must die with its changed atom set. Uses
-     * {@code User#bumpTokenVersion} (the single place that encodes the epoch contract) under the
-     * same {@code FOR UPDATE} the materializer uses, and is called in ascending id order so two
-     * concurrent binding writes cannot form an ABBA cycle (R2-19).
-     *
-     * <p>Note: W3-1 landed {@code RoleGrantMaterializer#materializeSubjectWithEpochBump} on develop
-     * after this branch was cut; once the branches meet, this helper collapses into that call. It
-     * stays local so this branch does not depend on a commit it does not contain.</p>
-     */
-    private void bumpEpoch(UUID subjectId) {
-        users.findByIdForUpdate(subjectId).ifPresent(user -> {
-            user.bumpTokenVersion();
-            users.save(user);
-            logger.info("[POLICY] event=role_binding_epoch_bump userId={} tokenVersion={}",
-                    subjectId, user.getTokenVersion());
-        });
-    }
-
     /** Identity of one binding row (subject × role; the scope is the request's). */
     private record BindingKey(UUID subjectId, UUID roleId) {
     }
 }
+
 
 

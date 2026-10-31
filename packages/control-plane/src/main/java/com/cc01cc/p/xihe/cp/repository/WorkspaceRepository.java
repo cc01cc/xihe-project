@@ -20,6 +20,20 @@ public interface WorkspaceRepository extends JpaRepository<Workspace, UUID> {
     Optional<Workspace> findByOwnerIdAndCreateIdempotencyKeyAndDeletedAtIsNull(
             String ownerId, String createIdempotencyKey);
 
+    /**
+     * PLAN-0610 W3-3: the membership fact is the workspace-scope role binding now, so the
+     * "workspaces I belong to" list reads {@code role_bindings} instead of the legacy
+     * {@code workspace_users} join. A membership granted through {@code PUT /api/v1/bindings}
+     * therefore shows up immediately; through the old join it would only appear after the
+     * transitional mirror ran (and {@code workspace_users} is dropped in V89).
+     */
+    @Query("select w from Workspace w where w.deletedAt is null and exists ("
+            + "select 1 from AccessRoleBinding b where b.subjectType = 'user'"
+            + " and b.subjectId = :userId and b.scopeType = 'workspace' and b.scopeId = w.id)"
+            + " order by w.createdAt asc")
+    List<Workspace> findActiveByMemberBinding(@Param("userId") UUID userId);
+
+    /** Legacy {@code workspace_users} join; kept only for the transition window (V89 drops it). */
     @Query("select w from Workspace w join WorkspaceUser wu on wu.id.workspaceId = w.id "
             + "where wu.id.userId = :userId and w.deletedAt is null order by w.createdAt asc")
     List<Workspace> findActiveByMemberUserId(@Param("userId") UUID userId);
