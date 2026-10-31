@@ -172,23 +172,43 @@ def test_classify_llm_exception_maps_provider_400_to_request_rejected():
 async def test_pure_chat_does_not_initialize_mcp(monkeypatch):
     import xihe_agent.app_state as agent_main
 
-    async def unexpected_initialize(**_kwargs):
+    async def unexpected_initialize(_workspace_id):
         raise AssertionError("MCP must not initialize for pure chat")
 
-    monkeypatch.setattr(agent_main.mcp_manager, "initialize", unexpected_initialize)
+    # PLAN-0588: discovery goes through the shard registry, never through a
+    # process-bound manager.
+    monkeypatch.setattr(agent_main.mcp_shard_registry, "get_or_create", unexpected_initialize)
 
     assert await agent_main._get_tools_for_mode("none", "workspace-a") == []
 
 
 @pytest.mark.asyncio
-async def test_mcp_workspace_context_conflict_fails_fast(monkeypatch):
+async def test_two_workspaces_get_isolated_shards(monkeypatch):
     import xihe_agent.app_state as agent_main
 
-    monkeypatch.setattr(agent_main.mcp_manager, "_initialized", True)
-    monkeypatch.setattr(agent_main.mcp_manager, "workspace_id", "workspace-a")
+    class _Manager:
+        def __init__(self, workspace_id):
+            self.workspace_id = workspace_id
+            self.tools = [type("Tool", (), {"spec": type("Spec", (), {"name": f"{workspace_id}-tool"})()})()]
 
-    with pytest.raises(RuntimeError, match="cannot be reused"):
-        await agent_main._get_tools_for_mode("workspace", "workspace-b")
+    class _Registry:
+        def __init__(self):
+            self.calls = []
+
+        async def get_or_create(self, workspace_id):
+            self.calls.append(workspace_id)
+            manager = _Manager(workspace_id)
+            return type("Shard", (), {"manager": manager})()
+
+    registry = _Registry()
+    monkeypatch.setattr(agent_main, "mcp_shard_registry", registry)
+
+    tools_a = await agent_main._get_tools_for_mode("workspace", "workspace-a")
+    tools_b = await agent_main._get_tools_for_mode("workspace", "workspace-b")
+
+    assert registry.calls == ["workspace-a", "workspace-b"]
+    assert [tool.spec.name for tool in tools_a] == ["workspace-a-tool"]
+    assert [tool.spec.name for tool in tools_b] == ["workspace-b-tool"], "no cross-workspace reuse"
 
 
 @pytest.mark.asyncio
@@ -203,10 +223,10 @@ async def test_workspace_tool_mode_requires_workspace_id():
 async def test_workspace_mcp_initialization_failure_is_not_silenced(monkeypatch):
     import xihe_agent.app_state as agent_main
 
-    async def failed_initialize(**_kwargs):
+    async def failed_initialize(_workspace_id):
         raise OSError("runtime unavailable")
 
-    monkeypatch.setattr(agent_main.mcp_manager, "initialize", failed_initialize)
+    monkeypatch.setattr(agent_main.mcp_shard_registry, "get_or_create", failed_initialize)
 
     with pytest.raises(RuntimeError, match="MCP workspace initialization failed"):
         await agent_main._get_tools_for_mode("workspace", "workspace-a")

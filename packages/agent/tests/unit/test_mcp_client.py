@@ -252,15 +252,12 @@ class TestMCPClientManager:
 
     @pytest.mark.asyncio
     async def test_chat_without_workspace_does_not_initialize_mcp(self, monkeypatch):
-        mock_manager = MagicMock()
-        mock_manager.initialized = False
-        mock_manager.workspace_id = None
-        mock_manager.initialize = AsyncMock()
-        mock_manager.tools = []
-        monkeypatch.setattr(main, "mcp_manager", mock_manager)
+        mock_registry = MagicMock()
+        mock_registry.get_or_create = AsyncMock()
+        monkeypatch.setattr(main, "mcp_shard_registry", mock_registry)
 
         assert await main._get_mcp_tools(None) == []
-        mock_manager.initialize.assert_not_awaited()
+        mock_registry.get_or_create.assert_not_awaited()
 
 
 class TestMCPAgentToolApproval:
@@ -480,29 +477,39 @@ class TestMCPAgentToolApproval:
     @pytest.mark.asyncio
     async def test_chat_with_workspace_initializes_mcp_on_demand(self, monkeypatch):
         mock_manager = MagicMock()
-        mock_manager.initialized = False
-        mock_manager.workspace_id = None
-        mock_manager.initialize = AsyncMock()
         mock_manager.tools = []
-        monkeypatch.setattr(main, "mcp_manager", mock_manager)
+        mock_registry = MagicMock()
+        mock_registry.get_or_create = AsyncMock(return_value=MagicMock(manager=mock_manager))
+        monkeypatch.setattr(main, "mcp_shard_registry", mock_registry)
 
         assert await main._get_mcp_tools("request-workspace") == []
-        mock_manager.initialize.assert_awaited_once_with(workspace_id="request-workspace")
+        mock_registry.get_or_create.assert_awaited_once_with("request-workspace")
 
     @pytest.mark.asyncio
-    async def test_chat_fails_closed_for_a_different_bound_workspace(self, monkeypatch):
-        mock_manager = MagicMock()
-        mock_manager.initialized = True
-        mock_manager.workspace_id = "bound-workspace"
-        mock_manager.initialize = AsyncMock()
-        mock_manager.tools = []
-        monkeypatch.setattr(main, "mcp_manager", mock_manager)
+    async def test_each_workspace_reads_its_own_shard(self, monkeypatch):
+        class _Manager:
+            def __init__(self, workspace_id):
+                self.workspace_id = workspace_id
+                self.tools = [type("Tool", (), {"spec": type("Spec", (), {"name": f"{workspace_id}-tool"})()})()]
 
-        # Fail-closed: tools discovered for one workspace must never be reused
-        # for another workspace; the request fails instead of silently returning [].
-        with pytest.raises(RuntimeError, match="cannot be reused"):
-            await main._get_mcp_tools("other-workspace")
-        mock_manager.initialize.assert_not_awaited()
+        class _Registry:
+            def __init__(self):
+                self.calls = []
+
+            async def get_or_create(self, workspace_id):
+                self.calls.append(workspace_id)
+                return type("Shard", (), {"manager": _Manager(workspace_id)})()
+
+        registry = _Registry()
+        monkeypatch.setattr(main, "mcp_shard_registry", registry)
+
+        tools_a = await main._get_mcp_tools("workspace-a")
+        tools_b = await main._get_mcp_tools("workspace-b")
+
+        assert registry.calls == ["workspace-a", "workspace-b"]
+        # Isolation: no tool discovered for one workspace is reused for another.
+        assert [tool.spec.name for tool in tools_a] == ["workspace-a-tool"]
+        assert [tool.spec.name for tool in tools_b] == ["workspace-b-tool"]
 
 
 class TestMCPAgentToolTimeout:

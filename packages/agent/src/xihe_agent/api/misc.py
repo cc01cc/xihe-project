@@ -4,12 +4,14 @@ Moved verbatim from `main.py` (PLAN-0473 T2.2); status codes, payloads, and
 log lines unchanged.
 """
 
+from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 from loguru import logger
 
+from xihe_agent import app_state
 from xihe_agent.api.shared import problem_details, verify_api_token
 from xihe_agent.app_state import (
     CP_URL,
@@ -17,7 +19,6 @@ from xihe_agent.app_state import (
     approval_tool,
     config_client,
     get_llm_initialization_status,
-    mcp_manager,
     run_cancel_registry,
     run_config_resolver,
 )
@@ -211,22 +212,42 @@ async def summarize(request: Request):
 
 
 @router.post("/internal/v1/agent/mcp/reinit", dependencies=[Depends(verify_api_token)])
-async def reinit_mcp():
+async def reinit_mcp(workspace_id: str | None = Query(default=None, alias="workspaceId")):
+    """Re-discover tools: one workspace shard when addressed, else every shard."""
+    registry = app_state.mcp_shard_registry
     try:
-        await mcp_manager.reinitialize()
-        return {
-            "status": "ok",
-            "toolsCount": len(mcp_manager.tools),
-            "tools": [t.spec.name for t in mcp_manager.tools],
-        }
+        reinitialized = await registry.reinitialize(workspace_id)
+    except app_state.McpShardNotFoundError:
+        logger.warning(
+            "[LIFECYCLE] service=agent event=mcp_reinit_unknown_shard workspaceId={}",
+            workspace_id,
+        )
+        return JSONResponse(
+            status_code=404,
+            content={"status": "error", "code": "MCP_SHARD_NOT_FOUND", "workspaceId": workspace_id},
+        )
     except Exception as e:
         logger.error("MCP reinit failed", exc_info=e)
         return {"status": "error", "code": "MCP_REINITIALIZE_FAILED", "requestId": str(uuid4())}
+    tools: list[Any] = []
+    if workspace_id:
+        tools = registry.tools_for(workspace_id) or []
+    else:
+        tools = registry.aggregate_tools()
+    return {
+        "status": "ok",
+        "workspaceId": workspace_id,
+        "shards": len(reinitialized),
+        "toolsCount": len(tools),
+        "tools": [t.spec.name for t in tools],
+    }
 
 
 @router.get("/internal/v1/agent/health")
 async def health():
     llm_status = get_llm_initialization_status()
+    registry = app_state.mcp_shard_registry
+    tool_names = registry.aggregate_tool_names()
     from xihe_agent.app_state import _agent_status, _instance_id, _llm_ready, _runtime_config_revision
 
     return {
@@ -238,9 +259,12 @@ async def health():
         "configSync": config_client.last_sync_report,
         "llm": llm_status,
         "cpUrl": CP_URL,
-        "mcpInitialized": mcp_manager.initialized,
-        "toolsCount": len(mcp_manager.tools),
-        "tools": [t.spec.name for t in mcp_manager.tools],
+        # PLAN-0588 spec §4.1: counts only — never workspace ids on this
+        # unauthenticated route (I8).
+        "mcpInitialized": registry.shard_count() > 0,
+        "mcpShards": registry.shard_count(),
+        "toolsCount": len(tool_names),
+        "tools": tool_names,
         "version": agent_version(),
         "commit": build_commit(),
         "framework": "langgraph",
@@ -248,8 +272,32 @@ async def health():
 
 
 @router.get("/internal/v1/agent/tools", dependencies=[Depends(verify_api_token)])
-async def list_tools():
-    return {
-        "tools": [{"name": t.spec.name, "description": t.spec.description} for t in mcp_manager.tools],
+async def list_tools(workspace_id: str | None = Query(default=None, alias="workspaceId")):
+    """Authenticated tool face: one shard when addressed, else the env shard."""
+    registry = app_state.mcp_shard_registry
+    payload: dict[str, Any] = {
         "customTools": [{"name": approval_tool.name, "description": approval_tool.description}],
     }
+    if workspace_id:
+        tools = registry.tools_for(workspace_id)
+        if tools is None:
+            logger.warning(
+                "[LIFECYCLE] service=agent event=mcp_tools_unknown_shard workspaceId={}",
+                workspace_id,
+            )
+            return JSONResponse(
+                status_code=404,
+                content={"status": "error", "code": "MCP_SHARD_NOT_FOUND", "workspaceId": workspace_id},
+            )
+        payload["workspaceId"] = workspace_id
+    else:
+        env_workspace = app_state.get_env("XIHE_WORKSPACE_ID")
+        tools = registry.tools_for(env_workspace) if env_workspace else None
+        if tools is None:
+            # No env workspace (host E2E shape): never return the union of all
+            # shards — that would leak tenant detail to an unaddressed call (I8).
+            payload["tools"] = []
+            payload["workspaceRequired"] = True
+            return payload
+    payload["tools"] = [{"name": t.spec.name, "description": t.spec.description} for t in tools]
+    return payload
