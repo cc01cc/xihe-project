@@ -549,8 +549,9 @@ export function useWorkspaceLayout(options: WorkspaceLayoutOptions) {
  * 4. below `MAIN_COMFORT_MIN_WIDTH` (720) the tree yields even when the floor is
  *    met, so the main column keeps a readable width.
  *
- * S5 defers the third yield step (navigation panel) to a later batch: the nav
- * state lives in `AppLayout` and would need a new cross-component contract.
+ * S5-W2 adds the second yield step of spec §1.5-C: after the tree, the
+ * **navigation panel** yields to its rail (`navYielded`) — comfort yield only while
+ * a pinned dock squeezes, hard-floor yield always, and never by closing the dock.
  * Pure function so the breakpoint table is unit-testable without a DOM.
  */
 export const MAIN_MIN_WIDTH = 640;
