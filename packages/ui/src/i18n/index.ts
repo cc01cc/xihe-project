@@ -162,6 +162,12 @@ const messages = {
                 loadMoreFailed: "后续事件加载失败，已有记录仍可查看。",
             },
         },
+    workspacePicker: {
+        title: "选择工作区",
+        subtitle: "你的账号属于多个工作区。选择一个工作区开始工作。",
+        loading: "正在加载工作区…",
+        empty: "你没有可用的工作区。",
+    },
         workspace: {
             panelCode: "代码",
             panelChanges: "变更",
@@ -2011,6 +2017,12 @@ const messages = {
                 loadMoreFailed: "Could not load later events. Existing events remain available.",
             },
         },
+    workspacePicker: {
+        title: "Choose a workspace",
+        subtitle: "Your account belongs to more than one workspace. Pick one to continue.",
+        loading: "Loading workspaces…",
+        empty: "You have no workspaces yet.",
+    },
         workspace: {
             panelCode: "Code",
             panelChanges: "Changes",
