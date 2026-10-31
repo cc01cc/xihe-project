@@ -248,4 +248,35 @@ describe("SessionSettingsPanel expansion", () => {
         expect(wrapper.find('[data-testid="session-settings-risk-template"]').exists()).toBe(false);
         wrapper.unmount();
     });
+
+    // PLAN-0582 S3b / S4 audit P1-1: the collapsed row must not leak projection state.
+    it("shows a placeholder while the template projection is still loading", async () => {
+        templateSummary.value = { label: null, loading: true, failed: false };
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        const current = wrapper.get('[data-testid="session-context-template-current"]');
+        // No raw template id flash on the first frame.
+        expect(current.text()).not.toContain("user-template");
+        expect(current.text()).toContain("—");
+        // Loading is not a risk: the chip must not flash either.
+        expect(wrapper.find('[data-testid="session-settings-risk-template"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+
+    it("reports a failed template projection as a risk instead of a clean row", async () => {
+        templateSummary.value = { label: null, loading: false, failed: true };
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        const current = wrapper.get('[data-testid="session-context-template-current"]');
+        // The raw id is unreadable, so failure shows localized copy instead.
+        expect(current.text()).not.toContain("user-template");
+        expect(current.text()).toContain("模板加载失败");
+        // A failed projection is itself a risk: the chip must stay visible.
+        const risk = wrapper.get('[data-testid="session-settings-risk-template"]');
+        expect(risk.isVisible()).toBe(true);
+        expect(risk.text()).toContain("模板加载失败");
+        wrapper.unmount();
+    });
 });
