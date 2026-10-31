@@ -29,7 +29,11 @@ test("new Workspace Session is created only after selecting a bound Agent", asyn
 
     await selector.selectOption("agent-1");
     const createRequestPromise = page.waitForRequest(
-        (request) => request.url().endsWith("/api/v1/sessions") && request.method() === "POST",
+        // PLAN-0608 C′: UI now posts to /api/v1/workspaces/{id}/sessions, so match
+        // both surfaces by pathname instead of a legacy suffix.
+        (request) =>
+            request.method() === "POST" &&
+            /^\/api\/v1\/(workspaces\/[^/]+\/)?sessions$/.test(new URL(request.url()).pathname),
     );
     await page.getByTestId("workspace-create-agent-session").click();
 

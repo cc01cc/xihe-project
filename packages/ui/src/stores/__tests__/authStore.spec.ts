@@ -166,17 +166,32 @@ describe("useAuthStore", () => {
         expect(store.userName).toBe("no-name@test.com");
     });
 
-    it("login stores the workspace in sessionStorage, never localStorage", async () => {
+    // PLAN-0608 I6（预期变更）：登录响应里的 workspace 只是 **fallback**，绝不写进
+    // tab 上下文——否则每个后续请求都会带着「回退值」冒充用户意图（review P0-1）。
+    // 判据未削弱：仍然断言「不得写 localStorage」，并**加强**为「连 sessionStorage 也不得写」，
+    // 另加一条 selectWorkspace 之后才允许写入的对照，防止把"什么都不写"当成实现。
+    it("login never seeds the workspace context (fallback is not intent); selectWorkspace does", async () => {
         const { api } = await import("../../composables/api");
         vi.mocked(api.login).mockResolvedValue({
             accessToken: "tab-token",
             user: mockUser,
             workspaceId: WORKSPACE_ID,
         });
+        vi.mocked(api.getWorkspace).mockResolvedValue({
+            id: WORKSPACE_ID,
+            name: "Default Workspace",
+        });
         const store = useAuthStore();
         await store.login("tab@test.com", "pass");
 
-        expect(JSON.parse(sessionStorage.getItem("xihe-workspace") ?? "{}").id).toBe(WORKSPACE_ID);
+        expect(sessionStorage.getItem("xihe-workspace")).toBeNull();
+        expect(localStorage.getItem("xihe-workspace")).toBeNull();
+
+        // 只写一次的通道是 selectWorkspace（用户显式选择），不是 login。
+        const otherId = "55555555-5555-4555-8555-555555555555";
+        vi.mocked(api.getWorkspace).mockResolvedValue({ id: otherId, name: "Other" });
+        await store.selectWorkspace(otherId);
+        expect(JSON.parse(sessionStorage.getItem("xihe-workspace") ?? "{}").id).toBe(otherId);
         expect(localStorage.getItem("xihe-workspace")).toBeNull();
     });
 

@@ -21,6 +21,7 @@ vi.mock("../../composables/api", async (importOriginal) => {
         api: {
             ...actual.api,
             getPendingApprovals: vi.fn<typeof apiModule.api.getPendingApprovals>(),
+            getWorkspace: vi.fn<typeof apiModule.api.getWorkspace>(),
             decideChatApproval: vi.fn<typeof apiModule.api.decideChatApproval>(),
         },
     };
@@ -78,11 +79,18 @@ async function mountLayout(
     return wrapper;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
     setActivePinia(createPinia());
     localStorage.clear();
+    // PLAN-0608 I6（预期变更，判据未削弱）：`hydrateWorkspace` 不再用
+    // `/workspaces/current` 回填回退值，所以「已有 workspace」必须由 tab 上下文提供。
+    // 本组用例考的是审批 banner/轮询，不是上下文解析 ⇒ 显式播种上下文即可，
+    // 断言（banner 出现/计数/轮询次数/导航）一条未改。
+    const { writeTabWorkspaceId } = await import("../../lib/workspaceContext");
+    writeTabWorkspaceId("workspace-1");
     vi.clearAllMocks();
     vi.mocked(api.getPendingApprovals).mockResolvedValue([]);
+    vi.mocked(api.getWorkspace).mockResolvedValue({ id: "workspace-1", name: "Workspace" });
     const auth = useAuthStore();
     auth.$patch({
         token: "token",
