@@ -3621,7 +3621,7 @@ components:
        type: object
        required: [catalogRevision, providers]
        properties:
-         catalogRevision: { type: string, enum: [v1, v2], description: 'PLAN-0591: v2 adds per-API-Type tool capability and provider supports.toolsPartial.' }
+         catalogRevision: { type: string, enum: [v1, v2, v3], description: 'PLAN-0591: v2 adds per-API-Type tool capability and provider supports.toolsPartial. PLAN-0605: v3 adds per-API-Type vision capability and provider supports.visionPartial.' }
          providers: { type: array, items: { $ref: '#/components/schemas/ProviderDefinition' } }
     ProviderDefinition:
        type: object
@@ -3659,6 +3659,7 @@ components:
        type: object
        properties:
           tools: { type: boolean, description: 'PLAN-0591 decision source per (providerId, apiTypeId, version); omitted is treated as unsupported (fail-closed) at runtime.' }
+          vision: { type: boolean, description: 'PLAN-0605 decision source for image input per (providerId, apiTypeId, version); omitted is treated as unsupported (fail-closed) at runtime. Renderer support in the Agent build is a separate precondition.' }
     ProviderCredentialDefinition:
        type: object
        required: [type, required]
@@ -3674,7 +3675,8 @@ components:
          streaming: { type: boolean }
          tools: { type: boolean, description: 'PLAN-0591: boolean any-route rollup (provider-level display only; decision source is supportedApiTypes[].capability.tools).' }
          toolsPartial: { type: boolean, description: 'PLAN-0591: true when at least one API Type supports tools and another does not.' }
-         vision: { type: boolean }
+         vision: { type: boolean, description: 'PLAN-0605: vendor declaration only (any-route); the runtime decision source is supportedApiTypes[].capability.vision.' }
+         visionPartial: { type: boolean, description: 'PLAN-0605: true when at least one API Type is verified vision-capable and another is not (any && !all).' }
     ProviderConnectionListResponse:
        type: object
        required: [connections]

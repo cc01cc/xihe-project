@@ -50,6 +50,7 @@ def grant(type_id, base):
         "apiKey": "fixture-only",
         "baseUrl": base,
         "toolsSupported": True,
+        "visionSupported": True,
     }
 
 
@@ -1328,3 +1329,4 @@ async def test_chat_route_surfaces_capability_gate_terminal(monkeypatch, type_id
         assert events["done"]["errorCode"] == "LLM_TOOL_ROUTE_UNSUPPORTED"
         assert events["done"]["outcome"] == "error"
         assert captures == []
+

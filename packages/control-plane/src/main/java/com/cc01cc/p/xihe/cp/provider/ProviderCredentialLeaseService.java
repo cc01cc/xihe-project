@@ -187,11 +187,16 @@ public class ProviderCredentialLeaseService {
         boolean toolsSupported =
                 catalog.toolsSupported(connection.getProviderId(), connection.getApiTypeId(),
                         connection.getApiTypeVersion());
+        // PLAN-0605: per-API-Type vision capability travels with the lease so the Agent
+        // gate can fail closed before any transport attempt.
+        boolean visionSupported =
+                catalog.visionSupported(connection.getProviderId(), connection.getApiTypeId(),
+                        connection.getApiTypeVersion());
         return new CredentialGrant(
                 connection.getProviderId(), routeProvider, request.model(), connection.getBaseUrl(),
                 apiKey, connection.getRevision(), connection.getModelDiscovery(), manualModels,
                 connection.getConnectionKey(), connection.getApiTypeId(),
-                connection.getApiTypeVersion(), operation, toolsSupported);
+                connection.getApiTypeVersion(), operation, toolsSupported, visionSupported);
     }
 
     private String randomToken() {
@@ -233,7 +238,8 @@ public class ProviderCredentialLeaseService {
             String apiTypeId,
             int apiTypeVersion,
             String operation,
-            boolean toolsSupported) {}
+            boolean toolsSupported,
+            boolean visionSupported) {}
 
     private List<String> parseManualModels(String raw) {
         if (raw == null || raw.isBlank()) {
@@ -246,3 +252,4 @@ public class ProviderCredentialLeaseService {
         }
     }
 }
+

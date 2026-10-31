@@ -8,10 +8,10 @@
     "litellmProvider": "openai",
     "defaultBaseUrl": "https://api.openai.com/v1",
     "modelDiscovery": "remote-models",
-    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true } }],
+    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true, "vision": false } }],
     "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
     "credential": { "type": "api-key", "required": true, "placeholder": "sk-..." },
-    "supports": { "customBaseUrl": true, "streaming": true, "tools": true, "vision": true, "toolsPartial": false }
+    "supports": { "customBaseUrl": true, "streaming": true, "tools": true, "vision": true, "toolsPartial": false, "visionPartial": false }
   },
   {
     "id": "anthropic",
@@ -22,10 +22,10 @@
     "litellmProvider": "anthropic",
     "defaultBaseUrl": "https://api.anthropic.com/v1",
     "modelDiscovery": "remote-models",
-    "supportedApiTypes": [{ "apiTypeId": "anthropic-messages", "version": 1, "capability": { "tools": true } }],
+    "supportedApiTypes": [{ "apiTypeId": "anthropic-messages", "version": 1, "capability": { "tools": true, "vision": false } }],
     "defaultApiType": { "apiTypeId": "anthropic-messages", "version": 1 },
     "credential": { "type": "api-key", "required": true, "placeholder": "sk-ant-..." },
-    "supports": { "customBaseUrl": true, "streaming": true, "tools": true, "vision": true, "toolsPartial": false }
+    "supports": { "customBaseUrl": true, "streaming": true, "tools": true, "vision": true, "toolsPartial": false, "visionPartial": false }
   },
   {
     "id": "deepseek",
@@ -36,10 +36,10 @@
     "litellmProvider": "deepseek",
     "defaultBaseUrl": "https://api.deepseek.com/v1",
     "modelDiscovery": "remote-models",
-    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true } }],
+    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true, "vision": false } }],
     "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
     "credential": { "type": "api-key", "required": true, "placeholder": "sk-..." },
-    "supports": { "customBaseUrl": true, "streaming": true, "tools": true, "vision": false, "toolsPartial": false }
+    "supports": { "customBaseUrl": true, "streaming": true, "tools": true, "vision": false, "toolsPartial": false, "visionPartial": false }
   },
   {
     "id": "xiaomi",
@@ -50,10 +50,10 @@
     "litellmProvider": "xiaomi_mimo",
     "defaultBaseUrl": "https://api.xiaomimimo.com/v1",
     "modelDiscovery": "remote-models",
-    "supportedApiTypes": [{ "apiTypeId": "mimo-responses", "version": 1, "capability": { "tools": false } }, { "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true } }],
+    "supportedApiTypes": [{ "apiTypeId": "mimo-responses", "version": 1, "capability": { "tools": false, "vision": false } }, { "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true, "vision": false } }],
     "defaultApiType": { "apiTypeId": "mimo-responses", "version": 1 },
     "credential": { "type": "api-key", "required": true, "placeholder": "sk-..." },
-    "supports": { "customBaseUrl": true, "streaming": true, "tools": true, "vision": false, "toolsPartial": true }
+    "supports": { "customBaseUrl": true, "streaming": true, "tools": true, "vision": false, "toolsPartial": true, "visionPartial": false }
   },
   {
     "id": "google-gemini",
@@ -64,10 +64,10 @@
     "litellmProvider": "openai",
     "defaultBaseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
     "modelDiscovery": "remote-models",
-    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true } }],
+    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true, "vision": false } }],
     "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
     "credential": { "type": "api-key", "required": true, "placeholder": "AIza..." },
-    "supports": { "customBaseUrl": false, "streaming": true, "tools": true, "vision": true, "toolsPartial": false }
+    "supports": { "customBaseUrl": false, "streaming": true, "tools": true, "vision": true, "toolsPartial": false, "visionPartial": false }
   },
   {
     "id": "moonshot",
@@ -78,10 +78,10 @@
     "litellmProvider": "moonshot",
     "defaultBaseUrl": "https://api.moonshot.cn/v1",
     "modelDiscovery": "remote-models",
-    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true } }],
+    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true, "vision": false } }],
     "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
     "credential": { "type": "api-key", "required": true, "placeholder": "sk-..." },
-    "supports": { "customBaseUrl": true, "streaming": true, "tools": true, "vision": false, "toolsPartial": false }
+    "supports": { "customBaseUrl": true, "streaming": true, "tools": true, "vision": false, "toolsPartial": false, "visionPartial": false }
   },
   {
     "id": "zhipu",
@@ -92,10 +92,10 @@
     "litellmProvider": "openai",
     "defaultBaseUrl": "https://open.bigmodel.cn/api/paas/v4",
     "modelDiscovery": "remote-models",
-    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true } }],
+    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true, "vision": false } }],
     "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
     "credential": { "type": "api-key", "required": true, "placeholder": "..." },
-    "supports": { "customBaseUrl": false, "streaming": true, "tools": true, "vision": true, "toolsPartial": false }
+    "supports": { "customBaseUrl": false, "streaming": true, "tools": true, "vision": true, "toolsPartial": false, "visionPartial": false }
   },
   {
     "id": "dashscope-qwen",
@@ -107,18 +107,18 @@
     "defaultBaseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "modelDiscovery": "remote-models",
     "supportedApiTypes": [
-      { "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true } },
+      { "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true, "vision": true } },
       {
         "apiTypeId": "dashscope-multimodal-embedding",
         "version": 1,
         "defaultBaseUrl": "https://dashscope.aliyuncs.com/api/v1",
         "modelDiscovery": "manual",
-        "capability": { "tools": false }
+        "capability": { "tools": false, "vision": false }
       }
     ],
     "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
     "credential": { "type": "api-key", "required": true, "placeholder": "sk-..." },
-    "supports": { "customBaseUrl": true, "streaming": true, "tools": true, "vision": true, "toolsPartial": true }
+    "supports": { "customBaseUrl": true, "streaming": true, "tools": true, "vision": true, "toolsPartial": true, "visionPartial": true }
   },
   {
     "id": "groq",
@@ -129,10 +129,10 @@
     "litellmProvider": "groq",
     "defaultBaseUrl": "https://api.groq.com/openai/v1",
     "modelDiscovery": "remote-models",
-    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true } }],
+    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true, "vision": false } }],
     "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
     "credential": { "type": "api-key", "required": true, "placeholder": "gsk_..." },
-    "supports": { "customBaseUrl": false, "streaming": true, "tools": true, "vision": false, "toolsPartial": false }
+    "supports": { "customBaseUrl": false, "streaming": true, "tools": true, "vision": false, "toolsPartial": false, "visionPartial": false }
   },
   {
     "id": "openrouter",
@@ -143,10 +143,10 @@
     "litellmProvider": "openrouter",
     "defaultBaseUrl": "https://openrouter.ai/api/v1",
     "modelDiscovery": "remote-models",
-    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true } }],
+    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true, "vision": false } }],
     "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
     "credential": { "type": "api-key", "required": true, "placeholder": "sk-or-..." },
-    "supports": { "customBaseUrl": false, "streaming": true, "tools": true, "vision": true, "toolsPartial": false }
+    "supports": { "customBaseUrl": false, "streaming": true, "tools": true, "vision": true, "toolsPartial": false, "visionPartial": false }
   },
   {
     "id": "xai",
@@ -157,10 +157,10 @@
     "litellmProvider": "xai",
     "defaultBaseUrl": "https://api.x.ai/v1",
     "modelDiscovery": "remote-models",
-    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true } }],
+    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true, "vision": false } }],
     "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
     "credential": { "type": "api-key", "required": true, "placeholder": "xai-..." },
-    "supports": { "customBaseUrl": false, "streaming": true, "tools": true, "vision": true, "toolsPartial": false }
+    "supports": { "customBaseUrl": false, "streaming": true, "tools": true, "vision": true, "toolsPartial": false, "visionPartial": false }
   },
   {
     "id": "mistral",
@@ -171,10 +171,10 @@
     "litellmProvider": "mistral",
     "defaultBaseUrl": "https://api.mistral.ai/v1",
     "modelDiscovery": "remote-models",
-    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true } }],
+    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true, "vision": false } }],
     "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
     "credential": { "type": "api-key", "required": true, "placeholder": "..." },
-    "supports": { "customBaseUrl": false, "streaming": true, "tools": true, "vision": false, "toolsPartial": false }
+    "supports": { "customBaseUrl": false, "streaming": true, "tools": true, "vision": false, "toolsPartial": false, "visionPartial": false }
   },
   {
     "id": "together",
@@ -185,10 +185,10 @@
     "litellmProvider": "together_ai",
     "defaultBaseUrl": "https://api.together.xyz/v1",
     "modelDiscovery": "remote-models",
-    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true } }],
+    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true, "vision": false } }],
     "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
     "credential": { "type": "api-key", "required": true, "placeholder": "..." },
-    "supports": { "customBaseUrl": false, "streaming": true, "tools": true, "vision": false, "toolsPartial": false }
+    "supports": { "customBaseUrl": false, "streaming": true, "tools": true, "vision": false, "toolsPartial": false, "visionPartial": false }
   },
   {
     "id": "fireworks",
@@ -199,10 +199,10 @@
     "litellmProvider": "fireworks_ai",
     "defaultBaseUrl": "https://api.fireworks.ai/inference/v1",
     "modelDiscovery": "remote-models",
-    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true } }],
+    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true, "vision": false } }],
     "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
     "credential": { "type": "api-key", "required": true, "placeholder": "fw_..." },
-    "supports": { "customBaseUrl": false, "streaming": true, "tools": true, "vision": false, "toolsPartial": false }
+    "supports": { "customBaseUrl": false, "streaming": true, "tools": true, "vision": false, "toolsPartial": false, "visionPartial": false }
   },
   {
     "id": "cohere",
@@ -213,10 +213,10 @@
     "litellmProvider": "openai",
     "defaultBaseUrl": "https://api.cohere.ai/compatibility/v1",
     "modelDiscovery": "remote-models",
-    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true } }],
+    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true, "vision": false } }],
     "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
     "credential": { "type": "api-key", "required": true, "placeholder": "..." },
-    "supports": { "customBaseUrl": false, "streaming": true, "tools": true, "vision": false, "toolsPartial": false }
+    "supports": { "customBaseUrl": false, "streaming": true, "tools": true, "vision": false, "toolsPartial": false, "visionPartial": false }
   },
   {
     "id": "volcengine-ark",
@@ -227,10 +227,10 @@
     "litellmProvider": "openai",
     "defaultBaseUrl": "https://ark.cn-beijing.volces.com/api/v3",
     "modelDiscovery": "manual",
-    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true } }],
+    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true, "vision": false } }],
     "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
     "credential": { "type": "api-key", "required": true, "placeholder": "..." },
-    "supports": { "customBaseUrl": true, "streaming": true, "tools": true, "vision": false, "toolsPartial": false }
+    "supports": { "customBaseUrl": true, "streaming": true, "tools": true, "vision": false, "toolsPartial": false, "visionPartial": false }
   },
   {
     "id": "minimax",
@@ -241,10 +241,10 @@
     "litellmProvider": "openai",
     "defaultBaseUrl": "https://api.minimax.chat/v1",
     "modelDiscovery": "manual",
-    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": false } }],
+    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": false, "vision": false } }],
     "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
     "credential": { "type": "api-key", "required": true, "placeholder": "..." },
-    "supports": { "customBaseUrl": false, "streaming": true, "tools": false, "vision": false, "toolsPartial": false }
+    "supports": { "customBaseUrl": false, "streaming": true, "tools": false, "vision": false, "toolsPartial": false, "visionPartial": false }
   },
   {
     "id": "baichuan",
@@ -255,10 +255,10 @@
     "litellmProvider": "openai",
     "defaultBaseUrl": "https://api.baichuan-ai.com/v1",
     "modelDiscovery": "manual",
-    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": false } }],
+    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": false, "vision": false } }],
     "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
     "credential": { "type": "api-key", "required": true, "placeholder": "sk-..." },
-    "supports": { "customBaseUrl": false, "streaming": true, "tools": false, "vision": false, "toolsPartial": false }
+    "supports": { "customBaseUrl": false, "streaming": true, "tools": false, "vision": false, "toolsPartial": false, "visionPartial": false }
   },
   {
     "id": "yi",
@@ -269,10 +269,10 @@
     "litellmProvider": "openai",
     "defaultBaseUrl": "https://api.lingyiwanwu.com/v1",
     "modelDiscovery": "manual",
-    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true } }],
+    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true, "vision": false } }],
     "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
     "credential": { "type": "api-key", "required": true, "placeholder": "..." },
-    "supports": { "customBaseUrl": false, "streaming": true, "tools": true, "vision": false, "toolsPartial": false }
+    "supports": { "customBaseUrl": false, "streaming": true, "tools": true, "vision": false, "toolsPartial": false, "visionPartial": false }
   },
   {
     "id": "ollama",
@@ -283,10 +283,10 @@
     "litellmProvider": "openai",
     "defaultBaseUrl": "http://localhost:11434/v1",
     "modelDiscovery": "remote-models",
-    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": false } }],
+    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": false, "vision": false } }],
     "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
     "credential": { "type": "none", "required": false, "placeholder": null },
-    "supports": { "customBaseUrl": true, "streaming": true, "tools": false, "vision": false, "toolsPartial": false }
+    "supports": { "customBaseUrl": true, "streaming": true, "tools": false, "vision": false, "toolsPartial": false, "visionPartial": false }
   },
   {
     "id": "lm-studio",
@@ -297,10 +297,10 @@
     "litellmProvider": "openai",
     "defaultBaseUrl": "http://localhost:1234/v1",
     "modelDiscovery": "remote-models",
-    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": false } }],
+    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": false, "vision": false } }],
     "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
     "credential": { "type": "none", "required": false, "placeholder": null },
-    "supports": { "customBaseUrl": true, "streaming": true, "tools": false, "vision": false, "toolsPartial": false }
+    "supports": { "customBaseUrl": true, "streaming": true, "tools": false, "vision": false, "toolsPartial": false, "visionPartial": false }
   },
   {
     "id": "vllm",
@@ -311,10 +311,10 @@
     "litellmProvider": "openai",
     "defaultBaseUrl": null,
     "modelDiscovery": "remote-models",
-    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": false } }],
+    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": false, "vision": false } }],
     "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
     "credential": { "type": "none", "required": false, "placeholder": null },
-    "supports": { "customBaseUrl": true, "streaming": true, "tools": false, "vision": false, "toolsPartial": false }
+    "supports": { "customBaseUrl": true, "streaming": true, "tools": false, "vision": false, "toolsPartial": false, "visionPartial": false }
   },
   {
     "id": "custom-openai-compatible",
@@ -325,9 +325,9 @@
     "litellmProvider": "openai",
     "defaultBaseUrl": null,
     "modelDiscovery": "manual",
-    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": false } }],
+    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": false, "vision": false } }],
     "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
     "credential": { "type": "api-key", "required": false, "placeholder": "可选 Bearer key" },
-    "supports": { "customBaseUrl": true, "streaming": true, "tools": false, "vision": false, "toolsPartial": false }
+    "supports": { "customBaseUrl": true, "streaming": true, "tools": false, "vision": false, "toolsPartial": false, "visionPartial": false }
   }
 ]
