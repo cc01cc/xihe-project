@@ -7,6 +7,7 @@ import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.entity.InstanceOwner;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.UserRole;
+import com.cc01cc.p.xihe.cp.entity.UserStatus;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
@@ -102,10 +103,14 @@ public class UserRoleService {
             deny(actorUserId, target, previousRole, newRole, "INSTANCE_OWNER_PROTECTED",
                     HttpStatus.CONFLICT, "The instance owner cannot be demoted");
         }
+        // PLAN-0581 corrects the counting basis of PLAN-0580's guard: a DISABLED or
+        // soft-deleted ADMIN cannot log in, so it must not count as the instance's
+        // remaining administrator. With the plain row count, "disable admin A" plus
+        // "demote admin B" would leave zero usable admins.
         if (previousRole == UserRole.ADMIN && newRole == UserRole.USER
-                && users.countByRole(UserRole.ADMIN) <= 1) {
+                && users.countByRoleAndStatusAndDeletedAtIsNull(UserRole.ADMIN, UserStatus.ACTIVE) <= 1) {
             deny(actorUserId, target, previousRole, newRole, "LAST_ADMIN",
-                    HttpStatus.CONFLICT, "The instance must keep at least one ADMIN");
+                    HttpStatus.CONFLICT, "The instance must keep at least one usable ADMIN");
         }
 
         target.setRole(newRole);
