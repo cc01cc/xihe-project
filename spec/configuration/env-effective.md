@@ -22,7 +22,7 @@ Credentials 不等于普通 config KV：API key/token 由 provider connection/le
 | 进程 | 能读取 | 不能假设能读取 | 输出要求 |
 |---|---|---|---|
 | CP | DB instance/user/workspace、EnvOverlayRegistry、code defaults、per-call/CLI input | Runtime host env/CLI 的实时值 | effective value/source/revision/lock/conflict；audit change |
-| Agent | CP 下发的 effective config/run payload、必要 lease | CP DB、Runtime host env、其他 Workspace config | metadata 标 source/revision；不自行 resolve precedence |
+| Agent | CP 下发的 effective config/run payload、必要 lease；按 run 身份 `(workspaceId, userId)` 拉取的 run 级 effective 快照（PLAN-0590，5 域：llm-provider/agent-profile/rag/agent-runtime/context-policy） | CP DB、Runtime host env、其他 Workspace config；不得把 env `XIHE_WORKSPACE_ID` 绑定快照当 run 基线 | metadata 标 source/revision；不自行 resolve precedence；run 快照解析日志含 `workspaceId`/`userId` 摘要 |
 | Runtime | 自身 bootstrap env/CLI（PORT/HOST/DB/JWT/backend/storage 等）和 CP execution spec | CP user/workspace DB layer，除非 CP 显式下发 | environment snapshot/provenance；host secrets 不回传 |
 | UI | CP 生效结果/层级/env lock 响应、capability available/reason | 进程 env、DB raw secret、Runtime host absolute path | 展示最终 source、被覆盖 key、lock reason 和 capability reason |
 
@@ -34,6 +34,7 @@ Runtime env 不是 CP/Agent 可直接读取的 source；Agent env block 由 Runt
 - per-call input 只影响本次操作，不能静默写入持久层。
 - schema invalid、secret unavailable、env unsafe/default fail-fast、unknown Workspace 显式失败；不得回退到旧 system/admin 或默认 provider。
 - source/revision 过期、配置变更和 Workspace generation mismatch 必须触发 refresh/reject，不使用陈旧 effective value。
+  - **Supersede（PLAN-0590，2026-10-31 Lead 裁定 #2）**：Agent 侧的 **run 级配置快照**允许**有界 stale**——仅当存在同一 `(workspaceId, userId)` 的旧快照、且其 age ≤ 2×TTL（TTL 默认 60 s，env `XIHE_AGENT_CONFIG_SNAPSHOT_TTL_S`）时继续服务，并 MUST 产出 `config_snapshot_stale` WARN 与 `config_snapshot_stale_total` 指标；超出该窗口、或不存在任何快照时 MUST fail-closed（`AGENT_CONFIG_SNAPSHOT_UNAVAILABLE`），**不得**回退到进程 workspace 绑定的 effective 快照。该例外只适用于 Agent 进程内的 run 快照，不改变 CP 侧 `effective` 计算的新鲜度要求，也不做按域分级（否决「按域不同失效语义」）。
 
 ## 验证映射
 

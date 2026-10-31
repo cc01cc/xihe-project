@@ -3,7 +3,12 @@
 import pytest
 
 import xihe_agent.app_state as main
+from xihe_agent.config_snapshot import process_config_snapshot
 from xihe_agent.llm.base import ENV_PROVIDER_KEY_MAP, LLMConfig
+
+
+def _snapshot():
+    return process_config_snapshot(main.config_client)
 
 
 class TestRunOverrideValidation:
@@ -45,11 +50,12 @@ class TestMergeRunDomain:
     def test_workspace_beats_user_beats_pulled_effective(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(
             main.config_client,
-            "get_domain",
-            lambda domain: {"temperature": "0.9", "timeout": "30"} if domain == "llm-provider" else {},
+            "_effective_cache",
+            {"llm-provider": {"temperature": "0.9", "timeout": "30"}},
         )
 
         merged = main._merge_run_domain(
+            _snapshot(),
             "llm-provider",
             {"llm-provider": {"temperature": "0.2", "maxTokens": "2048"}},
             {"llm-provider": {"temperature": "0.1"}},
@@ -61,18 +67,21 @@ class TestMergeRunDomain:
 
     def test_has_no_side_effects_on_process_snapshot(self, monkeypatch: pytest.MonkeyPatch):
         snapshot = {"temperature": "0.9"}
-        monkeypatch.setattr(main.config_client, "get_domain", lambda domain: snapshot)
+        monkeypatch.setattr(main.config_client, "_effective_cache", {"llm-provider": snapshot})
         before = main.llm_config
 
-        merged = main._merge_run_domain("llm-provider", {"llm-provider": {"temperature": "0.2"}}, {})
+        merged = main._merge_run_domain(
+            _snapshot(), "llm-provider", {"llm-provider": {"temperature": "0.2"}}, {}
+        )
         merged["temperature"] = "mutated"
 
         assert snapshot == {"temperature": "0.9"}
         assert main.llm_config is before
 
     def test_unknown_domain_returns_pulled_entries(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setattr(main.config_client, "get_domain", lambda domain: {"a": "b"})
-        assert main._merge_run_domain("unknown", {}, {}) == {"a": "b"}
+        monkeypatch.setattr(main.config_client, "_effective_cache", {"context-policy": {"a": "b"}})
+        assert main._merge_run_domain(_snapshot(), "context-policy", {}, {}) == {"a": "b"}
+        assert main._merge_run_domain(_snapshot(), "unknown", {}, {}) == {}
 
 
 class TestLLMConfigFromEntries:

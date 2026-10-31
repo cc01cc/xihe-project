@@ -34,6 +34,7 @@ from xihe_agent.app_state import (
     config_client,
     crash_recovery,
 )
+from xihe_agent.config_snapshot import process_config_snapshot
 from xihe_agent.dotenv_loader import load_project_env, parse_cli_overrides
 from xihe_agent.llm.base import LLMConfig, create_llm
 from xihe_agent.llm.models import fetch_model_catalog
@@ -204,13 +205,16 @@ async def reload_runtime_config(reason: str) -> SyncReport:
 
         if cc_user_name := config_client.get("agent-profile", "userName"):
             state.AGENT_USER_NAME = cc_user_name
-        state.USE_SUPERVISOR = config_client.get_bool("agent-runtime", "useSupervisor")
+        # PLAN-0590: `useSupervisor` is resolved per run from the run snapshot
+        # (`api/chat.py`); only the process-level registry capability gate stays here.
         state.USE_REGISTRY = config_client.get_bool("agent-runtime", "useRegistry")
         state._agent_status = "ok" if staged_ready == "ready" else "degraded"
         # PLAN-0341 T1.6: rebuild TokenCounter when tokenizerRef is configured.
         try:
             default_model = staged_llm_config.model if staged_llm_config else None
-            policy = _resolve_policy_for_model(default_model)
+            # Process-level refresh only: the tokenizer reference is an instance
+            # setting, so it reads the process snapshot (never a run snapshot).
+            policy = _resolve_policy_for_model(default_model, process_config_snapshot(config_client))
             if policy.tokenizer_ref:
                 state._token_counter = TokenCounter(tokenizer_ref=policy.tokenizer_ref, model=default_model)
                 logger.info(

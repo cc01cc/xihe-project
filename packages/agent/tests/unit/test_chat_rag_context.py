@@ -34,6 +34,12 @@ def profile():
     }
 
 
+def _snapshot():
+    from xihe_agent.config_snapshot import RunConfigSnapshot
+
+    return RunConfigSnapshot(workspace_id="workspace-fixture", user_id=None, fetched_at=0.0, entries={}, revisions={})
+
+
 def embedding_grant():
     return {
         "operation": "embedding",
@@ -127,7 +133,7 @@ async def test_run_bound_redeem_partition_empty_and_content(monkeypatch, results
     monkeypatch.setattr(chat_context.DashScopeEmbeddings, "embed", embed)
     monkeypatch.setattr(chat_context.VectorStore, "search", search)
     data = {"embeddingProfile": profile(), "embeddingCredentialLease": "one-use", "workspaceId": "workspace-fixture"}
-    text, state, count = await chat_context.retrieve_chat_context(data, "question", "run-fixture", "request-fixture")
+    text, state, count = await chat_context.retrieve_chat_context(data, "question", "run-fixture", "request-fixture", _snapshot())
     assert state == ("empty" if not results else None)
     assert count == len(results)
     assert text == (results[0]["text"] if results else "")
@@ -155,7 +161,10 @@ async def test_private_exception_details_never_enter_rag_logs(monkeypatch, fault
         with pytest.raises(ApiRequestError):
             await chat_context.retrieve_chat_context(
                 {"embeddingProfile": profile(), "embeddingCredentialLease": "one-use", "workspaceId": "workspace-fixture"},
-                "question", "safe-run", "safe-request",
+                "question",
+                "safe-run",
+                "safe-request",
+                _snapshot(),
             )
     finally:
         logger.remove(sink)

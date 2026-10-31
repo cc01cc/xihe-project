@@ -219,6 +219,22 @@ class LlmSummaryProviderTest {
         assertThat(prior).doesNotContain("secret rule");
     }
 
+    @Test
+    void agentPayloadCarriesRunIdentityForConfigSnapshot() {
+        givenSession(boundSession());
+        givenLease();
+        when(agentClient.summarize(any(), anyLong())).thenReturn(new AgentSummarizeClient.Result(
+                "[Goal] g\n[Recent] r", Map.of("inputTokens", 1, "outputTokens", 1, "source", "real")));
+
+        provider.summarize(request());
+
+        org.mockito.ArgumentCaptor<Map<String, Object>> captor = org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(agentClient).summarize(captor.capture(), anyLong());
+        // PLAN-0590: the Agent must resolve run config from these identity keys.
+        assertThat(captor.getValue().get("workspaceId")).isEqualTo(WORKSPACE_ID);
+        assertThat(captor.getValue().get("userId")).isEqualTo(USER_ID);
+    }
+
     private void givenSession(Session session) {
         SessionReadService.SummaryRoutingView view = new SessionReadService.SummaryRoutingView(
                 session.getProviderConnectionId(),

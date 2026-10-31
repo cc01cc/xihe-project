@@ -664,11 +664,20 @@ paths:
   /internal/v1/config/effective/{domain}:
     get:
       operationId: getEffectiveConfig
-      summary: Resolve effective config for a domain (env > workspace > user > instance > defaults); no layer exposure
+      summary: Resolve effective config for a domain (env > lock > workspace > user > instance > defaults); no layer exposure
+      description: |
+        PLAN-0590 (spec/run-config-snapshot.md): the Agent resolves one frozen
+        effective snapshot per `(workspaceId, userId)` run and reads its run
+        config from that snapshot. Both identity query parameters are optional;
+        when `workspaceId` is absent no workspace layer is read. The endpoint
+        does not check membership between `userId` and `workspaceId` — callers
+        are service-authenticated (`INTERNAL_SERVICE`) and the Agent always
+        passes identity keys taken from the CP run payload.
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: domain, required: true, schema: { type: string } }
         - { in: query, name: userId, required: false, schema: { type: string, format: uuid } }
+        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid } }
       responses: { '200': { description: Effective configuration (entries/revision/source) }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' } }
   /internal/v1/queries/tier1/status:
     get:
@@ -4105,6 +4114,8 @@ components:
         connectionRevision: { type: integer, minimum: 1 }
         text: { type: string, description: "role: content lines bounded by CP (per-message 4000 chars, pruneWindowChars budget; oldest dropped with an explicit omitted marker)." }
         priorSummary: { type: string, description: "Previous sectioned summary with [Constraints] stripped by CP." }
+        workspaceId: { type: string, format: uuid, description: "PLAN-0590: run workspace identity; the Agent uses it (with userId) to resolve the request-scoped config snapshot. Optional — absent identity degrades to code defaults." }
+        userId: { type: string, format: uuid, description: "PLAN-0590: run user identity for the request-scoped config snapshot. Optional." }
     AgentSummarizeResponse:
       type: object
       required: [summary, usage]

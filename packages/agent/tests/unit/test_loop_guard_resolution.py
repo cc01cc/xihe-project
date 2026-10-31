@@ -12,13 +12,18 @@ Frozen states (mirroring PLAN-0492 T2.1):
 
 import xihe_agent.app_state as app_state
 from xihe_agent.app_state import _resolve_loop_guard
+from xihe_agent.config_snapshot import process_config_snapshot
+
+
+def _snapshot():
+    return process_config_snapshot(app_state.config_client)
 from xihe_agent.context.loop_detection import BUILTIN_EXEMPT_TOOLS
 
 
 def test_loop_guard_defaults_when_nothing_configured(monkeypatch):
     monkeypatch.setattr(app_state.config_client, "_effective_cache", {})
 
-    thresholds, exempt = _resolve_loop_guard({}, {})
+    thresholds, exempt = _resolve_loop_guard(_snapshot(), {}, {})
 
     # M0 calibrated 2026-10-13: all defaults kept
     # (PLAN-0493 evidence/m0-observed-repeats.md §2).
@@ -49,7 +54,7 @@ def test_loop_guard_positive_ceiling_clamps_escalate_and_window(monkeypatch):
         },
     )
 
-    thresholds, _ = _resolve_loop_guard({}, {})
+    thresholds, _ = _resolve_loop_guard(_snapshot(), {}, {})
 
     assert thresholds.repeat_escalate == 10
     assert thresholds.window == 50
@@ -72,7 +77,7 @@ def test_loop_guard_zero_ceiling_means_no_clamp(monkeypatch):
         },
     )
 
-    thresholds, _ = _resolve_loop_guard({}, {})
+    thresholds, _ = _resolve_loop_guard(_snapshot(), {}, {})
 
     assert thresholds.repeat_escalate == 50
     assert thresholds.window == 200
@@ -91,6 +96,7 @@ def test_loop_guard_overrides_merge_and_still_clamp(monkeypatch):
     )
 
     thresholds, _ = _resolve_loop_guard(
+        _snapshot(),
         {"agent-runtime": {"loopRepeatEscalate": "8", "loopRepeatWarn": "1"}},
         {"agent-runtime": {"loopRepeatEscalate": "99", "loopWindowSize": "30"}},
     )
@@ -114,7 +120,7 @@ def test_loop_guard_invalid_values_fall_back_to_defaults(monkeypatch):
         },
     )
 
-    thresholds, _ = _resolve_loop_guard({}, {})
+    thresholds, _ = _resolve_loop_guard(_snapshot(), {}, {})
 
     assert thresholds.repeat_warn == 2
     assert thresholds.repeat_refuse == 3
@@ -132,7 +138,7 @@ def test_loop_exempt_tools_append_to_builtin_list(monkeypatch):
         },
     )
 
-    _, exempt = _resolve_loop_guard({}, {})
+    _, exempt = _resolve_loop_guard(_snapshot(), {}, {})
 
     assert set(BUILTIN_EXEMPT_TOOLS) <= set(exempt)
     assert "my_poll_tool" in exempt
@@ -146,5 +152,5 @@ def test_loop_exempt_tools_invalid_falls_back_to_builtin(monkeypatch):
             "_effective_cache",
             {"agent-runtime": {"loopExemptTools": raw}},
         )
-        _, exempt = _resolve_loop_guard({}, {})
+        _, exempt = _resolve_loop_guard(_snapshot(), {}, {})
         assert exempt == frozenset(BUILTIN_EXEMPT_TOOLS), raw
