@@ -1336,6 +1336,10 @@ const messages = {
             configSourceOverridable: "可被覆盖",
             configSourceInstanceOnly: "仅 instance",
             configLockNav: "配置锁定",
+            languageLabel: "界面语言",
+            languageZh: "中文（zh-Hans）",
+            languageEn: "English (en)",
+            languageHint: "切换立即生效并记住到本机，刷新后保持。",
             principalGrantsNav: "Principal 授权",
             principalGrantsTitle: "Principal 授权",
             principalGrantsSubtitle:
@@ -3216,6 +3220,11 @@ const messages = {
             configSourceOverridable: "Overridable",
             configSourceInstanceOnly: "Instance only",
             configLockNav: "Config locks",
+            languageLabel: "Interface language",
+            languageZh: "中文 (zh-Hans)",
+            languageEn: "English (en)",
+            languageHint:
+                "Applies immediately, remembered on this device, persists across reloads.",
             principalGrantsNav: "Principal grants",
             principalGrantsTitle: "Principal grants",
             principalGrantsSubtitle:
