@@ -1032,8 +1032,10 @@ public class ChatController {
                 agentRequest.put("contextTemplateSnapshot", persistedRun.context().contextTemplateSnapshot());
                 // PLAN-0605: image references (ids + metadata only). Bytes stay behind the
                 // run-bound internal route; the Agent pulls them lazily while rendering.
-                List<Map<String, Object>> imageReferences =
-                        chatAttachmentService.imageReferencesForMessage(persistedRun.userMessageId());
+                List<Map<String, Object>> imageReferences = chatRunReadService
+                        .findUserMessageAttachmentsJson(runId)
+                        .map(chatAttachmentService::imageReferencesFromAttachmentsJson)
+                        .orElseGet(List::of);
                 if (!imageReferences.isEmpty()) {
                     agentRequest.put("images", imageReferences);
                 }
@@ -2121,5 +2123,6 @@ public class ChatController {
         }
     }
 }
+
 
 
