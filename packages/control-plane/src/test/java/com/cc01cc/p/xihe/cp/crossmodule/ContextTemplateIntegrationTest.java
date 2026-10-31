@@ -536,8 +536,11 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
         body.put("agentPrincipalId", principalId);
         body.put("modelProvider", provider);
         body.put("modelName", model);
+        // PLAN-0608 C′: ownership is stated explicitly via the path form; the
+        // legacy header-less route now answers 409 when the caller belongs to
+        // more than one workspace (this fixture creates a second one).
         ResponseEntity<Map> response = restTemplate.exchange(
-                url("/api/v1/sessions"), HttpMethod.POST,
+                url("/api/v1/workspaces/" + workspaceId + "/sessions"), HttpMethod.POST,
                 new HttpEntity<>(body, bearerJson(token)),
                 Map.class);
         assertEquals(HttpStatus.CREATED, response.getStatusCode(), String.valueOf(response.getBody()));
@@ -579,3 +582,4 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
         }
     }
 }
+

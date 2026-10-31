@@ -467,7 +467,8 @@ paths:
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
-        '404': { $ref: '#/components/responses/Problem' }  /api/v1/sessions/{sessionId}/follow-ups:
+        '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/sessions/{sessionId}/follow-ups:
     get:
       operationId: getFollowUpQueue
       security: [{ bearerAuth: [] }]
