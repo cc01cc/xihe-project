@@ -8,14 +8,14 @@ import { useAgentStore } from "../stores/agent";
 import { useAuthStore } from "../stores/auth";
 import { useSessionStore } from "../stores/session";
 import { workspaceChatPath } from "../lib/routes";
+import { clearLayoutStorage, useWorkspaceLayout } from "../composables/useWorkspaceLayout";
 
 const mobileMediaQuery =
     typeof window === "undefined" || typeof window.matchMedia !== "function"
         ? null
         : window.matchMedia("(max-width: 767px)");
 const isMobile = ref(mobileMediaQuery?.matches ?? false);
-const sidebarOpen = ref(!isMobile.value);
-const sidebarWidth = ref(280);
+const { railCollapsed, navOpen, navWidth, mainOffset } = useWorkspaceLayout({ isMobile });
 const route = useRoute();
 const router = useRouter();
 const { t } = useI18n();
@@ -25,10 +25,7 @@ const sessionStore = useSessionStore();
 const pendingPollIntervalMs = 10_000;
 let pendingPollTimer: ReturnType<typeof setInterval> | null = null;
 
-const mainMargin = computed(() => {
-    if (isMobile.value) return "0";
-    return sidebarOpen.value ? `${sidebarWidth.value}px` : "0";
-});
+const mainMargin = computed(() => `${mainOffset.value}px`);
 
 const currentRouteSessionId = computed(() => {
     const sessionId = route.params.sessionId;
@@ -77,14 +74,24 @@ function updateViewport() {
     if (nextIsMobile === isMobile.value) return;
 
     isMobile.value = nextIsMobile;
-    sidebarOpen.value = !nextIsMobile;
+    navOpen.value = !nextIsMobile;
 }
 
 watch(
     () => route.fullPath,
     () => {
-        if (isMobile.value) sidebarOpen.value = false;
+        if (isMobile.value) navOpen.value = false;
         refreshPendingApprovals();
+    },
+);
+
+// PLAN-0582 V10: layout is user-scoped state. Dropping it here (instead of in
+// the auth store) keeps the single writer in the layout layer while still
+// covering logout and cross-tab logout broadcasts.
+watch(
+    () => auth.isAuthenticated,
+    (isAuthenticated) => {
+        if (!isAuthenticated) clearLayoutStorage();
     },
 );
 
@@ -128,15 +135,20 @@ onUnmounted(() => {
 
 <template>
     <div class="flex h-screen overflow-hidden bg-background text-foreground">
-        <Sidebar v-model:open="sidebarOpen" v-model:width="sidebarWidth" :is-mobile="isMobile" />
+        <Sidebar
+            v-model:open="navOpen"
+            v-model:width="navWidth"
+            v-model:rail-collapsed="railCollapsed"
+            :is-mobile="isMobile"
+        />
         <button
-            v-if="!sidebarOpen"
+            v-if="!navOpen && isMobile"
             type="button"
             data-testid="mobile-sidebar-toggle"
             aria-label="Open navigation"
             title="Open navigation"
             class="fixed right-3 top-3 z-30 inline-flex size-9 items-center justify-center rounded-md border bg-background/90 text-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-accent"
-            @click="sidebarOpen = true"
+            @click="navOpen = true"
         >
             <PanelLeftOpen class="size-4" />
         </button>

@@ -47,6 +47,11 @@ const messages = {
             pendingApprovalCount: "项待处理",
             pendingApprovalGoTo: "前往处理",
             pendingApprovalLive: "待审批数量已更新",
+            admin: "管理",
+            collapseRail: "收起导航栏",
+            expandRail: "展开导航栏",
+            clearSearch: "清除搜索",
+            resize: "调整导航面板宽度",
         },
         monitor: {
             refresh: "刷新监控数据",
@@ -1863,6 +1868,11 @@ const messages = {
             pendingApprovalCount: "items pending",
             pendingApprovalGoTo: "Review now",
             pendingApprovalLive: "Pending approval count updated",
+            admin: "Admin",
+            collapseRail: "Collapse navigation rail",
+            expandRail: "Expand navigation rail",
+            clearSearch: "Clear search",
+            resize: "Resize navigation panel",
         },
         monitor: {
             refresh: "Refresh monitor data",

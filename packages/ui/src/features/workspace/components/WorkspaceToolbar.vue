@@ -107,11 +107,6 @@ function overflowNav(navigate: () => void) {
     overflowOpen.value = false;
     navigate();
 }
-
-function switchSession(id: string) {
-    sessionStore.selectSession(id);
-    router.push(workspaceChatPath(props.workspaceId, id));
-}
 </script>
 
 <template>
@@ -297,20 +292,6 @@ function switchSession(id: string) {
             >
                 <Activity class="size-3.5" />
             </button>
-            <select
-                :value="sessionStore.currentSessionId ?? ''"
-                class="text-xs bg-background border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
-                @change="switchSession(($event.target as HTMLSelectElement).value)"
-            >
-                <option value="" disabled>会话</option>
-                <option
-                    v-for="session in sessionStore.sessions"
-                    :key="session.id"
-                    :value="session.id"
-                >
-                    {{ session.title }}
-                </option>
-            </select>
             <button
                 class="px-2 py-1 text-xs rounded border hover:bg-accent text-muted-foreground transition-colors"
                 title="Switch to chat"
