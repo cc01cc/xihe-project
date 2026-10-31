@@ -131,19 +131,60 @@ public class AuthService {
             throw new InvalidCredentialsException("Invalid email or password");
         }
 
+        // PLAN-0581 I1: a disabled or soft-deleted account cannot log in. The
+        // refusal deliberately reuses the credential-failure type so the caller
+        // answers the same 401 and counts the same lockout lease — an outsider
+        // cannot distinguish "wrong password" from "account disabled" and the
+        // admin does not leak account state through this endpoint.
+        if (!user.isUsable()) {
+            logger.info("Login rejected: id={} status={} deleted={}", user.getId(),
+                    user.getStatus(), user.getDeletedAt() != null);
+            throw new InvalidCredentialsException("Invalid email or password");
+        }
+
         logger.info("User logged in: id={} email={}", user.getId(), AuthLog.maskEmail(user.getEmail()));
         return user;
     }
 
-    /** Validates the refresh token and resolves its user; no token rotation here. */
+    /**
+     * Validates the refresh token and resolves its user; no token rotation here.
+     *
+     * <p>PLAN-0581 (§4, decision #1): four checks in this fixed order — signature
+     * and expiry, the user row exists, the account is usable
+     * ({@code status=ACTIVE} and {@code deleted_at IS NULL}), and finally the
+     * token's {@code sv} claim still equals {@code users.session_version}. Every
+     * failure uses the same {@link IllegalArgumentException} shape as before, so
+     * the caller keeps answering one indistinguishable 401 and never leaks whether
+     * the account exists, is disabled or was deleted.
+     */
     public User verifyRefresh(String refreshToken) {
         if (!jwtTokenProvider.validateRefreshToken(refreshToken)) {
             throw new IllegalArgumentException("Invalid or expired refresh token");
         }
 
         String userId = jwtTokenProvider.getUserIdFromRefreshToken(refreshToken);
-        return userRepository.findById(UUID.fromString(userId))
-                .orElseThrow(() -> new IllegalArgumentException("User not found"));
+        User user;
+        try {
+            user = userRepository.findById(UUID.fromString(userId))
+                    .orElseThrow(() -> new IllegalArgumentException("User not found"));
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("User not found");
+        }
+
+        if (!user.isUsable()) {
+            logger.info("Refresh rejected: id={} status={} deleted={}", user.getId(),
+                    user.getStatus(), user.getDeletedAt() != null);
+            throw new IllegalArgumentException("Account is not active");
+        }
+        Integer claimVersion = jwtTokenProvider.getSessionVersionFromRefreshToken(refreshToken);
+        if (claimVersion == null || claimVersion != user.getSessionVersion()) {
+            // Missing `sv` is a pre-0581 token: treat it exactly like a stale one
+            // instead of letting it through for the whole 7-day window.
+            logger.info("Refresh rejected: id={} claim={} current={}", user.getId(),
+                    claimVersion, user.getSessionVersion());
+            throw new IllegalArgumentException("Refresh token has been revoked");
+        }
+        return user;
     }
 
     /** Pure token issuance for a caller-resolved workspace; no Workspace reads. */
@@ -152,7 +193,10 @@ public class AuthService {
         // users.token_version so this token stops authenticating on its next use.
         String accessToken = jwtTokenProvider.createAccessToken(
                 user.getId().toString(), user.getEmail(), user.getRole().name(), user.getTokenVersion());
-        String refreshToken = jwtTokenProvider.createRefreshToken(user.getId().toString());
+        // PLAN-0581: the refresh token stamps the refresh epoch; disable/soft-delete/
+        // password-reset bump users.session_version and kill it on next use.
+        String refreshToken = jwtTokenProvider.createRefreshToken(
+                user.getId().toString(), user.getSessionVersion());
 
         return new AuthResponse(accessToken, refreshToken, 900,
                 UserResponse.from(user), workspaceId);

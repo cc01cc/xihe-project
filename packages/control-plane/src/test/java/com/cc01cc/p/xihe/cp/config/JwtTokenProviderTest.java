@@ -107,14 +107,14 @@ class JwtTokenProviderTest {
 
     @Test
     void validateTokenRejectsRefreshToken() {
-        String refreshToken = provider.createRefreshToken("user-1");
+        String refreshToken = provider.createRefreshToken("user-1", 0);
 
         assertFalse(provider.validateToken(refreshToken));
     }
 
     @Test
     void createRefreshTokenReturnsValidRefreshToken() {
-        String refreshToken = provider.createRefreshToken("user-1");
+        String refreshToken = provider.createRefreshToken("user-1", 0);
 
         assertNotNull(refreshToken);
         assertEquals(3, refreshToken.split("\\.").length);
@@ -122,7 +122,7 @@ class JwtTokenProviderTest {
 
     @Test
     void validateRefreshTokenAcceptsValidRefreshToken() {
-        String refreshToken = provider.createRefreshToken("user-1");
+        String refreshToken = provider.createRefreshToken("user-1", 0);
 
         assertTrue(provider.validateRefreshToken(refreshToken));
     }
@@ -136,14 +136,14 @@ class JwtTokenProviderTest {
 
     @Test
     void getUserIdFromRefreshTokenExtractsCorrectId() {
-        String refreshToken = provider.createRefreshToken("user-99");
+        String refreshToken = provider.createRefreshToken("user-99", 0);
 
         assertEquals("user-99", provider.getUserIdFromRefreshToken(refreshToken));
     }
 
     @Test
     void refreshTokenGeneratesNewTokenPair() {
-        String refreshToken = provider.createRefreshToken("user-1");
+        String refreshToken = provider.createRefreshToken("user-1", 0);
 
         assertTrue(provider.validateRefreshToken(refreshToken));
         assertEquals("user-1", provider.getUserIdFromRefreshToken(refreshToken));

@@ -21,6 +21,9 @@ public class JwtTokenProvider {
     /** PLAN-0580: access-token epoch claim name (matches {@code users.token_version}). */
     public static final String TOKEN_VERSION_CLAIM = "tv";
 
+    /** PLAN-0581: refresh-token epoch claim name (matches {@code users.session_version}). */
+    public static final String SESSION_VERSION_CLAIM = "sv";
+
     private final SecretKey accessKey;
     private final SecretKey refreshKey;
     private final long accessTokenValidity;
@@ -74,13 +77,25 @@ public class JwtTokenProvider {
         return builder.signWith(accessKey).compact();
     }
 
-    public String createRefreshToken(String userId) {
+    /**
+     * PLAN-0581: every refresh token carries the epoch claim {@code sv} — the
+     * value of {@code users.session_version} at issue time. {@code
+     * AuthService.verifyRefresh} compares it against the row, so a disable /
+     * soft-delete / password reset kills outstanding refresh tokens at once
+     * while a role change (which bumps only {@code token_version}) does not.
+     *
+     * <p>There is deliberately no one-argument overload: a refresh token without
+     * {@code sv} would be a permanent bypass of the refresh channel, the same way
+     * a {@code tv}-less access token would bypass the access channel.
+     */
+    public String createRefreshToken(String userId, int sessionVersion) {
         Date now = new Date();
         Date expiry = new Date(now.getTime() + refreshTokenValidity);
 
         return Jwts.builder()
                 .subject(userId)
                 .claim("type", "refresh")
+                .claim(SESSION_VERSION_CLAIM, sessionVersion)
                 .issuedAt(now)
                 .expiration(expiry)
                 .signWith(refreshKey)
@@ -175,6 +190,25 @@ public class JwtTokenProvider {
                 .parseSignedClaims(token)
                 .getPayload()
                 .get(TOKEN_VERSION_CLAIM);
+        if (raw instanceof Number number) {
+            return number.intValue();
+        }
+        return null;
+    }
+
+    /**
+     * PLAN-0581: the refresh token's {@code sv} claim, or {@code null} when the
+     * token predates the refresh epoch (or carries a non-numeric value). A null
+     * result is a hard rejection in {@code AuthService.verifyRefresh} — same
+     * fail-closed rule as {@code tv} on the access channel.
+     */
+    public Integer getSessionVersionFromRefreshToken(String token) {
+        Object raw = Jwts.parser()
+                .verifyWith(refreshKey)
+                .build()
+                .parseSignedClaims(token)
+                .getPayload()
+                .get(SESSION_VERSION_CLAIM);
         if (raw instanceof Number number) {
             return number.intValue();
         }

@@ -2,13 +2,14 @@ package com.cc01cc.p.xihe.cp.auth;
 
 /**
  * PLAN-0558: keeps auth log/audit fields free of raw emails and client-supplied
- * separators. Package-private; both AuthService and LoginAttemptService use it.
+ * separators. Package-private until PLAN-0581 needed the same masking for the
+ * admin-create audit row in {@code service/UserAdminService}.
  */
-final class AuthLog {
+public final class AuthLog {
 
     private AuthLog() {}
 
-    static String maskEmail(String email) {
+    public static String maskEmail(String email) {
         if (email == null || email.isBlank()) {
             return "unknown";
         }
