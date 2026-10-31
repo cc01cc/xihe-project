@@ -1,10 +1,17 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
-import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
+import com.cc01cc.p.xihe.cp.entity.AccessRole;
+import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
+import com.cc01cc.p.xihe.cp.policy.AccessScope;
+import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
+import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
+import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
@@ -37,11 +44,16 @@ class AgentPrincipalControllerContractTest extends AbstractIntegrationTest {
     @Autowired private AgentPrincipalRepository principalRepository;
     @Autowired private AuthorizationGrantRepository grantRepository;
     @Autowired private WorkspaceAgentRepository bindingRepository;
+    @Autowired private AccessRoleRepository accessRoleRepository;
+    @Autowired private AccessRolePermissionRepository permissionRepository;
+    @Autowired private AccessRoleBindingRepository roleBindingRepository;
+    @Autowired private RoleGrantMaterializer materializer;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private JdbcTemplate jdbcTemplate;
 
     private UUID userId;
     private String token;
+    private final List<UUID> testRoleIds = new java.util.ArrayList<>();
 
     @AfterEach
     void cleanFixtures() {
@@ -56,8 +68,15 @@ class AgentPrincipalControllerContractTest extends AbstractIntegrationTest {
                 principalRepository.deleteById(principalId);
             }
             grantRepository.deleteAll(grantRepository.findBySubjectTypeAndSubjectId("user", userId));
+            roleBindingRepository.deleteAll(
+                    roleBindingRepository.findBySubjectTypeAndSubjectId("user", userId));
             userRepository.deleteById(userId);
         }
+        for (UUID roleId : testRoleIds) {
+            permissionRepository.deleteAll(permissionRepository.findByIdRoleId(roleId));
+            accessRoleRepository.deleteById(roleId);
+        }
+        testRoleIds.clear();
     }
 
     @Test
@@ -122,17 +141,24 @@ class AgentPrincipalControllerContractTest extends AbstractIntegrationTest {
         token = TestDataFactory.createGlobalToken(userId.toString(), user.getEmail(), "USER", 0);
     }
 
-    private void addGrant(String actionClass, String resource) throws Exception {
-        AuthorizationGrant grant = new AuthorizationGrant();
-        grant.setGranterType("user");
-        grant.setGranterId(userId);
-        grant.setSubjectType("user");
-        grant.setSubjectId(userId);
-        grant.setSource("direct");
-        grant.setReadState("read");
-        grant.setPermissions(objectMapper.readTree("[{\"actionClass\":\"" + actionClass
-                + "\",\"resource\":\"" + resource + "\"}]"));
-        grantRepository.saveAndFlush(grant);
+    /**
+     * W1c: the caller ceiling is seeded the post-W1 way — a test-only role bound at instance scope
+     * and materialized into {@code grants(source='role')}.
+     *
+     * <p>The previous helper wrote a {@code source='direct'} row, which the authorization gates no
+     * longer read ({@code GrantSources.EVALUATION_SOURCES} excludes the retired sources). Keeping the
+     * helper on {@code role} is also what the product does after V88: direct is not an authorization
+     * input any more.</p>
+     */
+    private void addGrant(String actionClass, String resource) {
+        UUID roleId = UUID.randomUUID();
+        accessRoleRepository.save(new AccessRole(roleId, "TEST_GRANT_" + roleId.toString().replace("-", "").toUpperCase(), "Test grant role",
+                "test-only role", false));
+        permissionRepository.save(new AccessRolePermission(roleId, actionClass, resource));
+        roleBindingRepository.save(new AccessRoleBinding(roleId, "user", userId,
+                AccessScope.INSTANCE, null, userId));
+        materializer.materializeSubject("user", userId, userId, null);
+        testRoleIds.add(roleId);
     }
 
     private List<String> actionClasses(JsonNode permissions) {

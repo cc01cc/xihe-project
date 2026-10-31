@@ -54,6 +54,7 @@ class RoleGrantMaterializerTest {
     private AccessRoleBindingRepository bindingRepository;
     private AccessRolePermissionRepository permissionRepository;
     private AuthorizationGrantRepository grantRepository;
+    private com.cc01cc.p.xihe.cp.repository.UserRepository userRepository;
     private AuthzContext authzContext;
     private AuditLogger auditLogger;
     private RoleGrantMaterializer materializer;
@@ -63,11 +64,12 @@ class RoleGrantMaterializerTest {
         bindingRepository = mock(AccessRoleBindingRepository.class);
         permissionRepository = mock(AccessRolePermissionRepository.class);
         grantRepository = mock(AuthorizationGrantRepository.class);
+        userRepository = mock(com.cc01cc.p.xihe.cp.repository.UserRepository.class);
         authzContext = mock(AuthzContext.class);
         auditLogger = mock(AuditLogger.class);
         materializer = new RoleGrantMaterializer(bindingRepository, permissionRepository,
-                grantRepository, new GrantIntersectionEvaluator(), authzContext, auditLogger,
-                new ObjectMapper());
+                grantRepository, userRepository, new GrantIntersectionEvaluator(), authzContext,
+                auditLogger, new ObjectMapper());
         when(grantRepository.findBySubjectTypeAndSubjectIdAndSource(anyString(), any(), anyString()))
                 .thenReturn(List.of());
     }

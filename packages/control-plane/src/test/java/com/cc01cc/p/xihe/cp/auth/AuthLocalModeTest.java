@@ -194,9 +194,16 @@ class AuthLocalModeTest {
                     return localModeEnabled;
                 }
             };
+            // W1c drive-by: the register path reads the resolved client IP before the
+            // password/local-mode checks, so an unstubbed resolver answered null and made the
+            // expected 400/404 assertions fail with an NPE (pre-existing test defect).
+            ClientIpResolver clientIpResolver = mock(ClientIpResolver.class);
+            when(clientIpResolver.resolveClientIp(any())).thenReturn(
+                    new ClientIpResolver.ResolvedClientIp("127.0.0.1", "127.0.0.1"));
             return new AuthController(authService, workspaceService, localModeService,
-                    mock(LoginAttemptService.class), mock(ClientIpResolver.class),
+                    mock(LoginAttemptService.class), clientIpResolver,
                     mock(com.cc01cc.p.xihe.cp.service.InstanceOwnershipService.class),
+                    mock(com.cc01cc.p.xihe.cp.policy.GrantDefaultService.class),
                     mock(com.cc01cc.p.xihe.cp.auth.RegistrationPolicy.class),
                     mock(org.springframework.transaction.PlatformTransactionManager.class));
         }

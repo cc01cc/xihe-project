@@ -7,6 +7,7 @@ import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
+import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -14,6 +15,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -76,6 +79,7 @@ public class RoleGrantMaterializer {
     private final AccessRoleBindingRepository bindingRepository;
     private final AccessRolePermissionRepository permissionRepository;
     private final AuthorizationGrantRepository grantRepository;
+    private final UserRepository userRepository;
     private final GrantIntersectionEvaluator evaluator;
     private final AuthzContext authzContext;
     private final AuditLogger auditLogger;
@@ -84,6 +88,7 @@ public class RoleGrantMaterializer {
     public RoleGrantMaterializer(AccessRoleBindingRepository bindingRepository,
                                  AccessRolePermissionRepository permissionRepository,
                                  AuthorizationGrantRepository grantRepository,
+                                 UserRepository userRepository,
                                  GrantIntersectionEvaluator evaluator,
                                  AuthzContext authzContext,
                                  AuditLogger auditLogger,
@@ -91,6 +96,7 @@ public class RoleGrantMaterializer {
         this.bindingRepository = bindingRepository;
         this.permissionRepository = permissionRepository;
         this.grantRepository = grantRepository;
+        this.userRepository = userRepository;
         this.evaluator = evaluator;
         this.authzContext = authzContext;
         this.auditLogger = auditLogger;
@@ -141,12 +147,21 @@ public class RoleGrantMaterializer {
 
         Result result = reconcile(subjectType, subjectId, desired, actorUserId, auditWorkspaceId);
         if (AuthzContext.SUBJECT_USER.equals(subjectType)) {
-            authzContext.invalidate(subjectId);
+            invalidateAfterCompletion(subjectId);
         }
         return result;
     }
 
-    /** Re-materializes every subject bound to one role (role permission change, W3). */
+    /**
+     * Re-materializes every subject bound to one role (role permission change).
+     *
+     * <p>PLAN-0610 W1c (round-3 P1-2): a role edit changes what its holders may do, so every
+     * affected <b>user</b> subject also gets a {@code users.token_version} bump — the same epoch
+     * semantics {@code UserRoleService} uses for a tier change (I4). Without it an access token
+     * issued before the edit keeps authenticating for its remaining TTL even though the rows
+     * behind it changed. The bump happens only when the subject's materialized set actually
+     * changed, so a no-op re-materialization does not log anybody out.</p>
+     */
     @Transactional
     public int materializeRole(UUID roleId, UUID actorUserId, String auditWorkspaceId) {
         if (roleId == null) {
@@ -159,11 +174,51 @@ public class RoleGrantMaterializer {
             if (!seen.add(key)) {
                 continue;
             }
-            materializeSubject(binding.getSubjectType(), binding.getSubjectId(), actorUserId,
-                    auditWorkspaceId);
+            Result result = materializeSubject(binding.getSubjectType(), binding.getSubjectId(),
+                    actorUserId, auditWorkspaceId);
+            if (result.changed() && AuthzContext.SUBJECT_USER.equals(binding.getSubjectType())) {
+                bumpUserEpoch(binding.getSubjectId());
+            }
             materialized++;
         }
         return materialized;
+    }
+
+    /**
+     * I4: the epoch bump that makes an already-issued access token stop working on its next request.
+     * Joins the caller's transaction (the binding/role write), so a rollback leaves the epoch alone.
+     */
+    private void bumpUserEpoch(UUID subjectId) {
+        userRepository.findByIdForUpdate(subjectId).ifPresent(user -> {
+            user.bumpTokenVersion();
+            userRepository.save(user);
+            logger.info("[POLICY] event=role_materialization_epoch_bump userId={} tokenVersion={}",
+                    subjectId, user.getTokenVersion());
+        });
+    }
+
+    /**
+     * PLAN-0610 W1c (round-3 P1-2): invalidate the capability cache only <b>after</b> the
+     * transaction completes.
+     *
+     * <p>Invalidating inside the transaction let a concurrent request re-fill the cache from the
+     * pre-commit state; the stale entry then lived for the whole TTL ({@code
+     * cp.capability-cache-ttl-ms}, 30s by default) — the opposite of the 「不超过一次 lookup」
+     * contract in {@link AuthzContext}. {@code afterCompletion} runs after commit (and also after
+     * rollback, where clearing is harmless and prevents a mid-transaction fill from being trusted).
+     * A caller with no transaction (unit tests, plain service calls) invalidates immediately.</p>
+     */
+    private void invalidateAfterCompletion(UUID subjectId) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            authzContext.invalidate(subjectId);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                authzContext.invalidate(subjectId);
+            }
+        });
     }
 
     /** Drops every {@code source='role'} row of a subject (subject deletion / binding wipe). */
@@ -175,7 +230,7 @@ public class RoleGrantMaterializer {
             grantRepository.deleteAll(existing);
         }
         if (AuthzContext.SUBJECT_USER.equals(subjectType)) {
-            authzContext.invalidate(subjectId);
+            invalidateAfterCompletion(subjectId);
         }
         return existing.size();
     }
