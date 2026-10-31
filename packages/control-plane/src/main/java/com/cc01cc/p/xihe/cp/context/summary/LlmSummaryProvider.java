@@ -103,6 +103,15 @@ public class LlmSummaryProvider implements SummaryProvider {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("sessionId", request.sessionId());
         payload.put("runId", request.runId());
+        // PLAN-0590: the Agent resolves its own run-scoped config snapshot from
+        // these identity keys; without them it must use code defaults (never the
+        // process workspace snapshot).
+        if (request.workspaceId() != null && !request.workspaceId().isBlank()) {
+            payload.put("workspaceId", request.workspaceId());
+        }
+        if (request.userId() != null && !request.userId().isBlank()) {
+            payload.put("userId", request.userId());
+        }
         payload.put("provider", settings.providerId());
         payload.put("model", settings.model());
         payload.put("credentialLease", lease.token());

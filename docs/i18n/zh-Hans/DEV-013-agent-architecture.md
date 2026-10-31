@@ -73,7 +73,7 @@ LangChain 特定代码收敛到 `agent_runner/`（`langgraph_runner.py`、`tool_
 
 `XiheLiteLLM` 与 `MockChatModel` 实现 `LLMProvider`，方法为 `complete()` / `stream_complete()`。
 
-**调用路径（直调，不经 CP）**：Agent 经 litellm **直调** provider；provider/model 来自 per-run 合成（CP `GET /internal/v1/config/effective/{domain}` 的 workspace-bound effective + run payload 的 user/workspace overrides；无租约时用 env 兜底 key，常规路径由 `provider_connections` 租约下发密钥，PLAN-0307 决策 #3a/#40）。CP 负责配置治理与 relay，不组装 LLM 请求；运行日志、catalog 和 health 不暴露 provider key/base URL。
+**调用路径（直调，不经 CP）**：Agent 经 litellm **直调** provider；provider/model 来自 per-run 合成（PLAN-0590：run 开始时按 CP payload 的 `(workspaceId, userId)` 拉 5 域 effective **run 快照**，再叠加 run payload 的 user/workspace overrides；进程级 effective 快照不再作为 run 基线。无租约时用 env 兜底 key，常规路径由 `provider_connections` 租约下发密钥，PLAN-0307 决策 #3a/#40）。CP 负责配置治理与 relay，不组装 LLM 请求；运行日志、catalog 和 health 不暴露 provider key/base URL。
 
 - 为兼容 LangGraph 编排，`XiheLiteLLM` 仍继承 `ChatLiteLLM`。
 - 未来切换到非 LangGraph 编排层时可移除该继承。
@@ -103,7 +103,7 @@ flowchart TD
 ### 3.1b 收缩管道与 prune（PLAN-0341）
 
 - **装配**：`langgraph_runner.stream` 消费 CP 读模型 keep-recent → `prune_history_tool_results`（固定窗 `pruneWindowChars` 默认 80K chars，可配）→ 写 `context.prune` 墓碑；`HISTORY_TRUNCATION_LIMIT=20` 仅装配熔断，窗口起点落在 tool 结果时回退对齐（`_align_truncation_start`）。
-- **配置**：`context_policy.resolve` 读 effective `context-policy`（`defaults`/`models` JSON）：`maxInputTokens` 覆盖 litellm 窗、`pruneWindowChars`、`recoveryBand`、`tokenizerRef`（受信命名空间 allowlist）；日志 `context_policy_resolved source=config|default`。
+- **配置**：`context_policy.resolve` 读 run 快照的 effective `context-policy`（`defaults`/`models` JSON）：`maxInputTokens` 覆盖 litellm 窗、`pruneWindowChars`、`recoveryBand`、`tokenizerRef`（受信命名空间 allowlist）；日志 `context_policy_resolved workspaceId=… userId=… source=config|default`。
 - **SUM**：压缩摘要只在 `epoch.system_messages`；`AgentContext.apply_event("compaction.applied" | "compaction.manual_applied")` 截断 keep-recent 且不把摘要塞进 `messages`（两类同构，见 §事件表）。
 
 ### 3.2 事件类型
@@ -208,7 +208,7 @@ CP `ContextSourceRefreshService`（**每 run** 在 `ChatController.execAsync` �
 
 - **端点**：`POST /internal/v1/agent/summarize`（service Bearer；调用方仅 CP `LlmSummaryProvider`）。CP 在压缩时签发 2 分钟短租约并在请求中携带，Agent 经既有 CP `/internal/v1/provider-leases/redeem` 兑换后单次调用 provider（不新增凭据通道）。
 - **请求契约（camelCase）**：`sessionId` / `runId` / `provider` / `model` / `credentialLease` / `providerConnectionId` / `connectionRevision` / `text` / `priorSummary`。`credentialLease` 与 `text` 必填 fail-closed（缺 → 400 `INVALID_REQUEST`）；租约兑换失败 → 503 `PROVIDER_CONNECTION_UNAVAILABLE`；provider 调用异常 → 502 + `_classify_llm_exception` 细分码（如 `LLM_PROVIDER_UNREACHABLE`、`LLM_NOT_CONFIGURED`）。错误体为 problem+json（`code`/`detail`/`retryable`/`requestId`，回写 `X-Request-Id`）。
-- **组装（`llm/summarize.py`）**：`SUMMARIZE_SECTIONS` 固定六节 `[Goal]/[Work State]/[Next Move]/[Files&Artifacts]/[Errors]/[Recent]`；系统提示为固定常量，明确禁止输出 `[Constraints]`（SC/审批原文永不进 LLM，I3）；输入 = `priorSummary`（CP 已剥 `[Constraints]`）+ `text`（CP 已按单条上限 4000 chars 与 `pruneWindowChars` 预算截断）；`LLMConfig` 的 provider/model/apiKey/apiBase 来自兑换 grant，timeout/maxTokens/temperature 取进程 effective `llm-provider`，`max_tokens = min(config.maxTokens, 2048)`。
+- **组装（`llm/summarize.py`）**：`SUMMARIZE_SECTIONS` 固定六节 `[Goal]/[Work State]/[Next Move]/[Files&Artifacts]/[Errors]/[Recent]`；系统提示为固定常量，明确禁止输出 `[Constraints]`（SC/审批原文永不进 LLM，I3）；输入 = `priorSummary`（CP 已剥 `[Constraints]`）+ `text`（CP 已按单条上限 4000 chars 与 `pruneWindowChars` 预算截断）；`LLMConfig` 的 provider/model/apiKey/apiBase 来自兑换 grant，timeout/maxTokens/temperature 取**请求级 run 快照**（PLAN-0590：请求体带 `workspaceId`/`userId` 时按该 `(ws,user)` 解析 `llm-provider` 的 per-model `modelParams`；缺身份时用代码默认 timeout 60s / maxTokens 2048 并 WARN，不读进程 workspace 快照），`max_tokens = min(config.maxTokens, 2048)`。
 - **usage 三档**：`usage_metadata` 命中 → `source=real`；未命中 → 本地 `TokenCounter` 估算 → `estimated`；两者皆无 → `fallback` + 计数 0；`main.py` 追加 `model=provider/model`（CP pricing 查表键）。
 - **边界**：端点不写事件、不碰 SC/审批、无持久化；请求/响应日志不含摘要正文与凭据。
 

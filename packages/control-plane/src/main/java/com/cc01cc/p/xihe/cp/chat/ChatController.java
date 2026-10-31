@@ -108,9 +108,14 @@ public class ChatController {
      * pass through the single ChatRunTerminalService owner.
      */
     /**
-     * PLAN-0307 T2.7 (decision #3): domains with per-run Agent consumers, delivered
-     * as payload overrides. rag/embedding are process-level consumers covered by the
-     * workspace-bound effective pull; instance-only domains stay pull-only.
+     * PLAN-0307 T2.7 (decision #3) + PLAN-0590 (decision #1): domains delivered as
+     * per-run payload overrides. PLAN-0590 moved the Agent's config base from a
+     * process-wide effective snapshot to a per-run `(workspaceId, userId)` snapshot
+     * (5 domains: llm-provider / agent-profile / rag / agent-runtime /
+     * context-policy); these explicit rows still ride on top of that snapshot.
+     * `embedding` stays in the override set for wire compatibility but is NOT part
+     * of the run snapshot: the Agent run path does not read it (RAG resolves its
+     * profile per request, PLAN-0485). Instance-only domains stay pull-only.
      */
     private static final List<String> AGENT_RUN_OVERRIDE_DOMAINS =
         List.of("llm-provider", "agent-profile", "embedding", "rag", "agent-runtime",

@@ -223,7 +223,7 @@ PLAN-0576 起（V84）：新写密文使用 AAD v2（`v2|credentialId|ownerType|
 | 模块 | 客户端 | 行为 |
 |------|--------|------|
 | CP | 内建 `ConfigService` | 直接读库 |
-| Agent | `config_client.py` | 启动/周期拉取 workspace-bound effective；chat run 按 payload overrides 合成（instance → user → workspace，无副作用） |
+| Agent | `config_client.py` + `config_snapshot.py` | **run 级**：chat run 开始时按 CP payload 的 `(workspaceId, userId)` 拉 5 域（llm-provider / agent-profile / rag / agent-runtime / context-policy）effective 快照并在 run 内冻结；run 配置 = 快照 → `userOverrides` → `workspaceOverrides`。快照缓存 `(ws,user)` TTL 默认 60s、LRU 上限 128（`XIHE_AGENT_CONFIG_SNAPSHOT_TTL_S` / `_MAX`，`MAX=0` 关缓存），同键单飞。**进程级**仅保留启动/周期 sync（readyness、`logging.levelAgent`、`imageProvider`、`workersDir`、embedding 生命周期门），不再作为 run 基线。失败语义：无快照 → `AGENT_CONFIG_SNAPSHOT_UNAVAILABLE` fail-closed；旧快照 age ≤ 2×TTL → stale + WARN（见 `spec/configuration/env-effective.md` supersede 条款）。summary 旁路按请求 `workspaceId`/`userId` 解析同一快照（缺身份用代码默认 + WARN） |
 | Runtime | 无 config client（决策 #4） | 物理配置走 env/CLI（决策 #29） |
 
 ## 3a. Agent 模板域 agent-templates（PLAN-0374）
