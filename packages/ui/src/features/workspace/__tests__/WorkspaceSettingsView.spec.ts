@@ -107,10 +107,9 @@ beforeEach(() => {
     routeState.workspaceId = WORKSPACE_ID;
     routeState.query = {};
     localStorage.setItem("xihe-token", "test-token");
-    localStorage.setItem(
-        "xihe-user",
-        JSON.stringify({ id: "u1", email: "admin@xihe.local", role: "ADMIN" }),
-    );
+    // PLAN-0610 W3-2b: the wire no longer carries `role`; this spec covers the workspace settings
+    // tabs, which are gated by the workspace role/ownership, not by instance capabilities.
+    localStorage.setItem("xihe-user", JSON.stringify({ id: "u1", email: "owner@xihe.local" }));
     localStorage.setItem("xihe-workspace", JSON.stringify({ id: WORKSPACE_ID, name: "Workspace" }));
     mockConfigFetch();
 });

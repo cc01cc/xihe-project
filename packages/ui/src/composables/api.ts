@@ -148,6 +148,79 @@ export interface ApiWorkspaceMember {
 
 export type MemberAssignableRole = "EDITOR" | "VIEWER";
 
+/**
+ * PLAN-0610 W3-2a: the role/binding administration surface (`/api/v1/roles`, `/api/v1/bindings`).
+ *
+ * <p>`scopeClass` is the atom's SSOT classification: `instance` atoms are only meaningful on an
+ * instance binding, `both` atoms work on either scope. The UI groups the catalog by it and never
+ * keeps its own vocabulary copy.</p>
+ */
+export type ApiAtomScopeClass = "instance" | "both";
+
+export interface ApiRoleAtom {
+    name: string;
+    scopeClass: ApiAtomScopeClass;
+    capability: boolean;
+    resource: string;
+}
+
+export interface ApiRoleCatalog {
+    atoms: ApiRoleAtom[];
+    scopes: string[];
+}
+
+export interface ApiRole {
+    id: string;
+    name: string;
+    displayName: string;
+    description: string | null;
+    system: boolean;
+    atoms: ApiRoleAtom[];
+    bindingCount: number;
+}
+
+/** `POST /roles` and `PATCH /roles/{id}` body (PATCH: null = unchanged, system roles: display only). */
+export interface ApiRoleWrite {
+    name?: string | null;
+    displayName?: string | null;
+    description?: string | null;
+    atoms?: string[] | null;
+}
+
+export type ApiBindingScope = "instance" | "workspace";
+
+export interface ApiBindingRow {
+    id: string;
+    subjectType: string;
+    subjectId: string;
+    roleId: string;
+    roleName: string;
+    grantedBy: string | null;
+    grantedAt: string | null;
+}
+
+export interface ApiBindingSet {
+    scopeType: string;
+    scopeId: string | null;
+    bindings: ApiBindingRow[];
+}
+
+export interface ApiBindingInput {
+    subjectType?: string;
+    subjectId: string;
+    roleId: string;
+}
+
+/** `GET /api/v1/users` row (admin directory; the `role` string is gone since W3-2b). */
+export interface ApiAdminUser {
+    id: string;
+    email: string;
+    username?: string;
+    name?: string;
+    capabilities?: ApiUserCapabilities;
+    status?: string;
+}
+
 /** PLAN-0585: one manageable grant atom of the admin principal-grant surface. */
 export interface ApiPrincipalGrantAtom {
     actionClass: "CREATE_ACCOUNT" | "MANAGE_WORKSPACE_AGENTS" | string;
@@ -2132,6 +2205,54 @@ export const api = {
         return request<WorkspaceAgentBinding[]>(
             `/workspaces/${encodeURIComponent(workspaceId)}/agents`,
         );
+    },
+    /**
+     * PLAN-0610 W3-2a: the access-role definition surface. The atom vocabulary is **not** in the UI —
+     * `rolesCatalog()` is the only source, so a new atom appears without a front-end change.
+     */
+    rolesCatalog(): Promise<ApiRoleCatalog> {
+        return request<ApiRoleCatalog>("/roles/catalog");
+    },
+    listRoles(): Promise<ApiRole[]> {
+        return request<ApiRole[]>("/roles");
+    },
+    createRole(input: ApiRoleWrite): Promise<ApiRole> {
+        return request<ApiRole>("/roles", { method: "POST", body: JSON.stringify(input) });
+    },
+    updateRole(roleId: string, input: ApiRoleWrite): Promise<ApiRole> {
+        return request<ApiRole>(`/roles/${encodeURIComponent(roleId)}`, {
+            method: "PATCH",
+            body: JSON.stringify(input),
+        });
+    },
+    async deleteRole(roleId: string): Promise<void> {
+        await request<void>(`/roles/${encodeURIComponent(roleId)}`, { method: "DELETE" });
+    },
+    /** `GET /bindings`: one scope's complete user binding set (no capability echo on the wire). */
+    getBindings(scope: ApiBindingScope, scopeId?: string | null): Promise<ApiBindingSet> {
+        const query = new URLSearchParams({ scope });
+        if (scope === "workspace" && scopeId) query.set("scopeId", scopeId);
+        return request<ApiBindingSet>(`/bindings?${query.toString()}`);
+    },
+    /** `PUT /bindings`: full replacement — the body is the desired end state, not a delta. */
+    replaceBindings(
+        scope: ApiBindingScope,
+        scopeId: string | null | undefined,
+        bindings: ApiBindingInput[],
+    ): Promise<ApiBindingSet> {
+        const query = new URLSearchParams({ scope });
+        if (scope === "workspace" && scopeId) query.set("scopeId", scopeId);
+        return request<ApiBindingSet>(`/bindings?${query.toString()}`, {
+            method: "PUT",
+            body: JSON.stringify({ bindings }),
+        });
+    },
+    /** Admin user directory (`cap:instance:admin`); used to resolve binding subjects. */
+    async listAdminUsers(query: string): Promise<ApiAdminUser[]> {
+        const params = new URLSearchParams({ size: "50" });
+        if (query.trim()) params.set("q", query.trim());
+        const body = await request<{ items?: ApiAdminUser[] }>(`/users?${params.toString()}`);
+        return Array.isArray(body?.items) ? body.items : [];
     },
     getAgentTemplates(
         layer: AgentTemplateLayerResponse["layer"],

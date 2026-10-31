@@ -122,6 +122,13 @@ const router = createRouter({
                     name: "settings-principal-grants",
                     component: () => import("../views/settings/PrincipalGrantsView.vue"),
                 },
+                {
+                    // PLAN-0610 W5b: access-role definitions + bindings (ADMIN-gated, same as above;
+                    // W5c retires the principal-grant page once `source='direct'` is gone).
+                    path: "roles",
+                    name: "settings-roles",
+                    component: () => import("../views/settings/RolesView.vue"),
+                },
             ],
         },
         {

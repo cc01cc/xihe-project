@@ -30,6 +30,12 @@ const tabs = computed(() => {
             label: "settings.principalGrantsNav",
             path: "/settings/principal-grants",
         });
+        items.push({
+            // PLAN-0610 W5b: access-role definitions + bindings (instance-ADMIN only too).
+            name: "settings-roles",
+            label: "settings.rolesNav",
+            path: "/settings/roles",
+        });
     }
     return items;
 });

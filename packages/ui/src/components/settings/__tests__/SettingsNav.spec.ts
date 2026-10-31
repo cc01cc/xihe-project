@@ -95,4 +95,11 @@ describe("SettingsNav", () => {
         admin.value = true;
         expect(mountNav().html()).toContain("/settings/config-locks");
     });
+
+    it("PLAN-0610 W5b: shows the roles & bindings page only to administrators", () => {
+        expect(mountNav().html()).not.toContain("/settings/roles");
+
+        admin.value = true;
+        expect(mountNav().html()).toContain("/settings/roles");
+    });
 });
