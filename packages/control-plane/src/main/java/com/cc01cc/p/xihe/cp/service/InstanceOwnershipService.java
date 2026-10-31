@@ -8,7 +8,8 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.entity.InstanceOwner;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
+import com.cc01cc.p.xihe.cp.entity.UserStatus;
+import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import java.time.Instant;
@@ -46,6 +47,7 @@ public class InstanceOwnershipService {
 
     private final InstanceOwnerRepository owners;
     private final UserRepository users;
+    private final GrantDefaultService grantDefaultService;
     private final AuditLogger audit;
     private final DbLockTimeout dbLockTimeout;
     private final AuthService authService;
@@ -54,6 +56,7 @@ public class InstanceOwnershipService {
 
     public InstanceOwnershipService(InstanceOwnerRepository owners,
                                     UserRepository users,
+                                    GrantDefaultService grantDefaultService,
                                     AuditLogger audit,
                                     DbLockTimeout dbLockTimeout,
                                     AuthService authService,
@@ -61,6 +64,7 @@ public class InstanceOwnershipService {
                                     LoginAttemptService loginAttemptService) {
         this.owners = owners;
         this.users = users;
+        this.grantDefaultService = grantDefaultService;
         this.audit = audit;
         this.dbLockTimeout = dbLockTimeout;
         this.authService = authService;
@@ -112,9 +116,24 @@ public class InstanceOwnershipService {
                     "Only the current instance owner can transfer ownership");
         }
 
-        User target = users.findById(targetUserId).orElseThrow(() -> new CpApiException(
-                HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "User not found"));
-        if (target.getRole() != UserRole.ADMIN) {
+        // The target row lock follows the instance_owner lock (frozen order: instance_owner → users).
+        User target = users.findByIdForUpdate(targetUserId)
+                .orElseThrow(() -> new CpApiException(
+                        HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "User not found"));
+        // T4.3: a target that can never log in must not become the owner — the handover would
+        // leave the instance without a usable SUPER_ADMIN (I5).
+        if (target.getDeletedAt() != null) {
+            throw new CpApiException(HttpStatus.CONFLICT, "USER_DELETED",
+                    "A soft-deleted account cannot become the instance owner");
+        }
+        if (target.getStatus() != UserStatus.ACTIVE) {
+            throw new CpApiException(HttpStatus.CONFLICT, "OWNER_TARGET_UNAVAILABLE",
+                    "The instance owner must be an active account");
+        }
+        // T4.3: capability judgement replaces the legacy `users.role == ADMIN` read (design §3.6).
+        // "ADMIN" now means "holds an instance-tier ADMIN/SUPER_ADMIN binding": the transfer then
+        // upgrades the incoming owner to SUPER_ADMIN and leaves the outgoing owner on ADMIN.
+        if (!grantDefaultService.holdsInstanceAdminCapability(target.getId())) {
             throw new CpApiException(HttpStatus.CONFLICT, "OWNER_TARGET_NOT_ADMIN",
                     "The instance owner must be an ADMIN");
         }
@@ -122,6 +141,10 @@ public class InstanceOwnershipService {
         reauthenticateOwner(actorUserId, rawPassword, clientIp);
 
         UUID previousOwner = owner.getOwnerUserId();
+        // I5: binding handover + pointer + audit are one transaction. If any step fails
+        // (LAST_SUPER_ADMIN guard, lock timeout) none of the four changes (design §3.6).
+        grantDefaultService.transferInstanceSuperAdmin(previousOwner, target.getId(),
+                UUID.fromString(actorUserId));
         owner.assignTo(target.getId(), UUID.fromString(actorUserId));
         owners.save(owner);
         audit.recordDurableChange(actorUserId, null, "instance_owner_transferred", RESOURCE_TYPE,

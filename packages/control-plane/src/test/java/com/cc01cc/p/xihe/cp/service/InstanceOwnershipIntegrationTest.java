@@ -311,6 +311,144 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
         assertTrue(missing.getBody().contains("USER_NOT_FOUND"));
     }
 
+    // ── T4.3 (I5): the binding handover is part of the same transaction ─────
+
+    /**
+     * PLAN-0610 T4.3: one transfer writes <b>both</b> bindings, reconciles both atom sets, bumps
+     * both epochs and moves the pointer. The previous owner keeps the ADMIN tier (contract §4
+     * 「the previous owner stays ADMIN」) instead of holding a stale SUPER_ADMIN.
+     */
+    @Test
+    void transferRewritesSuperAdminBindingsAtomically() throws Exception {
+        String ownerToken = register("t43-owner@test.com");
+        String ownerId = userIdOf(ownerToken);
+        promote(ownerId);
+        grantInstanceRole(ownerId, "SUPER_ADMIN");
+        assignOwner(ownerId);
+        ownerToken = login("t43-owner@test.com");
+
+        String targetToken = register("t43-target@test.com");
+        String targetId = userIdOf(targetToken);
+        promote(targetId);
+
+        authzContext.invalidateAll();
+        assertEquals(List.of("SUPER_ADMIN"), instanceTierRoles(ownerId));
+        assertEquals(List.of("ADMIN"), instanceTierRoles(targetId));
+        assertTrue(authzContext.isInstanceSuper(UUID.fromString(ownerId)));
+        int ownerEpochBefore = tokenVersion(ownerId);
+        int targetEpochBefore = tokenVersion(targetId);
+        int ownerAuditsBefore = auditCount("authorization_instance_super_admin_transferred");
+
+        ResponseEntity<String> ok = putOwner(ownerToken, targetId, PASSWORD);
+        assertEquals(HttpStatus.OK, ok.getStatusCode(), ok.getBody());
+
+        assertEquals(targetId, currentOwnerId());
+        assertEquals(List.of("SUPER_ADMIN"), instanceTierRoles(targetId),
+                "the incoming owner holds exactly one instance tier binding (SUPER_ADMIN)");
+        assertEquals(List.of("ADMIN"), instanceTierRoles(ownerId),
+                "the outgoing owner is downgraded to ADMIN, not left without a tier");
+        assertEquals(15, atomRowCount("user", UUID.fromString(targetId)),
+                "SUPER_ADMIN materializes its 15 action atoms (capability atoms stay out of grants)");
+        assertEquals(8, atomRowCount("user", UUID.fromString(ownerId)),
+                "ADMIN materializes 5 base + 3 credential atoms");
+        authzContext.invalidateAll();
+        assertTrue(authzContext.isInstanceSuper(UUID.fromString(targetId)),
+                "the new owner resolves cap:instance:super");
+        assertFalse(authzContext.isInstanceSuper(UUID.fromString(ownerId)),
+                "the previous owner no longer resolves cap:instance:super");
+        assertTrue(authzContext.isInstanceAdmin(UUID.fromString(ownerId)));
+        assertEquals(ownerEpochBefore + 1, tokenVersion(ownerId),
+                "I4: the outgoing owner's epoch moves in the same transaction");
+        assertEquals(targetEpochBefore + 1, tokenVersion(targetId),
+                "I4: the incoming owner's epoch moves in the same transaction");
+        assertEquals(ownerAuditsBefore + 1,
+                auditCount("authorization_instance_super_admin_transferred"));
+        assertEquals(1, jdbc.queryForObject(
+                "SELECT COUNT(*) FROM role_bindings b JOIN roles r ON r.id = b.role_id"
+                        + " WHERE r.name = 'SUPER_ADMIN' AND b.scope_type = 'instance'"
+                        + " AND b.subject_id = CAST(? AS UUID)", Integer.class, targetId));
+        assertTrue(activeSuperAdminBindings() >= 1,
+                "I5: the instance still has at least one ACTIVE super administrator");
+        assertEquals(0, jdbc.queryForObject(
+                "SELECT COUNT(*) FROM role_bindings b JOIN roles r ON r.id = b.role_id"
+                        + " WHERE r.name = 'SUPER_ADMIN' AND b.scope_type = 'instance'"
+                        + " AND b.subject_id = CAST(? AS UUID)", Integer.class, ownerId),
+                "the outgoing owner must not keep a second SUPER_ADMIN binding");
+    }
+
+    /**
+     * T4.3: a DISABLED target cannot become the owner (it could never log in, so the instance would
+     * be left without a usable SUPER_ADMIN). The refusal changes nothing.
+     */
+    @Test
+    void transferRejectsDisabledTargetWithoutChangingAnything() throws Exception {
+        String ownerToken = register("t43-disabled-owner@test.com");
+        String ownerId = userIdOf(ownerToken);
+        promote(ownerId);
+        grantInstanceRole(ownerId, "SUPER_ADMIN");
+        assignOwner(ownerId);
+        ownerToken = login("t43-disabled-owner@test.com");
+
+        String targetId = userIdOf(register("t43-disabled-target@test.com"));
+        promote(targetId);
+        jdbc.update("UPDATE users SET status = 'DISABLED' WHERE id = CAST(? AS UUID)", targetId);
+
+        String before = transferState();
+        int auditsBefore = auditCount("instance_owner_transferred");
+        ResponseEntity<String> denied = putOwner(ownerToken, targetId, PASSWORD);
+        assertEquals(HttpStatus.CONFLICT, denied.getStatusCode(), denied.getBody());
+        assertTrue(denied.getBody().contains("OWNER_TARGET_UNAVAILABLE"), denied.getBody());
+        assertEquals(ownerId, currentOwnerId());
+        assertEquals(before, transferState(), "pointer/bindings/atoms/epochs must not change");
+        assertEquals(auditsBefore, auditCount("instance_owner_transferred"));
+    }
+
+    /** T4.3: a soft-deleted target is refused with the shared 409 USER_DELETED code. */
+    @Test
+    void transferRejectsSoftDeletedTargetWithoutChangingAnything() throws Exception {
+        String ownerToken = register("t43-deleted-owner@test.com");
+        String ownerId = userIdOf(ownerToken);
+        promote(ownerId);
+        grantInstanceRole(ownerId, "SUPER_ADMIN");
+        assignOwner(ownerId);
+        ownerToken = login("t43-deleted-owner@test.com");
+
+        String targetId = userIdOf(register("t43-deleted-target@test.com"));
+        promote(targetId);
+        jdbc.update("UPDATE users SET deleted_at = NOW(), status = 'DISABLED'"
+                + " WHERE id = CAST(? AS UUID)", targetId);
+
+        String before = transferState();
+        ResponseEntity<String> denied = putOwner(ownerToken, targetId, PASSWORD);
+        assertEquals(HttpStatus.CONFLICT, denied.getStatusCode(), denied.getBody());
+        assertTrue(denied.getBody().contains("USER_DELETED"), denied.getBody());
+        assertEquals(ownerId, currentOwnerId());
+        assertEquals(before, transferState());
+    }
+
+    /** T4.3: a target without an instance ADMIN tier binding is still 409 (capability judgement). */
+    @Test
+    void transferRequiresTheTargetToHoldTheInstanceAdminCapability() throws Exception {
+        String ownerToken = register("t43-cap-owner@test.com");
+        String ownerId = userIdOf(ownerToken);
+        promote(ownerId);
+        grantInstanceRole(ownerId, "SUPER_ADMIN");
+        assignOwner(ownerId);
+        ownerToken = login("t43-cap-owner@test.com");
+
+        // Legacy column says ADMIN, but the binding was never written: the capability judgement
+        // (design §3.6) refuses instead of trusting users.role.
+        String targetId = userIdOf(register("t43-cap-target@test.com"));
+        jdbc.update("UPDATE users SET role = 'ADMIN' WHERE id = CAST(? AS UUID)", targetId);
+
+        String before = transferState();
+        ResponseEntity<String> denied = putOwner(ownerToken, targetId, PASSWORD);
+        assertEquals(HttpStatus.CONFLICT, denied.getStatusCode(), denied.getBody());
+        assertTrue(denied.getBody().contains("OWNER_TARGET_NOT_ADMIN"), denied.getBody());
+        assertEquals(ownerId, currentOwnerId());
+        assertEquals(before, transferState());
+    }
+
     // ── V1/V2: guards + concurrency ─────────────────────────────────────────
 
     /** V2: the owner can never be demoted, and that denial is audited. */
@@ -599,8 +737,13 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
 
         assertEquals(1, statuses.stream().filter(status -> status == 200).count(),
                 "exactly one transfer may succeed, got " + statuses);
-        assertEquals(1, statuses.stream().filter(status -> status == 403).count(),
-                "the loser must be 403 NOT_INSTANCE_OWNER (pointer already moved), got " + statuses);
+        // T4.3: the winner bumps both epochs in the same transaction (I4), so the loser answers
+        // either 403 NOT_INSTANCE_OWNER (it authenticated before the commit and then re-reads the
+        // moved pointer) or 401 (its pre-transfer access token is already stale when the filter
+        // runs). Both prove "exactly one winner"; any other status is a defect.
+        assertEquals(1, statuses.stream().filter(status -> status == 403 || status == 401).count(),
+                "the loser must be refused with 403 NOT_INSTANCE_OWNER or 401 (stale epoch), got "
+                        + statuses);
         assertFalse(statuses.contains(503), "lock wait exceeded cp.lock-timeout-ms: " + statuses);
         assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM instance_owner", Integer.class));
         String owner = currentOwnerId();
@@ -676,6 +819,45 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
 
     private String roleOf(String userId) {
         return jdbc.queryForObject("SELECT role FROM users WHERE id = CAST(? AS UUID)", String.class, userId);
+    }
+
+    /** T4.3: the subject's instance-scope tier bindings, as role names in a stable order. */
+    private List<String> instanceTierRoles(String userId) {
+        return jdbc.queryForList("SELECT r.name FROM role_bindings b JOIN roles r ON r.id = b.role_id"
+                + " WHERE b.subject_type = 'user' AND b.subject_id = CAST(? AS UUID)"
+                + " AND b.scope_type = 'instance'"
+                + " AND r.name IN ('SUPER_ADMIN', 'ADMIN', 'USER') ORDER BY r.name",
+                String.class, userId);
+    }
+
+    private int tokenVersion(String userId) {
+        return jdbc.queryForObject("SELECT token_version FROM users WHERE id = CAST(? AS UUID)",
+                Integer.class, userId);
+    }
+
+    /** I5: ACTIVE (and not soft-deleted) holders of the instance SUPER_ADMIN binding. */
+    private int activeSuperAdminBindings() {
+        return jdbc.queryForObject("SELECT COUNT(*) FROM role_bindings b"
+                + " JOIN roles r ON r.id = b.role_id"
+                + " JOIN users u ON u.id = b.subject_id"
+                + " WHERE r.name = 'SUPER_ADMIN' AND b.scope_type = 'instance'"
+                + " AND u.status = 'ACTIVE' AND u.deleted_at IS NULL", Integer.class);
+    }
+
+    /**
+     * T4.3 failure-injection basis: the pointer + every tier binding + the two epoch columns.
+     * Any difference between two snapshots means a refused transfer wrote something.
+     */
+    private String transferState() {
+        String pointer = String.valueOf(currentOwnerId());
+        String bindings = String.join(";", jdbc.queryForList(
+                "SELECT subject_id || ':' || r.name FROM role_bindings b"
+                        + " JOIN roles r ON r.id = b.role_id"
+                        + " WHERE b.scope_type = 'instance' AND r.name IN ('SUPER_ADMIN', 'ADMIN', 'USER')"
+                        + " ORDER BY subject_id, r.name", String.class));
+        String epochs = String.join(";", jdbc.queryForList(
+                "SELECT id || ':' || token_version FROM users ORDER BY id", String.class));
+        return pointer + "|" + bindings + "|" + epochs;
     }
 
     private int adminCount() {

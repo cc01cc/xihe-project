@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.auth.AuthUserLockService;
+import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
@@ -22,11 +23,15 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -235,6 +240,124 @@ public class GrantDefaultService {
                 "role=" + SystemAccessRoleCatalog.SUPER_ADMIN + " scope=instance");
         logger.info("[POLICY] event=super_admin_binding_seeded userId={}", lockedUser.getId());
         materializer.materializeSubject(SUBJECT_USER, lockedUser.getId(), lockedUser.getId(), null);
+    }
+
+    /**
+     * T4.3: true when the subject holds an instance-scope {@code ADMIN} or {@code SUPER_ADMIN}
+     * binding.
+     *
+     * <p>This is the capability judgement that replaces the legacy {@code users.role == ADMIN}
+     * read in {@code InstanceOwnershipService#transfer} (design §3.6, W3 "users.role 读点清零").
+     * It reads the <b>binding rows</b> instead of {@link AuthzContext} on purpose: capability atoms
+     * are never materialized into {@code grants} (decision #23), so a binding is the only authority
+     * fact, and this path must not depend on a cache that another transaction may have filled
+     * before the current (uncommitted) state.</p>
+     */
+    @Transactional(readOnly = true)
+    public boolean holdsInstanceAdminCapability(UUID subjectId) {
+        if (subjectId == null) {
+            return false;
+        }
+        Set<UUID> adminTierRoleIds = roleRepository
+                .findByNameIn(List.of(SystemAccessRoleCatalog.SUPER_ADMIN,
+                        SystemAccessRoleCatalog.ADMIN))
+                .stream()
+                .map(AccessRole::getId)
+                .collect(Collectors.toSet());
+        if (adminTierRoleIds.isEmpty()) {
+            return false;
+        }
+        return bindingRepository
+                .findBySubjectTypeAndSubjectIdAndScopeType(SUBJECT_USER, subjectId,
+                        AccessScope.INSTANCE)
+                .stream()
+                .anyMatch(binding -> adminTierRoleIds.contains(binding.getRoleId()));
+    }
+
+    /**
+     * T4.3 (I5): move the instance {@code SUPER_ADMIN} binding from the outgoing owner to the
+     * incoming one and leave the outgoing owner on the {@code ADMIN} tier, in the caller's
+     * transaction (design §3.6, contract §4 「the previous owner stays ADMIN」).
+     *
+     * <p>Why this lives here: {@code instance_owner} + {@code users} + {@code role_bindings} +
+     * {@code grants} must move together, and this service already owns every write of the
+     * instance tier binding ({@link #ensureInstanceSuperAdmin(User)},
+     * {@link #ensureInstanceTierBinding(User)}). The caller
+     * ({@code InstanceOwnershipService#transfer}) holds the {@code instance_owner} singleton lock
+     * first, so the frozen lock order {@code instance_owner → users} is preserved: this method only
+     * takes the two user row locks, in ascending id order (round-4 P1-1 ABBA rule), and then writes
+     * bindings, reconciles {@code source='role'} atoms and bumps both epochs.</p>
+     *
+     * <p>Guard: the post-state must still hold at least one ACTIVE super administrator (I5). The
+     * incoming owner is ACTIVE (checked by the caller) so the count is 1 by construction; the
+     * assertion only fires on a corrupt pre-state and rolls the whole transfer back instead of
+     * committing a zero-super-admin instance.</p>
+     */
+    @Transactional
+    public void transferInstanceSuperAdmin(UUID fromUserId, UUID toUserId, UUID actorUserId) {
+        if (fromUserId == null || toUserId == null) {
+            throw new IllegalArgumentException("The outgoing and incoming owner ids are required");
+        }
+        dbLockTimeout.apply();
+        List<UUID> orderedSubjects = new ArrayList<>(
+                new LinkedHashSet<>(List.of(fromUserId, toUserId)));
+        orderedSubjects.sort(UUID::compareTo);
+        for (UUID subjectId : orderedSubjects) {
+            userLock.lockAndFind(subjectId)
+                    .orElseThrow(() -> new IllegalArgumentException("User not found: " + subjectId));
+        }
+        AccessRole superAdmin = roleRepository.findByName(SystemAccessRoleCatalog.SUPER_ADMIN)
+                .orElseThrow(() -> new IllegalStateException(
+                        "System role SUPER_ADMIN is missing (V87 must have been applied)"));
+        AccessRole admin = roleRepository.findByName(SystemAccessRoleCatalog.ADMIN)
+                .orElseThrow(() -> new IllegalStateException(
+                        "System role ADMIN is missing (V87 must have been applied)"));
+
+        boolean handover = !fromUserId.equals(toUserId);
+        Set<UUID> tierRoleIds = roleRepository
+                .findByNameIn(SystemAccessRoleCatalog.INSTANCE_TIER_ROLES)
+                .stream()
+                .map(AccessRole::getId)
+                .collect(Collectors.toSet());
+        if (handover) {
+            replaceInstanceTierBinding(fromUserId, admin, tierRoleIds, actorUserId);
+        }
+        replaceInstanceTierBinding(toUserId, superAdmin, tierRoleIds, actorUserId);
+
+        materializer.materializeSubjectWithEpochBump(SUBJECT_USER, fromUserId, actorUserId, null);
+        if (handover) {
+            materializer.materializeSubjectWithEpochBump(SUBJECT_USER, toUserId, actorUserId, null);
+        }
+        auditLogger.recordDurableChange(actorUserId == null ? null : actorUserId.toString(), null,
+                "authorization_instance_super_admin_transferred", "user", toUserId.toString(),
+                "role=" + SystemAccessRoleCatalog.SUPER_ADMIN + " scope=instance from=" + fromUserId
+                        + " to=" + toUserId);
+
+        long activeSuperAdmins = bindingRepository.countActiveUserBindingsForRole(
+                superAdmin.getId(), UserStatus.ACTIVE);
+        if (activeSuperAdmins < 1) {
+            throw new CpApiException(HttpStatus.CONFLICT, "LAST_SUPER_ADMIN",
+                    "The instance must keep at least one usable SUPER_ADMIN");
+        }
+        logger.info("[POLICY] event=instance_super_admin_transferred from={} to={} activeHolders={}",
+                fromUserId, toUserId, activeSuperAdmins);
+    }
+
+    /** Replaces the subject's instance tier binding with {@code role} (one tier row per user). */
+    private void replaceInstanceTierBinding(UUID subjectId, AccessRole role, Set<UUID> tierRoleIds,
+                                            UUID actorUserId) {
+        List<AccessRoleBinding> existing = bindingRepository
+                .findBySubjectTypeAndSubjectIdAndScopeType(SUBJECT_USER, subjectId,
+                        AccessScope.INSTANCE)
+                .stream()
+                .filter(binding -> tierRoleIds.contains(binding.getRoleId()))
+                .toList();
+        bindingRepository.deleteAll(existing);
+        // Hibernate flushes inserts before deletes inside one action queue, so the replacement row
+        // must not be queued while the old one is still pending (uq_role_bindings would fire).
+        bindingRepository.flush();
+        bindingRepository.save(new AccessRoleBinding(role.getId(), SUBJECT_USER, subjectId,
+                AccessScope.INSTANCE, null, actorUserId));
     }
 
     /**
