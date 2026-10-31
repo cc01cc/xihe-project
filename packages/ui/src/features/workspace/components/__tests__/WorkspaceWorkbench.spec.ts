@@ -326,6 +326,100 @@ describe("WorkspaceWorkbench anti-squeeze (PLAN-0582 S3b §4)", () => {
         wrapper.unmount();
     });
 });
+describe("WorkspaceWorkbench floating dock Escape (PLAN-0582 T5.4 gap)", () => {
+    function escapeFrom(target: EventTarget = window): void {
+        target.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    }
+
+    it("closes a floating dock on Escape", async () => {
+        const wrapper = mountWorkbench();
+        await flushPromises();
+        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        expect(
+            wrapper.get('[data-testid="workspace-aux-panel"]').attributes("data-dock-mode"),
+        ).toBe("floating");
+
+        escapeFrom();
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
+        // Collapsing is the stored truth (same path as the X button), not a latch.
+        await expectStored(() => expect(storedLayout().dockCollapsed).toBe(true));
+        wrapper.unmount();
+    });
+
+    it("keeps a pinned dock open on Escape", async () => {
+        // jsdom reports 1024 → floating is derived, so pin explicitly at a wide viewport.
+        const previousWidth = window.innerWidth;
+        window.innerWidth = 1920;
+        window.dispatchEvent(new Event("resize"));
+        localStorage.setItem(
+            "xihe-layout-ws:workspace-1",
+            JSON.stringify({
+                treeCollapsed: false,
+                treeWidth: 240,
+                dockCollapsed: false,
+                dockWidth: 360,
+                dockTabs: ["monitor"],
+                activeDockTab: "monitor",
+                dockMode: "pinned",
+                dockModeManual: true,
+                openTabs: ["environment", "scheduled-tasks", "settings"],
+            }),
+        );
+        try {
+            const wrapper = mountWorkbench();
+            await flushPromises();
+            expect(
+                wrapper.get('[data-testid="workspace-aux-panel"]').attributes("data-dock-mode"),
+            ).toBe("pinned");
+
+            escapeFrom();
+            await flushPromises();
+
+            expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
+            wrapper.unmount();
+        } finally {
+            window.innerWidth = previousWidth;
+            window.dispatchEvent(new Event("resize"));
+        }
+    });
+
+    it("ignores Escape typed inside a field", async () => {
+        const wrapper = mountWorkbench();
+        await flushPromises();
+        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+
+        const field = document.createElement("input");
+        document.body.appendChild(field);
+        try {
+            escapeFrom(field);
+            await flushPromises();
+            expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
+        } finally {
+            field.remove();
+            wrapper.unmount();
+        }
+    });
+
+    it("leaves the dock open while a dialog owns Escape", async () => {
+        const wrapper = mountWorkbench();
+        await flushPromises();
+        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+
+        const backdrop = document.createElement("div");
+        backdrop.setAttribute("data-testid", "modal-backdrop");
+        document.body.appendChild(backdrop);
+        try {
+            escapeFrom();
+            await flushPromises();
+            expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
+        } finally {
+            backdrop.remove();
+            wrapper.unmount();
+        }
+    });
+});
 describe("WorkspaceWorkbench dock policy (PLAN-0582 S3b P1-1 audit)", () => {
     it("keeps a dock the user explicitly re-opened open on the next mount", async () => {
         const first = mountWorkbench();

@@ -287,11 +287,28 @@ watch(
     { immediate: true },
 );
 
+/**
+ * Escape typed into a field belongs to that field (rename, search, composer), not to
+ * the dock; an open dialog likewise owns Escape for its own dismissal.
+ */
+function isTextEntryTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    if (target.isContentEditable) return true;
+    const tag = target.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+}
+
 // Floating is not a modal (Lead ruling 2026-10-31): no backdrop, dismiss with Esc
 // or by clicking the main column instead.
 function handleWindowKeydown(event: KeyboardEvent): void {
-    if (event.key !== "Escape") return;
+    if (event.key !== "Escape" || event.defaultPrevented) return;
+    // A pinned panel is a deliberate layout choice: Escape must not close it, and a
+    // squeeze-forced floating panel keeps the same body of behaviour (rendered mode).
     if (!dockOpen.value || renderedDockMode.value !== "floating") return;
+    // An open dialog closes itself on Escape; do not also collapse the dock behind it.
+    if (document.querySelector('[data-testid="modal-backdrop"]')) return;
+    // Escape in a text field cancels that field's interaction, not the dock.
+    if (isTextEntryTarget(event.target)) return;
     collapseDock();
 }
 
