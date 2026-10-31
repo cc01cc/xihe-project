@@ -1,9 +1,8 @@
 import { test, expect, type APIRequestContext, type Page, type Request } from "@playwright/test";
-import { execFileSync } from "node:child_process";
 import { generateE2EPassword } from "./helpers/password";
+import { replaceWorkspaceRole } from "./helpers/user-grants";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
-const PG_CONTAINER = process.env.XIHE_E2E_PG_CONTAINER || "a03-xihe-postgres-1";
 
 async function register(request: APIRequestContext, label: string) {
     const email = `plan0559-${label}-${Date.now()}@test.com`;
@@ -174,26 +173,9 @@ test.describe("PLAN-0559 workspace tabs", () => {
         const workspaceId = owner.body.workspaceId as string;
 
         const grant = (userId: string, role: "VIEWER" | "EDITOR") => {
-            execFileSync(
-                "docker",
-                [
-                    "exec",
-                    PG_CONTAINER,
-                    "psql",
-                    "-U",
-                    "xihe",
-                    "-d",
-                    "xihe_1",
-                    "-c",
-                    // PLAN-0610 W3-3 (workspace_users -> role_bindings): this direct membership
-                    // write is intentionally left for the W4/W3-3 wave; it still works while
-                    // `workspace_users` exists (dropped by V89).
-                    `INSERT INTO workspace_users (workspace_id, user_id, role, created_at)
-                     VALUES ('${workspaceId}', '${userId}', '${role}', now())
-                     ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = '${role}'`,
-                ],
-                { stdio: "pipe" },
-            );
+            // PLAN-0610 W4b: `workspace_users` is gone (V89); memberships are role bindings,
+            // so the fixture writes a WS_* binding and re-materializes the workspace scope.
+            replaceWorkspaceRole(userId, workspaceId, `WS_${role}`);
         };
         grant(viewer.body.user.id, "VIEWER");
         grant(editor.body.user.id, "EDITOR");

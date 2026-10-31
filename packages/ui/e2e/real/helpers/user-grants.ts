@@ -179,7 +179,7 @@ export function replaceWorkspaceRole(
     const workspace = escapeSql(workspaceId);
     const role = escapeSql(roleName);
     const sql = `
-DO $
+DO $$
 DECLARE
     v_role UUID;
 BEGIN
@@ -195,13 +195,6 @@ BEGIN
     INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type, scope_id)
     VALUES (gen_random_uuid(), v_role, 'user', '${user}'::uuid, 'workspace',
             '${workspace}'::uuid);
-
-    -- Mirror the legacy row while the table exists (V89 drops it with the read path).
-    INSERT INTO workspace_users (workspace_id, user_id, role, created_at)
-    VALUES ('${workspace}'::uuid, '${user}'::uuid,
-            CASE '${role}' WHEN 'WS_OWNER' THEN 'OWNER'
-                 WHEN 'WS_VIEWER' THEN 'VIEWER' ELSE 'EDITOR' END, NOW())
-    ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = EXCLUDED.role;
 
     DELETE FROM grants
     WHERE subject_type = 'user' AND subject_id = '${user}'::uuid AND source = 'role'
@@ -225,7 +218,7 @@ BEGIN
     WHERE b.subject_type = 'user' AND b.subject_id = '${user}'::uuid
       AND b.scope_type = 'workspace' AND b.scope_id = '${workspace}'::uuid
       AND rp.action_class NOT LIKE '%:%';
-END $;`;
+END $$;`;
     execFileSync(
         process.platform === "win32" ? "docker.exe" : "docker",
         ["exec", container, "psql", "-X", "-A", "-t", "-U", dbUser, "-d", database, "-c", sql],

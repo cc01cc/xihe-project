@@ -517,9 +517,9 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     const unboundOnly = (await createOnlyResponse.json()) as { principalId: string };
     const unboundOnlyId = requireUuid(unboundOnly.principalId);
     await page.getByTestId("agent-principal-bind").click();
-    await expect(page.getByRole("alert")).toContainText(
-        "MANAGE_WORKSPACE_AGENTS permission is required",
-    );
+    // W5c rewrote the F-02 copy to point at「设置 → 角色与绑定」; assert the stable atom code
+    // instead of one locale's sentence so the spec survives copy changes.
+    await expect(page.getByRole("alert")).toContainText("MANAGE_WORKSPACE_AGENTS");
     await expect(page.getByTestId("unbound-agent-principal")).toContainText(unboundOnlyId);
     expect(
         scalarCount(
