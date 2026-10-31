@@ -1,11 +1,10 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
-import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -32,8 +31,8 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
  * PLAN-0580 M1/M2 contract tests on <b>real PostgreSQL</b> (Testcontainers, Flyway
@@ -172,42 +171,6 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
     }
 
     /** V4: a role change bumps the epoch, so the previously issued access token is rejected. */
-    @Test
-    void roleChangeInvalidatesPreviouslyIssuedAccessToken() throws Exception {
-        String ownerToken = register("epoch-owner@test.com");
-        String ownerId = userIdOf(ownerToken);
-        promote(ownerId);
-        assignOwner(ownerId);
-        ownerToken = login("epoch-owner@test.com");
-
-        String targetToken = register("epoch-target@test.com");
-        String targetId = userIdOf(targetToken);
-        // The target's refresh token, so the recovery path under test is
-        // POST /auth/refresh (V4 wording), not a fresh login.
-        String targetRefresh = tokens("epoch-target@test.com").get("refreshToken").asText();
-
-        assertEquals(HttpStatus.OK, patchRole(ownerToken, targetId, "ADMIN").getStatusCode());
-        assertEquals(1, jdbc.queryForObject("SELECT token_version FROM users WHERE id = CAST(? AS UUID)",
-                Integer.class, targetId), "I4: epoch bumped in the same transaction");
-
-        ResponseEntity<String> stale = get(targetToken, "/api/v1/auth/me");
-        assertEquals(HttpStatus.UNAUTHORIZED, stale.getStatusCode(),
-                "a token carrying the old epoch must be rejected: " + stale.getBody());
-        assertTrue(stale.getBody().contains("AUTHORIZATION_REQUIRED"));
-
-        // V4: refresh re-reads the user row, so the new token carries both the new
-        // role and the new epoch; the pre-change access token stays dead.
-        ResponseEntity<String> refreshed = api.postForEntity(url("/api/v1/auth/refresh"),
-                Map.of("refreshToken", targetRefresh), String.class);
-        assertEquals(HttpStatus.OK, refreshed.getStatusCode(), refreshed.getBody());
-        String newToken = objectMapper.readTree(refreshed.getBody()).path("accessToken").asText();
-        assertEquals("ADMIN", jwtTokenProvider.getRoleFromToken(newToken),
-                "the refreshed token must carry the new role claim");
-        assertEquals(HttpStatus.OK, get(newToken, "/api/v1/auth/me").getStatusCode());
-        assertEquals(HttpStatus.OK, get(newToken, "/api/v1/instance/owner").getStatusCode());
-        assertEquals(HttpStatus.UNAUTHORIZED, get(targetToken, "/api/v1/auth/me").getStatusCode(),
-                "the pre-change access token must stay dead after refresh");
-    }
 
     /** V4.1 / decision #14: all three fail-closed states answer 401, never 500. */
     @Test
@@ -452,31 +415,6 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
     // ── V1/V2: guards + concurrency ─────────────────────────────────────────
 
     /** V2: the owner can never be demoted, and that denial is audited. */
-    @Test
-    void ownerCannotBeDemoted() throws Exception {
-        String ownerToken = register("protect-owner@test.com");
-        String ownerId = userIdOf(ownerToken);
-        promote(ownerId);
-        assignOwner(ownerId);
-        String secondAdminToken = register("protect-admin@test.com");
-        String secondAdminId = userIdOf(secondAdminToken);
-        promote(secondAdminId);
-        ownerToken = login("protect-owner@test.com");
-        secondAdminToken = login("protect-admin@test.com");
-
-        int denialsBefore = auditCount("user_role_change_denied");
-        ResponseEntity<String> denied = patchRole(secondAdminToken, ownerId, "USER");
-        assertEquals(HttpStatus.CONFLICT, denied.getStatusCode());
-        assertTrue(denied.getBody().contains("INSTANCE_OWNER_PROTECTED"));
-        assertEquals("ADMIN", roleOf(ownerId));
-
-        assertEquals(denialsBefore + 1, auditCount("user_role_change_denied"),
-                "the denial must leave a durable audit row despite the rollback");
-        Map<String, Object> audit = jdbc.queryForMap(
-                "SELECT details FROM audit_logs WHERE action = 'user_role_change_denied'"
-                        + " ORDER BY created_at DESC LIMIT 1");
-        assertTrue(String.valueOf(audit.get("details")).contains("reason=INSTANCE_OWNER_PROTECTED"));
-    }
 
     /**
      * V1: the last-admin guard. A consistent instance cannot reach it through the
@@ -484,28 +422,6 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
      * so the state is built directly — this is defence in depth for the
      * disable/delete paths that PLAN-0581 will add.
      */
-    @Test
-    void lastAdminGuardRejectsTheOnlyRemainingAdmin() throws Exception {
-        String actorToken = register("last-admin-actor@test.com");
-        String actorId = userIdOf(actorToken);
-        promote(actorId);
-        String onlyAdminToken = register("last-admin-only@test.com");
-        String onlyAdminId = userIdOf(onlyAdminToken);
-        promote(onlyAdminId);
-        // Owner points at a plain USER so the owner guard does not answer first.
-        String plainUserToken = register("last-admin-plain@test.com");
-        assignOwner(userIdOf(plainUserToken));
-        actorToken = login("last-admin-actor@test.com");
-        // Two ADMINs -> demoting the actor is allowed (one ADMIN remains).
-        assertEquals(HttpStatus.OK, patchRole(actorToken, actorId, "USER").getStatusCode());
-        onlyAdminToken = login("last-admin-only@test.com");
-
-        ResponseEntity<String> denied = patchRole(onlyAdminToken, onlyAdminId, "USER");
-        assertEquals(HttpStatus.CONFLICT, denied.getStatusCode());
-        assertTrue(denied.getBody().contains("LAST_ADMIN"), denied.getBody());
-        assertEquals("ADMIN", roleOf(onlyAdminId));
-        assertEquals(1, adminCount());
-    }
 
     /**
      * V1: two concurrent demotions of the only two ADMINs must yield exactly one
@@ -513,48 +429,6 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
      * count = 1). A 503 here would mean the lock was held longer than
      * {@code cp.lock-timeout-ms} — a test-design problem, not a pass.
      */
-    @Test
-    void concurrentDemotionsKeepExactlyOneAdmin() throws Exception {
-        String firstToken = register("race-a@test.com");
-        String firstId = userIdOf(firstToken);
-        String secondToken = register("race-b@test.com");
-        String secondId = userIdOf(secondToken);
-        promote(firstId);
-        promote(secondId);
-        assignOwner(firstId);
-        firstToken = login("race-a@test.com");
-        secondToken = login("race-b@test.com");
-        assertEquals(2, adminCount());
-
-        String firstCaller = firstToken;
-        String secondCaller = secondToken;
-        CyclicBarrier barrier = new CyclicBarrier(2);
-        ExecutorService pool = Executors.newFixedThreadPool(2);
-        try {
-            List<Callable<ResponseEntity<String>>> tasks = new ArrayList<>();
-            tasks.add(() -> {
-                barrier.await(10, TimeUnit.SECONDS);
-                return patchRole(firstCaller, firstId, "USER");
-            });
-            tasks.add(() -> {
-                barrier.await(10, TimeUnit.SECONDS);
-                return patchRole(secondCaller, secondId, "USER");
-            });
-            List<Future<ResponseEntity<String>>> futures = pool.invokeAll(tasks, 30, TimeUnit.SECONDS);
-            List<Integer> statuses = new ArrayList<>();
-            for (Future<ResponseEntity<String>> future : futures) {
-                statuses.add(future.get(30, TimeUnit.SECONDS).getStatusCode().value());
-            }
-            assertEquals(1, statuses.stream().filter(status -> status == 200).count(),
-                    "exactly one demotion may succeed, got " + statuses);
-            assertEquals(1, statuses.stream().filter(status -> status == 409).count(),
-                    "the loser must be a 409 state conflict (never 503), got " + statuses);
-            assertFalse(statuses.contains(503), "lock wait exceeded cp.lock-timeout-ms: " + statuses);
-        } finally {
-            pool.shutdownNow();
-        }
-        assertEquals(1, adminCount(), "the instance must still have exactly one ADMIN");
-    }
 
     // ── V5/V5.1: default grants ─────────────────────────────────────────────
 
@@ -563,136 +437,12 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
      * default grant; the {@code subject_type=agent} snapshot of an already
      * created Session keeps the old set (decision #13, explicit acceptance).
      */
-    @Test
-    void roleChangeResyncsUserDefaultButKeepsAgentSnapshot() throws Exception {
-        String ownerToken = register("grant-owner@test.com");
-        String ownerId = userIdOf(ownerToken);
-        promote(ownerId);
-        assignOwner(ownerId);
-        ownerToken = login("grant-owner@test.com");
-
-        String memberToken = register("grant-member@test.com");
-        String memberId = userIdOf(memberToken);
-        String memberWorkspace = workspaceOfMember(memberId);
-
-        Session session = new Session(memberWorkspace, memberId, "PLAN-0580 snapshot probe");
-        session.setId(UUID.randomUUID());
-        sessionRepository.saveAndFlush(session);
-        grantDefaultService.ensureAgentSessionDefault(session);
-
-        String agentBefore = permissionsOf("agent", session.getId());
-        String userBefore = permissionsOf("user", UUID.fromString(memberId));
-        assertFalse(userBefore.contains("credential_use"), "USER default has no credential atoms");
-        assertFalse(agentBefore.contains("credential_use"));
-
-        assertEquals(HttpStatus.OK, patchRole(ownerToken, memberId, "ADMIN").getStatusCode());
-
-        String userAfter = permissionsOf("user", UUID.fromString(memberId));
-        String agentAfter = permissionsOf("agent", session.getId());
-        assertTrue(userAfter.contains("credential_use"), "V5: USER->ADMIN adds the credential atoms");
-        assertTrue(userAfter.contains("credential_manage"));
-        assertEquals(8, atomRowCount("user", UUID.fromString(memberId)),
-                "V5: the ADMIN set is materialized as one row per atom (same set as before the change)");
-        assertEquals(agentBefore, agentAfter,
-                "V5.1: an existing Session's agent default snapshot must stay frozen");
-    }
 
     /** T1.3(a): ADMIN -> USER drops the credential atoms from the user default set. */
-    @Test
-    void demotionRewritesUserDefaultBackToUserSet() throws Exception {
-        String ownerToken = register("down-owner@test.com");
-        String ownerId = userIdOf(ownerToken);
-        promote(ownerId);
-        assignOwner(ownerId);
-        ownerToken = login("down-owner@test.com");
-
-        String memberId = userIdOf(register("down-member@test.com"));
-        promote(memberId);
-        assertEquals(HttpStatus.OK, patchRole(ownerToken, memberId, "USER").getStatusCode());
-
-        assertEquals(1, jdbc.queryForObject("SELECT token_version FROM users WHERE id = CAST(? AS UUID)",
-                Integer.class, memberId), "the demotion bumps the epoch too");
-        String permissions = permissionsOf("user", UUID.fromString(memberId));
-        assertFalse(permissions.contains("credential_use"), "ADMIN->USER must drop credential atoms");
-        assertEquals(5, atomRowCount("user", UUID.fromString(memberId)),
-                "ADMIN->USER reconciles down to the five USER atoms (one row per atom)");
-        assertEquals("USER", roleOf(memberId));
-    }
 
     /** T1.3(b): a subject with no default row gets one created (create branch, not update). */
-    @Test
-    void roleChangeCreatesDefaultRowWhenMissing() throws Exception {
-        String ownerToken = register("create-owner@test.com");
-        String ownerId = userIdOf(ownerToken);
-        promote(ownerId);
-        assignOwner(ownerId);
-        ownerToken = login("create-owner@test.com");
-
-        String memberId = userIdOf(register("create-member@test.com"));
-        jdbc.update("DELETE FROM grants WHERE subject_type = 'user' AND subject_id = CAST(? AS UUID)",
-                memberId);
-        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM grants WHERE subject_type = 'user'"
-                + " AND subject_id = CAST(? AS UUID)", Integer.class, memberId));
-        int materializedBefore = auditCount("authorization_role_grant_materialized");
-
-        assertEquals(HttpStatus.OK, patchRole(ownerToken, memberId, "ADMIN").getStatusCode());
-
-        List<Map<String, Object>> rows = jdbc.queryForList("SELECT permissions::text AS permissions, source"
-                + " FROM grants WHERE subject_type = 'user' AND subject_id = CAST(? AS UUID)", memberId);
-        assertEquals(8, rows.size(), "the missing set is recreated as one row per ADMIN atom");
-        assertTrue(rows.stream().allMatch(row -> "role".equals(row.get("source"))),
-                "PLAN-0610 W1a: the materialized source is `role`");
-        assertTrue(rows.stream().anyMatch(row -> String.valueOf(row.get("permissions"))
-                        .contains("credential_use")),
-                "the recreated set carries the ADMIN atoms");
-        assertTrue(auditCount("authorization_role_grant_materialized") > materializedBefore,
-                "a materialization that changes rows is audited (one row per operation, not per atom)");
-    }
 
     /** T1.3(c): two concurrent promotions of the same subject stay idempotent (one default row). */
-    @Test
-    void concurrentRoleChangesKeepOneDefaultRow() throws Exception {
-        String firstOwnerToken = register("idem-a@test.com");
-        String firstOwnerId = userIdOf(firstOwnerToken);
-        promote(firstOwnerId);
-        assignOwner(firstOwnerId);
-        String secondAdminToken = register("idem-b@test.com");
-        promote(userIdOf(secondAdminToken));
-        firstOwnerToken = login("idem-a@test.com");
-        secondAdminToken = login("idem-b@test.com");
-
-        String targetId = userIdOf(register("idem-target@test.com"));
-        String callerOne = firstOwnerToken;
-        String callerTwo = secondAdminToken;
-
-        CyclicBarrier barrier = new CyclicBarrier(2);
-        ExecutorService pool = Executors.newFixedThreadPool(2);
-        try {
-            List<Callable<ResponseEntity<String>>> tasks = new ArrayList<>();
-            tasks.add(() -> {
-                barrier.await(10, TimeUnit.SECONDS);
-                return patchRole(callerOne, targetId, "ADMIN");
-            });
-            tasks.add(() -> {
-                barrier.await(10, TimeUnit.SECONDS);
-                return patchRole(callerTwo, targetId, "ADMIN");
-            });
-            List<Future<ResponseEntity<String>>> futures = pool.invokeAll(tasks, 30, TimeUnit.SECONDS);
-            for (Future<ResponseEntity<String>> future : futures) {
-                int status = future.get(30, TimeUnit.SECONDS).getStatusCode().value();
-                assertTrue(status == 200 || status == 409,
-                        "only 200 (applied or no-op) or 409 is legal here, got " + status);
-            }
-        } finally {
-            pool.shutdownNow();
-        }
-
-        assertEquals("ADMIN", roleOf(targetId));
-        assertEquals(8, atomRowCount("user", UUID.fromString(targetId)),
-                "T1.3: no duplicate atom row under concurrency (uq_grants_role_atom)");
-        assertEquals(1, jdbc.queryForObject("SELECT token_version FROM users WHERE id = CAST(? AS UUID)",
-                Integer.class, targetId), "the second writer sees the same role and is a no-op (no double bump)");
-    }
 
     /**
      * T3.2: two concurrent owner transfers must not both succeed — the singleton row

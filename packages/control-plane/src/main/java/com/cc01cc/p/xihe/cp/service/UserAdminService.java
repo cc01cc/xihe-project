@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.auth.AuthLog;
+import com.cc01cc.p.xihe.cp.auth.CapabilityProjectionService;
 import com.cc01cc.p.xihe.cp.auth.UserAdminView;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
@@ -77,6 +78,8 @@ public class UserAdminService {
      * {@code user_role_change_denied}.
      */
     private final TransactionTemplate auditTransaction;
+    /** PLAN-0610 W3-2b: binding-backed capabilities replace the legacy {@code role} on the wire. */
+    private final CapabilityProjectionService capabilityProjection;
 
     public UserAdminService(UserRepository users,
                             InstanceOwnerRepository owners,
@@ -84,6 +87,7 @@ public class UserAdminService {
                             PasswordEncoder passwordEncoder,
                             AuditLogger audit,
                             DbLockTimeout dbLockTimeout,
+                            CapabilityProjectionService capabilityProjection,
                             PlatformTransactionManager transactionManager) {
         this.users = users;
         this.owners = owners;
@@ -91,6 +95,7 @@ public class UserAdminService {
         this.passwordEncoder = passwordEncoder;
         this.audit = audit;
         this.dbLockTimeout = dbLockTimeout;
+        this.capabilityProjection = capabilityProjection;
         this.auditTransaction = new TransactionTemplate(transactionManager);
         this.auditTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -100,33 +105,40 @@ public class UserAdminService {
     /**
      * GET /api/v1/users (contract §3 #1): filters are all optional, ordering is
      * always {@code createdAt DESC}, page size is clamped to 100.
+     *
+     * <p>PLAN-0610 W3-2b: the {@code role} filter is retired with the legacy tier column; callers
+     * select administrators by capability (the binding-backed {@link UserAdminView#getCapabilities()})
+     * instead of a {@code users.role} string.</p>
      */
     @Transactional(readOnly = true)
-    public Page<UserAdminView> list(String query, UserRole role, UserStatus status,
+    public Page<UserAdminView> list(String query, UserStatus status,
                                     boolean includeDeleted, int page, int size) {
         int effectiveSize = size <= 0 ? DEFAULT_PAGE_SIZE : Math.min(size, MAX_PAGE_SIZE);
         Pageable pageable = PageRequest.of(Math.max(page, 0), effectiveSize,
                 Sort.by(Sort.Direction.DESC, "createdAt"));
-        Specification<User> spec = buildFilter(query, role, status, includeDeleted);
-        return users.findAll(spec, pageable).map(UserAdminView::from);
+        Specification<User> spec = buildFilter(query, status, includeDeleted);
+        return users.findAll(spec, pageable).map(this::toView);
     }
 
     /** GET /api/v1/users/{userId}: 404 when the row does not exist at all. */
     @Transactional(readOnly = true)
     public UserAdminView detail(UUID targetUserId) {
-        return UserAdminView.from(users.findById(targetUserId).orElseThrow(() -> new CpApiException(
+        return toView(users.findById(targetUserId).orElseThrow(() -> new CpApiException(
                 HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "User not found")));
     }
 
-    private Specification<User> buildFilter(String query, UserRole role, UserStatus status,
+    /** Binding-backed view projection (PLAN-0610 W3-2b: no {@code users.role} on the wire). */
+    private UserAdminView toView(User user) {
+        return UserAdminView.from(user,
+                capabilityProjection.capabilitiesFor(user.getId()));
+    }
+
+    private Specification<User> buildFilter(String query, UserStatus status,
                                             boolean includeDeleted) {
         return (root, criteriaQuery, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
             if (!includeDeleted) {
                 predicates.add(cb.isNull(root.get("deletedAt")));
-            }
-            if (role != null) {
-                predicates.add(cb.equal(root.get("role"), role));
             }
             if (status != null) {
                 predicates.add(cb.equal(root.get("status"), status));
@@ -248,7 +260,7 @@ public class UserAdminService {
      * it must work with the public registration throttle switched off.
      */
     @Transactional
-    public CreatedUser createUser(String actorUserId, String email, String username, String rawRole,
+    public CreatedUser createUser(String actorUserId, String email, String username,
                                   String rawPassword, String name) {
         if (email == null || email.isBlank()) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "email is required");
@@ -257,7 +269,9 @@ public class UserAdminService {
         if (users.existsByEmail(normalizedEmail)) {
             throw new CpApiException(HttpStatus.CONFLICT, "EMAIL_TAKEN", "Email already registered");
         }
-        UserRole role = parseRole(rawRole);
+        // PLAN-0610 W3-2b: creation is "create account + assign the USER instance binding". The
+        // retired role field is not accepted; elevation is a role-binding write, not a create flag.
+        UserRole role = UserRole.USER;
         String resolvedUsername = resolveUsername(username, normalizedEmail);
 
         String temporaryPassword = (rawPassword == null || rawPassword.isBlank())
@@ -271,10 +285,10 @@ public class UserAdminService {
         grantDefaultService.ensureUserDefault(saved);
         audit.recordDurableChange(actorUserId, null, "user_created", RESOURCE_TYPE,
                 saved.getId().toString(),
-                "email=" + AuthLog.maskEmail(saved.getEmail()) + " role=" + role + " source=admin");
-        logger.info("[LIFECYCLE] service=cp event=user_created target={} role={} source=admin",
-                saved.getId(), role);
-        return new CreatedUser(UserAdminView.from(saved), temporaryPassword);
+                "email=" + AuthLog.maskEmail(saved.getEmail()) + " tier=USER source=admin");
+        logger.info("[LIFECYCLE] service=cp event=user_created target={} tier=USER source=admin",
+                saved.getId());
+        return new CreatedUser(toView(saved), temporaryPassword);
     }
 
     /**
@@ -356,18 +370,6 @@ public class UserAdminService {
     private User lockTarget(UUID targetUserId) {
         return users.findByIdForUpdate(targetUserId).orElseThrow(() -> new CpApiException(
                 HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "User not found"));
-    }
-
-    private UserRole parseRole(String rawRole) {
-        if (rawRole == null || rawRole.isBlank()) {
-            return UserRole.USER;
-        }
-        try {
-            return UserRole.valueOf(rawRole.trim().toUpperCase(Locale.ROOT));
-        } catch (IllegalArgumentException e) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_ROLE",
-                    "role must be ADMIN or USER", e);
-        }
     }
 
     /** Username rules are PLAN-0565's (regex + uniqueness); a blank one is derived from the email. */

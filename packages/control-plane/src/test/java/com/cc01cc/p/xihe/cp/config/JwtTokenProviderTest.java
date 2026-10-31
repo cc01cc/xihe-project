@@ -62,10 +62,15 @@ class JwtTokenProviderTest {
     }
 
     @Test
-    void getRoleFromTokenExtractsCorrectRole() {
-        String token = provider.createAccessToken("user-1", "test@test.com", "ADMIN", null, 0);
+    void accessTokenNoLongerCarriesTheRetiredRoleClaim() {
+        // PLAN-0610 W3-2b (decision #17): authorization is the cap:* authority projection; the
+        // signed role string is gone, so even the compatibility overload must not emit it.
+        String token = provider.createAccessToken("user-1", "test@test.com", "ADMIN", 0);
+        String payload = new String(java.util.Base64.getUrlDecoder().decode(token.split("\\.")[1]),
+                java.nio.charset.StandardCharsets.UTF_8);
 
-        assertEquals("ADMIN", provider.getRoleFromToken(token));
+        assertFalse(payload.contains("\"role\""), "no role claim may be signed: " + payload);
+        assertEquals(0, provider.getTokenVersionFromToken(token));
     }
 
     @Test

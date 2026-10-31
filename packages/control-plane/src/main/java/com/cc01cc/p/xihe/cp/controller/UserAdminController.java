@@ -2,7 +2,6 @@ package com.cc01cc.p.xihe.cp.controller;
 
 import com.cc01cc.p.xihe.cp.auth.UserAdminView;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
-import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.UserStatus;
 import com.cc01cc.p.xihe.cp.service.UserAdminService;
 import java.util.LinkedHashMap;
@@ -27,7 +26,7 @@ import org.springframework.web.bind.annotation.RestController;
  * PLAN-0581 §3: the user-management surface (6 routes, ADMIN only).
  *
  * <pre>
- * GET    /api/v1/users                              list (q/role/status/includeDeleted/page/size)
+ * GET    /api/v1/users                              list (q/status/includeDeleted/page/size)
  * GET    /api/v1/users/{userId}                     detail
  * POST   /api/v1/users                              create (+ one-time temporaryPassword)
  * PATCH  /api/v1/users/{userId}/status              ACTIVE|DISABLED
@@ -35,8 +34,8 @@ import org.springframework.web.bind.annotation.RestController;
  * POST   /api/v1/users/{userId}/password-reset      one-time temporaryPassword
  * </pre>
  *
- * <p>{@code PATCH /api/v1/users/{userId}/role} is <b>not</b> here: it belongs to
- * PLAN-0580 ({@link UserRoleController}). The two controllers share the
+ * <p>PLAN-0610 W3-2b: {@code PATCH /api/v1/users/{userId}/role} is retired with the legacy tier
+ * column; elevation is a role-binding write, not an account field. The two controllers share the
  * {@code /api/v1/users} base path, which is fine — different classes, disjoint
  * sub-paths.
  *
@@ -52,7 +51,8 @@ public class UserAdminController {
     public record StatusRequest(String status) {}
 
     /** Body of the admin create route: password is optional (server generates one then). */
-    public record CreateUserRequest(String email, String username, String role, String password,
+    /** PLAN-0610 W3-2b: the retired {@code role} field is gone; creation always assigns USER. */
+    public record CreateUserRequest(String email, String username, String password,
                                     String name) {}
 
     private final UserAdminService userAdminService;
@@ -65,13 +65,12 @@ public class UserAdminController {
     @PreAuthorize("hasAuthority('cap:instance:admin')")
     public ResponseEntity<Map<String, Object>> list(
             @RequestParam(value = "q", required = false) String q,
-            @RequestParam(value = "role", required = false) String role,
             @RequestParam(value = "status", required = false) String status,
             @RequestParam(value = "includeDeleted", required = false, defaultValue = "false")
             boolean includeDeleted,
             @RequestParam(value = "page", required = false, defaultValue = "0") int page,
             @RequestParam(value = "size", required = false, defaultValue = "20") int size) {
-        Page<UserAdminView> result = userAdminService.list(q, parseRoleFilter(role),
+        Page<UserAdminView> result = userAdminService.list(q,
                 parseStatusFilter(status, false), includeDeleted, page, size);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("items", result.getContent());
@@ -96,7 +95,7 @@ public class UserAdminController {
         }
         UserAdminService.CreatedUser created = userAdminService.createUser(
                 InstanceOwnerController.callerId(), request.email(), request.username(),
-                request.role(), request.password(), request.name());
+                request.password(), request.name());
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("user", created.view());
         if (created.temporaryPassword() != null) {
@@ -138,18 +137,6 @@ public class UserAdminController {
         } catch (IllegalArgumentException | NullPointerException e) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                     "userId must be a UUID", e);
-        }
-    }
-
-    private static UserRole parseRoleFilter(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return null;
-        }
-        try {
-            return UserRole.valueOf(raw.trim().toUpperCase(Locale.ROOT));
-        } catch (IllegalArgumentException e) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                    "role filter must be ADMIN or USER", e);
         }
     }
 

@@ -73,8 +73,6 @@ public class TenantContextInterceptor implements HandlerInterceptor {
 
         String userId = authenticated.get().userId();
         TenantContext.setUserId(userId);
-        // Compatibility carrier only: no decision reads the role string (PLAN-0610 W1b R2-5).
-        TenantContext.setUserRole(authenticated.get().role());
         TenantContext.setCapabilities(capabilitiesOf(userId));
 
         if (isTenantExempt(request.getRequestURI())) {

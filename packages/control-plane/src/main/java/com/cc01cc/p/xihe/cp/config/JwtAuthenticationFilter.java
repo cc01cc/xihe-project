@@ -30,7 +30,8 @@ import java.util.UUID;
  *   <li>the binding-backed capabilities of the subject, from {@link AuthzContext}
  *       ({@code cap:instance:super} / {@code cap:instance:admin}) — these are the only
  *       authorities any decision may read;</li>
- *   <li>plus {@code ROLE_<role>} as a <b>compatibility</b> authority for the not-yet-rewritten
+ *   <li>PLAN-0610 W3-2b: the legacy {@code ROLE_<claim role>} compatibility authority is <b>gone</b> —
+ *       the claim itself is no longer issued, so there is nothing to project;</li>
  *       {@code @PreAuthorize} expressions (W1b-2). It is derived from the signed claim exactly as
  *       before, is never read by the URL layer anymore, and disappears with the claim rewrite.</li>
  * </ul>
@@ -76,8 +77,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         if (authenticated.isPresent()) {
             AccessTokenAuthenticator.AuthenticatedUser user = authenticated.get();
             List<GrantedAuthority> authorities = new ArrayList<>(capabilityAuthorities(user.userId()));
-            // Compatibility carrier only (see class javadoc): no decision reads it in this wave.
-            authorities.add(new SimpleGrantedAuthority("ROLE_" + user.role()));
 
             UsernamePasswordAuthenticationToken authentication =
                     new UsernamePasswordAuthenticationToken(user.userId(), null, authorities);

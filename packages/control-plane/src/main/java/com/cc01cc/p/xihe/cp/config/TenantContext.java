@@ -10,7 +10,6 @@ public final class TenantContext {
     private static final ThreadLocal<String> currentUserId = new ThreadLocal<>();
     private static final ThreadLocal<String> currentWorkspaceId = new ThreadLocal<>();
     private static final ThreadLocal<String> currentWorkspacePath = new ThreadLocal<>();
-    private static final ThreadLocal<String> currentUserRole = new ThreadLocal<>();
     private static final ThreadLocal<Set<String>> CURRENT_CAPABILITIES = new ThreadLocal<>();
     private static final ThreadLocal<String> currentWorkspaceRole = new ThreadLocal<>();
     private static final ThreadLocal<String> currentWorkspaceSource = new ThreadLocal<>();
@@ -58,14 +57,6 @@ public final class TenantContext {
         return currentWorkspacePath.get();
     }
 
-    public static void setUserRole(String role) {
-        currentUserRole.set(role);
-    }
-
-    public static String getUserRole() {
-        return currentUserRole.get();
-    }
-
     public static void setWorkspaceRole(String role) {
         currentWorkspaceRole.set(role);
     }
@@ -87,7 +78,6 @@ public final class TenantContext {
         currentUserId.remove();
         currentWorkspaceId.remove();
         currentWorkspacePath.remove();
-        currentUserRole.remove();
         CURRENT_CAPABILITIES.remove();
         currentWorkspaceRole.remove();
         currentWorkspaceSource.remove();

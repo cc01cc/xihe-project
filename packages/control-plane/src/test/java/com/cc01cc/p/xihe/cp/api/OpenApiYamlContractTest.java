@@ -284,14 +284,17 @@ class OpenApiYamlContractTest {
             Map<?, ?> paths = (Map<?, ?>) document.get("paths");
             assertTrue(paths.containsKey("/api/v1/instance/owner"),
                     "GET/PUT /api/v1/instance/owner is contracted");
-            assertTrue(paths.containsKey("/api/v1/users/{userId}/role"),
-                    "PATCH /api/v1/users/{userId}/role is contracted");
+            // PLAN-0610 W3-2b: the legacy role route and its schemas are retired with users.role.
+            assertFalse(paths.containsKey("/api/v1/users/{userId}/role"),
+                    "PATCH /api/v1/users/{userId}/role is retired");
+            assertTrue(paths.containsKey("/api/v1/me/permissions"),
+                    "the self-service capability summary is contracted");
 
             Map<?, ?> ownerPath = (Map<?, ?>) paths.get("/api/v1/instance/owner");
             assertTrue(ownerPath.containsKey("get"), "owner read is contracted");
             assertTrue(ownerPath.containsKey("put"), "owner transfer is contracted");
-            Map<?, ?> rolePath = (Map<?, ?>) paths.get("/api/v1/users/{userId}/role");
-            assertTrue(rolePath.containsKey("patch"), "role change is contracted");
+            Map<?, ?> mePath = (Map<?, ?>) paths.get("/api/v1/me/permissions");
+            assertTrue(mePath.containsKey("get"), "me/permissions read is contracted");
 
             Map<?, ?> schemas = (Map<?, ?>) ((Map<?, ?>) document.get("components")).get("schemas");
             Map<?, ?> ownerView = (Map<?, ?>) schemas.get("InstanceOwnerView");
@@ -305,15 +308,16 @@ class OpenApiYamlContractTest {
                         "InstanceOwnerView must not expose " + forbidden + " (account enumeration)");
             }
 
-            Map<?, ?> changeRequest = (Map<?, ?>) schemas.get("UserRoleChangeRequest");
-            assertInstanceOf(Map.class, changeRequest, "UserRoleChangeRequest schema is contracted");
-            Map<?, ?> roleSchema = (Map<?, ?>) ((Map<?, ?>) changeRequest.get("properties")).get("role");
-            String roleText = String.valueOf(roleSchema);
-            assertTrue(roleText.contains("ADMIN") && roleText.contains("USER"),
-                    "role enum is contracted: " + roleText);
+            // PLAN-0610 W3-2b: the per-role wire schemas are retired; the capability projection is
+            // the contracted replacement on UserAdminView and /auth/me.
+            assertFalse(schemas.containsKey("UserRoleChangeRequest"),
+                    "UserRoleChangeRequest schema is retired");
+            assertFalse(schemas.containsKey("UserRoleView"),
+                    "UserRoleView schema is retired");
+            assertTrue(schemas.containsKey("UserCapabilities"),
+                    "UserCapabilities schema is contracted");
             assertTrue(schemas.containsKey("InstanceOwnerTransferRequest"),
                     "InstanceOwnerTransferRequest schema is contracted");
-            assertTrue(schemas.containsKey("UserRoleView"), "UserRoleView schema is contracted");
         }
     }
 
@@ -334,8 +338,9 @@ class OpenApiYamlContractTest {
             assertTrue(paths.containsKey("/api/v1/users/{userId}/status"), "status route is contracted");
             assertTrue(paths.containsKey("/api/v1/users/{userId}/password-reset"),
                     "password-reset route is contracted");
-            assertTrue(paths.containsKey("/api/v1/users/{userId}/role"),
-                    "the 0580 role route stays contracted");
+            // PLAN-0610 W3-2b: elevation is a role-binding write; the account role route is gone.
+            assertFalse(paths.containsKey("/api/v1/users/{userId}/role"),
+                    "the 0580 role route is retired");
 
             Map<?, ?> collection = (Map<?, ?>) paths.get("/api/v1/users");
             assertTrue(collection.containsKey("get"), "list is contracted");
@@ -350,10 +355,12 @@ class OpenApiYamlContractTest {
             Map<?, ?> adminView = (Map<?, ?>) schemas.get("UserAdminView");
             assertInstanceOf(Map.class, adminView, "UserAdminView schema is contracted");
             Map<?, ?> viewProps = (Map<?, ?>) adminView.get("properties");
-            for (String field : List.of("id", "email", "username", "name", "role", "status", "deletedAt",
-                    "createdAt")) {
+            for (String field : List.of("id", "email", "username", "name", "capabilities", "status",
+                    "deletedAt", "createdAt")) {
                 assertTrue(viewProps.containsKey(field), "UserAdminView must carry " + field);
             }
+            assertFalse(viewProps.containsKey("role"),
+                    "PLAN-0610 W3-2b: UserAdminView no longer exposes the legacy role string");
             for (String forbidden : List.of("passwordHash", "tokenVersion", "sessionVersion")) {
                 assertTrue(!viewProps.containsKey(forbidden),
                         "UserAdminView must not expose " + forbidden);

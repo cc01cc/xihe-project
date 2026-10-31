@@ -115,7 +115,6 @@ class ToolFaceServiceTest {
 
     @Test
     void instanceAdminMayOverrideBuiltinToolFace() {
-        TenantContext.setUserRole("ADMIN");
         when(repository.findByScopeAndOwnerIdIsNullOrderByCreatedAtAscIdAsc("instance")).thenReturn(List.of());
         when(repository.save(any(ToolFaceEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -178,7 +177,6 @@ class ToolFaceServiceTest {
 
     @Test
     void instanceAdminAuditRecordsInstanceScope() {
-        TenantContext.setUserRole("ADMIN");
         when(repository.findByScopeAndOwnerIdIsNullOrderByCreatedAtAscIdAsc("instance")).thenReturn(List.of());
         when(repository.save(any(ToolFaceEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 

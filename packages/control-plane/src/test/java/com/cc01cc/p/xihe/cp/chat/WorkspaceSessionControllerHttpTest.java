@@ -62,13 +62,12 @@ class WorkspaceSessionControllerHttpTest {
         JwtTokenProvider jwt = mock(JwtTokenProvider.class);
         when(jwt.validateToken(TOKEN)).thenReturn(true);
         when(jwt.getUserIdFromToken(TOKEN)).thenReturn(USER_ID);
-        when(jwt.getRoleFromToken(TOKEN)).thenReturn("USER");
         when(jwt.getWorkspaceIdFromToken(TOKEN)).thenReturn(null);
         // PLAN-0580 decision #21: the interceptor takes userId/role from the shared
         // epoch-checking authenticator, so the test stubs that boundary instead.
         AccessTokenAuthenticator authenticator = mock(AccessTokenAuthenticator.class);
         when(authenticator.authenticate(TOKEN)).thenReturn(Optional.of(
-                new AccessTokenAuthenticator.AuthenticatedUser(USER_ID, "USER", 1)));
+                new AccessTokenAuthenticator.AuthenticatedUser(USER_ID, 1)));
 
         workspaceService = mock(WorkspaceService.class);
         when(workspaceService.isWorkspaceMember(anyString(), eq(USER_ID))).thenReturn(true);

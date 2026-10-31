@@ -55,7 +55,6 @@ class TenantContextInterceptorTest {
 
         when(jwtTokenProvider.validateToken(TOKEN)).thenReturn(true);
         when(jwtTokenProvider.getUserIdFromToken(TOKEN)).thenReturn(USER_ID);
-        when(jwtTokenProvider.getRoleFromToken(TOKEN)).thenReturn("USER");
         when(jwtTokenProvider.getTokenVersionFromToken(TOKEN)).thenReturn(0);
         User user = new User("user@test.com", "hash", UserRole.USER, "User", "user");
         user.setId(UUID.fromString(USER_ID));
@@ -193,7 +192,6 @@ class TenantContextInterceptorTest {
                 new MockHttpServletResponse(), new Object()));
 
         assertNull(TenantContext.getUserId());
-        assertNull(TenantContext.getUserRole());
     }
 
     /** T1: a non-UUID subject is a failed authentication, not a 500 and not a tenant write. */

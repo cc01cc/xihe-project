@@ -30,12 +30,6 @@ class TenantContextTest {
     }
 
     @Test
-    void setAndGetUserRole() {
-        TenantContext.setUserRole("MEMBER");
-        assertEquals("MEMBER", TenantContext.getUserRole());
-    }
-
-    @Test
     void setAndGetWorkspacePath() {
         TenantContext.setWorkspacePath("/data/xihe/workspaces/ws-a");
         assertEquals("/data/xihe/workspaces/ws-a", TenantContext.getWorkspacePath());
@@ -54,7 +48,6 @@ class TenantContextTest {
         assertNull(TenantContext.getUserId());
         assertNull(TenantContext.getWorkspaceId());
         assertNull(TenantContext.getWorkspacePath());
-        assertNull(TenantContext.getUserRole());
         assertNull(TenantContext.getWorkspaceRole());
     }
 
@@ -63,13 +56,11 @@ class TenantContextTest {
         TenantContext.setUserId("user-1");
         TenantContext.setWorkspaceId("ws-1");
         TenantContext.setWorkspacePath("/data/ws-1");
-        TenantContext.setUserRole("USER");
         TenantContext.setWorkspaceRole("MEMBER");
 
         assertNotNull(TenantContext.getUserId());
         assertNotNull(TenantContext.getWorkspaceId());
         assertNotNull(TenantContext.getWorkspacePath());
-        assertNotNull(TenantContext.getUserRole());
         assertNotNull(TenantContext.getWorkspaceRole());
 
         TenantContext.clear();
@@ -77,7 +68,6 @@ class TenantContextTest {
         assertNull(TenantContext.getUserId());
         assertNull(TenantContext.getWorkspaceId());
         assertNull(TenantContext.getWorkspacePath());
-        assertNull(TenantContext.getUserRole());
         assertNull(TenantContext.getWorkspaceRole());
     }
 
@@ -86,26 +76,22 @@ class TenantContextTest {
         TenantContext.setUserId("main-thread");
         TenantContext.setWorkspaceId("ws-main");
         TenantContext.setWorkspacePath("/data/ws-main");
-        TenantContext.setUserRole("USER");
         TenantContext.setWorkspaceRole("OWNER");
 
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<String> childUserId = new AtomicReference<>();
         AtomicReference<String> childWorkspaceId = new AtomicReference<>();
         AtomicReference<String> childWorkspacePath = new AtomicReference<>();
-        AtomicReference<String> childUserRole = new AtomicReference<>();
         AtomicReference<String> childWorkspaceRole = new AtomicReference<>();
 
         Thread child = new Thread(() -> {
             TenantContext.setUserId("child-thread");
             TenantContext.setWorkspaceId("ws-child");
             TenantContext.setWorkspacePath("/data/ws-child");
-            TenantContext.setUserRole("ADMIN");
             TenantContext.setWorkspaceRole("MEMBER");
             childUserId.set(TenantContext.getUserId());
             childWorkspaceId.set(TenantContext.getWorkspaceId());
             childWorkspacePath.set(TenantContext.getWorkspacePath());
-            childUserRole.set(TenantContext.getUserRole());
             childWorkspaceRole.set(TenantContext.getWorkspaceRole());
             TenantContext.clear();
             latch.countDown();
@@ -118,13 +104,11 @@ class TenantContextTest {
         assertEquals("child-thread", childUserId.get());
         assertEquals("ws-child", childWorkspaceId.get());
         assertEquals("/data/ws-child", childWorkspacePath.get());
-        assertEquals("ADMIN", childUserRole.get());
         assertEquals("MEMBER", childWorkspaceRole.get());
 
         assertEquals("main-thread", TenantContext.getUserId());
         assertEquals("ws-main", TenantContext.getWorkspaceId());
         assertEquals("/data/ws-main", TenantContext.getWorkspacePath());
-        assertEquals("USER", TenantContext.getUserRole());
         assertEquals("OWNER", TenantContext.getWorkspaceRole());
     }
 
