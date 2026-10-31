@@ -264,7 +264,7 @@ if recover_ids:
 
 - **路由来源唯一**：调用串为 `{route_provider}/{model}`，`route_provider` 来自 CP 租约（catalog 条目 `litellmProvider`）；Agent **不得**按工具/模型自行改写 slug（`XiheLiteLLM.bind_tools` 的 xiaomi→`openai/...` 静默切换已在 M3 移除）。
 - **工具能力不匹配显式失败**：native `xiaomi_mimo` 无工具元数据，带工具请求由 litellm 抛 `UnsupportedParamsError`，Agent 经 `_classify_llm_exception` 映射为 `LLM_TOOL_ROUTE_UNSUPPORTED`；需要工具请使用 OpenAI 兼容连接（`litellmProvider: openai` + 显式 `baseUrl`）。**PLAN-0591 起**该判定前移为 catalog 驱动的**预发送门**（`supportedApiTypes[].capability.tools` 是唯一判定源；次序 = 渲染 → `validate_body` → capability gate → `begin_attempt()`，`api_sender.py:425-432`）：不支持的 apiType 在 dispatch 前即以 `LLM_TOOL_ROUTE_UNSUPPORTED` 失败（`attempt=0`、0 `tools/call`、0 文件），litellm `UnsupportedParamsError` 仅作兜底残余。契约见 `spec/capability-gate.md`；模型级能力残余见 DEV-018。
-- **OpenAI wire 必须有显式 baseUrl**：`openai` / `custom_openai` / `openai_like` 在 `baseUrl` 为空或空白时于 `XiheLiteLLM.__init__` fail-fast（`LLMRouteConfigError` → `LLM_BASE_URL_MISSING`），禁止回落到 OpenAI 默认端点。
+- **图像渲染器后置变换（PLAN-0605，M2 裁定 B）**：模板只负责文本槽；当 CP 在 dispatch 体带 `images[]`（**仅** `attachmentId/mimeType/sizeBytes`，无字节）且该 `apiTypeId` 在 `VISION_RENDERERS`（首批 `openai-chat-completions`）时，Agent 在模板渲染之后、能力门通过之后，把**本轮最后一条 user 消息**的 `content` 改写为 `[{type:"text",text:原文}, {type:"image_url",image_url:{url:"data:<mime>;base64,…"}}…]`——原文本逐字保留，其它消息与字段原样透传。字节凭 `runId` 从 CP 内部路由 `GET /internal/v1/attachments/{id}/content?runId=` 拉取（run/workspace/attachment 三元归属 + lease 已 redeem），只在内存组装 data URL，**不落盘、不进日志/SSE/DB**；拉取失败（403/404/413/超时）以 `LLM_VISION_ATTACHMENT_UNAVAILABLE` 失败，**不得**降级为纯文本。顺序契约见 `spec/capability-gate.md` §2a。- **OpenAI wire 必须有显式 baseUrl**：`openai` / `custom_openai` / `openai_like` 在 `baseUrl` 为空或空白时于 `XiheLiteLLM.__init__` fail-fast（`LLMRouteConfigError` → `LLM_BASE_URL_MISSING`），禁止回落到 OpenAI 默认端点。
 
 ## 6. 相关文件
 
@@ -295,3 +295,4 @@ if recover_ids:
 
 - `PLAN-033-XH-agent-module-decoupling.md`
 - `PLAN-035-XH-agent-context-architecture.md`
+

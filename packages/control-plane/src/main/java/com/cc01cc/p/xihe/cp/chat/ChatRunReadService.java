@@ -25,13 +25,29 @@ public class ChatRunReadService {
     private final ChatRunRepository chatRunRepository;
     private final ChatRunTransportAttemptRepository transportAttempts;
     private final ApprovalService approvalService;
+    private final com.cc01cc.p.xihe.cp.repository.MessageRepository messages;
 
     public ChatRunReadService(ChatRunRepository chatRunRepository,
                               ChatRunTransportAttemptRepository transportAttempts,
-                              ApprovalService approvalService) {
+                              ApprovalService approvalService,
+                              com.cc01cc.p.xihe.cp.repository.MessageRepository messages) {
         this.chatRunRepository = chatRunRepository;
         this.transportAttempts = transportAttempts;
         this.approvalService = approvalService;
+        this.messages = messages;
+    }
+
+    /**
+     * PLAN-0605: the user message's admitted attachment JSON for this run. Dispatch builds
+     * `images[]` from it, so it does not depend on `files.message_id` being linked yet.
+     */
+    Optional<String> findUserMessageAttachmentsJson(String runId) {
+        return chatRunRepository.findById(UUID.fromString(runId))
+                .map(ChatRun::getUserMessageId)
+                .filter(messageId -> messageId != null && !messageId.isBlank())
+                .flatMap(messageId -> messages.findById(UUID.fromString(messageId)))
+                .map(com.cc01cc.p.xihe.cp.entity.Message::getAttachments)
+                .filter(json -> json != null && !json.isBlank());
     }
 
     public Map<String, Object> getStatus(UUID runUuid, String runId, String userId, String workspaceId) {
@@ -179,12 +195,14 @@ public class ChatRunReadService {
     Optional<ExecutionRun> findExecutionRun(String runId) {
         return chatRunRepository.findById(UUID.fromString(runId))
                 .map(run -> new ExecutionRun(run.getProvider(), run.getModel(), run.getProviderConnectionId(),
-                        run.getConnectionRevision(), new ContextTemplateSourceService.RunContext(
+                        run.getConnectionRevision(), run.getUserMessageId(),
+                        new ContextTemplateSourceService.RunContext(
                         run.getSessionId(), run.getWorkspaceId(), run.getUserId(),
                         run.getContextTemplateSnapshot()), continuationDescriptor(run)));
     }
 
     record ExecutionRun(String provider, String model, String providerConnectionId, Long connectionRevision,
+                        String userMessageId,
                         ContextTemplateSourceService.RunContext context,
                         ContinuationDescriptor continuation) {
     }
@@ -222,3 +240,5 @@ public class ChatRunReadService {
                                    ContinuationDescriptor continuation) {
     }
 }
+
+

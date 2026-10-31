@@ -1,6 +1,8 @@
 package com.cc01cc.p.xihe.cp.files;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,6 +32,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -43,6 +46,10 @@ public class ChatAttachmentService {
 
     private static final Logger logger = LoggerFactory.getLogger(ChatAttachmentService.class);
     private static final long MAX_FILE_SIZE = 500L * 1024 * 1024;
+    /** PLAN-0605 D6 ceilings for the image channel (enforced again on byte streaming). */
+    public static final int MAX_IMAGES_PER_MESSAGE = 4;
+    private static final Set<String> SUPPORTED_IMAGE_MIMES =
+            Set.of("image/png", "image/jpeg", "image/webp");
 
     private static final Map<String, String> EXTENSION_TO_MIME = Map.ofEntries(
         Map.entry("png", "image/png"),
@@ -236,6 +243,36 @@ public class ChatAttachmentService {
     }
 
     @Transactional
+
+    /**
+     * PLAN-0605: reference-only `images[]` payload for the Agent dispatch. Bytes never
+     * travel here; the Agent pulls them back over the run-bound internal route. Only
+     * png/jpeg/webp within the per-image ceiling qualify, at most four per message.
+     */
+    public List<Map<String, Object>> imageReferencesForMessage(String messageId) {
+        if (messageId == null || messageId.isBlank()) {
+            return List.of();
+        }
+        List<Map<String, Object>> references = new ArrayList<>();
+        for (File attachment : fileRepository.findByMessageId(messageId)) {
+            String mime = attachment.getMimeType() == null
+                    ? "" : attachment.getMimeType().toLowerCase(Locale.ROOT);
+            if (!SUPPORTED_IMAGE_MIMES.contains(mime)
+                    || attachment.getSizeBytes() > AttachmentContentService.MAX_IMAGE_BYTES) {
+                continue;
+            }
+            Map<String, Object> ref = new LinkedHashMap<>();
+            ref.put("attachmentId", attachment.getId().toString());
+            ref.put("mimeType", mime);
+            ref.put("sizeBytes", attachment.getSizeBytes());
+            references.add(ref);
+            if (references.size() >= MAX_IMAGES_PER_MESSAGE) {
+                break;
+            }
+        }
+        return List.copyOf(references);
+    }
+
     public void deleteSessionAttachments(String sessionId) {
         List<File> files = fileRepository.findBySessionIdOrderByIdAsc(sessionId);
         for (File candidate : files) {
@@ -263,6 +300,43 @@ public class ChatAttachmentService {
         }
     }
 
+    /**
+     * PLAN-0605: reference-only `images[]` payload built from the admitted message
+     * attachment JSON (`[{fileId,name,type,size}]`). Same filters as
+     * {@link #imageReferencesForMessage}: png/jpeg/webp, per-image ceiling, at most four.
+     */
+    public List<Map<String, Object>> imageReferencesFromAttachmentsJson(String attachmentsJson) {
+        if (attachmentsJson == null || attachmentsJson.isBlank()) {
+            return List.of();
+        }
+        List<Map<String, Object>> references = new ArrayList<>();
+        try {
+            JsonNode parsed = objectMapper.readTree(attachmentsJson);
+            if (parsed == null || !parsed.isArray()) {
+                throw new IllegalStateException("Admitted attachment JSON must be an array");
+            }
+            for (JsonNode node : parsed) {
+                String mime = node.path("type").asText("").toLowerCase(Locale.ROOT);
+                long size = node.path("size").asLong(0);
+                String fileId = node.path("fileId").asText("");
+                if (fileId.isBlank() || !SUPPORTED_IMAGE_MIMES.contains(mime)
+                        || size > AttachmentContentService.MAX_IMAGE_BYTES) {
+                    continue;
+                }
+                Map<String, Object> ref = new LinkedHashMap<>();
+                ref.put("attachmentId", fileId);
+                ref.put("mimeType", mime);
+                ref.put("sizeBytes", size);
+                references.add(ref);
+                if (references.size() >= MAX_IMAGES_PER_MESSAGE) {
+                    break;
+                }
+            }
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Admitted attachment JSON is unreadable", e);
+        }
+        return List.copyOf(references);
+    }
     /**
      * PLAN-0470 (decision #23): ChatSubmission links admitted attachments to
      * the freshly created user Message through the Files owner. Joins the

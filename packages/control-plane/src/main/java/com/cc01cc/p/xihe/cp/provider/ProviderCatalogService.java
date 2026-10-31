@@ -71,6 +71,9 @@ public class ProviderCatalogService {
             int declared = 0;
             boolean anyTools = false;
             boolean allTools = true;
+            int visionDeclared = 0;
+            boolean anyVision = false;
+            boolean allVision = true;
             for (JsonNode pair : supported) {
                 String typeId = pair.path("apiTypeId").asText();
                 int version = pair.path("version").asInt();
@@ -82,9 +85,10 @@ public class ProviderCatalogService {
                 }
                 JsonNode capability = pair.get("capability");
                 if (capability == null || capability.isNull()) {
-                    logger.warn("Provider capability.tools missing; treated as unsupported provider={} apiType={}@{}",
+                    logger.warn("Provider capability missing; treated as unsupported provider={} apiType={}@{}",
                             providerId, typeId, version);
                     allTools = false;
+                    allVision = false;
                     continue;
                 }
                 if (!capability.isObject()) {
@@ -95,14 +99,28 @@ public class ProviderCatalogService {
                     logger.warn("Provider capability.tools missing; treated as unsupported provider={} apiType={}@{}",
                             providerId, typeId, version);
                     allTools = false;
-                    continue;
-                }
-                if (!tools.isBoolean()) {
+                } else if (!tools.isBoolean()) {
                     throw new IllegalStateException("Provider capability.tools must be boolean: " + providerId);
+                } else {
+                    declared++;
+                    anyTools |= tools.asBoolean();
+                    allTools &= tools.asBoolean();
                 }
-                declared++;
-                anyTools |= tools.asBoolean();
-                allTools &= tools.asBoolean();
+                // PLAN-0605: per-API-Type vision capability. Missing = unsupported (fail-closed);
+                // provider-level `supports.vision` is only a declaration and may stay true while the
+                // per-pair value is still "待证" (verified=false), so equality is not enforced.
+                JsonNode vision = capability.get("vision");
+                if (vision == null || vision.isNull()) {
+                    logger.warn("Provider capability.vision missing; treated as unsupported provider={} apiType={}@{}",
+                            providerId, typeId, version);
+                    allVision = false;
+                } else if (!vision.isBoolean()) {
+                    throw new IllegalStateException("Provider capability.vision must be boolean: " + providerId);
+                } else {
+                    visionDeclared++;
+                    anyVision |= vision.asBoolean();
+                    allVision &= vision.asBoolean();
+                }
             }
             if (!defaultAllowed) {
                 throw new IllegalStateException("Provider default API Type is not supported: " + providerId);
@@ -119,6 +137,24 @@ public class ProviderCatalogService {
                 if (partial != null && partial.isBoolean() && partial.asBoolean() != expectedPartial) {
                     throw new IllegalStateException(
                             "Provider supports.toolsPartial disagrees with capabilities: " + providerId);
+                }
+                if (visionDeclared == supported.size()) {
+                    JsonNode visionPartial = supports == null ? null : supports.get("visionPartial");
+                    boolean expectedVisionPartial = anyVision && !allVision;
+                    if (visionPartial != null && visionPartial.isBoolean()
+                            && visionPartial.asBoolean() != expectedVisionPartial) {
+                        throw new IllegalStateException(
+                                "Provider supports.visionPartial disagrees with capabilities: " + providerId);
+                    }
+                    JsonNode supportsVision = supports == null ? null : supports.get("vision");
+                    if (supportsVision != null && supportsVision.isBoolean() && supportsVision.asBoolean()
+                            && !anyVision) {
+                        logger.warn("Provider supports.vision=true but no apiType is verified vision-capable yet "
+                                + "(待证) provider={}", providerId);
+                    }
+                } else if (visionDeclared > 0) {
+                    logger.warn("Provider capability.vision partially declared; aggregate check skipped provider={} "
+                            + "declared={}/{}", providerId, visionDeclared, supported.size());
                 }
             } else if (declared > 0) {
                 logger.warn("Provider capability.tools partially declared; aggregate check skipped provider={} declared={}/{}",
@@ -179,6 +215,16 @@ public class ProviderCatalogService {
     public boolean toolsSupported(String providerId, String apiTypeId, int version) {
         JsonNode tools = supportedPair(providerId, apiTypeId, version).path("capability").get("tools");
         return tools != null && tools.isBoolean() && tools.asBoolean();
+    }
+
+    /**
+     * PLAN-0605: the single vision decision source, mirroring {@link #toolsSupported}.
+     * Missing/explicit-null {@code capability.vision} is treated as unsupported at
+     * runtime; provider-level {@code supports.vision} is a declaration only.
+     */
+    public boolean visionSupported(String providerId, String apiTypeId, int version) {
+        JsonNode vision = supportedPair(providerId, apiTypeId, version).path("capability").get("vision");
+        return vision != null && vision.isBoolean() && vision.asBoolean();
     }
 
     public boolean requiresCredential(String providerId) {

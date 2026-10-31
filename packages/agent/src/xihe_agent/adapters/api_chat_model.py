@@ -24,6 +24,7 @@ from xihe_agent.interfaces.tool import ACQUIRE_CREDENTIAL_TOOL_NAME, BaseAgentTo
 from xihe_agent.llm.api_request import ApiRequestError, ChatApiType, render_request
 from xihe_agent.llm.api_sender import NATIVE_USAGE_COUNTERS, ApiSender, NativeResponse
 from xihe_agent.llm.transport_metrics import TransportEventSink, TransportMetricsCollector
+from xihe_agent.llm.vision_render import apply_image_parts
 
 
 def native_tools(tools: Sequence[BaseAgentTool], api_type: ChatApiType) -> list[dict[str, Any]]:
@@ -207,6 +208,7 @@ class ApiChatModel(BaseChatModel):
     # PLAN-0523 decisions #9/#12: per-model sampling overrides resolved from the
     # layer `modelParams` map, applied onto every rendered step body.
     _sampling_overrides: dict[str, Any] | None = PrivateAttr(default=None)
+    _image_data_urls: list[str] = PrivateAttr(default_factory=list)
 
     def __init__(
         self,
@@ -221,8 +223,12 @@ class ApiChatModel(BaseChatModel):
         transport_sink: TransportEventSink | None = None,
         include_initial_messages: bool = False,
         sampling_overrides: dict[str, Any] | None = None,
+        image_data_urls: list[str] | None = None,
     ):
         super().__init__(cache=False)
+        # PLAN-0605 decision B: renderer post-transform payload. Data URLs live in
+        # memory only for this Run and are never logged or persisted.
+        self._image_data_urls = list(image_data_urls or [])
         self._api_type = api_type
         # PLAN-0508: the per-Run collector sequences transport attempts; the
         # sink is the runner-provided relay into the existing event stream.
@@ -320,7 +326,9 @@ class ApiChatModel(BaseChatModel):
         # literals; unset keys keep whatever the template/provider defaults to.
         if self._sampling_overrides:
             body.update(self._sampling_overrides)
-        return body
+        # PLAN-0605: template renders text; the apiType renderer injects image parts
+        # for the current turn (no-op unless images were dispatched for this run).
+        return apply_image_parts(body, self._api_type.id, self._image_data_urls)
 
     def _dispatch_body(self, messages: list[BaseMessage]) -> dict[str, Any]:
         """Final native body for this provider step, estimated before dispatch.
@@ -436,3 +444,4 @@ class ApiChatModel(BaseChatModel):
                     response_metadata={"reasoning_content": safe_reasoning_tail} if safe_reasoning_tail else {},
                 )
             )
+

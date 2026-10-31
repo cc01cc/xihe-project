@@ -97,6 +97,50 @@ class ProviderCatalogServiceTest {
     }
 
     @Test
+    void visionCapabilityIsPerApiTypeAndRolledUp() {
+        // PLAN-0605: `capability.vision` mirrors the tools semantics. Only the verified
+        // dashscope-qwen chat pair is true; the embedding pair and xiaomi stay false, and
+        // the provider rollup exposes the mixed state through `supports.visionPartial`.
+        assertTrue(catalog.visionSupported("dashscope-qwen", "openai-chat-completions", 1));
+        assertFalse(catalog.visionSupported("dashscope-qwen", "dashscope-multimodal-embedding", 1));
+        assertFalse(catalog.visionSupported("xiaomi", "mimo-responses", 1));
+        assertFalse(catalog.visionSupported("xiaomi", "openai-chat-completions", 1));
+        var dashSupports = catalog.require("dashscope-qwen").path("supports");
+        assertTrue(dashSupports.path("vision").asBoolean());
+        assertTrue(dashSupports.path("visionPartial").asBoolean());
+        // Declared-but-unverified providers keep the rollup but no per-type permission.
+        var openai = catalog.require("openai");
+        assertTrue(openai.path("supports").path("vision").asBoolean());
+        assertFalse(openai.path("supportedApiTypes").get(0).path("capability").path("vision").asBoolean());
+    }
+
+    @Test
+    void missingVisionCapabilityLoadsWithUnsupportedDefault() {
+        var service = catalogWith(PROVIDER_HEAD
+                + "{\"apiTypeId\":\"openai-chat-completions\",\"version\":1,\"capability\":{\"tools\":true}}"
+                + PROVIDER_TAIL);
+        assertFalse(service.visionSupported("p", "openai-chat-completions", 1));
+    }
+
+    @Test
+    void nonBooleanVisionCapabilityFailsFast() {
+        assertThrows(IllegalStateException.class, () -> catalogWith(PROVIDER_HEAD
+                + "{\"apiTypeId\":\"openai-chat-completions\",\"version\":1,"
+                + "\"capability\":{\"tools\":true,\"vision\":\"yes\"}}"
+                + PROVIDER_TAIL));
+    }
+
+    @Test
+    void visionPartialDisagreementFailsFastWhenAllDeclared() {
+        assertThrows(IllegalStateException.class, () -> catalogWith(PROVIDER_HEAD
+                + "{\"apiTypeId\":\"openai-chat-completions\",\"version\":1,"
+                + "\"capability\":{\"tools\":true,\"vision\":false}}"
+                + "],\"defaultApiType\":{\"apiTypeId\":\"openai-chat-completions\",\"version\":1},"
+                + "\"credential\":{\"type\":\"api-key\",\"required\":true},"
+                + "\"supports\":{\"tools\":true,\"visionPartial\":true}}]"));
+    }
+
+    @Test
     void missingCapabilityLoadsWithUnsupportedDefault() {
         var service = catalogWith(PROVIDER_HEAD
                 + "{\"apiTypeId\":\"openai-chat-completions\",\"version\":1}" + PROVIDER_TAIL);

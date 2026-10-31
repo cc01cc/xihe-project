@@ -367,6 +367,42 @@ def tools_non_empty(body: dict[str, Any]) -> bool:
     return isinstance(tools, list) and len(tools) > 0
 
 
+# PLAN-0605: apiTypes whose renderer can emit image content parts. Anything else
+# must fail closed even when the capability data claims vision support, so a
+# missing renderer can never degrade into "silently drops the image".
+VISION_RENDERERS: frozenset[str] = frozenset({"openai-chat-completions"})
+
+
+def images_non_empty(body: dict[str, Any]) -> bool:
+    """PLAN-0605: does the rendered body carry at least one image content part?
+
+    Recognizes OpenAI-compatible parts (`type=image_url`), Anthropic-style parts
+    (`type=image`) and the Responses API shape (`input_image`). Text-only bodies,
+    including plain-string content, return False.
+    """
+    # `messages` covers chat-completions/Anthropic shapes; `input` covers the
+    # Responses-style native apiTypes (e.g. mimo-responses).
+    for wire_field in ("messages", "input"):
+        items = body.get(wire_field)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            content = item.get("content")
+            if not isinstance(content, list):
+                continue
+            for part in content:
+                if isinstance(part, dict) and part.get("type") in ("image_url", "input_image", "image"):
+                    return True
+    return False
+
+
+def vision_route_supported(api_type_id: str, vision_supported: bool) -> bool:
+    """PLAN-0605 gate decision (pure): capability data AND a renderer for this apiType."""
+    return vision_supported and api_type_id in VISION_RENDERERS
+
+
 class ApiSender:
     def __init__(
         self,
@@ -389,6 +425,15 @@ class ApiSender:
                 api_type.version,
             )
         self.tools_supported = grant.get("toolsSupported") is True
+        # PLAN-0605: per-API-Type vision capability, mirroring toolsSupported.
+        if "visionSupported" not in grant:
+            logger.warning(
+                "provider lease missing visionSupported; treating as unsupported provider={} apiType={}@{}",
+                grant.get("provider"),
+                api_type.id,
+                api_type.version,
+            )
+        self.vision_supported = grant.get("visionSupported") is True
         base = grant.get("baseUrl")
         key = grant.get("apiKey")
         if (
@@ -428,6 +473,13 @@ class ApiSender:
         # the provider.
         if tools_non_empty(body) and not self.tools_supported:
             raise ApiRequestError("LLM_TOOL_ROUTE_UNSUPPORTED")
+        # PLAN-0605: vision gate. Two independent reasons to fail closed before the
+        # attempt opens: the apiType is not declared vision-capable, or this build has
+        # no renderer for it. Neither may degrade into dropping the image silently.
+        if images_non_empty(body) and not vision_route_supported(
+            self.api_type.id, self.vision_supported
+        ):
+            raise ApiRequestError("LLM_VISION_ROUTE_UNSUPPORTED")
         # PLAN-0508: one bounded progress/terminal attempt per HTTP dispatch.
         probe = self._collector.begin_attempt() if self._collector is not None else None
         # No retry loop, redirect replay or SDK retry. Total deadline covers reading
@@ -517,3 +569,5 @@ class ApiSender:
         finally:
             if probe is not None:
                 probe.close()
+
+

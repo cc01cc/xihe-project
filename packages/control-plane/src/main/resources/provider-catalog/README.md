@@ -2,7 +2,7 @@
 
 This directory holds the classpath provider catalog (`providers.json`) consumed by
 `ProviderCatalogService` and served as `GET /api/v1/provider-catalog`
-(`catalogRevision = v2`).
+(`catalogRevision = v3`).
 
 **`providers.json` is strict JSON.** It carries no comments and no `_comment`
 fields; this README is the only annotation channel. Do not add schema fields just
@@ -21,10 +21,32 @@ to attach an explanation — the runtime schema is contract-tested.
   `xiaomi` = `mimo-responses@1:false` + `openai-chat-completions@1:true`
   ⇒ `supports.tools = true`, `supports.toolsPartial = true`.
 
+## Vision capability semantics (PLAN-0605)
+
+- `supportedApiTypes[].capability.vision` is the **single** decision source for image
+  input on that route. Missing value ⇒ unsupported (runtime WARN).
+- Provider-level `supports.vision` is a **declaration** (vendor docs), not a grant;
+  `supports.visionPartial` is `any && !all` over verified per-pair values.
+- A pair is `true` only with an evidence pointer. Unverified pairs stay `false` and
+  are labelled 「待证」 even when `supports.vision=true` for the provider — the loader
+  emits a WARN in that case (`ProviderCatalogService#validate`).
+- A route declared unsupported (or with no renderer in this build) must fail closed
+  **before** dispatch: any image content part ⇒ stable `LLM_VISION_ROUTE_UNSUPPORTED`,
+  zero provider HTTP, zero transport attempt. Renderers are enumerated in
+  `packages/agent/src/xihe_agent/llm/api_sender.py` (`VISION_RENDERERS`; first batch:
+  `openai-chat-completions`).
+
+| provider / apiType | `capability.vision` | Evidence pointer | Evidence state |
+|---|---|---|---|
+| `dashscope-qwen` / `openai-chat-completions@1` | `true` | PLAN-0591 `evidence/m4-real-lane.md` §3b: `qwen3.8-omni-flash` direct `/chat/completions` with a data-URL PNG returned 200 + an image description; product-path chat `succeeded` (53-char assistant text) | verified 2026-10-31 |
+| `dashscope-qwen` / `dashscope-multimodal-embedding@1` | `false` | embedding route (`operation=embedding`), never a chat image target | confirmed by design |
+| `openai` / `anthropic` / `google-gemini` / `zhipu` / `openrouter` / `xai` (chat pair each) | `false` | none — `supports.vision=true` is vendor declaration only | 「待证」; flip requires a real capture per the review triggers below |
+| `xiaomi` (2 pairs) 及其余 14 providers | `false` | provider `supports.vision=false` / no evidence | confirmed unsupported |
+
 ## Maintenance contract (PLAN-0591 T4.3 decision C)
 
 Whoever edits capability data owns it. Every change to `capability.tools`,
-`supports.tools`, `supports.toolsPartial` or `catalogRevision` must come with an
+`supports.tools`, `supports.toolsPartial`, `capability.vision`, `supports.visionPartial` or `catalogRevision` must come with an
 evidence pointer recorded in the table below; a change without one is not
 mergeable, and vendor marketing or model names are never evidence.
 
@@ -52,3 +74,4 @@ Before flipping an entry to `true`:
 
 Model-level capability (one model of a Type lacking tools) is explicitly out of
 scope: it falls back to provider 400 → `LLM_REQUEST_REJECTED`, tracked separately.
+
