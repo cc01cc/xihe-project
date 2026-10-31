@@ -196,6 +196,14 @@ flowchart LR
 - **注册默认最小集**：新注册 USER 的 `source=default` 权限集 = `read/write/delete/exec/network` 五类（`credential` 不在 USER 默认集），仅本人资源由 subject 隔离 + workspace 成员隔离 + HardGuard L0 路径校验收口；断言 `GrantDefaultBootstrapIntegrationTest#registeredUserDefaultGrantIsMinimalAndEvaluatorScopesItToOwnWorkspaceOnly`。
 - **内部分级查询**：`GET /internal/v1/queries/tier1/status`（沿 provenance 单向向下 + 同 workspace 免 grant 的状态元数据 `{sessionId, runId, state, at}`，无内容字段）与 `GET /internal/v1/queries/tier2/access`（同链规则 + `GrantAuthorizationService.allows` 单一内核的内容访问判定）；均 service Bearer，反向/链外/跨 workspace 403。契约见 `spec/security/principal-workspace-scope.md` §4 与 PLAN-0407 spec §5；OpenAPI/inventory 为准。
 
+## 8e-2. 访问角色与绑定 API（PLAN-0610 W3-2a）
+
+- **模型**：`roles` + `role_permissions`（只存原子名）+ `role_bindings`（role × subject × scope）。`scope_class`（`instance`/`both`）的 SSOT 在代码 `PermissionAtomCatalog`，`GET /api/v1/roles/catalog` 只是它的投影（18 原子 = 15 动作 + 3 能力）；API 不复制词表，新增原子自动出现在目录与写入校验里。
+- **门是动作原子，不是 authority**：`/roles*` 与 `/bindings` 的 `@PreAuthorize` 写 `@requesterAuthority.holdsActionAtom('MANAGE_ROLES')`——`MANAGE_ROLES` 是动作原子，按决策 #23 只有**能力原子**才成为 `cap:<atom>` authority（`instance:super`/`instance:admin`/`workspace:admin`），因此它从 `source='role'` 的 grant 行用评估内核同一套 scoped 读评估（`RequesterAuthority`）。实例 ADMIN（有 `cap:instance:admin`、无 `MANAGE_ROLES`）因此**不能**管角色；工作区作用域的绑定写入还要求该工作区的 `MANAGE_WORKSPACE_AGENTS`。
+- **写入语义**：角色改原子 = 同事务 `RoleGrantMaterializer.materializeRole`（重算全部持有者 `source='role'` 行、能力缓存「立即 + afterCompletion」双失效、原子集真变化的持有者 `token_version+1`）；`PUT /bindings` 是**全量替换**（diff 写入，同 body 重发为真 no-op），提交前校验作用域兼容（400 `ROLE_SCOPE_MISMATCH`）、最小权限（403 `PRIVILEGE_ESCALATION`，只对**新增**绑定对判定）、以及实例「仍有 ≥1 个可用超管」（409 `LAST_SUPER_ADMIN`）。锁序沿用 `instance_owner → users`（角色编辑在 `instance_owner` 之后取 role 行锁，物化器再按 id 升序锁 users）。
+- **错误映射**：并发死锁/序列化失败（`40P01`/`40001`）在 API 边缘统一映射为 409 `CONCURRENT_MODIFICATION`（可重试），与锁等待超时（`55P03` → 503 `OPERATION_LOCK_TIMEOUT`）区分开——两者都是 `PessimisticLockingFailureException` 的子类，靠异常类型特异性保序。
+- **作用域判定统一**：`AccessScopeResolver` 的成员校验新增 `AuthzContext.canWorkspaceAdmin` 回落（round-4 P2），使「实例管理员不是工作区成员」不再被成员门挡住；回落本身不授权，后续原子评估仍决定动作是否放行。
+
 ## 8f. 上下文模板与 Session 绑定（PLAN-0414）
 
 - **配置域 `context-templates`**：仿 `agent-templates` 走显式分层读写（`ConfigService` 三层白名单注册、merged `effective()` 拒绝、非 ADMIN 读 instance 层 403、写入经 `ContextTemplateService` 追加式校验）；schema = `config-schemas/context-templates.json`，导入样例见 `config.import.example.jsonc` 注释块。与 `agent-templates`（Agent 角色卡）是不同概念，路由/键名区分。

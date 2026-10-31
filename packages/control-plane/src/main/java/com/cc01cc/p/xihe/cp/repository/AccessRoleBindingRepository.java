@@ -18,6 +18,13 @@ public interface AccessRoleBindingRepository extends JpaRepository<AccessRoleBin
     List<AccessRoleBinding> findBySubjectTypeAndSubjectIdAndScopeType(String subjectType, UUID subjectId,
                                                                      String scopeType);
 
+    /** PLAN-0610 W3-2a: the instance-scope binding set of the admin API. */
+    List<AccessRoleBinding> findBySubjectTypeAndScopeType(String subjectType, String scopeType);
+
+    /** PLAN-0610 W3-2a: the workspace-scope binding set of one workspace. */
+    List<AccessRoleBinding> findBySubjectTypeAndScopeTypeAndScopeId(String subjectType,
+                                                                   String scopeType, UUID scopeId);
+
     List<AccessRoleBinding> findByRoleId(UUID roleId);
 
     long countByRoleId(UUID roleId);

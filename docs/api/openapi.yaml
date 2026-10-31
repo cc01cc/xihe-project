@@ -2944,6 +2944,105 @@ paths:
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
+  /api/v1/roles/catalog:
+    get:
+      operationId: getRoleCatalog
+      summary: Access-role atom catalog (PLAN-0610 W3-2a)
+      description: 'The permission vocabulary of the access-role model: 18 atoms = 15 action atoms + 3 capability atoms (R2-8). scope_class (instance|both) is the SSOT of PermissionAtomCatalog — the API projects it and never carries its own table (R2-10); capability=true marks the three atoms that become cap:<atom> authorities (instance:super, instance:admin, workspace:admin) and are never materialized into grants (decision #23). Gate: MANAGE_ROLES — an action atom, evaluated from the grant rows because only capability atoms are authorities (R2-5).'
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: 'Atom catalog', content: { application/json: { schema: { $ref: '#/components/schemas/RoleCatalogView' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+  /api/v1/roles:
+    get:
+      operationId: listRoles
+      summary: List access-role definitions (PLAN-0610 W3-2a)
+      description: 'Every role definition (the six V87 system roles plus custom ones), system roles first and then by name. Each row carries its atom set and bindingCount so the UI can disable a delete it cannot perform. Gate: MANAGE_ROLES.'
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: 'Role definitions', content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/RoleView' } } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+    post:
+      operationId: createRole
+      summary: Create a custom access role (PLAN-0610 W3-2a)
+      description: 'Gate: MANAGE_ROLES. name must match ^[A-Za-z][A-Za-z0-9_.:-]{1,63}$ (400 INVALID_ROLE_NAME) and be unique (409 ROLE_NAME_EXISTS); atoms must be a non-empty set of catalog atoms (400 INVALID_ROLE_ATOMS / 400 UNKNOWN_ACTION_CLASS), duplicates are removed. A custom role may combine any atoms; whether an atom may be bound at a given scope is decided by the binding API (400 ROLE_SCOPE_MISMATCH there), not here. Audited as access_role_created.'
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/RoleCreateRequest' } } }
+      responses:
+        '201': { description: 'Created role', content: { application/json: { schema: { $ref: '#/components/schemas/RoleView' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /api/v1/roles/{roleId}:
+    patch:
+      operationId: updateRole
+      summary: Update an access role (PLAN-0610 W3-2a)
+      description: 'Gate: MANAGE_ROLES. A custom role may change name (409 ROLE_NAME_EXISTS), displayName, description and atoms; an atom change re-materializes every holder in the same transaction (source=role rows reconciled, capability cache invalidated immediately and after completion, token_version + 1 per holder whose set changed). A system role accepts ONLY displayName — any other field answers 409 SYSTEM_ROLE_IMMUTABLE. Audited as access_role_updated, which includes the holder count.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: roleId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/RoleUpdateRequest' } } }
+      responses:
+        '200': { description: 'Updated role', content: { application/json: { schema: { $ref: '#/components/schemas/RoleView' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+    delete:
+      operationId: deleteRole
+      summary: Delete a custom access role (PLAN-0610 W3-2a)
+      description: 'Gate: MANAGE_ROLES. 204 on success; a system role answers 409 SYSTEM_ROLE_IMMUTABLE, a role that still has bindings answers 409 ROLE_IN_USE (unbind first through PUT /bindings). The atom rows are deleted with the role. Audited as access_role_deleted.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: roleId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: 'Deleted' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /api/v1/bindings:
+    get:
+      operationId: listRoleBindings
+      summary: Read the binding set of one scope (PLAN-0610 W3-2a)
+      description: 'Gate: MANAGE_ROLES; a workspace scope additionally requires MANAGE_WORKSPACE_AGENTS in that workspace (403 FORBIDDEN). Returns the complete user binding set of the scope. scope=instance must not carry scopeId (400 INVALID_SCOPE); scope=workspace requires an existing, non-deleted workspace (400 INVALID_SCOPE / 404 WORKSPACE_NOT_FOUND).'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: scope, required: false, schema: { type: string, enum: [instance, workspace], default: instance } }
+        - { in: query, name: scopeId, required: false, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'Binding set', content: { application/json: { schema: { $ref: '#/components/schemas/BindingSetView' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    put:
+      operationId: replaceRoleBindings
+      summary: Replace the binding set of one scope (PLAN-0610 W3-2a)
+      description: 'Full replacement, not a delta: the body is the complete desired set, absent rows are deleted and new pairs inserted, so a retry with the same body is a true no-op (no epoch bump, no audit row, no re-materialization). Gates: MANAGE_ROLES (endpoint) and, for a workspace scope, MANAGE_WORKSPACE_AGENTS in that workspace. Validation before the first write, in order: subject exists (404 USER_NOT_FOUND) and is not soft-deleted (409 USER_DELETED), subjectType must be user (400 INVALID_BINDING), role exists (404 ROLE_NOT_FOUND), atom scope compatibility for the added pairs (400 ROLE_SCOPE_MISMATCH), least privilege for the added pairs (403 PRIVILEGE_ESCALATION — the caller must already hold every atom it hands out, capability atoms compared against the caller capabilities). Removing the last usable SUPER_ADMIN instance binding answers 409 LAST_SUPER_ADMIN and changes nothing. Every affected subject is re-materialized in the same transaction with a token_version bump; a concurrent deadlock/serialization failure answers 409 CONCURRENT_MODIFICATION (retryable). Lock order: instance_owner -> users. Audited as role_bindings_replaced (scope, added, removed, subject count).'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: scope, required: false, schema: { type: string, enum: [instance, workspace], default: instance } }
+        - { in: query, name: scopeId, required: false, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/BindingReplaceRequest' } } }
+      responses:
+        '200': { description: 'Resulting binding set', content: { application/json: { schema: { $ref: '#/components/schemas/BindingSetView' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer }
@@ -3017,6 +3116,79 @@ components:
       properties:
         targetUserId: { type: string, format: uuid }
         password: { type: string, description: 'The current owner''s login password (re-authentication, never stored or logged)' }
+    RoleAtomView:
+      type: object
+      description: 'PLAN-0610 W3-2a: one permission atom of the access-role vocabulary, projected from PermissionAtomCatalog (the SSOT). scopeClass=instance atoms may only be bound at instance scope; scopeClass=both atoms are bindable in either scope (decision #27).'
+      properties:
+        name: { type: string }
+        scopeClass: { type: string, enum: [instance, both] }
+        capability: { type: boolean, description: 'true for instance:super / instance:admin / workspace:admin — resolved as cap:<atom> authorities, never materialized (decision #23)' }
+        resource: { type: string, description: 'Canonical resource pattern of a wildcard atom (* or credential:*)' }
+    RoleCatalogView:
+      type: object
+      required: [atoms, scopes]
+      properties:
+        atoms: { type: array, items: { $ref: '#/components/schemas/RoleAtomView' } }
+        scopes: { type: array, items: { type: string, enum: [instance, workspace] } }
+    RoleView:
+      type: object
+      description: 'PLAN-0610 W3-2a: a role definition with its atom set and how many bindings reference it.'
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        displayName: { type: string }
+        description: { type: string, nullable: true }
+        system: { type: boolean, description: 'Seeded by V87; only the display name is editable' }
+        atoms: { type: array, items: { $ref: '#/components/schemas/RoleAtomView' } }
+        bindingCount: { type: integer, minimum: 0 }
+    RoleCreateRequest:
+      type: object
+      required: [name, atoms]
+      properties:
+        name: { type: string, description: 'Matches ^[A-Za-z][A-Za-z0-9_.:-]{1,63}$' }
+        displayName: { type: string, nullable: true, description: 'Defaults to name; 1..200 characters' }
+        description: { type: string, nullable: true }
+        atoms: { type: array, minItems: 1, items: { type: string } }
+    RoleUpdateRequest:
+      type: object
+      description: 'Every field is optional; null/absent means unchanged. On a system role only displayName may be present.'
+      properties:
+        name: { type: string }
+        displayName: { type: string }
+        description: { type: string, nullable: true }
+        atoms: { type: array, minItems: 1, items: { type: string } }
+    BindingView:
+      type: object
+      description: 'PLAN-0610 W3-2a: one role binding row with the role name resolved.'
+      properties:
+        id: { type: string, format: uuid }
+        subjectType: { type: string, enum: [user] }
+        subjectId: { type: string, format: uuid }
+        roleId: { type: string, format: uuid }
+        roleName: { type: string }
+        grantedBy: { type: string, format: uuid, nullable: true }
+        grantedAt: { type: string, format: date-time }
+    BindingSetView:
+      type: object
+      required: [scopeType, bindings]
+      properties:
+        scopeType: { type: string, enum: [instance, workspace] }
+        scopeId: { type: string, format: uuid, nullable: true, description: 'Null for the instance scope' }
+        bindings: { type: array, items: { $ref: '#/components/schemas/BindingView' } }
+    BindingReplaceRequest:
+      type: object
+      required: [bindings]
+      description: 'The complete desired set for the scope; send an empty array to clear it.'
+      properties:
+        bindings:
+          type: array
+          items:
+            type: object
+            required: [subjectId, roleId]
+            properties:
+              subjectType: { type: string, enum: [user], description: 'Optional; must be user when present' }
+              subjectId: { type: string, format: uuid }
+              roleId: { type: string, format: uuid }
     UserRoleView:
       type: object
       properties:
