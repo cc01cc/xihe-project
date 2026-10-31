@@ -51,6 +51,15 @@ flowchart LR
 - **守卫与写序**：`PATCH /api/v1/users/{userId}/role`（ADMIN-only）在单一事务内按固定顺序执行「实例锁 → 守卫 → `users.role` → default 集 resync（仅 `subject_type='user'`）→ `users.token_version + 1` → 审计」；锁序恒为 `instance_owner` 单例行 → 目标 `users` 行，首语句 `dbLockTimeout.apply()`（锁超时 → 503 `OPERATION_LOCK_TIMEOUT`，与 409 状态冲突严格区分）。守卫优先级：owner 保护（409 `INSTANCE_OWNER_PROTECTED`，审计 `user_role_change_denied` 用独立事务落库）先于 last-admin（409 `LAST_ADMIN`）；角色未变的请求是 200 空操作，不 bump 也不写审计。
 - **access token epoch（`tv`）**：access token 除签名外还携带 `tv`（签发时的 `users.token_version`），唯一生产签发点 `AuthService.issueTokens`。每个请求由 `config/AccessTokenAuthenticator` 做一次按主键的用户行读取并比对，**三态 fail-closed**（`sub` 非 UUID / 用户行不存在 / `tv` 缺失或不匹配）一律按未认证处理 → 401 `AUTHORIZATION_REQUIRED`，**不得**变成 500；`JwtAuthenticationFilter` 与 `TenantContextInterceptor` 共用这一判定，撤销后的 token 既不建立 `Authentication` 也不写租户上下文。`InternalTokenFilter` 的 `cp.agent-api-token` 不是用户 access token，仍不写用户租户语义。详见 [`spec/security/authorization.md`](../../../spec/security/authorization.md) §4/§4.1。
 
+## 1c. 用户管理面与双通道撤销（PLAN-0581）
+
+- **用户管理面 6 条 route**（`controller/UserAdminController`，全部 `@PreAuthorize("hasRole('ADMIN')")`，与 0580 的 `UserRoleController` 共用 `/api/v1/users` 基路径但子路径不相交）：`GET /api/v1/users`（`q`/`role`/`status`/`includeDeleted`/分页，`size ≤ 100`，`createdAt` 倒序）、`GET /api/v1/users/{userId}`、`POST /api/v1/users`（closed 模式唯一建号出口，未给密码时一次性返回 `temporaryPassword`）、`PATCH /api/v1/users/{userId}/status`、`DELETE /api/v1/users/{userId}`（软删）、`POST /api/v1/users/{userId}/password-reset`（一次性临时密码）。**角色变更仍归 0580**（`PATCH …/role`），不在此面内。
+- **唯一写者** `service/UserAdminService`：单事务固定序「实例锁（`instance_owner` 单例行）→ 目标 `users` 行锁 → 守卫 → 列写 → 双通道撤销 → durable 审计」；守卫优先级 `SELF_OPERATION_FORBIDDEN` → `INSTANCE_OWNER_PROTECTED` → `LAST_ADMIN`（后两者复用 0580 入口，但 last-admin **只统计可用 ADMIN**）；同状态请求为 200 空操作（不 bump、不审计）；拒绝审计 `user_admin_action_denied` 用独立事务落库，避免被守卫回滚吞掉。
+- **双通道撤销**：access = `users.token_version` + claim `tv`（0580 交付，判定在 `AccessTokenAuthenticator`）；refresh = `users.session_version`（V86）+ claim `sv`（判定在 `AuthService.verifyRefresh`，四步：验签/未过期 → 行存在 → `status=ACTIVE` 且 `deleted_at` 为空 → `sv` 相等）。**禁用/软删/管理员重置密码**在同一事务同时 bump 两列（立即失效，不等 TTL）；**启用**不 bump（旧凭据不复活，需重新登录）；**角色变更只 bump `token_version`**，refresh 仍可用并按 DB 当前角色重签。非活跃账号在 access/refresh/login 三处一律走既有 401 语义，不产生 5xx、不泄露账号状态。
+- **软删**：`deleted_at` + `status=DISABLED` 同写（V86 `ck_users_deleted_status` 兜底），v1 不可逆；`uq_users_email`/`uq_users_username` 保持原样（软删账号继续占用标识，决策 #7）。
+- **注册策略**：`XIHE_AUTH_REGISTRATION_POLICY ∈ {open(默认), closed}`（bootstrap env，非 config 域），非法值启动 fail-fast；`closed` 时 `/auth/register` 在 0558 IP 限流之后、建号之前返回 403 `REGISTRATION_CLOSED`；localMode 不受影响。
+- **D9 硬化**：`/internal/v1/config/effective/{domain}` 在 `userId` 与 `workspaceId` 都非空时校验成员关系，不满足 → 403 `WORKSPACE_FORBIDDEN`（复用既有码），置于 domain 校验之后、合并之前。契约见 [`spec/security/authentication.md`](../../../spec/security/authentication.md) §6 与 `docs/api/inventory.md`。
+
 ## 2. 会话级持久 SSE（PLAN-230）
 
 - `SseEmitterManager` 按 `{sessionId, generation, emitter}` 存储，单会话单活；新连接替换旧连接（`chat_sse_replaced`），旧 `onCompletion` 用 `removeIfCurrent` 身份比对保护（误删记 `stale_cleanup_ignored`）。

@@ -34,6 +34,7 @@ DEV-032 提出 `human/agent/service/system` 四类 principal，以及独立的 A
 - 本地模式 **MUST NOT** 改变既有 JWT/授权模型（仍走 `/api/v1/**` 的 `hasAnyRole` 与 grants）；`users.password_hash` 保持 `NOT NULL`，自动密码为真实存储值。
 - `bootstrap-status` **MUST** 恒定 200 且只暴露 `initialized`/`localMode` 两个布尔，不参与 I1 门禁。
 - 开启 `XIHE_LOCAL_MODE` 时 CP **MUST** 绑定回环地址，且 `XIHE_ENV=prod` 下 **MUST** 拒绝启动。
+- **扩展指针（PLAN-0580 / PLAN-0581，2026-10-31）**：上面「本地模式 MUST NOT 改变既有 JWT/授权模型」的实质不变（仍走 `/api/v1/**` 的 `hasAnyRole` 与 grants），但后续计划已在其上增加两条 localMode 专属语义，来源记录于此以免与本段矛盾：① PLAN-0580 —— 首个账号注册后自动成为 `instance_owner`，且 `PUT /api/v1/instance/owner`、`PATCH /api/v1/users/{userId}/role` 在 localMode 下 **MUST** 409 `LOCAL_SINGLE_USER_MODE`；② PLAN-0581 —— 用户管理面的写操作（状态/软删/重置密码）在 localMode 下同样 **MUST** 409，理由同「单用户实例不存在第二个管理员」。
 
 ## 5 登录暴力破解防护（PLAN-0558）
 
@@ -43,7 +44,17 @@ DEV-032 提出 `human/agent/service/system` 四类 principal，以及独立的 A
 - 计数状态 **MUST** 为 CP 进程内有界表；表满 **MUST NOT** 淘汰锁定或失败中的记录。v1 为单实例语义：多 CP 实例各自计数，重启清空计数与锁定。
 - `X-Forwarded-For` **MUST** 默认忽略；仅当 socket `remoteAddr` 命中 `cp.auth.login.trusted-proxies`（IP/CIDR）时，按右向左取第一个非可信 IP；IPv6 默认按 /64 聚合。反代 **MUST** 覆盖而非追加客户端提供的 XFF。
 - 锁定 **MUST NOT** 撤销既有 access/refresh token；`/refresh` v1 不限流。账号锁定 **MUST** 自动过期；本地模式（`XIHE_LOCAL_MODE` 生效）下 `/login`、`/local-login`、`/local-password-reset` 不受登录锁定影响。
+  - **范围澄清（PLAN-0581，2026-10-31）**：本条的范围 **仅** 约束 0558 的**临时登录锁定**（自动过期）；它 **不覆盖** 管理员发起的账号状态变更 —— 后者按 §6 的「双通道撤销」处理，二者语义不同且不得互相援引。
 - `/register` **MUST** 按客户端 IP 做请求限流（默认 30 次 / 3600 秒），并默认豁免回环地址（`cp.auth.login.register.exempt-loopback=true`），避免 host E2E 自锁。
 - 失败 **MUST** 写 AUDIT JSONL；锁定/解锁 **MUST** 写 durable `audit_logs`，仅含掩码邮箱、IP、reason 与 requestId，**MUST NOT** 含密码、哈希或 token。
 
 - 部署 env：`XIHE_CP_AUTH_LOGIN_ACCOUNT_{MAX_FAILURES,WINDOW_SECONDS,LOCK_SECONDS}`、`XIHE_CP_AUTH_LOGIN_ACCOUNT_MAX_CONCURRENT`、`XIHE_CP_AUTH_LOGIN_IP_{MAX_FAILURES,WINDOW_SECONDS,LOCK_SECONDS}`、`XIHE_CP_AUTH_LOGIN_GLOBAL_MAX_CONCURRENT`、`XIHE_CP_AUTH_LOGIN_MAX_TRACKED_KEYS`、`XIHE_CP_AUTH_LOGIN_CLEANUP_INTERVAL_MS`、`XIHE_CP_AUTH_TRUSTED_PROXIES`、`XIHE_CP_AUTH_LOGIN_IPV6_PREFIX_LENGTH`、`XIHE_CP_AUTH_LOGIN_REGISTER_{MAX_ATTEMPTS,WINDOW_SECONDS,LOCK_SECONDS}`、`XIHE_CP_AUTH_LOGIN_REGISTER_EXEMPT_LOOPBACK`。默认值以 `application.properties` 为准。
+
+## 6 账号状态与双通道撤销（PLAN-0581）
+
+- 账号状态由 `users.status`（`ACTIVE`|`DISABLED`）与 `users.deleted_at` 表达；`status ≠ ACTIVE` 或 `deleted_at IS NOT NULL` 的账号 **MUST NOT** 登录、**MUST NOT** 刷新、且其**既有 access token MUST NOT** 再通过认证。三条判定 **MUST** 同源（同一 DB 行），不允许「登录取库、请求取缓存」。
+- 撤销 **MUST** 为双通道，且两通道的载体与判定点固定：**access** = `users.token_version`（claim `tv`，判定在 CP 的认证入口，PLAN-0580 已交付）；**refresh** = `users.session_version`（claim `sv`，判定在 `AuthService.verifyRefresh`，PLAN-0581 新增）。refresh token **MUST** 携带 `sv`；缺失 `sv` 的 token **MUST** 按已撤销处理，不得因「兼容旧 token」放行。
+- 管理员发起的禁用、软删、重置密码 **MUST** 在同一事务内同时自增 `token_version` 与 `session_version`（双通道立即失效，禁止依赖 access TTL 或 7 天 refresh 窗口）；启用（`DISABLED → ACTIVE`）**MUST NOT** 复活旧凭据。
+- 角色变更（PLAN-0580）**MUST** 只自增 access epoch，**MUST NOT** 撤销 refresh —— 降权不应把用户登出，refresh 重新签发时按 DB 当前角色与当前 epoch 取值。
+- 非活跃账号的拒绝 **MUST** 复用既有 401 语义（access：`AUTHORIZATION_REQUIRED`；refresh/login：既有无效凭证形态），**MUST NOT** 产生 5xx，也 **MUST NOT** 通过错误码或 detail 泄露账号是否存在/被停用/被删除。
+- 注册策略：`XIHE_AUTH_REGISTRATION_POLICY ∈ {open(默认), closed}`，非法值 **MUST** 启动 fail-fast；`closed` 时公开注册 **MUST** 返回 403 `REGISTRATION_CLOSED`，判定 **MUST** 在登录/注册限流之后、任何用户行创建之前；localMode **MUST** 不受该策略影响（否则 0 用户实例无法引导）。

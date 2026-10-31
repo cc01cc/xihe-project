@@ -2875,6 +2875,106 @@ paths:
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
+  /api/v1/users:
+    get:
+      operationId: listUsers
+      summary: Admin user list (PLAN-0581)
+      description: 'ADMIN only. Filters are all optional: q (case-insensitive substring over email/username/name), role (ADMIN|USER), status (ACTIVE|DISABLED), includeDeleted (default false). Ordered by createdAt DESC, size clamped to 100 (default 20). Response {items,total,page,size}; items are the admin view {id,email,username,name,role,status,deletedAt,createdAt} and never carry password_hash, token_version or session_version.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: q, required: false, schema: { type: string } }
+        - { in: query, name: role, required: false, schema: { type: string, enum: [ADMIN, USER] } }
+        - { in: query, name: status, required: false, schema: { type: string, enum: [ACTIVE, DISABLED] } }
+        - { in: query, name: includeDeleted, required: false, schema: { type: boolean, default: false } }
+        - { in: query, name: page, required: false, schema: { type: integer, minimum: 0, default: 0 } }
+        - { in: query, name: size, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        '200': { description: 'Paged admin view', content: { application/json: { schema: { $ref: '#/components/schemas/UserAdminPage' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+    post:
+      operationId: createUser
+      summary: Admin account creation (PLAN-0581)
+      description: 'ADMIN only; the only account source when XIHE_AUTH_REGISTRATION_POLICY=closed. Body {email, username?, role?, password?, name?}. When password is omitted the server generates a strong one and returns it once as temporaryPassword (never logged, never audited). 409 EMAIL_TAKEN / USERNAME_TAKEN, 400 USERNAME_INVALID (^[a-z][a-z0-9]{0,31}$). Audited as user_created.'
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserCreateRequest' }
+      responses:
+        '201': { description: 'Created view + optional temporaryPassword', content: { application/json: { schema: { $ref: '#/components/schemas/UserCreatedResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /api/v1/users/{userId}:
+    get:
+      operationId: getUser
+      summary: Admin user detail (PLAN-0581)
+      description: 'ADMIN only. Same admin view as the list rows; 404 USER_NOT_FOUND for an unknown id. deletedAt is non-null only on a soft-deleted row.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: userId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'Admin view', content: { application/json: { schema: { $ref: '#/components/schemas/UserAdminView' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    delete:
+      operationId: softDeleteUser
+      summary: Soft-delete an account (PLAN-0581)
+      description: 'ADMIN only. Sets deletedAt + status=DISABLED and revokes BOTH token channels (users.token_version and users.session_version) in one transaction; 204. Irreversible in v1. Guards, in this order: 409 SELF_OPERATION_FORBIDDEN, 409 INSTANCE_OWNER_PROTECTED, 409 LAST_ADMIN. Audited as user_soft_deleted.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: userId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: 'Soft-deleted' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /api/v1/users/{userId}/status:
+    patch:
+      operationId: changeUserStatus
+      summary: Enable or disable an account (PLAN-0581)
+      description: 'ADMIN only. Body {status: ACTIVE|DISABLED} (400 INVALID_STATUS otherwise). A soft-deleted target answers 409 USER_DELETED for ANY status write — including a write that would otherwise be a no-op, because the deletion guard runs before the no-change check (v1 deletion is irreversible; the ck_users_deleted_status CHECK stays as the safety net rather than as the error contract). ACTIVE->DISABLED revokes both channels in the same transaction, so the next request with an old access token answers 401 AUTHORIZATION_REQUIRED and an old refresh token answers 401 at /auth/refresh; DISABLED->ACTIVE does not revive old credentials (the user logs in again). A request that does not change the status of a live account is a 200 no-op (no epoch bump, no audit). Guards: 409 SELF_OPERATION_FORBIDDEN, 409 INSTANCE_OWNER_PROTECTED, 409 LAST_ADMIN; lock wait over cp.lock-timeout-ms = 503 OPERATION_LOCK_TIMEOUT (retryable). Audited as user_status_changed; refusals as user_admin_action_denied.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: userId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserStatusRequest' }
+      responses:
+        '200': { description: 'Updated admin view', content: { application/json: { schema: { $ref: '#/components/schemas/UserAdminView' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /api/v1/users/{userId}/password-reset:
+    post:
+      operationId: resetUserPassword
+      summary: Admin password reset (PLAN-0581)
+      description: 'ADMIN only. Generates a one-time password, stores only its hash, revokes BOTH channels in the same transaction and returns {temporaryPassword} exactly once; the plaintext never reaches audit_logs, logs or events. A soft-deleted target answers 409 USER_DELETED (deletion is irreversible in v1). 409 SELF_OPERATION_FORBIDDEN when the target is the caller (owner/last-admin guards do not apply: the role and state are untouched). Audited as user_password_reset.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: userId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'One-time password', content: { application/json: { schema: { $ref: '#/components/schemas/UserPasswordResetResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer }
@@ -2893,6 +2993,48 @@ components:
           schema: { type: string, enum: [no-store] }
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
   schemas:
+    UserAdminView:
+      type: object
+      description: 'PLAN-0581 admin view of an account (list rows and detail share the shape). Deliberately carries no password_hash, token_version or session_version.'
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        username: { type: string }
+        name: { type: string, nullable: true }
+        role: { type: string, enum: [ADMIN, USER] }
+        status: { type: string, enum: [ACTIVE, DISABLED] }
+        deletedAt: { type: string, format: date-time, nullable: true, description: 'non-null only on a soft-deleted row' }
+        createdAt: { type: string, format: date-time }
+    UserAdminPage:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/UserAdminView' } }
+        total: { type: integer, format: int64 }
+        page: { type: integer }
+        size: { type: integer }
+    UserCreateRequest:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email }
+        username: { type: string, description: 'optional; ^[a-z][a-z0-9]{0,31}$, derived from the email when absent' }
+        role: { type: string, enum: [ADMIN, USER], description: 'default USER' }
+        password: { type: string, description: 'optional; when absent the server generates a one-time password' }
+        name: { type: string }
+    UserCreatedResponse:
+      type: object
+      properties:
+        user: { $ref: '#/components/schemas/UserAdminView' }
+        temporaryPassword: { type: string, description: 'present exactly once, and only when the caller did not supply a password' }
+    UserStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [ACTIVE, DISABLED] }
+    UserPasswordResetResponse:
+      type: object
+      properties:
+        temporaryPassword: { type: string, description: 'one-time plaintext; never logged, audited or persisted' }
     InstanceOwnerView:
       type: object
       description: 'PLAN-0580 owner pointer. Deliberately carries no account identifiers (no username/email/name): the users surface is ADMIN-only.'

@@ -44,7 +44,7 @@ class AuthControllerCredentialTest {
             }
         };
         AuthController controller = new AuthController(authService, workspaceService, localMode,
-                attempts, resolver, mock(com.cc01cc.p.xihe.cp.service.InstanceOwnershipService.class),
+                attempts, resolver, mock(com.cc01cc.p.xihe.cp.service.InstanceOwnershipService.class), mock(com.cc01cc.p.xihe.cp.auth.RegistrationPolicy.class),
                 mock(PlatformTransactionManager.class));
 
         assertThrows(CpApiException.class, () -> controller.login(

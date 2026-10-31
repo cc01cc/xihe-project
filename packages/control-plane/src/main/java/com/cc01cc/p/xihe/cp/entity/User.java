@@ -56,6 +56,35 @@ public class User {
     @Column(name = "token_version", nullable = false)
     private int tokenVersion;
 
+    /**
+     * PLAN-0581: account lifecycle state (V86). A non-{@code ACTIVE} row cannot
+     * log in or refresh. The field is initialized to {@code ACTIVE} in Java
+     * (matching the column default) so an in-memory user is never null.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 16)
+    private UserStatus status = UserStatus.ACTIVE;
+
+    /**
+     * PLAN-0581: soft-delete marker. Non-null implies {@code status = DISABLED}
+     * (V86 CHECK {@code ck_users_deleted_status}); v1 deletion is irreversible
+     * (decision #3).
+     */
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
+
+    /**
+     * PLAN-0581: refresh-token epoch, carried as the {@code sv} claim. Disable,
+     * soft-delete and administrator password reset bump it together with
+     * {@link #tokenVersion} so <b>both</b> channels die in one transaction, while
+     * a role change bumps only the access epoch (0580) and keeps refresh alive.
+     *
+     * <p>Primitive {@code int} is deliberate — a wrapper would write NULL and trip
+     * the NOT NULL constraint (spec {@code migration-v86.md} §4).
+     */
+    @Column(name = "session_version", nullable = false)
+    private int sessionVersion;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -141,4 +170,25 @@ public class User {
 
     /** PLAN-0580 I4: every role change bumps the epoch exactly once. */
     public void bumpTokenVersion() { this.tokenVersion = this.tokenVersion + 1; }
+
+    /** PLAN-0581: the refresh epoch, observed by {@code AuthService.verifyRefresh} against the {@code sv} claim. */
+    public int getSessionVersion() { return sessionVersion; }
+    public void setSessionVersion(int sessionVersion) { this.sessionVersion = sessionVersion; }
+
+    /** PLAN-0581: only a disable/soft-delete/password-reset bumps the refresh epoch. */
+    public void bumpSessionVersion() { this.sessionVersion = this.sessionVersion + 1; }
+
+    public UserStatus getStatus() { return status; }
+    public void setStatus(UserStatus status) { this.status = status; }
+
+    public Instant getDeletedAt() { return deletedAt; }
+    public void setDeletedAt(Instant deletedAt) { this.deletedAt = deletedAt; }
+
+    /**
+     * PLAN-0581 I1: the single "may this account still be used" predicate. Login,
+     * refresh and every admin write read it from the same row — no cached copy.
+     */
+    public boolean isUsable() {
+        return status == UserStatus.ACTIVE && deletedAt == null;
+    }
 }

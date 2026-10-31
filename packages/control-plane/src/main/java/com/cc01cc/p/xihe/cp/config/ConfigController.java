@@ -517,6 +517,33 @@ public class ConfigController {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.BAD_REQUEST, "INVALID_DOMAIN", "Unknown config domain");
         }
+        // PLAN-0581 D9 (contract §8): before merging the user layer, the pair
+        // (userId, workspaceId) must actually be a membership. The endpoint is
+        // internal-service authenticated, but that only proves "some service is
+        // calling" — without this check an internal caller could read another
+        // user's layer by pairing its id with any workspace ("ws + foreign userId →
+        // 200" was reproduced in PLAN-0590).
+        //
+        // Placed after the domain validation on purpose: an invalid domain stays a
+        // 400 without paying for a membership query, and the check only applies when
+        // BOTH parameters are present (instance-layer reads have no notion of
+        // membership; a missing workspaceId must not 403).
+        if (queryUserId != null && !queryUserId.isBlank()
+                && queryWorkspaceId != null && !queryWorkspaceId.isBlank()) {
+            try {
+                if (!workspaceService.isWorkspaceMember(queryWorkspaceId.trim(), queryUserId.trim())) {
+                    // Same code as the tenant interceptor's cross-workspace denial: no
+                    // new code, and it does not disclose whether the workspace or the
+                    // user exists.
+                    return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN,
+                            "WORKSPACE_FORBIDDEN", "User is not a member of this workspace");
+                }
+            } catch (IllegalArgumentException e) {
+                // Malformed UUID: defer to the existing config-context validation so
+                // the response stays 400 INVALID_REQUEST instead of a 500.
+                log.debug("Skipping D9 membership check on malformed id: {}", e.getMessage());
+            }
+        }
         ConfigService.EffectiveConfig effective;
         try {
             effective = configService.effective(
