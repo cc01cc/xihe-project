@@ -82,6 +82,12 @@ final class CpModuleAssignment implements SliceAssignment {
         if (name.startsWith("User")) {
             return "auth";
         }
+        // PLAN-0580: the instance-owner pointer lives with the role/identity
+        // surface it guards (users.role, users.token_version), so it belongs to the
+        // same slice instead of introducing a new module for one singleton row.
+        if (name.startsWith("InstanceOwner")) {
+            return "auth";
+        }
         if (name.startsWith("AuditLog")) {
             return "audit";
         }
