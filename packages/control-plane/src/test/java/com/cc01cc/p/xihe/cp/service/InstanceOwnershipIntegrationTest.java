@@ -453,6 +453,160 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
                 "V5.1: an existing Session's agent default snapshot must stay frozen");
     }
 
+    /** T1.3(a): ADMIN -> USER drops the credential atoms from the user default set. */
+    @Test
+    void demotionRewritesUserDefaultBackToUserSet() throws Exception {
+        String ownerToken = register("down-owner@test.com");
+        String ownerId = userIdOf(ownerToken);
+        promote(ownerId);
+        assignOwner(ownerId);
+        ownerToken = login("down-owner@test.com");
+
+        String memberId = userIdOf(register("down-member@test.com"));
+        promote(memberId);
+        assertEquals(HttpStatus.OK, patchRole(ownerToken, memberId, "USER").getStatusCode());
+
+        assertEquals(1, jdbc.queryForObject("SELECT token_version FROM users WHERE id = CAST(? AS UUID)",
+                Integer.class, memberId), "the demotion bumps the epoch too");
+        String permissions = permissionsOf("user", UUID.fromString(memberId));
+        assertFalse(permissions.contains("credential_use"), "ADMIN->USER must drop credential atoms");
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM grants WHERE subject_type = 'user'"
+                        + " AND subject_id = CAST(? AS UUID) AND source = 'default'", Integer.class, memberId),
+                "still exactly one default row (in-place update)");
+        assertEquals("USER", roleOf(memberId));
+    }
+
+    /** T1.3(b): a subject with no default row gets one created (create branch, not update). */
+    @Test
+    void roleChangeCreatesDefaultRowWhenMissing() throws Exception {
+        String ownerToken = register("create-owner@test.com");
+        String ownerId = userIdOf(ownerToken);
+        promote(ownerId);
+        assignOwner(ownerId);
+        ownerToken = login("create-owner@test.com");
+
+        String memberId = userIdOf(register("create-member@test.com"));
+        jdbc.update("DELETE FROM grants WHERE subject_type = 'user' AND subject_id = CAST(? AS UUID)",
+                memberId);
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM grants WHERE subject_type = 'user'"
+                + " AND subject_id = CAST(? AS UUID)", Integer.class, memberId));
+        int createdBefore = auditCount("authorization_default_grant_created");
+        int syncedBefore = auditCount("authorization_default_grant_synced");
+
+        assertEquals(HttpStatus.OK, patchRole(ownerToken, memberId, "ADMIN").getStatusCode());
+
+        Map<String, Object> row = jdbc.queryForMap("SELECT permissions::text AS permissions, source FROM grants"
+                + " WHERE subject_type = 'user' AND subject_id = CAST(? AS UUID) ORDER BY created_at DESC LIMIT 1",
+                memberId);
+        assertEquals("default", row.get("source"));
+        assertTrue(String.valueOf(row.get("permissions")).contains("credential_use"),
+                "the created default row carries the ADMIN set");
+        assertEquals(createdBefore + 1, auditCount("authorization_default_grant_created"),
+                "the create branch is audited");
+        assertEquals(syncedBefore, auditCount("authorization_default_grant_synced"),
+                "the update branch must not fire when the row was missing");
+    }
+
+    /** T1.3(c): two concurrent promotions of the same subject stay idempotent (one default row). */
+    @Test
+    void concurrentRoleChangesKeepOneDefaultRow() throws Exception {
+        String firstOwnerToken = register("idem-a@test.com");
+        String firstOwnerId = userIdOf(firstOwnerToken);
+        promote(firstOwnerId);
+        assignOwner(firstOwnerId);
+        String secondAdminToken = register("idem-b@test.com");
+        promote(userIdOf(secondAdminToken));
+        firstOwnerToken = login("idem-a@test.com");
+        secondAdminToken = login("idem-b@test.com");
+
+        String targetId = userIdOf(register("idem-target@test.com"));
+        String callerOne = firstOwnerToken;
+        String callerTwo = secondAdminToken;
+
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            List<Callable<ResponseEntity<String>>> tasks = new ArrayList<>();
+            tasks.add(() -> {
+                barrier.await(10, TimeUnit.SECONDS);
+                return patchRole(callerOne, targetId, "ADMIN");
+            });
+            tasks.add(() -> {
+                barrier.await(10, TimeUnit.SECONDS);
+                return patchRole(callerTwo, targetId, "ADMIN");
+            });
+            List<Future<ResponseEntity<String>>> futures = pool.invokeAll(tasks, 30, TimeUnit.SECONDS);
+            for (Future<ResponseEntity<String>> future : futures) {
+                int status = future.get(30, TimeUnit.SECONDS).getStatusCode().value();
+                assertTrue(status == 200 || status == 409,
+                        "only 200 (applied or no-op) or 409 is legal here, got " + status);
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+
+        assertEquals("ADMIN", roleOf(targetId));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM grants WHERE subject_type = 'user'"
+                        + " AND subject_id = CAST(? AS UUID) AND source = 'default'", Integer.class, targetId),
+                "T1.3: no duplicate default row under concurrency (uq_grants_default_subject)");
+        assertEquals(1, jdbc.queryForObject("SELECT token_version FROM users WHERE id = CAST(? AS UUID)",
+                Integer.class, targetId), "the second writer sees the same role and is a no-op (no double bump)");
+    }
+
+    /**
+     * T3.2: two concurrent owner transfers must not both succeed — the singleton row
+     * lock serializes them and the loser re-reads the pointer, finds it already
+     * moved, and answers 403 NOT_INSTANCE_OWNER (never a second 200).
+     */
+    @Test
+    void concurrentOwnerTransfersAllowExactlyOneWinner() throws Exception {
+        String ownerToken = register("xfer-owner@test.com");
+        String ownerId = userIdOf(ownerToken);
+        promote(ownerId);
+        assignOwner(ownerId);
+        ownerToken = login("xfer-owner@test.com");
+
+        String firstTargetId = userIdOf(register("xfer-target-a@test.com"));
+        String secondTargetId = userIdOf(register("xfer-target-b@test.com"));
+        promote(firstTargetId);
+        promote(secondTargetId);
+        int auditsBefore = auditCount("instance_owner_transferred");
+        String caller = ownerToken;
+
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        List<Integer> statuses = new ArrayList<>();
+        try {
+            List<Callable<ResponseEntity<String>>> tasks = new ArrayList<>();
+            tasks.add(() -> {
+                barrier.await(10, TimeUnit.SECONDS);
+                return putOwner(caller, firstTargetId, PASSWORD);
+            });
+            tasks.add(() -> {
+                barrier.await(10, TimeUnit.SECONDS);
+                return putOwner(caller, secondTargetId, PASSWORD);
+            });
+            List<Future<ResponseEntity<String>>> futures = pool.invokeAll(tasks, 30, TimeUnit.SECONDS);
+            for (Future<ResponseEntity<String>> future : futures) {
+                statuses.add(future.get(30, TimeUnit.SECONDS).getStatusCode().value());
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+
+        assertEquals(1, statuses.stream().filter(status -> status == 200).count(),
+                "exactly one transfer may succeed, got " + statuses);
+        assertEquals(1, statuses.stream().filter(status -> status == 403).count(),
+                "the loser must be 403 NOT_INSTANCE_OWNER (pointer already moved), got " + statuses);
+        assertFalse(statuses.contains(503), "lock wait exceeded cp.lock-timeout-ms: " + statuses);
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM instance_owner", Integer.class));
+        String owner = currentOwnerId();
+        assertTrue(owner.equals(firstTargetId) || owner.equals(secondTargetId),
+                "the owner must be exactly one of the two targets, got " + owner);
+        assertEquals(auditsBefore + 1, auditCount("instance_owner_transferred"),
+                "only the winning transfer is audited");
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────────
 
     /** Registers a fresh USER account and returns its access token. */
