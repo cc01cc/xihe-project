@@ -6,6 +6,11 @@ import { createPinia, setActivePinia } from "pinia";
 import { api } from "../../composables/api";
 import type * as apiModule from "../../composables/api";
 import { useAuthStore } from "../../stores/auth";
+import {
+    NAV_WIDTH_DEFAULT,
+    RAIL_WIDTH,
+    clampNavWidthForViewport,
+} from "../../composables/useWorkspaceLayout";
 import { useSessionStore } from "../../stores/session";
 import AppLayout from "../AppLayout.vue";
 
@@ -91,8 +96,12 @@ describe("AppLayout navigation IA (PLAN-0582 S1/S2)", () => {
         const wrapper = await mountLayout(createTestRouter());
 
         const style = wrapper.find("main").attributes("style");
-        // S2 ruling #1: fixed 56px icon rail + 280px default panel.
-        expect(style).toContain("336px");
+        // S2 ruling #1: fixed 56px icon rail + the default 280px panel. S3a audit
+        // P1-3: the offset uses the *breakpoint-clamped* panel width, so build the
+        // expectation with the same helper instead of hardcoding the wide-window sum.
+        const expectedOffset =
+            RAIL_WIDTH + clampNavWidthForViewport(NAV_WIDTH_DEFAULT, window.innerWidth);
+        expect(style).toContain(`${expectedOffset}px`);
     });
 
     it("keeps the 56px rail offset when the navigation panel is collapsed", async () => {

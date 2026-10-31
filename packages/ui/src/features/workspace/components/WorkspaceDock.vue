@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { ChevronDown, X } from "@lucide/vue";
+import { ChevronDown, Pin, PinOff, X } from "@lucide/vue";
 import {
+    DOCK_WIDTH_DEFAULT,
     DOCK_WIDTH_KEYBOARD_STEP,
     DOCK_WIDTH_MAX,
     DOCK_WIDTH_MIN,
@@ -15,19 +16,27 @@ import type { DockTab } from "./workspaceDockTabs";
  * tab, the width and the collapsed flag are owned by `WorkspaceWorkbench`
  * (single writer), so this component never persists anything itself.
  *
- * Ruling #3: the dock is narrow (320-480) and defaults to closed. Below 1800px the
- * workbench wraps it in an absolutely positioned overlay (`min-[1800px]:static`)
- * so it can never squeeze the main column; at/above 1800px it is a flex child.
+ * PLAN-0582 S3b: the pinned/floating mode is a prop (derived + user override live
+ * in the workbench/layout composable), so the `min-[1800px]:*` Tailwind classes are
+ * gone — the single source of truth for the breakpoint is
+ * `DOCK_INLINE_MIN_VIEWPORT`, and this component only renders its projection.
+ *
+ * Floating is deliberately **not** a modal: no backdrop (it would block the main
+ * column the user is editing), only a shadow, Esc and click-outside to dismiss.
  */
 const props = withDefaults(
     defineProps<{
         tabs: DockTab[];
         activeTab: string;
         width: number;
+        /** Pinned = flex child (never covers content); floating = overlay. */
+        mode?: "pinned" | "floating";
+        /** Width restored by the resizer double-click (P2-1). */
+        defaultWidth?: number;
         /** Tabs rendered in the strip before they move into the overflow menu. */
         maxVisibleTabs?: number;
     }>(),
-    { maxVisibleTabs: 3 },
+    { maxVisibleTabs: 3, mode: "floating", defaultWidth: DOCK_WIDTH_DEFAULT },
 );
 
 const emit = defineEmits<{
@@ -35,10 +44,22 @@ const emit = defineEmits<{
     "close-tab": [id: string];
     close: [];
     "update:width": [width: number];
+    "toggle-mode": [];
 }>();
 
 const { t } = useI18n();
 const overflowOpen = ref(false);
+/** Live width shown in the drag bubble; never persisted (the write is throttled). */
+const resizingWidth = ref<number | null>(null);
+
+const isPinned = computed(() => props.mode === "pinned");
+const modeLabel = computed(() =>
+    isPinned.value ? t("workspace.dockModePinned") : t("workspace.dockModeFloating"),
+);
+const panelClass = computed(() => [
+    "flex h-full shrink-0 flex-col border-l border-border-subtle bg-surface-canvas",
+    isPinned.value ? "relative z-auto shadow-none" : "absolute inset-y-0 right-0 z-20 shadow-xl",
+]);
 
 const visibleTabs = computed(() => props.tabs.slice(0, props.maxVisibleTabs));
 const overflowTabs = computed(() => props.tabs.slice(props.maxVisibleTabs));
@@ -69,18 +90,28 @@ function handleResizeStart(event: MouseEvent) {
     const startX = event.clientX,
         startWidth = props.width;
 
+    resizingWidth.value = startWidth;
+
     function onMouseMove(moveEvent: MouseEvent) {
         // The dock sits on the right edge: dragging left widens it.
-        emit("update:width", clampDockWidth(startWidth - (moveEvent.clientX - startX)));
+        const next = clampDockWidth(startWidth - (moveEvent.clientX - startX));
+        resizingWidth.value = next;
+        emit("update:width", next);
     }
 
     function onMouseUp() {
+        resizingWidth.value = null;
         document.removeEventListener("mousemove", onMouseMove);
         document.removeEventListener("mouseup", onMouseUp);
     }
 
     document.addEventListener("mousemove", onMouseMove);
     document.addEventListener("mouseup", onMouseUp);
+}
+
+/** P2-1: double-clicking the handle restores the default width. */
+function resetWidth() {
+    emit("update:width", clampDockWidth(props.defaultWidth));
 }
 
 function handleResizeKeydown(event: KeyboardEvent) {
@@ -98,8 +129,9 @@ function handleResizeKeydown(event: KeyboardEvent) {
 <template>
     <aside
         data-testid="workspace-aux-panel"
+        :data-dock-mode="mode"
         :aria-label="t('workspace.dockTabs')"
-        class="absolute inset-y-0 right-0 z-20 flex h-full shrink-0 flex-col border-l border-border-subtle bg-surface-canvas shadow-xl min-[1800px]:static min-[1800px]:z-auto min-[1800px]:shadow-none"
+        :class="panelClass"
         :style="{ width: `${width}px` }"
     >
         <div
@@ -112,9 +144,20 @@ function handleResizeKeydown(event: KeyboardEvent) {
             tabindex="0"
             data-testid="dock-resizer"
             class="absolute left-0 top-0 bottom-0 w-1 -translate-x-1/2 cursor-col-resize transition-colors hover:bg-primary/20 focus-visible:bg-primary/30 focus-visible:outline-none"
+            @dblclick="resetWidth"
             @mousedown="handleResizeStart"
             @keydown="handleResizeKeydown"
         />
+
+        <!-- P2-2: the live width bubble; display-only, never persisted. -->
+        <span
+            v-if="resizingWidth !== null"
+            data-testid="dock-resize-bubble"
+            aria-hidden="true"
+            class="pointer-events-none absolute left-0 top-1/2 z-30 -translate-x-full -translate-y-1/2 rounded bg-foreground/85 px-1.5 py-0.5 text-[11px] tabular-nums text-background"
+        >
+            {{ resizingWidth }}px
+        </span>
 
         <div class="flex h-9 shrink-0 items-center gap-1 border-b pl-2 pr-1 text-xs">
             <div
@@ -198,6 +241,19 @@ function handleResizeKeydown(event: KeyboardEvent) {
                 </div>
             </div>
 
+            <button
+                type="button"
+                data-testid="dock-mode-toggle"
+                class="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                :class="isPinned ? 'text-brand' : ''"
+                :aria-pressed="isPinned"
+                :aria-label="modeLabel"
+                :title="`${modeLabel} · ${t('workspace.dockModeToggleHint')}`"
+                @click="emit('toggle-mode')"
+            >
+                <Pin v-if="isPinned" class="size-3.5" aria-hidden="true" />
+                <PinOff v-else class="size-3.5" aria-hidden="true" />
+            </button>
             <button
                 type="button"
                 data-testid="workspace-aux-close"

@@ -5,8 +5,9 @@ import { useI18n } from "vue-i18n";
 import { X } from "@lucide/vue";
 import {
     WORKSPACE_TAB_IDS,
+    defaultOpenTabs,
     readWorkspaceLayout,
-    writeWorkspaceLayout,
+    writeWorkspaceOpenTabs,
     type WorkspaceTabId,
 } from "../../../composables/useWorkspaceLayout";
 import { useSessionStore } from "../../../stores/session";
@@ -114,11 +115,22 @@ function currentTabId(): WorkspaceTabId | null {
     return null;
 }
 
+/**
+ * Persist the open set. S3a audit P1-1: the workbench distinguishes "no stored
+ * layout yet" (apply the ≥1800 first-run policy) from "user already chose", so this
+ * writer must never fabricate the key just because a route was visited — only a
+ * real change of the open set (i.e. closing a tab) may create it.
+ */
 function persistOpenTabs(next: WorkspaceTabId[]): void {
+    const defaults = defaultOpenTabs();
+    const isDefaultSet =
+        next.length === defaults.length && defaults.every((id) => next.includes(id));
     openTabs.value = next;
-    if (!props.workspaceId) return;
-    const layout = readWorkspaceLayout(props.workspaceId);
-    writeWorkspaceLayout(props.workspaceId, { ...layout, openTabs: next });
+    if (!props.workspaceId || isDefaultSet) return;
+    // Only the tab slice is written: re-writing the whole layout from a
+    // default-valued read would clobber the workbench's stored geometry and silently
+    // disable the ≥1800 "open monitor on first run" policy (S3a audit P1-1).
+    writeWorkspaceOpenTabs(props.workspaceId, next);
 }
 
 /** Visiting a route through any means (tab, deep link, history) opens its tab. */

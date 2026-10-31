@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import {
@@ -18,6 +18,7 @@ import SessionList from "../../features/workspace/chat/components/SessionList.vu
 import NavRail from "./NavRail.vue";
 import { workspacePath } from "../../lib/routes";
 import {
+    NAV_WIDTH_DEFAULT,
     NAV_WIDTH_KEYBOARD_STEP,
     NAV_WIDTH_MAX,
     NAV_WIDTH_MIN,
@@ -93,22 +94,34 @@ function toggleSidebar() {
     emit("update:open", !props.open);
 }
 
+/** S3b P2-2: live width bubble while dragging (display-only, never persisted). */
+const resizingWidth = ref<number | null>(null);
+
 function handleResizeStart(e: MouseEvent) {
     e.preventDefault();
     const startX = e.clientX,
         startWidth = props.width;
+    resizingWidth.value = startWidth;
 
     function onMouseMove(ev: MouseEvent) {
-        emit("update:width", clampNavWidth(startWidth + (ev.clientX - startX)));
+        const next = clampNavWidth(startWidth + (ev.clientX - startX));
+        resizingWidth.value = next;
+        emit("update:width", next);
     }
 
     function onMouseUp() {
+        resizingWidth.value = null;
         document.removeEventListener("mousemove", onMouseMove);
         document.removeEventListener("mouseup", onMouseUp);
     }
 
     document.addEventListener("mousemove", onMouseMove);
     document.addEventListener("mouseup", onMouseUp);
+}
+
+/** S3b P2-1: double-clicking the handle restores the default panel width. */
+function resetWidth() {
+    emit("update:width", NAV_WIDTH_DEFAULT);
 }
 
 function handleResizeKeydown(e: KeyboardEvent) {
@@ -263,6 +276,16 @@ function handleLogout() {
                 </button>
             </div>
 
+            <!-- S3b P2-2: live width bubble (display-only). -->
+            <span
+                v-if="resizingWidth !== null"
+                data-testid="sidebar-resize-bubble"
+                aria-hidden="true"
+                class="pointer-events-none absolute -right-1 top-1/2 z-30 translate-x-full -translate-y-1/2 rounded bg-foreground/85 px-1.5 py-0.5 text-[11px] tabular-nums text-background"
+            >
+                {{ resizingWidth }}px
+            </span>
+
             <div
                 v-if="!isMobile && open"
                 role="separator"
@@ -275,6 +298,7 @@ function handleLogout() {
                 data-testid="sidebar-resizer"
                 class="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize transition-colors hover:bg-primary/20 focus-visible:bg-primary/30 focus-visible:outline-none"
                 @mousedown="handleResizeStart"
+                @dblclick="resetWidth"
                 @keydown="handleResizeKeydown"
             />
         </div>

@@ -96,7 +96,9 @@ const i18n = createI18n({
     messages,
 });
 
-async function mountSidebar(props: Partial<{ open: boolean; isMobile: boolean }> = {}) {
+async function mountSidebar(
+    props: Partial<{ open: boolean; isMobile: boolean; width: number }> = {},
+) {
     const wrapper = mount(Sidebar, {
         props: {
             open: true,
@@ -348,6 +350,29 @@ describe("Sidebar", () => {
 
         await separator.trigger("keydown", { key: "ArrowLeft" });
         expect(wrapper.emitted("update:width")?.at(-1)).toEqual([264]);
+    });
+
+    it("resets the panel width on a handle double-click (S3b P2-1)", async () => {
+        mockAuth();
+        const wrapper = await mountSidebar({ width: 340 });
+        await wrapper.get('[data-testid="sidebar-resizer"]').trigger("dblclick");
+        expect(wrapper.emitted("update:width")?.at(-1)).toEqual([280]);
+    });
+
+    it("shows a live width bubble only while dragging (S3b P2-2)", async () => {
+        mockAuth();
+        const wrapper = await mountSidebar();
+        const separator = wrapper.get('[data-testid="sidebar-resizer"]');
+        expect(wrapper.find('[data-testid="sidebar-resize-bubble"]').exists()).toBe(false);
+
+        await separator.trigger("mousedown", { clientX: 300 });
+        document.dispatchEvent(new MouseEvent("mousemove", { clientX: 320 }));
+        await wrapper.vm.$nextTick();
+        expect(wrapper.get('[data-testid="sidebar-resize-bubble"]').text()).toContain("px");
+
+        document.dispatchEvent(new MouseEvent("mouseup"));
+        await wrapper.vm.$nextTick();
+        expect(wrapper.find('[data-testid="sidebar-resize-bubble"]').exists()).toBe(false);
     });
 
     it("collapses the panel from its own header control (S2 ruling #1)", async () => {
