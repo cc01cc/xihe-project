@@ -6,6 +6,7 @@ import { toast } from "vue-sonner";
 import { useConfigStore } from "../../stores/config";
 import ConfigLayerPanels from "../../components/settings/ConfigLayerPanels.vue";
 import SettingsNav from "../../components/settings/SettingsNav.vue";
+import LanguageSwitcher from "../../components/settings/LanguageSwitcher.vue";
 import BackToChatButton from "../../components/settings/BackToChatButton.vue";
 import { logger } from "../../lib/logger";
 import { useAuthStore } from "../../stores/auth";
@@ -128,6 +129,9 @@ async function handleImportFile(event: Event) {
     <div>
         <BackToChatButton />
         <SettingsNav />
+        <div class="mx-auto w-full max-w-6xl px-6 pt-4">
+            <LanguageSwitcher />
+        </div>
         <div class="mx-auto w-full max-w-6xl space-y-2 px-6 py-6">
             <h2 data-testid="settings-config-heading" class="text-lg font-semibold mb-4">
                 {{ t("settings.configTab") }}
