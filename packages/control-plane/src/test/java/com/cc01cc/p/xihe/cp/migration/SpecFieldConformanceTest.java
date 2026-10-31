@@ -15,7 +15,7 @@ import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 /**
  * PLAN-0407 T2.9: DB schema conformance to spec §3
@@ -54,13 +54,18 @@ class SpecFieldConformanceTest extends AbstractIntegrationTest {
                 "spec §3.1: permissions is a JSONB atom array");
         assertEquals("timestamp with time zone", columnInfo("grants", "created_at", "data_type"),
                 "spec §3.1: created_at is a timestamp column");
-        // PLAN-0610 V87 (round-2 P0): the allow-list is the union of the legacy four values and
-        // the three new ones, so the migration applies to a database that still holds
-        // default/direct rows. V88 converts the rows and narrows the constraint.
-        assertEquals(Set.of("default", "spawn", "direct", "template",
-                        "role", "credential_binding", "agent_default"),
+        // PLAN-0610 V88 (round-2 R2-1): after the one-shot copy the allow-list is the five
+        // post-migration values; V87's widened union only existed for the migration window.
+        assertEquals(Set.of("role", "spawn", "template", "credential_binding", "agent_default"),
                 checkAllowedValues("ck_grants_source"),
-                "PLAN-0610 V87: legacy four values plus role/credential_binding/agent_default");
+                "PLAN-0610 V88: role/spawn/template/credential_binding/agent_default");
+
+        // PLAN-0610 V88: the V38/V65 legacy fences are dropped once their rows are converted; the
+        // V87 per-source successors below are the constraints of record.
+        assertNull(indexDefinition("uq_grants_default_subject"),
+                "V38's default fence is dropped by V88 (its rows became role rows)");
+        assertNull(indexDefinition("uq_grants_direct_subject"),
+                "V65's direct fence is dropped by V88 (agent rows became credential bindings)");
 
         // PLAN-0610 V87: the scoped materialization keys (one row per atom per scope), and the
         // per-source successors of the V38/V65 fences.
@@ -70,20 +75,6 @@ class SpecFieldConformanceTest extends AbstractIntegrationTest {
                 "PLAN-0610 keeps V65's one-row-per-subject fence under the new source name");
         assertNotNull(indexDefinition("uq_grants_agent_default_subject"),
                 "the frozen agent snapshot keeps the V38-style single-row fence");
-
-        String indexDef = indexDefinition("uq_grants_default_subject");
-        assertNotNull(indexDef, "spec §3.1: partial unique index uq_grants_default_subject must "
-                + "survive until V88 converts the legacy default rows");
-        assertTrue(indexDef.contains("UNIQUE"),
-                "one default permission set per subject: " + indexDef);
-        assertTrue(indexDef.contains("(subject_type, subject_id)"),
-                "spec §3.1: the default index keys are (subject_type, subject_id): " + indexDef);
-        String partialPredicate = indexDef.contains("WHERE")
-                ? indexDef.substring(indexDef.indexOf("WHERE"))
-                        .replace("::text", "").replace("(", "").replace(")", "")
-                : "";
-        assertTrue(partialPredicate.contains("source = 'default'"),
-                "spec §3.1: the index is partial over source='default': " + indexDef);
     }
 
     /** spec §3.2: sessions provenance columns, kind ∈ {spawn, fork}, agent_principal_id. */

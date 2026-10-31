@@ -128,7 +128,7 @@ class AgentPrincipalControllerContractTest extends AbstractIntegrationTest {
         grant.setGranterId(userId);
         grant.setSubjectType("user");
         grant.setSubjectId(userId);
-        grant.setSource("direct");
+        grant.setSource("role");
         grant.setReadState("read");
         grant.setPermissions(objectMapper.readTree("[{\"actionClass\":\"" + actionClass
                 + "\",\"resource\":\"" + resource + "\"}]"));

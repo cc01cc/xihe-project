@@ -36,6 +36,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -112,7 +113,7 @@ class BoundaryRecalcTest extends AbstractIntegrationTest {
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
         principalId = agentPrincipalRepository.saveAndFlush(principal).getId();
 
-        addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "default", null, null,
+        addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "role", null, null,
                 atoms("read", "write"));
         bindPrincipal(workspaceId, atoms("read", "write", "SPAWN_AGENT"));
         Session session = saveAgentSession(workspaceId, userId, "Boundary recalc agent",
@@ -122,7 +123,7 @@ class BoundaryRecalcTest extends AbstractIntegrationTest {
         assertFalse(gateAllowsSpawn(session, spawnBody),
                 "I4（仅工具调用边界重算）：主体默认权限集不含 SPAWN_AGENT 时，工具调用边界必须拒绝");
 
-        UUID appended = addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "direct",
+        UUID appended = addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "role",
                 "user", UUID.fromString(userId), atoms("SPAWN_AGENT"));
         assertTrue(gateAllowsSpawn(session, spawnBody),
                 "I4（追加授权下一工具生效）：追加 direct grant 后的下一次工具调用必须放行");
@@ -148,7 +149,7 @@ class BoundaryRecalcTest extends AbstractIntegrationTest {
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
         principalId = agentPrincipalRepository.saveAndFlush(principal).getId();
 
-        addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "default", null, null,
+        addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "role", null, null,
                 atoms("read", "write"));
         bindPrincipal(workspaceId, atoms("read"));
         Session session = saveAgentSession(workspaceId, userId, "Boundary recalc cap agent",
@@ -176,8 +177,8 @@ class BoundaryRecalcTest extends AbstractIntegrationTest {
         corrupt.setSubjectId(corruptRow.principalId());
         corrupt.setSource("default");
         corrupt.setPermissions(objectMapper.getNodeFactory().textNode("not-an-atom-array"));
-        when(corruptRow.grantRepository().findBySubjectTypeAndSubjectId(
-                GrantPrincipalPathResolver.AGENT_PRINCIPAL, corruptRow.principalId()))
+        when(corruptRow.grantRepository().findScopedGrants(
+                eq(GrantPrincipalPathResolver.AGENT_PRINCIPAL), eq(corruptRow.principalId()), any(), any()))
                 .thenReturn(List.of(corrupt));
         assertFalse(corruptRow.service().allows(corruptRow.request()),
                 "I4（评估异常 = fail-closed 拒绝）：损坏的 grant 行触发评估异常时必须拒绝而非放行");
@@ -192,8 +193,8 @@ class BoundaryRecalcTest extends AbstractIntegrationTest {
     @Test
     void unexpectedEvaluationRuntimeExceptionNeverAllows() {
         UnitFixture unit = unitFixture();
-        when(unit.grantRepository().findBySubjectTypeAndSubjectId(
-                GrantPrincipalPathResolver.AGENT_PRINCIPAL, unit.principalId()))
+        when(unit.grantRepository().findScopedGrants(
+                eq(GrantPrincipalPathResolver.AGENT_PRINCIPAL), eq(unit.principalId()), any(), any()))
                 .thenThrow(new IllegalStateException("simulated evaluation failure"));
 
         IllegalStateException thrown = assertThrows(IllegalStateException.class,
@@ -210,8 +211,9 @@ class BoundaryRecalcTest extends AbstractIntegrationTest {
         AuthorizationGrant initial = grantRow(unit.principalId(), atoms("read"));
         AuthorizationGrant midFlightChange = grantRow(unit.principalId(), atoms("read", "SPAWN_AGENT"));
         AtomicInteger reads = new AtomicInteger();
-        when(unit.grantRepository().findBySubjectTypeAndSubjectId(
-                GrantPrincipalPathResolver.AGENT_PRINCIPAL, unit.principalId())).thenAnswer(invocation -> {
+        when(unit.grantRepository().findScopedGrants(
+                eq(GrantPrincipalPathResolver.AGENT_PRINCIPAL), eq(unit.principalId()), any(), any()))
+                .thenAnswer(invocation -> {
                     if (reads.incrementAndGet() == 1) {
                         return List.of(initial);
                     }
@@ -224,7 +226,8 @@ class BoundaryRecalcTest extends AbstractIntegrationTest {
         assertEquals(1, reads.get(),
                 "I4（评估内不重读）：单次评估只读取一次 grant 状态");
         verify(unit.grantRepository(), times(1))
-                .findBySubjectTypeAndSubjectId(GrantPrincipalPathResolver.AGENT_PRINCIPAL, unit.principalId());
+                .findScopedGrants(eq(GrantPrincipalPathResolver.AGENT_PRINCIPAL), eq(unit.principalId()),
+                        any(), any());
         verify(unit.bindingRepository(), times(1)).findById(any(WorkspaceAgentId.class));
         verify(unit.resolver(), times(1)).resolveAgent(anyString(), anyString(), anyString());
     }
@@ -284,6 +287,8 @@ class BoundaryRecalcTest extends AbstractIntegrationTest {
         grant.setId(UUID.randomUUID());
         grant.setSubjectType(GrantPrincipalPathResolver.AGENT_PRINCIPAL);
         grant.setSubjectId(subjectId);
+        // Mocked fixture only (the repository is a mock here, no DB CHECK): keep the legacy
+        // 'default' source so the unit path under test is the one that reads it.
         grant.setSource("default");
         grant.setPermissions(permissions);
         return grant;

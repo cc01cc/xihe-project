@@ -446,9 +446,11 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
         String agentAfter = permissionsOf("agent", session.getId());
         assertTrue(userAfter.contains("credential_use"), "V5: USER->ADMIN adds the credential atoms");
         assertTrue(userAfter.contains("credential_manage"));
-        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM grants WHERE subject_type = 'user'"
-                        + " AND subject_id = CAST(? AS UUID) AND source = 'default'", Integer.class, memberId),
-                "V5: still exactly one default row for the subject");
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM (SELECT permissions->0->>'actionClass' AS a,"
+                        + " COUNT(*) c FROM grants WHERE subject_type = 'user'"
+                        + " AND subject_id = CAST(? AS UUID) AND source = 'role' GROUP BY 1 HAVING COUNT(*) > 1) dup",
+                        Integer.class, memberId),
+                "V5: the role set is materialized once per atom after a tier change");
         assertEquals(agentBefore, agentAfter,
                 "V5.1: an existing Session's agent default snapshot must stay frozen");
     }
@@ -470,9 +472,11 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
                 Integer.class, memberId), "the demotion bumps the epoch too");
         String permissions = permissionsOf("user", UUID.fromString(memberId));
         assertFalse(permissions.contains("credential_use"), "ADMIN->USER must drop credential atoms");
-        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM grants WHERE subject_type = 'user'"
-                        + " AND subject_id = CAST(? AS UUID) AND source = 'default'", Integer.class, memberId),
-                "still exactly one default row (in-place update)");
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM (SELECT permissions->0->>'actionClass' AS a,"
+                        + " COUNT(*) c FROM grants WHERE subject_type = 'user'"
+                        + " AND subject_id = CAST(? AS UUID) AND source = 'role' GROUP BY 1 HAVING COUNT(*) > 1) dup",
+                        Integer.class, memberId),
+                "the demotion reconciles the role rows in place (no duplicated atoms)");
         assertEquals("USER", roleOf(memberId));
     }
 
@@ -490,21 +494,20 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
                 memberId);
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM grants WHERE subject_type = 'user'"
                 + " AND subject_id = CAST(? AS UUID)", Integer.class, memberId));
-        int createdBefore = auditCount("authorization_default_grant_created");
-        int syncedBefore = auditCount("authorization_default_grant_synced");
 
         assertEquals(HttpStatus.OK, patchRole(ownerToken, memberId, "ADMIN").getStatusCode());
 
+        // PLAN-0610: the tier change is materialized as source='role' rows (one per atom) instead
+        // of a single source='default' row; the materializer audits one reconciliation run.
         Map<String, Object> row = jdbc.queryForMap("SELECT permissions::text AS permissions, source FROM grants"
-                + " WHERE subject_type = 'user' AND subject_id = CAST(? AS UUID) ORDER BY created_at DESC LIMIT 1",
+                + " WHERE subject_type = 'user' AND subject_id = CAST(? AS UUID)"
+                + " AND permissions->0->>'actionClass' = 'credential_use' ORDER BY created_at DESC LIMIT 1",
                 memberId);
-        assertEquals("default", row.get("source"));
+        assertEquals("role", row.get("source"));
         assertTrue(String.valueOf(row.get("permissions")).contains("credential_use"),
-                "the created default row carries the ADMIN set");
-        assertEquals(createdBefore + 1, auditCount("authorization_default_grant_created"),
-                "the create branch is audited");
-        assertEquals(syncedBefore, auditCount("authorization_default_grant_synced"),
-                "the update branch must not fire when the row was missing");
+                "the materialized ADMIN set carries the credential atoms");
+        assertTrue(auditCount("authorization_role_grant_materialized") > 0,
+                "the reconcile run is audited");
     }
 
     /** T1.3(c): two concurrent promotions of the same subject stay idempotent (one default row). */
@@ -546,9 +549,11 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
         }
 
         assertEquals("ADMIN", roleOf(targetId));
-        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM grants WHERE subject_type = 'user'"
-                        + " AND subject_id = CAST(? AS UUID) AND source = 'default'", Integer.class, targetId),
-                "T1.3: no duplicate default row under concurrency (uq_grants_default_subject)");
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM (SELECT permissions->0->>'actionClass' AS a,"
+                        + " COUNT(*) c FROM grants WHERE subject_type = 'user'"
+                        + " AND subject_id = CAST(? AS UUID) AND source = 'role' GROUP BY 1 HAVING COUNT(*) > 1) dup",
+                        Integer.class, targetId),
+                "T1.3: concurrent role changes still materialize one row per atom (uq_grants_role_atom)");
         assertEquals(1, jdbc.queryForObject("SELECT token_version FROM users WHERE id = CAST(? AS UUID)",
                 Integer.class, targetId), "the second writer sees the same role and is a no-op (no double bump)");
     }
@@ -669,8 +674,14 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
     }
 
     private String permissionsOf(String subjectType, UUID subjectId) {
+        if ("user".equals(subjectType)) {
+            // PLAN-0610: the user default set is the union of the materialized source='role' rows.
+            return jdbc.queryForObject("SELECT COALESCE(string_agg(permissions::text, ','), '[]')"
+                    + " FROM grants WHERE subject_type = 'user' AND subject_id = ? AND source = 'role'",
+                    String.class, subjectId);
+        }
         return jdbc.queryForObject("SELECT permissions::text FROM grants WHERE subject_type = ?"
-                + " AND subject_id = ? AND source = 'default' ORDER BY created_at DESC LIMIT 1",
+                + " AND subject_id = ? AND source = 'agent_default' ORDER BY created_at DESC LIMIT 1",
                 String.class, subjectType, subjectId);
     }
 

@@ -94,13 +94,19 @@ class CredentialMigrationIntegrationTest {
     }
 
     @Test
-    void v65_directGrantPartialUniqueIndexApplied() throws SQLException {
+    void v65CredentialBindingFenceSurvivesTheDataCopyUnderTheNewSourceName() throws SQLException {
+        // PLAN-0610 V88: the V65 "one row per subject" fence moves to the credential_binding
+        // source; the legacy direct/default fences are dropped after their rows are converted.
         assertEquals(1, scalarInt(
                 "SELECT count(*) FROM pg_indexes WHERE schemaname = 'public' "
-                        + "AND indexname = 'uq_grants_direct_subject' "
+                        + "AND indexname = 'uq_grants_credential_binding_subject' "
                         + "AND indexdef LIKE '%(subject_type, subject_id)%' "
                         + "AND indexdef LIKE '%source%'"),
-                "PLAN-0496 round-4: one direct grant row per subject (V65)");
+                "PLAN-0496 V65 semantics preserved under source='credential_binding'");
+        assertEquals(0, scalarInt(
+                "SELECT count(*) FROM pg_indexes WHERE schemaname = 'public' "
+                        + "AND indexname IN ('uq_grants_direct_subject', 'uq_grants_default_subject')"),
+                "the legacy source fences are dropped by V88");
     }
 
     @Test

@@ -144,7 +144,7 @@ class CredentialThreeLayerAuthorizationTest extends AbstractIntegrationTest {
         manageGrant.setSubjectId(user.getId());
         manageGrant.setGranterType("user");
         manageGrant.setGranterId(user.getId());
-        manageGrant.setSource("direct");
+        manageGrant.setSource("role");
         // MANAGE_WORKSPACE_AGENTS for the cap write, plus credential_use@* so the
         // operator ceiling of setWorkspaceCap covers the concrete test id.
         manageGrant.setPermissions(snapshotOf("""
@@ -163,7 +163,7 @@ class CredentialThreeLayerAuthorizationTest extends AbstractIntegrationTest {
         // — merge the credential atom into that single row instead of inserting another one.
         AuthorizationGrant principalGrant = grantRepository.findBySubjectTypeAndSubjectId(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId).stream()
-                .filter(grant -> "default".equals(grant.getSource()))
+                .filter(grant -> GrantSources.AGENT_DEFAULT.equals(grant.getSource()))
                 .findFirst()
                 .orElseThrow();
         com.fasterxml.jackson.databind.node.ArrayNode mergedPermissions = objectMapper.createArrayNode();

@@ -21,6 +21,12 @@ import java.io.IOException;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Testcontainers
 @ActiveProfiles("test")
+// PLAN-0612 M4: the PG integration lane exercises the docker workspace backend (jobs/materialize/
+// imports). `.env.dev` carries the production default (disabled) and the dotenv loader writes it as
+// a system property, which outranks application-test.properties; an inlined test property outranks
+// both. The frozen-by-default contract itself is asserted by WorkspaceBackendPolicyTest.
+@org.springframework.test.context.TestPropertySource(
+        properties = "XIHE_WORKSPACE_DOCKER_BACKEND=enabled")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 public abstract class AbstractIntegrationTest {
 

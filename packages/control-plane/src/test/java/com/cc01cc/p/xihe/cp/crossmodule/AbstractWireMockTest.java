@@ -24,6 +24,12 @@ import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMoc
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("h2")
+// PLAN-0612 M4: `.env.dev` carries XIHE_WORKSPACE_DOCKER_BACKEND=disabled and the dotenv loader
+// exports it as a system property; the H2 lane still needs docker-backed workspaces to exercise
+// materialize/import/jobs, so an inlined test property overrides it (the frozen-by-default contract
+// is asserted by WorkspaceBackendPolicyTest).
+@org.springframework.test.context.TestPropertySource(
+        properties = "XIHE_WORKSPACE_DOCKER_BACKEND=enabled")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 public abstract class AbstractWireMockTest {
 

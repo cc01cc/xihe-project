@@ -202,7 +202,7 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractIntegrationTest {
             direct.setSubjectId(creatorId);
             direct.setGranterType("user");
             direct.setGranterId(creatorId);
-            direct.setSource("direct");
+            direct.setSource("role");
             direct.setPermissions(newAtoms);
             grantRepository.save(direct);
             return;
