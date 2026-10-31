@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.config.AccessTokenAuthenticator;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.config.TenantContextInterceptor;
@@ -63,6 +64,11 @@ class WorkspaceSessionControllerHttpTest {
         when(jwt.getUserIdFromToken(TOKEN)).thenReturn(USER_ID);
         when(jwt.getRoleFromToken(TOKEN)).thenReturn("USER");
         when(jwt.getWorkspaceIdFromToken(TOKEN)).thenReturn(null);
+        // PLAN-0580 decision #21: the interceptor takes userId/role from the shared
+        // epoch-checking authenticator, so the test stubs that boundary instead.
+        AccessTokenAuthenticator authenticator = mock(AccessTokenAuthenticator.class);
+        when(authenticator.authenticate(TOKEN)).thenReturn(Optional.of(
+                new AccessTokenAuthenticator.AuthenticatedUser(USER_ID, "USER", 1)));
 
         workspaceService = mock(WorkspaceService.class);
         when(workspaceService.isWorkspaceMember(anyString(), eq(USER_ID))).thenReturn(true);
@@ -83,7 +89,7 @@ class WorkspaceSessionControllerHttpTest {
 
         SessionCreationService creationService = new SessionCreationService(sessionService, workspaceService);
         TenantContextInterceptor interceptor =
-                new TenantContextInterceptor(jwt, workspaceService, new ObjectMapper());
+                new TenantContextInterceptor(jwt, authenticator, workspaceService, new ObjectMapper());
         mockMvc = MockMvcBuilders.standaloneSetup(new WorkspaceSessionController(creationService))
                 .addInterceptors(interceptor)
                 .build();
@@ -147,3 +153,4 @@ class WorkspaceSessionControllerHttpTest {
         return mockMvc.perform(request);
     }
 }
+
