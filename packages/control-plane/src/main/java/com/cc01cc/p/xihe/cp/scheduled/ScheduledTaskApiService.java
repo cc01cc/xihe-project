@@ -9,6 +9,7 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.event.WorkspaceEventManager;
 import com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
+import com.cc01cc.p.xihe.cp.policy.GrantSources;
 import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.ToolShape;
@@ -182,7 +183,7 @@ public class ScheduledTaskApiService {
         UUID workspaceUuid = parseUuid(workspaceId, "INVALID_WORKSPACE");
         Creator creator = resolveCreator(userUuid, workspaceUuid, request.agentPrincipalId());
         requireActionPermission(creator, POLICY_TOOL_CREATE,
-                ToolFaceRegistry.ACTION_CREATE_SCHEDULED_TASK, workspaceId, userId);
+                ToolFaceRegistry.ACTION_CREATE_SCHEDULED_TASK, workspaceUuid, userId);
 
         String timezone = request.timezone() == null || request.timezone().isBlank()
                 ? DEFAULT_TIMEZONE : request.timezone().trim();
@@ -399,17 +400,29 @@ public class ScheduledTaskApiService {
         return new Creator(userUuid, principalId, ACTOR_AGENT);
     }
 
+    /**
+     * PLAN-0610 W1c (round-3 P0-1): the subject's permission set is the <b>scoped</b> union for the
+     * request workspace — not every grant row the subject owns.
+     *
+     * <p>The previous unscoped read let a user who is {@code WS_OWNER} in workspace A pass this gate
+     * for workspace B, where they hold only {@code WS_VIEWER} (the scheduled-task atoms are
+     * {@code scope_class=both}, so a workspace-A binding materializes them). {@code findScopedGrants}
+     * mirrors the evaluation kernel's predicate: instance rows always participate, workspace rows
+     * only for the request workspace, and the retired {@code default}/{@code direct} sources are
+     * excluded through {@link GrantSources#EVALUATION_SOURCES}.</p>
+     */
     private void requireActionPermission(Creator creator, String policyTool, String actionClass,
-                                         String workspaceId, String userId) {
+                                         UUID workspaceId, String userId) {
         String subjectType = creator.agentPrincipalId() == null
                 ? GrantPrincipalPathResolver.USER : GrantPrincipalPathResolver.AGENT_PRINCIPAL;
         UUID subjectId = creator.agentPrincipalId() == null ? creator.userId() : creator.agentPrincipalId();
         boolean allowed;
         try {
-            var permissions = evaluator.union(
-                    grantRepository.findBySubjectTypeAndSubjectId(subjectType, subjectId));
+            var permissions = evaluator.union(grantRepository.findScopedGrants(subjectType,
+                    subjectId, GrantSources.EVALUATION_SOURCES, workspaceId));
             PolicyRequest request = new PolicyRequest(policyTool, List.of(actionClass),
-                    List.of(workspaceId), ToolShape.OPAQUE, userId, workspaceId, null);
+                    List.of(workspaceId.toString()), ToolShape.OPAQUE, userId,
+                    workspaceId.toString(), null);
             allowed = evaluator.allows(request, List.of(permissions));
         } catch (RuntimeException e) {
             logger.error("[POLICY] event=scheduled_task_grant_evaluation_failed actor={} "
@@ -433,7 +446,8 @@ public class ScheduledTaskApiService {
         Creator actor = resolveCreator(UUID.fromString(userId),
                 UUID.fromString(workspaceId), agentPrincipalId);
         requireActionPermission(actor, POLICY_TOOL_DISPOSE,
-                ToolFaceRegistry.ACTION_MANAGE_SCHEDULED_TASK, workspaceId, userId);
+                ToolFaceRegistry.ACTION_MANAGE_SCHEDULED_TASK,
+                UUID.fromString(workspaceId), userId);
     }
 
     private Creator disposeCreator(String userId, String agentPrincipalId) {

@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.repository;
 
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.UserStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -22,6 +23,22 @@ public interface AccessRoleBindingRepository extends JpaRepository<AccessRoleBin
     long countByRoleId(UUID roleId);
 
     List<AccessRoleBinding> findByRoleIdIn(Collection<UUID> roleIds);
+
+    /**
+     * PLAN-0610 W1c (round-3 P1-3): how many <b>usable</b> user subjects hold this role at instance
+     * scope.
+     *
+     * <p>The bootstrap seeder may only mint a {@code SUPER_ADMIN} binding while this count is zero.
+     * Otherwise a restart after an operator moved the account to a lower tier resurrects the
+     * privilege, and a transferred owner keeps a permanent second super administrator. DISABLED and
+     * soft-deleted rows are excluded: such an account can never log in, so counting it would claim
+     * "someone usable is still super admin" for an unusable row.</p>
+     */
+    @Query("select count(b) from AccessRoleBinding b join User u on u.id = b.subjectId "
+            + "where b.roleId = :roleId and b.scopeType = 'instance' "
+            + "and b.subjectType = 'user' and u.status = :status and u.deletedAt is null")
+    long countActiveUserBindingsForRole(@Param("roleId") UUID roleId,
+                                        @Param("status") UserStatus status);
 
     @Modifying
     @Query("delete from AccessRoleBinding b where b.subjectType = :subjectType and b.subjectId = :subjectId")

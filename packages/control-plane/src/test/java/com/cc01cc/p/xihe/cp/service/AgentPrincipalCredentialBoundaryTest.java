@@ -6,9 +6,16 @@ import com.cc01cc.p.xihe.cp.auth.AuthService;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
-import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
+import com.cc01cc.p.xihe.cp.entity.AccessRole;
+import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
 import com.cc01cc.p.xihe.cp.entity.User;
+import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
+import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
+import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
+import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuditLogRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
@@ -50,9 +57,14 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractIntegrationTest {
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;
     @Autowired private WorkspaceUserRepository workspaceUserRepository;
+    @Autowired private AccessRoleRepository accessRoleRepository;
+    @Autowired private AccessRolePermissionRepository permissionRepository;
+    @Autowired private AccessRoleBindingRepository roleBindingRepository;
+    @Autowired private RoleGrantMaterializer materializer;
     @Autowired private ObjectMapper objectMapper;
 
     private UUID creatorId;
+    private UUID creatorRoleId;
     private String workspaceId;
     private final List<UUID> principalIds = new ArrayList<>();
 
@@ -67,6 +79,8 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractIntegrationTest {
         if (creatorId != null) {
             grantRepository.deleteAll(grantRepository.findBySubjectTypeAndSubjectId(
                     GrantPrincipalPathResolver.USER, creatorId));
+            roleBindingRepository.deleteAll(
+                    roleBindingRepository.findBySubjectTypeAndSubjectId("user", creatorId));
             auditLogRepository.deleteAll(
                     auditLogRepository.findByUserIdOrderByCreatedAtDesc(creatorId.toString()));
             if (workspaceId != null) {
@@ -76,6 +90,11 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractIntegrationTest {
                 workspaceRepository.deleteById(workspaceUuid);
             }
             userRepository.deleteById(creatorId);
+        }
+        if (creatorRoleId != null) {
+            permissionRepository.deleteAll(permissionRepository.findByIdRoleId(creatorRoleId));
+            accessRoleRepository.deleteById(creatorRoleId);
+            creatorRoleId = null;
         }
     }
 
@@ -187,31 +206,30 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractIntegrationTest {
         workspaceId = registered.getWorkspaceId();
     }
 
-    /** V64: a subject owns a single direct grant row — successive grants merge into it. */
+    /**
+     * W1c: the creator's ceiling is seeded the post-W1 way — a test-only role bound at instance scope
+     * and materialized into {@code grants(source='role')}.
+     *
+     * <p>The helper used to merge into a single {@code source='direct'} row. The authorization gates
+     * no longer read that source ({@code GrantSources.EVALUATION_SOURCES} excludes the retired rows),
+     * which is the intended end state: after V88 direct is not an authorization input. Successive
+     * calls accumulate atoms on the same role, exactly like the old merge.</p>
+     */
     private void grantCreator(String permissionsJson) {
-        AuthorizationGrant direct = grantRepository.findBySubjectTypeAndSubjectId(
-                        GrantPrincipalPathResolver.USER, creatorId).stream()
-                .filter(grant -> "direct".equals(grant.getSource()))
-                .findFirst()
-                .orElse(null);
-        JsonNode newAtoms = permissions(permissionsJson);
-        if (direct == null) {
-            direct = new AuthorizationGrant();
-            direct.setId(UUID.randomUUID());
-            direct.setSubjectType("user");
-            direct.setSubjectId(creatorId);
-            direct.setGranterType("user");
-            direct.setGranterId(creatorId);
-            direct.setSource("direct");
-            direct.setPermissions(newAtoms);
-            grantRepository.save(direct);
-            return;
+        if (creatorRoleId == null) {
+            creatorRoleId = UUID.randomUUID();
+            accessRoleRepository.save(new AccessRole(creatorRoleId, "TEST_CREATOR_" + creatorRoleId.toString().replace("-", "").toUpperCase(),
+                    "Boundary test creator", "test-only role", false));
+            roleBindingRepository.save(new AccessRoleBinding(creatorRoleId, "user", creatorId,
+                    AccessScope.INSTANCE, null, creatorId));
         }
-        com.fasterxml.jackson.databind.node.ArrayNode merged = objectMapper.createArrayNode();
-        direct.getPermissions().forEach(merged::add);
-        newAtoms.forEach(merged::add);
-        direct.setPermissions(merged);
-        grantRepository.save(direct);
+        for (JsonNode atom : permissions(permissionsJson)) {
+            String actionClass = atom.path("actionClass").asText();
+            String resource = atom.has("resource") ? atom.path("resource").asText()
+                    : com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog.WILDCARD;
+            permissionRepository.save(new AccessRolePermission(creatorRoleId, actionClass, resource));
+        }
+        materializer.materializeSubject("user", creatorId, creatorId, null);
     }
 
     private JsonNode principalGrant(UUID principalId) {

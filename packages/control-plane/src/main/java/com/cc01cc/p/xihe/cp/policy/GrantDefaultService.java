@@ -6,12 +6,15 @@ import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
+import com.cc01cc.p.xihe.cp.entity.InstanceOwner;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.UserRole;
+import com.cc01cc.p.xihe.cp.entity.UserStatus;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
+import com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository;
 import com.cc01cc.p.xihe.cp.service.SessionLockService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -63,6 +66,7 @@ public class GrantDefaultService {
     private final AuthorizationGrantRepository grantRepository;
     private final AccessRoleRepository roleRepository;
     private final AccessRoleBindingRepository bindingRepository;
+    private final InstanceOwnerRepository instanceOwnerRepository;
     private final RoleGrantMaterializer materializer;
     private final AuthUserLockService userLock;
     private final SessionLockService sessionLock;
@@ -73,6 +77,7 @@ public class GrantDefaultService {
     public GrantDefaultService(AuthorizationGrantRepository grantRepository,
                                AccessRoleRepository roleRepository,
                                AccessRoleBindingRepository bindingRepository,
+                               InstanceOwnerRepository instanceOwnerRepository,
                                RoleGrantMaterializer materializer,
                                AuthUserLockService userLock,
                                SessionLockService sessionLock,
@@ -82,6 +87,7 @@ public class GrantDefaultService {
         this.grantRepository = grantRepository;
         this.roleRepository = roleRepository;
         this.bindingRepository = bindingRepository;
+        this.instanceOwnerRepository = instanceOwnerRepository;
         this.materializer = materializer;
         this.userLock = userLock;
         this.sessionLock = sessionLock;
@@ -161,6 +167,27 @@ public class GrantDefaultService {
      * <p>Idempotent: an existing SUPER_ADMIN binding is left untouched. Otherwise the lower tier
      * binding (ADMIN/USER) is replaced, so a subject never accumulates two instance tiers. The
      * materialization in the same transaction keeps «绑定并集 == 物化行集» (T1.10) true.</p>
+     *
+     * <p><b>PLAN-0610 W1c (round-3 P1-3) — no privilege resurrection.</b> Seeding is a
+     * <em>bootstrap</em> action, so it now runs only when all of the following hold:</p>
+     *
+     * <ol>
+     *   <li>the target account is usable ({@code ACTIVE}, not soft-deleted) — a DISABLED or deleted
+     *       account never receives a fresh privilege (it could not log in to use it, and an operator
+     *       disabled it on purpose);</li>
+     *   <li>the instance has <b>no</b> usable {@code SUPER_ADMIN} holder at instance scope — a
+     *       second super administrator is never minted by a restart (this also stops the old
+     *       "downgraded admin is re-promoted on every boot" behaviour when another holder exists);</li>
+     *   <li>the target still is (or the pointer is empty so it is about to become) the instance
+     *       owner — the pre-V88 bridge keeps «owner MUST hold SUPER_ADMIN» (I5) and stops seeding a
+     *       second account after ownership moved elsewhere.</li>
+     * </ol>
+     *
+     * <p>Residual case, deliberate: if the only usable super administrator is moved to a lower tier,
+     * the next bootstrap re-seeds it. That is I1 repair, not escalation — the write path that may
+     * produce such a state must refuse it ({@code 409 LAST_SUPER_ADMIN}, W3); a downgrade that
+     * reached the database therefore came from a bypass, and restoring the invariant is the safer
+     * end state.</p>
      */
     @Transactional
     public void ensureInstanceSuperAdmin(User user) {
@@ -177,16 +204,47 @@ public class GrantDefaultService {
         List<AccessRoleBinding> tierBindings = tierBindings(lockedUser.getId(), tierRoles);
         boolean alreadySuperAdmin = tierBindings.stream()
                 .anyMatch(binding -> superAdmin.getId().equals(binding.getRoleId()));
-        if (!alreadySuperAdmin) {
-            bindingRepository.deleteAll(tierBindings);
-            bindingRepository.save(new AccessRoleBinding(superAdmin.getId(), SUBJECT_USER,
-                    lockedUser.getId(), AccessScope.INSTANCE, null, lockedUser.getId()));
-            auditLogger.recordDurableChange(lockedUser.getId().toString(), null,
-                    "authorization_super_admin_binding_seeded", "user", lockedUser.getId().toString(),
-                    "role=" + SystemAccessRoleCatalog.SUPER_ADMIN + " scope=instance");
-            logger.info("[POLICY] event=super_admin_binding_seeded userId={}", lockedUser.getId());
+        if (alreadySuperAdmin) {
+            materializer.materializeSubject(SUBJECT_USER, lockedUser.getId(), lockedUser.getId(), null);
+            return;
         }
+        if (!lockedUser.isUsable()) {
+            logger.info("[POLICY] event=super_admin_binding_seed_skipped reason=account_not_active userId={}"
+                    + " status={} deleted={}", lockedUser.getId(), lockedUser.getStatus(),
+                    lockedUser.getDeletedAt() != null);
+            return;
+        }
+        long usableSuperAdmins = bindingRepository.countActiveUserBindingsForRole(
+                superAdmin.getId(), UserStatus.ACTIVE);
+        if (usableSuperAdmins > 0) {
+            logger.info("[POLICY] event=super_admin_binding_seed_skipped"
+                            + " reason=instance_has_active_super_admin userId={} holders={}",
+                    lockedUser.getId(), usableSuperAdmins);
+            return;
+        }
+        if (!isInstanceOwnerOrUnowned(lockedUser.getId())) {
+            logger.info("[POLICY] event=super_admin_binding_seed_skipped reason=not_instance_owner userId={}",
+                    lockedUser.getId());
+            return;
+        }
+        bindingRepository.deleteAll(tierBindings);
+        bindingRepository.save(new AccessRoleBinding(superAdmin.getId(), SUBJECT_USER,
+                lockedUser.getId(), AccessScope.INSTANCE, null, lockedUser.getId()));
+        auditLogger.recordDurableChange(lockedUser.getId().toString(), null,
+                "authorization_super_admin_binding_seeded", "user", lockedUser.getId().toString(),
+                "role=" + SystemAccessRoleCatalog.SUPER_ADMIN + " scope=instance");
+        logger.info("[POLICY] event=super_admin_binding_seeded userId={}", lockedUser.getId());
         materializer.materializeSubject(SUBJECT_USER, lockedUser.getId(), lockedUser.getId(), null);
+    }
+
+    /**
+     * True when {@code userId} holds the {@code instance_owner} pointer, or when no pointer exists
+     * yet (a fresh instance: the caller assigns ownership in the same bootstrap transaction).
+     */
+    private boolean isInstanceOwnerOrUnowned(UUID userId) {
+        return instanceOwnerRepository.findById(InstanceOwner.SINGLETON_ID)
+                .map(owner -> owner.getOwnerUserId() == null || owner.getOwnerUserId().equals(userId))
+                .orElse(true);
     }
 
     private List<AccessRoleBinding> tierBindings(UUID userId, Map<String, AccessRole> tierRoles) {

@@ -53,6 +53,11 @@ public class AuthController {
     private final ClientIpResolver clientIpResolver;
     private final TransactionTemplate transactionTemplate;
     private final com.cc01cc.p.xihe.cp.service.InstanceOwnershipService instanceOwnershipService;
+    /**
+     * PLAN-0610 W1c (round-3 P0-2): the local-mode first account must end the transaction holding
+     * the instance-level {@code SUPER_ADMIN} binding (I1/I5), not a plain {@code ADMIN} tier.
+     */
+    private final com.cc01cc.p.xihe.cp.policy.GrantDefaultService grantDefaultService;
     /** PLAN-0581 §6: bootstrap env switch for public self-registration (default open). */
     private final RegistrationPolicy registrationPolicy;
 
@@ -61,6 +66,7 @@ public class AuthController {
                           LoginAttemptService loginAttemptService,
                           ClientIpResolver clientIpResolver,
                           com.cc01cc.p.xihe.cp.service.InstanceOwnershipService instanceOwnershipService,
+                          com.cc01cc.p.xihe.cp.policy.GrantDefaultService grantDefaultService,
                           RegistrationPolicy registrationPolicy,
                           PlatformTransactionManager transactionManager) {
         this.authService = authService;
@@ -69,6 +75,7 @@ public class AuthController {
         this.loginAttemptService = loginAttemptService;
         this.clientIpResolver = clientIpResolver;
         this.instanceOwnershipService = instanceOwnershipService;
+        this.grantDefaultService = grantDefaultService;
         this.registrationPolicy = registrationPolicy;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
@@ -118,6 +125,13 @@ public class AuthController {
                 // the same transaction. Idempotent: an existing pointer stays.
                 if (localModeService.enabled()) {
                     instanceOwnershipService.ensureAssigned(user, user.getId().toString());
+                    // PLAN-0610 W1c (round-3 P0-2): ADMIN alone leaves an empty instance with no
+                    // SUPER_ADMIN binding — the tier bridge maps users.role to ADMIN/USER only, and
+                    // DataSeeder (the other seed site) returns early in local mode. Seeding here, in
+                    // the same transaction and after the owner assignment (frozen lock order
+                    // instance_owner → users row), is the only path that makes I1/I5 true on a fresh
+                    // local instance. Idempotent and guarded against privilege resurrection.
+                    grantDefaultService.ensureInstanceSuperAdmin(user);
                 }
                 return withDefaultWorkspace(user);
             });
@@ -199,6 +213,12 @@ public class AuthController {
     public ResponseEntity<?> localLogin(HttpServletRequest httpRequest) {
         localModeService.requireLocalAccess(httpRequest);
         User user = authService.requireSingleUser();
+        // PLAN-0610 W1c (round-3 P0-2): repair a local instance created before the SUPER_ADMIN seed
+        // existed (or whose seed transaction did not include it). Both calls are idempotent and the
+        // seed is guarded, so a deliberately downgraded or disabled account is not re-promoted and a
+        // login never widens privilege by itself.
+        instanceOwnershipService.ensureAssigned(user, user.getId().toString());
+        grantDefaultService.ensureInstanceSuperAdmin(user);
         return ResponseEntity.ok(withDefaultWorkspace(user));
     }
 

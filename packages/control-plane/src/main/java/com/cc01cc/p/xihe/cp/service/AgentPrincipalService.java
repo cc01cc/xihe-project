@@ -11,6 +11,7 @@ import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.ToolShape;
 import com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
+import com.cc01cc.p.xihe.cp.policy.GrantSources;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
@@ -82,7 +83,7 @@ public class AgentPrincipalService {
     public AgentPrincipal createPrincipalFromTemplate(String actorUserId, String name, String templateId) {
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         requireUser(actorId);
-        requireUserAction(actorId, ToolFaceRegistry.ACTION_CREATE_ACCOUNT, "*");
+        requireUserAction(actorId, ToolFaceRegistry.ACTION_CREATE_ACCOUNT, "*", null);
         AgentTemplateService.ResolvedTemplate resolved = agentTemplateService.resolveForCreation(
                 actorUserId, null, templateId);
         String resolvedTemplateId = optionalText(resolved.snapshot(), "templateId");
@@ -343,15 +344,34 @@ public class AgentPrincipalService {
     }
 
     private void requireWorkspaceAgentManagement(UUID actorId, UUID workspaceId) {
-        requireUserAction(actorId, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS, workspaceId.toString());
+        requireUserAction(actorId, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS,
+                workspaceId.toString(), workspaceId);
     }
 
-    private void requireUserAction(UUID actorId, String actionClass, String resource) {
+    /**
+     * PLAN-0610 W1c (round-3 P0-1): the caller's permission set is the <b>scoped</b> union for the
+     * request workspace, not every grant row the subject owns.
+     *
+     * <p>Reading the unscoped set let a user who is {@code WS_OWNER} in workspace A (which
+     * materializes {@code MANAGE_WORKSPACE_AGENTS@*}) pass this gate for workspace B, where they are
+     * only {@code WS_VIEWER}: the membership gate at {@code setWorkspaceCap} is scoped, this
+     * authorization gate was not. {@code findScopedGrants} applies the same predicate as the
+     * evaluation kernel ({@code GrantAuthorizationService}): instance rows always participate,
+     * workspace rows only for the request workspace, and the retired {@code default}/{@code direct}
+     * sources are excluded by {@link GrantSources#EVALUATION_SOURCES}.</p>
+     *
+     * @param workspaceId the request workspace, or {@code null} for an instance-wide action
+     *     ({@code CREATE_ACCOUNT}); a null scope means "instance rows only", which is exactly the
+     *     authorization basis of an instance-level atom.
+     */
+    private void requireUserAction(UUID actorId, String actionClass, String resource,
+                                   UUID workspaceId) {
         PolicyRequest request = new PolicyRequest(actionClass.toLowerCase(),
                 List.of(actionClass), List.of(resource), ToolShape.OPAQUE,
                 actorId.toString(), null, null);
         if (!evaluator.allows(request, List.of(evaluator.union(
-                grantRepository.findBySubjectTypeAndSubjectId(GrantPrincipalPathResolver.USER, actorId))))) {
+                grantRepository.findScopedGrants(GrantPrincipalPathResolver.USER, actorId,
+                        GrantSources.EVALUATION_SOURCES, workspaceId))))) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", actionClass + " permission is required");
         }
     }
