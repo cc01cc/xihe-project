@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
+import com.cc01cc.p.xihe.cp.config.WorkspaceWriteGuard;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.service.ContextTemplateService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
@@ -77,6 +78,15 @@ public class SessionCreationService {
             // The header surface was already membership-checked by the interceptor;
             // the path surface is new, so it is checked here with the same gate.
             workspaceService.requireContextWorkspace(pathWorkspace, userId);
+            // PLAN-0608 C′ (review P1): the interceptor's role gate is graded on the
+            // *context* workspace, so a path-only request could create a session inside
+            // a workspace where the caller is only VIEWER. Enforce the write role on the
+            // workspace that actually owns this session.
+            String pathRole = workspaceService.resolveWorkspaceRole(pathWorkspace, userId);
+            if (!WorkspaceWriteGuard.allows(pathRole, WorkspaceWriteGuard.Requirement.WRITE)) {
+                throw new CpApiException(HttpStatus.FORBIDDEN, "WORKSPACE_READ_ONLY",
+                        "Viewer cannot modify this workspace");
+            }
             workspaceId = pathWorkspace;
         }
 
@@ -92,3 +102,4 @@ public class SessionCreationService {
         return session;
     }
 }
+
