@@ -586,7 +586,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         org.springframework.http.ResponseEntity<java.util.Map> accepted = restTemplate.postForEntity(
                 url("/api/v1/workspaces/" + workspaceId + "/imports"),
                 new org.springframework.http.HttpEntity<>(java.util.Map.of(
-                        "sourcePath", "H:\\zeogit\\one",
+                        "sourcePath", importSourceRoot(),
                         "excludeRules", java.util.List.of("node_modules", "target"),
                         "idempotencyKey", "import-test-1"), headers),
                 java.util.Map.class);
@@ -653,5 +653,21 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         return userRepository.findByEmail(email)
                 .orElseThrow(() -> new AssertionError("registered user not found: " + email))
                 .getId().toString();
+    }
+
+    /**
+     * PLAN-0612: the workspace import fixture must not hardcode this machine's checkout path.
+     * Walk up from the Maven working directory to the repo root (identified by
+     * {@code scripts/stack-run.mjs}) and fall back to the working directory.
+     */
+    private static String importSourceRoot() {
+        java.nio.file.Path path = java.nio.file.Path.of(System.getProperty("user.dir")).toAbsolutePath();
+        for (int depth = 0; depth < 6 && path != null; depth += 1) {
+            if (java.nio.file.Files.isRegularFile(path.resolve("scripts").resolve("stack-run.mjs"))) {
+                return path.toString();
+            }
+            path = path.getParent();
+        }
+        return System.getProperty("user.dir");
     }
 }

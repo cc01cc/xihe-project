@@ -43,7 +43,7 @@ describe("WorkspaceSourceImportDialog", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         listImportSources.mockResolvedValue({
-            path: "H:/zeogit",
+            path: "/fixtures/workspace",
             entries: [{ name: "one", kind: "directory", readable: true, size: 0 }],
         });
         listWorkspaceImports.mockResolvedValue([]);
@@ -52,11 +52,11 @@ describe("WorkspaceSourceImportDialog", () => {
     it("browses a Runtime-visible directory and starts an import job", async () => {
         const wrapper = mountDialog();
         await flushPromises();
-        await buttonByTestId(wrapper, "workspace-import-path").setValue("H:/zeogit");
+        await buttonByTestId(wrapper, "workspace-import-path").setValue("/fixtures/workspace");
         await buttonByTestId(wrapper, "workspace-import-read").trigger("click");
         await flushPromises();
 
-        expect(listImportSources).toHaveBeenCalledWith("H:/zeogit");
+        expect(listImportSources).toHaveBeenCalledWith("/fixtures/workspace");
         expect(wrapper.text()).toContain("one");
 
         startWorkspaceImport.mockResolvedValue({ importId: "imp-1", status: "completed" });
@@ -65,14 +65,14 @@ describe("WorkspaceSourceImportDialog", () => {
         await flushPromises();
         expect(startWorkspaceImport).toHaveBeenCalledWith(
             "ws-1",
-            expect.objectContaining({ sourcePath: "H:/zeogit" }),
+            expect.objectContaining({ sourcePath: "/fixtures/workspace" }),
         );
     });
 
     it("cancels a running import through the cancel API", async () => {
         const wrapper = mountDialog();
         await flushPromises();
-        await buttonByTestId(wrapper, "workspace-import-path").setValue("H:/zeogit");
+        await buttonByTestId(wrapper, "workspace-import-path").setValue("/fixtures/workspace");
         startWorkspaceImport.mockResolvedValue({ importId: "imp-2", status: "running" });
         getWorkspaceImport.mockResolvedValue({ status: "running" });
         await buttonByTestId(wrapper, "workspace-import-start").trigger("click");
@@ -105,7 +105,7 @@ describe("WorkspaceSourceImportDialog", () => {
     it("surfaces a failed import with its error code", async () => {
         const wrapper = mountDialog();
         await flushPromises();
-        await buttonByTestId(wrapper, "workspace-import-path").setValue("H:/zeogit");
+        await buttonByTestId(wrapper, "workspace-import-path").setValue("/fixtures/workspace");
         startWorkspaceImport.mockResolvedValue({ importId: "imp-3", status: "failed" });
         getWorkspaceImport.mockResolvedValue({ status: "failed", errorCode: "IMPORT_SCAN_FAILED" });
         await buttonByTestId(wrapper, "workspace-import-start").trigger("click");

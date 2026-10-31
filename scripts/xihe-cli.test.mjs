@@ -591,6 +591,49 @@ test('dev check does not create the host root or print environment secrets', asy
   assert.equal(JSON.stringify(result).includes(TEST_KEY), false);
 });
 
+test('dev check reports an actionable owner hint for occupied ports (PLAN-0612 M3)', async (t) => {
+  const cp = await startCpMock();
+  t.after(cp.close);
+  const result = await runCommand(['dev', 'check', '--json'], {
+    env: { ...cp.env },
+    spawnSyncImpl: (command) => {
+      if (command === 'netstat') {
+        return { status: 0, stdout: '  TCP    127.0.0.1:12630    0.0.0.0:0    LISTENING    4321\n', stderr: '' };
+      }
+      if (command === 'tasklist') {
+        return { status: 0, stdout: '"node.exe","4321","Console","1","10,000 K"\n', stderr: '' };
+      }
+      return { status: 0, stdout: 'tool version\n', stderr: '' };
+    },
+    portProbeFn: async (port) => (port === 12630 ? { free: false, occupied: true } : { free: true }),
+    httpProbeFn: async (url) => (url.includes(':12630/') ? 'unresponsive' : 'ready'),
+    tcpProbeFn: async () => 'listening',
+    promptSecret: noPrompt,
+  });
+
+  const ui = result.data.checks.find((check) => check.category === 'port' && check.name === 'UI');
+  assert.equal(ui.status, 'occupied-unresponsive');
+  assert.deepEqual(ui.owner, { pid: 4321, process: 'node.exe' });
+  assert.match(ui.hint, /端口 12630 被 node\.exe \(pid 4321\) 占用/);
+  assert.match(ui.hint, /XIHE_UI_PORT/);
+  assert.equal(result.exitCode, 1, 'an occupied-unresponsive port keeps the preflight red');
+});
+
+test('dev check reports env key drift between .env.dev and .env.example (PLAN-0612 M3)', async (t) => {
+  const cp = await startCpMock();
+  t.after(cp.close);
+  const result = await runCommand(['dev', 'check', '--json'], {
+    env: { ...cp.env },
+    spawnSyncImpl: () => ({ status: 0, stdout: 'tool version\n', stderr: '' }),
+    portProbeFn: async () => ({ free: true }),
+    promptSecret: noPrompt,
+  });
+  const keyCheck = result.data.checks.find((check) => check.name === 'env key set (.env.dev vs .env.example)');
+  assert.ok(keyCheck, 'env key set check must be present');
+  // 仓库内两侧当前一致；若新增/删除键未同步，此断言会变成 drift 并提示缺哪些键。
+  assert.equal(keyCheck.status, 'ok');
+});
+
 test('CP connection refusal is retried once before sending the request', async (t) => {
   const cp = await startCpMock();
   t.after(cp.close);

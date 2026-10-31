@@ -3,9 +3,10 @@
  * XH dev-stack — detached, turn-surviving full-stack supervisor (PLAN-0603 B′).
  *
  * Why: `mise run dev:host` is a foreground mise task; when the launching terminal /
- * agent turn ends the child tree is reaped. `scripts/ports.mjs dev xihe` is already
- * detached but can only start services that declare a `runner` (xihe: ui only) and
- * always uses the main checkout as cwd. This supervisor launches CP / Agent /
+ * agent turn ends the child tree is reaped. The ONE workspace's `ports.mjs dev xihe`
+ * wrapper is detached but only starts services that declare a `runner` (xihe: UI only)
+ * and always uses the main checkout as cwd; it is also outside this repo (PLAN-0612).
+ * This supervisor launches CP / Agent /
  * Runtime / UI through the existing `scripts/stack-run.mjs` targets (which own the
  * per-service command, cwd and stack env derivation), keeps per-service logs and a
  * PID JSON, waits for HTTP readiness, and supports status / stop / residual checks.
@@ -15,7 +16,8 @@
  *   node scripts/dev-stack.mjs status [--stack N] [--cwd <repo>] [--json]
  *   node scripts/dev-stack.mjs stop   [--stack N] [--cwd <repo>] [--with-pg] [--json]
  *
- * - Stack ports come from `<one>/scripts/ports.mjs`'s deriveStack() (single SSOT).
+ * - Stack ports come from this repo's `scripts/lib/stack-ports.mjs` deriveStack() (PLAN-0612:
+ *   the port fact source belongs to A03; no parent-directory lookup).
  * - Works from the main checkout and from `.worktrees/<name>`: project root defaults
  *   to the directory that contains this script; `--cwd` points it at another checkout.
  * - `stop` keeps PostgreSQL by default; pass `--with-pg` to stop the compose container
@@ -29,7 +31,8 @@ import { existsSync, mkdirSync, openSync, closeSync, readFileSync, renameSync, r
 import http from 'node:http';
 import net from 'node:net';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
+import { deriveStack, normalizeStackArg } from './lib/stack-ports.mjs';
 
 const scriptPath = fileURLToPath(import.meta.url);
 const scriptProjectRoot = resolve(dirname(scriptPath), '..');
@@ -79,28 +82,9 @@ function parseArgs(argv) {
   return args;
 }
 
-/* ------------------------------------------------------------- one root */
+/* ---------------------------------------------------------- stack ports */
 
-function findOneRoot(start) {
-  let current = resolve(start);
-  for (let depth = 0; depth < 12; depth += 1) {
-    if (existsSync(join(current, 'config', 'ports.mjs')) && existsSync(join(current, 'scripts', 'ports.mjs'))) {
-      return current;
-    }
-    const parent = dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
-  return null;
-}
-
-const oneRoot = findOneRoot(scriptProjectRoot);
-if (!oneRoot) {
-  console.error(`[dev-stack] ERROR: cannot locate the one workspace root above ${scriptProjectRoot}`);
-  process.exit(2);
-}
-const portsModule = await import(pathToFileURL(join(oneRoot, 'scripts', 'ports.mjs')).href);
-const { deriveStack, normalizeStackArg } = portsModule;
+/* Ports/derived paths come from the in-repo module (PLAN-0612). */
 
 /* ---------------------------------------------------------------- utils */
 

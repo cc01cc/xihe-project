@@ -119,9 +119,14 @@ fn mxc_file_worker_real_boundary_matrix() {
         "set XIHE_JOB_MXC=1"
     );
 
-    let isolated_root = Path::new(r"H:\zeogit\one\.local");
-    let workspace = tempfile::tempdir_in(isolated_root).expect("workspace");
-    let outside = tempfile::tempdir_in(isolated_root).expect("outside");
+    // PLAN-0612: no machine-specific drive path. The ignored MXC matrix takes an explicit
+    // isolated root (must stay on the same volume as the workspace) and falls back to the
+    // OS temp dir so a fresh clone can run it without editing the file.
+    let isolated_root = std::env::var_os("XIHE_MXC_ISOLATED_ROOT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    let workspace = tempfile::tempdir_in(&isolated_root).expect("workspace");
+    let outside = tempfile::tempdir_in(&isolated_root).expect("outside");
     fs::write(workspace.path().join("source.txt"), "source").expect("source");
     let outside_marker = outside.path().join("marker.txt");
 

@@ -10,42 +10,18 @@
  *   node scripts/stack-run.mjs env-json [--stack N]   给 PowerShell 脚本用的派生值 JSON
  *   node scripts/stack-run.mjs slots-json            全部已登记栈槽位（给 preflight）
  *
- * 契约：本文件不定义端口，全部来自 `<one>/scripts/ports.mjs` 的 deriveStack()。
- * 它必须能同时在主 checkout 与 .worktrees/<name> 下工作，因此 one 根目录按
- * 「向上找到 config/ports.mjs」解析，而不是写死相对层级。
+ * 契约：本文件不定义端口，全部来自仓库内 `scripts/lib/stack-ports.mjs` 的
+ * deriveStack()（PLAN-0612：端口事实源归 A03，不再向上查找 one 工作区）。
  */
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { resolveHostRoot } from "./host-root.mjs";
 import { applySetToEnv, applyUrlSyncToEnv, parseStackSetArgs } from "./lib/stack-set.mjs";
+import { DEFAULT_STACK_ID, STACK_IDS, deriveStack, normalizeStackArg, stackEnvDefaults } from "./lib/stack-ports.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDir, "..");
-
-function findOneRoot(start) {
-  let current = resolve(start);
-  for (let depth = 0; depth < 12; depth += 1) {
-    if (existsSync(join(current, "config", "ports.mjs")) && existsSync(join(current, "scripts", "ports.mjs"))) {
-      return current;
-    }
-    const parent = dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
-  return null;
-}
-
-const oneRoot = findOneRoot(projectRoot);
-if (!oneRoot) {
-  console.error("[stack] ERROR: cannot locate the one workspace root (config/ports.mjs not found above " + projectRoot + ")");
-  process.exit(2);
-}
-
-const { DEFAULT_STACK_ID, STACK_IDS, deriveStack, normalizeStackArg, stackEnvDefaults } = await import(
-  pathToFileURL(join(oneRoot, "scripts", "ports.mjs")).href
-);
 
 function readStackArg(args) {
   const inline = args.find((arg) => arg.startsWith("--stack="));

@@ -123,7 +123,7 @@ updated: 2026-10-25
 
 ## 环境 / Docker
 
-- **WSL2 OOM**: 修改 vitest config 前需 `bash ../../scripts/cleanup-wsl-resources.sh`
+- **WSL2 OOM**: 修改 vitest config 前应先在 one workspace 侧清理 WSL 资源（清理脚本属 one 工具，见 one 的 `docker` / `windows` skill 文档；本仓库不依赖它，单独 clone 可跳过）
 - **Container name**: `docker compose up -d` 前先 `docker rm -f xihe-*` 清理残留
 - **Native host boundary**: 日常 host 开发只允许 PostgreSQL 运行在 Docker；CP、Agent、Runtime、UI 必须由 mise 作为 Windows 原生任务启动。不要使用不带服务筛选的 `docker compose up -d`，否则会误启动后三个后端容器。
 - **Native host startup**: 使用 `mise run dev:host`；该任务先执行 `docker compose up -d --wait postgres`，再并行管理四个原生服务。`mise run dev:host:watch` 由 Node watcher 监督健康端点并在任务组故障后重启。

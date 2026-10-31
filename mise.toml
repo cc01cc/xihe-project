@@ -17,10 +17,8 @@
 
 [env]
 NODE_OPTIONS = "--max-old-space-size=2048"
-# Keep uv's cache on the same volume as the project so hardlinks work on
-# Windows (NTFS hardlinks cannot cross volumes). See one/AGENTS.md and
-# .agents/skills/windows/SKILL.md §硬链接不能跨卷.
-UV_CACHE_DIR = "H:/zeolib/uv-cache"
+# uv cache: 使用 uv 自身默认位置（不再写死盘符）。需要与其它项目共享缓存的人
+# 自行在外层 shell 设置 UV_CACHE_DIR；本仓库不替用户决定机器布局。
 
 [tools]
 node = "24"
@@ -128,8 +126,8 @@ description = "Run all tests"
 alias = "test"
 
 [tasks."test:cli"]
-run = "node --test scripts/xihe-cli.test.mjs"
-description = "Run the dev/ops CLI unit tests"
+run = "node --test scripts/xihe-cli.test.mjs scripts/lib/stack-ports.test.mjs"
+description = "Run the dev/ops CLI + stack port table unit tests"
 alias = "test:cli"
 
 [tasks."test:ui"]
@@ -201,12 +199,12 @@ description = "Run backend integration tests — T2 (no Docker) + T3 (auto Docke
 alias = "test:integration"
 
 [tasks."test:integration:t2"]
-run = "C:/Progra~1/Git/bin/bash.exe scripts/mise/integration-test-t2.sh"
+run = "node scripts/mise/run-posix.mjs scripts/mise/integration-test-t2.sh"
 description = "Run T2 cross-module stub integration tests (no Docker required)"
 alias = "test:integration:t2"
 
 [tasks."test:integration:t3"]
-run = "C:/Progra~1/Git/bin/bash.exe scripts/mise/integration-test-t3.sh"
+run = "node scripts/mise/run-posix.mjs scripts/mise/integration-test-t3.sh"
 description = "Run T3 cross-module real integration tests (requires Docker)"
 alias = "test:integration:t3"
 
@@ -244,7 +242,7 @@ dir = "packages/runtime"
 alias = "lint:runtime"
 
 [tasks."lint:links"]
-run = "C:/Progra~1/Git/bin/bash.exe scripts/check-doc-links-entry.sh ."
+run = "node scripts/mise/run-posix.mjs scripts/check-doc-links-entry.sh ."
 description = "Check documentation links (no escape from docs/)"
 alias = "lint:links"
 
@@ -260,7 +258,7 @@ dir = "packages/ui"
 alias = "typecheck:ui"
 
 [tasks.format]
-run = "bash scripts/mise/format.sh"
+run = "node scripts/mise/run-posix.mjs scripts/mise/format.sh"
 description = "Format code across modules"
 alias = "format"
 
@@ -391,3 +389,16 @@ alias = "clean:runtime-sweep"
 run = "node scripts/check-runtime-target.mjs"
 description = "Check Runtime target water lines (normal 12GB / watch >12GB / warn 15GB / force 20GB or H free <5GB; exit 1 = force)"
 alias = "check:target"
+
+# PLAN-0612: 严格剥离 ONE 的验收门 —— 无父级目录副本上验证启动前置（不启动服务/容器）。
+# 用 `--worktree`（临时 index 打包工作树）以便**提交前**验收；CI/提交后可用默认 HEAD 模式。
+[tasks."check:standalone"]
+run = "node scripts/check-standalone.mjs --worktree"
+description = "Export a parent-less copy of the working tree and verify stack-run/dev-check work without the ONE workspace"
+alias = "check:standalone"
+
+# PLAN-0612: A03 端口事实源 vs ONE 端口分配镜像的 parity（ONE 不存在时显式 skip）。
+[tasks."check:ports"]
+run = "node scripts/check-ports-parity.mjs"
+description = "Compare the built-in xihe port table with ONE's allocation table (skips with a reason when ONE is absent)"
+alias = "check:ports"
