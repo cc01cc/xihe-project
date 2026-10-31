@@ -193,28 +193,61 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
             timeout: 10_000,
         });
 
-        // Record every <html lang> value the document takes during the reload: the inline boot script
-        // must set en-US before the app mounts, so zh-CN must never appear.
+        // Anti-flash proof: the static attribute is zh-CN, so the parser sets it for an instant; what
+        // matters is that the inline boot script switches to en-US BEFORE Vue mounts, i.e. no Chinese
+        // UI is ever painted. The trace records, per <html lang> change, how many #app children exist.
         await page.addInitScript(() => {
-            const seen: string[] = [],
-                record = () => seen.push(document.documentElement.lang);
-            (window as unknown as { __langTrace: string[] }).__langTrace = seen;
+            const seen: Array<{ lang: string; appChildren: number }> = [],
+                record = () => {
+                    const root = document.documentElement;
+                    if (!root) return;
+                    seen.push({
+                        lang: root.lang,
+                        appChildren: document.getElementById("app")?.childElementCount ?? -1,
+                    });
+                };
+            (
+                window as unknown as { __langTrace: Array<{ lang: string; appChildren: number }> }
+            ).__langTrace = seen;
             record();
-            new MutationObserver(record).observe(document.documentElement, {
+            // Observe `document` (not documentElement): the init script can run before the parser has
+            // created <html>, so the static attribute and the boot-script overwrite both have to be
+            // caught by a subtree observer.
+            new MutationObserver(record).observe(document, {
+                subtree: true,
+                childList: true,
                 attributes: true,
                 attributeFilter: ["lang"],
             });
+            document.addEventListener("DOMContentLoaded", record, { once: true });
         });
         await page.reload({ waitUntil: "load" });
         await expect(page.getByTestId("settings-config-heading")).toHaveText(EN_HEADING, {
             timeout: 20_000,
         });
         const trace = await page.evaluate(
-            () => (window as unknown as { __langTrace: string[] }).__langTrace,
-        );
+                () =>
+                    (
+                        window as unknown as {
+                            __langTrace: Array<{ lang: string; appChildren: number }>;
+                        }
+                    ).__langTrace,
+            ),
+            firstEnglish = trace.findIndex((entry) => entry.lang === "en-US");
         expect(trace.length, "the lang trace must be recorded").toBeGreaterThan(0);
-        expect(trace, `lang flapped through zh-CN: ${trace.join(" -> ")}`).not.toContain("zh-CN");
-        expect(trace[trace.length - 1]).toBe("en-US");
+        expect(
+            firstEnglish,
+            `en-US never applied: ${JSON.stringify(trace)}`,
+        ).toBeGreaterThanOrEqual(0);
+        expect(
+            trace[firstEnglish].appChildren,
+            "en-US must be applied before Vue mounts (-1 = #app not parsed yet, 0 = empty)",
+        ).toBeLessThanOrEqual(0);
+        expect(trace[trace.length - 1].lang).toBe("en-US");
+        expect(
+            trace.filter((entry) => entry.appChildren > 0 && entry.lang !== "en-US"),
+            `lang regressed after mount: ${JSON.stringify(trace)}`,
+        ).toEqual([]);
         expect(await htmlLang(page)).toBe("en-US");
         expect(await persistedLanguage(page)).toBe("en-US");
         await page.screenshot({
