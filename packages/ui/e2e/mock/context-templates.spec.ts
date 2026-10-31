@@ -153,13 +153,18 @@ test.describe("Context templates (PLAN-0414)", () => {
             await openChat.click();
         }
 
-        const badge = page.getByTestId("session-context-template-current");
+        // PLAN-0582 S4: collapsed by default. The unbound state is a risk badge in
+        // the summary row; the selector itself only exists in the expanded panel.
+        const settingsSummary = page.getByTestId("session-settings-summary");
+        await expect(page.getByTestId("session-settings-risk-template")).toContainText(
+            "模板未绑定",
+        );
+        await expect(page.getByTestId("session-settings-expanded")).toBeHidden();
+        await shoot(page, "04-chat-binding-default.png");
+
+        await settingsSummary.click();
         const select = page.getByTestId("session-context-template-select");
         await expect(select).toBeVisible();
-        // Unbound Session: no revision is pinned yet, so the badge shows the
-        // explicit-rebind requirement instead of a name.
-        await expect(badge).toContainText("需显式重新绑定请求模板");
-        await shoot(page, "04-chat-binding-default.png");
 
         await select.selectOption(`user:${TEMPLATE_ID}:1`);
 
@@ -173,8 +178,11 @@ test.describe("Context templates (PLAN-0414)", () => {
             connectionRevision: CONNECTION_REVISION,
         });
 
-        // Visible result: badge reflects the pinned revision.
-        await expect(badge).toContainText("User Bound Template v1");
+        // Visible result: the summary reflects the pinned revision.
+        await expect(page.getByTestId("session-context-template-current")).toContainText(
+            "User Bound Template v1",
+        );
+        await expect(page.getByTestId("session-settings-risk-template")).toHaveCount(0);
         await shoot(page, "05-chat-binding-user-template.png");
     });
 });
