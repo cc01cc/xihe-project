@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.auth;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
@@ -18,7 +20,6 @@ import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.service.InstanceOwnershipService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -65,7 +66,7 @@ class LocalModeSuperAdminBootstrapTest extends AbstractH2Test {
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;
-    @Autowired private WorkspaceUserRepository workspaceUserRepository;
+    @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private AccessRoleRepository accessRoleRepository;
     @Autowired private AccessRoleBindingRepository bindingRepository;
     @Autowired private AuthorizationGrantRepository grantRepository;
@@ -234,7 +235,7 @@ class LocalModeSuperAdminBootstrapTest extends AbstractH2Test {
         grantRepository.deleteAll();
         auditLogRepository.deleteAll();
         instanceOwnerRepository.deleteAll();
-        workspaceUserRepository.deleteAll();
+        workspaceFixture.unbindAllWorkspaces();
         workspaceRepository.deleteAll();
         userRepository.deleteAll();
         assertTrue(userRepository.count() == 0L, "precondition: an empty instance");

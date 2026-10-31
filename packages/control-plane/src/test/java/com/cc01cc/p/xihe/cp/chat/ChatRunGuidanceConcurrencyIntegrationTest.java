@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -52,6 +54,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class ChatRunGuidanceConcurrencyIntegrationTest extends AbstractIntegrationTest {
 
+    @Autowired
+    private WorkspaceFixture workspaceFixture;
+
     /**
      * The blocked consume must outlive the await window below if the machine is
      * slow; 15s is still bounded, so a genuine deadlock fails the test instead
@@ -100,7 +105,7 @@ class ChatRunGuidanceConcurrencyIntegrationTest extends AbstractIntegrationTest 
         assertTrue(registration.getStatusCode().is2xxSuccessful());
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        workspaceId = workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId))
+        workspaceId = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId))
                 .stream().findFirst().orElseThrow().getId().toString();
         Session session = new Session(workspaceId, userId, "Guidance Concurrency Session");
         session.setId(UUID.randomUUID());

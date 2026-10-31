@@ -230,8 +230,8 @@ class DomainSchemaMigrationTest {
         UUID workspaceId = UUID.randomUUID();
         UUID sessionId = UUID.randomUUID();
         UUID branchId = UUID.randomUUID();
-        executeUpdate("INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
-                + "'::uuid, 'v59-ws', '" + userId + "'::uuid)");
+        executeUpdate("INSERT INTO workspaces (id, name) VALUES ('" + workspaceId
+                + "'::uuid, 'v59-ws')");
         executeUpdate("INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('" + sessionId
                 + "'::uuid, '" + workspaceId + "'::uuid, '" + userId + "'::uuid, 'v59-session')");
         executeUpdate("INSERT INTO session_branches (id, session_id, created_at) VALUES ('" + branchId
@@ -357,8 +357,8 @@ class DomainSchemaMigrationTest {
         UUID workspaceId = UUID.randomUUID();
         executeUpdate("INSERT INTO users (id, email, password_hash, username) VALUES ('" + userId
                 + "'::uuid, 'cp-" + userId + "@test.local', 'hash', 'x' || left(md5(random()::text), 31))");
-        executeUpdate("INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
-                + "'::uuid, 'cp-ws', '" + userId + "'::uuid)");
+        executeUpdate("INSERT INTO workspaces (id, name) VALUES ('" + workspaceId
+                + "'::uuid, 'cp-ws')");
 
         UUID runId = UUID.randomUUID();
         UUID sessionId = UUID.randomUUID();
@@ -409,8 +409,12 @@ class DomainSchemaMigrationTest {
 
     @Test
     void v8SchemaGateFixesApplied() throws SQLException {
+        // PLAN-0610 W4b/V89: fk_workspaces_owner disappeared together with workspaces.owner_id.
+        assertEquals(0, scalarInt("SELECT count(*) FROM pg_constraint"
+                + " WHERE conname = 'fk_workspaces_owner'"),
+                "V89 drops the workspace owner FK with the column");
         for (String fk : new String[]{
-                "fk_workspaces_owner", "fk_sessions_user", "fk_chat_runs_user",
+                "fk_sessions_user", "fk_chat_runs_user",
                 "fk_files_user", "fk_context_events_user", "fk_context_projections_user",
                 "fk_approval_requests_user"}) {
             String deleteRule = scalarString(
@@ -526,6 +530,7 @@ class DomainSchemaMigrationTest {
                 upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
             executeUpdate(c, "INSERT INTO users (id, email, password_hash) VALUES ('" + userId
                     + "'::uuid, 'v57-" + userId + "@test.local', 'hash')");
+            // V57 schema: owner_id is still NOT NULL here.
             executeUpdate(c, "INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
                     + "'::uuid, 'v57-workspace', '" + userId + "'::uuid)");
             executeUpdate(c, "INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('" + sessionId
@@ -724,6 +729,7 @@ class DomainSchemaMigrationTest {
                 backupUrl, postgres.getUsername(), postgres.getPassword())) {
             executeUpdate(c, "INSERT INTO users (id, email, password_hash) VALUES ('" + userId
                     + "'::uuid, 'v57backup-" + userId + "@test.local', 'hash')");
+            // V57 schema: owner_id is still NOT NULL here.
             executeUpdate(c, "INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
                     + "'::uuid, 'v57backup-workspace', '" + userId + "'::uuid)");
             executeUpdate(c, "INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('" + sessionId
@@ -812,6 +818,7 @@ class DomainSchemaMigrationTest {
                 restoreUrl, postgres.getUsername(), postgres.getPassword())) {
             executeUpdate(c, "INSERT INTO users (id, email, password_hash) VALUES ('" + userId
                     + "'::uuid, 'v57backup-" + userId + "@test.local', 'hash')");
+            // V56 schema: owner_id is still NOT NULL here.
             executeUpdate(c, "INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
                     + "'::uuid, 'v57backup-workspace', '" + userId + "'::uuid)");
             executeUpdate(c, "INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('" + sessionId
@@ -860,8 +867,8 @@ class DomainSchemaMigrationTest {
         UUID sessionId = UUID.randomUUID();
         executeUpdate("INSERT INTO users (id, email, password_hash) VALUES ('" + userId
                 + "'::uuid, 'fresh-" + userId + "@test.local', 'hash')");
-        executeUpdate("INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
-                + "'::uuid, 'fresh-ws', '" + userId + "'::uuid)");
+        executeUpdate("INSERT INTO workspaces (id, name) VALUES ('" + workspaceId
+                + "'::uuid, 'fresh-ws')");
         executeUpdate("INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('" + sessionId
                 + "'::uuid, '" + workspaceId + "'::uuid, '" + userId + "'::uuid, 'fresh-session')");
         return sessionId;
@@ -902,12 +909,13 @@ class DomainSchemaMigrationTest {
                 upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
             executeUpdate(c, "INSERT INTO users (id, email, password_hash) VALUES ('" + userId
                     + "'::uuid, 'upgrade-" + userId + "@test.local', 'hash')");
+            // V33 schema: the legacy columns/table still exist here (V89 drops them later).
             executeUpdate(c, "INSERT INTO users (id, email, password_hash, role) VALUES ('" + adminId
                     + "'::uuid, 'upgrade-admin-" + adminId + "@test.local', 'hash', 'ADMIN')");
             executeUpdate(c, "INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
                     + "'::uuid, 'upgrade-workspace', '" + userId + "'::uuid)");
-            executeUpdate(c, "INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ('" + workspaceId
-                    + "'::uuid, '" + userId + "'::uuid, 'OWNER')");
+            executeUpdate(c, "INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ('"
+                    + workspaceId + "'::uuid, '" + userId + "'::uuid, 'OWNER')");
             executeUpdate(c, "INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('" + sessionId
                     + "'::uuid, '" + workspaceId + "'::uuid, '" + userId + "'::uuid, 'upgrade-session')");
             executeUpdate(c, "INSERT INTO chat_runs (id, session_id, user_id, workspace_id, idempotency_key, "
@@ -1082,13 +1090,31 @@ class DomainSchemaMigrationTest {
                 "pre-V44 runs must keep terminal_at NULL until a terminal transaction writes it");
     }
 
+    private static boolean hasWorkspaceOwnerColumn(Connection c) throws SQLException {
+        try (java.sql.PreparedStatement statement = c.prepareStatement(
+                "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public'"
+                        + " AND table_name = 'workspaces' AND column_name = 'owner_id'")) {
+            try (java.sql.ResultSet rs = statement.executeQuery()) {
+                rs.next();
+                return rs.getInt(1) > 0;
+            }
+        }
+    }
+
     private static UUID insertV44Fixture(Connection c, UUID userId, String label) throws SQLException {
         UUID workspaceId = UUID.randomUUID();
         UUID sessionId = UUID.randomUUID();
         UUID branchId = UUID.randomUUID();
         UUID runId = UUID.randomUUID();
-        executeUpdate(c, "INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
-                + "'::uuid, '" + label + "-ws', '" + userId + "'::uuid)");
+        // This helper is used on a V43 upgrade database (owner_id NOT NULL) and on the fresh database
+        // (V89 dropped the column), so the shape follows the connection.
+        if (hasWorkspaceOwnerColumn(c)) {
+            executeUpdate(c, "INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
+                    + "'::uuid, '" + label + "-ws', '" + userId + "'::uuid)");
+        } else {
+            executeUpdate(c, "INSERT INTO workspaces (id, name) VALUES ('" + workspaceId
+                    + "'::uuid, '" + label + "-ws')");
+        }
         executeUpdate(c, "INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('" + sessionId
                 + "'::uuid, '" + workspaceId + "'::uuid, '" + userId + "'::uuid, '" + label + "-session')");
         executeUpdate(c, "INSERT INTO session_branches (id, session_id, created_at) VALUES ('" + branchId
@@ -1249,6 +1275,7 @@ class DomainSchemaMigrationTest {
         UUID workspaceId = UUID.randomUUID();
         try (Connection c = DriverManager.getConnection(
                 upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
+            // Pre-V41 schema: legacy columns/table are still part of the shape being upgraded.
             executeUpdate(c, "INSERT INTO users (id, email, password_hash, role) VALUES ('" + adminId
                     + "'::uuid, 'v63-upgrade-admin-" + adminId + "@test.local', 'hash', 'ADMIN')");
             executeUpdate(c, "INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId

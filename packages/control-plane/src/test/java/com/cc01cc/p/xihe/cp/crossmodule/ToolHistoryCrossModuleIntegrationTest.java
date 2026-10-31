@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.crossmodule;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -7,10 +9,8 @@ import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -51,7 +51,7 @@ class ToolHistoryCrossModuleIntegrationTest extends AbstractWireMockTest {
     @Autowired
     private WorkspaceRepository workspaceRepository;
     @Autowired
-    private WorkspaceUserRepository workspaceUserRepository;
+    private WorkspaceFixture workspaceFixture;
     @Autowired
     private SessionRepository sessionRepository;
     @Autowired
@@ -66,9 +66,9 @@ class ToolHistoryCrossModuleIntegrationTest extends AbstractWireMockTest {
         // 父类 AbstractWireMockTest 的 @BeforeEach 已负责 restTemplate/wireMock。
         token = registerAndLogin();
         userId = jwtTokenProvider.getUserIdFromToken(token);
-        Workspace ws = workspaceRepository.save(new Workspace("Tool history test", userId));
+        Workspace ws = workspaceFixture.createOwnedWorkspace("Tool history test", userId);
         workspaceId = ws.getId().toString();
-        workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
         token = jwtTokenProvider.createAccessToken(userId, jwtTokenProvider.getEmailFromToken(token), "USER", workspaceId, 0);
 
     }

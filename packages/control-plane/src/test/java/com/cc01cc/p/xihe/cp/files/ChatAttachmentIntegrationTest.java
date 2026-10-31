@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.files;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,14 +26,12 @@ import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -64,7 +64,7 @@ class ChatAttachmentIntegrationTest extends AbstractIntegrationTest {
     private AuthorizationGrantRepository authorizationGrantRepository;
 
     @Autowired
-    private WorkspaceUserRepository workspaceUserRepository;
+    private WorkspaceFixture workspaceFixture;
 
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
@@ -85,9 +85,9 @@ class ChatAttachmentIntegrationTest extends AbstractIntegrationTest {
 
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        Workspace ws = workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId)).stream().findFirst().orElseThrow();
+        Workspace ws = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId)).stream().findFirst().orElseThrow();
         workspaceId = ws.getId().toString();
-        workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
         authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId, 0);
 
         sessionId = UUID.randomUUID().toString();

@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
@@ -8,7 +10,6 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.policy.GrantSources;
@@ -16,7 +17,6 @@ import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -42,7 +42,7 @@ class WorkspaceAgentControllerContractTest extends AbstractIntegrationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;
-    @Autowired private WorkspaceUserRepository workspaceUserRepository;
+    @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private AgentPrincipalRepository principalRepository;
     @Autowired private WorkspaceAgentRepository bindingRepository;
     @Autowired private AuthorizationGrantRepository grantRepository;
@@ -145,12 +145,14 @@ class WorkspaceAgentControllerContractTest extends AbstractIntegrationTest {
         User user = userRepository.saveAndFlush(new User("workspace-agents-" + UUID.randomUUID() + "@test.com",
                 "hash", "Workspace Agents Test"));
         userId = user.getId();
-        Workspace workspace = workspaceRepository.saveAndFlush(new Workspace("Agent binding test", userId.toString()));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Agent binding test", userId.toString());
         workspaceId = workspace.getId();
-        Workspace other = workspaceRepository.saveAndFlush(new Workspace("Other Agent binding test", userId.toString()));
+        Workspace other = workspaceFixture.createOwnedWorkspace("Other Agent binding test", userId.toString());
         otherWorkspaceId = other.getId();
-        workspaceUserRepository.saveAndFlush(new WorkspaceUser(workspaceId.toString(), userId.toString(), WorkspaceRole.OWNER));
-        workspaceUserRepository.saveAndFlush(new WorkspaceUser(otherWorkspaceId.toString(), userId.toString(), WorkspaceRole.OWNER));
+        // PLAN-0610 W4b: the operator under test is a plain workspace member (EDITOR). WS_OWNER
+        // materializes MANAGE_WORKSPACE_AGENTS/workspace:admin by design, which would bypass the gate.
+        workspaceFixture.bindWorkspaceRole(workspaceId.toString(), userId.toString(), WorkspaceRole.EDITOR);
+        workspaceFixture.bindWorkspaceRole(otherWorkspaceId.toString(), userId.toString(), WorkspaceRole.EDITOR);
 
         AgentPrincipal principal = new AgentPrincipal();
         principal.setName("Research Agent");

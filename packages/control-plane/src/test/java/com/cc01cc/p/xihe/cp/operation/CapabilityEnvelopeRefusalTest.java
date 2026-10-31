@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.operation;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -55,6 +57,9 @@ import static org.mockito.Mockito.when;
  * happens once and the refusal comes back from the envelope, not from RBAC.</p>
  */
 class CapabilityEnvelopeRefusalTest extends AbstractIntegrationTest {
+
+    @Autowired
+    private WorkspaceFixture workspaceFixture;
 
     private static final List<String> LIVE_APPROVAL_STATES =
             List.of("pending", "dispatching", "dispatch_unknown");
@@ -173,7 +178,7 @@ class CapabilityEnvelopeRefusalTest extends AbstractIntegrationTest {
         bearerToken = response.getBody().getAccessToken();
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        workspaceId = workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId))
+        workspaceId = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId))
                 .stream().findFirst().orElseThrow().getId().toString();
     }
 

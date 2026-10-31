@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -11,14 +13,12 @@ import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.cc01cc.p.xihe.cp.service.AgentTemplateService;
 import com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService;
@@ -79,7 +79,7 @@ class SessionWorkspaceBindingNegativeTest extends AbstractH2Test {
     private WorkspaceRepository workspaceRepository;
 
     @Autowired
-    private WorkspaceUserRepository workspaceUserRepository;
+    private WorkspaceFixture workspaceFixture;
 
     @Autowired
     private WorkspaceAgentRepository workspaceAgentRepository;
@@ -182,12 +182,12 @@ class SessionWorkspaceBindingNegativeTest extends AbstractH2Test {
         userId = user.getId().toString();
 
         // Workspace A owns the Session; Workspace B is a foreign Workspace of the same user.
-        Workspace a = workspaceRepository.save(new Workspace("plan0348-a", userId));
+        Workspace a = workspaceFixture.createOwnedWorkspace("plan0348-a", userId);
         workspaceA = a.getId().toString();
-        workspaceUserRepository.save(new WorkspaceUser(workspaceA, userId, WorkspaceRole.OWNER));
-        Workspace b = workspaceRepository.save(new Workspace("plan0348-b", userId));
+        workspaceFixture.bindWorkspaceRole(workspaceA, userId, WorkspaceRole.OWNER);
+        Workspace b = workspaceFixture.createOwnedWorkspace("plan0348-b", userId);
         workspaceB = b.getId().toString();
-        workspaceUserRepository.save(new WorkspaceUser(workspaceB, userId, WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(workspaceB, userId, WorkspaceRole.OWNER);
 
         tokenA = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceA, 0);
         tokenB = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceB, 0);

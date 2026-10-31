@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.credentials;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -15,7 +17,6 @@ import com.cc01cc.p.xihe.cp.repository.CredentialEventRepository;
 import com.cc01cc.p.xihe.cp.repository.CredentialRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
@@ -49,7 +50,7 @@ class CredentialRevealIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;
-    @Autowired private WorkspaceUserRepository workspaceUserRepository;
+    @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private AuthorizationGrantRepository grantRepository;
     @Autowired private AuditLogRepository auditLogRepository;
     @Autowired private CredentialRepository credentialRepository;
@@ -79,8 +80,7 @@ class CredentialRevealIntegrationTest extends AbstractIntegrationTest {
                     auditLogRepository.findByUserIdOrderByCreatedAtDesc(userId.toString()));
             if (workspaceId != null) {
                 UUID workspaceUuid = UUID.fromString(workspaceId);
-                workspaceUserRepository.deleteAll(
-                        workspaceUserRepository.findByIdWorkspaceId(workspaceUuid));
+                workspaceFixture.unbindWorkspace(workspaceUuid);
                 workspaceRepository.deleteById(workspaceUuid);
             }
             userRepository.deleteById(userId);

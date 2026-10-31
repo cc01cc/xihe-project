@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.crossmodule;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.containing;
 import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
@@ -24,13 +26,11 @@ import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.cc01cc.p.xihe.cp.service.AgentTemplateService;
 import com.cc01cc.p.xihe.cp.service.BranchPathService;
@@ -78,7 +78,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
     private WorkspaceRepository workspaceRepository;
 
     @Autowired
-    private WorkspaceUserRepository workspaceUserRepository;
+    private WorkspaceFixture workspaceFixture;
 
     @Autowired
     private WorkspaceAgentRepository workspaceAgentRepository;
@@ -132,10 +132,10 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
         token = registerAndLogin();
 
         userId = jwtTokenProvider.getUserIdFromToken(token);
-        Workspace ws = new Workspace("Agent Test", userId);
+        Workspace ws = new Workspace("Agent Test");
         ws = workspaceRepository.save(ws);
         workspaceId = ws.getId().toString();
-        workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
         token = jwtTokenProvider.createAccessToken(userId, jwtTokenProvider.getEmailFromToken(token), "USER", workspaceId, 0);
 
         var defaultTemplate = agentTemplateService.resolveForCreation(userId, workspaceId, null);
@@ -146,8 +146,8 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(
                 principalId, workspaceId, principalPermissions.deepCopy()));
 
-        assertTrue(workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId), UUID.fromString(userId)).isPresent(),
-                "Workspace user should be created");
+        assertTrue(workspaceFixture.isMember(UUID.fromString(workspaceId), UUID.fromString(userId)),
+                "Workspace membership binding should exist");
 
         when(sseEmitterManager.hasEmitter(anyString())).thenReturn(true);
     }

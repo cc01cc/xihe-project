@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
@@ -39,7 +41,6 @@ import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
@@ -48,7 +49,6 @@ import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
@@ -100,7 +100,7 @@ class ChatControllerTest extends AbstractH2Test {
     private WorkspaceRepository workspaceRepository;
 
     @Autowired
-    private WorkspaceUserRepository workspaceUserRepository;
+    private WorkspaceFixture workspaceFixture;
 
     @Autowired
     private WorkspaceAgentRepository workspaceAgentRepository;
@@ -252,9 +252,9 @@ class ChatControllerTest extends AbstractH2Test {
 
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        Workspace ws = workspaceRepository.save(new Workspace("chat-test-workspace", userId));
+        Workspace ws = workspaceFixture.createOwnedWorkspace("chat-test-workspace", userId);
         workspaceId = ws.getId().toString();
-        workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
         authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId, 0);
 
         var defaultTemplate = agentTemplateService.resolveForCreation(userId, workspaceId, null);
@@ -852,8 +852,8 @@ class ChatControllerTest extends AbstractH2Test {
         restTemplate.postForEntity(baseUrl + "/api/v1/auth/register",
                 new RegisterRequest(email2, TestDataFactory.PASSWORD, "Other"), AuthResponse.class);
         User user2 = userRepository.findByEmail(email2).orElseThrow();
-        Workspace ws2 = workspaceRepository.save(new Workspace("chat-test-other", user2.getId().toString()));
-        workspaceUserRepository.save(new WorkspaceUser(ws2.getId().toString(), user2.getId().toString(), WorkspaceRole.OWNER));
+        Workspace ws2 = workspaceFixture.createOwnedWorkspace("chat-test-other", user2.getId().toString());
+        workspaceFixture.bindWorkspaceRole(ws2.getId().toString(), user2.getId().toString(), WorkspaceRole.OWNER);
         String token2 = jwtTokenProvider.createAccessToken(
                 user2.getId().toString(), email2, "USER", ws2.getId().toString(), 0);
 

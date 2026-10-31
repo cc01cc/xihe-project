@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.LoginRequest;
@@ -42,6 +44,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ChatRunGuidanceHttpIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
+    private WorkspaceFixture workspaceFixture;
+
+    @Autowired
     private ChatRunRepository runs;
 
     @Autowired
@@ -74,7 +79,7 @@ class ChatRunGuidanceHttpIntegrationTest extends AbstractIntegrationTest {
         assertTrue(reg.getStatusCode().is2xxSuccessful());
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        workspaceId = workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId))
+        workspaceId = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId))
                 .stream().findFirst().orElseThrow().getId().toString();
 
         Session session = new Session(workspaceId, userId, "Guidance HTTP Session");

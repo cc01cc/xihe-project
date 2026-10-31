@@ -102,7 +102,8 @@ public class WorkspaceEnvironmentController {
         response.put("storageBackend", valueOrDefault(workspace.getStorageBackend(), "host_directory"));
         response.put("storageRef", valueOrDefault(workspace.getStorageRef(), workspaceId));
         response.put("storageMode", valueOrDefault(workspace.getStorageMode(), "managed_import"));
-        response.put("hostPath", visibleHostPath(workspace, userId, isAdmin));
+        response.put("hostPath", visibleHostPath(workspace,
+                workspaceService.ownerIdOf(workspace.getId()), userId, isAdmin));
         response.put("executionMode", valueOrDefault(workspace.getExecutionMode(), "docker"));
         response.put("capability", workspaceService.capabilitySnapshot(workspace));
         // PLAN-0396：Job 可用性来自 Runtime capabilities（单一事实源），
@@ -266,8 +267,8 @@ public class WorkspaceEnvironmentController {
         return result;
     }
 
-    static String visibleHostPath(Workspace workspace, String userId, boolean admin) {
-        return admin || (userId != null && userId.equals(workspace.getOwnerId()))
+    static String visibleHostPath(Workspace workspace, String ownerId, String userId, boolean admin) {
+        return admin || (userId != null && userId.equals(ownerId))
                 ? workspace.getHostPath() : null;
     }
 

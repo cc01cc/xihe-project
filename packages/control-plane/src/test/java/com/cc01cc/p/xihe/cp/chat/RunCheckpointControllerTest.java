@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -10,14 +12,12 @@ import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.RunCheckpointRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -65,7 +65,7 @@ class RunCheckpointControllerTest extends AbstractH2Test {
     @Autowired
     private WorkspaceRepository workspaceRepository;
     @Autowired
-    private WorkspaceUserRepository workspaceUserRepository;
+    private WorkspaceFixture workspaceFixture;
     @Autowired
     private SessionRepository sessionRepository;
     @Autowired
@@ -163,9 +163,9 @@ class RunCheckpointControllerTest extends AbstractH2Test {
                 AuthResponse.class);
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        Workspace workspace = workspaceRepository.save(new Workspace("cp-test-workspace", userId));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("cp-test-workspace", userId);
         workspaceId = workspace.getId().toString();
-        workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
         authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId, 0);
 
         sessionId = UUID.randomUUID().toString();
@@ -401,7 +401,7 @@ class RunCheckpointControllerTest extends AbstractH2Test {
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(3, ((Map<?, ?>) response.getBody().get("counts")).get("deleted"));
 
-        Workspace foreign = workspaceRepository.save(new Workspace("cp-foreign-ws", UUID.randomUUID().toString()));
+        Workspace foreign = workspaceFixture.createOwnedWorkspace("cp-foreign-ws", UUID.randomUUID().toString());
         ResponseEntity<Map> denied = get("/api/v1/workspaces/" + foreign.getId() + "/checkpoints");
         assertEquals(HttpStatus.NOT_FOUND, denied.getStatusCode());
         assertEquals("WORKSPACE_NOT_FOUND", denied.getBody().get("code"));

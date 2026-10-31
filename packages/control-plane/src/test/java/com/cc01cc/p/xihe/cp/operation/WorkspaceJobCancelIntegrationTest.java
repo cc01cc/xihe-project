@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.operation;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -9,13 +11,11 @@ import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceJob;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceJobHistory;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceJobHistoryRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceJobRepository;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeJobClient;
@@ -71,7 +71,7 @@ class WorkspaceJobCancelIntegrationTest extends AbstractIntegrationTest {
     private WorkspaceRepository workspaceRepository;
 
     @Autowired
-    private WorkspaceUserRepository workspaceUserRepository;
+    private WorkspaceFixture workspaceFixture;
 
     @Autowired
     private WorkspaceJobRepository workspaceJobs;
@@ -94,7 +94,7 @@ class WorkspaceJobCancelIntegrationTest extends AbstractIntegrationTest {
         authToken = response.getBody().getAccessToken();
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        workspaceId = workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId))
+        workspaceId = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId))
                 .stream().findFirst().orElseThrow().getId().toString();
 
         Session session = new Session(workspaceId, userId, "Job Cancel Session");
@@ -291,7 +291,7 @@ class WorkspaceJobCancelIntegrationTest extends AbstractIntegrationTest {
                 new RegisterRequest(email, TestDataFactory.PASSWORD, "Member"),
                 AuthResponse.class).getBody();
         User member = userRepository.findByEmail(email).orElseThrow();
-        workspaceUserRepository.saveAndFlush(new WorkspaceUser(workspaceId, member.getId().toString(), WorkspaceRole.MEMBER));
+        workspaceFixture.bindWorkspaceRole(workspaceId, member.getId().toString(), WorkspaceRole.MEMBER);
 
         UUID domainJobId = newJob(UUID.randomUUID().toString(), "running");
         when(runtimeJobClient.cancelJob(workspaceId, jobStateService.findByJobId(domainJobId).orElseThrow().jobId()))

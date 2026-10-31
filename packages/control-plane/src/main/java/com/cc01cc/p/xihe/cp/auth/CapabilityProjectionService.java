@@ -2,20 +2,18 @@ package com.cc01cc.p.xihe.cp.auth;
 
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.GrantSources;
 import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
+import com.cc01cc.p.xihe.cp.policy.WorkspaceMembershipService;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -41,16 +39,16 @@ public class CapabilityProjectionService {
 
     private final AuthzContext authzContext;
     private final AuthorizationGrantRepository grants;
-    private final WorkspaceUserRepository workspaceUsers;
+    private final WorkspaceMembershipService memberships;
     private final WorkspaceRepository workspaces;
 
     public CapabilityProjectionService(AuthzContext authzContext,
                                        AuthorizationGrantRepository grants,
-                                       WorkspaceUserRepository workspaceUsers,
+                                       WorkspaceMembershipService memberships,
                                        WorkspaceRepository workspaces) {
         this.authzContext = authzContext;
         this.grants = grants;
-        this.workspaceUsers = workspaceUsers;
+        this.memberships = memberships;
         this.workspaces = workspaces;
     }
 
@@ -77,12 +75,10 @@ public class CapabilityProjectionService {
         AuthzContext.Capabilities capabilities = authzContext.capabilitiesFor(userId);
         Set<UUID> adminWorkspaces = new LinkedHashSet<>();
         if (capabilities.workspaceAdminAll() || capabilities.isInstanceAdmin()) {
-            for (WorkspaceUser membership : workspaceUsers.findByIdUserId(userId)) {
-                UUID workspaceId = membership.getId() == null ? null
-                        : membership.getId().getWorkspaceId();
-                if (workspaceId != null) {
-                    adminWorkspaces.add(workspaceId);
-                }
+            // PLAN-0610 W4b: memberships are role bindings now (workspace_users is gone).
+            for (WorkspaceMembershipService.WorkspaceRoleRef ref
+                    : memberships.workspaceRolesOf(userId)) {
+                adminWorkspaces.add(ref.workspaceId());
             }
         } else {
             adminWorkspaces.addAll(capabilities.workspaceAdminWorkspaces());
@@ -123,16 +119,10 @@ public class CapabilityProjectionService {
         List<AtomView> instanceAtoms = atoms(grants.findScopedGrants(
                 AuthzContext.SUBJECT_USER, userId, GrantSources.EVALUATION_SOURCES, null));
 
-        Map<UUID, WorkspaceUser> memberships = new LinkedHashMap<>();
-        for (WorkspaceUser membership : workspaceUsers.findByIdUserId(userId)) {
-            UUID workspaceId = membership.getId() == null ? null : membership.getId().getWorkspaceId();
-            if (workspaceId != null) {
-                memberships.putIfAbsent(workspaceId, membership);
-            }
-        }
-
         List<WorkspacePermissions> workspaceViews = new ArrayList<>();
-        for (Map.Entry<UUID, WorkspaceUser> entry : memberships.entrySet()) {
+        for (WorkspaceMembershipService.WorkspaceRoleRef ref : memberships.workspaceRolesOf(userId)) {
+            Map.Entry<UUID, WorkspaceMembershipService.WorkspaceRoleRef> entry =
+                    Map.entry(ref.workspaceId(), ref);
             UUID workspaceId = entry.getKey();
             Workspace workspace = workspaces.findById(workspaceId).orElse(null);
             if (workspace == null || workspace.getDeletedAt() != null) {
@@ -143,9 +133,8 @@ public class CapabilityProjectionService {
                             workspaceId).stream()
                     .filter(row -> "workspace".equals(row.getScopeType()))
                     .toList();
-            WorkspaceUser membership = entry.getValue();
             workspaceViews.add(new WorkspacePermissions(workspaceId.toString(),
-                    membership.getRole() == null ? null : membership.getRole().canonicalName(),
+                    entry.getValue().role().canonicalName(),
                     authzContext.canWorkspaceAdmin(userId, workspaceId),
                     atoms(workspaceRows)));
         }

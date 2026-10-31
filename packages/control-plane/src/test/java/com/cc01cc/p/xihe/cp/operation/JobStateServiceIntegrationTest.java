@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.operation;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -30,6 +32,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** Domain-owned MCP tool result materialization and Workspace Job state transitions. */
 class JobStateServiceIntegrationTest extends AbstractIntegrationTest {
 
+    @Autowired
+    private WorkspaceFixture workspaceFixture;
+
     @Autowired private JobStateService jobStateService;
     @Autowired private SessionRepository sessionRepository;
     @Autowired private UserRepository userRepository;
@@ -49,7 +54,7 @@ class JobStateServiceIntegrationTest extends AbstractIntegrationTest {
                 baseUrl + "/api/v1/auth/register", register, AuthResponse.class);
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        workspaceId = workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId))
+        workspaceId = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId))
                 .stream().findFirst().orElseThrow().getId().toString();
 
         Session session = new Session(workspaceId, userId, "Job State Session");

@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.context;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -45,6 +47,9 @@ import org.springframework.test.context.DynamicPropertySource;
 /** Real CP/PG wire and the unmodified Python EventStore consumer. */
 class ContextEventReadContractIntegrationTest extends AbstractIntegrationTest {
 
+    @Autowired
+    private WorkspaceFixture workspaceFixture;
+
     private static final String SERVICE_TOKEN = UUID.randomUUID() + "-" + UUID.randomUUID();
     private static final String MARKER = "syntheticSensitiveMarker0470";
     private static final Set<String> EVENT_KEYS = Set.of("aggregate_id", "sequence", "type",
@@ -87,7 +92,7 @@ class ContextEventReadContractIntegrationTest extends AbstractIntegrationTest {
         assertThat(registration.getBody()).isNotNull();
         userToken = registration.getBody().getAccessToken();
         userId = userRepository.findByEmail(email).orElseThrow().getId().toString();
-        workspaceId = workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId))
+        workspaceId = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId))
                 .getFirst().getId().toString();
         var session = new Session(workspaceId, userId, "Context read contract");
         session.setId(UUID.randomUUID());

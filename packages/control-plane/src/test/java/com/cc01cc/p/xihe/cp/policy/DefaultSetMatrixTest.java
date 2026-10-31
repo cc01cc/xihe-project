@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.AuthService;
@@ -11,12 +13,10 @@ import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;import com.cc01cc.p.
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.repository.AuditLogRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -102,7 +102,7 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
     private WorkspaceRepository workspaceRepository;
 
     @Autowired
-    private WorkspaceUserRepository workspaceUserRepository;
+    private WorkspaceFixture workspaceFixture;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -123,7 +123,7 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
                 .forEach(auditLogRepository::deleteById);
         if (workspaceId != null) {
             UUID workspaceUuid = UUID.fromString(workspaceId);
-            workspaceUserRepository.deleteAll(workspaceUserRepository.findByIdWorkspaceId(workspaceUuid));
+            workspaceFixture.unbindWorkspace(workspaceUuid);
             workspaceRepository.deleteById(workspaceUuid);
         }
         userRepository.deleteById(userUuid);
@@ -190,7 +190,7 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
         assertFalse(authzContext.isInstanceSuper(userUuid), "ADMIN is not SUPER_ADMIN");
 
         String adminUserId = userUuid.toString();
-        workspaceUserRepository.save(new WorkspaceUser(workspaceId, adminUserId, WorkspaceRole.MEMBER));
+        workspaceFixture.bindWorkspaceRole(workspaceId, adminUserId, WorkspaceRole.MEMBER);
         assertTrue(grantAuthorizationService.allowsUserOnly(new PolicyRequest(
                         "probe_tool", List.of("credential_use"), List.of("credential:" + UUID.randomUUID()),
                         ToolShape.STRUCTURED, adminUserId, workspaceId, null)),

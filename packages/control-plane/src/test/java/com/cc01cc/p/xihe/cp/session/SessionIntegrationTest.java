@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.session;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -18,7 +20,6 @@ import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
@@ -32,7 +33,6 @@ import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -79,7 +79,7 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
     private WorkspaceRepository workspaceRepository;
 
     @Autowired
-    private WorkspaceUserRepository workspaceUserRepository;
+    private WorkspaceFixture workspaceFixture;
 
     @Autowired
     private AgentPrincipalRepository agentPrincipalRepository;
@@ -135,11 +135,11 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
         // The default workspace is created via the auth flow.
-        var defaultWorkspace = workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId)).stream().findFirst();
+        var defaultWorkspace = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId)).stream().findFirst();
         workspaceId = defaultWorkspace.orElseThrow().getId().toString();
         // Backfill membership (auth flow already inserts OWNER; ensure role is set).
-        if (workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId), UUID.fromString(userId)).isEmpty()) {
-            workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
+        if (!workspaceFixture.isMember(UUID.fromString(workspaceId), UUID.fromString(userId))) {
+            workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
         }
 
         when(sseEmitterManager.hasEmitter(anyString())).thenReturn(true);

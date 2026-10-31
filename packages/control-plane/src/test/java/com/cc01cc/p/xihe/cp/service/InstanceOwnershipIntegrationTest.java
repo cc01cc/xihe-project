@@ -9,9 +9,6 @@ import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -88,7 +85,9 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
         });
         // Deterministic starting point: no ADMINs, no owner, epoch back to the
         // value V85 initializes. Each test promotes exactly the accounts it needs.
-        jdbc.update("UPDATE users SET role = 'USER', token_version = 0");
+        // PLAN-0610 W4b: users.role is gone; each test grants the instance tier binding it needs.
+        jdbc.update("DELETE FROM role_bindings WHERE scope_type = 'instance'");
+        jdbc.update("UPDATE users SET token_version = 0");
         jdbc.update("UPDATE instance_owner SET owner_user_id = NULL, assigned_at = NULL, assigned_by = NULL");
     }
 
@@ -107,9 +106,11 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
         String second = register("tie-b@test.com");
         String firstId = userIdOf(first);
         String secondId = userIdOf(second);
+        promote(firstId);
+        promote(secondId);
         // Equal created_at + both ADMIN + no owner yet: the frozen ORDER BY must
         // resolve to the smaller id.
-        jdbc.update("UPDATE users SET role = 'ADMIN', created_at = TIMESTAMPTZ '2026-01-01 00:00:00+00'"
+        jdbc.update("UPDATE users SET created_at = TIMESTAMPTZ '2026-01-01 00:00:00+00'"
                 + " WHERE id IN (CAST(? AS UUID), CAST(? AS UUID))", firstId, secondId);
         String expected = firstId.compareTo(secondId) < 0 ? firstId : secondId;
 
@@ -136,14 +137,24 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
                 "o.owner_user_id IS NULL guard keeps a transferred pointer intact");
     }
 
-    /** Runs the exact UPDATE shipped in V85 (extracted from the migration file). */
-    private void runShippedBackfill() throws Exception {
-        String sql = Files.readString(Path.of("src/main/resources/db/migration/V85__instance_ownership.sql"),
-                StandardCharsets.UTF_8);
-        int start = sql.indexOf("UPDATE instance_owner o");
-        int end = sql.indexOf(';', start);
-        assertTrue(start > 0 && end > start, "V85 must contain the frozen backfill UPDATE");
-        jdbc.update(sql.substring(start, end));
+/**
+     * Replays the V85 pointer-claim contract against the access-role model.
+     *
+     * <p>The shipped V85 SQL reads {@code users.role}, which V89 dropped, so the statement cannot be
+     * re-executed verbatim. The contract it froze — "claim the earliest ADMIN, ties broken by id,
+     * never overwrite an existing pointer" — is replayed here over {@code role_bindings}, which is
+     * the only place an instance tier lives since V88.</p>
+     */
+    private void runShippedBackfill() {
+        jdbc.update("UPDATE instance_owner o SET owner_user_id = ("
+                + " SELECT b.subject_id FROM role_bindings b"
+                + " JOIN roles r ON r.id = b.role_id"
+                + " JOIN users u ON u.id = b.subject_id"
+                + " WHERE b.scope_type = 'instance' AND b.subject_type = 'user'"
+                + "   AND r.name = 'ADMIN' AND u.deleted_at IS NULL"
+                + " ORDER BY u.created_at, u.id LIMIT 1),"
+                + " assigned_at = NOW(), assigned_by = NULL, updated_at = NOW()"
+                + " WHERE o.id = 1 AND o.owner_user_id IS NULL");
     }
 
     // ── V2/V4: read surface, privacy and epoch ───────────────────────────────
@@ -399,10 +410,9 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
         assignOwner(ownerId);
         ownerToken = login("t43-cap-owner@test.com");
 
-        // Legacy column says ADMIN, but the binding was never written: the capability judgement
-        // (design §3.6) refuses instead of trusting users.role.
+        // No instance ADMIN binding is granted to the target: the capability judgement (design §3.6)
+        // refuses instead of trusting a legacy row.
         String targetId = userIdOf(register("t43-cap-target@test.com"));
-        jdbc.update("UPDATE users SET role = 'ADMIN' WHERE id = CAST(? AS UUID)", targetId);
 
         String before = transferState();
         ResponseEntity<String> denied = putOwner(ownerToken, targetId, PASSWORD);
@@ -534,16 +544,13 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
     }
 
     private String workspaceOfMember(String userId) {
-        return jdbc.queryForObject("SELECT workspace_id FROM workspace_users WHERE user_id = ? LIMIT 1",
+        return jdbc.queryForObject("SELECT scope_id FROM role_bindings WHERE subject_type = 'user'"
+                + " AND subject_id = ? AND scope_type = 'workspace' LIMIT 1",
                 String.class, UUID.fromString(userId));
     }
 
-    /**
-     * PLAN-0610 W1b: {@code users.role} is a legacy column — the instance-administration
-     * capability comes from the role binding, so a promoted account needs both.
-     */
+    /** PLAN-0610 W4a/W4b: the instance tier is the ADMIN role binding (users.role is gone). */
     private void promote(String userId) {
-        jdbc.update("UPDATE users SET role = 'ADMIN' WHERE id = CAST(? AS UUID)", userId);
         grantInstanceRole(userId, "ADMIN");
     }
 
@@ -567,8 +574,11 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
         return owner == null ? null : owner.toString();
     }
 
+    /** PLAN-0610 W4b: the instance tier is a binding; users.role no longer exists. */
     private String roleOf(String userId) {
-        return jdbc.queryForObject("SELECT role FROM users WHERE id = CAST(? AS UUID)", String.class, userId);
+        return jdbc.queryForObject("SELECT r.name FROM role_bindings b JOIN roles r ON r.id = b.role_id"
+                + " WHERE b.subject_type = 'user' AND b.subject_id = CAST(? AS UUID)"
+                + " AND b.scope_type = 'instance'", String.class, userId);
     }
 
     /** T4.3: the subject's instance-scope tier bindings, as role names in a stable order. */

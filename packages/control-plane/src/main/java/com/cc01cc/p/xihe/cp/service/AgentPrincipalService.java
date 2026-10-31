@@ -37,7 +37,7 @@ import java.util.UUID;
  * <p>PLAN-0470 #22: User/Workspace identity reads go through the Auth and
  * Workspace narrow entries; the agent-principal default grant write is owned
  * by Policy ({@link GrantDefaultService#createAgentPrincipalGrant}). Direct
- * User/WorkspaceUser/Workspace/Grant-repository access is limited to this
+ * User/Workspace/Grant-repository access (not the retired workspace_users table, dropped by V89) is limited to this
  * service's own AgentPrincipal/WorkspaceAgent tables plus the Policy grant
  * <em>reads</em> used for permission ceilings (reads stay until a dedicated
  * Policy query seam is approved).

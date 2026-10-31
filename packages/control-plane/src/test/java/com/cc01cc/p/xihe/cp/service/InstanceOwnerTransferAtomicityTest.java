@@ -69,7 +69,10 @@ class InstanceOwnerTransferAtomicityTest extends AbstractIntegrationTest {
 
     @AfterEach
     void resetInstanceState() {
-        jdbc.update("UPDATE users SET role = 'USER', token_version = 0");
+        // PLAN-0610 W4b: users.role is gone; the instance tier is a binding, so the reset clears
+        // every instance-scope binding instead.
+        jdbc.update("DELETE FROM role_bindings WHERE scope_type = 'instance'");
+        jdbc.update("UPDATE users SET token_version = 0");
         jdbc.update("UPDATE instance_owner SET owner_user_id = NULL, assigned_at = NULL,"
                 + " assigned_by = NULL");
     }

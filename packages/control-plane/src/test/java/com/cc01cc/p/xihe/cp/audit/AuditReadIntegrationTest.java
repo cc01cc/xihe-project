@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.audit;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -62,6 +64,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class AuditReadIntegrationTest extends AbstractIntegrationTest {
 
+    @Autowired
+    private WorkspaceFixture workspaceFixture;
+
     /** /internal/v1 only accepts the service Bearer (SecurityConfig hasRole INTERNAL_SERVICE). */
     private static final String SERVICE_TOKEN = "dev-token-not-secure";
 
@@ -118,15 +123,14 @@ class AuditReadIntegrationTest extends AbstractIntegrationTest {
         authToken = register(ownerEmail);
         User user = userRepository.findByEmail(ownerEmail).orElseThrow();
         userId = user.getId().toString();
-        workspaceId = workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId))
+        workspaceId = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId))
                 .stream().findFirst().orElseThrow().getId().toString();
 
         String otherEmail = newEmail("audit-other");
         otherAuthToken = register(otherEmail);
         User otherUser = userRepository.findByEmail(otherEmail).orElseThrow();
         otherUserId = otherUser.getId().toString();
-        otherWorkspaceId = workspaceRepository
-                .findActiveByMemberUserId(UUID.fromString(otherUserId))
+        otherWorkspaceId =                 workspaceFixture.memberWorkspacesOf(UUID.fromString(otherUserId))
                 .stream().findFirst().orElseThrow().getId().toString();
 
         Session session = new Session(workspaceId, userId, "Audit read session");

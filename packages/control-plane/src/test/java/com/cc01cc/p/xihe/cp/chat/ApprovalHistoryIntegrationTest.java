@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.ApprovalHistory;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
@@ -8,14 +10,12 @@ import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.repository.ApprovalHistoryRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -53,7 +53,7 @@ class ApprovalHistoryIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private WorkspaceRepository workspaceRepository;
     @Autowired
-    private WorkspaceUserRepository workspaceUserRepository;
+    private WorkspaceFixture workspaceFixture;
     @Autowired
     private UserRepository userRepository;
     @Autowired
@@ -69,7 +69,8 @@ class ApprovalHistoryIntegrationTest extends AbstractIntegrationTest {
     void cleanUp() {
         if (workspaceId != null) {
             jdbcTemplate.update("DELETE FROM sessions WHERE CAST(workspace_id AS VARCHAR) = ?", workspaceId);
-            jdbcTemplate.update("DELETE FROM workspace_users WHERE CAST(workspace_id AS VARCHAR) = ?", workspaceId);
+            jdbcTemplate.update("DELETE FROM role_bindings WHERE scope_type = 'workspace'"
+                    + " AND CAST(scope_id AS VARCHAR) = ?", workspaceId);
             if (workspaceRepository.findById(UUID.fromString(workspaceId)).isPresent()) {
                 workspaceRepository.deleteById(UUID.fromString(workspaceId));
             }
@@ -86,9 +87,9 @@ class ApprovalHistoryIntegrationTest extends AbstractIntegrationTest {
     private Fixture fixture() {
         User user = userRepository.save(new User("approval-history-" + UUID.randomUUID() + "@test.com", "hash", "Approval history"));
         userId = user.getId().toString();
-        Workspace workspace = workspaceRepository.save(new Workspace("Approval history workspace", userId));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Approval history workspace", userId);
         workspaceId = workspace.getId().toString();
-        workspaceUserRepository.saveAndFlush(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
         Session session = new Session(workspaceId, userId, "Approval history session");
         session.setId(UUID.randomUUID());
         session = sessionRepository.saveAndFlush(session);

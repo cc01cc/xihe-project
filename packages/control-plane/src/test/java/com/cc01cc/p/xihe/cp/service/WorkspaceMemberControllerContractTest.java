@@ -1,10 +1,11 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
@@ -15,7 +16,6 @@ import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,6 +39,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -50,7 +51,7 @@ class WorkspaceMemberControllerContractTest extends AbstractIntegrationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;
-    @Autowired private WorkspaceUserRepository workspaceUserRepository;
+    @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private AccessRoleRepository accessRoleRepository;
     @Autowired private AccessRoleBindingRepository accessRoleBindingRepository;
@@ -66,8 +67,8 @@ class WorkspaceMemberControllerContractTest extends AbstractIntegrationTest {
     @AfterEach
     void cleanFixtures() {
         if (workspaceId != null) {
-            jdbcTemplate.update("DELETE FROM workspace_users WHERE workspace_id = ?::uuid",
-                    workspaceId.toString());
+            jdbcTemplate.update("DELETE FROM role_bindings WHERE scope_type = 'workspace'"
+                    + " AND scope_id = ?::uuid", workspaceId.toString());
             jdbcTemplate.update("DELETE FROM audit_logs WHERE CAST(workspace_id AS VARCHAR) = ?",
                     workspaceId.toString());
             workspaceRepository.deleteById(workspaceId);
@@ -236,13 +237,11 @@ class WorkspaceMemberControllerContractTest extends AbstractIntegrationTest {
         assertEquals(HttpStatusCode.valueOf(403), deniedAdd.getStatusCode());
 
         // Emergency removal works without membership.
-        workspaceUserRepository.saveAndFlush(new WorkspaceUser(workspaceId.toString(),
-                target.getId().toString(), WorkspaceRole.EDITOR));
+        workspaceFixture.bindWorkspaceRole(workspaceId.toString(), target.getId().toString(), WorkspaceRole.EDITOR);
         ResponseEntity<Void> removed = request(HttpMethod.DELETE, path() + "/" + target.getId(),
                 null, adminToken, false, Void.class);
         assertEquals(HttpStatusCode.valueOf(204), removed.getStatusCode());
-        assertTrue(workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(
-                workspaceId, target.getId()).isEmpty());
+        assertFalse(workspaceFixture.isMember(workspaceId, target.getId()));
 
         // Removing the unique OWNER is refused even for instance ADMIN.
         ResponseEntity<Map> lastOwner = request(HttpMethod.DELETE, path() + "/" + ownerId,
@@ -267,8 +266,7 @@ class WorkspaceMemberControllerContractTest extends AbstractIntegrationTest {
 
         // Fixture-seeded dual owners (API cannot grant OWNER; spec §2): one removal succeeds.
         User second = newUser("second-owner");
-        workspaceUserRepository.saveAndFlush(new WorkspaceUser(workspaceId.toString(),
-                second.getId().toString(), WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(workspaceId.toString(), second.getId().toString(), WorkspaceRole.OWNER);
         ResponseEntity<Void> split = request(HttpMethod.DELETE, path() + "/" + second.getId(),
                 null, ownerToken, true, Void.class);
         assertEquals(HttpStatusCode.valueOf(204), split.getStatusCode());
@@ -297,7 +295,7 @@ class WorkspaceMemberControllerContractTest extends AbstractIntegrationTest {
         } finally {
             pool.shutdownNow();
         }
-        assertEquals(1, workspaceUserRepository.findByIdUserId(target.getId()).size());
+        assertEquals(1, workspaceFixture.bindingsOfUser(target.getId()).size());
     }
 
     private User adminUser;
@@ -324,10 +322,9 @@ class WorkspaceMemberControllerContractTest extends AbstractIntegrationTest {
         ownerId = owner.getId();
         ownerUsername = owner.getUsername();
         Workspace workspace = workspaceRepository.saveAndFlush(
-                new Workspace("Member matrix test", ownerId.toString()));
+                new Workspace("Member matrix test"));
         workspaceId = workspace.getId();
-        workspaceUserRepository.saveAndFlush(new WorkspaceUser(workspaceId.toString(),
-                ownerId.toString(), WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(workspaceId.toString(), ownerId.toString(), WorkspaceRole.OWNER);
         ownerToken = TestDataFactory.createGlobalToken(ownerId.toString(), owner.getEmail(), "USER", 0);
         // JDK HttpClient factory supports PATCH (the shared RestTemplate cannot).
         client = new RestTemplate(new JdkClientHttpRequestFactory());
@@ -349,8 +346,7 @@ class WorkspaceMemberControllerContractTest extends AbstractIntegrationTest {
     /** Token for a user; a non-null workspaceRole seeds a membership row (header path). */
     private String tokenFor(User user, String workspaceRole) {
         if (workspaceRole != null) {
-            workspaceUserRepository.saveAndFlush(new WorkspaceUser(workspaceId.toString(),
-                    user.getId().toString(), WorkspaceRole.valueOf(workspaceRole)));
+            workspaceFixture.bindWorkspaceRole(workspaceId.toString(), user.getId().toString(), WorkspaceRole.valueOf(workspaceRole));
         }
         return TestDataFactory.createGlobalToken(user.getId().toString(), user.getEmail(), "USER", 0);
     }

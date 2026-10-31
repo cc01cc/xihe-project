@@ -59,7 +59,8 @@ public class WorkspaceController {
                     HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Authentication required");
         }
         return ResponseEntity.ok(workspaceService.getWorkspacesByUser(userId).stream()
-                .map(workspace -> toMap(workspace, userId, isAdmin(), roleFor(workspace, userId))).toList());
+                .map(workspace -> toMap(workspace, workspaceService.ownerIdOf(workspace.getId()),
+                        userId, isAdmin(), roleFor(workspace, userId))).toList());
     }
 
     @GetMapping("/{workspaceId}")
@@ -106,7 +107,10 @@ public class WorkspaceController {
             // toView already returns a ResponseEntity. Nesting it as the body
             // serializes `{body, headers, statusCode}` and hides workspace.id
             // from the UI response.
-            return ResponseEntity.status(HttpStatus.CREATED).body(toMap(workspace, userId, isAdmin(), WorkspaceRole.OWNER.name()));
+            // PLAN-0610 W4b: the creator is the owner through the WS_OWNER binding written by the service.
+        return ResponseEntity.status(HttpStatus.CREATED).body(toMap(workspace,
+                workspaceService.ownerIdOf(workspace.getId()), userId, isAdmin(),
+                WorkspaceRole.OWNER.name()));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -141,23 +145,26 @@ public class WorkspaceController {
     }
 
     private ResponseEntity<Map<String, Object>> toView(Workspace workspace, String userId, boolean admin) {
-        return ResponseEntity.ok(toMap(workspace, userId, admin, roleFor(workspace, userId)));
+        return ResponseEntity.ok(toMap(workspace, workspaceService.ownerIdOf(workspace.getId()),
+                userId, admin, roleFor(workspace, userId)));
     }
 
     private String roleFor(Workspace workspace, String userId) {
         return workspaceService.resolveWorkspaceRole(workspace.getId().toString(), userId);
     }
 
-    static Map<String, Object> toMap(Workspace workspace, String userId, boolean admin, String workspaceRole) {
+    static Map<String, Object> toMap(Workspace workspace, String ownerId, String userId,
+            boolean admin, String workspaceRole) {
         Map<String, Object> view = new LinkedHashMap<>();
         view.put("id", workspace.getId());
         view.put("name", workspace.getName());
         view.put("description", workspace.getDescription());
-        view.put("ownerId", workspace.getOwnerId());
+        // PLAN-0610 W4b: derived from the WS_OWNER binding (workspaces.owner_id was dropped by V89).
+        view.put("ownerId", ownerId);
         view.put("storageBackend", workspace.getStorageBackend());
         view.put("storageRef", workspace.getStorageRef());
         view.put("storageMode", workspace.getStorageMode());
-        view.put("hostPath", admin || (userId != null && userId.equals(workspace.getOwnerId()))
+        view.put("hostPath", admin || (userId != null && userId.equals(ownerId))
                 ? workspace.getHostPath() : null);
         view.put("executionMode", workspace.getExecutionMode());
         view.put("generation", workspace.getGeneration());

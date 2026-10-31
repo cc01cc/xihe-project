@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
@@ -14,7 +16,6 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
@@ -23,7 +24,6 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.cc01cc.p.xihe.cp.service.AgentTemplateService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -71,7 +71,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
     private WorkspaceRepository workspaceRepository;
 
     @Autowired
-    private WorkspaceUserRepository workspaceUserRepository;
+    private WorkspaceFixture workspaceFixture;
 
     @Autowired
     private UserRepository userRepository;
@@ -133,7 +133,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
             workspaceRepository.deleteById(unjoinedWorkspaceId);
         }
         if (workspaceId != null) {
-            workspaceUserRepository.deleteAll(workspaceUserRepository.findByIdWorkspaceId(workspaceId));
+            workspaceFixture.unbindWorkspace(workspaceId);
             workspaceRepository.deleteById(workspaceId);
         }
         if (userId != null) {
@@ -146,9 +146,9 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         User user = userRepository.save(new User("grant-path-" + UUID.randomUUID() + "@test.com",
                 "hash", "Grant path test"));
         userId = user.getId().toString();
-        Workspace workspace = workspaceRepository.save(new Workspace("Grant path test", userId));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Grant path test", userId);
         workspaceId = workspace.getId();
-        workspaceUserRepository.save(new WorkspaceUser(workspaceId.toString(), userId, WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(workspaceId.toString(), userId, WorkspaceRole.OWNER);
 
         AgentPrincipal principal = new AgentPrincipal();
         principal.setName("Grant path test agent");
@@ -236,7 +236,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         setBindingCap(workspaceId, atoms("read", "write"));
 
         Workspace unjoinedWorkspace = workspaceRepository.save(
-                new Workspace("Unjoined grant path test", userId));
+                new Workspace("Unjoined grant path test"));
         unjoinedWorkspaceId = unjoinedWorkspace.getId();
         Session unboundWorkspaceSession = saveAgentSession(unjoinedWorkspaceId, userId,
                 "Unbound workspace agent", atoms("read", "write"));
@@ -314,10 +314,9 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         User user = userRepository.save(new User("grant-chain-" + UUID.randomUUID() + "@test.com",
                 "hash", "Grant chain test"));
         userId = user.getId().toString();
-        Workspace workspace = workspaceRepository.save(new Workspace("Grant chain test", userId));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Grant chain test", userId);
         workspaceId = workspace.getId();
-        WorkspaceUser membership = workspaceUserRepository.saveAndFlush(
-                new WorkspaceUser(workspaceId.toString(), userId, WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(workspaceId.toString(), userId, WorkspaceRole.OWNER);
 
         AgentPrincipal principal = new AgentPrincipal();
         principal.setName("Grant chain agent");
@@ -333,13 +332,12 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         PolicyRequest agentWrite = request(workspaceId, userId, memberSession, "write", "src/main.java");
         assertTrue(grantAuthorizationService.allows(agentWrite));
 
-        workspaceUserRepository.delete(membership);
+        workspaceFixture.unbindWorkspaceRole(workspaceId, UUID.fromString(userId));
         assertTrue(grantAuthorizationService.allows(agentWrite),
                 "Agent actions follow the WorkspaceAgent binding, not human WorkspaceUser membership");
         assertFalse(grantAuthorizationService.allowsUserOnly(agentWrite),
                 "revoking human membership denies the user-only path immediately");
-        workspaceUserRepository.saveAndFlush(new WorkspaceUser(
-                workspaceId.toString(), userId, WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(workspaceId.toString(), userId, WorkspaceRole.OWNER);
 
         WorkspaceAgentId bindingId = new WorkspaceAgentId(principalId, workspaceId);
         workspaceAgentRepository.deleteById(bindingId);
@@ -383,9 +381,9 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         User user = userRepository.save(new User("principal-lifecycle-" + UUID.randomUUID() + "@test.com",
                 "hash", "Principal lifecycle test"));
         userId = user.getId().toString();
-        Workspace workspace = workspaceRepository.save(new Workspace("Principal lifecycle", userId));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Principal lifecycle", userId);
         workspaceId = workspace.getId();
-        workspaceUserRepository.save(new WorkspaceUser(workspaceId.toString(), userId, WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(workspaceId.toString(), userId, WorkspaceRole.OWNER);
         addGrant("user", UUID.fromString(userId), "role", null, null, atoms("read", "write"));
         addGrant("user", UUID.fromString(userId), "role", null, null,
                 atoms("MANAGE_WORKSPACE_AGENTS"));
@@ -473,9 +471,9 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         User user = userRepository.save(new User("template-scope-" + UUID.randomUUID() + "@test.com",
                 "hash", "Template scope test"));
         userId = user.getId().toString();
-        Workspace workspace = workspaceRepository.save(new Workspace("Template scope workspace", userId));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Template scope workspace", userId);
         workspaceId = workspace.getId();
-        workspaceUserRepository.save(new WorkspaceUser(workspaceId.toString(), userId, WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(workspaceId.toString(), userId, WorkspaceRole.OWNER);
         addGrant("user", UUID.fromString(userId), "role", null, null, atoms("read", "write"));
 
         String userRoleId = UUID.randomUUID().toString();
@@ -514,7 +512,11 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         AgentTemplateService.ResolvedTemplate defaultTemplate = agentTemplateService.resolveForCreation(
                 userId, workspaceId.toString(), null);
         assertEquals("default", defaultTemplate.sourceLayer());
-        assertEquals(atoms("read", "write"), defaultTemplate.snapshot().path("permissions"),
+        // PLAN-0610 W4b: the default snapshot is the caller's materialized atom set. The fixture user
+        // holds the WS_OWNER binding, so the default carries the owner rings (design #23/#27: the
+        // workspace usage atoms are materialized, only capability atoms are not).
+        assertEquals(atoms("MANAGE_WORKSPACE_AGENTS", "delete", "exec", "read", "write"),
+                defaultTemplate.snapshot().path("permissions"),
                 "no selected template preserves the bare-default grant behavior");
 
         AgentPrincipal principal = agentPrincipalService.createPrincipal(

@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.operation;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -42,6 +44,9 @@ import static org.mockito.Mockito.when;
  */
 class WorkspaceJobOutputIntegrationTest extends AbstractIntegrationTest {
 
+    @Autowired
+    private WorkspaceFixture workspaceFixture;
+
     @MockitoBean
     private RuntimeJobClient runtimeJobClient;
 
@@ -77,7 +82,7 @@ class WorkspaceJobOutputIntegrationTest extends AbstractIntegrationTest {
         authToken = response.getBody().getAccessToken();
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        workspaceId = workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId))
+        workspaceId = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId))
                 .stream().findFirst().orElseThrow().getId().toString();
 
         Session session = new Session(workspaceId, userId, "Job Output Session");

@@ -165,7 +165,7 @@ class TieredQueryIntegrationTest extends AbstractIntegrationTest {
                 "out-of-chain sessions are denied even inside the same workspace");
 
         otherWorkspaceId = workspaceRepository.save(
-                new Workspace("Tier1 foreign ws", userId)).getId().toString();
+                new Workspace("Tier1 foreign ws")).getId().toString();
         Session foreign = new Session(otherWorkspaceId, userId, "Tier1 foreign");
         foreign.setId(UUID.randomUUID());
         sessionRepository.saveAndFlush(foreign);
@@ -311,7 +311,7 @@ class TieredQueryIntegrationTest extends AbstractIntegrationTest {
                 "hash", "Tier query test"));
         userId = user.getId().toString();
         workspaceId = workspaceRepository.save(
-                new Workspace("Tier query test", userId)).getId().toString();
+                new Workspace("Tier query test")).getId().toString();
         if (withPrincipal) {
             AgentPrincipal principal = new AgentPrincipal();
             principal.setName("Tier query principal");

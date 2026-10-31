@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.AuthService;
@@ -14,7 +16,6 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
@@ -53,7 +54,7 @@ class CredentialThreeLayerAuthorizationTest extends AbstractIntegrationTest {
     @Autowired private WorkspaceAgentRepository workspaceAgentRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;
-    @Autowired private WorkspaceUserRepository workspaceUserRepository;
+    @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private ObjectMapper objectMapper;
 
     private String userId;
@@ -75,7 +76,7 @@ class CredentialThreeLayerAuthorizationTest extends AbstractIntegrationTest {
             grantRepository.deleteAll(grantRepository.findBySubjectTypeAndSubjectId(
                     GrantPrincipalPathResolver.USER, userUuid));
             if (workspaceId != null) {
-                workspaceUserRepository.deleteAll(workspaceUserRepository.findByIdWorkspaceId(workspaceId));
+                workspaceFixture.unbindWorkspace(workspaceId);
                 workspaceRepository.deleteById(workspaceId);
             }
             userRepository.deleteById(userUuid);

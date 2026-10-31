@@ -2324,7 +2324,12 @@ public class McpProxyController {
                     return AuthorizationResult.failure(problem(
                             HttpStatus.FORBIDDEN, "FORBIDDEN", "User context requires an owned session"));
                 }
-                userId = workspace.getOwnerId();
+                // PLAN-0610 W4b: the owner is the WS_OWNER binding (workspaces.owner_id is gone).
+                userId = workspaceService.ownerIdOf(workspace.getId());
+                if (userId == null) {
+                    return AuthorizationResult.failure(problem(
+                            HttpStatus.NOT_FOUND, "WORKSPACE_NOT_FOUND", "Workspace has no owner"));
+                }
             }
         } else {
             userId = TenantContext.getUserId();

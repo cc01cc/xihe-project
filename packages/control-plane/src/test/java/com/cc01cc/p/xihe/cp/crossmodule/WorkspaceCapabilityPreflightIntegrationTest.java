@@ -23,7 +23,6 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.web.client.HttpServerErrorException;
 
 import java.util.Map;
-import java.util.UUID;
 
 /**
  * PLAN-0384 T1.3/V2: the public capability preflight route plus the reason
@@ -200,7 +199,7 @@ class WorkspaceCapabilityPreflightIntegrationTest extends AbstractWireMockTest {
                                 + "\"executionMode\":\"windows-mxc\",\"available\":false,"
                                 + "\"reason\":\"MXC_EXECUTABLE_MISSING\"}")));
 
-        Workspace workspace = new Workspace("preflight-snapshot", UUID.randomUUID().toString());
+        Workspace workspace = new Workspace("preflight-snapshot");
         workspace.setStorageMode("direct_attach");
         workspace.setHostPath("C:/work/repo");
         workspace.setExecutionMode("windows-mxc");

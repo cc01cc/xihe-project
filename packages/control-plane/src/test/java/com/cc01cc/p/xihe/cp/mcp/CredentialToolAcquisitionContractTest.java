@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.mcp;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.chat.ApprovalDecision;
 import com.cc01cc.p.xihe.cp.chat.ApprovalService;
@@ -17,7 +19,6 @@ import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
@@ -32,7 +33,6 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -127,7 +127,7 @@ class CredentialToolAcquisitionContractTest extends AbstractIntegrationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;
-    @Autowired private WorkspaceUserRepository workspaceUserRepository;
+    @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private AgentPrincipalRepository agentPrincipalRepository;
     @Autowired private WorkspaceAgentRepository workspaceAgentRepository;
     @Autowired private SessionRepository sessionRepository;
@@ -167,10 +167,9 @@ class CredentialToolAcquisitionContractTest extends AbstractIntegrationTest {
         User user = userRepository.save(new User("acquire-contract-" + UUID.randomUUID() + "@test.com", "hash",
                 "Acquire contract"));
         userId = user.getId().toString();
-        Workspace workspace = workspaceRepository.save(new Workspace("Acquire contract", user.getId().toString()));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Acquire contract", user.getId().toString());
         workspaceId = workspace.getId().toString();
-        workspaceUserRepository.saveAndFlush(
-                new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
 
         leaseCredential = credentialService.create(new CredentialService.CreateRequest(
                 "USER", userId, "leased-contract", "token", "lease",
@@ -239,7 +238,7 @@ class CredentialToolAcquisitionContractTest extends AbstractIntegrationTest {
             grantRepository.deleteAll(grantRepository.findBySubjectTypeAndSubjectId("user", userUuid));
             if (workspaceId != null) {
                 UUID workspaceUuid = UUID.fromString(workspaceId);
-                workspaceUserRepository.deleteAll(workspaceUserRepository.findByIdWorkspaceId(workspaceUuid));
+                workspaceFixture.unbindWorkspace(workspaceUuid);
                 workspaceRepository.deleteById(workspaceUuid);
             }
             userRepository.deleteById(userUuid);

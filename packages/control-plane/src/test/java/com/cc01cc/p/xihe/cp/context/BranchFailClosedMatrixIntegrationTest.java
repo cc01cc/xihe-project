@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.context;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -61,6 +63,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class BranchFailClosedMatrixIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
+    private WorkspaceFixture workspaceFixture;
+
+    @Autowired
     private BranchPathService branchPathService;
     @Autowired
     private SessionRepository sessionRepository;
@@ -103,7 +108,7 @@ class BranchFailClosedMatrixIntegrationTest extends AbstractIntegrationTest {
 
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        workspaceId = workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId))
+        workspaceId = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId))
                 .stream().findFirst().orElseThrow().getId().toString();
     }
 

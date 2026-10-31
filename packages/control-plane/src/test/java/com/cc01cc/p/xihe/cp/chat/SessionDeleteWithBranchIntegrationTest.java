@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -9,13 +11,11 @@ import com.cc01cc.p.xihe.cp.entity.MessageRole;
 import com.cc01cc.p.xihe.cp.entity.SessionBranch;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionBranchRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.service.BranchPathService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import org.junit.jupiter.api.BeforeEach;
@@ -52,7 +52,7 @@ class SessionDeleteWithBranchIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository providerConnectionRepository;
     @Autowired private WorkspaceRepository workspaceRepository;
-    @Autowired private WorkspaceUserRepository workspaceUserRepository;
+    @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private ChatRunRepository chatRunRepository;
     @Autowired private MessageRepository messageRepository;
     @Autowired private SessionBranchRepository sessionBranchRepository;
@@ -73,11 +73,10 @@ class SessionDeleteWithBranchIntegrationTest extends AbstractIntegrationTest {
 
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        workspaceId = workspaceRepository.findActiveByMemberUserId(user.getId()).stream()
+        workspaceId = workspaceFixture.memberWorkspacesOf(user.getId()).stream()
                 .findFirst().orElseThrow().getId().toString();
-        if (workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(
-                UUID.fromString(workspaceId), UUID.fromString(userId)).isEmpty()) {
-            workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
+        if (!workspaceFixture.isMember(UUID.fromString(workspaceId), UUID.fromString(userId))) {
+            workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
         }
     }
 

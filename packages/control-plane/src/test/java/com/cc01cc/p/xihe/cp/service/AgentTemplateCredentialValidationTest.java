@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.AuthService;
@@ -18,7 +20,6 @@ import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
 import com.cc01cc.p.xihe.cp.repository.CredentialRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -51,7 +52,7 @@ class AgentTemplateCredentialValidationTest extends AbstractIntegrationTest {
     @Autowired private ConfigAuditRepository configAuditRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;
-    @Autowired private WorkspaceUserRepository workspaceUserRepository;
+    @Autowired private WorkspaceFixture workspaceFixture;
 
     private UUID writerId;
     private String workspaceId;
@@ -70,8 +71,7 @@ class AgentTemplateCredentialValidationTest extends AbstractIntegrationTest {
                     auditLogRepository.findByUserIdOrderByCreatedAtDesc(writerId.toString()));
             if (workspaceId != null) {
                 UUID workspaceUuid = UUID.fromString(workspaceId);
-                workspaceUserRepository.deleteAll(
-                        workspaceUserRepository.findByIdWorkspaceId(workspaceUuid));
+                workspaceFixture.unbindWorkspace(workspaceUuid);
                 workspaceRepository.deleteById(workspaceUuid);
             }
             userRepository.deleteById(writerId);

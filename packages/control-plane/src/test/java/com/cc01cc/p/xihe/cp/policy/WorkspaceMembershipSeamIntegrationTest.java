@@ -29,13 +29,13 @@ import org.springframework.web.client.RestTemplate;
  * <p>Three claims, each cross-surface (the point of round-4 P2-5 is that all readers agree):</p>
  *
  * <ol>
- *   <li><b>Creation</b> binds the creator to {@code WS_OWNER} (binding + transitional legacy row),
- *       and the member API reports them as the owner.</li>
+ *   <li><b>Creation</b> binds the creator to {@code WS_OWNER}, and the member API reports them as
+ *       the owner.</li>
  *   <li><b>{@code PUT /api/v1/bindings}</b> is a real membership grant: the subject passes the
  *       tenant gate, appears in the member list and sees the workspace in its workspace list — the
  *       three readers that used to query {@code workspace_users} directly.</li>
- *   <li>The <b>legacy fallback</b> still counts a pre-W3-3 {@code workspace_users} row as
- *       membership, and a member removal through the API clears both facts.</li>
+ *   <li>A member removal through the API drops the binding, so every reader stops admitting the
+ *       subject (V89 dropped the legacy table, so the binding is the only membership fact).</li>
  * </ol>
  */
 class WorkspaceMembershipSeamIntegrationTest extends AbstractIntegrationTest {
@@ -73,10 +73,6 @@ class WorkspaceMembershipSeamIntegrationTest extends AbstractIntegrationTest {
 
         assertEquals(List.of("WS_OWNER"), workspaceTierRoles(userId, workspaceId),
                 "the creator holds exactly one workspace-tier binding");
-        assertEquals("OWNER", jdbc.queryForObject("SELECT role FROM workspace_users"
-                        + " WHERE workspace_id = CAST(? AS UUID) AND user_id = CAST(? AS UUID)",
-                String.class, workspaceId, userId),
-                "the legacy row is mirrored while the table exists (dropped by V89)");
 
         ResponseEntity<String> members = call(HttpMethod.GET,
                 "/api/v1/workspaces/" + workspaceId + "/members", null, token);
@@ -131,29 +127,27 @@ class WorkspaceMembershipSeamIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void legacyRowStillCountsAndMemberRemovalClearsBothFacts() throws Exception {
-        String ownerToken = register("seam-legacy-owner@test.com");
+    void memberRemovalDropsTheBindingForEveryReader() throws Exception {
+        String ownerToken = register("seam-removal-owner@test.com");
         String ownerId = userIdOf(ownerToken);
-        String workspaceId = createWorkspace(ownerToken, "seam-legacy");
-        String memberId = userIdOf(register("seam-legacy-member@test.com"));
-        String memberToken = login("seam-legacy-member@test.com");
+        String workspaceId = createWorkspace(ownerToken, "seam-removal");
+        String memberId = userIdOf(register("seam-removal-member@test.com"));
+        String memberToken = login("seam-removal-member@test.com");
 
-        // A pre-W3-3 fixture row only (no binding): the fallback must still report membership.
-        jdbc.update("INSERT INTO workspace_users (workspace_id, user_id, role) VALUES"
-                        + " (CAST(? AS UUID), CAST(? AS UUID), 'MEMBER')",
-                workspaceId, memberId);
+        // A workspace-tier binding is the only way in (V89 dropped workspace_users).
+        jdbc.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+                        + " scope_id, granted_at) SELECT gen_random_uuid(), r.id, 'user',"
+                        + " CAST(? AS UUID), 'workspace', CAST(? AS UUID), NOW()"
+                        + " FROM roles r WHERE r.name = 'WS_EDITOR'", memberId, workspaceId);
         assertEquals(HttpStatus.OK,
                 call(HttpMethod.GET, "/api/v1/workspaces/" + workspaceId, null, memberToken,
                         workspaceId).getStatusCode());
-        assertTrue(workspaceTierRoles(memberId, workspaceId).isEmpty(),
-                "the fixture wrote no binding — the fallback is what admitted the subject");
+        assertEquals(List.of("WS_EDITOR"), workspaceTierRoles(memberId, workspaceId));
 
-        // The owner removes the member: both the binding path and the legacy row are cleared.
+        // The owner removes the member: the binding and the derived access go with it.
         ResponseEntity<String> removed = call(HttpMethod.DELETE,
                 "/api/v1/workspaces/" + workspaceId + "/members/" + memberId, null, ownerToken);
         assertEquals(HttpStatus.NO_CONTENT, removed.getStatusCode(), removed.getBody());
-        assertEquals(0, countRows("SELECT COUNT(*) FROM workspace_users WHERE workspace_id ="
-                + " CAST(? AS UUID) AND user_id = CAST(? AS UUID)", workspaceId, memberId));
         assertTrue(workspaceTierRoles(memberId, workspaceId).isEmpty());
         assertEquals(HttpStatus.FORBIDDEN,
                 call(HttpMethod.GET, "/api/v1/workspaces/" + workspaceId, null, memberToken,

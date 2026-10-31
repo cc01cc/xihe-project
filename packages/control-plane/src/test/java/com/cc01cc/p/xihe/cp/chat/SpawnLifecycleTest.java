@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
@@ -9,7 +11,6 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
@@ -17,7 +18,6 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.awaitility.Awaitility;
@@ -88,7 +88,7 @@ class SpawnLifecycleTest extends AbstractIntegrationTest {
     private WorkspaceRepository workspaceRepository;
 
     @Autowired
-    private WorkspaceUserRepository workspaceUserRepository;
+    private WorkspaceFixture workspaceFixture;
 
     @Autowired
     private UserRepository userRepository;
@@ -368,9 +368,9 @@ class SpawnLifecycleTest extends AbstractIntegrationTest {
         User user = userRepository.save(new User("spawn-lifecycle-" + UUID.randomUUID() + "@test.com",
                 "hash", "Spawn lifecycle test"));
         userId = user.getId().toString();
-        Workspace workspace = workspaceRepository.save(new Workspace("Spawn lifecycle test", userId));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Spawn lifecycle test", userId);
         workspaceId = workspace.getId().toString();
-        workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
         AgentPrincipal principal = new AgentPrincipal();
         principal.setName("Spawn lifecycle principal");
         principal.setCreatedByUserId(userId);

@@ -6,12 +6,9 @@ import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUserId;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -25,12 +22,13 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
 /**
- * PLAN-0610 W3-3: the <b>single membership seam</b> of a workspace.
+ * PLAN-0610: the <b>single membership seam</b> of a workspace.
  *
  * <p>Before this class every surface asked {@code workspace_users} directly (member API, tenant
  * interceptor, D9 context access, grant evaluation, attachment access, agent templates) and the
@@ -48,13 +46,13 @@ import java.util.UUID;
  *       workspace role is not carried by the access token (only instance tier bindings need the I4
  *       epoch, because the token used to carry the instance role claim), and bumping here would
  *       invalidate the actor's own token on every membership edit — including the workspace they
- *       just created. The legacy {@code workspace_users} row is <b>mirrored</b> while the table
- *       still exists so the surfaces that have not moved yet (workspace list sql, 0565-era
- *       fixtures) keep working; V89 drops the table together with the mirror.</li>
- *   <li><b>Reads</b> prefer the binding and fall back to the legacy row. The fallback exists only
- *       for rows/fixtures created before this wave; it logs a warning so a stale writer is visible
- *       instead of silent. Deletable in one line once V89 lands.</li>
+ *       just created.</li>
  * </ul>
+ *
+ * <p>PLAN-0610 W4b (V89): the transitional {@code workspace_users} mirror and read fallback are
+ * gone — the table was dropped with the legacy {@code workspaces.owner_id} column, so the binding is
+ * the <b>only</b> membership fact. Anything that used to read "the owner of a workspace" now derives
+ * it from the {@code WS_OWNER} binding ({@link #ownerOf}).</p>
  *
  * <p>What this class deliberately does <b>not</b> decide: whether an instance administrator may act
  * on the workspace ({@link AuthzContext#canWorkspaceAdmin} — see {@code AccessScopeResolver}) and
@@ -74,20 +72,17 @@ public class WorkspaceMembershipService {
 
     private final AccessRoleRepository roles;
     private final AccessRoleBindingRepository bindings;
-    private final WorkspaceUserRepository legacyMembers;
     private final UserRepository users;
     private final RoleGrantMaterializer materializer;
     private final AuditLogger audit;
 
     public WorkspaceMembershipService(AccessRoleRepository roles,
                                       AccessRoleBindingRepository bindings,
-                                      WorkspaceUserRepository legacyMembers,
                                       UserRepository users,
                                       RoleGrantMaterializer materializer,
                                       AuditLogger audit) {
         this.roles = roles;
         this.bindings = bindings;
-        this.legacyMembers = legacyMembers;
         this.users = users;
         this.materializer = materializer;
         this.audit = audit;
@@ -98,27 +93,25 @@ public class WorkspaceMembershipService {
                          WorkspaceRole role, Instant joinedAt) {
     }
 
-    /** The caller's workspace role, binding first and legacy row as the transitional fallback. */
+    /** One workspace membership of a subject (for the self-service capability projection). */
+    public record WorkspaceRoleRef(UUID workspaceId, WorkspaceRole role) {
+    }
+
+    /** The caller's workspace role, from the binding only (V89 dropped the legacy table). */
     @Transactional(readOnly = true)
     public Optional<WorkspaceRole> roleOf(UUID workspaceId, UUID userId) {
         if (workspaceId == null || userId == null) {
             return Optional.empty();
         }
         Map<UUID, String> roleNames = roleNamesById();
-        Optional<WorkspaceRole> bound = bindings
+        return bindings
                 .findBySubjectTypeAndScopeTypeAndScopeId(SUBJECT_USER, AccessScope.WORKSPACE,
                         workspaceId)
                 .stream()
                 .filter(binding -> userId.equals(binding.getSubjectId()))
                 .map(binding -> ROLE_BY_NAME.get(roleNames.get(binding.getRoleId())))
-                .filter(java.util.Objects::nonNull)
+                .filter(Objects::nonNull)
                 .findFirst();
-        if (bound.isPresent()) {
-            return bound;
-        }
-        return legacyMembers
-                .findByIdWorkspaceIdAndIdUserId(workspaceId, userId)
-                .map(WorkspaceUser::getRole);
     }
 
     @Transactional(readOnly = true)
@@ -133,7 +126,29 @@ public class WorkspaceMembershipService {
                 .orElse(false);
     }
 
-    /** OWNER count (bindings ∪ legacy rows, deduplicated by user) for the last-owner guard. */
+    /**
+     * The workspace owner as the wire/derived view sees it: the earliest-granted {@code WS_OWNER}
+     * binding subject. {@code workspaces.owner_id} is gone (V89); an owner is a binding, and the
+     * contract keeps a single {@code ownerId} field by reporting the first owner (the creator unless
+     * ownership was handed over). Empty when the workspace has no owner binding.
+     */
+    @Transactional(readOnly = true)
+    public Optional<UUID> ownerOf(UUID workspaceId) {
+        if (workspaceId == null) {
+            return Optional.empty();
+        }
+        Map<UUID, String> roleNames = roleNamesById();
+        return bindings
+                .findBySubjectTypeAndScopeTypeAndScopeId(SUBJECT_USER, AccessScope.WORKSPACE,
+                        workspaceId)
+                .stream()
+                .filter(binding -> WorkspaceRole.OWNER
+                        == ROLE_BY_NAME.get(roleNames.get(binding.getRoleId())))
+                .min(Comparator.comparing(AccessRoleBinding::getGrantedAt))
+                .map(AccessRoleBinding::getSubjectId);
+    }
+
+    /** OWNER count for the last-owner guard. */
     @Transactional(readOnly = true)
     public long countOwners(UUID workspaceId) {
         return members(workspaceId).stream()
@@ -141,10 +156,26 @@ public class WorkspaceMembershipService {
                 .count();
     }
 
-    /**
-     * The workspace's members: every workspace-scope user binding joined with the account, plus the
-     * legacy rows that have no binding yet (bindings win on a duplicate subject).
-     */
+    /** Every workspace membership of a subject, ordered by workspace id (self-service projection). */
+    @Transactional(readOnly = true)
+    public List<WorkspaceRoleRef> workspaceRolesOf(UUID userId) {
+        if (userId == null) {
+            return List.of();
+        }
+        Map<UUID, String> roleNames = roleNamesById();
+        List<WorkspaceRoleRef> refs = new ArrayList<>();
+        for (AccessRoleBinding binding : bindings.findBySubjectTypeAndSubjectIdAndScopeType(
+                SUBJECT_USER, userId, AccessScope.WORKSPACE)) {
+            WorkspaceRole role = ROLE_BY_NAME.get(roleNames.get(binding.getRoleId()));
+            if (role != null) {
+                refs.add(new WorkspaceRoleRef(binding.getScopeId(), role));
+            }
+        }
+        refs.sort(Comparator.comparing(WorkspaceRoleRef::workspaceId));
+        return refs;
+    }
+
+    /** The workspace's members: one workspace-scope user binding per subject, joined with accounts. */
     @Transactional(readOnly = true)
     public List<Member> members(UUID workspaceId) {
         Map<UUID, String> roleNames = roleNamesById();
@@ -172,21 +203,13 @@ public class WorkspaceMembershipService {
             members.add(new Member(user.getId(), user.getUsername(), user.getEmail(),
                     user.getName(), entry.getValue().role(), entry.getValue().joinedAt()));
         }
-        for (WorkspaceUser legacy : legacyMembers.findByIdWorkspaceId(workspaceId)) {
-            if (boundBySubject.containsKey(legacy.getId().getUserId())) {
-                continue;
-            }
-            users.findById(legacy.getId().getUserId()).ifPresent(user -> members.add(
-                    new Member(user.getId(), user.getUsername(), user.getEmail(), user.getName(),
-                            legacy.getRole(), legacy.getCreatedAt())));
-        }
         members.sort(Comparator.comparing(Member::joinedAt).thenComparing(Member::username));
         return members;
     }
 
     /**
-     * Grants or changes a workspace role in one transaction: the binding becomes the truth, the
-     * subject's atoms are re-materialized with an epoch bump, and the legacy row is mirrored.
+     * Grants or changes a workspace role in one transaction: the binding becomes the truth and the
+     * subject's atoms are re-materialized.
      */
     @Transactional
     public void assign(UUID workspaceId, UUID userId, WorkspaceRole role, UUID actorUserId) {
@@ -210,7 +233,6 @@ public class WorkspaceMembershipService {
         bindings.save(new AccessRoleBinding(accessRole.getId(), SUBJECT_USER, userId,
                 AccessScope.WORKSPACE, workspaceId, actorUserId));
         bindings.flush();
-        mirrorLegacyRow(workspaceId, userId, role);
         materializer.materializeSubject(SUBJECT_USER, userId, actorUserId, null);
         audit.recordDurableChange(actorUserId == null ? null : actorUserId.toString(),
                 workspaceId.toString(), "workspace_membership_bound", "workspace_member",
@@ -219,7 +241,7 @@ public class WorkspaceMembershipService {
                 workspaceId, userId, role.canonicalName());
     }
 
-    /** Removes the workspace membership (binding + mirrored legacy row) and re-materializes. */
+    /** Removes the workspace membership (binding only) and re-materializes the subject. */
     @Transactional
     public void remove(UUID workspaceId, UUID userId, UUID actorUserId) {
         if (workspaceId == null || userId == null) {
@@ -235,8 +257,6 @@ public class WorkspaceMembershipService {
                 .toList();
         bindings.deleteAll(existing);
         bindings.flush();
-        legacyMembers.findById(new WorkspaceUserId(workspaceId.toString(), userId.toString()))
-                .ifPresent(legacyMembers::delete);
         materializer.materializeSubject(SUBJECT_USER, userId, actorUserId, null);
         audit.recordDurableChange(actorUserId == null ? null : actorUserId.toString(),
                 workspaceId.toString(), "workspace_membership_unbound", "workspace_member",
@@ -252,20 +272,6 @@ public class WorkspaceMembershipService {
             case "VIEWER" -> SystemAccessRoleCatalog.WS_VIEWER;
             default -> SystemAccessRoleCatalog.WS_EDITOR;
         };
-    }
-
-    /**
-     * PLAN-0610 W3-3 transition: keep {@code workspace_users} in step while the table exists (V89
-     * drops it). Delete this method together with the fallback branch in {@link #roleOf} — nothing
-     * else may write the legacy table.
-     */
-    private void mirrorLegacyRow(UUID workspaceId, UUID userId, WorkspaceRole role) {
-        WorkspaceUserId id = new WorkspaceUserId(workspaceId.toString(), userId.toString());
-        legacyMembers.findById(id).ifPresentOrElse(row -> {
-            row.setRole(role);
-            legacyMembers.save(row);
-        }, () -> legacyMembers.save(new WorkspaceUser(workspaceId.toString(),
-                userId.toString(), role)));
     }
 
     private Map<UUID, String> roleNamesById() {
@@ -287,5 +293,3 @@ public class WorkspaceMembershipService {
                 "Workspace access denied");
     }
 }
-
-

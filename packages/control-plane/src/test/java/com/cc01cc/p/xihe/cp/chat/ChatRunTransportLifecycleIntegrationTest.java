@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
@@ -9,7 +11,6 @@ import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunTransportAttemptRepository;
@@ -17,7 +18,6 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.service.RunCheckpointService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -54,7 +54,7 @@ class ChatRunTransportLifecycleIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired private UserRepository users;
     @Autowired private WorkspaceRepository workspaces;
-    @Autowired private WorkspaceUserRepository workspaceUsers;
+    @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private AgentPrincipalRepository principals;
     @Autowired private WorkspaceAgentRepository workspaceAgents;
     @Autowired private SessionRepository sessions;
@@ -83,9 +83,9 @@ class ChatRunTransportLifecycleIntegrationTest extends AbstractIntegrationTest {
                 "hash", "Transport lifecycle integration test"));
         userId = user.getId().toString();
 
-        Workspace workspace = workspaces.save(new Workspace("Transport lifecycle test", userId));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Transport lifecycle test", userId);
         workspaceId = workspace.getId().toString();
-        workspaceUsers.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
 
         AgentPrincipal principal = new AgentPrincipal();
         principal.setName("Transport lifecycle principal");

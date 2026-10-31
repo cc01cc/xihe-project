@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
@@ -9,14 +11,12 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import org.junit.jupiter.api.AfterEach;
@@ -63,7 +63,7 @@ class BoundaryRecalcTest extends AbstractIntegrationTest {
     private WorkspaceRepository workspaceRepository;
 
     @Autowired
-    private WorkspaceUserRepository workspaceUserRepository;
+    private WorkspaceFixture workspaceFixture;
 
     @Autowired
     private UserRepository userRepository;
@@ -89,7 +89,7 @@ class BoundaryRecalcTest extends AbstractIntegrationTest {
             agentPrincipalRepository.deleteById(principalId);
         }
         if (workspaceId != null) {
-            workspaceUserRepository.deleteAll(workspaceUserRepository.findByIdWorkspaceId(workspaceId));
+            workspaceFixture.unbindWorkspace(workspaceId);
             workspaceRepository.deleteById(workspaceId);
         }
         if (userId != null) {
@@ -102,9 +102,9 @@ class BoundaryRecalcTest extends AbstractIntegrationTest {
         User user = userRepository.save(new User("boundary-grant-" + UUID.randomUUID() + "@test.com",
                 "hash", "Boundary recalc grant test"));
         userId = user.getId().toString();
-        Workspace workspace = workspaceRepository.save(new Workspace("Boundary recalc grant test", userId));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Boundary recalc grant test", userId);
         workspaceId = workspace.getId();
-        workspaceUserRepository.save(new WorkspaceUser(workspaceId.toString(), userId, WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(workspaceId.toString(), userId, WorkspaceRole.OWNER);
 
         AgentPrincipal principal = new AgentPrincipal();
         principal.setName("Boundary recalc agent");
@@ -138,9 +138,9 @@ class BoundaryRecalcTest extends AbstractIntegrationTest {
         User user = userRepository.save(new User("boundary-cap-" + UUID.randomUUID() + "@test.com",
                 "hash", "Boundary recalc cap test"));
         userId = user.getId().toString();
-        Workspace workspace = workspaceRepository.save(new Workspace("Boundary recalc cap test", userId));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Boundary recalc cap test", userId);
         workspaceId = workspace.getId();
-        workspaceUserRepository.save(new WorkspaceUser(workspaceId.toString(), userId, WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(workspaceId.toString(), userId, WorkspaceRole.OWNER);
 
         AgentPrincipal principal = new AgentPrincipal();
         principal.setName("Boundary recalc cap agent");
@@ -256,7 +256,7 @@ class BoundaryRecalcTest extends AbstractIntegrationTest {
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
         when(principalRepository.findById(principalId)).thenReturn(Optional.of(principal));
         when(workspaceRepository.findByIdAndDeletedAtIsNull(workspaceId))
-                .thenReturn(Optional.of(new Workspace("unit workspace", userId)));
+                .thenReturn(Optional.of(new Workspace("unit workspace")));
         when(memberships.isMember(any(), any())).thenReturn(true);
         when(bindingRepository.findById(any(WorkspaceAgentId.class))).thenReturn(Optional.of(
                 new WorkspaceAgent(principalId.toString(), workspaceId.toString(),

@@ -14,7 +14,8 @@ class WorkspaceProjectionTest {
     void ordinaryMemberDoesNotReceiveRawHostPath() {
         Workspace workspace = workspace();
 
-        Map<String, Object> view = WorkspaceController.toMap(workspace, "member-1", false, "EDITOR");
+        Map<String, Object> view = WorkspaceController.toMap(workspace, "owner-1", "member-1", false,
+                "EDITOR");
 
         assertNull(view.get("hostPath"));
     }
@@ -23,14 +24,18 @@ class WorkspaceProjectionTest {
     void ownerAndAdminMayReceiveCanonicalHostPath() {
         Workspace workspace = workspace();
 
-        assertEquals("C:/work/repo", WorkspaceController.toMap(workspace, "owner-1", false, "OWNER").get("hostPath"));
-        assertEquals("C:/work/repo", WorkspaceController.toMap(workspace, "member-1", true, "EDITOR").get("hostPath"));
-        assertNull(WorkspaceEnvironmentController.visibleHostPath(workspace, "member-1", false));
-        assertEquals("C:/work/repo", WorkspaceEnvironmentController.visibleHostPath(workspace, "owner-1", false));
+        // PLAN-0610 W4b: the owner id is derived from the WS_OWNER binding and passed in.
+        assertEquals("C:/work/repo", WorkspaceController
+                .toMap(workspace, "owner-1", "owner-1", false, "OWNER").get("hostPath"));
+        assertEquals("C:/work/repo", WorkspaceController
+                .toMap(workspace, "owner-1", "member-1", true, "EDITOR").get("hostPath"));
+        assertNull(WorkspaceEnvironmentController.visibleHostPath(workspace, "owner-1", "member-1", false));
+        assertEquals("C:/work/repo",
+                WorkspaceEnvironmentController.visibleHostPath(workspace, "owner-1", "owner-1", false));
     }
 
     private static Workspace workspace() {
-        Workspace workspace = new Workspace("workspace", "owner-1");
+        Workspace workspace = new Workspace("workspace");
         workspace.setHostPath("C:/work/repo");
         workspace.setStorageMode("direct_attach");
         workspace.setExecutionMode("windows-mxc");

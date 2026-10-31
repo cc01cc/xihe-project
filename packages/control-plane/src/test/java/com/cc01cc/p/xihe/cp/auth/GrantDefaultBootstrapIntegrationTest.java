@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.auth;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.AuditLog;
@@ -63,6 +65,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </ul>
  */
 class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
+
+    @Autowired
+    private WorkspaceFixture workspaceFixture;
 
     private static final String MATERIALIZED_ACTION = "authorization_role_grant_materialized";
     private static final String AGENT_DEFAULT_ACTION = "authorization_agent_default_grant_created";
@@ -243,7 +248,10 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
                         request("credential_use", "credential:" + UUID.randomUUID())),
                 "credential is outside the minimal set (zero over-privilege, PLAN-0496 atoms)");
 
-        Workspace foreignWorkspace = workspaceRepository.save(new Workspace("Foreign", userId));
+        User foreignOwner = userRepository.save(new User("foreign-" + UUID.randomUUID() + "@test.com",
+                "hash", "Foreign owner"));
+        Workspace foreignWorkspace = workspaceFixture.createOwnedWorkspace("Foreign",
+                foreignOwner.getId().toString());
         foreignWorkspaceId = foreignWorkspace.getId();
         assertFalse(grantAuthorizationService.allowsUserOnly(new PolicyRequest(
                         "read_file", List.of("read"), List.of("src/main.java"), ToolShape.STRUCTURED,

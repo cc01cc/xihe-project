@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.session;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -9,13 +11,11 @@ import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -42,7 +42,7 @@ class SessionDerivedStateIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired private UserRepository users;
     @Autowired private WorkspaceRepository workspaces;
-    @Autowired private WorkspaceUserRepository workspaceUsers;
+    @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private SessionRepository sessions;
     @Autowired private ChatRunRepository chatRuns;
     @Autowired private JdbcTemplate jdbcTemplate;
@@ -62,10 +62,9 @@ class SessionDerivedStateIntegrationTest extends AbstractIntegrationTest {
                 AuthResponse.class);
         ownerToken = response.getBody().getAccessToken();
         owner = users.findByEmail(email).orElseThrow();
-        workspace = workspaces.findActiveByMemberUserId(owner.getId()).stream().findFirst().orElseThrow();
-        if (workspaceUsers.findByIdWorkspaceIdAndIdUserId(workspace.getId(), owner.getId()).isEmpty()) {
-            workspaceUsers.saveAndFlush(new WorkspaceUser(workspace.getId().toString(), owner.getId().toString(),
-                    WorkspaceRole.OWNER));
+        workspace = workspaceFixture.memberWorkspacesOf(owner.getId()).stream().findFirst().orElseThrow();
+        if (!workspaceFixture.isMember(workspace.getId(), owner.getId())) {
+            workspaceFixture.bindWorkspaceRole(workspace.getId().toString(), owner.getId().toString(), WorkspaceRole.OWNER);
         }
     }
 
@@ -78,8 +77,7 @@ class SessionDerivedStateIntegrationTest extends AbstractIntegrationTest {
         ChatRun activeRun = newRun(visibleChild, "awaiting_approval", ChatRun.ORIGIN_SPAWN);
 
         User other = users.save(new User("other-derived-" + UUID.randomUUID() + "@test.com", "hash", "Other user"));
-        workspaceUsers.saveAndFlush(new WorkspaceUser(workspace.getId().toString(), other.getId().toString(),
-                WorkspaceRole.MEMBER));
+        workspaceFixture.bindWorkspaceRole(workspace.getId().toString(), other.getId().toString(), WorkspaceRole.MEMBER);
         Session hiddenChild = spawnSession(other, workspace, "Must not leak", parent, parentRun);
         ChatRun hiddenRun = newRun(hiddenChild, "running", ChatRun.ORIGIN_SPAWN);
 
@@ -156,8 +154,7 @@ class SessionDerivedStateIntegrationTest extends AbstractIntegrationTest {
         ResponseEntity<Map> notWorkspaceMember = restTemplate.exchange(
                 baseUrl + "/api/v1/sessions/" + parent.getId() + "/derived-state",
                 HttpMethod.GET, bearer(otherToken), Map.class);
-        workspaceUsers.saveAndFlush(new WorkspaceUser(workspace.getId().toString(), other.getId().toString(),
-                WorkspaceRole.MEMBER));
+        workspaceFixture.bindWorkspaceRole(workspace.getId().toString(), other.getId().toString(), WorkspaceRole.MEMBER);
 
         ResponseEntity<Map> response = restTemplate.exchange(
                 baseUrl + "/api/v1/sessions/" + parent.getId() + "/derived-state",

@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
@@ -12,8 +14,6 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUserId;
 import com.cc01cc.p.xihe.cp.mcp.McpProxyController;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
@@ -24,7 +24,6 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.github.tomakehurst.wiremock.WireMockServer;
@@ -93,7 +92,7 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
     private WorkspaceRepository workspaceRepository;
 
     @Autowired
-    private WorkspaceUserRepository workspaceUserRepository;
+    private WorkspaceFixture workspaceFixture;
 
     @Autowired
     private UserRepository userRepository;
@@ -694,7 +693,7 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
     private ParentFixture fixtureInOtherWorkspace() {
         ensureWorkspace();
         Workspace otherWorkspace = workspaceRepository.saveAndFlush(
-                new Workspace("Cross-workspace gate test", userId));
+                new Workspace("Cross-workspace gate test"));
         String otherWorkspaceId = otherWorkspace.getId().toString();
         additionalWorkspaceIds.add(otherWorkspace.getId());
 
@@ -895,12 +894,9 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
         User user = userRepository.save(new User("spawn-route-" + UUID.randomUUID() + "@test.com",
                 "hash", "Spawn route test"));
         userId = user.getId().toString();
-        Workspace workspace = workspaceRepository.save(new Workspace("Spawn route test", userId));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Spawn route test", userId);
         workspaceId = workspace.getId().toString();
-        WorkspaceUserId membershipId = new WorkspaceUserId(workspaceId, userId);
-        if (!workspaceUserRepository.existsById(membershipId)) {
-            workspaceUserRepository.saveAndFlush(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
-        }
+        workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
         AgentPrincipal principal = new AgentPrincipal();
         principal.setName("Spawn route principal");
         principal.setCreatedByUserId(userId);

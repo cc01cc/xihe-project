@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.oauth;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
@@ -20,7 +22,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import com.cc01cc.p.xihe.cp.crypto.EnvelopeEncryptionService;
 import com.cc01cc.p.xihe.cp.entity.McpServer;
 import com.cc01cc.p.xihe.cp.entity.OAuthCredential;
-import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
 import com.cc01cc.p.xihe.cp.repository.OAuthCredentialRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -51,6 +52,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @ActiveProfiles("h2")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class OAuthRefreshRaceProbeTest {
+
+    @Autowired
+    private WorkspaceFixture workspaceFixture;
 
     @Autowired
     private OAuthCredentialService service;
@@ -85,7 +89,7 @@ class OAuthRefreshRaceProbeTest {
     @Test
     void concurrentSameKeyRequestsTriggerExactlyOneRefresh() throws Exception {
         String userId = UUID.randomUUID().toString();
-        String workspaceId = workspaceRepository.save(new Workspace("race-probe", userId)).getId().toString();
+        String workspaceId = workspaceFixture.createOwnedWorkspace("race-probe", userId).getId().toString();
         String serverId = UUID.randomUUID().toString();
         String scope = "mcp:tools";
 

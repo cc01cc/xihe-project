@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.context;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
 import com.cc01cc.p.xihe.cp.context.service.ContextProjectionService;
 import com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService;
@@ -7,9 +9,7 @@ import com.cc01cc.p.xihe.cp.context.repository.ContextSourceHashRepository;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeContextSourceClient;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeContextSourceClient.SourceRead;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -50,7 +50,7 @@ class ContextSourceRefreshServiceTest extends AbstractH2Test {
     private WorkspaceRepository workspaceRepository;
 
     @Autowired
-    private WorkspaceUserRepository workspaceUserRepository;
+    private WorkspaceFixture workspaceFixture;
 
     @Autowired
     private ContextSourceHashRepository sourceHashRepository;
@@ -59,9 +59,9 @@ class ContextSourceRefreshServiceTest extends AbstractH2Test {
     private RuntimeContextSourceClient runtimeContextSourceClient;
 
     private Workspace createWorkspace(String userId) {
-        Workspace ws = new Workspace("test-ws", userId);
+        Workspace ws = new Workspace("test-ws");
         ws = workspaceRepository.save(ws);
-        workspaceUserRepository.save(new WorkspaceUser(ws.getId().toString(), userId, WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(ws.getId().toString(), userId, WorkspaceRole.OWNER);
         return ws;
     }
 

@@ -150,6 +150,7 @@ class ContextTemplateResetScopeTest {
         try (Statement st = c.createStatement()) {
             st.executeUpdate("INSERT INTO users (id, email, password_hash) VALUES ('"
                     + USER_ID + "'::uuid, 't02@test.local', 'hash')");
+            // V57 schema: owner_id is still NOT NULL here.
             st.executeUpdate("INSERT INTO workspaces (id, name, owner_id) VALUES ('"
                     + WS_ID + "'::uuid, 't02-workspace', '" + USER_ID + "'::uuid)");
             for (String layer : LAYERS) {

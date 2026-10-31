@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.oauth;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
@@ -59,6 +61,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class OAuthBrokerLockTimeoutIntegrationTest extends AbstractIntegrationTest {
 
+    @Autowired
+    private WorkspaceFixture workspaceFixture;
+
     private static final String SCOPE = "mcp:tools";
 
     @DynamicPropertySource
@@ -102,7 +107,7 @@ class OAuthBrokerLockTimeoutIntegrationTest extends AbstractIntegrationTest {
         assertTrue(registration.getStatusCode().is2xxSuccessful(), "registration must succeed");
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        workspaceId = workspaceRepository.findActiveByMemberUserId(user.getId())
+        workspaceId = workspaceFixture.memberWorkspacesOf(user.getId())
                 .stream().findFirst().orElseThrow().getId().toString();
 
         provider = new ProviderStub();

@@ -55,7 +55,11 @@ class D9MembershipIntegrationTest extends AbstractIntegrationTest {
         assertEquals(HttpStatus.CREATED, admin.getStatusCode(), admin.getBody());
         adminToken = objectMapper.readTree(admin.getBody()).path("accessToken").asText();
         String adminId = objectMapper.readTree(admin.getBody()).path("user").path("id").asText();
-        jdbc.update("UPDATE users SET role = 'ADMIN' WHERE id = CAST(? AS UUID)", adminId);
+        // PLAN-0610 W4b: an instance administrator is the ADMIN role binding (users.role is gone).
+        jdbc.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type)"
+                + " SELECT gen_random_uuid(), id, 'user', CAST(? AS UUID), 'instance'"
+                + " FROM roles WHERE name = 'ADMIN'"
+                + " ON CONFLICT ON CONSTRAINT uq_role_bindings DO NOTHING", adminId);
         jdbc.update("UPDATE instance_owner SET owner_user_id = CAST(? AS UUID), assigned_at = NOW()"
                 + " WHERE id = 1", adminId);
 
@@ -64,7 +68,8 @@ class D9MembershipIntegrationTest extends AbstractIntegrationTest {
                         "password", USER_PASSWORD, "name", "D9 Member"), String.class);
         assertEquals(HttpStatus.CREATED, member.getStatusCode(), member.getBody());
         memberId = objectMapper.readTree(member.getBody()).path("user").path("id").asText();
-        workspaceId = jdbc.queryForObject("SELECT workspace_id FROM workspace_users WHERE user_id = ? LIMIT 1",
+        workspaceId = jdbc.queryForObject("SELECT scope_id FROM role_bindings WHERE subject_type = 'user'"
+                + " AND subject_id = ? AND scope_type = 'workspace' LIMIT 1",
                 String.class, UUID.fromString(memberId));
 
         ResponseEntity<String> outsider = restTemplate.postForEntity(url("/api/v1/auth/register"),

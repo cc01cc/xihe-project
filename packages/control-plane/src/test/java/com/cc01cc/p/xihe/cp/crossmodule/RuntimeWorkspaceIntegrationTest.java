@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.crossmodule;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.containing;
 import static com.github.tomakehurst.wiremock.client.WireMock.created;
@@ -29,7 +31,6 @@ import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.operation.JobStateService;
 import com.cc01cc.p.xihe.cp.repository.AuditLogRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceJobHistoryRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceJobRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
@@ -66,7 +67,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
     private WorkspaceRepository workspaceRepository;
 
     @Autowired
-    private WorkspaceUserRepository workspaceUserRepository;
+    private WorkspaceFixture workspaceFixture;
 
     @Autowired
     private AuditLogRepository auditLogRepository;
@@ -114,8 +115,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
             createdJobId = null;
         }
         if (createdWorkspace != null) {
-            workspaceUserRepository.deleteAll(
-                    workspaceUserRepository.findByIdWorkspaceId(createdWorkspace.getId()));
+            workspaceFixture.unbindWorkspace(createdWorkspace.getId());
             workspaceRepository.deleteById(createdWorkspace.getId());
             createdWorkspace = null;
         }
@@ -243,9 +243,8 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
                         "direct_attach", tempWorkspace.toString(), "windows-mxc",
                         "probe-unavailable-" + UUID.randomUUID()));
         assertEquals("DIRECT_ATTACH_UNAVAILABLE", error.getCode());
-        assertTrue(
-                workspaceRepository.findAll().stream()
-                        .noneMatch(workspace -> ownerId.equals(workspace.getOwnerId())),
+        assertTrue(workspaceFixture.memberWorkspacesOf(UUID.fromString(ownerId)).stream()
+                        .noneMatch(workspace -> "direct_attach".equals(workspace.getStorageMode())),
                 "a failed probe must not persist a Workspace");
     }
 
@@ -387,8 +386,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
                 java.util.Map.class);
         assertEquals(201, reg.getStatusCode().value());
         String memberUserId = userIdOf(email);
-        workspaceUserRepository.save(new com.cc01cc.p.xihe.cp.entity.WorkspaceUser(
-                target, memberUserId, com.cc01cc.p.xihe.cp.entity.WorkspaceRole.MEMBER));
+        workspaceFixture.bindWorkspaceRole(target, memberUserId, com.cc01cc.p.xihe.cp.entity.WorkspaceRole.MEMBER);
         String token = (String) reg.getBody().get("accessToken");
 
         org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
@@ -441,8 +439,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
                 java.util.Map.of("email", email, "password", TestDataFactory.PASSWORD, "name", "Mat409"),
                 java.util.Map.class);
         String memberUserId = userIdOf(email);
-        workspaceUserRepository.save(new com.cc01cc.p.xihe.cp.entity.WorkspaceUser(
-                target, memberUserId, com.cc01cc.p.xihe.cp.entity.WorkspaceRole.MEMBER));
+        workspaceFixture.bindWorkspaceRole(target, memberUserId, com.cc01cc.p.xihe.cp.entity.WorkspaceRole.MEMBER);
         String token = (String) reg.getBody().get("accessToken");
 
         org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
@@ -474,8 +471,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
                 java.util.Map.of("email", email, "password", TestDataFactory.PASSWORD, "name", "Mat502"),
                 java.util.Map.class);
         String memberUserId = userIdOf(email);
-        workspaceUserRepository.save(new com.cc01cc.p.xihe.cp.entity.WorkspaceUser(
-                target, memberUserId, com.cc01cc.p.xihe.cp.entity.WorkspaceRole.MEMBER));
+        workspaceFixture.bindWorkspaceRole(target, memberUserId, com.cc01cc.p.xihe.cp.entity.WorkspaceRole.MEMBER);
         String token = (String) reg.getBody().get("accessToken");
 
         org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();

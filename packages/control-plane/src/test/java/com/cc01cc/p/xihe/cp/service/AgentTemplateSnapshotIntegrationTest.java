@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuditLog;
@@ -12,7 +14,6 @@ import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
@@ -29,7 +30,6 @@ import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -78,7 +78,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
     @Autowired private AccessRoleBindingRepository bindingRepository;
 
     @Autowired private RoleGrantMaterializer materializer;
-    @Autowired private WorkspaceUserRepository workspaceUserRepository;
+    @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private ConfigJpaRepository configJpaRepository;
     @Autowired private AuthorizationGrantRepository grantRepository;
     @Autowired private AuditLogRepository auditLogRepository;
@@ -120,7 +120,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
             }
         }
         if (workspaceId != null) {
-            workspaceUserRepository.deleteAll(workspaceUserRepository.findByIdWorkspaceId(workspaceId));
+            workspaceFixture.unbindWorkspace(workspaceId);
             workspaceRepository.deleteById(workspaceId);
         }
         if (adminUserId != null) {
@@ -520,10 +520,11 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
         outsiderUserId = outsider.getId();
 
         Workspace workspace = workspaceRepository.saveAndFlush(
-                new Workspace("Template read workspace", memberUserId.toString()));
+                new Workspace("Template read workspace"));
         workspaceId = workspace.getId();
-        workspaceUserRepository.saveAndFlush(new WorkspaceUser(
-                workspaceId.toString(), memberUserId.toString(), WorkspaceRole.OWNER));
+        // PLAN-0610 W4b: the member is a plain EDITOR. WS_OWNER materializes
+        // MANAGE_WORKSPACE_AGENTS/workspace:admin by design, which would mask the gate under test.
+        workspaceFixture.bindWorkspaceRole(workspaceId.toString(), memberUserId.toString(), WorkspaceRole.EDITOR);
 
         UUID instanceRoleId = UUID.randomUUID();
         instanceTemplateId = UUID.randomUUID();

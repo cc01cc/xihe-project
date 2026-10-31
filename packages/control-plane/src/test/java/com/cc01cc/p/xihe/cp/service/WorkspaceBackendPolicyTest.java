@@ -26,7 +26,7 @@ class WorkspaceBackendPolicyTest {
     }
 
     private static Workspace workspace(String executionMode) {
-        Workspace workspace = new Workspace("ws", "user-1");
+        Workspace workspace = new Workspace("ws");
         workspace.setExecutionMode(executionMode);
         return workspace;
     }

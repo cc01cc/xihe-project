@@ -32,7 +32,6 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -151,7 +150,9 @@ public class WorkspaceService {
 
         if (normalizedIdempotencyKey != null) {
             Optional<Workspace> existing = workspaceRepository
-                    .findByOwnerIdAndCreateIdempotencyKeyAndDeletedAtIsNull(ownerId, normalizedIdempotencyKey);
+                    .findByCreateIdempotencyKeyAndDeletedAtIsNull(normalizedIdempotencyKey)
+                    .filter(workspace -> memberships.isOwner(workspace.getId(),
+                            UUID.fromString(ownerId)));
             if (existing.isPresent()) {
                 if (!requestHash.equals(existing.get().getCreateRequestHash())) {
                     throw new CpApiException(
@@ -209,24 +210,13 @@ public class WorkspaceService {
     }
 
     /**
-     * PLAN-0610 W3-3: the workspaces a subject belongs to = workspace-scope role bindings ∪ the
-     * transitional {@code workspace_users} rows. Bindings are the truth (a membership granted through
-     * {@code PUT /api/v1/bindings} is visible immediately, which the legacy join alone would miss);
-     * the legacy row keeps pre-W3-3 data and fixtures working until V89 drops the table — delete the
-     * second query together with {@code WorkspaceMembershipService#roleOf}'s fallback.
+     * PLAN-0610 W3-3/W4b: the workspaces a subject belongs to = workspace-scope role bindings. This is
+     * the single membership fact since V89 dropped {@code workspace_users}; a membership granted
+     * through {@code PUT /api/v1/bindings} is visible immediately.
      */
     @Transactional(readOnly = true)
     private List<Workspace> memberWorkspaces(UUID userId) {
-        Map<UUID, Workspace> byId = new LinkedHashMap<>();
-        for (Workspace workspace : workspaceRepository.findActiveByMemberBinding(userId)) {
-            byId.put(workspace.getId(), workspace);
-        }
-        for (Workspace workspace : workspaceRepository.findActiveByMemberUserId(userId)) {
-            byId.putIfAbsent(workspace.getId(), workspace);
-        }
-        List<Workspace> ordered = new ArrayList<>(byId.values());
-        ordered.sort(java.util.Comparator.comparing(Workspace::getCreatedAt));
-        return ordered;
+        return workspaceRepository.findActiveByMemberBinding(userId);
     }
 
     @Transactional(readOnly = true)
@@ -311,6 +301,16 @@ public class WorkspaceService {
         }
     }
 
+    /**
+     * PLAN-0610 W4b: the {@code ownerId} the workspace wire view reports. The column is gone, so it
+     * is derived from the earliest-granted {@code WS_OWNER} binding (the creator unless ownership was
+     * handed over). {@code null} only for a workspace that somehow has no owner binding.
+     */
+    @Transactional(readOnly = true)
+    public String ownerIdOf(UUID workspaceId) {
+        return memberships.ownerOf(workspaceId).map(UUID::toString).orElse(null);
+    }
+
     @Transactional(readOnly = true)
     public String resolveWorkspaceRole(String workspaceId, String userId) {
         if (userId == null) {
@@ -347,7 +347,8 @@ public class WorkspaceService {
                         org.springframework.http.HttpStatus.NOT_FOUND,
                         "WORKSPACE_NOT_FOUND",
                         "Workspace not found"));
-        if (!admin && (actorId == null || !actorId.equals(workspace.getOwnerId()))) {
+        if (!admin && (actorId == null || !memberships.isOwner(workspace.getId(),
+                UUID.fromString(actorId)))) {
             throw new CpApiException(
                     org.springframework.http.HttpStatus.NOT_FOUND,
                     "WORKSPACE_NOT_FOUND",
@@ -451,7 +452,7 @@ public class WorkspaceService {
             String profile, String image, String storageMode, String hostPath,
             String executionMode, String idempotencyKey, String requestHash) {
         requireNonBlank(name, "name");
-        Workspace workspace = new Workspace(name.trim(), ownerId);
+        Workspace workspace = new Workspace(name.trim());
         workspace.setDescription(description);
         workspace.setStorageBackend("host_directory");
         workspace.setStorageMode(storageMode);
@@ -462,8 +463,8 @@ public class WorkspaceService {
         workspace = workspaceRepository.save(workspace);
         workspace.setStorageRef(workspace.getId().toString());
         workspace = workspaceRepository.save(workspace);
-        // PLAN-0610 W3-3: the creator is the owner through the WS_OWNER workspace-scope binding
-        // (the seam mirrors the legacy workspace_users row while the table exists).
+        // PLAN-0610 W3-3/W4b: the creator is the owner through the WS_OWNER workspace-scope binding —
+        // the only remaining owner fact (V89 dropped workspaces.owner_id and workspace_users).
         memberships.assign(workspace.getId(), UUID.fromString(ownerId), WorkspaceRole.OWNER,
                 UUID.fromString(ownerId));
 
@@ -720,8 +721,19 @@ public class WorkspaceService {
         return normalized;
     }
 
+    /**
+     * PLAN-0610 W4b: ownership is the {@code WS_OWNER} binding (V89 dropped
+     * {@code workspaces.owner_id}). A malformed or unknown subject is the same 404 as "not the
+     * owner" so existence never leaks.
+     */
     private void ensureOwner(Workspace workspace, String ownerId) {
-        if (ownerId == null || !ownerId.equals(workspace.getOwnerId())) {
+        UUID actor;
+        try {
+            actor = ownerId == null ? null : UUID.fromString(ownerId);
+        } catch (IllegalArgumentException invalidOwner) {
+            actor = null;
+        }
+        if (actor == null || !memberships.isOwner(workspace.getId(), actor)) {
             throw new CpApiException(
                     org.springframework.http.HttpStatus.NOT_FOUND,
                     "WORKSPACE_NOT_FOUND",

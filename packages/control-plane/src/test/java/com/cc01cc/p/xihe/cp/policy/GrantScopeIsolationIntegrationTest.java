@@ -1,18 +1,18 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -45,7 +45,7 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
     private WorkspaceRepository workspaceRepository;
 
     @Autowired
-    private WorkspaceUserRepository workspaceUserRepository;
+    private WorkspaceFixture workspaceFixture;
 
     @Autowired
     private AccessRoleRepository accessRoleRepository;
@@ -100,6 +100,12 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
     @Test
     void instanceScopeRowsParticipateInEveryWorkspaceRequest() {
         Fixture fixture = fixture("instance");
+        // The tenant gate requires membership; viewer bindings keep the workspace-scope atom set
+        // minimal (read only) so the instance-row count stays the subject of the assertion.
+        workspaceFixture.bindWorkspaceRole(fixture.workspaceA().toString(),
+                fixture.userId().toString(), WorkspaceRole.VIEWER);
+        workspaceFixture.bindWorkspaceRole(fixture.workspaceB().toString(),
+                fixture.userId().toString(), WorkspaceRole.VIEWER);
         UUID userRoleId = accessRoleRepository.findByName(SystemAccessRoleCatalog.USER)
                 .orElseThrow().getId();
         bindingRepository.save(new AccessRoleBinding(userRoleId, "user", fixture.userId(),
@@ -117,7 +123,9 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
                                 fixture.userId(), fixture.workspaceA())),
                 "the instance USER role carries no credential atom");
         assertEquals(5, grantRepository.findScopedGrants("user", fixture.userId(),
-                GrantSources.EVALUATION_SOURCES, fixture.workspaceB()).size(),
+                        GrantSources.EVALUATION_SOURCES, fixture.workspaceB()).stream()
+                        .filter(row -> AccessScope.INSTANCE.equals(row.getScopeType()))
+                        .count(),
                 "one row per USER atom, all instance-scoped");
     }
 
@@ -185,13 +193,10 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
     private Fixture fixture(String tag) {
         User user = userRepository.save(new User("scope-" + tag + "-" + UUID.randomUUID()
                 + "@test.local", "hash", "Scope " + tag));
-        String owner = user.getId().toString();
-        Workspace workspaceA = workspaceRepository.save(new Workspace("scope-" + tag + "-a", owner));
-        Workspace workspaceB = workspaceRepository.save(new Workspace("scope-" + tag + "-b", owner));
-        for (Workspace workspace : List.of(workspaceA, workspaceB)) {
-            workspaceUserRepository.save(new WorkspaceUser(workspace.getId().toString(), owner,
-                    WorkspaceRole.EDITOR));
-        }
+        // No membership is seeded: each test writes exactly the binding it studies (V89: a binding
+        // is the only membership fact, so a bare workspace here is a workspace with no members).
+        Workspace workspaceA = workspaceFixture.createWorkspace("scope-" + tag + "-a");
+        Workspace workspaceB = workspaceFixture.createWorkspace("scope-" + tag + "-b");
         return new Fixture(user.getId(), workspaceA.getId(), workspaceB.getId());
     }
 

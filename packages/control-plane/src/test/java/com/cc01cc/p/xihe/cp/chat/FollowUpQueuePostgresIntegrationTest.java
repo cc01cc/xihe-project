@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
@@ -12,7 +14,6 @@ import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
@@ -22,7 +23,6 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.service.BranchPathService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.awaitility.Awaitility;
@@ -103,7 +103,7 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
     private WorkspaceAgentRepository workspaceAgentRepository;
 
     @Autowired
-    private WorkspaceUserRepository workspaceUserRepository;
+    private WorkspaceFixture workspaceFixture;
 
     @Autowired
     private ChatSubmissionService chatSubmissionService;
@@ -982,8 +982,7 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
     private Fixture fixture() {
         User user = userRepository.saveAndFlush(new User("follow-up-" + UUID.randomUUID() + "@test.com", "hash", "Follow-up test"));
         String userId = user.getId().toString();
-        Workspace workspace = workspaceRepository.saveAndFlush(new Workspace(
-                "Follow-up " + UUID.randomUUID(), userId));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Follow-up " + UUID.randomUUID(), userId);
         String workspaceId = workspace.getId().toString();
         Session session = new Session(workspaceId, userId, "Follow-up session");
         session.setId(UUID.randomUUID());
@@ -995,8 +994,7 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
     private Fixture boundFixture() {
         User user = userRepository.saveAndFlush(new User("follow-up-bound-" + UUID.randomUUID() + "@test.com", "hash", "Follow-up test"));
         String userId = user.getId().toString();
-        Workspace workspace = workspaceRepository.saveAndFlush(new Workspace(
-                "Follow-up " + UUID.randomUUID(), userId));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Follow-up " + UUID.randomUUID(), userId);
         String workspaceId = workspace.getId().toString();
 
         AgentPrincipal principal = new AgentPrincipal();
@@ -1008,7 +1006,7 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
         principal = agentPrincipalRepository.saveAndFlush(principal);
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(
                 principal.getId().toString(), workspaceId, objectMapper.createArrayNode()));
-        workspaceUserRepository.saveAndFlush(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
 
         Session session = new Session(workspaceId, userId, "Follow-up session");
         session.setId(UUID.randomUUID());

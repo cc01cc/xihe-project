@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.oauth;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
@@ -25,7 +27,6 @@ import com.cc01cc.p.xihe.cp.entity.OAuthCredential;
 import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
 import com.cc01cc.p.xihe.cp.repository.OAuthCredentialRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -56,6 +57,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @ActiveProfiles("h2")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class OAuthBrokerIntegrationTest {
+
+    @Autowired
+    private WorkspaceFixture workspaceFixture;
 
     private static final String SCOPE = "mcp:tools";
 
@@ -92,7 +96,7 @@ class OAuthBrokerIntegrationTest {
     void setUp() throws Exception {
         provider = new ProviderStub();
         userId = UUID.randomUUID().toString();
-        workspaceId = workspaceRepository.save(new Workspace("broker-it", userId)).getId().toString();
+        workspaceId = workspaceFixture.createOwnedWorkspace("broker-it", userId).getId().toString();
         serverId = UUID.randomUUID().toString();
         McpServer server = new McpServer(workspaceId, "broker-server", "https://broker.example/mcp");
         server.setId(UUID.fromString(serverId));

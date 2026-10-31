@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -38,6 +40,9 @@ import static org.mockito.Mockito.verify;
 class ChatRunGuidanceRecoveryIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
+    private WorkspaceFixture workspaceFixture;
+
+    @Autowired
     private ChatRunGuidanceService service;
 
     @MockitoSpyBean
@@ -69,7 +74,7 @@ class ChatRunGuidanceRecoveryIntegrationTest extends AbstractIntegrationTest {
         assertTrue(registration.getStatusCode().is2xxSuccessful());
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        workspaceId = workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId))
+        workspaceId = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId))
                 .stream().findFirst().orElseThrow().getId().toString();
         Session session = new Session(workspaceId, userId, "Guidance Recovery Session");
         session.setId(UUID.randomUUID());

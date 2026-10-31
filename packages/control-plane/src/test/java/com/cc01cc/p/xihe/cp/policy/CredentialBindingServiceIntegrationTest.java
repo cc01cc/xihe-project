@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.AuthService;
@@ -19,7 +21,6 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
@@ -63,7 +64,7 @@ class CredentialBindingServiceIntegrationTest extends AbstractIntegrationTest {
     @Autowired private SessionRepository sessionRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;
-    @Autowired private WorkspaceUserRepository workspaceUserRepository;
+    @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private WorkspaceAgentRepository workspaceAgentRepository;
     @Autowired private ObjectMapper objectMapper;
 
@@ -90,8 +91,7 @@ class CredentialBindingServiceIntegrationTest extends AbstractIntegrationTest {
                     auditLogRepository.findByUserIdOrderByCreatedAtDesc(creatorId.toString()));
             if (workspaceId != null) {
                 UUID workspaceUuid = UUID.fromString(workspaceId);
-                workspaceUserRepository.deleteAll(
-                        workspaceUserRepository.findByIdWorkspaceId(workspaceUuid));
+                workspaceFixture.unbindWorkspace(workspaceUuid);
                 workspaceRepository.deleteById(workspaceUuid);
             }
             userRepository.deleteById(creatorId);
@@ -286,7 +286,7 @@ class CredentialBindingServiceIntegrationTest extends AbstractIntegrationTest {
         Fixture fixture = fixture("credential:*", "credential:*", true);
         // Temporarily remove the operator from the target workspace (B1 裁定 2026-10-13:
         // bindings align with setWorkspaceCap's membership precondition).
-        workspaceUserRepository.deleteAll(workspaceUserRepository.findByIdWorkspaceId(fixture.workspaceId));
+        workspaceFixture.unbindWorkspace(fixture.workspaceId);
 
         com.cc01cc.p.xihe.cp.config.CpApiException error = assertThrows(
                 com.cc01cc.p.xihe.cp.config.CpApiException.class,
@@ -338,31 +338,38 @@ class CredentialBindingServiceIntegrationTest extends AbstractIntegrationTest {
         workspaceId = registered.getWorkspaceId();
     }
 
-    /** PLAN-0610: user grants are materialized role rows; successive seeds merge into one row. */
+    /**
+     * PLAN-0610: user grants are materialized {@code source='role'} rows and a materialized row
+     * carries exactly one atom. The fixture therefore seeds one row per atom (idempotently) — a
+     * multi-atom row would be treated as malformed and rewritten by the materializer, which collides
+     * with {@code uq_grants_role_atom} when the delete and the insert land in one flush.
+     */
     private void grantCreator(String permissionsJson) {
-        AuthorizationGrant roleGrant = grantRepository.findBySubjectTypeAndSubjectId(
-                        GrantPrincipalPathResolver.USER, creatorId).stream()
-                .filter(grant -> GrantSources.ROLE.equals(grant.getSource()))
-                .findFirst()
-                .orElse(null);
         JsonNode newAtoms = permissions(permissionsJson);
-        if (roleGrant == null) {
-            roleGrant = new AuthorizationGrant();
+        for (JsonNode atom : newAtoms) {
+            String actionClass = atom.path("actionClass").asText();
+            String resource = atom.path("resource").asText("*");
+            boolean exists = grantRepository.findBySubjectTypeAndSubjectId(
+                            GrantPrincipalPathResolver.USER, creatorId).stream()
+                    .filter(grant -> GrantSources.ROLE.equals(grant.getSource()))
+                    .anyMatch(grant -> grant.getPermissions().size() == 1
+                            && actionClass.equals(grant.getPermissions().get(0)
+                                    .path("actionClass").asText())
+                            && resource.equals(grant.getPermissions().get(0)
+                                    .path("resource").asText("*")));
+            if (exists) {
+                continue;
+            }
+            AuthorizationGrant roleGrant = new AuthorizationGrant();
             roleGrant.setId(UUID.randomUUID());
             roleGrant.setSubjectType("user");
             roleGrant.setSubjectId(creatorId);
             roleGrant.setGranterType("user");
             roleGrant.setGranterId(creatorId);
             roleGrant.setSource(GrantSources.ROLE);
-            roleGrant.setPermissions(newAtoms);
+            roleGrant.setPermissions(objectMapper.createArrayNode().add(atom));
             grantRepository.save(roleGrant);
-            return;
         }
-        com.fasterxml.jackson.databind.node.ArrayNode merged = objectMapper.createArrayNode();
-        roleGrant.getPermissions().forEach(merged::add);
-        newAtoms.forEach(merged::add);
-        roleGrant.setPermissions(merged);
-        grantRepository.save(roleGrant);
     }
 
     private boolean principalCredentialBindingContains(UUID principalId, String resource) {

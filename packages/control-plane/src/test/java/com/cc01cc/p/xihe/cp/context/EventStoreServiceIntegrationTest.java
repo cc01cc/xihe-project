@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.context;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
@@ -42,6 +44,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class EventStoreServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
+    private WorkspaceFixture workspaceFixture;
+
+    @Autowired
     private EventStoreService eventStoreService;
 
     @Autowired
@@ -77,7 +82,7 @@ class EventStoreServiceIntegrationTest extends AbstractIntegrationTest {
 
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        workspaceId = workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId))
+        workspaceId = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId))
                 .stream().findFirst().orElseThrow().getId().toString();
 
         Session session = new Session(workspaceId, userId, "Event Store Session");

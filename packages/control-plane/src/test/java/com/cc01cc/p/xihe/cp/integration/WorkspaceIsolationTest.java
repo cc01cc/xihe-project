@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.integration;
 
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -23,11 +24,9 @@ import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 
 import java.util.List;
@@ -67,7 +66,7 @@ class WorkspaceIsolationTest {
     private WorkspaceRepository workspaceRepository;
 
     @Autowired
-    private WorkspaceUserRepository workspaceUserRepository;
+    private WorkspaceFixture workspaceFixture;
 
     @Autowired
     private SessionRepository sessionRepository;
@@ -100,7 +99,7 @@ class WorkspaceIsolationTest {
         // User A is then added to user B's workspace as MEMBER to exercise isolation.
         ws1 = workspaceService.findCurrentWorkspace(userA.getId().toString()).orElseThrow();
         ws2 = workspaceService.findCurrentWorkspace(userB.getId().toString()).orElseThrow();
-        workspaceUserRepository.save(new WorkspaceUser(ws2.getId().toString(), userA.getId().toString(), WorkspaceRole.MEMBER));
+        workspaceFixture.bindWorkspaceRole(ws2.getId().toString(), userA.getId().toString(), WorkspaceRole.MEMBER);
     }
 
     @AfterEach
@@ -238,7 +237,7 @@ class WorkspaceIsolationTest {
                 .andExpect(jsonPath("$.code").value("WORKSPACE_FORBIDDEN"));
 
         // VIEWER can read but not write.
-        workspaceUserRepository.save(new WorkspaceUser(ownerWorkspace, memberId, WorkspaceRole.VIEWER));
+        workspaceFixture.bindWorkspaceRole(ownerWorkspace, memberId, WorkspaceRole.VIEWER);
         mockMvc.perform(get("/api/v1/sessions")
                         .header("Authorization", "Bearer " + member.getAccessToken())
                         .header("X-Workspace-Id", ownerWorkspace))
@@ -252,7 +251,7 @@ class WorkspaceIsolationTest {
                 .andExpect(jsonPath("$.code").value("WORKSPACE_READ_ONLY"));
 
         // EDITOR can write content but cannot manage workspace lifecycle.
-        workspaceUserRepository.save(new WorkspaceUser(ownerWorkspace, memberId, WorkspaceRole.EDITOR));
+        workspaceFixture.bindWorkspaceRole(ownerWorkspace, memberId, WorkspaceRole.EDITOR);
         int editorWriteStatus = mockMvc.perform(post("/api/v1/workspaces/" + ownerWorkspace + "/imports")
                         .header("Authorization", "Bearer " + member.getAccessToken())
                         .header("X-Workspace-Id", ownerWorkspace)

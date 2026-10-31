@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
@@ -7,13 +9,10 @@ import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUserId;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,7 +38,7 @@ class RunTraceControllerIntegrationTest extends AbstractIntegrationTest {
     @Autowired private JwtTokenProvider jwtTokenProvider;
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;
-    @Autowired private WorkspaceUserRepository workspaceUserRepository;
+    @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private SessionRepository sessionRepository;
     @Autowired private ChatRunRepository chatRunRepository;
 
@@ -55,9 +54,8 @@ class RunTraceControllerIntegrationTest extends AbstractIntegrationTest {
         owner = userRepository.saveAndFlush(new User("run-trace-api-owner-" + UUID.randomUUID() + "@test.com",
                 "test-hash", "Run Trace API owner"));
         workspace = workspaceRepository.saveAndFlush(
-                new Workspace("Run Trace API owner workspace", owner.getId().toString()));
-        workspaceUserRepository.saveAndFlush(new WorkspaceUser(
-                workspace.getId().toString(), owner.getId().toString(), WorkspaceRole.OWNER));
+                new Workspace("Run Trace API owner workspace"));
+        workspaceFixture.bindWorkspaceRole(workspace.getId().toString(), owner.getId().toString(), WorkspaceRole.OWNER);
 
         session = new Session(workspace.getId().toString(), owner.getId().toString(),
                 "Run Trace API session");
@@ -83,17 +81,15 @@ class RunTraceControllerIntegrationTest extends AbstractIntegrationTest {
             sessionRepository.deleteById(session.getId());
         }
         if (workspaceMember != null && workspace != null) {
-            workspaceUserRepository.deleteById(new WorkspaceUserId(
-                    workspace.getId().toString(), workspaceMember.getId().toString()));
+            workspaceFixture.unbindWorkspaceRole(workspace.getId().toString(),
+                    workspaceMember.getId().toString());
         }
         if (otherWorkspace != null && owner != null) {
-            workspaceUserRepository.deleteById(new WorkspaceUserId(
-                    otherWorkspace.getId().toString(), owner.getId().toString()));
+            workspaceFixture.unbindWorkspace(otherWorkspace.getId());
             workspaceRepository.deleteById(otherWorkspace.getId());
         }
         if (workspace != null && owner != null) {
-            workspaceUserRepository.deleteById(new WorkspaceUserId(
-                    workspace.getId().toString(), owner.getId().toString()));
+            workspaceFixture.unbindWorkspace(workspace.getId());
             workspaceRepository.deleteById(workspace.getId());
         }
         if (workspaceMember != null) {
@@ -130,15 +126,13 @@ class RunTraceControllerIntegrationTest extends AbstractIntegrationTest {
 
         workspaceMember = userRepository.saveAndFlush(new User("run-trace-api-member-" + UUID.randomUUID() + "@test.com",
                 "test-hash", "Run Trace API workspace member"));
-        workspaceUserRepository.saveAndFlush(new WorkspaceUser(
-                workspace.getId().toString(), workspaceMember.getId().toString(), WorkspaceRole.MEMBER));
+        workspaceFixture.bindWorkspaceRole(workspace.getId().toString(), workspaceMember.getId().toString(), WorkspaceRole.MEMBER);
         assertProblem(getTrace(tracePath, token(workspaceMember, workspace)),
                 HttpStatus.FORBIDDEN, "FORBIDDEN");
 
         otherWorkspace = workspaceRepository.saveAndFlush(
-                new Workspace("Run Trace API second workspace", owner.getId().toString()));
-        workspaceUserRepository.saveAndFlush(new WorkspaceUser(
-                otherWorkspace.getId().toString(), owner.getId().toString(), WorkspaceRole.OWNER));
+                new Workspace("Run Trace API second workspace"));
+        workspaceFixture.bindWorkspaceRole(otherWorkspace.getId().toString(), owner.getId().toString(), WorkspaceRole.OWNER);
         assertProblem(getTrace(tracePath, token(owner, otherWorkspace)),
                 HttpStatus.FORBIDDEN, "FORBIDDEN");
 

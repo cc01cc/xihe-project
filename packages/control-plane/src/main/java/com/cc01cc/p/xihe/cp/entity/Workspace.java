@@ -1,7 +1,6 @@
 package com.cc01cc.p.xihe.cp.entity;
 
 import jakarta.persistence.Column;
-import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -28,10 +27,6 @@ public class Workspace {
 
     @Column(columnDefinition = "TEXT")
     private String description;
-
-    @Column(name = "owner_id", nullable = false, length = 36)
-    @Convert(converter = UuidStringConverter.class)
-    private String ownerId;
 
     @Column(name = "storage_backend", length = 32)
     private String storageBackend = "host_directory";
@@ -75,9 +70,9 @@ public class Workspace {
 
     public Workspace() {}
 
-    public Workspace(String name, String ownerId) {
+    /** V89: the owner is the {@code WS_OWNER} role binding, not a column. */
+    public Workspace(String name) {
         this.name = name;
-        this.ownerId = ownerId;
     }
 
     @PrePersist
@@ -99,9 +94,6 @@ public class Workspace {
 
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
-
-    public String getOwnerId() { return ownerId; }
-    public void setOwnerId(String ownerId) { this.ownerId = ownerId; }
 
     public String getStorageBackend() { return storageBackend; }
     public void setStorageBackend(String storageBackend) { this.storageBackend = storageBackend; }

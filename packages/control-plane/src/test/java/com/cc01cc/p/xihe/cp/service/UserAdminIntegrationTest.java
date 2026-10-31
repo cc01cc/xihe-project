@@ -88,11 +88,11 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
         emailAlias.clear();
         // PLAN-0610 W4a: an administrator is an instance ADMIN/SUPER_ADMIN binding, so the per-test
         // baseline is "no instance binding at all" (the seeded SUPER_ADMIN included). Each test then
-        // grants exactly the administrators it asserts about. The retired users.role column is still
-        // reset for the transition window, but nothing reads it.
+        // grants exactly the administrators it asserts about. users.role was dropped by V89, so the
+        // reset only touches the account state and the bindings.
         jdbc.update("DELETE FROM role_bindings WHERE scope_type = 'instance'");
         authzContext.invalidateAll();
-        jdbc.update("UPDATE users SET role = 'USER', status = 'ACTIVE', deleted_at = NULL,"
+        jdbc.update("UPDATE users SET status = 'ACTIVE', deleted_at = NULL,"
                 + " token_version = 0, session_version = 0");
         jdbc.update("UPDATE instance_owner SET owner_user_id = NULL, assigned_at = NULL, assigned_by = NULL");
     }
@@ -500,8 +500,11 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
         String workspaceOwnerId = userIdOf(workspaceOwnerToken);
         String workspaceId = workspaceOf(workspaceOwnerId);
         String memberId = userIdOf(register("ws-member@test.com"));
-        jdbc.update("INSERT INTO workspace_users (workspace_id, user_id, role, created_at)"
-                + " VALUES (CAST(? AS UUID), CAST(? AS UUID), 'VIEWER', NOW())", workspaceId, memberId);
+        // PLAN-0610 W4b: membership is the WS_VIEWER binding (workspace_users is gone).
+        jdbc.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+                + " scope_id, granted_at) SELECT gen_random_uuid(), r.id, 'user', CAST(? AS UUID),"
+                + " 'workspace', CAST(? AS UUID), NOW() FROM roles r WHERE r.name = 'WS_VIEWER'",
+                memberId, workspaceId);
 
         // workspace OWNER: own plane OK, instance plane refused.
         assertEquals(HttpStatus.OK,
@@ -598,13 +601,9 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
     }
 
     private String workspaceOf(String userId) {
-        return jdbc.queryForObject("SELECT workspace_id FROM workspace_users WHERE user_id = ? LIMIT 1",
+        return jdbc.queryForObject("SELECT scope_id FROM role_bindings WHERE subject_type = 'user'"
+                + " AND subject_id = ? AND scope_type = 'workspace' LIMIT 1",
                 String.class, UUID.fromString(userId));
-    }
-
-    private String roleOf(String userId) {
-        return jdbc.queryForObject(
-                "SELECT role FROM users WHERE id = CAST(? AS UUID)", String.class, userId);
     }
 
     private int tokenVersion(String userId) {

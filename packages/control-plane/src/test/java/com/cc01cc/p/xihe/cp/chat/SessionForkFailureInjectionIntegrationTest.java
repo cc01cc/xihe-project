@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -14,7 +16,6 @@ import com.cc01cc.p.xihe.cp.entity.SessionForkRequest;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
@@ -24,7 +25,6 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.service.BranchPathService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -76,7 +76,7 @@ class SessionForkFailureInjectionIntegrationTest extends AbstractIntegrationTest
     @Autowired private ObjectMapper objectMapper;
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;
-    @Autowired private WorkspaceUserRepository workspaceUserRepository;
+    @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private AgentPrincipalRepository agentPrincipalRepository;
     @Autowired private AuthorizationGrantRepository authorizationGrantRepository;
     @Autowired private WorkspaceAgentRepository workspaceAgentRepository;
@@ -110,11 +110,10 @@ class SessionForkFailureInjectionIntegrationTest extends AbstractIntegrationTest
 
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        workspaceId = workspaceRepository.findActiveByMemberUserId(user.getId()).stream()
+        workspaceId = workspaceFixture.memberWorkspacesOf(user.getId()).stream()
                 .findFirst().orElseThrow().getId().toString();
-        if (workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(
-                UUID.fromString(workspaceId), UUID.fromString(userId)).isEmpty()) {
-            workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
+        if (!workspaceFixture.isMember(UUID.fromString(workspaceId), UUID.fromString(userId))) {
+            workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
         }
         principalId = createBoundPrincipal();
     }

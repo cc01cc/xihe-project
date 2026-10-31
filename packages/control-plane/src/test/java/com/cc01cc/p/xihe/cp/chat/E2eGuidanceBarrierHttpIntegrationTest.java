@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -44,6 +46,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @ActiveProfiles({"test", "e2e"})
 class E2eGuidanceBarrierHttpIntegrationTest extends AbstractIntegrationTest {
 
+    @Autowired
+    private WorkspaceFixture workspaceFixture;
+
     private static final String SERVICE_TOKEN = UUID.randomUUID() + "-" + UUID.randomUUID();
     private static final String E2E_RUN_ID = "host-plan0536-" + UUID.randomUUID().toString().substring(0, 8);
 
@@ -77,7 +82,7 @@ class E2eGuidanceBarrierHttpIntegrationTest extends AbstractIntegrationTest {
         assertTrue(registration.getStatusCode().is2xxSuccessful());
         User user = users.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        workspaceId = workspaces.findActiveByMemberUserId(UUID.fromString(userId))
+        workspaceId = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId))
                 .getFirst().getId().toString();
         Session session = new Session(workspaceId, userId, "Barrier Session");
         session.setId(UUID.randomUUID());

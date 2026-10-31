@@ -138,10 +138,12 @@ class AccessRoleDataBackfillMigrationTest {
         // orphaned user default (subject not in users): audited then dropped
         insertGrant("default", "user", UUID.randomUUID(), "[{\"actionClass\":\"read\"}]");
 
-        // switch to the V88 window
+        // switch to the V88 window — this class asserts what V88 leaves behind for V89, so it must
+        // not run the destructive V89 step (the schema tests cover that).
         Flyway.configure()
                 .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
                 .locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("88"))
                 .load()
                 .migrate();
     }
@@ -332,7 +334,8 @@ class AccessRoleDataBackfillMigrationTest {
 
     @Test
     void v88KeepsLegacyColumnsForV89() throws SQLException {
-        // The column/table drop is V89 (W6); V88 must not remove the source facts.
+        // The column/table drop is V89 (W4b, exercised by the schema tests); V88 must not remove
+        // the source facts.
         assertEquals(1, scalarInt("SELECT count(*) FROM information_schema.columns "
                 + "WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'role'"));
         assertEquals(1, scalarInt("SELECT count(*) FROM information_schema.columns "

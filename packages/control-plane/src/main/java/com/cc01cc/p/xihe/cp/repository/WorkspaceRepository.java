@@ -13,12 +13,14 @@ import java.util.List;
 import java.util.Optional;
 
 public interface WorkspaceRepository extends JpaRepository<Workspace, UUID> {
-    List<Workspace> findByOwnerIdAndDeletedAtIsNullOrderByCreatedAtAsc(String ownerId);
-
     Optional<Workspace> findByIdAndDeletedAtIsNull(UUID id);
 
-    Optional<Workspace> findByOwnerIdAndCreateIdempotencyKeyAndDeletedAtIsNull(
-            String ownerId, String createIdempotencyKey);
+    /**
+     * PLAN-0610 W4b: the create-idempotency lookup is keyed by the key only; the caller checks that
+     * the caller still owns the workspace (the {@code WS_OWNER} binding) — {@code workspaces.owner_id}
+     * no longer exists.
+     */
+    Optional<Workspace> findByCreateIdempotencyKeyAndDeletedAtIsNull(String createIdempotencyKey);
 
     /**
      * PLAN-0610 W3-3: the membership fact is the workspace-scope role binding now, so the
@@ -32,11 +34,6 @@ public interface WorkspaceRepository extends JpaRepository<Workspace, UUID> {
             + " and b.subjectId = :userId and b.scopeType = 'workspace' and b.scopeId = w.id)"
             + " order by w.createdAt asc")
     List<Workspace> findActiveByMemberBinding(@Param("userId") UUID userId);
-
-    /** Legacy {@code workspace_users} join; kept only for the transition window (V89 drops it). */
-    @Query("select w from Workspace w join WorkspaceUser wu on wu.id.workspaceId = w.id "
-            + "where wu.id.userId = :userId and w.deletedAt is null order by w.createdAt asc")
-    List<Workspace> findActiveByMemberUserId(@Param("userId") UUID userId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select w from Workspace w where w.id = :id and w.deletedAt is null")

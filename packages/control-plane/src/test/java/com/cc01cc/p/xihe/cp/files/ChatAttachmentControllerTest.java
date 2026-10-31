@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.files;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,13 +29,11 @@ import com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -60,7 +60,7 @@ class ChatAttachmentControllerTest extends AbstractH2Test {
     private WorkspaceRepository workspaceRepository;
 
     @Autowired
-    private WorkspaceUserRepository workspaceUserRepository;
+    private WorkspaceFixture workspaceFixture;
 
     @Autowired
     private SessionRepository sessionRepository;
@@ -101,9 +101,9 @@ class ChatAttachmentControllerTest extends AbstractH2Test {
 
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        Workspace ws = workspaceRepository.save(new Workspace("attach-test-workspace", userId));
+        Workspace ws = workspaceFixture.createOwnedWorkspace("attach-test-workspace", userId);
         workspaceId = ws.getId().toString();
-        workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
 
         authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId, 0);
 
@@ -315,7 +315,7 @@ class ChatAttachmentControllerTest extends AbstractH2Test {
         restTemplate.postForEntity(baseUrl + "/api/v1/auth/register",
                 new RegisterRequest(otherEmail, TestDataFactory.PASSWORD, "Other"), AuthResponse.class);
         User other = userRepository.findByEmail(otherEmail).orElseThrow();
-        workspaceUserRepository.save(new WorkspaceUser(workspaceId, other.getId().toString(), WorkspaceRole.MEMBER));
+        workspaceFixture.bindWorkspaceRole(workspaceId, other.getId().toString(), WorkspaceRole.MEMBER);
         String otherToken = jwtTokenProvider.createAccessToken(other.getId().toString(), otherEmail, "USER", workspaceId, 0);
 
         ResponseEntity<Map> response = restTemplate.exchange(

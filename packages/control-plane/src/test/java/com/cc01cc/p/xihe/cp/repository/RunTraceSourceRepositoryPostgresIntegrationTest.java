@@ -1,12 +1,13 @@
 package com.cc01cc.p.xihe.cp.repository;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.repository.RunTraceSourceRepository.RunMetadata;
 import com.cc01cc.p.xihe.cp.repository.RunTraceSourceRepository.RunIdentity;
 import com.cc01cc.p.xihe.cp.repository.RunTraceSourceRepository.SourceRecord;
@@ -41,7 +42,7 @@ class RunTraceSourceRepositoryPostgresIntegrationTest extends AbstractIntegratio
     @Autowired private RunTraceSourceRepository sourceRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;
-    @Autowired private WorkspaceUserRepository workspaceUserRepository;
+    @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private SessionRepository sessionRepository;
     @Autowired private ChatRunRepository chatRunRepository;
     @Autowired private JdbcTemplate jdbcTemplate;
@@ -60,10 +61,9 @@ class RunTraceSourceRepositoryPostgresIntegrationTest extends AbstractIntegratio
         userId = user.getId();
 
         Workspace workspace = workspaceRepository.saveAndFlush(
-                new Workspace("Run Trace repository test", userId.toString()));
+                new Workspace("Run Trace repository test"));
         workspaceId = workspace.getId();
-        workspaceUserRepository.saveAndFlush(new WorkspaceUser(
-                workspaceId.toString(), userId.toString(), WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(workspaceId.toString(), userId.toString(), WorkspaceRole.OWNER);
 
         Session session = createSession("Run Trace source session");
         sessionId = session.getId();
@@ -97,8 +97,7 @@ class RunTraceSourceRepositoryPostgresIntegrationTest extends AbstractIntegratio
             sessionRepository.deleteById(otherSessionId);
         }
         if (workspaceId != null && userId != null) {
-            workspaceUserRepository.deleteById(new com.cc01cc.p.xihe.cp.entity.WorkspaceUserId(
-                    workspaceId.toString(), userId.toString()));
+            workspaceFixture.unbindWorkspaceRole(workspaceId.toString(), userId.toString());
             workspaceRepository.deleteById(workspaceId);
         }
         if (userId != null) {

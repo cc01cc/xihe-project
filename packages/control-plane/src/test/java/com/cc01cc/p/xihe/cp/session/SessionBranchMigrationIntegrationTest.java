@@ -123,8 +123,8 @@ class SessionBranchMigrationIntegrationTest {
             UUID sessionId = UUID.randomUUID();
             execute(connection, "INSERT INTO users (id, email, password_hash, username) VALUES ('" + userId
                     + "'::uuid, 'branch-fresh-" + userId + "@test.local', 'hash', 'x' || left(md5(random()::text), 31))");
-            execute(connection, "INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
-                    + "'::uuid, 'branch-fresh-ws', '" + userId + "'::uuid)");
+            execute(connection, "INSERT INTO workspaces (id, name) VALUES ('" + workspaceId
+                    + "'::uuid, 'branch-fresh-ws')");
             execute(connection, "INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('"
                     + sessionId + "'::uuid, '" + workspaceId + "'::uuid, '" + userId
                     + "'::uuid, 'fresh-session')");
@@ -213,6 +213,7 @@ class SessionBranchMigrationIntegrationTest {
         try (Connection connection = connect(jdbcUrl)) {
             execute(connection, "INSERT INTO users (id, email, password_hash) VALUES ('" + userId
                     + "'::uuid, 'branch-upgrade-" + userId + "@test.local', 'hash')");
+            // V42 schema: owner_id is still NOT NULL here.
             execute(connection, "INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
                     + "'::uuid, 'branch-upgrade-ws', '" + userId + "'::uuid)");
             execute(connection, "INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ('"
@@ -373,6 +374,7 @@ class SessionBranchMigrationIntegrationTest {
         try (Connection connection = connect(jdbcUrl)) {
             execute(connection, "INSERT INTO users (id, email, password_hash) VALUES ('" + userId
                     + "'::uuid, 'branch-rollback-" + userId + "@test.local', 'hash')");
+            // V42 schema: owner_id is still NOT NULL here.
             execute(connection, "INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
                     + "'::uuid, 'branch-rollback-ws', '" + userId + "'::uuid)");
             execute(connection, "INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('"

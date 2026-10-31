@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
@@ -11,7 +13,6 @@ import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
@@ -20,7 +21,6 @@ import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.scheduled.ScheduledTaskApiService;
 import com.cc01cc.p.xihe.cp.scheduled.ScheduledTaskRepository;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
@@ -59,7 +59,7 @@ class CrossWorkspaceGrantGateTest extends AbstractH2Test {
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;
-    @Autowired private WorkspaceUserRepository workspaceUserRepository;
+    @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private AccessRoleRepository accessRoleRepository;
     @Autowired private AccessRolePermissionRepository permissionRepository;
     @Autowired private AccessRoleBindingRepository bindingRepository;
@@ -166,12 +166,10 @@ class CrossWorkspaceGrantGateTest extends AbstractH2Test {
         User user = userRepository.save(new User("gate-" + tag + "-" + UUID.randomUUID() + "@test.local",
                 "hash", "Gate " + tag));
         String owner = user.getId().toString();
-        Workspace workspaceA = workspaceRepository.save(new Workspace("gate-" + tag + "-a", owner));
-        Workspace workspaceB = workspaceRepository.save(new Workspace("gate-" + tag + "-b", owner));
-        workspaceUserRepository.save(new WorkspaceUser(workspaceA.getId().toString(), owner,
-                WorkspaceRole.OWNER));
-        workspaceUserRepository.save(new WorkspaceUser(workspaceB.getId().toString(), owner,
-                WorkspaceRole.VIEWER));
+        Workspace workspaceA = workspaceFixture.createOwnedWorkspace("gate-" + tag + "-a", owner);
+        Workspace workspaceB = workspaceFixture.createOwnedWorkspace("gate-" + tag + "-b", owner);
+        workspaceFixture.bindWorkspaceRole(workspaceA.getId().toString(), owner, WorkspaceRole.OWNER);
+        workspaceFixture.bindWorkspaceRole(workspaceB.getId().toString(), owner, WorkspaceRole.VIEWER);
 
         UUID ownerRoleId = accessRoleRepository.findByName(SystemAccessRoleCatalog.WS_OWNER)
                 .orElseThrow().getId();

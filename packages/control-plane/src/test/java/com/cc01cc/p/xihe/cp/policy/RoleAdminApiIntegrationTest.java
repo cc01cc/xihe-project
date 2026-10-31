@@ -79,7 +79,7 @@ class RoleAdminApiIntegrationTest extends AbstractIntegrationTest {
         jdbc.update("DELETE FROM role_permissions WHERE role_id IN"
                 + " (SELECT id FROM roles WHERE is_system = false)");
         jdbc.update("DELETE FROM roles WHERE is_system = false");
-        jdbc.update("DELETE FROM workspace_users WHERE workspace_id IN"
+        jdbc.update("DELETE FROM role_bindings WHERE scope_type = 'workspace' AND scope_id IN"
                 + " (SELECT id FROM workspaces WHERE name LIKE 'role-api-%')");
         jdbc.update("DELETE FROM workspaces WHERE name LIKE 'role-api-%'");
     }
@@ -357,7 +357,7 @@ class RoleAdminApiIntegrationTest extends AbstractIntegrationTest {
         String superToken = superAdmin("gate-admin@test.com");
         // Instance ADMIN: cap:instance:admin but no MANAGE_ROLES (R2-4).
         String adminId = userIdOf(register("gate-instance-admin@test.com"));
-        jdbc.update("UPDATE users SET role = 'ADMIN' WHERE id = CAST(? AS UUID)", adminId);
+        // PLAN-0610 W4b: only the binding matters (users.role and the legacy table are gone).
         grantInstanceRole(adminId, "ADMIN");
         String adminToken = login("gate-instance-admin@test.com");
         assertTrue(authzContext.isInstanceAdmin(UUID.fromString(adminId)));

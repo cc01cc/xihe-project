@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.AuthService;
@@ -21,7 +23,6 @@ import com.cc01cc.p.xihe.cp.repository.AuditLogRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -56,7 +57,7 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractIntegrationTest {
     @Autowired private AuditLogRepository auditLogRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;
-    @Autowired private WorkspaceUserRepository workspaceUserRepository;
+    @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private AccessRoleRepository accessRoleRepository;
     @Autowired private AccessRolePermissionRepository permissionRepository;
     @Autowired private AccessRoleBindingRepository roleBindingRepository;
@@ -85,8 +86,7 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractIntegrationTest {
                     auditLogRepository.findByUserIdOrderByCreatedAtDesc(creatorId.toString()));
             if (workspaceId != null) {
                 UUID workspaceUuid = UUID.fromString(workspaceId);
-                workspaceUserRepository.deleteAll(
-                        workspaceUserRepository.findByIdWorkspaceId(workspaceUuid));
+                workspaceFixture.unbindWorkspace(workspaceUuid);
                 workspaceRepository.deleteById(workspaceUuid);
             }
             userRepository.deleteById(creatorId);

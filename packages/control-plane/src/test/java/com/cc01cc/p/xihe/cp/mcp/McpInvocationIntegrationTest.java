@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.mcp;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.checkpoint.AgentGraphCheckpointService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
@@ -15,7 +17,6 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.policy.GrantAuthorizationService;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
@@ -27,7 +28,6 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -65,7 +65,7 @@ class McpInvocationIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;
-    @Autowired private WorkspaceUserRepository workspaceUserRepository;
+    @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private SessionRepository sessionRepository;
     @Autowired private ChatRunRepository chatRunRepository;
     @Autowired private ChatApprovalRepository chatApprovalRepository;
@@ -97,9 +97,9 @@ class McpInvocationIntegrationTest extends AbstractIntegrationTest {
         User other = userRepository.save(new User("mcp-inv-other-" + UUID.randomUUID() + "@test.com", "hash", "MCP other"));
         otherUserId = other.getId().toString();
 
-        Workspace ws = workspaceRepository.save(new Workspace("MCP invocation test", userId));
+        Workspace ws = workspaceFixture.createOwnedWorkspace("MCP invocation test", userId);
         workspaceId = ws.getId().toString();
-        workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
 
         AgentPrincipal principal = new AgentPrincipal();
         principal.setName("MCP invocation test agent");
@@ -136,7 +136,7 @@ class McpInvocationIntegrationTest extends AbstractIntegrationTest {
             agentPrincipalRepository.deleteById(principalId);
         }
         if (workspaceId != null) {
-            workspaceUserRepository.deleteAll(workspaceUserRepository.findByIdWorkspaceId(UUID.fromString(workspaceId)));
+            workspaceFixture.unbindWorkspace(UUID.fromString(workspaceId));
             workspaceRepository.deleteById(UUID.fromString(workspaceId));
         }
         if (userId != null) {

@@ -1,8 +1,9 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
@@ -33,7 +34,7 @@ class WorkspaceServiceTest {
     private com.cc01cc.p.xihe.cp.repository.WorkspaceRepository workspaceRepository;
 
     @Autowired
-    private WorkspaceUserRepository workspaceUserRepository;
+    private WorkspaceFixture workspaceFixture;
 
     @Autowired
     private com.cc01cc.p.xihe.cp.repository.UserRepository userRepository;
@@ -73,8 +74,8 @@ class WorkspaceServiceTest {
     void createWorkspace_assignsOwnerRole() {
         String userId = java.util.UUID.randomUUID().toString();
         Workspace ws = workspaceService.createWorkspace("role-test", userId);
-        assertTrue(workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(ws.getId(), UUID.fromString(userId))
-                .map(wu -> wu.getRole() == WorkspaceRole.OWNER)
+        assertTrue(workspaceFixture.roleOf(ws.getId(), UUID.fromString(userId))
+                .map(role -> role == WorkspaceRole.OWNER)
                 .orElse(false));
     }
 

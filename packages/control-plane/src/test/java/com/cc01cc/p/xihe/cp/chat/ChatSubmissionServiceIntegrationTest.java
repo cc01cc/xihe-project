@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
@@ -13,7 +15,6 @@ import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
@@ -23,7 +24,6 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.service.BranchPathService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -100,7 +100,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     private WorkspaceAgentRepository workspaceAgentRepository;
 
     @Autowired
-    private WorkspaceUserRepository workspaceUserRepository;
+    private WorkspaceFixture workspaceFixture;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -118,7 +118,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     @Test
     void messageWriteFailureRollsBackChatRunAndSessionBinding() {
         User user = userRepository.save(new User("chat-submit-" + UUID.randomUUID() + "@test.com", "hash", "Chat Submit"));
-        Workspace workspace = workspaceRepository.save(new Workspace("Chat Submit Workspace", user.getId().toString()));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Chat Submit Workspace", user.getId().toString());
         Session session = new Session(workspace.getId().toString(), user.getId().toString(), "Chat Submit Session");
         session.setId(UUID.randomUUID());
         Session persistedSession = saveBoundChatSession(session, user);
@@ -133,8 +133,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         AgentPrincipal principal = savePrincipal(user);
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
                 workspace.getId().toString(), objectMapper.createArrayNode()));
-        workspaceUserRepository.saveAndFlush(new WorkspaceUser(workspace.getId().toString(),
-                user.getId().toString(), WorkspaceRole.OWNER));
+        workspaceFixture.bindWorkspaceRole(workspace.getId().toString(), user.getId().toString(), WorkspaceRole.OWNER);
 
         assertThrows(IllegalStateException.class, () -> submit(
                 runId, persistedSession, user, workspace, "message", principal.getId().toString()));
@@ -149,7 +148,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     @Test
     void createRejectsMissingDisabledOrUnboundPrincipalBeforeWritingRun() {
         User user = userRepository.save(new User("chat-admission-" + UUID.randomUUID() + "@test.com", "hash", "Admission test"));
-        Workspace workspace = workspaceRepository.save(new Workspace("Chat Admission Workspace", user.getId().toString()));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Chat Admission Workspace", user.getId().toString());
         Session session = new Session(workspace.getId().toString(), user.getId().toString(), "Admission Session");
         session.setId(UUID.randomUUID());
         Session persistedSession = saveBoundChatSession(session, user);
@@ -176,9 +175,8 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     @Test
     void firstChatBindsOnlyExplicitPrincipalAndStoresPrincipalWorkspaceIntersection() throws Exception {
         User user = userRepository.save(new User("chat-first-bind-" + UUID.randomUUID() + "@test.com", "hash", "First bind test"));
-        Workspace workspace = workspaceRepository.save(new Workspace("Chat First Bind Workspace", user.getId().toString()));
-        workspaceUserRepository.saveAndFlush(new WorkspaceUser(workspace.getId().toString(),
-                user.getId().toString(), WorkspaceRole.OWNER));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Chat First Bind Workspace", user.getId().toString());
+        workspaceFixture.bindWorkspaceRole(workspace.getId().toString(), user.getId().toString(), WorkspaceRole.OWNER);
         Session session = new Session(workspace.getId().toString(), user.getId().toString(), "Empty placeholder");
         session.setId(UUID.randomUUID());
         Session persistedSession = saveBoundChatSession(session, user);
@@ -215,9 +213,8 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     @Test
     void historicalSessionWithMessagesCannotBeBoundToAnAgent() throws Exception {
         User user = userRepository.save(new User("chat-history-bind-" + UUID.randomUUID() + "@test.com", "hash", "History bind test"));
-        Workspace workspace = workspaceRepository.save(new Workspace("Chat History Workspace", user.getId().toString()));
-        workspaceUserRepository.saveAndFlush(new WorkspaceUser(workspace.getId().toString(),
-                user.getId().toString(), WorkspaceRole.OWNER));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Chat History Workspace", user.getId().toString());
+        workspaceFixture.bindWorkspaceRole(workspace.getId().toString(), user.getId().toString(), WorkspaceRole.OWNER);
         Session session = new Session(workspace.getId().toString(), user.getId().toString(), "Imported history");
         session.setId(UUID.randomUUID());
         Session persistedSession = saveBoundChatSession(session, user);
@@ -241,7 +238,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     @Test
     void userDirectInvocationSessionCannotBeBoundToAnAgent() {
         User user = userRepository.save(new User("chat-user-ledger-" + UUID.randomUUID() + "@test.com", "hash", "User ledger test"));
-        Workspace workspace = workspaceRepository.save(new Workspace("User Ledger Workspace", user.getId().toString()));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("User Ledger Workspace", user.getId().toString());
         Session session = saveEmptySession(user, workspace, "User direct operation");
         AgentPrincipal principal = savePrincipal(user);
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
@@ -270,7 +267,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     @Test
     void toolContextEventSessionCannotBeBoundToAnAgent() {
         User user = userRepository.save(new User("chat-tool-event-" + UUID.randomUUID() + "@test.com", "hash", "Tool event test"));
-        Workspace workspace = workspaceRepository.save(new Workspace("Tool Event Workspace", user.getId().toString()));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Tool Event Workspace", user.getId().toString());
         Session session = saveEmptySession(user, workspace, "User tool event");
         AgentPrincipal principal = savePrincipal(user);
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
@@ -296,9 +293,8 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     @Test
     void secondCreateWhileRunInFlightIsRejectedInsideSessionRowLock() {
         User user = userRepository.save(new User("chat-inflight-" + UUID.randomUUID() + "@test.com", "hash", "In-flight test"));
-        Workspace workspace = workspaceRepository.save(new Workspace("Chat In-flight Workspace", user.getId().toString()));
-        workspaceUserRepository.saveAndFlush(new WorkspaceUser(workspace.getId().toString(),
-                user.getId().toString(), WorkspaceRole.OWNER));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Chat In-flight Workspace", user.getId().toString());
+        workspaceFixture.bindWorkspaceRole(workspace.getId().toString(), user.getId().toString(), WorkspaceRole.OWNER);
         Session session = new Session(workspace.getId().toString(), user.getId().toString(), "In-flight Session");
         session.setId(UUID.randomUUID());
         Session persistedSession = saveBoundChatSession(session, user);
@@ -514,9 +510,8 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
 
     private ChatFixture createChatFixture(String prefix) {
         User user = userRepository.save(new User(prefix + "-" + UUID.randomUUID() + "@test.com", "hash", "Tool snapshot"));
-        Workspace workspace = workspaceRepository.save(new Workspace(prefix + " Workspace", user.getId().toString()));
-        workspaceUserRepository.saveAndFlush(new WorkspaceUser(workspace.getId().toString(),
-                user.getId().toString(), WorkspaceRole.OWNER));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace(prefix + " Workspace", user.getId().toString());
+        workspaceFixture.bindWorkspaceRole(workspace.getId().toString(), user.getId().toString(), WorkspaceRole.OWNER);
         Session session = new Session(workspace.getId().toString(), user.getId().toString(), prefix + " Session");
         session.setId(UUID.randomUUID());
         Session persistedSession = saveBoundChatSession(session, user);
@@ -585,9 +580,8 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
 
     private PendingInboxFixture createPendingInboxFixture(String prefix) throws Exception {
         User user = userRepository.save(new User(prefix + "-" + UUID.randomUUID() + "@test.com", "hash", "Inbox claim test"));
-        Workspace workspace = workspaceRepository.save(new Workspace(prefix + "-workspace", user.getId().toString()));
-        workspaceUserRepository.saveAndFlush(new WorkspaceUser(workspace.getId().toString(),
-                user.getId().toString(), WorkspaceRole.OWNER));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace(prefix + "-workspace", user.getId().toString());
+        workspaceFixture.bindWorkspaceRole(workspace.getId().toString(), user.getId().toString(), WorkspaceRole.OWNER);
         AgentPrincipal principal = savePrincipal(user);
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
                 workspace.getId().toString(), objectMapper.createArrayNode()));
