@@ -360,10 +360,10 @@ dir = "packages/ui"
 env = { XIHE_ENV = "dev" }
 alias = "dev:host:start:ui"
 
-[tasks."dev:stack"]
-run = "node scripts/stack-run.mjs dev-host"
-description = "Start a named host stack: mise run dev:stack -- --stack 2 (default stack-1)"
-alias = "dev:stack"
+# PLAN-0603: 旧的 `dev:stack`（`node scripts/stack-run.mjs dev-host`，前台）已被上面的
+# detached supervisor 取代（同名任务不能重复定义，否则 TOML 解析失败）。
+# 等价迁移：`mise run dev:stack -- --stack <n>` 仍可用（新入口是超集：readiness/PG/worktree/stop）；
+# 需要旧的前台行为时直接用 `node scripts/stack-run.mjs dev-host`。
 
 # [FROZEN 2026-10-07] docker 构建冻结，见文件头冻结说明（现存镜像可继续被 Runtime 使用）
 # [tasks."image:workspace:build"]
