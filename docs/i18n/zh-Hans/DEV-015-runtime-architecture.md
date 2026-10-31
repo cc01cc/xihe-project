@@ -27,6 +27,7 @@ updated: 2026-10-08
 ## 2. 执行边界（PLAN-235）
 
 - Strict / Coding / Isolated 三 profile 的 Workspace 文件、命令、PDF、后台操作**全部在 Sandbox 内执行**，Runtime host 进程不直接读写 WorkspaceStorage，无 container failure → host fallback。
+- **Docker 后端冻结（PLAN-0612 M4）**：Runtime 侧行为不变（Docker 实现按 2026-10-25 裁定不在内部改功能）；冻结门在**外层**——CP 用静态开关 `XIHE_WORKSPACE_DOCKER_BACKEND`（默认 `disabled`）在创建时 `409 BACKEND_DISABLED`、在既有 docker 工作区的执行/文件/环境操作前 `503 BACKEND_DISABLED`，CLI `xihe dev check` 与 `xihe verify` 给出同口径预检；唯一豁免是 `test:e2e:host`（runner 注入 `enabled`，见 [DEV-020](DEV-020-e2e-test-strategy.md)）。Runtime 自身仍按「未知 Workspace/后端不可用必须显式失败、不得回退宿主」处理（见 [DEV-031](DEV-031-sandbox-backend-contract.md)）。
 - 传输模型：统一 per-request Docker exec；**无** HTTP container-runtime 通道、instance token、长驻 worker、NDJSON 多路复用（exec 本身即认证边界：只有 Runtime 能调 Docker Engine API）。
 
 ```mermaid

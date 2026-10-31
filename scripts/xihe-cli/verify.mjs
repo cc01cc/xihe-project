@@ -344,6 +344,19 @@ export async function runVerify({
     if (workspace.status !== 200) {
       failA('A3 workspace access', 'WORKSPACE_NOT_ACCESSIBLE', `The account cannot access workspace ${workspaceId} (HTTP ${workspace.status}).`);
     }
+    // PLAN-0612 M4 preflight: verification creates sessions/chat runs (execution) — a
+    // docker-backend workspace cannot run while the backend is frozen. Fail before any
+    // principal/session/provider work, with the same code CP would return later.
+    const workspaceExecutionMode = String(workspace.body?.executionMode ?? 'docker').trim().toLowerCase();
+    const dockerBackendEnabled = String(env.XIHE_WORKSPACE_DOCKER_BACKEND ?? '').trim().toLowerCase() === 'enabled';
+    if (workspaceExecutionMode === 'docker' && !dockerBackendEnabled) {
+      failA(
+        'A3 workspace access',
+        'BACKEND_DISABLED',
+        `Workspace ${workspaceId} runs on the frozen docker execution backend; verification would execute in it. `
+          + 'Use a direct_attach workspace (windows-host/windows-mxc), or set XIHE_WORKSPACE_DOCKER_BACKEND=enabled for the test lane.',
+      );
+    }
     step('A3 workspace access', 'PASS');
 
     if (!state.principalId) {

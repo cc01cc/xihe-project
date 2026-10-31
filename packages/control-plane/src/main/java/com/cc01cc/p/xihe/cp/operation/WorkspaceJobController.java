@@ -5,6 +5,7 @@ import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeJobClient;
+import com.cc01cc.p.xihe.cp.service.WorkspaceBackendPolicy;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.http.HttpStatus;
@@ -42,17 +43,20 @@ public class WorkspaceJobController {
     private final WorkspaceJobStartService workspaceJobStartService;
     private final WorkspaceJobCancellationService workspaceJobCancellationService;
     private final WorkspaceService workspaceService;
+    private final WorkspaceBackendPolicy backendPolicy;
     private final RuntimeJobClient runtimeJobClient;
 
     public WorkspaceJobController(JobStateService jobStateService,
                                   WorkspaceJobStartService workspaceJobStartService,
                                   WorkspaceJobCancellationService workspaceJobCancellationService,
                                   WorkspaceService workspaceService,
+                                  WorkspaceBackendPolicy backendPolicy,
                                   RuntimeJobClient runtimeJobClient) {
         this.jobStateService = jobStateService;
         this.workspaceJobStartService = workspaceJobStartService;
         this.workspaceJobCancellationService = workspaceJobCancellationService;
         this.workspaceService = workspaceService;
+        this.backendPolicy = backendPolicy;
         this.runtimeJobClient = runtimeJobClient;
     }
 
@@ -90,6 +94,9 @@ public class WorkspaceJobController {
             // this entry; start additionally resolves executionMode here and
             // passes it down — the Job service no longer reads Workspace data.
             Workspace workspace = workspaceService.requireAccessibleWorkspace(workspaceId, userId);
+            // PLAN-0612 M4: starting a Job executes in the workspace backend; docker
+            // workspaces fail closed (503 BACKEND_DISABLED) while the backend is frozen.
+            backendPolicy.requireOperationAllowed(workspace);
             String executionMode = workspace.getExecutionMode() == null || workspace.getExecutionMode().isBlank()
                     ? "docker" : workspace.getExecutionMode();
             WorkspaceJobStartService.StartOutcome outcome = workspaceJobStartService.start(

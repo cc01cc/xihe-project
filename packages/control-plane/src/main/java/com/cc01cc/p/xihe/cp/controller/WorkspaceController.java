@@ -5,6 +5,7 @@ import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
+import com.cc01cc.p.xihe.cp.service.WorkspaceBackendPolicy;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -29,9 +30,11 @@ import java.util.Map;
 public class WorkspaceController {
 
     private final WorkspaceService workspaceService;
+    private final WorkspaceBackendPolicy backendPolicy;
 
-    public WorkspaceController(WorkspaceService workspaceService) {
+    public WorkspaceController(WorkspaceService workspaceService, WorkspaceBackendPolicy backendPolicy) {
         this.workspaceService = workspaceService;
+        this.backendPolicy = backendPolicy;
     }
 
     @GetMapping("/current")
@@ -82,6 +85,15 @@ public class WorkspaceController {
                     HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Authentication required");
         }
         try {
+            // PLAN-0612 M4: the frozen docker backend is refused at creation time with a
+            // stable 409 before any row/spec is written. A blank storageMode is the
+            // historical default (managed_import → docker), so it is gated too.
+            String requestedStorageMode = request == null ? null : request.storageMode();
+            boolean dockerRequested = requestedStorageMode == null || requestedStorageMode.isBlank()
+                    || "managed_import".equalsIgnoreCase(requestedStorageMode.trim());
+            if (dockerRequested) {
+                backendPolicy.requireCreationAllowed();
+            }
             String name = request == null || request.name() == null ? "Default Workspace" : request.name();
             String description = request == null ? null : request.description();
             String profile = request == null ? null : request.profile();

@@ -1882,6 +1882,10 @@ async function main() {
       XIHE_AGENT_BASE_URL: `http://127.0.0.1:${agentPort}`,
       XIHE_RUNTIME_URL: `http://127.0.0.1:${runtimePort}`,
       XIHE_DEV_ADMIN_PASSWORD: e2eAdminPassword,
+      // PLAN-0612 M4: the host E2E lane is the single documented exemption from the
+      // frozen workspace docker backend; inject it explicitly instead of relying on a
+      // developer's shell env.
+      XIHE_WORKSPACE_DOCKER_BACKEND: 'enabled',
       ...(useCpNative ? { XIHE_CHANNEL_ENABLED: 'true' } : {}),
     }
     if (useCpJar) console.log(`[e2e-host] CP boot via fat jar ${cpBootPlan.jar.name} (${cpBootPlan.reason})`)

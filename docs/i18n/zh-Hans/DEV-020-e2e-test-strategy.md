@@ -253,6 +253,10 @@ node scripts/e2e-host-detached.mjs --timeout-min 25 --auth-lane=ratelimit \
 
 生产与日常 host 栈默认限流开启（不注入 = 既有默认值）；`XIHE_E2E_EXTERNAL_SERVER=1` 复用模式不在该车道判定内。限流的产品侧根因（IPv6 回环豁免失效）另见 PLAN-0571。
 
+### 3.3b 工作区 docker 后端豁免（PLAN-0612 M4）
+
+`test:e2e:host` 是「工作区 docker 执行后端冻结」的**唯一豁免**（2026-10-31 用户裁定）：runner 在 CP `serviceEnv` 里**显式注入** `XIHE_WORKSPACE_DOCKER_BACKEND=enabled`（`scripts/e2e-host.mjs` 的 `commonCpEnv`），不依赖开发者 shell 预设；未注入即 CP 默认 `disabled`（创建 `managed_import` → 409、既有 docker 工作区执行/文件/环境操作 → 503，见 [DEV-014 §8b](DEV-014-control-plane-architecture.md)、[DEV-003 §2](DEV-003-config-management.md)）。因此本车道产生的 `managed_import` 用例不受冻结门影响，其他车道（含手工 `node scripts/xihe.mjs …`）仍按冻结口径预检。
+
 ### 3.4 时间预算与网络分类（PLAN-0586）
 
 - **批次预算**：mock-full 整批墙钟基线 7.5 min → 6.7 min（0586 优化后 402.8 s，82 passed / 0 unexpected / 0 flaky；证据 `plans/PLAN-0586-XH-e2e-runtime-slim/evidence/m4-final-ab.md`）。新增/改动不得使整批退回 7.5 min 以上。

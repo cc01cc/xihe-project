@@ -269,7 +269,27 @@ export async function checkDevelopmentEnvironment({
         : {}),
     });
   }
-  return { ok: !failed, checks };
+  // PLAN-0612 M4: the workspace docker execution backend is frozen by default; surface it
+  // before any workspace creation/execution so the CLI never leads a user into container
+  // creation. The switch is static (env), matching CP's WorkspaceBackendPolicy.
+  const rawBackend = String(env.XIHE_WORKSPACE_DOCKER_BACKEND ?? '').trim().toLowerCase();
+  const dockerEnabled = rawBackend === 'enabled';
+  const workspaceBackend = {
+    docker: dockerEnabled ? 'enabled' : 'disabled',
+    dockerFrozen: !dockerEnabled,
+    directAttach: 'available',
+  };
+  checks.push({
+    category: 'workspace-backend',
+    name: 'workspace-backend',
+    status: dockerEnabled
+      ? 'docker=enabled / direct_attach=available'
+      : 'docker=disabled (frozen) / direct_attach=available',
+    ...(dockerEnabled
+      ? {}
+      : { hint: '新建工作区请用 direct_attach（hostPath + windows-host/windows-mxc）；managed_import(docker) 会被 CP 拒为 409 BACKEND_DISABLED' }),
+  });
+  return { ok: !failed, checks, workspaceBackend };
 }
 
 function parseCommandOptions(args, valueOptions) {
