@@ -36,6 +36,9 @@ public class ToolFaceRegistry {
     // are independent opt-in action classes, default deny like CREATE_ACCOUNT above.
     public static final String ACTION_CREATE_SCHEDULED_TASK = "CREATE_SCHEDULED_TASK";
     public static final String ACTION_MANAGE_SCHEDULED_TASK = "MANAGE_SCHEDULED_TASK";
+    // PLAN-0610 (T1.2): the fifteenth action atom — who may create/edit access roles and
+    // bindings. It is a normal action atom (evaluated through grants), not a capability atom.
+    public static final String ACTION_MANAGE_ROLES = "MANAGE_ROLES";
 
     /** PLAN-0496 #2: the credential resource namespace ({@code credential:<uuid>} / {@code credential:*}). */
     public static final String CREDENTIAL_ACTION_PREFIX = "credential_";
@@ -101,7 +104,7 @@ public class ToolFaceRegistry {
         return Set.of(ACTION_READ, ACTION_WRITE, ACTION_DELETE, ACTION_EXEC, ACTION_NETWORK,
                 ACTION_CREDENTIAL_USE, ACTION_CREDENTIAL_REVEAL, ACTION_CREDENTIAL_MANAGE,
                 ACTION_CREATE_ACCOUNT, ACTION_CREATE_TEMPLATE, ACTION_MANAGE_WORKSPACE_AGENTS, ACTION_SPAWN_AGENT,
-                ACTION_CREATE_SCHEDULED_TASK, ACTION_MANAGE_SCHEDULED_TASK);
+                ACTION_CREATE_SCHEDULED_TASK, ACTION_MANAGE_SCHEDULED_TASK, ACTION_MANAGE_ROLES);
     }
 
     /** PLAN-0496 #2: credential-namespace action classes (the three atoms share resource rules). */

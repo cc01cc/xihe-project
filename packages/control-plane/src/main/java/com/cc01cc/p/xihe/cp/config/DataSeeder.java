@@ -35,15 +35,18 @@ public class DataSeeder implements CommandLineRunner {
     private final GrantDefaultService grantDefaultService;
     private final LocalModeService localModeService;
     private final com.cc01cc.p.xihe.cp.service.InstanceOwnershipService instanceOwnershipService;
+    private final com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog systemAccessRoleCatalog;
 
     public DataSeeder(UserRepository userRepository, PasswordEncoder passwordEncoder,
                       GrantDefaultService grantDefaultService, LocalModeService localModeService,
-                      com.cc01cc.p.xihe.cp.service.InstanceOwnershipService instanceOwnershipService) {
+                      com.cc01cc.p.xihe.cp.service.InstanceOwnershipService instanceOwnershipService,
+                      com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog systemAccessRoleCatalog) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.grantDefaultService = grantDefaultService;
         this.localModeService = localModeService;
         this.instanceOwnershipService = instanceOwnershipService;
+        this.systemAccessRoleCatalog = systemAccessRoleCatalog;
     }
 
     static String seededAdminPassword() {
@@ -53,6 +56,10 @@ public class DataSeeder implements CommandLineRunner {
     @Override
     @Transactional
     public void run(String... args) {
+        // PLAN-0610 T1.2: the built-in access-role catalog. V87 seeds it on PostgreSQL; this call
+        // makes the same catalog present on a schema built from the entities (H2 profile, Flyway
+        // disabled) and is a no-op on an already migrated database.
+        systemAccessRoleCatalog.ensureSeeded();
         // PLAN-0526: local mode is a fresh single-user bootstrap — do not seed the
         // default admin, so the instance starts with zero users and can onboard.
         if (localModeService.enabled()) {

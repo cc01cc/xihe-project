@@ -98,8 +98,9 @@ public class GrantAuthorizationService {
                 return false;
             }
 
-            List<AuthorizationGrant> principalGrants = grantRepository.findBySubjectTypeAndSubjectId(
-                    GrantPrincipalPathResolver.AGENT_PRINCIPAL, principal.getId());
+            List<AuthorizationGrant> principalGrants = grantRepository.findScopedGrants(
+                    GrantPrincipalPathResolver.AGENT_PRINCIPAL, principal.getId(),
+                    GrantSources.EVALUATION_SOURCES, workspaceId);
             List<Set<GrantIntersectionEvaluator.PermissionAtom>> permissionPath = new ArrayList<>();
             permissionPath.add(evaluator.union(principalGrants));
             permissionPath.add(evaluator.parse(binding.getPermissionsSnapshot()));
@@ -139,10 +140,19 @@ public class GrantAuthorizationService {
                 && workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(workspaceId, userId).isPresent();
     }
 
+    /**
+     * PLAN-0610 T1.6: the user path reads the scoped union of the role/spawn/template/
+     * credential-binding/agent-default sources. Instance-scope rows always participate; a
+     * workspace-scope row participates only when it belongs to the request workspace, so a
+     * binding in workspace A can never authorize workspace B (P0-1). The retired
+     * {@code default}/{@code direct} branches are gone.
+     */
     private boolean evaluateUserPath(PolicyRequest request) {
         UUID userId = UUID.fromString(request.userId());
+        UUID workspaceId = UUID.fromString(request.workspaceId());
         Set<GrantIntersectionEvaluator.PermissionAtom> userGrants = evaluator.union(
-                grantRepository.findBySubjectTypeAndSubjectId(GrantPrincipalPathResolver.USER, userId));
+                grantRepository.findScopedGrants(GrantPrincipalPathResolver.USER, userId,
+                        GrantSources.EVALUATION_SOURCES, workspaceId));
         return evaluator.allows(request, List.of(userGrants));
     }
 }
