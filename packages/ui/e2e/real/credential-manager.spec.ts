@@ -29,7 +29,7 @@ import {
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
 import { createWorkspaceSessionWithPrincipal } from "./helpers/agent-principal";
-import { seedUserGrant } from "./helpers/user-grants";
+import { seedUserGrant, seedUserGrantPermissions } from "./helpers/user-grants";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
@@ -79,11 +79,7 @@ function appendCredentialAtoms(
     userId: string,
     atoms: Array<{ actionClass: string; resource: string }>,
 ) {
-    const extra = JSON.stringify(atoms).replaceAll("'", "''");
-    psql(
-        `UPDATE grants SET permissions = permissions || '${extra}'::jsonb ` +
-            `WHERE subject_type = 'user' AND subject_id = '${userId}'::uuid`,
-    );
+    seedUserGrantPermissions(userId, atoms);
 }
 
 /** Any durable table carrying a delivered/revealed plaintext is an I5 breach. */

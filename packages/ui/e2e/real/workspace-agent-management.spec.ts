@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { isSessionCreateRequest } from "./helpers/agent-principal";
 import { CP_URL, registerJourneyUser, seedPage } from "./helpers/journey";
-import { seedUserGrantPermissions } from "./helpers/user-grants";
+import { replaceUserGrantPermissions, seedUserGrantPermissions } from "./helpers/user-grants";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TEMPLATE_PROMPT = "Answer using only the scoped workspace material.";
@@ -489,10 +489,9 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
         principalId,
     );
 
-    queryIsolatedPostgres(
-        `UPDATE grants SET permissions = '[{"actionClass":"CREATE_ACCOUNT","resource":"*"}]'::jsonb ` +
-            `WHERE subject_type = 'user' AND subject_id = '${ownerUserId}'::uuid AND source = 'direct'`,
-    );
+    // PLAN-0610 W6/T6.1: narrow the owner's seeded access-role ceiling to CREATE_ACCOUNT only
+    // (the retired direct-row UPDATE is gone; the helper recomputes the materialized role union).
+    replaceUserGrantPermissions(ownerUserId, [{ actionClass: "CREATE_ACCOUNT", resource: "*" }]);
     await page.getByTestId("workspace-toolbar-agents").click();
     await page.getByTestId("agent-principal-name").fill("Create only, no bind permission");
     const createOnlyResponsePromise = page.waitForResponse(

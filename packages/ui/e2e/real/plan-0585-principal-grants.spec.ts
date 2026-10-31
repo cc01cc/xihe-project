@@ -5,6 +5,12 @@ import { expectPlatformScreenshot } from "../helpers/visual";
 /**
  * PLAN-0585 M2 real-browser acceptance — maps 1:1 onto `evidence/m2-ui-checklist.md`.
  *
+ * ⚠ PLAN-0610 W2 decision #28: the `/api/v1/principal-grants/*` write surface was retired with V88
+ * (`410 PRINCIPAL_GRANTS_RETIRED`; the UI page is removed by the W5 wave). This whole spec therefore
+ * fails by design on current develop and must be **deleted or replaced** by the W6 E2E batch
+ * (T5.7/T6.1 follow-up); it is intentionally left in place here because deleting a tracked file
+ * needs the owning PLAN/wave approval. Do not "fix" it by re-seeding grants — the surface is gone.
+ *
  * External-service mode (shared PLAN-0585 / PLAN-0591 isolated stack):
  *   XIHE_E2E_EXTERNAL_SERVER=1        reuse the running UI instead of `pnpm dev` (playwright.config)
  *   XIHE_CP_BASE_URL | XIHE_CP_PORT   CP origin — no port is hardcoded in this spec

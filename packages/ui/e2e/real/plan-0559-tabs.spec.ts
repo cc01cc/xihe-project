@@ -185,6 +185,9 @@ test.describe("PLAN-0559 workspace tabs", () => {
                     "-d",
                     "xihe_1",
                     "-c",
+                    // PLAN-0610 W3-3 (workspace_users -> role_bindings): this direct membership
+                    // write is intentionally left for the W4/W3-3 wave; it still works while
+                    // `workspace_users` exists (dropped by V89).
                     `INSERT INTO workspace_users (workspace_id, user_id, role, created_at)
                      VALUES ('${workspaceId}', '${userId}', '${role}', now())
                      ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = '${role}'`,
