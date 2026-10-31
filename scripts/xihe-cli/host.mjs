@@ -25,12 +25,84 @@ const toolChecks = [
 // PLAN-0533: env-first so `xihe dev check` follows the stack launcher's env.
 const stackPort = (name, fallback) => Number(process.env[name] || fallback);
 const portChecks = [
-  { name: 'UI', port: stackPort('XIHE_UI_PORT', 12630), url: `http://127.0.0.1:${stackPort('XIHE_UI_PORT', 12630)}/` },
-  { name: 'CP', port: stackPort('XIHE_CP_PORT', 12631), url: `http://127.0.0.1:${stackPort('XIHE_CP_PORT', 12631)}/actuator/health` },
-  { name: 'Agent', port: stackPort('XIHE_AGENT_PORT', 12632), url: `http://127.0.0.1:${stackPort('XIHE_AGENT_PORT', 12632)}/internal/v1/agent/health` },
-  { name: 'Runtime', port: stackPort('XIHE_RUNTIME_PORT', 12633), url: `http://127.0.0.1:${stackPort('XIHE_RUNTIME_PORT', 12633)}/ready` },
-  { name: 'PostgreSQL', port: stackPort('XIHE_PG_PORT', 12634) },
+  { name: 'UI', port: stackPort('XIHE_UI_PORT', 12630), envKey: 'XIHE_UI_PORT', url: `http://127.0.0.1:${stackPort('XIHE_UI_PORT', 12630)}/` },
+  { name: 'CP', port: stackPort('XIHE_CP_PORT', 12631), envKey: 'XIHE_CP_PORT', url: `http://127.0.0.1:${stackPort('XIHE_CP_PORT', 12631)}/actuator/health` },
+  { name: 'Agent', port: stackPort('XIHE_AGENT_PORT', 12632), envKey: 'XIHE_AGENT_PORT', url: `http://127.0.0.1:${stackPort('XIHE_AGENT_PORT', 12632)}/internal/v1/agent/health` },
+  { name: 'Runtime', port: stackPort('XIHE_RUNTIME_PORT', 12633), envKey: 'XIHE_RUNTIME_PORT', url: `http://127.0.0.1:${stackPort('XIHE_RUNTIME_PORT', 12633)}/ready` },
+  { name: 'PostgreSQL', port: stackPort('XIHE_PG_PORT', 12634), envKey: 'XIHE_PG_PORT' },
 ];
+
+// PLAN-0612 M3: `dev:host:check` 必须给出**可行动的**端口占用提示（谁占的 + 改哪个键）。
+// 探测是 best-effort：拿不到 owner 时仍给出改法，不因探测失败改变 ok。
+function describePortOwner(port, spawnSyncImpl) {
+  try {
+    if (process.platform === 'win32') {
+      const netstat = spawnSyncImpl('netstat', ['-ano', '-p', 'tcp'], {
+        encoding: 'utf8', timeout: TOOL_TIMEOUT_MS, windowsHide: true,
+      });
+      if (netstat?.status !== 0 || typeof netstat.stdout !== 'string') return null;
+      const line = netstat.stdout
+        .split(/\r?\n/)
+        .find((entry) => entry.includes(`:${port} `) && entry.includes('LISTENING'));
+      const pid = line?.trim().split(/\s+/).pop();
+      if (!pid) return null;
+      const tasks = spawnSyncImpl('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], {
+        encoding: 'utf8', timeout: TOOL_TIMEOUT_MS, windowsHide: true,
+      });
+      const processName = /^"([^"]+)"/.exec(tasks?.stdout ?? '')?.[1] ?? null;
+      return { pid: Number(pid), process: processName };
+    }
+    const lsof = spawnSyncImpl('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], {
+      encoding: 'utf8', timeout: TOOL_TIMEOUT_MS,
+    });
+    const pid = Number((lsof?.stdout ?? '').trim().split(/\r?\n/)[0]);
+    return Number.isFinite(pid) && pid > 0 ? { pid, process: null } : null;
+  } catch {
+    return null;
+  }
+}
+
+function portHint(item, owner) {
+  const holder = owner
+    ? `${owner.process ? `${owner.process} ` : ''}(pid ${owner.pid})`
+    : 'an unknown process';
+  return `端口 ${item.port} 被 ${holder} 占用 → 改 ${item.envKey} 或换 XIHE_STACK_ID`;
+}
+
+// PLAN-0612 M3（BL-166 加强项）：`.env.dev` 与 `.env.example` 的模板键集合必须同步。
+// 模板键写在 `.env.example` 的 `dev baseline keys` 标记块内（注释形式 `# KEY=`）。
+const ENV_TEMPLATE_BEGIN = '# --- dev baseline keys';
+const ENV_TEMPLATE_END = '# --- end dev baseline keys';
+
+function parseEnvKeys(filePath, { includeCommented = false } = {}) {
+  if (!fs.existsSync(filePath)) return null;
+  const keys = new Set();
+  for (const line of fs.readFileSync(filePath, 'utf8').split(/\r?\n/)) {
+    const match = (includeCommented ? /^\s*#?\s*([A-Z][A-Z0-9_]*)\s*=/ : /^\s*([A-Z][A-Z0-9_]*)\s*=/).exec(line);
+    if (match) keys.add(match[1]);
+  }
+  return keys;
+}
+
+function parseTemplateDevKeys(filePath) {
+  if (!fs.existsSync(filePath)) return null;
+  const keys = new Set();
+  let inBlock = false;
+  for (const line of fs.readFileSync(filePath, 'utf8').split(/\r?\n/)) {
+    if (line.trim().startsWith(ENV_TEMPLATE_BEGIN)) {
+      inBlock = true;
+      continue;
+    }
+    if (line.trim().startsWith(ENV_TEMPLATE_END)) {
+      inBlock = false;
+      continue;
+    }
+    if (!inBlock) continue;
+    const match = /^\s*#?\s*([A-Z][A-Z0-9_]*)\s*=/.exec(line);
+    if (match) keys.add(match[1]);
+  }
+  return inBlock || keys.size > 0 ? keys : null;
+}
 
 function runTool(item, env, spawnSyncImpl) {
   let command = item.command;
@@ -134,7 +206,15 @@ export async function checkDevelopmentEnvironment({
     const status = service === 'ready' || service === 'listening' || service === 'responding'
       ? service
       : 'occupied-unresponsive';
-    checks.push({ category: 'port', name: item.name, port: item.port, status });
+    const owner = describePortOwner(item.port, spawnSyncImpl);
+    checks.push({
+      category: 'port',
+      name: item.name,
+      port: item.port,
+      status,
+      ...(owner ? { owner } : {}),
+      hint: portHint(item, owner),
+    });
     if (status === 'occupied-unresponsive') failed = true;
   }
 
@@ -153,6 +233,42 @@ export async function checkDevelopmentEnvironment({
     name: 'real E2E Xiaomi key in current process',
     status: env.XIHE_E2E_REAL_XIAOMI_KEY ? 'present' : 'not-in-process',
   });
+
+  // PLAN-0612 M3（BL-166 加强项）：`.env.dev` 与 `.env.example` 模板键集合差异。
+  // 只报警、不改变 ok：模板与基线谁缺键都需要人判断语义（新增 dev 键 / 误删键）。
+  const devEnvPath = path.join(projectRoot, `.env.${env.XIHE_ENV || 'dev'}`);
+  const templatePath = path.join(projectRoot, '.env.example');
+  const devKeys = parseEnvKeys(devEnvPath);
+  const templateKeys = parseTemplateDevKeys(templatePath);
+  if (!devKeys) {
+    checks.push({
+      category: 'config',
+      name: 'env key set (.env.dev vs .env.example)',
+      status: 'env-file-missing',
+      hint: `${path.basename(devEnvPath)} 不存在；单 clone 请直接使用入库的 .env.dev（不要 cp 覆盖）`,
+    });
+  } else if (!templateKeys) {
+    checks.push({
+      category: 'config',
+      name: 'env key set (.env.dev vs .env.example)',
+      status: 'template-missing',
+      hint: `.env.example 缺少 '${ENV_TEMPLATE_BEGIN}' 标记块；请补模板键清单`,
+    });
+  } else {
+    const missingInDev = [...templateKeys].filter((key) => !devKeys.has(key)).sort();
+    const undocumented = [...devKeys].filter((key) => !templateKeys.has(key)).sort();
+    const drift = missingInDev.length > 0 || undocumented.length > 0;
+    checks.push({
+      category: 'config',
+      name: 'env key set (.env.dev vs .env.example)',
+      status: drift ? 'drift' : 'ok',
+      ...(missingInDev.length > 0 ? { missingInDev } : {}),
+      ...(undocumented.length > 0 ? { undocumented } : {}),
+      ...(drift
+        ? { hint: '模板与 .env.dev 键集合不一致 → 新增/删除 env 键时同批更新两侧（仅告警，不阻断）' }
+        : {}),
+    });
+  }
   return { ok: !failed, checks };
 }
 

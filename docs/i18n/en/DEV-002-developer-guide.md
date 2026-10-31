@@ -213,7 +213,7 @@ mvn spring-boot:run -f packages/control-plane/pom.xml
 
 ```bash
 mise run dev:stack -- --stack 2                    # or: XIHE_STACK_ID=stack-2 mise run dev:host
-node ../scripts/ports.mjs plan xihe --stack 2      # show that stack's ports without starting
+node scripts/stack-run.mjs env-json --stack 2      # print that stack's derived values without starting
 ```
 
 | Stack | UI | CP | Agent | Runtime | PG | compose project |
@@ -230,7 +230,7 @@ node ../scripts/ports.mjs plan xihe --stack 2      # show that stack's ports wit
 
 #### Detached full-stack supervisor (PLAN-0603)
 
-`mise run dev:host` is a **foreground** mise task: when the terminal / agent turn exits, its child tree is reaped. `node ../scripts/ports.mjs dev xihe` is already detached, but it only starts services that declare a `runner` (xihe: UI only) and always uses the main checkout as cwd. For "survives the turn + four services ready", use the repo supervisor (commands/cwd/stack env are reused from `scripts/stack-run.mjs`):
+`mise run dev:host` is a **foreground** mise task: when the terminal / agent turn exits, its child tree is reaped. For "survives the turn + four services ready", use the repo supervisor (commands/cwd/stack env are reused from `scripts/stack-run.mjs`, with no parent-directory lookup):
 
 ```bash
 # Run from the A03 checkout root; works in the main checkout and in .worktrees/<name>
@@ -243,15 +243,15 @@ node scripts/dev-stack.mjs stop --stack 4 --with-pg       # explicitly stop the 
 
 - Services: CP / Agent / Runtime / UI; `start` waits for HTTP readiness (default 300s, `--timeout`) and exits 2 on timeout, pointing at `.xihe-stacks/<n>/logs/*.err.log`.
 - Logs/PIDs: `.xihe-stacks/<n>/logs/<svc>.{out,err}.log` and `dev-stack-pids.json`; `--json` for machine-readable output.
-- `node ../scripts/ports.mjs dev xihe --stack N` delegates to this supervisor; **`--next` is not supported for xihe** (use `--stack`).
-- **Parallel worktrees must use different stacks** (the same stack shares the PG database `xihe_<n>`); first run in a worktree needs `pnpm install --offline` for `packages/ui`, and it is recommended to `. ../scripts/worktree-env.ps1 -Worktree <worktree>` first to externalize `CARGO_TARGET_DIR` / `UV_PROJECT_ENVIRONMENT`.
+- `mise run dev:stack -- --stack N` forwards to this supervisor; **`--next` is not supported for xihe** (use `--stack`).
+- **Parallel worktrees must use different stacks** (the same stack shares the PG database `xihe_<n>`); first run in a worktree needs `pnpm install --offline` for `packages/ui`. Inside the ONE workspace the external-cache convention for `CARGO_TARGET_DIR` / `UV_PROJECT_ENVIRONMENT` is documented on the ONE side; a standalone clone just uses the default cache.
 - `stop` only kills process trees recorded in the PID file whose command line matches `stack-run.mjs`; it never kills by port blindly.
 
 #### Rust build cache and worktree isolation (PLAN-0596)
 
-- **Default: one `CARGO_TARGET_DIR` per worktree.** `. ../scripts/worktree-env.ps1 -Worktree <name>` externalizes it under `one/.local/cargo-target/<name>` (and `UV_PROJECT_ENVIRONMENT` under `one/.local/venvs/<name>`). Do not point several worktrees at the same target: concurrent builds serialize on the target lock, and on Windows a running service holds the exe, so the other worktree's build fails.
+- **Default: one `CARGO_TARGET_DIR` per worktree.** Inside the ONE workspace, the ONE-side worktree convention externalizes it under `one/.local/cargo-target/<name>` (and `UV_PROJECT_ENVIRONMENT` under `one/.local/venvs/<name>`); a standalone clone keeps the in-tree default. Do not point several worktrees at the same target: concurrent builds serialize on the target lock, and on Windows a running service holds the exe, so the other worktree's build fails.
 - **Measured (2026-10-31 scratch):** two checkouts with identical source/profile shared one target: second cold build 48.9s → **0.3s**, disk 2×2.606GB → **2.606GB**. The benefit only applies when source/toolchain/profile match; real parallel branches differ, so the default stays isolated (user acceptance would be required to change it).
-- **Sweep scope:** `mise run clean:runtime-sweep` only touches the single target resolved by the current `cargo metadata` (in-tree in a plain shell, the external dir after dot-sourcing `worktree-env.ps1`); it never scans other projects under `.local/cargo-target`. `--maxsize 12GB` is interpreted as MiB (≈11.18 GiB).
+- **Sweep scope:** `mise run clean:runtime-sweep` only touches the single target resolved by the current `cargo metadata` (in-tree in a plain shell; under the ONE-side convention, the external dir after dot-sourcing the ONE worktree script); it never scans other projects under `.local/cargo-target`. `--maxsize 12GB` is interpreted as MiB (≈11.18 GiB).
 - **Permanent delete:** `mise run clean` runs `rm -rf logs packages/*/target packages/*/dist packages/*/coverage` with **no recycle bin and no prompt**; stop builds/services and confirm those are rebuildable artifacts first. Treat caches as "delete and rebuild", not cross-drive backup.
 
 ### 2.5. Configuration Management (PLAN-042)

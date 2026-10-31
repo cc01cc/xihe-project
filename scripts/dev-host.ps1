@@ -27,7 +27,7 @@ $ErrorActionPreference = "Stop"
 
 $ProjectRoot = (Resolve-Path "$PSScriptRoot/..").Path
 
-# Single source of derived values: <one>/scripts/ports.mjs via stack-run.mjs.
+# Single source of derived values: this repo's scripts/lib/stack-ports.mjs via stack-run.mjs.
 # Fail-fast on unregistered XIHE_STACK_ID (spec I4) happens inside stack-run.
 $StackJson = & node "$PSScriptRoot/stack-run.mjs" env-json
 if ($LASTEXITCODE -ne 0 -or -not $StackJson) {
