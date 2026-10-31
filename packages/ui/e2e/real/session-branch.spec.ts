@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import {
     CP_URL,
     awaitOperationCompletedForRun,
@@ -13,8 +13,23 @@ import {
     type JourneyContext,
 } from "./helpers/journey";
 import { seedUserGrant } from "./helpers/user-grants";
+import { bindToolCapableChat } from "./helpers/tool-capable-chat";
 
 test.describe.configure({ mode: "serial", retries: 0, timeout: 90000 });
+
+/**
+ * The branch selector lives inside the collapsible Session settings panel
+ * (`session-settings-summary` toggles `aria-expanded`). It is collapsed by
+ * default, and `selectOption` requires a visible element, so expand it first.
+ */
+async function expandSessionSettings(page: Page): Promise<void> {
+    const summary = page.getByTestId("session-settings-summary");
+    await summary.waitFor({ state: "visible", timeout: 15000 });
+    if ((await summary.getAttribute("aria-expanded")) !== "true") {
+        await summary.click();
+    }
+    await expect(page.getByTestId("session-branch-select")).toBeVisible({ timeout: 15000 });
+}
 
 test.describe("@host Session branch path", () => {
     let journey: JourneyContext,
@@ -143,6 +158,17 @@ test.describe("@host Session branch path", () => {
             .locator('[data-testid="chat-input"]')
             .waitFor({ state: "visible", timeout: 30000 });
 
+        // PLAN-0591 capability gate: bind the tool-capable `openai` row instead
+        // of the default `custom-openai-compatible` fixture (capability.tools =
+        // false), otherwise a workspace-tool chat fails closed with
+        // LLM_TOOL_ROUTE_UNSUPPORTED before any transport attempt.
+        await bindToolCapableChat(
+            request,
+            { authToken: journey.authToken, workspaceId: journey.workspaceId },
+            sessionId,
+            "wire-model",
+        );
+
         const anchorText = `root-anchor-${Date.now()}`;
         const attachmentBytes = Buffer.from("PLAN-0409 browser fork attachment bytes\n");
         const uploadResponsePromise = page.waitForResponse(
@@ -260,6 +286,7 @@ test.describe("@host Session branch path", () => {
         // V8 second flow: rewind to the original path by switching the selector back
         // to root, assert the original messages are shown again and the branch-only
         // message is gone from the DOM, then re-select the branch before forking.
+        await expandSessionSettings(page);
         await branchSelect.selectOption(rootBranchId);
         await expect(branchSelect).toHaveValue(rootBranchId);
         await expect(page.locator('[data-slot="message"]').last()).toContainText(anchorText);
@@ -468,6 +495,16 @@ test.describe("@host Session branch path", () => {
         await expect(mobileChatSheet).toBeVisible();
         const mobileBranchSelect = mobileChatSheet.getByTestId("session-branch-select");
         await expect(mobileBranchSelect).toHaveValue(childBranchId);
+        // Same collapsible settings panel as on desktop: the branch selector only
+        // becomes visible once the panel is expanded inside the mobile sheet.
+        const mobileSummary = mobileChatSheet.getByTestId("session-settings-summary");
+        if ((await mobileSummary.getAttribute("aria-expanded")) !== "true") {
+            // MessageScroller pins the transcript to the bottom, so the panel header
+            // sits outside the viewport and Playwright cannot scroll it in; dispatch
+            // the click directly (the aria-expanded assertion below still proves the
+            // panel really opened).
+            await mobileSummary.dispatchEvent("click");
+        }
         // The messages list is pinned to the bottom by MessageScroller, so the header
         // select cannot stay in-viewport while the latest message is shown; assert it
         // is rendered and holds the child branch instead of viewport intersection.
@@ -527,6 +564,15 @@ test.describe("@host Session branch path", () => {
         await page
             .locator('[data-testid="chat-input"]')
             .waitFor({ state: "visible", timeout: 30000 });
+
+        // PLAN-0591 capability gate: same tool-capable binding as the first
+        // case (see bindToolCapableChat in helpers/tool-capable-chat.ts).
+        await bindToolCapableChat(
+            request,
+            { authToken: journey.authToken, workspaceId: journey.workspaceId },
+            compactSessionId,
+            "wire-model",
+        );
 
         const runChatRound = async (text: string) => {
             const responsePromise = page.waitForResponse(

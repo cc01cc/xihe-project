@@ -39,6 +39,7 @@ import {
     createSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
+import { bindToolCapableChat } from "./helpers/tool-capable-chat";
 
 const RUN_ID = process.env.XIHE_E2E_RUN_ID ?? "";
 const AGENT_PORT = Number(process.env.XIHE_AGENT_PORT || "12632");
@@ -109,99 +110,6 @@ async function latestRunStatus(
     if (!res.ok()) return `http-${res.status()}`;
     const body = (await res.json()) as { entries?: Array<{ status?: string }> };
     return body.entries?.[0]?.status ?? "none";
-}
-
-interface ConnectionView {
-    id: string;
-    providerId: string;
-    revision: number;
-    enabled: boolean;
-    status: string;
-    operation?: string;
-    manualModels?: string[];
-}
-
-/**
- * PLAN-0591 capability gate: `custom-openai-compatible` declares
- * `capability.tools = false`, so the default mock-lane binding cannot dispatch a
- * request that carries MCP tools (LLM_TOOL_ROUTE_UNSUPPORTED). Bind the
- * tool-capable built-in `openai` provider row against the fake LLM instead.
- */
-async function bindToolCapableChat(
-    request: APIRequestContext,
-    ctx: { authToken: string; workspaceId: string },
-    sessionId: string,
-    modelName: string,
-): Promise<string> {
-    const headers = {
-        Authorization: `Bearer ${ctx.authToken}`,
-        "Content-Type": "application/json",
-        "X-Workspace-Id": ctx.workspaceId,
-    };
-    const baseUrl = `http://127.0.0.1:${process.env.XIHE_FAKE_LLM_PORT}/openai/v1`;
-    const list = (await (
-        await request.get(`${CP_URL}/api/v1/provider-connections`, { headers })
-    ).json()) as { connections?: ConnectionView[] };
-    let connection = (list.connections ?? []).find(
-        (item) =>
-            item.enabled &&
-            item.status === "READY" &&
-            item.operation === "chat" &&
-            item.providerId === "openai",
-    );
-    if (!connection) {
-        const created = await request.post(`${CP_URL}/api/v1/provider-connections`, {
-            headers,
-            data: {
-                providerId: "openai",
-                apiTypeId: "openai-chat-completions",
-                apiTypeVersion: 1,
-                apiKey: "sk-fake-openai-key",
-                connectionKey: `e2e-0588-tools-${ctx.workspaceId.slice(0, 8)}`,
-                label: "E2E 0588 tool-capable chat",
-                scope: "USER",
-                modelDiscovery: "manual",
-                manualModels: [modelName],
-                baseUrl,
-            },
-        });
-        expect(created.ok(), `connection create ${created.status()}: ${await created.text()}`).toBe(
-            true,
-        );
-        connection = (await created.json()) as ConnectionView;
-        const verified = await request.post(
-            `${CP_URL}/api/v1/provider-connections/${connection.id}/verify`,
-            { headers },
-        );
-        expect(verified.ok(), `verify ${verified.status()}: ${await verified.text()}`).toBe(true);
-        connection = ((await verified.json()) as { connection: ConnectionView }).connection;
-        expect(connection.status, "tool-capable connection must be READY").toBe("READY");
-    }
-    if (!(connection.manualModels ?? []).includes(modelName)) {
-        const patched = await request.patch(
-            `${CP_URL}/api/v1/provider-connections/${connection.id}`,
-            {
-                headers,
-                data: {
-                    manualModels: [...(connection.manualModels ?? []), modelName],
-                    expectedRevision: connection.revision,
-                },
-            },
-        );
-        expect(patched.ok(), `models ${patched.status()}: ${await patched.text()}`).toBe(true);
-        connection = (await patched.json()) as ConnectionView;
-    }
-    const bound = await request.patch(`${CP_URL}/api/v1/sessions/${sessionId}`, {
-        headers,
-        data: {
-            providerConnectionId: connection.id,
-            modelProvider: "openai",
-            modelName,
-            connectionRevision: connection.revision,
-        },
-    });
-    expect(bound.ok(), `bind ${bound.status()}: ${await bound.text()}`).toBe(true);
-    return connection.id;
 }
 
 async function mcpInvocationCount(
