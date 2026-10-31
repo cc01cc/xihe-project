@@ -56,15 +56,36 @@ async function loginThroughUi(page: Page, email: string): Promise<void> {
     await expect(page).toHaveURL(/\/workspace/);
 }
 
-/** 浏览器侧 `/api/v1/auth/**` 响应记录器（判据以它为准）。 */
-function trackAuthCalls(page: Page) {
-    const calls: { path: string; status: number }[] = [];
+/**
+ * 浏览器侧 `/api/v1/**` 响应记录器（判据以它为准）。
+ * 注意：401 可能落在**任意**受保护端点上（本例是工作区详情），不只 `/auth/**`，
+ * 所以记录全量 API 响应，避免"401 存在但没被记录"的假红。
+ */
+function trackApiCalls(page: Page) {
+    const calls: { method: string; path: string; status: number }[] = [];
     page.on("response", (response) => {
         const url = new URL(response.url());
-        if (!url.pathname.startsWith("/api/v1/auth/")) return;
-        calls.push({ path: url.pathname, status: response.status() });
+        if (!url.pathname.startsWith("/api/v1/")) return;
+        calls.push({
+            method: response.request().method(),
+            path: url.pathname,
+            status: response.status(),
+        });
     });
     return calls;
+}
+
+/**
+ * 单独记录**发出**的 refresh 请求：T3.3 要区分"没发刷新"（前置 token 缺失 / 走了别的
+ * 收敛路径）与"发了但被拒"（撤销生效）。只看 response 会把两者混为一谈。
+ */
+function trackRefreshRequests(page: Page) {
+    const requests: string[] = [];
+    page.on("request", (request) => {
+        const path = new URL(request.url()).pathname;
+        if (path.endsWith("/auth/refresh")) requests.push(path);
+    });
+    return requests;
 }
 
 async function authStorage(page: Page) {
@@ -86,12 +107,19 @@ test.describe("@host PLAN-0581 T3.3 — 停用账号的浏览器侧失效链路"
         test.setTimeout(240_000);
         const user = await registerUser(request, "p0581disabled");
         const token = await adminToken(request);
-        const calls = trackAuthCalls(page);
+        const calls = trackApiCalls(page);
+        const refreshRequests = trackRefreshRequests(page);
 
         await loginThroughUi(page, user.email);
         const before = await authStorage(page);
         expect(before["xihe-token"], "登录后应有 access token").toBeTruthy();
         expect(before["xihe-user"], "登录后应有 user 快照").toBeTruthy();
+        // 前置：没有 refresh token，`ensureRefreshed()` 会**不发请求**直接返回 false，
+        // T3.3 的"刷新失败"段就无从发生。所以先断言它存在，否则本用例前提不成立。
+        expect(
+            before["xihe-refresh-token"],
+            "登录后应有 refresh token，否则无法验『刷新失败』段",
+        ).toBeTruthy();
 
         const disabled = await request.patch(`${CP_URL}/api/v1/users/${user.userId}/status`, {
             headers: { Authorization: `Bearer ${token}` },
@@ -99,9 +127,10 @@ test.describe("@host PLAN-0581 T3.3 — 停用账号的浏览器侧失效链路"
         });
         expect(disabled.ok(), await disabled.text()).toBe(true);
 
-        // 用户上下文发下一个请求：点选择面里的工作区 → 触发受保护请求
-        await page.getByTestId("workspace-picker").waitFor();
-        await page.getByTestId(`workspace-picker-item-${user.workspaceId}`).click();
+        // 触发"下一请求"：被停用用户的真实场景是**刷新页面/继续操作**。
+        // 这里用 `reload()`（真实用户动作，必然产生受保护请求），而不是凭空断言
+        // ——原实现缺这一步，导致"没有下一请求却断言下一请求 401"。
+        await page.reload();
 
         await expect(page).toHaveURL(/\/login/, { timeout: 60_000 });
 
@@ -114,11 +143,26 @@ test.describe("@host PLAN-0581 T3.3 — 停用账号的浏览器侧失效链路"
             calls.some((c) => c.status === 401),
             `应出现 401：${JSON.stringify(calls)}`,
         ).toBe(true);
+        // 「刷新失败」段：必须先**发了**刷新请求（`refreshRequests`），且它**不是**成功的
+        // ——要么被拒（≥400），要么根本没回来（网络/中断）。若一个刷新请求都没发，说明
+        // UI 走的是「无 refresh token → 直接登出」的收敛路径，那 T3.3 的该段并未被验证，
+        // 必须显式报错而不是放过（`refreshRequests.length === 0` 判红）。
+        expect(
+            refreshRequests.length,
+            `必须实际发起 /auth/refresh 才能验证「刷新失败」段；实际 calls=${JSON.stringify(calls)}`,
+        ).toBeGreaterThan(0);
         expect(
             calls.some((c) => c.path.endsWith("/auth/refresh") && c.status >= 400),
             `刷新必须失败：${JSON.stringify(calls)}`,
         ).toBe(true);
 
+        // 证据留痕：把浏览器侧调用序列写进报告（成功用例没有 error message，必须主动 attach）
+        const callLog = { calls, refreshRequests, url: page.url(), authStorageAfter: after };
+        console.log(`[0581-t33] api-calls=${JSON.stringify(callLog)}`);
+        await test.info().attach("browser-api-calls", {
+            body: JSON.stringify(callLog, null, 2),
+            contentType: "application/json",
+        });
         await page.screenshot({ path: `${EVIDENCE}/disabled-redirect-login.png` });
     });
 

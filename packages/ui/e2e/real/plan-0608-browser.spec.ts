@@ -323,4 +323,151 @@ test.describe("@host PLAN-0608 — C′ 会话归属的浏览器侧证据", () =
         });
         expect(crossRead.status(), "B 的会话不得被 C 读到").toBe(404);
     });
+
+    // ─────────────────── 以下是 **API 级**补测（不需要浏览器） ───────────────────
+    // 依据 Lead 2026-10-31 指令补齐 verify 剩余便宜项：V3 三形态、V4 幂等 + 零成员、V1 列表隔离。
+    // 判据取自 `verify.md` V1/V3/V4 原文，不新增判据。
+
+    test("5. [V3 单成员零回归] 三种调用形态均 201 且落在唯一 ws", async ({ request }) => {
+        test.setTimeout(120_000);
+        const solo = await registerAccount(request, "p0608solo");
+        const principalId = await provisionWorkspaceAgentPrincipal(
+            request,
+            { accessToken: solo.accessToken, workspaceId: solo.workspaceId },
+            { name: `p0608-solo-agent-${Date.now().toString(36).slice(-5)}` },
+        );
+        const body = { agentPrincipalId: principalId };
+        const headers = { Authorization: `Bearer ${solo.accessToken}` };
+        const results: { form: string; status: number; workspaceId?: string }[] = [];
+
+        const noInput = await request.post(`${CP_URL}/api/v1/sessions`, { headers, data: body });
+        results.push({
+            form: "无输入（legacy）",
+            status: noInput.status(),
+            workspaceId: ((await noInput.json()) as { workspaceId?: string }).workspaceId,
+        });
+
+        const headerOnly = await request.post(`${CP_URL}/api/v1/sessions`, {
+            headers: { ...headers, "X-Workspace-Id": solo.workspaceId },
+            data: body,
+        });
+        results.push({
+            form: "只带 X-Workspace-Id",
+            status: headerOnly.status(),
+            workspaceId: ((await headerOnly.json()) as { workspaceId?: string }).workspaceId,
+        });
+
+        const pathForm = await request.post(
+            `${CP_URL}/api/v1/workspaces/${solo.workspaceId}/sessions`,
+            { headers, data: body },
+        );
+        results.push({
+            form: "路径形式",
+            status: pathForm.status(),
+            workspaceId: ((await pathForm.json()) as { workspaceId?: string }).workspaceId,
+        });
+
+        for (const r of results) {
+            expect(r.status, `${r.form} 必须 201：${JSON.stringify(results)}`).toBe(201);
+            expect(r.workspaceId, `${r.form} 必须落在唯一 ws`).toBe(solo.workspaceId);
+        }
+        expect(
+            results.filter((r) => r.status === 409 || r.status === 400),
+            `单成员三形态不得出现 409/400：${JSON.stringify(results)}`,
+        ).toHaveLength(0);
+    });
+
+    test("6. [V4 无输入确定性] 多成员连发 3 次都是 409 且行数不变；零成员按 V4 降级", async ({
+        request,
+    }) => {
+        test.setTimeout(120_000);
+        const { b, fallback } = await buildTwoWorkspaceFixture(request);
+        const headers = { Authorization: `Bearer ${b.accessToken}` };
+
+        const countSessions = async () => {
+            const res = await request.get(`${CP_URL}/api/v1/sessions`, {
+                headers: { ...headers, "X-Workspace-Id": fallback },
+            });
+            expect(res.ok(), await res.text()).toBe(true);
+            return ((await res.json()) as { sessions: unknown[] }).sessions.length;
+        };
+
+        const before = await countSessions();
+        const statuses: number[] = [];
+        const codes: string[] = [];
+        for (let i = 0; i < 3; i += 1) {
+            const res = await request.post(`${CP_URL}/api/v1/sessions`, { headers, data: {} });
+            statuses.push(res.status());
+            codes.push(((await res.json()) as { code?: string }).code ?? "");
+        }
+        const after = await countSessions();
+
+        expect(statuses, `连发 3 次必须都是 409：${JSON.stringify({ statuses, codes })}`).toEqual([
+            409, 409, 409,
+        ]);
+        expect(codes, "三次都必须是 WORKSPACE_CONTEXT_REQUIRED").toEqual([
+            "WORKSPACE_CONTEXT_REQUIRED",
+            "WORKSPACE_CONTEXT_REQUIRED",
+            "WORKSPACE_CONTEXT_REQUIRED",
+        ]);
+        expect(after, `会话行数必须不变（前 ${before} / 后 ${after}）`).toBe(before);
+    });
+
+    // 零成员（verify V4 原文允许降级）：登录路径会自动建默认 workspace
+    // （`AuthController#withDefaultWorkspace` → `getOrCreateDefaultWorkspace`），
+    // 故产品路径**不可构造**「0 个成员 ws 的已登录用户」；该态由
+    // `SessionWorkspaceResolverTest`（no-input + memberCount=0 → USE(null) → 下游 401）单测覆盖。
+    test("6b. [V4 零成员 → 401] 产品路径不可构造，按 verify V4 降级为单测覆盖", () => {
+        test.skip(
+            true,
+            "零成员态不可构造（登录自动 getOrCreateDefaultWorkspace），已由 SessionWorkspaceResolverTest 覆盖",
+        );
+    });
+
+    test("7. [V1 列表隔离] 同一 ws 内 B/C 的会话列表互不包含对方", async ({ request }) => {
+        test.setTimeout(180_000);
+        const owner = await registerAccount(request, "p0608v1a");
+        const workspaceA = owner.workspaceId;
+        const b = await registerAccount(request, "p0608v1b");
+        const c = await registerAccount(request, "p0608v1c");
+        await addMember(request, owner, workspaceA, b.username, "EDITOR");
+        await addMember(request, owner, workspaceA, c.username, "EDITOR");
+        const principalId = await provisionWorkspaceAgentPrincipal(
+            request,
+            { accessToken: owner.accessToken, workspaceId: workspaceA },
+            { name: `p0608-v1-agent-${Date.now().toString(36).slice(-5)}` },
+        );
+
+        const createInA = async (account: typeof b) => {
+            const res = await request.post(`${CP_URL}/api/v1/workspaces/${workspaceA}/sessions`, {
+                headers: { Authorization: `Bearer ${account.accessToken}` },
+                data: { agentPrincipalId: principalId, title: `v1-${account.username}` },
+            });
+            expect(res.status(), await res.text()).toBe(201);
+            return ((await res.json()) as { id: string }).id;
+        };
+        const sessionB = await createInA(b);
+        const sessionC = await createInA(c);
+
+        const listFor = async (account: typeof b) => {
+            const res = await request.get(`${CP_URL}/api/v1/sessions`, {
+                headers: {
+                    Authorization: `Bearer ${account.accessToken}`,
+                    "X-Workspace-Id": workspaceA,
+                },
+            });
+            expect(res.ok(), await res.text()).toBe(true);
+            return ((await res.json()) as { sessions: { id: string }[] }).sessions.map((s) => s.id);
+        };
+
+        const listB = await listFor(b);
+        const listC = await listFor(c);
+        expect(listB, "B 的列表必须含自己的会话").toContain(sessionB);
+        expect(listB, "B 的列表不得含 C 的会话").not.toContain(sessionC);
+        expect(listC, "C 的列表必须含自己的会话").toContain(sessionC);
+        expect(listC, "C 的列表不得含 B 的会话").not.toContain(sessionB);
+
+        // 遗留（承接 L1/L2）：V1 的另一条「各跑一次纯 chat + 双 run 快照对照 user 层」
+        // 需要 `--llm-mode=success` 与 run 配置快照比对，成本高，不在本批。
+    });
 });
