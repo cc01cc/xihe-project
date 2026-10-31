@@ -450,6 +450,17 @@ class OpenApiYamlContractTest {
             // 13: the write-guard code is still defined at document level.
             assertTrue(raw.contains("WORKSPACE_READ_ONLY"),
                     "WORKSPACE_READ_ONLY must stay documented (write guard contract)");
+
+            // 14: the 403 entry names BOTH codes, like every other workspace-scoped
+            // operation in this document (openapi.yaml:131/150/173). A bare $ref here
+            // would leave a reader unable to tell "not a member" (WORKSPACE_FORBIDDEN)
+            // from "VIEWER write" (WORKSPACE_READ_ONLY) — the inconsistency the review
+            // flagged.
+            Map<?, ?> forbidden = (Map<?, ?>) responses.get("403");
+            assertInstanceOf(Map.class, forbidden, "the 403 response is contracted");
+            String forbiddenText = String.valueOf(forbidden.get("description"));
+            assertTrue(forbiddenText.contains("WORKSPACE_FORBIDDEN") && forbiddenText.contains("WORKSPACE_READ_ONLY"),
+                    "403 must name both WORKSPACE_FORBIDDEN and WORKSPACE_READ_ONLY: " + forbiddenText);
         }
     }
 }
