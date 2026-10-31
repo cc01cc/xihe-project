@@ -148,7 +148,7 @@ onUnmounted(() => {
             <PanelLeftOpen class="size-4" />
         </button>
         <main
-            class="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto transition-[margin] duration-300"
+            class="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-surface-content transition-[margin] duration-300"
             :style="{ marginLeft: mainMargin }"
         >
             <div

@@ -99,7 +99,7 @@ function handleResizeKeydown(event: KeyboardEvent) {
     <aside
         data-testid="workspace-aux-panel"
         :aria-label="t('workspace.dockTabs')"
-        class="absolute inset-y-0 right-0 z-20 flex h-full shrink-0 flex-col border-l bg-background shadow-xl min-[1800px]:static min-[1800px]:z-auto min-[1800px]:shadow-none"
+        class="absolute inset-y-0 right-0 z-20 flex h-full shrink-0 flex-col border-l border-border-subtle bg-surface-canvas shadow-xl min-[1800px]:static min-[1800px]:z-auto min-[1800px]:shadow-none"
         :style="{ width: `${width}px` }"
     >
         <div

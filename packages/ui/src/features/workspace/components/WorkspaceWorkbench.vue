@@ -226,7 +226,7 @@ watch(
             <!-- Left column: file tree (S3 moves this inside the workbench header). -->
             <div
                 data-testid="workspace-file-rail"
-                class="flex shrink-0 flex-col border-r bg-muted/10 transition-[width] duration-200"
+                class="flex shrink-0 flex-col border-r border-border-subtle bg-surface-canvas transition-[width] duration-200"
                 :class="effectiveTreeCollapsed ? 'w-10' : 'w-60'"
             >
                 <div v-if="effectiveTreeCollapsed" class="flex flex-col items-center gap-1 py-2">
@@ -251,7 +251,7 @@ watch(
             </div>
 
             <!-- Center: the routed main content (chat / environment / settings). -->
-            <div class="flex min-w-0 flex-1 flex-col">
+            <div class="flex min-w-0 flex-1 flex-col bg-surface-content">
                 <slot name="center" />
             </div>
 

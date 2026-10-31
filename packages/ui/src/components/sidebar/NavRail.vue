@@ -27,8 +27,10 @@ const isSettingsRoute = computed(
 );
 
 const itemClass =
-    "flex size-10 items-center justify-center rounded-md text-sidebar-foreground transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
-const activeClass = "bg-sidebar-accent font-medium";
+    "flex size-10 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+// Ruling P2-1: the current module is the only rail state that carries the accent.
+const inactiveClass = "text-sidebar-foreground hover:bg-sidebar-accent";
+const activeClass = "bg-brand/10 font-medium text-brand";
 
 function navigateSettings() {
     void router.push("/settings/config");
@@ -47,7 +49,7 @@ function handleLogout() {
 <template>
     <nav
         data-testid="nav-rail"
-        class="flex h-full w-14 shrink-0 flex-col items-center gap-1 border-r border-sidebar-border bg-sidebar-background py-2"
+        class="flex h-full w-14 shrink-0 flex-col items-center gap-1 border-r border-sidebar-border bg-surface-canvas py-2"
     >
         <span
             aria-hidden="true"
@@ -60,7 +62,7 @@ function handleLogout() {
             v-if="auth.isAdmin"
             type="button"
             data-testid="nav-rail-admin"
-            :class="[itemClass, isAdminRoute ? activeClass : '']"
+            :class="[itemClass, isAdminRoute ? activeClass : inactiveClass]"
             :aria-current="isAdminRoute ? 'page' : undefined"
             :aria-label="t('sidebar.admin')"
             :title="t('sidebar.admin')"
@@ -74,7 +76,7 @@ function handleLogout() {
             <button
                 type="button"
                 data-testid="nav-rail-settings"
-                :class="[itemClass, isSettingsRoute ? activeClass : '']"
+                :class="[itemClass, isSettingsRoute ? activeClass : inactiveClass]"
                 :aria-current="isSettingsRoute ? 'page' : undefined"
                 :aria-label="t('sidebar.settings')"
                 :title="t('sidebar.settings')"
@@ -86,7 +88,7 @@ function handleLogout() {
             <button
                 type="button"
                 data-testid="nav-rail-logout"
-                :class="itemClass"
+                :class="[itemClass, inactiveClass]"
                 :aria-label="t('sidebar.logout')"
                 :title="t('sidebar.logout')"
                 @click="handleLogout"

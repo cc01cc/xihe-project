@@ -146,7 +146,7 @@ function handleLogout() {
         data-testid="sidebar"
         :aria-hidden="isMobile && !open ? 'true' : undefined"
         :inert="isMobile && !open ? true : undefined"
-        class="fixed left-0 top-0 z-40 flex h-full overflow-hidden bg-sidebar-background border-r border-sidebar-border transition-[width] duration-300"
+        class="fixed left-0 top-0 z-40 flex h-full overflow-hidden bg-surface-canvas border-r border-sidebar-border transition-[width] duration-300"
         :class="{ 'shadow-lg': isMobile && open }"
         :style="asideStyle"
     >
@@ -162,14 +162,18 @@ function handleLogout() {
                 <button
                     type="button"
                     data-testid="sidebar-workspace"
-                    class="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
-                    :class="{ 'bg-sidebar-accent': isWorkspacePage }"
+                    class="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-base transition-colors"
+                    :class="
+                        isWorkspacePage
+                            ? 'bg-brand/10 font-semibold text-brand'
+                            : 'text-sidebar-foreground hover:bg-sidebar-accent'
+                    "
                     :aria-current="isWorkspacePage ? 'page' : undefined"
                     :title="workspaceLabel"
                     @click="navigateToWorkspace"
                 >
                     <FolderTree class="size-4 shrink-0" aria-hidden="true" />
-                    <span class="truncate font-medium">{{ workspaceLabel }}</span>
+                    <span class="truncate font-semibold">{{ workspaceLabel }}</span>
                 </button>
                 <button
                     type="button"
@@ -187,7 +191,7 @@ function handleLogout() {
             <div class="px-3 pb-2">
                 <button
                     data-testid="sidebar-new-chat"
-                    class="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-sidebar-border text-sm text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
+                    class="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-brand text-sm font-medium text-brand-foreground transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     @click="startNewChat"
                 >
                     <Plus class="size-4" aria-hidden="true" />

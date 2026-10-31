@@ -19,6 +19,12 @@
 @theme inline {
     --color-background: var(--background);
     --color-foreground: var(--foreground);
+    /* PLAN-0582 S2: two surface layers + one brand accent (review P0-2 / P2-1). */
+    --color-surface-canvas: var(--surface-canvas);
+    --color-surface-content: var(--surface-content);
+    --color-border-subtle: var(--border-subtle);
+    --color-brand: var(--brand);
+    --color-brand-foreground: var(--brand-foreground);
     --color-card: var(--card);
     --color-card-foreground: var(--card-foreground);
     --color-popover: var(--popover);
@@ -114,9 +120,30 @@
     color: var(--muted-foreground);
 }
 
+/*
+ * PLAN-0582 S2 visual tokens (review P0-2 / P2-1 / P2-3).
+ *
+ * Surfaces — exactly two layers, no shadows:
+ *   --surface-canvas   rail / navigation panel / dock / file tree
+ *   --surface-content  main content, cards, inputs
+ *   --border-subtle    1px separation between the two layers (never double lines)
+ *
+ * Accent — a single saturated colour, allowed in only four places:
+ *   primary CTA · current nav item (aria-current) · focus ring · error/danger.
+ *   NOTE: `--accent` is the existing shadcn hover surface (`hover:bg-accent`), so the
+ *   brand accent is mapped to `--brand` instead of redefining `--accent`; the focus
+ *   ring reuses it through `--ring` and errors keep `--destructive`.
+ *
+ * Type scale (P2-3): panel/section title 16/600, body 14/400, auxiliary 12/400.
+ */
 :root {
     --background: oklch(1 0 0);
     --foreground: oklch(0.145 0 0);
+    --surface-canvas: #f7f7f8;
+    --surface-content: #ffffff;
+    --border-subtle: #e5e7eb;
+    --brand: oklch(0.55 0.2 263);
+    --brand-foreground: oklch(0.985 0 0);
     --card: oklch(1 0 0);
     --card-foreground: oklch(0.145 0 0);
     --popover: oklch(1 0 0);
@@ -130,28 +157,33 @@
     --accent: oklch(0.97 0 0);
     --accent-foreground: oklch(0.205 0 0);
     --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
+    --border: var(--border-subtle);
+    --input: var(--border-subtle);
+    --ring: var(--brand);
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);
     --chart-4: oklch(0.371 0 0);
     --chart-5: oklch(0.269 0 0);
     --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
+    --sidebar: var(--surface-canvas);
     --sidebar-foreground: oklch(0.145 0 0);
     --sidebar-primary: oklch(0.205 0 0);
     --sidebar-primary-foreground: oklch(0.985 0 0);
     --sidebar-accent: oklch(0.97 0 0);
     --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+    --sidebar-border: var(--border-subtle);
+    --sidebar-ring: var(--brand);
 }
 
 .dark {
     --background: oklch(0.145 0 0);
     --foreground: oklch(0.985 0 0);
+    --surface-canvas: oklch(0.185 0 0);
+    --surface-content: oklch(0.145 0 0);
+    --border-subtle: oklch(1 0 0 / 12%);
+    --brand: oklch(0.62 0.19 264);
+    --brand-foreground: oklch(0.985 0 0);
     --card: oklch(0.205 0 0);
     --card-foreground: oklch(0.985 0 0);
     --popover: oklch(0.205 0 0);
@@ -165,20 +197,20 @@
     --accent: oklch(0.269 0 0);
     --accent-foreground: oklch(0.985 0 0);
     --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
+    --border: var(--border-subtle);
     --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
+    --ring: var(--brand);
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);
     --chart-4: oklch(0.371 0 0);
     --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
+    --sidebar: var(--surface-canvas);
     --sidebar-foreground: oklch(0.985 0 0);
     --sidebar-primary: oklch(0.488 0.243 264.376);
     --sidebar-primary-foreground: oklch(0.985 0 0);
     --sidebar-accent: oklch(0.269 0 0);
     --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    --sidebar-border: var(--border-subtle);
+    --sidebar-ring: var(--brand);
 }
