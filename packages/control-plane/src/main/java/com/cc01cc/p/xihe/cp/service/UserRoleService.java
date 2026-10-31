@@ -94,6 +94,12 @@ public class UserRoleService {
 
         User target = users.findByIdForUpdate(targetUserId).orElseThrow(() -> new CpApiException(
                 HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "User not found"));
+        // PLAN-0581 (merge-audit follow-up): soft delete is terminal for every write
+        // path, not just the status/password ones. Without this, a role change on a
+        // deleted row would answer 200 while really writing (role + epoch bump +
+        // default-grant row + audit) — the same terminal state would get two
+        // different answers depending on which endpoint the operator used.
+        requireNotDeleted(target);
         UserRole previousRole = target.getRole();
         if (previousRole == newRole) {
             return target;
@@ -136,6 +142,21 @@ public class UserRoleService {
         return owners.lockSingleton()
                 .map(InstanceOwner::getOwnerUserId)
                 .orElse(null);
+    }
+
+    /**
+     * PLAN-0581 (merge-audit follow-up): the terminal-state rule shared with
+     * {@code UserAdminService.requireNotDeleted} — kept as a local copy so the 0580
+     * service does not depend on the 0581 admin surface; both answer the same
+     * contract code {@code 409 USER_DELETED} for a soft-deleted target.
+     */
+    private void requireNotDeleted(User target) {
+        if (target.getDeletedAt() != null) {
+            logger.info("[LIFECYCLE] service=cp event=user_role_change_denied target={}"
+                    + " reason=USER_DELETED", target.getId());
+            throw new CpApiException(HttpStatus.CONFLICT, "USER_DELETED",
+                    "A soft-deleted account cannot be modified (deletion is irreversible in v1)");
+        }
     }
 
     private void deny(String actorUserId, User target, UserRole previousRole, UserRole newRole,

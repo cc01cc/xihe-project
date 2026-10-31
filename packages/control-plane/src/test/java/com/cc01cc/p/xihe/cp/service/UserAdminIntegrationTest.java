@@ -252,6 +252,24 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
         assertEquals(HttpStatus.CONFLICT, reset.getStatusCode(), reset.getBody());
         assertTrue(reset.getBody().contains("USER_DELETED"), reset.getBody());
 
+        // The role surface is a third write path into the same terminal state: it must
+        // answer the same contract code and must not write anything (role, epoch,
+        // default grants, audit are all unchanged).
+        String roleBefore = roleOf(userId);
+        int tvBefore = tokenVersion(userId);
+        int grantsBefore = jdbc.queryForObject("SELECT COUNT(*) FROM grants WHERE subject_type = 'user'"
+                + " AND subject_id = CAST(? AS UUID)", Integer.class, userId);
+        int roleAuditBefore = auditCount("user_role_changed");
+        ResponseEntity<String> roleChange = patchRole(adminToken, userId, "ADMIN");
+        assertEquals(HttpStatus.CONFLICT, roleChange.getStatusCode(), roleChange.getBody());
+        assertTrue(roleChange.getBody().contains("USER_DELETED"), roleChange.getBody());
+        assertEquals(roleBefore, roleOf(userId), "role must not be written");
+        assertEquals(tvBefore, tokenVersion(userId), "the epoch must not be bumped");
+        assertEquals(grantsBefore, jdbc.queryForObject("SELECT COUNT(*) FROM grants WHERE subject_type = 'user'"
+                + " AND subject_id = CAST(? AS UUID)", Integer.class, userId),
+                "no default grant row for a dead account");
+        assertEquals(roleAuditBefore, auditCount("user_role_changed"), "no role audit row");
+
         // The row is untouched: still deleted and still DISABLED.
         Map<String, Object> row = jdbc.queryForMap(
                 "SELECT status, deleted_at FROM users WHERE id = CAST(? AS UUID)", userId);
@@ -598,6 +616,11 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
     private String workspaceOf(String userId) {
         return jdbc.queryForObject("SELECT workspace_id FROM workspace_users WHERE user_id = ? LIMIT 1",
                 String.class, UUID.fromString(userId));
+    }
+
+    private String roleOf(String userId) {
+        return jdbc.queryForObject(
+                "SELECT role FROM users WHERE id = CAST(? AS UUID)", String.class, userId);
     }
 
     private int tokenVersion(String userId) {
