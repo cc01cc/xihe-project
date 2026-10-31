@@ -32,9 +32,11 @@ test.describe("Session switch between chat and workspace", () => {
         await page.getByTestId("sidebar-workspace").click();
         await page.waitForURL(`**/workspace/${workspaceId}`);
         await expect(page.locator(`text=${userMessage}`)).toBeVisible({ timeout: 5000 });
-        await expect(page.locator('button[title="Switch to chat"]')).toBeVisible({ timeout: 5000 });
+        // PLAN-0582 S3a: the "switch to chat" toolbar button became the chat tab
+        // of the middle route tab bar (pure route projection).
+        await expect(page.getByTestId("workspace-tab-chat")).toBeVisible({ timeout: 5000 });
 
-        await page.locator('button[title="Switch to chat"]').click();
+        await page.getByTestId("workspace-tab-chat").click();
         await page.waitForURL(`**/workspace/${workspaceId}/chat/${sessionId}`);
         await expect(page.locator(`text=${userMessage}`)).toBeVisible({ timeout: 5000 });
     });
@@ -48,7 +50,7 @@ test.describe("Session switch between chat and workspace", () => {
         });
 
         await page.goto(`/workspace/${workspaceId}`);
-        await expect(page.locator('button[title="Switch to chat"]')).toBeVisible({ timeout: 5000 });
+        await expect(page.getByTestId("workspace-tab-chat")).toBeVisible({ timeout: 5000 });
 
         // PLAN-0582 S1: the toolbar <select> is gone; the navigation panel is the
         // single session switcher.

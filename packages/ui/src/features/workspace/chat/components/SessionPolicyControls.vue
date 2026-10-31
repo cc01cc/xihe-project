@@ -52,6 +52,13 @@ async function changeMode(nextMode: SessionPolicyMode) {
     }
 }
 
+/** Reload the policy state after an inline error (P0-4: errors stay retryable inline). */
+function retry() {
+    if (!props.sessionId) return;
+    policyStore.reset();
+    void policyStore.load(props.sessionId);
+}
+
 function handleModeChange(event: Event) {
     const value = (event.target as HTMLSelectElement).value;
     if (isPolicyMode(value)) void changeMode(value);
@@ -74,8 +81,9 @@ function handleModeChange(event: Event) {
             <select
                 :id="`session-policy-mode-${sessionId}`"
                 data-testid="session-policy-mode"
-                class="max-w-36 rounded-md border bg-background px-2 py-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+                class="min-w-40 max-w-44 truncate rounded-md border bg-background px-2 py-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
                 :value="mode ?? ''"
+                :title="modeLabel"
                 :disabled="!mode || busy"
                 @change="handleModeChange"
             >
@@ -110,9 +118,19 @@ function handleModeChange(event: Event) {
     <p
         v-if="state?.error"
         data-testid="session-policy-mode-error"
-        class="border-b border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
         role="alert"
+        class="mx-3 my-1.5 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-xs text-destructive"
     >
-        {{ state.error }}
+        <span class="line-clamp-2 min-w-0 flex-1" :title="state.error">
+            {{ state.errorKey ? t(state.errorKey) : t("chat.approvalModeLoadFailed") }}
+        </span>
+        <button
+            type="button"
+            data-testid="session-policy-mode-retry"
+            class="shrink-0 rounded border border-destructive/40 px-1.5 py-0.5 font-medium transition-colors hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            @click="retry"
+        >
+            {{ t("workspace.retry") }}
+        </button>
     </p>
 </template>

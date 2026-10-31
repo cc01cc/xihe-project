@@ -113,7 +113,12 @@ const i18n = createI18n({
 const stubs = {
     ChatPanel: { template: '<div data-testid="chat-panel-stub" />' },
     FileEditor: { template: '<div data-testid="file-editor-stub" />' },
-    FileTreePanel: { template: '<div data-testid="file-tree-stub" />' },
+    // S3a: the collapse control lives in the file-tree panel head, so the stub
+    // exposes it with the same id the old toolbar button had.
+    FileTreePanel: {
+        emits: ["collapse"],
+        template: `<div data-testid="file-tree-stub"><button data-testid="workspace-toolbar-toggle-tree" @click="$emit('collapse')" /></div>`,
+    },
     WorkspaceChangesPanel: { template: '<div data-testid="changes-panel-stub" />' },
     SessionMonitorPanel: { template: '<div data-testid="session-monitor-stub" />' },
 };

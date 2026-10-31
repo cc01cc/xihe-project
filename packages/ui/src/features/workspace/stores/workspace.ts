@@ -700,6 +700,21 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         }
     }
 
+    /**
+     * PLAN-0582 S3a (S2 audit P0-1): `openFiles` / `activeFilePath` are global
+     * singletons. Without this reset, switching to workspace B keeps workspace
+     * A's editor buffer and active path reachable, and `saveFile` would then
+     * write A's content to B's same-named file. Called on every workspace change.
+     */
+    function resetWorkspaceScoped() {
+        openFiles.value = new Map();
+        activeFilePath.value = null;
+        expandedPaths.value = new Set();
+        treeError.value = null;
+        loadedWorkspaceId.value = null;
+        loadTreePending = 0;
+    }
+
     return {
         sessionId,
         sessionAttachments,
@@ -740,5 +755,6 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         removeFromUploadQueue,
         executeUpload,
         syncActiveFileToSession,
+        resetWorkspaceScoped,
     };
 });

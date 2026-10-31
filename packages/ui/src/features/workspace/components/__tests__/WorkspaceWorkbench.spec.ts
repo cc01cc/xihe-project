@@ -54,7 +54,10 @@ const i18n = createI18n({
 });
 
 const stubs = {
-    FileTreePanel: { template: '<div data-testid="file-tree-stub" />' },
+    FileTreePanel: {
+        emits: ["collapse"],
+        template: `<div data-testid="file-tree-stub"><button data-testid="workspace-toolbar-toggle-tree" @click="$emit('collapse')" /></div>`,
+    },
     FileEditor: { template: '<div data-testid="file-editor-stub" />' },
     WorkspaceChangesPanel: { template: '<div data-testid="changes-panel-stub" />' },
     SessionMonitorPanel: { template: '<div data-testid="session-monitor-stub" />' },
@@ -239,7 +242,8 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         const wrapper = mountWorkbench({ isMobile: true });
         await flushPromises();
 
-        await wrapper.get('[data-testid="workspace-toolbar-toggle-tree"]').trigger("click");
+        // Mobile has no tree panel and no dock: nothing may be persisted.
+        await wrapper.get('[data-testid="workspace-toolbar-files-mobile"]').trigger("click");
 
         expect(localStorage.getItem("xihe-layout-ws:workspace-1")).toBeNull();
     });

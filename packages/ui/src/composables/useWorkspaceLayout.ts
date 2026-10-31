@@ -42,6 +42,15 @@ export const DOCK_INLINE_MIN_VIEWPORT = 1800;
 export const DOCK_TAB_IDS = ["code", "changes", "monitor"] as const;
 export type DockTabId = (typeof DOCK_TAB_IDS)[number];
 
+/**
+ * PLAN-0582 S3a: the middle route tab bar is a pure projection of the existing
+ * routes (`/workspace/:ws`, `/chat/:sid`, `/environment`, `/scheduled-tasks`,
+ * `/settings`) — no new routes. `chat` is always open (it is the fallback), the
+ * other three are an "open set" persisted per workspace.
+ */
+export const WORKSPACE_TAB_IDS = ["environment", "scheduled-tasks", "settings"] as const;
+export type WorkspaceTabId = (typeof WORKSPACE_TAB_IDS)[number];
+
 export interface GlobalLayoutState {
     navOpen: boolean;
     navWidth: number;
@@ -53,6 +62,8 @@ export interface WorkspaceLayoutState {
     dockWidth: number;
     dockTabs: DockTabId[];
     activeDockTab: DockTabId | null;
+    /** Route tabs opened by the user (the chat tab is implicit and not stored). */
+    openTabs: WorkspaceTabId[];
 }
 
 function storage(): Storage | null {
@@ -77,8 +88,52 @@ export function isDockTabId(value: unknown): value is DockTabId {
     return typeof value === "string" && (DOCK_TAB_IDS as readonly string[]).includes(value);
 }
 
+/**
+ * P1-4 (S2 audit): the navigation panel width is clamped per breakpoint for
+ * rendering only — the user's stored value is never rewritten, so going back to a
+ * wide window restores it (spec §1.5 A).
+ */
+export function clampNavWidthForViewport(width: number, viewportWidth: number): number {
+    if (!Number.isFinite(viewportWidth) || viewportWidth <= 0) return clampNavWidth(width);
+    const breakpointMax = viewportWidth < 1280 ? 240 : viewportWidth < 1440 ? 260 : NAV_WIDTH_MAX;
+    return Math.min(clampNavWidth(width), breakpointMax);
+}
+
+/** P1-1 (S2 audit): a workspace with no stored layout opens the monitor on wide screens. */
+export function hasWorkspaceLayout(workspaceId: string): boolean {
+    const store = storage();
+    if (!workspaceId || !store) return false;
+    return store.getItem(workspaceLayoutKey(workspaceId)) !== null;
+}
+
+export function defaultWorkspaceLayoutForViewport(viewportWidth: number): WorkspaceLayoutState {
+    const defaults = defaultWorkspaceLayout();
+    if (Number.isFinite(viewportWidth) && viewportWidth >= DOCK_INLINE_MIN_VIEWPORT) {
+        return {
+            ...defaults,
+            dockCollapsed: false,
+            dockTabs: ["monitor"],
+            activeDockTab: "monitor",
+        };
+    }
+    return defaults;
+}
+
+export function isWorkspaceTabId(value: unknown): value is WorkspaceTabId {
+    return typeof value === "string" && (WORKSPACE_TAB_IDS as readonly string[]).includes(value);
+}
+
 export function defaultGlobalLayout(): GlobalLayoutState {
     return { navOpen: true, navWidth: NAV_WIDTH_DEFAULT };
+}
+
+/**
+ * Every route tab starts open so the three workspace pages always have an entry
+ * point from the chat view; closing one only hides it until the route is visited
+ * again (a closed tab must never strand the user).
+ */
+export function defaultOpenTabs(): WorkspaceTabId[] {
+    return [...WORKSPACE_TAB_IDS];
 }
 
 export function defaultWorkspaceLayout(): WorkspaceLayoutState {
@@ -88,6 +143,7 @@ export function defaultWorkspaceLayout(): WorkspaceLayoutState {
         dockWidth: DOCK_WIDTH_DEFAULT,
         dockTabs: [],
         activeDockTab: null,
+        openTabs: defaultOpenTabs(),
     };
 }
 
@@ -134,6 +190,17 @@ function workspaceLayoutKey(workspaceId: string): string {
     return `${WORKSPACE_LAYOUT_STORAGE_PREFIX}${workspaceId}`;
 }
 
+/** Route tabs are sanitized the same way as dock tabs: known ids, no duplicates. */
+function readOpenTabs(parsed: Partial<WorkspaceLayoutState>): WorkspaceTabId[] {
+    // A missing field means "legacy / never closed anything" -> all tabs open.
+    if (!Array.isArray(parsed.openTabs)) return defaultOpenTabs();
+    const openTabs: WorkspaceTabId[] = [];
+    for (const tab of parsed.openTabs) {
+        if (isWorkspaceTabId(tab) && !openTabs.includes(tab)) openTabs.push(tab);
+    }
+    return openTabs;
+}
+
 /**
  * Per-workspace workbench layout. Tabs are de-duplicated, capped at
  * `DOCK_MAX_TABS`, and `activeDockTab` must belong to the open set — a corrupt
@@ -173,6 +240,7 @@ export function readWorkspaceLayout(workspaceId: string): WorkspaceLayoutState {
                     : defaults.dockWidth,
             dockTabs: tabs,
             activeDockTab: tabs.length === 0 ? null : active,
+            openTabs: readOpenTabs(parsed),
         };
     } catch (cause) {
         logger.warn("Failed to read the workspace layout, falling back to defaults", cause);
@@ -193,6 +261,7 @@ export function writeWorkspaceLayout(workspaceId: string, state: WorkspaceLayout
                 dockWidth: clampDockWidth(state.dockWidth),
                 dockTabs: state.dockTabs.slice(0, DOCK_MAX_TABS),
                 activeDockTab: state.activeDockTab,
+                openTabs: state.openTabs.filter(isWorkspaceTabId),
             }),
         );
     } catch (cause) {

@@ -3,12 +3,10 @@ import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useWorkspaceStore } from "../stores/workspace";
-import { useSessionStore } from "../../../stores/session";
 import { useAuthStore } from "../../../stores/auth";
 import {
     Activity,
     Bot,
-    Clock,
     Code,
     FileDiff,
     FolderOpen,
@@ -16,33 +14,32 @@ import {
     MoreHorizontal,
     PanelLeft,
     Plus,
-    RefreshCw,
-    Settings2,
-    Upload,
 } from "@lucide/vue";
 import {
-    workspaceChatPath,
     workspacePath,
     workspaceScheduledTasksPath,
     workspaceSettingsPath,
 } from "../../../lib/routes";
 
+/**
+ * PLAN-0582 S3a (review P1-1): this row keeps only controls that belong here —
+ * the dock toggles and the workspace-level dialog entries. Page tabs moved to
+ * `WorkspaceTabBar`, file actions moved to the file-tree panel head, and the
+ * workspace name is no longer repeated here (P1-2).
+ */
 const props = defineProps<{
     workspaceId: string;
     agentPrincipalId?: string | null;
-    treeCollapsed?: boolean;
     codeOpen?: boolean;
     changesOpen?: boolean;
     monitorOpen?: boolean;
 }>();
 
 const emit = defineEmits<{
-    upload: [];
     importSource: [];
     agents: [];
     addWorkspace: [];
     files: [];
-    toggleTree: [];
     toggleCode: [];
     toggleChanges: [];
     toggleMonitor: [];
@@ -51,7 +48,6 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const router = useRouter(),
     ws = useWorkspaceStore(),
-    sessionStore = useSessionStore(),
     auth = useAuthStore();
 
 const breadcrumb = computed(() => {
@@ -63,21 +59,6 @@ const breadcrumb = computed(() => {
         isLast: i === arr.length - 1,
     }));
 });
-
-const workspaceLabel = computed(() => {
-    const id = props.workspaceId || auth.currentWorkspaceId || "";
-    return auth.workspace?.name || (id ? `Workspace ${id.slice(0, 6)}` : "Workspace");
-});
-
-function handleRefresh() {
-    ws.refreshTree();
-}
-
-function switchToChat() {
-    const id = sessionStore.currentSessionId,
-        workspaceId = props.workspaceId || auth.currentWorkspaceId;
-    if (id && workspaceId) router.push(workspaceChatPath(workspaceId, id));
-}
 
 function openEnvironment() {
     const id = props.workspaceId || auth.currentWorkspaceId;
@@ -221,7 +202,9 @@ function overflowNav(navigate: () => void) {
                     </span>
                 </span>
             </template>
-            <span v-else class="truncate text-foreground/80 font-medium">{{ workspaceLabel }}</span>
+            <span v-else class="truncate text-muted-foreground/70">{{
+                t("workspace.noActiveFile")
+            }}</span>
             <span
                 v-if="agentPrincipalId"
                 data-testid="workspace-active-agent"
@@ -234,18 +217,6 @@ function overflowNav(navigate: () => void) {
         </div>
 
         <div class="flex items-center gap-1 max-md:hidden">
-            <button
-                type="button"
-                data-testid="workspace-toolbar-toggle-tree"
-                class="p-1.5 rounded text-muted-foreground transition-colors hover:bg-accent"
-                :title="treeCollapsed ? t('workspace.expandFiles') : t('workspace.collapseFiles')"
-                :aria-label="
-                    treeCollapsed ? t('workspace.expandFiles') : t('workspace.collapseFiles')
-                "
-                @click="emit('toggleTree')"
-            >
-                <FolderTree class="size-3.5" />
-            </button>
             <button
                 type="button"
                 data-testid="workspace-toolbar-code"
@@ -293,38 +264,6 @@ function overflowNav(navigate: () => void) {
                 <Activity class="size-3.5" />
             </button>
             <button
-                class="px-2 py-1 text-xs rounded border hover:bg-accent text-muted-foreground transition-colors"
-                title="Switch to chat"
-                @click="switchToChat"
-            >
-                聊天
-            </button>
-            <button
-                data-testid="workspace-toolbar-environment"
-                class="px-2 py-1 text-xs rounded border hover:bg-accent text-muted-foreground transition-colors"
-                title="View workspace environment"
-                @click="openEnvironment"
-            >
-                环境
-            </button>
-            <button
-                data-testid="workspace-toolbar-scheduled-tasks"
-                class="inline-flex items-center gap-1 px-2 py-1 text-xs rounded border hover:bg-accent text-muted-foreground transition-colors"
-                :title="t('workspace.scheduledTasks.nav')"
-                @click="openScheduledTasks"
-            >
-                <Clock class="size-3" aria-hidden="true" />
-                {{ t("workspace.scheduledTasks.nav") }}
-            </button>
-            <button
-                data-testid="workspace-toolbar-settings"
-                class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors"
-                title="Workspace settings"
-                @click="openSettings"
-            >
-                <Settings2 class="size-3.5" />
-            </button>
-            <button
                 type="button"
                 data-testid="workspace-toolbar-agents"
                 class="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent"
@@ -346,24 +285,11 @@ function overflowNav(navigate: () => void) {
             <button
                 data-testid="workspace-toolbar-import-source"
                 class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors"
-                title="Import workspace directory"
+                :title="t('workspace.importSource')"
+                :aria-label="t('workspace.importSource')"
                 @click="emit('importSource')"
             >
                 <FolderOpen class="size-3.5" />
-            </button>
-            <button
-                class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors"
-                title="Upload files"
-                @click="emit('upload')"
-            >
-                <Upload class="size-3.5" />
-            </button>
-            <button
-                class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors"
-                title="Refresh"
-                @click="handleRefresh"
-            >
-                <RefreshCw class="size-3.5" />
             </button>
         </div>
     </div>

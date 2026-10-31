@@ -9,7 +9,10 @@ export interface SessionPolicyState {
     loading: boolean;
     changing: boolean;
     loaded: boolean;
+    /** Raw diagnostic (logs / tooltip only — never rendered as user copy). */
     error: string | null;
+    /** Stable i18n key the UI renders instead of the raw message (S3a P0-4). */
+    errorKey: "chat.approvalModeLoadFailed" | "chat.approvalModeChangeFailed" | null;
 }
 
 function createState(): SessionPolicyState {
@@ -19,6 +22,7 @@ function createState(): SessionPolicyState {
         changing: false,
         loaded: false,
         error: null,
+        errorKey: null,
     };
 }
 
@@ -56,6 +60,7 @@ export const usePolicyStore = defineStore("policy", () => {
         const mutationGeneration = mutationGenerations.get(sessionId) ?? 0;
         state.loading = true;
         state.error = null;
+        state.errorKey = null;
         const request = Promise.resolve().then(async () => {
             try {
                 const result = await api.getPolicyMode(sessionId);
@@ -66,6 +71,7 @@ export const usePolicyStore = defineStore("policy", () => {
             } catch (cause) {
                 if ((mutationGenerations.get(sessionId) ?? 0) === mutationGeneration) {
                     state.error = errorMessage(cause, "Failed to load approval mode");
+                    state.errorKey = "chat.approvalModeLoadFailed";
                     logger.warn("Failed to load session policy mode", cause);
                 }
             } finally {
@@ -86,6 +92,7 @@ export const usePolicyStore = defineStore("policy", () => {
         mutationGenerations.set(sessionId, generation);
         state.changing = true;
         state.error = null;
+        state.errorKey = null;
         try {
             const result = await api.setPolicyMode(sessionId, mode);
             if (mutationGenerations.get(sessionId) === generation) {
@@ -96,6 +103,7 @@ export const usePolicyStore = defineStore("policy", () => {
         } catch (cause) {
             if (mutationGenerations.get(sessionId) === generation) {
                 state.error = errorMessage(cause, "Failed to change approval mode");
+                state.errorKey = "chat.approvalModeChangeFailed";
                 logger.warn("Failed to change session policy mode", cause);
             }
             throw cause;

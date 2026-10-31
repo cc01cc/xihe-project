@@ -121,6 +121,12 @@ const activeAgentPrincipalId = computed(
         null,
 );
 
+/** P1-2: the center header shows the session, never the workspace name again. */
+const sessionTitle = computed(() => {
+    const session = sessionStore.sessions.find((item) => item.id === sessionId.value);
+    return session?.title ?? t("workspace.chatHeader");
+});
+
 const workspaceId = computed(() => routeWorkspaceId.value || auth.currentWorkspaceId || "");
 
 const workspaceEvents = useWorkspaceSSE(workspaceId, {
@@ -243,14 +249,6 @@ watch(
     },
 );
 
-function handleUpload() {
-    if (!auth.canWriteWorkspace) {
-        toast.error(t("workspace.viewerReadOnly"));
-        return;
-    }
-    ws.openImportDialog();
-}
-
 onMounted(() => {
     void selectSessionForWorkspace();
 });
@@ -293,7 +291,6 @@ watch([workspaceId, routeSessionId], () => {
             :is-mobile="isMobileViewport"
             :mobile-changes-open="showMobileChanges"
             :mobile-aux-tab="mobileAuxTab"
-            @upload="handleUpload"
             @import-source="showSourceImportDialog = true"
             @agents="showAgentManagementDialog = true"
             @add-workspace="showCreateDialog = true"
@@ -308,12 +305,16 @@ watch([workspaceId, routeSessionId], () => {
                         class="h-9 shrink-0 border-b px-3 flex items-center gap-2 text-xs text-muted-foreground bg-muted/5"
                         :title="`workspace=${workspaceId}`"
                     >
+                        <!-- S3a (review P1-2): the workspace name lives in the panel head
+                           and the file-tree head only; this row is session-scoped. -->
                         <span
-                            class="font-medium text-foreground/80"
+                            data-testid="workspace-session-title"
+                            class="min-w-0 max-w-72 truncate font-medium text-foreground/80"
                             :data-workspace-id="auth.workspace?.id"
                             :data-role="auth.workspaceRole"
                             :data-can-write="String(auth.canWriteWorkspace)"
-                            >{{ auth.workspace?.name ?? t("workspace.chatHeader") }}</span
+                            :title="sessionTitle"
+                            >{{ sessionTitle }}</span
                         >
                         <span
                             v-if="!auth.canWriteWorkspace"
@@ -322,9 +323,6 @@ watch([workspaceId, routeSessionId], () => {
                         >
                             {{ t("workspace.viewerReadOnly") }}
                         </span>
-                        <span class="text-muted-foreground/60">{{
-                            t("workspace.chatHeader")
-                        }}</span>
                         <span
                             data-testid="workspace-event-status"
                             class="text-[10px]"
