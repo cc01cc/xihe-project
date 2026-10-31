@@ -46,7 +46,7 @@ class RoleMaterializationEpochTest extends AbstractH2Test {
     @Autowired private PlatformTransactionManager transactionManager;
 
     @Test
-    void capabilityCacheIsClearedOnlyAfterCommit() {
+    void capabilityCacheIsInvalidatedImmediatelyAndAgainAfterCompletion() {
         User user = user();
         AccessRoleBinding binding = bindingRepository.save(new AccessRoleBinding(
                 roleId(SystemAccessRoleCatalog.SUPER_ADMIN), "user", user.getId(),
@@ -57,16 +57,16 @@ class RoleMaterializationEpochTest extends AbstractH2Test {
         new TransactionTemplate(transactionManager).execute(status -> {
             bindingRepository.delete(binding);
             materializer.materializeSubject("user", user.getId(), user.getId(), null);
-            // Inside the transaction the invalidation is registered but not executed: a concurrent
-            // reader therefore cannot re-fill from a half-applied state, and this read still sees the
-            // pre-commit snapshot.
-            assertTrue(authzContext.isInstanceSuper(user.getId()),
-                    "invalidation must not run before the commit (round-3 P1-2)");
+            // W1c-2 (round-4 P1-2): the write path invalidates *immediately* as well, so a reader in
+            // the same transaction (W3's /me/permissions or the binding echo) sees the post-change
+            // state instead of the cache filled before the write. A cache hit would still say `true`.
+            assertFalse(authzContext.isInstanceSuper(user.getId()),
+                    "same-transaction readers must not see the pre-change snapshot");
             return null;
         });
 
         assertFalse(authzContext.isInstanceSuper(user.getId()),
-                "after the commit the next read must resolve the new (empty) state");
+                "after the commit the state stays consistent (afterCompletion cleared again)");
         assertTrue(grantRepository.findScopedGrants("user", user.getId(),
                 GrantSources.EVALUATION_SOURCES, null).isEmpty());
     }

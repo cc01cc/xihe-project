@@ -247,6 +247,73 @@ class RoleGrantMaterializerTest {
                 : "*";
     }
 
+    /**
+     * PLAN-0610 W1c-2 (round-4 P1-1): the per-subject epoch bumps take {@code SELECT … FOR UPDATE}
+     * locks in <b>sorted subject-id order</b>, not in the order {@code findByRoleId} happened to
+     * return. Without the sort two concurrent role edits over intersecting holder sets could form an
+     * ABBA cycle and one of them would die with PostgreSQL {@code 40P01}.
+     */
+    @Test
+    void bumpsEpochsInSortedSubjectOrder() {
+        UUID lowSubject = UUID.fromString("00000000-0000-4000-8000-000000000001");
+        UUID highSubject = UUID.fromString("00000000-0000-4000-8000-000000000002");
+        stubRoles(USER_ROLE);
+        AccessRoleBinding lowBinding = new AccessRoleBinding(USER_ROLE, "user", lowSubject,
+                AccessScope.INSTANCE, null, ACTOR);
+        AccessRoleBinding highBinding = new AccessRoleBinding(USER_ROLE, "user", highSubject,
+                AccessScope.INSTANCE, null, ACTOR);
+        // Deliberately "wrong" order: the higher id comes back from the role query first.
+        when(bindingRepository.findByRoleId(USER_ROLE)).thenReturn(List.of(highBinding, lowBinding));
+        when(bindingRepository.findBySubjectTypeAndSubjectId("user", lowSubject))
+                .thenReturn(List.of(lowBinding));
+        when(bindingRepository.findBySubjectTypeAndSubjectId("user", highSubject))
+                .thenReturn(List.of(highBinding));
+        when(userRepository.findByIdForUpdate(any())).thenAnswer(invocation ->
+                java.util.Optional.of(userWith(invocation.getArgument(0))));
+
+        materializer.materializeRole(USER_ROLE, ACTOR, null);
+
+        org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(userRepository);
+        inOrder.verify(userRepository).findByIdForUpdate(lowSubject);
+        inOrder.verify(userRepository).findByIdForUpdate(highSubject);
+    }
+
+    /**
+     * PLAN-0610 W1c-2 (round-4 P1-2): invalidation happens <b>twice</b> — once inside the writing
+     * transaction (same-request readers such as W3's {@code /me/permissions}) and once after the
+     * transaction completes (a concurrent reader may have re-filled the cache from the pre-commit
+     * state in between).
+     */
+    @Test
+    void invalidatesImmediatelyAndAgainAfterTheTransactionCompletes() {
+        stubRoles(USER_ROLE);
+        bindings(new AccessRoleBinding(USER_ROLE, "user", SUBJECT, AccessScope.INSTANCE, null, ACTOR));
+
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        try {
+            materializer.materializeSubject("user", SUBJECT, ACTOR, null);
+            verify(authzContext, org.mockito.Mockito.times(1)).invalidate(SUBJECT);
+
+            org.springframework.transaction.support.TransactionSynchronizationManager
+                    .getSynchronizations()
+                    .forEach(sync -> sync.afterCompletion(
+                            org.springframework.transaction.support.TransactionSynchronization
+                                    .STATUS_COMMITTED));
+            verify(authzContext, org.mockito.Mockito.times(2)).invalidate(SUBJECT);
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager
+                    .clearSynchronization();
+        }
+    }
+
+    private static com.cc01cc.p.xihe.cp.entity.User userWith(UUID userId) {
+        com.cc01cc.p.xihe.cp.entity.User user = new com.cc01cc.p.xihe.cp.entity.User(
+                "epoch-" + userId + "@test.local", "hash",
+                com.cc01cc.p.xihe.cp.entity.UserRole.USER, "Epoch");
+        user.setId(userId);
+        return user;
+    }
+
     private void bindings(AccessRoleBinding... rows) {
         when(bindingRepository.findBySubjectTypeAndSubjectId("user", SUBJECT)).thenReturn(List.of(rows));
     }

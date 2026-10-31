@@ -23,17 +23,19 @@ import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.scheduled.ScheduledTaskApiService;
+import com.cc01cc.p.xihe.cp.scheduled.ScheduledTaskRepository;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.PageRequest;
 
 import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -68,25 +70,28 @@ class CrossWorkspaceGrantGateTest extends AbstractH2Test {
     @Autowired private RoleGrantMaterializer materializer;
     @Autowired private AgentPrincipalService agentPrincipalService;
     @Autowired private ScheduledTaskApiService scheduledTaskApiService;
+    @Autowired private ScheduledTaskRepository scheduledTaskRepository;
     @Autowired private ObjectMapper objectMapper;
 
     @Test
     void workspaceOwnerInADoesNotManageAgentsOfB() {
         Fixture fixture = fixture("agents");
         UUID principalId = principalBoundTo(fixture.userId(), fixture.workspaceA());
+        grantPrincipalAtom(principalId, fixture.userId(), ToolFaceRegistry.ACTION_READ);
 
-        // Positive control: inside A the same caller passes the gate (WS_OWNER carries
-        // MANAGE_WORKSPACE_AGENTS), so the fix is not "deny everything". An empty cap keeps the
-        // separate "cap ⊆ principal permissions" ceiling check out of the way.
+        // Positive control (round-4 P2-4): inside A the same caller *succeeds* with a non-empty cap,
+        // so the fix is "scoped", not "deny everything". A deny-all implementation cannot pass this.
         WorkspaceAgent updated = agentPrincipalService.setWorkspaceCap(fixture.userId().toString(),
-                fixture.workspaceA(), principalId, atoms());
-        assertEquals(0, updated.getPermissionsSnapshot().size(),
-                "WS_OWNER keeps the workspace-A agent management it actually holds");
+                fixture.workspaceA(), principalId, atoms("read"));
+        assertEquals(1, updated.getPermissionsSnapshot().size(),
+                "WS_OWNER really can set the workspace-A agent cap it is allowed to set");
+        assertEquals(ToolFaceRegistry.ACTION_READ,
+                updated.getPermissionsSnapshot().get(0).get("actionClass").asText());
 
         // Negative: workspace B only granted WS_VIEWER → 403 at the authorization gate.
         CpApiException refusal = assertThrows(CpApiException.class,
                 () -> agentPrincipalService.setWorkspaceCap(fixture.userId().toString(),
-                        fixture.workspaceB(), principalId, atoms()));
+                        fixture.workspaceB(), principalId, atoms("read")));
         assertEquals(REFUSED_CODE, refusal.getCode(),
                 "the workspace-A MANAGE_WORKSPACE_AGENTS atom must not authorize workspace B");
     }
@@ -97,17 +102,20 @@ class CrossWorkspaceGrantGateTest extends AbstractH2Test {
         bindAtomInWorkspace(fixture.userId(), fixture.workspaceA(),
                 ToolFaceRegistry.ACTION_CREATE_SCHEDULED_TASK);
 
+        // delay_once + job_dispatch is the one shape that needs no pre-existing Session, so the
+        // positive control can assert a real success instead of "failed for another reason".
         ScheduledTaskApiService.CreateRequest request = new ScheduledTaskApiService.CreateRequest(
-                "delay_once", null, "UTC", "session_wakeup", null, "ping", null, "2030-01-01T00:00:00Z",
-                null);
+                "delay_once", null, "UTC", "job_dispatch", null, null,
+                objectMapper.createObjectNode().put("command", "echo gate-positive-control"),
+                java.time.Instant.now().plusSeconds(600).toString(), null);
 
-        // Positive control: A holds CREATE_SCHEDULED_TASK, so the gate passes and the call fails
-        // later for an unrelated reason (no such Session) — never with the gate message.
-        CpApiException inA = assertThrows(CpApiException.class,
-                () -> scheduledTaskApiService.create(fixture.workspaceA().toString(),
-                        fixture.userId().toString(), request));
-        assertNotEquals(ToolFaceRegistry.ACTION_CREATE_SCHEDULED_TASK + " grant is required",
-                inA.getMessage(), "workspace A really does grant the atom");
+        // Positive control (round-4 P2-4): A holds CREATE_SCHEDULED_TASK and the task is created.
+        ScheduledTaskApiService.TaskView created = scheduledTaskApiService.create(
+                fixture.workspaceA().toString(), fixture.userId().toString(), request);
+        assertNotNull(created.id(), "WS_OWNER-in-A really can create a scheduled task in A");
+        assertEquals(1, scheduledTaskRepository.findByWorkspaceIdOrderByCreatedAtDesc(
+                fixture.workspaceA(), PageRequest.of(0, 10)).size(),
+                "the task was persisted in workspace A");
 
         // Negative: B holds only WS_VIEWER → the scoped read must refuse it.
         CpApiException inB = assertThrows(CpApiException.class,
@@ -117,6 +125,9 @@ class CrossWorkspaceGrantGateTest extends AbstractH2Test {
                 inB.getMessage(),
                 "the workspace-A CREATE_SCHEDULED_TASK atom must not authorize workspace B");
         assertEquals(REFUSED_CODE, inB.getCode());
+        assertTrue(scheduledTaskRepository.findByWorkspaceIdOrderByCreatedAtDesc(
+                fixture.workspaceB(), PageRequest.of(0, 10)).isEmpty(),
+                "nothing was written into workspace B");
     }
 
     @Test
@@ -201,6 +212,26 @@ class CrossWorkspaceGrantGateTest extends AbstractH2Test {
         workspaceAgentRepository.saveAndFlush(
                 new WorkspaceAgent(principalId.toString(), workspaceId.toString(), atoms()));
         return principalId;
+    }
+
+    /**
+     * Gives an agent principal one atom so a non-empty workspace cap can pass the separate
+     * "cap ⊆ principal permissions" ceiling check (that check is the accepted P1-1 family and still
+     * reads unscoped rows). {@code source='template'} is one of the evaluation sources, so the row is
+     * a realistic principal snapshot rather than a test-only shortcut.
+     */
+    private void grantPrincipalAtom(UUID principalId, UUID granterId, String actionClass) {
+        AuthorizationGrant grant = new AuthorizationGrant();
+        grant.setId(UUID.randomUUID());
+        grant.setSubjectType("agent_principal");
+        grant.setSubjectId(principalId);
+        grant.setGranterType("user");
+        grant.setGranterId(granterId);
+        grant.setSource(GrantSources.TEMPLATE);
+        grant.setScopeType(AccessScope.INSTANCE);
+        grant.setReadState("read");
+        grant.setPermissions(atoms(actionClass));
+        grantRepository.saveAndFlush(grant);
     }
 
     private com.fasterxml.jackson.databind.node.ArrayNode atoms(String... actionClasses) {

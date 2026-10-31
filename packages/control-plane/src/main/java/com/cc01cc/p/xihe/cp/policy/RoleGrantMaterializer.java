@@ -19,6 +19,7 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -147,7 +148,7 @@ public class RoleGrantMaterializer {
 
         Result result = reconcile(subjectType, subjectId, desired, actorUserId, auditWorkspaceId);
         if (AuthzContext.SUBJECT_USER.equals(subjectType)) {
-            invalidateAfterCompletion(subjectId);
+            invalidateNowAndAfterCompletion(subjectId);
         }
         return result;
     }
@@ -169,6 +170,7 @@ public class RoleGrantMaterializer {
         }
         int materialized = 0;
         Set<String> seen = new HashSet<>();
+        List<UUID> changedUserSubjects = new ArrayList<>();
         for (AccessRoleBinding binding : bindingRepository.findByRoleId(roleId)) {
             String key = binding.getSubjectType() + "|" + binding.getSubjectId();
             if (!seen.add(key)) {
@@ -177,11 +179,44 @@ public class RoleGrantMaterializer {
             Result result = materializeSubject(binding.getSubjectType(), binding.getSubjectId(),
                     actorUserId, auditWorkspaceId);
             if (result.changed() && AuthzContext.SUBJECT_USER.equals(binding.getSubjectType())) {
-                bumpUserEpoch(binding.getSubjectId());
+                changedUserSubjects.add(binding.getSubjectId());
             }
             materialized++;
         }
+        bumpUserEpochs(changedUserSubjects);
         return materialized;
+    }
+
+    /**
+     * PLAN-0610 W1c-2 (round-4 P1-1): bumps the epoch of every affected user in one
+     * <b>globally ordered</b> pass.
+     *
+     * <p>Bumping inside the binding loop took {@code SELECT … FOR UPDATE} locks in
+     * {@code findByRoleId}'s return order, so two concurrent role edits over intersecting holder
+     * sets ({@code R1={A,B}}, {@code R2={B,A}}) could form an ABBA cycle — PostgreSQL then aborts
+     * one of them with {@code 40P01} and nothing maps that to a retryable error. Sorting by
+     * {@link UUID#compareTo} (a total order that every process computes identically: signed
+     * most-significant-long first) gives all materializer transactions the same lock order, which
+     * removes the cycle. Any future multi-row {@code users} lock MUST use this same comparator.</p>
+     *
+     * <p><b>Why not one bulk {@code UPDATE users … WHERE id IN (:ids)}:</b> it is safe today
+     * ({@code User} carries no {@code @Version}), but it would (a) bypass {@code
+     * User#bumpTokenVersion}, the single place that encodes the epoch contract, and silently
+     * desynchronize an optimistic-lock column if one is added later; (b) drop the per-user
+     * {@code role_materialization_epoch_bump} log line (the only trace of a bump — bumps are not
+     * written to {@code audit_logs}); and (c) still leave us iterating the id set for the per-subject
+     * capability-cache invalidation, so the round-trip saving is the only gain. Sorted row locks keep
+     * the entity semantics and give a provable order instead.</p>
+     */
+    private void bumpUserEpochs(Collection<UUID> subjectIds) {
+        if (subjectIds == null || subjectIds.isEmpty()) {
+            return;
+        }
+        List<UUID> ordered = new ArrayList<>(new LinkedHashSet<>(subjectIds));
+        ordered.sort(UUID::compareTo);
+        for (UUID subjectId : ordered) {
+            bumpUserEpoch(subjectId);
+        }
     }
 
     /**
@@ -198,19 +233,29 @@ public class RoleGrantMaterializer {
     }
 
     /**
-     * PLAN-0610 W1c (round-3 P1-2): invalidate the capability cache only <b>after</b> the
-     * transaction completes.
+     * PLAN-0610 W1c (round-3 P1-2) + W1c-2 (round-4 P1-2): invalidate the capability cache
+     * <b>twice</b>, for two different reasons.
      *
-     * <p>Invalidating inside the transaction let a concurrent request re-fill the cache from the
-     * pre-commit state; the stale entry then lived for the whole TTL ({@code
-     * cp.capability-cache-ttl-ms}, 30s by default) — the opposite of the 「不超过一次 lookup」
-     * contract in {@link AuthzContext}. {@code afterCompletion} runs after commit (and also after
-     * rollback, where clearing is harmless and prevents a mid-transaction fill from being trusted).
-     * A caller with no transaction (unit tests, plain service calls) invalidates immediately.</p>
+     * <ol>
+     *   <li><b>Immediately</b> — a same-transaction reader must not see the pre-change snapshot.
+     *       Today nothing reads capabilities inside the write transaction, but the W3 surfaces that
+     *       will ({@code GET /api/v1/me/permissions} and the effective-capability echo of
+     *       {@code PUT /api/v1/bindings}) would otherwise answer from the cache filled before the
+     *       write.</li>
+     *   <li><b>After the transaction completes</b> — a concurrent request can still re-fill the cache
+     *       from the pre-commit state between the immediate invalidation and the commit; without the
+     *       second invalidation that entry survives for the whole TTL
+     *       ({@code cp.capability-cache-ttl-ms}, 30s), the opposite of the 「不超过一次 lookup」
+     *       contract in {@link AuthzContext}. {@code afterCompletion} also covers rollback, where
+     *       clearing is harmless and a mid-transaction fill must not be trusted.</li>
+     * </ol>
+     *
+     * <p>The TTL is untouched: entries are still filled lazily on read and still expire, so a missed
+     * invalidation degrades to the documented 30s bound instead of becoming permanent.</p>
      */
-    private void invalidateAfterCompletion(UUID subjectId) {
+    private void invalidateNowAndAfterCompletion(UUID subjectId) {
+        authzContext.invalidate(subjectId);
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            authzContext.invalidate(subjectId);
             return;
         }
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
@@ -230,7 +275,7 @@ public class RoleGrantMaterializer {
             grantRepository.deleteAll(existing);
         }
         if (AuthzContext.SUBJECT_USER.equals(subjectType)) {
-            invalidateAfterCompletion(subjectId);
+            invalidateNowAndAfterCompletion(subjectId);
         }
         return existing.size();
     }
