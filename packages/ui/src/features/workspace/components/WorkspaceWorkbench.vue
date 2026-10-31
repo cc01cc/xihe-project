@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, inject, onBeforeUnmount, ref, watch } from "vue";
 import { useMediaQuery, useWindowSize } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
@@ -14,6 +14,7 @@ import {
     TREE_WIDTH_MIN,
     clampDockWidth,
     clampTreeWidth,
+    WORKSPACE_LAYOUT_KEY,
     computeWorkbenchSqueeze,
     createWorkspaceLayoutWriter,
     defaultWorkspaceLayout,
@@ -24,6 +25,8 @@ import {
     readWorkspaceLayout,
     type DockMode,
     type DockTabId,
+    type WorkbenchSqueezeDemand,
+    type WorkbenchSqueezeResult,
     type WorkspaceLayoutState,
 } from "../../../composables/useWorkspaceLayout";
 import { useWorkspaceStore } from "../stores/workspace";
@@ -156,31 +159,6 @@ const dockTabs = computed<DockTab[]>(() =>
 const narrowViewport = useMediaQuery("(max-width: 1439px)");
 const treeExpandedManually = ref(false);
 
-// S3b §4: the anti-squeeze rules need the real row width, so measure the workbench
-// element instead of re-deriving it from the viewport (the nav panel offset is
-// owned by AppLayout and the dock width is user-dragged).
-const workbenchEl = ref<HTMLElement | null>(null);
-const workbenchWidth = ref(0);
-let workbenchObserver: ResizeObserver | null = null;
-
-watch(
-    workbenchEl,
-    (element) => {
-        workbenchObserver?.disconnect();
-        workbenchObserver = null;
-        if (!element || typeof ResizeObserver === "undefined") return;
-        workbenchObserver = new ResizeObserver((entries) => {
-            const entry = entries[0];
-            if (entry) workbenchWidth.value = entry.contentRect.width;
-        });
-        workbenchObserver.observe(element);
-        workbenchWidth.value = element.getBoundingClientRect().width;
-    },
-    { immediate: true },
-);
-
-onBeforeUnmount(() => workbenchObserver?.disconnect());
-
 const dockMode = computed<DockMode>(() =>
     layout.value.dockModeManual ? layout.value.dockMode : deriveDockMode(viewportWidth.value),
 );
@@ -195,19 +173,38 @@ const treeCollapsedForSqueeze = computed(() =>
     treeExpandedManually.value ? false : layout.value.treeCollapsed || narrowViewport.value,
 );
 
-const squeeze = computed(() =>
-    computeWorkbenchSqueeze({
-        workbenchWidth: workbenchWidth.value || viewportWidth.value,
-        treeWidth: layout.value.treeWidth,
-        treeCollapsed: treeCollapsedForSqueeze.value,
-        dockWidth: layout.value.dockWidth,
-        dockOpen: dockOpen.value,
-        dockMode: dockMode.value,
-        // A manual expansion is an explicit choice: no automatic yielding, the dock
-        // goes floating instead (the hard floor still overrides if that is not enough).
-        allowTreeYield: !treeExpandedManually.value,
-    }),
-);
+/**
+ * S5-W2: the squeeze itself is owned by `useWorkspaceLayout` (single geometry
+ * truth: it knows the viewport, the rail/panel offset and therefore whether the
+ * navigation panel has to yield). This component only publishes the workbench-side
+ * demand and reads the result back. When no layout provider exists (isolated unit
+ * tests), it falls back to the same pure function with no nav panel to yield.
+ */
+const layoutOwner = inject(WORKSPACE_LAYOUT_KEY, null);
+
+const demand = computed<WorkbenchSqueezeDemand>(() => ({
+    treeWidth: layout.value.treeWidth,
+    treeCollapsed: treeCollapsedForSqueeze.value,
+    dockWidth: layout.value.dockWidth,
+    dockOpen: dockOpen.value,
+    dockMode: dockMode.value,
+    // A manual expansion is an explicit choice: no automatic yielding, the dock
+    // goes floating instead (the hard floor still overrides if that is not enough).
+    allowTreeYield: !treeExpandedManually.value,
+}));
+
+watch(demand, (value) => layoutOwner?.setWorkbenchDemand(value), { immediate: true });
+onBeforeUnmount(() => layoutOwner?.setWorkbenchDemand(null));
+
+const squeeze = computed<WorkbenchSqueezeResult>(() => {
+    if (layoutOwner) return layoutOwner.squeeze.value;
+    const offset = viewportWidth.value || 0;
+    return computeWorkbenchSqueeze({
+        workbenchWidth: offset,
+        ...demand.value,
+        navPanelWidth: 0,
+    });
+});
 
 /** Rendered dock mode: forced floating wins over the user's pinned choice. */
 const renderedDockMode = computed<DockMode>(() =>
@@ -424,12 +421,7 @@ watch(
             <FileEditor />
         </div>
 
-        <div
-            v-else
-            ref="workbenchEl"
-            class="relative flex min-h-0 min-w-0 flex-1"
-            data-testid="workspace-workbench"
-        >
+        <div v-else class="relative flex min-h-0 min-w-0 flex-1" data-testid="workspace-workbench">
             <!-- Left column: the file tree. S3b: draggable 200-320 + keyboard + dblclick. -->
             <div
                 data-testid="workspace-file-rail"

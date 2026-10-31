@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, provide, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { PanelLeftOpen } from "@lucide/vue";
@@ -9,14 +9,21 @@ import { useAgentStore } from "../stores/agent";
 import { useAuthStore } from "../stores/auth";
 import { useSessionStore } from "../stores/session";
 import { workspaceChatPath } from "../lib/routes";
-import { clearLayoutStorage, useWorkspaceLayout } from "../composables/useWorkspaceLayout";
+import {
+    WORKSPACE_LAYOUT_KEY,
+    clearLayoutStorage,
+    useWorkspaceLayout,
+} from "../composables/useWorkspaceLayout";
 
 const mobileMediaQuery =
     typeof window === "undefined" || typeof window.matchMedia !== "function"
         ? null
         : window.matchMedia("(max-width: 767px)");
 const isMobile = ref(mobileMediaQuery?.matches ?? false);
-const { navOpen, navWidth, mainOffset } = useWorkspaceLayout({ isMobile });
+const workspaceLayout = useWorkspaceLayout({ isMobile });
+const { navOpen, navWidth, mainOffset, navYielded } = workspaceLayout;
+// S5-W2: the workbench publishes its squeeze demand here (single geometry owner).
+provide(WORKSPACE_LAYOUT_KEY, workspaceLayout);
 const route = useRoute();
 const router = useRouter();
 const { t } = useI18n();
@@ -159,7 +166,12 @@ onUnmounted(() => {
 
 <template>
     <div class="flex h-screen overflow-hidden bg-background text-foreground">
-        <Sidebar v-model:open="navOpen" v-model:width="navWidth" :is-mobile="isMobile" />
+        <Sidebar
+            v-model:open="navOpen"
+            v-model:width="navWidth"
+            :is-mobile="isMobile"
+            :force-collapsed="navYielded"
+        />
         <button
             v-if="!navOpen && isMobile"
             type="button"
