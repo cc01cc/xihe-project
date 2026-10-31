@@ -183,8 +183,8 @@ beforeEach(() => {
     });
 });
 
-describe("WorkspaceView conversation-first layout (PLAN-0328 M3 T3.7)", () => {
-    it("renders the conversation as the main column with the file tree rail visible and the Monitor panel open by default", async () => {
+describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
+    it("renders the conversation as the main column with the file tree visible and the dock closed", async () => {
         useSessionStore().currentSessionId = SESSION_A;
         const wrapper = mountView();
         await settle();
@@ -198,8 +198,10 @@ describe("WorkspaceView conversation-first layout (PLAN-0328 M3 T3.7)", () => {
                 .exists(),
         ).toBe(true);
         expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="session-monitor-stub"]').exists()).toBe(true);
+
+        // S2 ruling #3: the dock defaults to closed — no panel, no panel content.
+        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="session-monitor-stub"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="file-editor-stub"]').exists()).toBe(false);
     });
 
@@ -218,7 +220,7 @@ describe("WorkspaceView conversation-first layout (PLAN-0328 M3 T3.7)", () => {
         expect(wrapper.find('[data-testid="workspace-tree-expand"]').exists()).toBe(false);
     });
 
-    it("toggles the code and changes auxiliary panels through the toolbar", async () => {
+    it("opens dock tabs through the toolbar and keeps a single active tab", async () => {
         useSessionStore().currentSessionId = SESSION_A;
         const wrapper = mountView();
         await settle();
@@ -227,11 +229,18 @@ describe("WorkspaceView conversation-first layout (PLAN-0328 M3 T3.7)", () => {
         await wrapper.find('[data-testid="workspace-toolbar-code"]').trigger("click");
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="file-editor-stub"]').exists()).toBe(true);
+        // Only the active tab's content is mounted, so opening another one swaps it.
         await wrapper.find('[data-testid="workspace-toolbar-changes"]').trigger("click");
         expect(wrapper.find('[data-testid="file-editor-stub"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="changes-panel-stub"]').exists()).toBe(true);
+        // The code tab is still open, just inactive.
+        expect(wrapper.find('[data-testid="dock-tab-code"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="dock-tab-changes"]').attributes("aria-selected")).toBe(
+            "true",
+        );
 
         await wrapper.find('[data-testid="workspace-toolbar-changes"]').trigger("click");
+        // Pressing the active tab collapses the dock but keeps the tab set.
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
 
         await wrapper.find('[data-testid="workspace-toolbar-monitor"]').trigger("click");
@@ -239,7 +248,7 @@ describe("WorkspaceView conversation-first layout (PLAN-0328 M3 T3.7)", () => {
         expect(wrapper.find('[data-testid="session-monitor-stub"]').exists()).toBe(true);
     });
 
-    it("closes the auxiliary panel from its own close action", async () => {
+    it("closes the dock from its own close action without dropping the tabs", async () => {
         useSessionStore().currentSessionId = SESSION_A;
         const wrapper = mountView();
         await settle();
@@ -248,9 +257,14 @@ describe("WorkspaceView conversation-first layout (PLAN-0328 M3 T3.7)", () => {
         await wrapper.find('[data-testid="workspace-toolbar-code"]').trigger("click");
         await wrapper.find('[data-testid="workspace-aux-close"]').trigger("click");
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
+
+        // Re-opening restores the same tab and the same width (collapse ≠ width loss).
+        await wrapper.find('[data-testid="workspace-toolbar-code"]').trigger("click");
+        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="file-editor-stub"]').exists()).toBe(true);
     });
 
-    it("remembers the layout toggles per session within the component", async () => {
+    it("keeps the dock and tree state per workspace across session switches", async () => {
         const sessionStore = useSessionStore();
         sessionStore.currentSessionId = SESSION_A;
         const wrapper = mountView();
@@ -262,14 +276,18 @@ describe("WorkspaceView conversation-first layout (PLAN-0328 M3 T3.7)", () => {
         expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="file-editor-stub"]').exists()).toBe(true);
 
-        sessionStore.currentSessionId = SESSION_B;
-        await settle();
-        expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="session-monitor-stub"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="file-editor-stub"]').exists()).toBe(false);
+        const stored = JSON.parse(
+            localStorage.getItem("xihe-layout-ws:workspace-1") ?? "{}",
+        ) as Record<string, unknown>;
+        expect(stored).toMatchObject({
+            treeCollapsed: true,
+            dockCollapsed: false,
+            dockTabs: ["code"],
+            activeDockTab: "code",
+        });
 
-        sessionStore.currentSessionId = SESSION_A;
+        // Switching sessions no longer resets the auxiliary panel (S2 semantics).
+        sessionStore.currentSessionId = SESSION_B;
         await settle();
         expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);

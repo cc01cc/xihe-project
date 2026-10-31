@@ -86,16 +86,16 @@ beforeEach(() => {
     });
 });
 
-describe("AppLayout navigation IA (PLAN-0582 S1)", () => {
-    it("offsets the content by the collapsed rail plus the open navigation panel", async () => {
+describe("AppLayout navigation IA (PLAN-0582 S1/S2)", () => {
+    it("offsets the content by the fixed 56px rail plus the open navigation panel", async () => {
         const wrapper = await mountLayout(createTestRouter());
 
         const style = wrapper.find("main").attributes("style");
-        // R-D: 48px icon rail + 280px default panel.
-        expect(style).toContain("328px");
+        // S2 ruling #1: fixed 56px icon rail + 280px default panel.
+        expect(style).toContain("336px");
     });
 
-    it("keeps the rail offset when the navigation panel is collapsed", async () => {
+    it("keeps the 56px rail offset when the navigation panel is collapsed", async () => {
         localStorage.setItem(
             "xihe-layout-global",
             JSON.stringify({ railCollapsed: false, navOpen: false, navWidth: 300 }),
@@ -103,12 +103,13 @@ describe("AppLayout navigation IA (PLAN-0582 S1)", () => {
         const wrapper = await mountLayout(createTestRouter());
 
         const style = wrapper.find("main").attributes("style");
-        expect(style).toContain("176px");
-        expect(style).not.toContain("476px");
+        // R-D: collapsing the panel never removes the rail offset.
+        expect(style).toContain("56px");
+        expect(style).not.toContain("356px");
     });
 
     it("clears the user-scoped layout keys when the session is logged out", async () => {
-        localStorage.setItem("xihe-layout-global", JSON.stringify({ railCollapsed: true }));
+        localStorage.setItem("xihe-layout-global", JSON.stringify({ navOpen: true }));
         localStorage.setItem("xihe-layout-ws:workspace-1", "{}");
         await mountLayout(createTestRouter());
 

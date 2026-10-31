@@ -21,8 +21,7 @@ import {
     NAV_WIDTH_KEYBOARD_STEP,
     NAV_WIDTH_MAX,
     NAV_WIDTH_MIN,
-    RAIL_WIDTH_COLLAPSED,
-    RAIL_WIDTH_EXPANDED,
+    RAIL_WIDTH,
     clampNavWidth,
 } from "../../composables/useWorkspaceLayout";
 import { useSessionStore } from "../../stores/session";
@@ -31,13 +30,11 @@ const props = defineProps<{
     open: boolean;
     width: number;
     isMobile: boolean;
-    railCollapsed: boolean;
 }>();
 
 const emit = defineEmits<{
     "update:open": [value: boolean];
     "update:width": [value: number];
-    "update:railCollapsed": [value: boolean];
 }>();
 
 const router = useRouter(),
@@ -58,15 +55,13 @@ const isWorkspacePage = computed(() => {
     return (route?.path ?? "") === workspacePath(workspaceId);
 });
 
-const railWidth = computed(() =>
-    props.railCollapsed ? RAIL_WIDTH_COLLAPSED : RAIL_WIDTH_EXPANDED,
-);
-
+// S2 ruling #1: the rail is a fixed 56px icon strip, so the panel sits right
+// after it; collapsing the panel keeps that 56px offset (R-D).
 const asideStyle = computed(() => {
     if (props.isMobile) {
         return { width: props.open ? `min(${props.width}px, calc(100vw - 1rem))` : "0px" };
     }
-    const total = railWidth.value + (props.open ? props.width : 0);
+    const total = RAIL_WIDTH + (props.open ? props.width : 0);
     return { width: `${total}px` };
 });
 
@@ -155,13 +150,7 @@ function handleLogout() {
         :class="{ 'shadow-lg': isMobile && open }"
         :style="asideStyle"
     >
-        <NavRail
-            v-if="!isMobile"
-            :collapsed="railCollapsed"
-            :nav-open="open"
-            @toggle-rail="emit('update:railCollapsed', !railCollapsed)"
-            @toggle-nav="toggleSidebar"
-        />
+        <NavRail v-if="!isMobile" />
         <div
             data-testid="sidebar-panel"
             :aria-hidden="!isMobile && !open ? 'true' : undefined"
@@ -183,12 +172,12 @@ function handleLogout() {
                     <span class="truncate font-medium">{{ workspaceLabel }}</span>
                 </button>
                 <button
-                    v-if="isMobile"
                     type="button"
-                    data-testid="sidebar-close"
+                    :data-testid="isMobile ? 'sidebar-close' : 'sidebar-collapse'"
                     :aria-label="t('sidebar.collapse')"
                     :title="t('sidebar.collapse')"
-                    class="shrink-0 rounded-md p-1.5 text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
+                    :aria-expanded="open"
+                    class="shrink-0 rounded-md p-1.5 text-sidebar-foreground transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     @click="toggleSidebar"
                 >
                     <PanelLeftClose class="size-4" aria-hidden="true" />
