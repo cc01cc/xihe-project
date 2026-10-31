@@ -62,14 +62,29 @@ const templateValue = computed(() => {
     }
     return null;
 });
-// A risk badge must never be derived from a still-loading (or failed) projection:
-// that would flash "not bound" on every session switch.
-const templateUnbound = computed(
-    () =>
-        !templateSummary.value.loading &&
-        !templateSummary.value.failed &&
-        templateValue.value === null,
+// A risk badge must never be derived from a still-loading projection (that would
+// flash "not bound" on every session switch) — but a *failed* projection is a risk
+// in itself, so it must NOT be suppressed (S4 audit P1-1: "failure looked safe").
+const templateRisk = computed(() => {
+    if (templateSummary.value.failed) return true;
+    if (templateSummary.value.loading) return false;
+    return templateValue.value === null;
+});
+const templateRiskText = computed(() =>
+    templateSummary.value.failed
+        ? t("sessionSettings.templateLoadFailed")
+        : t("sessionSettings.templateUnbound"),
 );
+/**
+ * Collapsed-summary value. `loading` shows a placeholder instead of the raw id (it
+ * would flash on every session switch and read like a real binding) and `failed`
+ * shows a localized failure line — the raw template id is unreadable either way.
+ */
+const templateDisplay = computed(() => {
+    if (templateSummary.value.failed) return templateRiskText.value;
+    if (templateSummary.value.loading) return "—";
+    return templateValue.value ?? "—";
+});
 const branchLabel = computed(
     () =>
         props.branchOptions.find((branch) => branch.branchId === props.selectedBranchId)?.label ??
@@ -85,9 +100,7 @@ const branchDetached = computed(
 const summaryText = computed(() =>
     [
         `${t("chat.approvalModeLabel")} ${modeLabel.value}`,
-        `${t("chat.contextTemplateLabel")} ${
-            templateValue.value ?? t("sessionSettings.templateUnbound")
-        }`,
+        `${t("chat.contextTemplateLabel")} ${templateDisplay.value}`,
         `${t("chat.branchSelectorLabel")} ${branchLabel.value}`,
     ].join(" · "),
 );
@@ -114,6 +127,12 @@ async function closeAutoApproval() {
         }
     } catch (cause) {
         logger.warn("Failed to close auto approval mode", cause);
+        // S4 audit P1-2 (S5-10): turning auto approval off is a safety action. A
+        // silent failure would leave the user believing it is off while it is still
+        // on, so the failure must be visible even when the panel stays collapsed.
+        if (props.sessionId === sessionId) {
+            toast.error(t("chat.approvalAutoOffFailed"));
+        }
     } finally {
         closingAuto.value = false;
     }
@@ -152,14 +171,14 @@ async function closeAutoApproval() {
                 <span
                     class="min-w-0 truncate"
                     data-testid="session-context-template-current"
-                    :title="templateValue ?? t('sessionSettings.templateUnbound')"
+                    :title="templateDisplay"
                 >
                     {{ t("chat.contextTemplateLabel") }}
                     <span
                         class="font-medium"
-                        :class="templateUnbound ? 'text-muted-foreground' : 'text-foreground'"
+                        :class="templateRisk ? 'text-amber-700' : 'text-foreground'"
                     >
-                        {{ templateValue ?? "—" }}
+                        {{ templateDisplay }}
                     </span>
                 </span>
                 <span class="shrink-0 text-muted-foreground/50">·</span>
@@ -169,13 +188,13 @@ async function closeAutoApproval() {
                 </span>
             </span>
             <span
-                v-if="templateUnbound"
+                v-if="templateRisk"
                 data-testid="session-settings-risk-template"
                 class="inline-flex max-w-36 shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-700"
-                :title="t('sessionSettings.templateUnbound')"
+                :title="templateRiskText"
             >
                 <CircleAlert class="size-3 shrink-0" aria-hidden="true" />
-                <span class="truncate">{{ t("sessionSettings.templateUnbound") }}</span>
+                <span class="truncate">{{ templateRiskText }}</span>
             </span>
             <span
                 v-if="branchDetached"

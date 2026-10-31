@@ -191,6 +191,24 @@ public class WorkspaceService {
         return workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId));
     }
 
+    /**
+     * PLAN-0608 (T1.4): number of active workspaces the user belongs to. Reuses
+     * the same query the fallback resolution uses, so "is the fallback
+     * unambiguous?" and "what would the fallback be?" can never disagree.
+     */
+    @Transactional(readOnly = true)
+    public int countActiveMemberWorkspaces(String userId) {
+        if (userId == null || userId.isBlank()) {
+            return 0;
+        }
+        try {
+            return workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId)).size();
+        } catch (IllegalArgumentException e) {
+            // Non-UUID subject (legacy service token / tests): treat as no workspace.
+            return 0;
+        }
+    }
+
     @Transactional(readOnly = true)
     public Workspace requireActiveWorkspace(String workspaceId) {
         return findActiveWorkspace(workspaceId)

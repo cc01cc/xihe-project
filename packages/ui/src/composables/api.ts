@@ -2088,8 +2088,17 @@ export const api = {
     },
     async createSession(agentPrincipalId: string, title?: string): Promise<SessionResponse> {
         const body = title === undefined ? { agentPrincipalId } : { title, agentPrincipalId };
+        // PLAN-0608 (C′): address the workspace in the PATH. The tab header alone is
+        // not enough — after login the tab may hold the *fallback* workspace, which
+        // silently created sessions in the wrong tenant (review P0-1). With no
+        // selection yet, keep the legacy route so CP answers WORKSPACE_CONTEXT_REQUIRED
+        // and the UI can offer the picker.
+        const workspaceId = readTabWorkspaceId();
+        const path = workspaceId
+            ? `/workspaces/${encodeURIComponent(workspaceId)}/sessions`
+            : "/sessions";
         return normalizeSession(
-            await request<unknown>("/sessions", {
+            await request<unknown>(path, {
                 method: "POST",
                 body: JSON.stringify(body),
             }),

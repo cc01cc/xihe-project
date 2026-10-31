@@ -4,7 +4,19 @@ import { createPinia, setActivePinia } from "pinia";
 import { createI18n } from "vue-i18n";
 import type { Router } from "vue-router";
 import WorkspaceWorkbench from "../WorkspaceWorkbench.vue";
+
+const { toastWarning } = vi.hoisted(() => ({ toastWarning: vi.fn<(message: string) => void>() }));
+
+vi.mock("vue-sonner", () => ({
+    toast: {
+        warning: toastWarning,
+        success: vi.fn<(message?: string) => void>(),
+        error: vi.fn<(message?: string) => void>(),
+        info: vi.fn<(message?: string) => void>(),
+    },
+}));
 import { useAuthStore } from "../../../../stores/auth";
+import { useWorkspaceStore } from "../../stores/workspace";
 
 vi.mock("vue-router", () => ({
     createRouter: () => ({
@@ -88,6 +100,11 @@ function storedLayout(workspaceId = "workspace-1"): Record<string, unknown> {
     >;
 }
 
+/** S3b P2-9: writes are coalesced, so persistence assertions have to poll. */
+async function expectStored(check: () => void): Promise<void> {
+    await vi.waitFor(check, { timeout: 2000, interval: 20 });
+}
+
 beforeEach(() => {
     setActivePinia(createPinia());
     localStorage.clear();
@@ -149,8 +166,10 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
 
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
-        expect(storedLayout().dockCollapsed).toBe(true);
-        expect(storedLayout().dockTabs).toEqual(["code"]);
+        await expectStored(() => {
+            expect(storedLayout().dockCollapsed).toBe(true);
+            expect(storedLayout().dockTabs).toEqual(["code"]);
+        });
 
         await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
         // Re-opening does not duplicate the tab.
@@ -172,8 +191,10 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         // Middle click closes the remaining tab and the empty dock rolls up.
         await wrapper.get('[data-testid="dock-tab-code"]').trigger("auxclick", { button: 1 });
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
-        expect(storedLayout().dockTabs).toEqual([]);
-        expect(storedLayout().dockCollapsed).toBe(true);
+        await expectStored(() => {
+            expect(storedLayout().dockTabs).toEqual([]);
+            expect(storedLayout().dockCollapsed).toBe(true);
+        });
     });
 
     it("keeps width and collapsed state independent (collapse then re-open restores the width)", async () => {
@@ -182,7 +203,7 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
 
         await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
         await wrapper.get('[data-testid="dock-resizer"]').trigger("keydown", { key: "End" });
-        expect(storedLayout().dockWidth).toBe(480);
+        await expectStored(() => expect(storedLayout().dockWidth).toBe(480));
         expect(wrapper.get('[data-testid="workspace-aux-panel"]').attributes("style")).toContain(
             "width: 480px",
         );
@@ -190,7 +211,7 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         await wrapper.get('[data-testid="workspace-aux-close"]').trigger("click");
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
         // Collapsing must not rewrite the stored width.
-        expect(storedLayout().dockWidth).toBe(480);
+        await expectStored(() => expect(storedLayout().dockWidth).toBe(480));
 
         await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
         expect(wrapper.get('[data-testid="workspace-aux-panel"]').attributes("style")).toContain(
@@ -204,11 +225,11 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
 
         await wrapper.get('[data-testid="workspace-toolbar-toggle-tree"]').trigger("click");
         expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(false);
-        expect(storedLayout().treeCollapsed).toBe(true);
+        await expectStored(() => expect(storedLayout().treeCollapsed).toBe(true));
 
         await wrapper.get('[data-testid="workspace-tree-expand"]').trigger("click");
         expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(true);
-        expect(storedLayout().treeCollapsed).toBe(false);
+        await expectStored(() => expect(storedLayout().treeCollapsed).toBe(false));
     });
 
     it("swaps to a fresh layout when the workspace changes", async () => {
@@ -246,5 +267,80 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         await wrapper.get('[data-testid="workspace-toolbar-files-mobile"]').trigger("click");
 
         expect(localStorage.getItem("xihe-layout-ws:workspace-1")).toBeNull();
+    });
+});
+describe("WorkspaceWorkbench workspace switch (PLAN-0582 S3a audit P0)", () => {
+    it("clears the open file buffer on a mobile workspace switch too", async () => {
+        const wrapper = mountWorkbench({ isMobile: true });
+        await flushPromises();
+        const ws = useWorkspaceStore();
+        ws.openFiles.set("notes.md", {
+            path: "notes.md",
+            content: "workspace A content",
+            originalContent: "workspace A content",
+            modified: true,
+            language: "markdown",
+        });
+        ws.activeFilePath = "notes.md";
+        expect(ws.openFiles.size).toBe(1);
+
+        // Mobile must run the same reset: the sheet renders the tree and the editor,
+        // so a stale buffer would be saved into the *new* workspace.
+        await wrapper.setProps({ workspaceId: "workspace-2" });
+        await flushPromises();
+
+        expect(ws.openFiles.size).toBe(0);
+        expect(ws.activeFilePath).toBeNull();
+    });
+});
+describe("WorkspaceWorkbench anti-squeeze (PLAN-0582 S3b §4)", () => {
+    it("forces a pinned dock back to floating and says why, without rewriting the choice", async () => {
+        // A narrow row (jsdom reports 1024) cannot host tree 240 + pinned dock 360.
+        localStorage.setItem(
+            "xihe-layout-ws:workspace-1",
+            JSON.stringify({
+                treeCollapsed: false,
+                treeWidth: 240,
+                dockCollapsed: false,
+                dockWidth: 360,
+                dockTabs: ["monitor"],
+                activeDockTab: "monitor",
+                dockMode: "pinned",
+                dockModeManual: true,
+                dockPolicyDismissed: false,
+                openTabs: ["environment", "scheduled-tasks", "settings"],
+            }),
+        );
+        const wrapper = mountWorkbench();
+        await flushPromises();
+
+        // Rendered as floating so the main column keeps its floor...
+        expect(
+            wrapper.get('[data-testid="workspace-aux-panel"]').attributes("data-dock-mode"),
+        ).toBe("floating");
+        // ...and the fallback is never silent.
+        expect(toastWarning).toHaveBeenCalledTimes(1);
+        // The user's explicit choice is preserved (rendering only).
+        expect(storedLayout().dockMode).toBe("pinned");
+        expect(storedLayout().dockModeManual).toBe(true);
+        wrapper.unmount();
+    });
+});
+describe("WorkspaceWorkbench dock policy (PLAN-0582 S3b P1-1 audit)", () => {
+    it("keeps a dock the user explicitly re-opened open on the next mount", async () => {
+        const first = mountWorkbench();
+        await flushPromises();
+        // Open the dock, close it, then open it again (all explicit user actions).
+        await first.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await first.get('[data-testid="workspace-aux-close"]').trigger("click");
+        await first.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await expectStored(() => expect(storedLayout().dockCollapsed).toBe(false));
+        first.unmount();
+
+        // A fresh mount must honour the stored state instead of a dismissal latch.
+        const second = mountWorkbench();
+        await flushPromises();
+        expect(second.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
+        second.unmount();
     });
 });

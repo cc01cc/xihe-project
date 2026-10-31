@@ -100,8 +100,11 @@ export const useAuthStore = defineStore("auth", () => {
             refreshToken.value = rt;
             localStorage.setItem("xihe-refresh-token", rt);
         }
-        if (ws) writeTabWorkspace(ws);
-        else clearTabWorkspace();
+        // PLAN-0608 (I6): the login response's workspace is a *fallback*, not the
+        // user's choice. Persisting it as tab intent made every later request
+        // carry the wrong workspace (review P0-1). A multi-workspace member now
+        // picks explicitly; the router sends them to the picker.
+        clearTabWorkspace();
         // New authentication session: rotate the anonymous telemetry session id (PLAN-0527).
         rotateAnonSessionId();
     }
@@ -270,9 +273,14 @@ export const useAuthStore = defineStore("auth", () => {
             return;
         }
         try {
-            const current = tabWorkspaceId
-                ? await api.getWorkspace(tabWorkspaceId)
-                : await api.getCurrentWorkspace();
+            if (!tabWorkspaceId) {
+                // PLAN-0608 (I6): never invent a workspace from the fallback
+                // (`/workspaces/current` = first member workspace). "Not chosen yet"
+                // is a real state; the router renders the picker for it.
+                workspace.value = null;
+                return;
+            }
+            const current = await api.getWorkspace(tabWorkspaceId);
             workspace.value = current;
             writeTabWorkspace(current);
         } catch (cause) {

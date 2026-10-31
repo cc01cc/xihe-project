@@ -137,11 +137,21 @@ public class UserRoleService {
         return saved;
     }
 
-    /** The singleton row is the instance mutex; its owner id is the guard input. */
+    /**
+     * The singleton row is the instance mutex; its owner id is the guard input.
+     *
+     * <p>Semantics mirror {@code InstanceOwnershipService#lockSingleton()}: a
+     * missing row is created instead of degrading to "no owner". Returning
+     * {@code null} on a missing row would silently disable owner protection (I3);
+     * that state is only reachable on the H2 profile, which builds its schema from
+     * the entities and never runs V85.
+     */
     private UUID lockInstanceOwner() {
-        return owners.lockSingleton()
-                .map(InstanceOwner::getOwnerUserId)
-                .orElse(null);
+        InstanceOwner owner = owners.lockSingleton().orElseGet(() -> {
+            logger.warn("instance_owner singleton row missing; creating the instance mutex row");
+            return owners.save(new InstanceOwner());
+        });
+        return owner.getOwnerUserId();
     }
 
     /**

@@ -215,6 +215,13 @@ async function confirmCreateAgentSession() {
         const message = cause instanceof ApiError ? cause.message : "Failed to create session";
         logger.error("Create session failed", cause);
         toast.error(message);
+        // PLAN-0608 (T1.5 / P0-2): a workspace-context rejection must be
+        // recoverable, not a dead-end toast — send the user to the picker.
+        const code = cause instanceof ApiError ? cause.problem.code : "";
+        if (code === "WORKSPACE_CONTEXT_REQUIRED" || code === "WORKSPACE_CONTEXT_CONFLICT") {
+            showAgentSelection.value = false;
+            await router.push({ name: "workspace-home" });
+        }
         return null;
     } finally {
         creatingAgentSession.value = false;

@@ -128,7 +128,9 @@ function handleLoadFullContent() {
         <div v-if="!activeFile" class="flex-1 flex items-center justify-center">
             <div class="text-center">
                 <FileText class="mx-auto size-12 text-muted-foreground/30" aria-hidden="true" />
-                <p class="mt-2 text-sm text-muted-foreground">从文件树选择文件</p>
+                <p class="mt-2 text-sm text-muted-foreground">
+                    {{ t("workspace.editorSelectFile") }}
+                </p>
             </div>
         </div>
 
@@ -155,7 +157,9 @@ function handleLoadFullContent() {
                     :disabled="!activeFile.modified || !canWrite"
                     @click="handleSave"
                 >
-                    {{ activeFile.modified ? "保存" : "已保存" }}
+                    {{
+                        activeFile.modified ? t("workspace.editorSave") : t("workspace.editorSaved")
+                    }}
                 </button>
             </div>
             <!-- Truncation banner -->
@@ -163,12 +167,12 @@ function handleLoadFullContent() {
                 v-if="activeFile.truncated"
                 class="flex items-center justify-between px-3 py-1.5 text-xs bg-amber-50 text-amber-900 border-b"
             >
-                <span>内容已截断，仅显示文件的一部分。</span>
+                <span>{{ t("workspace.editorTruncated") }}</span>
                 <button
                     class="px-2 py-0.5 rounded bg-amber-600 text-white hover:bg-amber-700"
                     @click="handleLoadFullContent"
                 >
-                    加载完整内容
+                    {{ t("workspace.editorLoadFull") }}
                 </button>
             </div>
             <div class="flex-1 overflow-hidden">
@@ -189,14 +193,18 @@ function handleLoadFullContent() {
                         class="px-2 py-0.5 text-xs rounded border hover:bg-muted transition-colors"
                         @click="toggleDiff"
                     >
-                        {{ diffMode ? "编辑" : "差异" }}
+                        {{ diffMode ? t("workspace.editorEdit") : t("workspace.editorDiff") }}
                     </button>
                     <button
                         class="px-2 py-0.5 text-xs rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-30"
                         :disabled="!activeFile.modified || !canWrite"
                         @click="handleSave"
                     >
-                        {{ activeFile.modified ? "保存" : "已保存" }}
+                        {{
+                            activeFile.modified
+                                ? t("workspace.editorSave")
+                                : t("workspace.editorSaved")
+                        }}
                     </button>
                 </div>
             </div>
@@ -205,12 +213,12 @@ function handleLoadFullContent() {
                 v-if="activeFile.truncated"
                 class="flex items-center justify-between px-3 py-1.5 text-xs bg-amber-50 text-amber-900 border-b"
             >
-                <span>内容已截断，仅显示文件的一部分。</span>
+                <span>{{ t("workspace.editorTruncated") }}</span>
                 <button
                     class="px-2 py-0.5 rounded bg-amber-600 text-white hover:bg-amber-700"
                     @click="handleLoadFullContent"
                 >
-                    加载完整内容
+                    {{ t("workspace.editorLoadFull") }}
                 </button>
             </div>
             <div v-if="diffMode && activeFile" class="flex-1 overflow-hidden">
@@ -239,12 +247,12 @@ function handleLoadFullContent() {
                 v-if="activeFile.truncated"
                 class="flex items-center justify-between px-3 py-1.5 text-xs bg-amber-50 text-amber-900 border-b"
             >
-                <span>内容已截断，仅显示文件的一部分。</span>
+                <span>{{ t("workspace.editorTruncated") }}</span>
                 <button
                     class="px-2 py-0.5 rounded bg-amber-600 text-white hover:bg-amber-700"
                     @click="handleLoadFullContent"
                 >
-                    加载完整内容
+                    {{ t("workspace.editorLoadFull") }}
                 </button>
             </div>
             <div class="flex-1">

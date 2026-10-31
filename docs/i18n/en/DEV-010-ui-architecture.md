@@ -5,7 +5,7 @@ lang: en
 sidebar_group: "Developer Guide"
 sidebar_order: 10
 created: 2026-10-10
-updated: 2026-10-10
+updated: 2026-10-31
 status: active
 ---
 
@@ -26,17 +26,19 @@ This English companion records the current route map and Workspace/Chat UI owner
 | Route | View | Behavior |
 |---|---|---|
 | `/` | redirect | Redirects to `/workspace`. |
-| `/workspace` | `WorkspaceView` | Workspace home; may show the no-Session empty state. |
-| `/workspace/:workspaceId` | `WorkspaceView` | Workspace files and the selected Workspace Chat, when a Session is selected. |
+| `/workspace` | `WorkspacePicker` (inside `AppLayout`, when no tab context) | **Explicit workspace picker** (PLAN-0608); roles come from the authoritative `GET /workspaces`. With a tab context the guard redirects to `/workspace/{id}`. |
+| `/workspace/:workspaceId` | `WorkspaceView` | Workbench (file tree / main area / dock); may show the no-Session empty state. |
 | `/workspace/:workspaceId/chat/:sessionId` | `WorkspaceView` | Selects a Session belonging to the Workspace and displays Chat. |
 | `/workspace/:workspaceId/environment` | `WorkspaceEnvironmentView` | Workspace execution environment. |
 | `/workspace/:workspaceId/settings` | `WorkspaceSettingsView` (PLAN-0560) | General (OWNER rename/delete) / Config (workspace-layer domains) / MCP sections; `?tab=config\|mcp` deep links. |
+| `/workspace/:workspaceId/scheduled-tasks` | `WorkspaceScheduledTasksView` | Scheduled tasks; participates in routing as one tab of the **middle route tab bar** (`router/index.ts`). |
 
-There is no standalone `/chat` route. Workspace routes share `AppLayout`; a Session ID does not replace a Workspace ID.
+There is no standalone `/chat` route. Workspace routes share `AppLayout`, which is **two-tier left nav + main area**: leftmost `NavRail` (fixed **56px**, icons only, no text labels) + navigation panel (default **280px**, collapsible and draggable 220–360) + main area. Workbench content is owned by `WorkspaceWorkbench` (structure see below), with the **middle route tab bar** `WorkspaceTabBar` on top (a projection of the existing routes — no new routes; `chat` is always open, the other three are a per-workspace persisted open set). Visiting `/workspace` with no tab context renders the **explicit workspace picker** `WorkspacePicker` (PLAN-0608). A Session ID does not replace a Workspace ID.
 
 ## 2. Feature Ownership
 
 - `src/features/workspace/` owns Workspace pages, components, store, and interactions.
+- `WorkspaceView` is an **assembly layer**: it only wires routing/layout; the workbench body is owned by `WorkspaceWorkbench` (rail 56 + navigation panel + file tree / main area / dock). On `400 WORKSPACE_CONTEXT_CONFLICT` / `409 WORKSPACE_CONTEXT_REQUIRED` it falls back to the `WorkspacePicker` selection surface (PLAN-0608) instead of a dead-end toast.
 - `src/features/workspace/chat/` owns Workspace Chat UI, `ChatStore`, Session list UI, and Chat SSE/parser composables.
 - `src/stores/session.ts` remains shared UI state for Session selection and metadata. The Control Plane remains canonical for Session, Message, and ChatRun lifecycle and durable records.
 - Shared API facades, cross-feature types, and shared stores remain outside the Workspace feature.

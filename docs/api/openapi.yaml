@@ -447,7 +447,27 @@ paths:
         '404': { $ref: '#/components/responses/Problem' }
   /api/v1/sessions:
     get: { operationId: listSessions, security: [{ bearerAuth: [] }], parameters: [{ in: header, name: X-Workspace-Id, required: false, schema: { type: string, format: uuid } }], responses: { '200': { description: Sessions }, '400': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' } } }
-    post: { operationId: createSession, security: [{ bearerAuth: [] }], parameters: [{ in: header, name: X-Workspace-Id, required: false, schema: { type: string, format: uuid } }], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SessionCreateRequest' } } } }, responses: { '201': { description: Created Agent Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
+    post: { operationId: createSession, security: [{ bearerAuth: [] }], parameters: [{ in: header, name: X-Workspace-Id, required: false, schema: { type: string, format: uuid } }], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SessionCreateRequest' } } } }, responses: { '201': { description: Created Agent Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' } } }
+  /api/v1/workspaces/{workspaceId}/sessions:
+    post:
+      operationId: createWorkspaceSession
+      security: [{ bearerAuth: [] }]
+      summary: Create a session under an explicit workspace (PLAN-0608)
+      description: >-
+        Ownership is taken from the path. Supplying a conflicting X-Workspace-Id
+        returns 400 WORKSPACE_CONTEXT_CONFLICT; omitting the workspace on the
+        legacy /api/v1/sessions route while the caller belongs to more than one
+        workspace returns 409 WORKSPACE_CONTEXT_REQUIRED.
+      parameters:
+        - { in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }
+        - { in: header, name: X-Workspace-Id, required: false, schema: { type: string, format: uuid } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SessionCreateRequest' } } } }
+      responses:
+        '201': { description: Created Agent Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /api/v1/sessions/{sessionId}/follow-ups:
     get:
       operationId: getFollowUpQueue
@@ -4792,3 +4812,5 @@ components:
         entry: { $ref: '#/components/schemas/InternalAuditEntry' }
         timeline: { type: array, items: { $ref: '#/components/schemas/AuditTimelineEvent' } }
         attempts: { type: array, items: { $ref: '#/components/schemas/InternalAuditAttempt' } }
+
+

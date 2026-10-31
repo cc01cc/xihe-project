@@ -22,7 +22,10 @@ const router = createRouter({
                 {
                     path: "",
                     name: "workspace-home",
-                    component: () => import("../features/workspace/pages/WorkspaceView.vue"),
+                    // PLAN-0608 (T1.5 / P0-2): with no tab context this is the
+                    // explicit workspace picker; the guard below redirects to
+                    // /workspace/{id} whenever a context already exists.
+                    component: () => import("../components/WorkspacePicker.vue"),
                 },
             ],
         },
