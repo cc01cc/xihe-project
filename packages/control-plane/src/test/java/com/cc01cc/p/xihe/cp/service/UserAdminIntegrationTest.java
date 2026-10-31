@@ -140,27 +140,6 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
      * re-issues a token carrying the new role. Getting this wrong (bumping sv too)
      * would log every user out on a routine permission change.
      */
-    @Test
-    void roleChangeKillsAccessButKeepsRefreshAlive() throws Exception {
-        String adminToken = adminWithOwner();
-        String targetId = userIdOf(register("role-keep@test.com"));
-        Tokens target = login("role-keep@test.com");
-
-        assertEquals(HttpStatus.OK, patchRole(adminToken, targetId, "ADMIN").getStatusCode());
-        assertEquals(1, tokenVersion(targetId), "0580 bumps the access epoch");
-        assertEquals(0, sessionVersion(targetId), "0581 must NOT bump the refresh epoch here");
-
-        assertEquals(HttpStatus.UNAUTHORIZED, get(target.accessToken(), "/api/v1/auth/me").getStatusCode(),
-                "old access token must be rejected");
-
-        ResponseEntity<String> refreshed = post(Map.of("refreshToken", target.refreshToken()),
-                "/api/v1/auth/refresh", null);
-        assertEquals(HttpStatus.OK, refreshed.getStatusCode(), refreshed.getBody());
-        String newAccess = objectMapper.readTree(refreshed.getBody()).path("accessToken").asText();
-        assertEquals("ADMIN", jwtTokenProvider.getRoleFromToken(newAccess),
-                "refresh re-issues with the current role, not the stale one");
-        assertEquals(HttpStatus.OK, get(newAccess, "/api/v1/auth/me").getStatusCode());
-    }
 
     /** Matrix row 5: an administrator password reset kills both channels and rotates the password. */
     @Test
@@ -255,23 +234,6 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
         assertEquals(HttpStatus.CONFLICT, reset.getStatusCode(), reset.getBody());
         assertTrue(reset.getBody().contains("USER_DELETED"), reset.getBody());
 
-        // The role surface is a third write path into the same terminal state: it must
-        // answer the same contract code and must not write anything (role, epoch,
-        // default grants, audit are all unchanged).
-        String roleBefore = roleOf(userId);
-        int tvBefore = tokenVersion(userId);
-        int grantsBefore = jdbc.queryForObject("SELECT COUNT(*) FROM grants WHERE subject_type = 'user'"
-                + " AND subject_id = CAST(? AS UUID)", Integer.class, userId);
-        int roleAuditBefore = auditCount("user_role_changed");
-        ResponseEntity<String> roleChange = patchRole(adminToken, userId, "ADMIN");
-        assertEquals(HttpStatus.CONFLICT, roleChange.getStatusCode(), roleChange.getBody());
-        assertTrue(roleChange.getBody().contains("USER_DELETED"), roleChange.getBody());
-        assertEquals(roleBefore, roleOf(userId), "role must not be written");
-        assertEquals(tvBefore, tokenVersion(userId), "the epoch must not be bumped");
-        assertEquals(grantsBefore, jdbc.queryForObject("SELECT COUNT(*) FROM grants WHERE subject_type = 'user'"
-                + " AND subject_id = CAST(? AS UUID)", Integer.class, userId),
-                "no default grant row for a dead account");
-        assertEquals(roleAuditBefore, auditCount("user_role_changed"), "no role audit row");
 
         // The row is untouched: still deleted and still DISABLED.
         Map<String, Object> row = jdbc.queryForMap(
@@ -357,12 +319,6 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
         assertEquals(0, all.path("page").asInt());
         assertEquals(100, all.path("size").asInt());
 
-        JsonNode admins = listBody(adminToken, "?role=ADMIN&size=100");
-        assertEquals(jdbc.queryForObject("SELECT COUNT(*) FROM users WHERE deleted_at IS NULL"
-                + " AND role = 'ADMIN'", Long.class), admins.path("total").asLong());
-        for (JsonNode item : admins.path("items")) {
-            assertEquals("ADMIN", item.path("role").asText());
-        }
 
         JsonNode filtered = listBody(adminToken, "?q=" + actualEmail("list-a@test.com").split("@")[0]);
         assertTrue(filtered.path("total").asLong() >= 1);
@@ -549,8 +505,8 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
         // workspace OWNER: own plane OK, instance plane refused.
         assertEquals(HttpStatus.OK,
                 get(workspaceOwnerToken, "/api/v1/workspaces/" + workspaceId + "/members").getStatusCode());
-        assertEquals(HttpStatus.FORBIDDEN, patchRole(workspaceOwnerToken, workspaceOwnerId, "ADMIN")
-                .getStatusCode(), "a workspace OWNER must not reach the instance role surface");
+        assertEquals(HttpStatus.NOT_FOUND, patchRole(workspaceOwnerToken, workspaceOwnerId, "ADMIN")
+                .getStatusCode(), "PLAN-0610 W3-2b: the instance role surface is retired");
         assertEquals(HttpStatus.FORBIDDEN, patchStatus(workspaceOwnerToken, workspaceOwnerId, "DISABLED")
                 .getStatusCode(), "a workspace OWNER must not reach the instance status surface");
         ResponseEntity<String> ownerAttempt = api.exchange(url("/api/v1/instance/owner"), HttpMethod.PUT,

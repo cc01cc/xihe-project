@@ -105,10 +105,8 @@ class PolicyRuleServiceTest {
                 () -> service.create("workspace", "u1", "ws1", false, input("read", "*", "allow", false)));
         assertEquals(HttpStatus.FORBIDDEN, error.getStatus());
 
-        TenantContext.setUserRole("ADMIN");
         assertNotNull(service.create("workspace", "u1", "ws1", false, input("read", "*", "allow", false)));
 
-        TenantContext.setUserRole(null);
         TenantContext.setWorkspaceRole("ADMIN");
         assertNotNull(service.create("workspace", "u1", "ws1", false, input("read", "*", "allow", false)));
     }

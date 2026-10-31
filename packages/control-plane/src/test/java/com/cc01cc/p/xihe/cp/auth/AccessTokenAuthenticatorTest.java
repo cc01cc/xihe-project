@@ -37,7 +37,6 @@ class AccessTokenAuthenticatorTest {
         userRepository = mock(UserRepository.class);
         authenticator = new AccessTokenAuthenticator(jwtTokenProvider, userRepository);
         when(jwtTokenProvider.validateToken(TOKEN)).thenReturn(true);
-        when(jwtTokenProvider.getRoleFromToken(TOKEN)).thenReturn("ADMIN");
     }
 
     private static User persistedUser(int tokenVersion) {
@@ -57,7 +56,6 @@ class AccessTokenAuthenticatorTest {
 
         assertTrue(result.isPresent());
         assertEquals(USER_ID.toString(), result.get().userId());
-        assertEquals("ADMIN", result.get().role());
         assertEquals(2, result.get().tokenVersion());
     }
 

@@ -10,9 +10,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.core.context.SecurityContextHolder;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -42,7 +42,6 @@ class JwtAuthenticationFilterTest {
         when(request.getHeader("Authorization")).thenReturn("Bearer valid-jwt");
         when(jwtProvider.validateToken("valid-jwt")).thenReturn(true);
         when(jwtProvider.getUserIdFromToken("valid-jwt")).thenReturn(USER_ID);
-        when(jwtProvider.getRoleFromToken("valid-jwt")).thenReturn("USER");
         when(jwtProvider.getTokenVersionFromToken("valid-jwt")).thenReturn(3);
         when(userRepository.findById(java.util.UUID.fromString(USER_ID)))
                 .thenReturn(java.util.Optional.of(userWithVersion(3)));
@@ -52,8 +51,11 @@ class JwtAuthenticationFilterTest {
         var auth = SecurityContextHolder.getContext().getAuthentication();
         assertNotNull(auth);
         assertEquals(USER_ID, auth.getPrincipal());
-        assertTrue(auth.getAuthorities().stream()
-            .anyMatch(a -> a.getAuthority().equals("ROLE_USER")));
+        // PLAN-0610 W3-2b: the legacy ROLE_<claim role> authority is retired; only cap:* carries
+        // authorization (this fixture's AuthzContext stub grants nothing).
+        assertFalse(auth.getAuthorities().stream()
+            .anyMatch(a -> a.getAuthority().startsWith("ROLE_")),
+            "no ROLE_ compatibility authority may be injected: " + auth.getAuthorities());
     }
 
     private static User userWithVersion(int tokenVersion) {

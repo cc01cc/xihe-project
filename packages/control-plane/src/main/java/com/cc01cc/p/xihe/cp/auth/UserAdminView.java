@@ -12,6 +12,9 @@ import java.time.Instant;
  * {@code sessionVersion} (contract §2 "数据隔离"): the epoch columns are internal
  * revocation machinery, and exposing them would let an operator compute when a
  * session dies. {@code deletedAt} is only non-null on a soft-deleted row.
+ *
+ * <p>PLAN-0610 W3-2b (decision #22): the legacy {@code role} string is gone from this view; the
+ * admin surface shows the binding-backed {@link CapabilitiesView} instead.
  */
 public class UserAdminView {
 
@@ -19,18 +22,22 @@ public class UserAdminView {
     private String email;
     private String username;
     private String name;
-    private String role;
+    private CapabilitiesView capabilities;
     private String status;
     private Instant deletedAt;
     private Instant createdAt;
 
     public static UserAdminView from(User user) {
+        return from(user, CapabilitiesView.NONE);
+    }
+
+    public static UserAdminView from(User user, CapabilitiesView capabilities) {
         UserAdminView view = new UserAdminView();
         view.id = user.getId().toString();
         view.email = user.getEmail();
         view.username = user.getUsername();
         view.name = user.getName();
-        view.role = user.getRole().name();
+        view.capabilities = capabilities == null ? CapabilitiesView.NONE : capabilities;
         view.status = user.getStatus() == null ? null : user.getStatus().name();
         view.deletedAt = user.getDeletedAt();
         view.createdAt = user.getCreatedAt();
@@ -49,8 +56,8 @@ public class UserAdminView {
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
 
-    public String getRole() { return role; }
-    public void setRole(String role) { this.role = role; }
+    public CapabilitiesView getCapabilities() { return capabilities; }
+    public void setCapabilities(CapabilitiesView capabilities) { this.capabilities = capabilities; }
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }

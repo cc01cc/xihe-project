@@ -40,26 +40,40 @@ public class JwtTokenProvider {
     }
 
     /**
-     * PLAN-0559: production access tokens are user-level. The workspace is
-     * resolved per request from {@code X-Workspace-Id} (or the legacy claim /
-     * default workspace during the transition), so a token can never pin a
-     * browser tab to one workspace.
+     * PLAN-0610 W3-2b (decision #17/#22): access tokens no longer carry a {@code role} claim.
+     * Authorization is the {@code cap:...} authority projection resolved from role bindings at
+     * authentication time; a signed role string would be a second vocabulary that can go stale.
      *
      * <p>PLAN-0580: every access token carries the epoch claim {@code tv} — the
      * value of {@code users.token_version} at issue time. The single production
      * issue point is {@code AuthService.issueTokens}; a token without {@code tv}
      * is rejected by {@link AccessTokenAuthenticator} (decision #14).
      */
+    public String createAccessToken(String userId, String email, int tokenVersion) {
+        return buildAccessToken(userId, email, null, tokenVersion);
+    }
+
+    /**
+     * Legacy/test-only overload. The {@code role} argument is ignored: W3-2b removed the claim, so
+     * a token issued through this shape is byte-identical to the two-argument form. Kept only so
+     * the many call sites that still pass {@code users.role} compile during the W3/W4 window.
+     */
     public String createAccessToken(String userId, String email, String role, int tokenVersion) {
-        return createAccessToken(userId, email, role, null, tokenVersion);
+        return buildAccessToken(userId, email, null, tokenVersion);
     }
 
     /**
      * Legacy/test-only overload. Passing a workspaceId keeps the old
      * {@code workspace_id} claim so PLAN-0559 can exercise the transition and
-     * older client shapes; production code must call the four-argument form.
+     * older client shapes; production code must call the two-argument form. The role slot is
+     * ignored (W3-2b).
      */
     public String createAccessToken(String userId, String email, String role, String workspaceId,
+                                    int tokenVersion) {
+        return buildAccessToken(userId, email, workspaceId, tokenVersion);
+    }
+
+    private String buildAccessToken(String userId, String email, String workspaceId,
                                     int tokenVersion) {
         Date now = new Date();
         Date expiry = new Date(now.getTime() + accessTokenValidity);
@@ -67,7 +81,6 @@ public class JwtTokenProvider {
         io.jsonwebtoken.JwtBuilder builder = Jwts.builder()
                 .subject(userId)
                 .claim("email", email)
-                .claim("role", role)
                 .claim(TOKEN_VERSION_CLAIM, tokenVersion)
                 .issuedAt(now)
                 .expiration(expiry);
@@ -160,14 +173,6 @@ public class JwtTokenProvider {
                 .get("email", String.class);
     }
 
-    public String getRoleFromToken(String token) {
-        return Jwts.parser()
-                .verifyWith(accessKey)
-                .build()
-                .parseSignedClaims(token)
-                .getPayload()
-                .get("role", String.class);
-    }
 
     public String getWorkspaceIdFromToken(String token) {
         return Jwts.parser()

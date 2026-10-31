@@ -157,7 +157,8 @@ class AuthLocalModeTest {
         when(encoder.encode(anyString())).thenReturn("hash");
         AuthService service = new AuthService(repo, encoder,
                 mock(com.cc01cc.p.xihe.cp.config.JwtTokenProvider.class),
-                mock(com.cc01cc.p.xihe.cp.policy.GrantDefaultService.class));
+                mock(com.cc01cc.p.xihe.cp.policy.GrantDefaultService.class),
+                mock(CapabilityProjectionService.class));
         RegisterRequest request = new RegisterRequest("local@test.com", "pw-12345678", "Local");
 
         assertEquals(com.cc01cc.p.xihe.cp.entity.UserRole.ADMIN,
@@ -181,7 +182,8 @@ class AuthLocalModeTest {
             return new AuthService(userRepository,
                     mock(org.springframework.security.crypto.password.PasswordEncoder.class),
                     mock(com.cc01cc.p.xihe.cp.config.JwtTokenProvider.class),
-                    mock(com.cc01cc.p.xihe.cp.policy.GrantDefaultService.class));
+                    mock(com.cc01cc.p.xihe.cp.policy.GrantDefaultService.class),
+                    mock(CapabilityProjectionService.class));
         }
 
         static AuthController controller(boolean localModeEnabled) {

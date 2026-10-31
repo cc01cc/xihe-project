@@ -31,14 +31,18 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
     private final GrantDefaultService grantDefaultService;
+    /** PLAN-0610 W3-2b: capability projection for the auth/user wire shapes. */
+    private final CapabilityProjectionService capabilityProjection;
     private final String dummyPasswordHash;
 
     public AuthService(UserRepository userRepository, PasswordEncoder passwordEncoder,
-                       JwtTokenProvider jwtTokenProvider, GrantDefaultService grantDefaultService) {
+                       JwtTokenProvider jwtTokenProvider, GrantDefaultService grantDefaultService,
+                       CapabilityProjectionService capabilityProjection) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenProvider = jwtTokenProvider;
         this.grantDefaultService = grantDefaultService;
+        this.capabilityProjection = capabilityProjection;
         // PLAN-0558: unknown accounts must cost one BCrypt verification too, so
         // response timing cannot distinguish "no such user" from a wrong password.
         this.dummyPasswordHash = passwordEncoder.encode(UUID.randomUUID().toString());
@@ -192,14 +196,14 @@ public class AuthService {
         // PLAN-0580: the access token stamps the current epoch; a role change bumps
         // users.token_version so this token stops authenticating on its next use.
         String accessToken = jwtTokenProvider.createAccessToken(
-                user.getId().toString(), user.getEmail(), user.getRole().name(), user.getTokenVersion());
+                user.getId().toString(), user.getEmail(), user.getTokenVersion());
         // PLAN-0581: the refresh token stamps the refresh epoch; disable/soft-delete/
         // password-reset bump users.session_version and kill it on next use.
         String refreshToken = jwtTokenProvider.createRefreshToken(
                 user.getId().toString(), user.getSessionVersion());
 
         return new AuthResponse(accessToken, refreshToken, 900,
-                UserResponse.from(user), workspaceId);
+                UserResponse.from(user, capabilityProjection.capabilitiesFor(user.getId())), workspaceId);
     }
 
     /**
@@ -265,6 +269,6 @@ public class AuthService {
     public UserResponse getCurrentUser(String userId) {
         User user = userRepository.findById(UUID.fromString(userId))
                 .orElseThrow(() -> new IllegalArgumentException("User not found"));
-        return UserResponse.from(user);
+        return UserResponse.from(user, capabilityProjection.capabilitiesFor(user.getId()));
     }
 }

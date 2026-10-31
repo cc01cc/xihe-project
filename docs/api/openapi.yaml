@@ -28,6 +28,15 @@ paths:
       parameters:
         - { in: header, name: X-Workspace-Id, required: false, schema: { type: string, format: uuid }, description: 'PLAN-0559: optional workspace to echo in workspaceId. Access tokens are user-level; this header never rebinds a token.' }
       responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' } }
+  /api/v1/me/permissions:
+    get:
+      operationId: myPermissions
+      summary: Effective capabilities of the caller (PLAN-0610 W3-2b)
+      description: 'Instance-scope materialized atoms plus one entry per active workspace membership. Read-only self service: the data source is the caller''s role bindings plus the materialized grants union (users.role is never read).'
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: 'Self permission summary', content: { application/json: { schema: { $ref: '#/components/schemas/MePermissions' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
   /api/v1/auth/me:
     get:
       operationId: currentUser
@@ -2823,36 +2832,14 @@ paths:
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
-  /api/v1/users/{userId}/role:
-    patch:
-      operationId: changeUserRole
-      summary: Change an instance role (PLAN-0580)
-      description: 'ADMIN only. Body {role: ADMIN|USER}; any other value is 400 INVALID_ROLE. One transaction, fixed order: instance lock -> guards -> users.role -> default-grant resync (subject_type=user only) -> users.token_version + 1 -> audit user_role_changed. Guard priority: the current owner cannot be demoted (409 INSTANCE_OWNER_PROTECTED, audited as user_role_change_denied), then the last ADMIN cannot be removed (409 LAST_ADMIN). A request that does not change the role is a no-op 200 with no epoch bump and no audit row. The epoch bump invalidates every access token issued before it: the next request with such a token answers 401 AUTHORIZATION_REQUIRED. localMode answers 409 LOCAL_SINGLE_USER_MODE; a lock wait over cp.lock-timeout-ms answers 503 OPERATION_LOCK_TIMEOUT (safe to retry).'
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - { in: path, name: userId, required: true, schema: { type: string, format: uuid } }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/UserRoleChangeRequest' }
-      responses:
-        '200': { description: 'Role view', content: { application/json: { schema: { $ref: '#/components/schemas/UserRoleView' } } } }
-        '400': { $ref: '#/components/responses/Problem' }
-        '401': { $ref: '#/components/responses/Problem' }
-        '403': { $ref: '#/components/responses/Problem' }
-        '404': { $ref: '#/components/responses/Problem' }
-        '409': { $ref: '#/components/responses/Problem' }
-        '503': { $ref: '#/components/responses/Problem' }
   /api/v1/users:
     get:
       operationId: listUsers
       summary: Admin user list (PLAN-0581)
-      description: 'ADMIN only. Filters are all optional: q (case-insensitive substring over email/username/name), role (ADMIN|USER), status (ACTIVE|DISABLED), includeDeleted (default false). Ordered by createdAt DESC, size clamped to 100 (default 20). Response {items,total,page,size}; items are the admin view {id,email,username,name,role,status,deletedAt,createdAt} and never carry password_hash, token_version or session_version.'
+      description: 'ADMIN only. Filters are all optional: q (case-insensitive substring over email/username/name), status (ACTIVE|DISABLED), includeDeleted (default false). Ordered by createdAt DESC, size clamped to 100 (default 20). Response {items,total,page,size}; items are the admin view {id,email,username,name,role,status,deletedAt,createdAt} and never carry password_hash, token_version or session_version.'
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: query, name: q, required: false, schema: { type: string } }
-        - { in: query, name: role, required: false, schema: { type: string, enum: [ADMIN, USER] } }
         - { in: query, name: status, required: false, schema: { type: string, enum: [ACTIVE, DISABLED] } }
         - { in: query, name: includeDeleted, required: false, schema: { type: boolean, default: false } }
         - { in: query, name: page, required: false, schema: { type: integer, minimum: 0, default: 0 } }
@@ -2865,7 +2852,7 @@ paths:
     post:
       operationId: createUser
       summary: Admin account creation (PLAN-0581)
-      description: 'ADMIN only; the only account source when XIHE_AUTH_REGISTRATION_POLICY=closed. Body {email, username?, role?, password?, name?}. When password is omitted the server generates a strong one and returns it once as temporaryPassword (never logged, never audited). 409 EMAIL_TAKEN / USERNAME_TAKEN, 400 USERNAME_INVALID (^[a-z][a-z0-9]{0,31}$). Audited as user_created.'
+      description: 'ADMIN only; the only account source when XIHE_AUTH_REGISTRATION_POLICY=closed. Body {email, username?, password?, name?}. When password is omitted the server generates a strong one and returns it once as temporaryPassword (never logged, never audited). 409 EMAIL_TAKEN / USERNAME_TAKEN, 400 USERNAME_INVALID (^[a-z][a-z0-9]{0,31}$). Audited as user_created.'
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -3061,6 +3048,32 @@ components:
           schema: { type: string, enum: [no-store] }
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
   schemas:
+    UserCapabilities:
+      type: object
+      description: 'PLAN-0610 W3-2b: binding-backed capability projection that replaces the retired role string (decision #22).'
+      properties:
+        isInstanceAdmin: { type: boolean }
+        isInstanceSuper: { type: boolean }
+        workspaceAdminOf: { type: array, items: { type: string, format: uuid } }
+    MePermissionsAtom:
+      type: object
+      properties:
+        actionClass: { type: string }
+        resource: { type: string, description: '"*" when the atom is wildcard-scoped' }
+    MePermissionsWorkspace:
+      type: object
+      properties:
+        workspaceId: { type: string, format: uuid }
+        workspaceRole: { type: string, nullable: true }
+        workspaceAdmin: { type: boolean }
+        permissions: { type: array, items: { $ref: '#/components/schemas/MePermissionsAtom' } }
+    MePermissions:
+      type: object
+      properties:
+        userId: { type: string, format: uuid }
+        instanceCapabilities: { type: array, items: { type: string }, description: 'capability atoms such as instance:super / instance:admin' }
+        instancePermissions: { type: array, items: { $ref: '#/components/schemas/MePermissionsAtom' } }
+        workspaces: { type: array, items: { $ref: '#/components/schemas/MePermissionsWorkspace' } }
     UserAdminView:
       type: object
       description: 'PLAN-0581 admin view of an account (list rows and detail share the shape). Deliberately carries no password_hash, token_version or session_version.'
@@ -3069,7 +3082,7 @@ components:
         email: { type: string }
         username: { type: string }
         name: { type: string, nullable: true }
-        role: { type: string, enum: [ADMIN, USER] }
+        capabilities: { $ref: '#/components/schemas/UserCapabilities' }
         status: { type: string, enum: [ACTIVE, DISABLED] }
         deletedAt: { type: string, format: date-time, nullable: true, description: 'non-null only on a soft-deleted row' }
         createdAt: { type: string, format: date-time }
@@ -3086,7 +3099,6 @@ components:
       properties:
         email: { type: string, format: email }
         username: { type: string, description: 'optional; ^[a-z][a-z0-9]{0,31}$, derived from the email when absent' }
-        role: { type: string, enum: [ADMIN, USER], description: 'default USER' }
         password: { type: string, description: 'optional; when absent the server generates a one-time password' }
         name: { type: string }
     UserCreatedResponse:
@@ -3189,16 +3201,6 @@ components:
               subjectType: { type: string, enum: [user], description: 'Optional; must be user when present' }
               subjectId: { type: string, format: uuid }
               roleId: { type: string, format: uuid }
-    UserRoleView:
-      type: object
-      properties:
-        userId: { type: string, format: uuid }
-        role: { type: string, enum: [ADMIN, USER] }
-    UserRoleChangeRequest:
-      type: object
-      required: [role]
-      properties:
-        role: { type: string, enum: [ADMIN, USER] }
     ContextEventReadView:
       type: object
       additionalProperties: false

@@ -33,8 +33,12 @@ public class AccessTokenAuthenticator {
 
     private static final Logger logger = LoggerFactory.getLogger(AccessTokenAuthenticator.class);
 
-    /** Resolved caller facts; the role comes from the signed claim, the epoch from the row. */
-    public record AuthenticatedUser(String userId, String role, int tokenVersion) {}
+    /**
+     * Resolved caller facts (PLAN-0610 W3-2b, decision #17): the access token no longer carries a
+     * role claim, so there is no role here — capabilities are resolved from role bindings by
+     * {@code AuthzContext}. The epoch still comes from the row.
+     */
+    public record AuthenticatedUser(String userId, int tokenVersion) {}
 
     private final JwtTokenProvider jwtTokenProvider;
     private final UserRepository userRepository;
@@ -101,7 +105,6 @@ public class AccessTokenAuthenticator {
             return Optional.empty();
         }
 
-        return Optional.of(new AuthenticatedUser(userId.toString(),
-                jwtTokenProvider.getRoleFromToken(token), claimVersion));
+        return Optional.of(new AuthenticatedUser(userId.toString(), claimVersion));
     }
 }
