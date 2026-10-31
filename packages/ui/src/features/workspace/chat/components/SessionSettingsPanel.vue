@@ -127,6 +127,12 @@ async function closeAutoApproval() {
         }
     } catch (cause) {
         logger.warn("Failed to close auto approval mode", cause);
+        // S4 audit P1-2 (S5-10): turning auto approval off is a safety action. A
+        // silent failure would leave the user believing it is off while it is still
+        // on, so the failure must be visible even when the panel stays collapsed.
+        if (props.sessionId === sessionId) {
+            toast.error(t("chat.approvalAutoOffFailed"));
+        }
     } finally {
         closingAuto.value = false;
     }

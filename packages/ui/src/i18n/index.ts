@@ -916,6 +916,7 @@ const messages = {
             checkpointRevertDone: "恢复完成",
             checkpointRevertPartial: "恢复完成，但有未完成项",
             checkpointRevertFailed: "恢复执行失败",
+            approvalAutoOffFailed: "关闭自动放行失败，自动放行仍然开启，请重试",
         },
         settings: {
             title: "设置",
@@ -2828,6 +2829,7 @@ const messages = {
             checkpointRevertDone: "Restore completed",
             checkpointRevertPartial: "Restore completed with unfinished items",
             checkpointRevertFailed: "Restore execution failed",
+            approvalAutoOffFailed: "Could not turn off auto allow; it is still on. Please retry.",
         },
         settings: {
             title: "Settings",

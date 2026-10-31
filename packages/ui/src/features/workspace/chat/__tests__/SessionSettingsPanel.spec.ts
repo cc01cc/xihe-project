@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { defineComponent, h, ref, watchEffect } from "vue";
 import SessionSettingsPanel from "../components/SessionSettingsPanel.vue";
 import { i18n } from "../../../../i18n";
+import { toast } from "vue-sonner";
 import { api } from "../../../../composables/api";
 import type * as apiModule from "../../../../composables/api";
 import { usePolicyStore } from "../../../../stores/policy";
@@ -20,6 +21,13 @@ vi.mock("../../../../composables/api", async (importOriginal) => {
         },
     };
 });
+
+vi.mock("vue-sonner", () => ({
+    toast: {
+        success: vi.fn<(message: string) => void>(),
+        error: vi.fn<(message: string) => void>(),
+    },
+}));
 
 const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     ROOT_BRANCH_ID = "44444444-4444-4444-8444-444444444444",
@@ -233,6 +241,24 @@ describe("SessionSettingsPanel expansion", () => {
 
         expect(api.setPolicyMode).toHaveBeenCalledWith(SESSION_ID, "manual");
         expect(wrapper.find('[data-testid="session-policy-auto-banner"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+
+    // PLAN-0582 S5-10 / S4 audit P1-2: a safety action's failure must stay visible.
+    it("surfaces a failed auto-approval close instead of failing silently", async () => {
+        setPolicyMode("auto");
+        vi.mocked(api.setPolicyMode).mockRejectedValueOnce(new Error("boom"));
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        await wrapper.get('[data-testid="session-policy-auto-close"]').trigger("click");
+        await flushPromises();
+
+        expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(toast.error).mock.calls[0]?.[0]).toContain("关闭自动放行失败");
+        expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
+        // Optimistic hiding would claim it is off while it is still on.
+        expect(wrapper.get('[data-testid="session-policy-auto-banner"]').isVisible()).toBe(true);
         wrapper.unmount();
     });
 
