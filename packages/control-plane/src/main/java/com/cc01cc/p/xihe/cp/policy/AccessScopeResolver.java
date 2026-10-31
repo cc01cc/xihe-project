@@ -24,13 +24,16 @@ import java.util.UUID;
  *       foreign workspace id in the path, a query parameter or a header.</li>
  * </ul>
  *
+ * <p>W3-2a (round-4 P2, 口径统一): the membership check now has the administrator fallback
+ * {@link AuthzContext#canWorkspaceAdmin(UUID, UUID)}. Without it the resolver and the two P0-1 call
+ * sites disagreed about instance administrators: an {@code instance:admin} holder administers every
+ * workspace by capability (decision #15) but was rejected here before its atoms were evaluated. The
+ * fallback grants nothing by itself — the caller still has to pass the atom evaluation that
+ * follows.</p>
+ *
  * <p>A client-supplied {@code scope}/{@code scopeId} value is never used as a source; if it
  * contradicts the resolved scope the request is rejected ({@code 400 INVALID_SCOPE}) instead of
  * silently honouring one side.</p>
- *
- * <p>Instance-level administrators are <em>not</em> handled here: a plain workspace scope is a
- * statement about "which rows participate", and {@link AuthzContext#canWorkspaceAdmin} answers
- * the separate "may this subject act on that workspace" question.</p>
  */
 @Component
 public class AccessScopeResolver {
@@ -39,11 +42,14 @@ public class AccessScopeResolver {
 
     private final WorkspaceRepository workspaceRepository;
     private final WorkspaceUserRepository workspaceUserRepository;
+    private final AuthzContext authzContext;
 
     public AccessScopeResolver(WorkspaceRepository workspaceRepository,
-                               WorkspaceUserRepository workspaceUserRepository) {
+                               WorkspaceUserRepository workspaceUserRepository,
+                               AuthzContext authzContext) {
         this.workspaceRepository = workspaceRepository;
         this.workspaceUserRepository = workspaceUserRepository;
+        this.authzContext = authzContext;
     }
 
     /** The scope of the current request: the tenant-resolved workspace, else instance. */
@@ -93,7 +99,11 @@ public class AccessScopeResolver {
         boolean active = workspaceRepository.findByIdAndDeletedAtIsNull(workspaceId).isPresent();
         boolean member = workspaceUserRepository
                 .findByIdWorkspaceIdAndIdUserId(workspaceId, userUuid).isPresent();
-        if (!active || !member) {
+        // W3-2a (round-4 P2): an instance administrator is not a member of the workspaces it
+        // administers, so the membership gate alone would contradict decision #15. The atom
+        // evaluation that follows this resolver still decides whether the action is allowed.
+        boolean workspaceAdmin = !member && authzContext.canWorkspaceAdmin(userUuid, workspaceId);
+        if (!active || !(member || workspaceAdmin)) {
             logger.warn("[POLICY] event=scope_resolution_denied origin={} reason=not_member", origin);
             throw new CpApiException(HttpStatus.FORBIDDEN, "WORKSPACE_FORBIDDEN",
                     "Workspace access denied");

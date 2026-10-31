@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -102,6 +103,29 @@ public class ProblemDetailsHandler {
         }
         logger.warn("Bad request at {}", request.getRequestURI(), exception);
         return problem(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Request validation failed", request);
+    }
+
+    /**
+     * PLAN-0610 W3-2a (round-4 handoff): a database-side serialization failure or deadlock
+     * ({@code 40001}/{@code 40P01}) is a <b>retryable conflict</b>, not a server error. PostgreSQL
+     * aborts one of the transactions; the API answers {@code 409 CONCURRENT_MODIFICATION} so the
+     * client can retry instead of seeing a 500.
+     *
+     * <p>Registered on {@link PessimisticLockingFailureException} because Spring maps both
+     * SQLSTATEs onto it ({@code DeadlockLoserDataAccessException} /
+     * {@code PessimisticLockingFailureException}); a lock <em>timeout</em> (55P03) arrives as the
+     * more specific {@link CannotAcquireLockException} and keeps its 503 semantics.</p>
+     */
+    @ExceptionHandler(PessimisticLockingFailureException.class)
+    public ResponseEntity<Map<String, Object>> concurrentModification(
+            PessimisticLockingFailureException exception, HttpServletRequest request) {
+        String requestId = resolveRequestId(request);
+        Throwable cause = exception.getMostSpecificCause();
+        logger.warn("[LIFECYCLE] service=cp event=concurrent_modification path={} requestId={} reason={}",
+                request.getRequestURI(), requestId,
+                cause == null ? exception.getMessage() : cause.getMessage());
+        return problem(HttpStatus.CONFLICT, "CONCURRENT_MODIFICATION",
+                "Concurrent modification detected; retry the request", requestId);
     }
 
     @ExceptionHandler(CannotAcquireLockException.class)
