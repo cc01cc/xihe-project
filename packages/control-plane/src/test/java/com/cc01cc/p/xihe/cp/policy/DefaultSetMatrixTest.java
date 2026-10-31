@@ -4,7 +4,10 @@ import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.AuthService;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
-import com.cc01cc.p.xihe.cp.entity.AuditLog;
+import com.cc01cc.p.xihe.cp.entity.AccessRole;
+import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;import com.cc01cc.p.xihe.cp.entity.AuditLog;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
@@ -67,6 +70,18 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
 
     @Autowired
     private AuthService authService;
+
+    @Autowired
+    private AccessRoleRepository accessRoleRepository;
+
+    @Autowired
+    private AccessRoleBindingRepository accessRoleBindingRepository;
+
+    @Autowired
+    private RoleGrantMaterializer roleGrantMaterializer;
+
+    @Autowired
+    private AuthzContext authzContext;
 
     @Autowired
     private com.cc01cc.p.xihe.cp.service.WorkspaceService workspaceService;
@@ -142,33 +157,60 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
                         + "for the default USER grant (PLAN-0496 atoms)");
     }
 
-    /** spec §4.1 ADMIN row + evidence matrix full-allow column, incl. the credential behavior. */
+    /**
+     * spec §4.1 ADMIN row + evidence matrix full-allow column, incl. the credential behavior.
+     *
+     * <p>PLAN-0610 W1b T1.9: the bootstrap admin is seeded with the SUPER_ADMIN instance binding
+     * (invariant I1), so the ADMIN matrix is verified through an explicit ADMIN binding instead of
+     * the seeded account — that keeps this assertion about the role, not about the seed.</p>
+     */
     @Test
-    void seededAdminDefaultGrantMatchesSpec41AndTheEvidenceMatrixFullAllowColumn() {
+    void adminRoleBindingMatchesSpec41AndTheEvidenceMatrixFullAllowColumn() {
         register();
-        User admin = userRepository.findByEmail("admin@xihe.local").orElseThrow();
+        UUID userUuid = UUID.fromString(userId);
+        AccessRole adminRole = accessRoleRepository.findByName(SystemAccessRoleCatalog.ADMIN)
+                .orElseThrow();
+        accessRoleBindingRepository.deleteAll(
+                accessRoleBindingRepository.findBySubjectTypeAndSubjectId("user", userUuid));
+        accessRoleBindingRepository.save(new AccessRoleBinding(adminRole.getId(), "user", userUuid,
+                AccessScope.INSTANCE, null, userUuid));
+        roleGrantMaterializer.materializeSubject("user", userUuid, userUuid, null);
 
-        Set<String> adminAtoms = materializedAtoms("user", admin.getId());
+        Set<String> adminAtoms = materializedAtoms("user", userUuid);
         assertEquals(ADMIN_MATRIX, adminAtoms,
                 "spec §4.1 ADMIN row = 全 allow 的一个集: five rows plus the PLAN-0496 "
                         + "credential atoms (credential_use/reveal/manage)");
-        assertCanonicalAtoms("user", admin.getId());
+        assertCanonicalAtoms("user", userUuid);
         assertFalse(adminAtoms.contains("SPAWN_AGENT"),
-                "spec §2.1: SPAWN_AGENT stays out of the USER/ADMIN default sets even for ADMIN");
+                "spec §2.1: SPAWN_AGENT stays out of the ADMIN set");
         assertFalse(adminAtoms.contains(PermissionAtomCatalog.CAP_INSTANCE_ADMIN),
                 "PLAN-0610 #23: capability atoms are authorities, never grant rows");
+        assertTrue(authzContext.isInstanceAdmin(userUuid),
+                "the ADMIN role's instance:admin atom resolves as cap:instance:admin");
+        assertFalse(authzContext.isInstanceSuper(userUuid), "ADMIN is not SUPER_ADMIN");
 
-        String adminUserId = admin.getId().toString();
+        String adminUserId = userUuid.toString();
         workspaceUserRepository.save(new WorkspaceUser(workspaceId, adminUserId, WorkspaceRole.MEMBER));
         assertTrue(grantAuthorizationService.allowsUserOnly(new PolicyRequest(
                         "probe_tool", List.of("credential_use"), List.of("credential:" + UUID.randomUUID()),
                         ToolShape.STRUCTURED, adminUserId, workspaceId, null)),
-                "behavioral: the seeded ADMIN default (credential_use@credential:*) covers a "
-                        + "concrete credential id (evidence matrix ADMIN column, PLAN-0496 #2)");
+                "behavioral: the ADMIN set (credential_use@credential:*) covers a concrete "
+                        + "credential id (evidence matrix ADMIN column, PLAN-0496 #2)");
         assertFalse(grantAuthorizationService.allowsUserOnly(new PolicyRequest(
                         "probe_tool", List.of("SPAWN_AGENT"), List.of("*"),
                         ToolShape.STRUCTURED, adminUserId, workspaceId, null)),
                 "spec §2.1: even the full-allow ADMIN set denies SPAWN_AGENT (无 grant 在 approval 之前拒绝)");
+    }
+
+    /** PLAN-0610 W1b T1.9: the bootstrap admin holds SUPER_ADMIN (all 15 action atoms). */
+    @Test
+    void seededAdminIsSuperAdminWithEveryActionAtom() {
+        User admin = userRepository.findByEmail("admin@xihe.local").orElseThrow();
+        assertEquals(new LinkedHashSet<>(PermissionAtomCatalog.actionAtoms()),
+                materializedAtoms("user", admin.getId()),
+                "SUPER_ADMIN materializes all 15 action atoms");
+        assertTrue(authzContext.isInstanceSuper(admin.getId()),
+                "and resolves cap:instance:super from the seeded binding");
     }
 
     /** spec §3.1/§2.1 未列即 deny: vocabulary classes absent from the grant evaluate deny. */
@@ -291,3 +333,5 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
                 ToolShape.STRUCTURED, userId, workspaceId, null);
     }
 }
+
+

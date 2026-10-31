@@ -67,6 +67,9 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private com.cc01cc.p.xihe.cp.config.JwtTokenProvider jwtTokenProvider;
 
+    @Autowired
+    private com.cc01cc.p.xihe.cp.policy.AuthzContext authzContext;
+
     /**
      * The shared test RestTemplate is backed by the JDK {@code HttpURLConnection},
      * which cannot emit PATCH and drops the 401 bodies this suite asserts on. The
@@ -289,10 +292,14 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
         String adminToken = register("guard-admin@test.com");
         String plainUserToken = register("guard-user@test.com");
         String plainUserId = userIdOf(plainUserToken);
+        // PLAN-0610 W1b (R2-9): PUT /api/v1/instance/owner requires cap:instance:admin at the URL
+        // layer, so the caller must be an administrator before the controller answers
+        // NOT_INSTANCE_OWNER (a plain USER is refused earlier with 403 FORBIDDEN).
+        promote(userIdOf(adminToken));
 
         ResponseEntity<String> notOwner = putOwner(adminToken, plainUserId, PASSWORD);
         assertEquals(HttpStatus.FORBIDDEN, notOwner.getStatusCode());
-        assertTrue(notOwner.getBody().contains("NOT_INSTANCE_OWNER"));
+        assertTrue(notOwner.getBody().contains("NOT_INSTANCE_OWNER"), notOwner.getBody());
 
         promote(userIdOf(adminToken));
         ResponseEntity<String> notAdmin = putOwner(ownerToken, plainUserId, PASSWORD);
@@ -446,9 +453,8 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
         String agentAfter = permissionsOf("agent", session.getId());
         assertTrue(userAfter.contains("credential_use"), "V5: USER->ADMIN adds the credential atoms");
         assertTrue(userAfter.contains("credential_manage"));
-        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM grants WHERE subject_type = 'user'"
-                        + " AND subject_id = CAST(? AS UUID) AND source = 'default'", Integer.class, memberId),
-                "V5: still exactly one default row for the subject");
+        assertEquals(8, atomRowCount("user", UUID.fromString(memberId)),
+                "V5: the ADMIN set is materialized as one row per atom (same set as before the change)");
         assertEquals(agentBefore, agentAfter,
                 "V5.1: an existing Session's agent default snapshot must stay frozen");
     }
@@ -470,9 +476,8 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
                 Integer.class, memberId), "the demotion bumps the epoch too");
         String permissions = permissionsOf("user", UUID.fromString(memberId));
         assertFalse(permissions.contains("credential_use"), "ADMIN->USER must drop credential atoms");
-        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM grants WHERE subject_type = 'user'"
-                        + " AND subject_id = CAST(? AS UUID) AND source = 'default'", Integer.class, memberId),
-                "still exactly one default row (in-place update)");
+        assertEquals(5, atomRowCount("user", UUID.fromString(memberId)),
+                "ADMIN->USER reconciles down to the five USER atoms (one row per atom)");
         assertEquals("USER", roleOf(memberId));
     }
 
@@ -490,21 +495,20 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
                 memberId);
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM grants WHERE subject_type = 'user'"
                 + " AND subject_id = CAST(? AS UUID)", Integer.class, memberId));
-        int createdBefore = auditCount("authorization_default_grant_created");
-        int syncedBefore = auditCount("authorization_default_grant_synced");
+        int materializedBefore = auditCount("authorization_role_grant_materialized");
 
         assertEquals(HttpStatus.OK, patchRole(ownerToken, memberId, "ADMIN").getStatusCode());
 
-        Map<String, Object> row = jdbc.queryForMap("SELECT permissions::text AS permissions, source FROM grants"
-                + " WHERE subject_type = 'user' AND subject_id = CAST(? AS UUID) ORDER BY created_at DESC LIMIT 1",
-                memberId);
-        assertEquals("default", row.get("source"));
-        assertTrue(String.valueOf(row.get("permissions")).contains("credential_use"),
-                "the created default row carries the ADMIN set");
-        assertEquals(createdBefore + 1, auditCount("authorization_default_grant_created"),
-                "the create branch is audited");
-        assertEquals(syncedBefore, auditCount("authorization_default_grant_synced"),
-                "the update branch must not fire when the row was missing");
+        List<Map<String, Object>> rows = jdbc.queryForList("SELECT permissions::text AS permissions, source"
+                + " FROM grants WHERE subject_type = 'user' AND subject_id = CAST(? AS UUID)", memberId);
+        assertEquals(8, rows.size(), "the missing set is recreated as one row per ADMIN atom");
+        assertTrue(rows.stream().allMatch(row -> "role".equals(row.get("source"))),
+                "PLAN-0610 W1a: the materialized source is `role`");
+        assertTrue(rows.stream().anyMatch(row -> String.valueOf(row.get("permissions"))
+                        .contains("credential_use")),
+                "the recreated set carries the ADMIN atoms");
+        assertTrue(auditCount("authorization_role_grant_materialized") > materializedBefore,
+                "a materialization that changes rows is audited (one row per operation, not per atom)");
     }
 
     /** T1.3(c): two concurrent promotions of the same subject stay idempotent (one default row). */
@@ -546,9 +550,8 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
         }
 
         assertEquals("ADMIN", roleOf(targetId));
-        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM grants WHERE subject_type = 'user'"
-                        + " AND subject_id = CAST(? AS UUID) AND source = 'default'", Integer.class, targetId),
-                "T1.3: no duplicate default row under concurrency (uq_grants_default_subject)");
+        assertEquals(8, atomRowCount("user", UUID.fromString(targetId)),
+                "T1.3: no duplicate atom row under concurrency (uq_grants_role_atom)");
         assertEquals(1, jdbc.queryForObject("SELECT token_version FROM users WHERE id = CAST(? AS UUID)",
                 Integer.class, targetId), "the second writer sees the same role and is a no-op (no double bump)");
     }
@@ -642,8 +645,23 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
                 String.class, UUID.fromString(userId));
     }
 
+    /**
+     * PLAN-0610 W1b: {@code users.role} is a legacy column — the instance-administration
+     * capability comes from the role binding, so a promoted account needs both.
+     */
     private void promote(String userId) {
         jdbc.update("UPDATE users SET role = 'ADMIN' WHERE id = CAST(? AS UUID)", userId);
+        grantInstanceRole(userId, "ADMIN");
+    }
+
+    private void grantInstanceRole(String userId, String roleName) {
+        jdbc.update("DELETE FROM role_bindings WHERE subject_type = 'user'"
+                + " AND subject_id = CAST(? AS UUID) AND scope_type = 'instance'", userId);
+        jdbc.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+                + " granted_at) SELECT CAST(? AS UUID), r.id, 'user', CAST(? AS UUID), 'instance',"
+                + " NOW() FROM roles r WHERE r.name = ?",
+                UUID.randomUUID().toString(), userId, roleName);
+        authzContext.invalidate(UUID.fromString(userId));
     }
 
     private void assignOwner(String userId) {
@@ -668,10 +686,23 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
         return jdbc.queryForObject("SELECT COUNT(*) FROM audit_logs WHERE action = ?", Integer.class, action);
     }
 
+    /**
+     * PLAN-0610 W1a: the materialized set moved from one {@code source='default'} row to one
+     * {@code source='role'} row per atom, and the Session snapshot lives under
+     * {@code source='agent_default'}. The helper therefore aggregates the rows of whichever source
+     * the subject type owns, in a stable order, so equal atom sets compare equal.
+     */
     private String permissionsOf(String subjectType, UUID subjectId) {
-        return jdbc.queryForObject("SELECT permissions::text FROM grants WHERE subject_type = ?"
-                + " AND subject_id = ? AND source = 'default' ORDER BY created_at DESC LIMIT 1",
-                String.class, subjectType, subjectId);
+        String source = "agent".equals(subjectType) ? "agent_default" : "role";
+        List<String> rows = jdbc.queryForList("SELECT permissions::text FROM grants WHERE subject_type = ?"
+                + " AND subject_id = ? AND source = ? ORDER BY permissions::text",
+                String.class, subjectType, subjectId, source);
+        return String.join("", rows);
+    }
+
+    private int atomRowCount(String subjectType, UUID subjectId) {
+        return jdbc.queryForObject("SELECT COUNT(*) FROM grants WHERE subject_type = ?"
+                + " AND subject_id = ? AND source = 'role'", Integer.class, subjectType, subjectId);
     }
 
     private HttpHeaders authHeaders(String token) {
@@ -697,3 +728,6 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
                         authHeaders(token)), String.class);
     }
 }
+
+
+

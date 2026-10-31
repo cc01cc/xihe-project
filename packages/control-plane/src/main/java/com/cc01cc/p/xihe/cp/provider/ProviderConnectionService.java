@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.provider;
 
+import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnectionAudit;
@@ -452,9 +453,10 @@ public class ProviderConnectionService {
         }
         if (ProviderConnection.OWNER_WORKSPACE.equals(connection.getOwnerType())) {
             String role = TenantContext.getWorkspaceRole();
+            // PLAN-0610 W1b (R2-9): the instance-level bypass is a capability.
             if (!connection.getOwnerId().equals(TenantContext.getWorkspaceId())
                     || !(WorkspaceRole.canWrite(role)
-                    || "ADMIN".equals(TenantContext.getUserRole()))) {
+                    || CapabilityAuthorities.isInstanceAdmin())) {
                 throw new IllegalArgumentException("Workspace provider connection is not writable");
             }
             return;
@@ -508,8 +510,9 @@ public class ProviderConnectionService {
         if (ProviderConnection.OWNER_WORKSPACE.equals(scope)) {
             String workspaceId = TenantContext.getWorkspaceId();
             String role = TenantContext.getWorkspaceRole();
+            // PLAN-0610 W1b (R2-9): the instance-level bypass is a capability.
             if (workspaceId == null || !(WorkspaceRole.canWrite(role)
-                    || "ADMIN".equals(TenantContext.getUserRole()))) {
+                    || CapabilityAuthorities.isInstanceAdmin())) {
                 throw new IllegalArgumentException("Workspace editor permission is required");
             }
             return workspaceId;
@@ -832,3 +835,6 @@ public class ProviderConnectionService {
         public KeyImmutableException(String message) { super(message); }
     }
 }
+
+
+

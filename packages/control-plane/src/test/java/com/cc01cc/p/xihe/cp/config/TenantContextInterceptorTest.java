@@ -34,6 +34,7 @@ class TenantContextInterceptorTest {
     private JwtTokenProvider jwtTokenProvider;
     private UserRepository userRepository;
     private WorkspaceService workspaceService;
+    private com.cc01cc.p.xihe.cp.policy.AuthzContext authzContext;
     private TenantContextInterceptor interceptor;
 
     @BeforeEach
@@ -44,9 +45,13 @@ class TenantContextInterceptorTest {
         // PLAN-0580: the interceptor shares the real epoch decision with the
         // security filter (decision #21), so the test wires the real
         // AccessTokenAuthenticator over a mocked provider + repository.
+        // PLAN-0610 W1b: capabilities come from AuthzContext; this test pins the tenant
+        // resolution only, so the capability source stays empty.
+        authzContext = mock(com.cc01cc.p.xihe.cp.policy.AuthzContext.class);
+        when(authzContext.authoritiesFor(org.mockito.ArgumentMatchers.any())).thenReturn(java.util.Set.of());
         interceptor = new TenantContextInterceptor(jwtTokenProvider,
                 new AccessTokenAuthenticator(jwtTokenProvider, userRepository),
-                workspaceService, new ObjectMapper());
+                workspaceService, new ObjectMapper(), authzContext);
 
         when(jwtTokenProvider.validateToken(TOKEN)).thenReturn(true);
         when(jwtTokenProvider.getUserIdFromToken(TOKEN)).thenReturn(USER_ID);
@@ -211,3 +216,6 @@ class TenantContextInterceptorTest {
         return request;
     }
 }
+
+
+

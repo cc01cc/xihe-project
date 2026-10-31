@@ -88,8 +88,11 @@ class WorkspaceSessionControllerHttpTest {
                 });
 
         SessionCreationService creationService = new SessionCreationService(sessionService, workspaceService);
-        TenantContextInterceptor interceptor =
-                new TenantContextInterceptor(jwt, authenticator, workspaceService, new ObjectMapper());
+        com.cc01cc.p.xihe.cp.policy.AuthzContext authzContext =
+                mock(com.cc01cc.p.xihe.cp.policy.AuthzContext.class);
+        when(authzContext.authoritiesFor(any())).thenReturn(java.util.Set.of());
+        TenantContextInterceptor interceptor = new TenantContextInterceptor(
+                jwt, authenticator, workspaceService, new ObjectMapper(), authzContext);
         mockMvc = MockMvcBuilders.standaloneSetup(new WorkspaceSessionController(creationService))
                 .addInterceptors(interceptor)
                 .build();
@@ -153,4 +156,5 @@ class WorkspaceSessionControllerHttpTest {
         return mockMvc.perform(request);
     }
 }
+
 

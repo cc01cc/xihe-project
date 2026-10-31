@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.config;
 
 import com.cc01cc.p.xihe.cp.entity.Workspace;
+import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
@@ -36,15 +37,18 @@ public class TenantContextInterceptor implements HandlerInterceptor {
     private final AccessTokenAuthenticator tokenAuthenticator;
     private final WorkspaceService workspaceService;
     private final ObjectMapper objectMapper;
+    private final AuthzContext authzContext;
 
     public TenantContextInterceptor(JwtTokenProvider jwtTokenProvider,
                                     AccessTokenAuthenticator tokenAuthenticator,
                                     WorkspaceService workspaceService,
-                                    ObjectMapper objectMapper) {
+                                    ObjectMapper objectMapper,
+                                    AuthzContext authzContext) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.tokenAuthenticator = tokenAuthenticator;
         this.workspaceService = workspaceService;
         this.objectMapper = objectMapper;
+        this.authzContext = authzContext;
     }
 
     @Override
@@ -69,7 +73,9 @@ public class TenantContextInterceptor implements HandlerInterceptor {
 
         String userId = authenticated.get().userId();
         TenantContext.setUserId(userId);
+        // Compatibility carrier only: no decision reads the role string (PLAN-0610 W1b R2-5).
         TenantContext.setUserRole(authenticated.get().role());
+        TenantContext.setCapabilities(capabilitiesOf(userId));
 
         if (isTenantExempt(request.getRequestURI())) {
             return true;
@@ -121,6 +127,22 @@ public class TenantContextInterceptor implements HandlerInterceptor {
             return enforceWorkspaceRole(request, response);
         }
         return true;
+    }
+
+    /**
+     * PLAN-0610 W1b (R2-5): the request capability projection. Fail-closed — a resolution failure
+     * yields no capability rather than an exception, so the request keeps only what the URL layer
+     * grants to a plain authenticated principal.
+     */
+    private java.util.Set<String> capabilitiesOf(String userId) {
+        try {
+            return authzContext.authoritiesFor(UUID.fromString(userId));
+        } catch (IllegalArgumentException e) {
+            return java.util.Set.of();
+        } catch (RuntimeException e) {
+            logger.warn("[TENANT] capability resolution failed, granting none: {}", e.getMessage());
+            return java.util.Set.of();
+        }
     }
 
     private boolean enforceWorkspaceRole(HttpServletRequest request, HttpServletResponse response)
@@ -184,3 +206,5 @@ public class TenantContextInterceptor implements HandlerInterceptor {
         TenantContext.clear();
     }
 }
+
+

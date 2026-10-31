@@ -16,7 +16,6 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Optional;
 
 /**
  * Policy administration API (PLAN-0328 M1): rules, tool faces and session mode.
@@ -144,8 +143,9 @@ public class PolicyController {
         return ResponseEntity.ok(payload);
     }
 
+    /** PLAN-0610 W1b (R2-9): capability projection, not the compatibility role string. */
     private static boolean isAdmin() {
-        return "ADMIN".equalsIgnoreCase(Optional.ofNullable(TenantContext.getUserRole()).orElse(""));
+        return CapabilityAuthorities.isInstanceAdmin();
     }
 
     private static ResponseEntity<?> problem(CpApiException e) {
@@ -157,3 +157,5 @@ public class PolicyController {
         return value == null ? null : String.valueOf(value);
     }
 }
+
+

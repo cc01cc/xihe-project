@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.config;
 
 import org.springframework.http.HttpStatus;
 
+import java.util.Set;
 import java.util.UUID;
 
 public final class TenantContext {
@@ -10,6 +11,7 @@ public final class TenantContext {
     private static final ThreadLocal<String> currentWorkspaceId = new ThreadLocal<>();
     private static final ThreadLocal<String> currentWorkspacePath = new ThreadLocal<>();
     private static final ThreadLocal<String> currentUserRole = new ThreadLocal<>();
+    private static final ThreadLocal<Set<String>> CURRENT_CAPABILITIES = new ThreadLocal<>();
     private static final ThreadLocal<String> currentWorkspaceRole = new ThreadLocal<>();
     private static final ThreadLocal<String> currentWorkspaceSource = new ThreadLocal<>();
 
@@ -19,6 +21,25 @@ public final class TenantContext {
 
     public static String getUserId() {
         return currentUserId.get();
+    }
+
+    /**
+     * PLAN-0610 W1b (R2-5): the request's capability projection of the subject's role bindings
+     * ({@code cap:instance:super} / {@code cap:instance:admin}). Decisions read this — or, for
+     * workspace-scoped questions, {@code AuthzContext.canWorkspaceAdmin(wsId)}. The role string
+     * below is a compatibility carrier only.
+     */
+    public static void setCapabilities(Set<String> capabilities) {
+        CURRENT_CAPABILITIES.set(capabilities == null ? Set.of() : Set.copyOf(capabilities));
+    }
+
+    public static Set<String> getCapabilities() {
+        Set<String> capabilities = CURRENT_CAPABILITIES.get();
+        return capabilities == null ? Set.of() : capabilities;
+    }
+
+    public static boolean hasCapability(String capability) {
+        return capability != null && getCapabilities().contains(capability);
     }
 
     public static void setWorkspaceId(String workspaceId) {
@@ -67,6 +88,7 @@ public final class TenantContext {
         currentWorkspaceId.remove();
         currentWorkspacePath.remove();
         currentUserRole.remove();
+        CURRENT_CAPABILITIES.remove();
         currentWorkspaceRole.remove();
         currentWorkspaceSource.remove();
     }

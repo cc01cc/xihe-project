@@ -1,15 +1,20 @@
 package com.cc01cc.p.xihe.cp.config;
 
+import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.DispatcherType;
 import org.springframework.context.annotation.Bean;
+import org.springframework.http.HttpMethod;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
+import org.springframework.security.authorization.AuthorizationDecision;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
@@ -73,8 +78,24 @@ public class SecurityConfig {
                 // Security must not pre-empt it, otherwise the Runtime cannot
                 // exchange its service token via headers.
                 .requestMatchers("/internal/v1/channel").permitAll()
-                .requestMatchers("/api/v1/mcp").hasAnyRole("USER", "ADMIN", "INTERNAL_SERVICE")
-                .requestMatchers("/api/v1/**").hasAnyRole("USER", "ADMIN")
+                // PLAN-0610 W1b (R2-5): the URL layer no longer speaks role names. Every public
+                // route only requires an authenticated principal; the two sensitive endpoints that
+                // had no method-level guard are gated by the instance-administration capability.
+                .requestMatchers(HttpMethod.POST, "/api/v1/logs")
+                    .hasAuthority(CapabilityAuthorities.CAP_INSTANCE_ADMIN)
+                .requestMatchers(HttpMethod.PUT, "/api/v1/instance/owner")
+                    .hasAuthority(CapabilityAuthorities.CAP_INSTANCE_ADMIN)
+                // /api/v1/mcp is the one prefix shared with the service identity; both a user
+                // token and the internal service token authenticate, so `authenticated()` keeps
+                // the pre-existing mixed surface without naming a role.
+                .requestMatchers("/api/v1/mcp", "/api/v1/mcp/**").authenticated()
+                // A human-user surface: the service identity keeps its own channels
+                // (/internal/** and /api/v1/mcp) and must not gain the user API just because it
+                // is "authenticated" (PLAN-0610 W1b keeps the pre-existing denial).
+                .requestMatchers("/api/v1/**").access((authentication, context) -> userPrincipalOnly(authentication.get()))
+                // Service authentication is not user authorization: the service role is unchanged
+                // (ROLE_INTERNAL_SERVICE) and the nine internal @PreAuthorize expressions depend
+                // on it (W1b-2 keeps them as-is).
                 .requestMatchers("/internal/v1/**").hasRole("INTERNAL_SERVICE")
                 .anyRequest().authenticated()
             )
@@ -82,6 +103,25 @@ public class SecurityConfig {
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
+    }
+
+    /**
+     * PLAN-0610 W1b (R2-5): {@code /api/v1/**} means "an authenticated human principal". The
+     * service identity is authenticated too, so it is excluded explicitly instead of by naming a
+     * role; a user token never carries the service capability.
+     */
+    private static AuthorizationDecision userPrincipalOnly(Authentication auth) {
+        // Note: AnonymousAuthenticationToken#isAuthenticated() is true, so anonymous must be
+        // excluded explicitly — otherwise an unauthenticated call would reach the controller and
+        // the chain would answer 500 instead of 401.
+        boolean anonymous = auth instanceof AnonymousAuthenticationToken;
+        boolean serviceIdentity = auth != null && auth.getAuthorities().stream()
+                .anyMatch(authority -> CapabilityAuthorities.CAP_INTERNAL_SERVICE
+                                .equals(authority.getAuthority())
+                        || CapabilityAuthorities.LEGACY_ROLE_INTERNAL_SERVICE
+                                .equals(authority.getAuthority()));
+        return new AuthorizationDecision(
+                auth != null && auth.isAuthenticated() && !anonymous && !serviceIdentity);
     }
 
     @Bean
@@ -102,3 +142,7 @@ public class SecurityConfig {
         return source;
     }
 }
+
+
+
+

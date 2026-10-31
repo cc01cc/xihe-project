@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.controller;
 
+import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
@@ -41,8 +42,8 @@ public class WorkspaceRuntimeReleaseController {
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             Authentication authentication) {
         String userId = authentication == null ? TenantContext.getUserId() : authentication.getName();
-        boolean isAdmin = authentication != null && authentication.getAuthorities().stream()
-                .anyMatch(authority -> "ROLE_ADMIN".equals(authority.getAuthority()));
+        // PLAN-0610 W1b (R2-9): capability projection, never the ROLE_ADMIN authority.
+        boolean isAdmin = CapabilityAuthorities.isInstanceAdmin(authentication);
         Workspace workspace = workspaceService.findActiveWorkspace(workspaceId).orElse(null);
         if (workspace == null || (!isAdmin && !workspaceService.isWorkspaceMember(workspaceId, userId))) {
             return ProblemDetailsHandler.problemResponse(
@@ -58,3 +59,5 @@ public class WorkspaceRuntimeReleaseController {
         }
     }
 }
+
+

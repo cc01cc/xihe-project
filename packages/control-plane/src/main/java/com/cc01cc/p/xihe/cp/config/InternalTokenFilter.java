@@ -13,6 +13,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
 import java.io.IOException;
 import java.util.List;
 
@@ -39,7 +40,13 @@ public class InternalTokenFilter extends OncePerRequestFilter {
             SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(
                     "internal-service", null,
-                    List.of(new SimpleGrantedAuthority("ROLE_INTERNAL_SERVICE"))
+                    List.of(
+                        // Compatibility authority: /internal/v1/** and the nine internal
+                        // @PreAuthorize expressions still match ROLE_INTERNAL_SERVICE (R2-5).
+                        new SimpleGrantedAuthority(CapabilityAuthorities.LEGACY_ROLE_INTERNAL_SERVICE),
+                        // PLAN-0610 W1b: the capability spelling of the same identity.
+                        new SimpleGrantedAuthority(CapabilityAuthorities.CAP_INTERNAL_SERVICE)
+                    )
                 )
             );
             log.debug("Internal token authenticated: {} {}", request.getMethod(), request.getRequestURI());
@@ -47,3 +54,4 @@ public class InternalTokenFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 }
+

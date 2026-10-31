@@ -120,7 +120,8 @@ public class PolicyRuleService {
             return;
         }
         String role = TenantContext.getWorkspaceRole();
-        if (!(WorkspaceRole.canWrite(role) || "ADMIN".equals(TenantContext.getUserRole()))) {
+        // PLAN-0610 W1b (R2-9): the instance-level bypass is a capability, not the role string.
+        if (!(WorkspaceRole.canWrite(role) || CapabilityAuthorities.isInstanceAdmin())) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
                     "workspace-layer rules require workspace EDITOR or OWNER");
         }
@@ -174,3 +175,4 @@ public class PolicyRuleService {
         };
     }
 }
+
