@@ -86,6 +86,40 @@ beforeEach(() => {
     });
 });
 
+describe("AppLayout navigation IA (PLAN-0582 S1)", () => {
+    it("offsets the content by the collapsed rail plus the open navigation panel", async () => {
+        const wrapper = await mountLayout(createTestRouter());
+
+        const style = wrapper.find("main").attributes("style");
+        // R-D: 48px icon rail + 280px default panel.
+        expect(style).toContain("328px");
+    });
+
+    it("keeps the rail offset when the navigation panel is collapsed", async () => {
+        localStorage.setItem(
+            "xihe-layout-global",
+            JSON.stringify({ railCollapsed: false, navOpen: false, navWidth: 300 }),
+        );
+        const wrapper = await mountLayout(createTestRouter());
+
+        const style = wrapper.find("main").attributes("style");
+        expect(style).toContain("176px");
+        expect(style).not.toContain("476px");
+    });
+
+    it("clears the user-scoped layout keys when the session is logged out", async () => {
+        localStorage.setItem("xihe-layout-global", JSON.stringify({ railCollapsed: true }));
+        localStorage.setItem("xihe-layout-ws:workspace-1", "{}");
+        await mountLayout(createTestRouter());
+
+        useAuthStore().$patch({ token: null, user: null });
+        await flushPromises();
+
+        expect(localStorage.getItem("xihe-layout-global")).toBeNull();
+        expect(localStorage.getItem("xihe-layout-ws:workspace-1")).toBeNull();
+    });
+});
+
 describe("AppLayout pending approval indicators", () => {
     it("renders the global banner for another session and navigates without deciding", async () => {
         vi.mocked(api.getPendingApprovals).mockResolvedValue([

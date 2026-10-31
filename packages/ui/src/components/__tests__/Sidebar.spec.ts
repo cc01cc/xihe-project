@@ -4,6 +4,7 @@ import { setActivePinia, createPinia } from "pinia";
 import { createI18n } from "vue-i18n";
 import type { Router } from "vue-router";
 import Sidebar from "../sidebar/Sidebar.vue";
+import NavRail from "../sidebar/NavRail.vue";
 import { useSessionStore } from "../../stores/session";
 import { useAuthStore } from "../../stores/auth";
 import { useAgentStore } from "../../stores/agent";
@@ -24,12 +25,24 @@ const messages = {
             logout: "退出登录",
             noWorkspace: "没有可用工作区",
             pendingApprovalBadge: "待审批",
+            admin: "管理",
+            collapse: "收起侧边栏",
+            expand: "展开侧边栏",
+            collapseRail: "收起导航栏",
+            expandRail: "展开导航栏",
+            clearSearch: "清除搜索",
+            resize: "调整导航面板宽度",
         },
     },
 };
 
-const { pushSpy } = vi.hoisted(() => ({
+const { pushSpy, routeState } = vi.hoisted(() => ({
     pushSpy: vi.fn<Router["push"]>(),
+    routeState: {
+        params: {} as Record<string, string>,
+        name: "workspace-chat",
+        path: "/workspace/ws-test/chat/session-1",
+    },
 }));
 
 vi.mock("vue-router", () => ({
@@ -43,7 +56,7 @@ vi.mock("vue-router", () => ({
     }),
     createWebHistory: () => ({}),
     useRouter: () => ({ push: pushSpy }),
-    useRoute: () => ({ params: {} }),
+    useRoute: () => routeState,
 }));
 
 function mockAuth(workspaceId = "ws-test") {
@@ -71,6 +84,9 @@ beforeEach(() => {
     localStorage.clear();
     pushSpy.mockClear();
     vi.restoreAllMocks();
+    routeState.name = "workspace-chat";
+    routeState.path = "/workspace/ws-test/chat/session-1";
+    routeState.params = {};
 });
 
 const i18n = createI18n({
@@ -80,9 +96,15 @@ const i18n = createI18n({
     messages,
 });
 
-async function mountSidebar() {
+async function mountSidebar(props: Partial<{ open: boolean; isMobile: boolean }> = {}) {
     const wrapper = mount(Sidebar, {
-        props: { open: true, width: 280, isMobile: false },
+        props: {
+            open: true,
+            width: 280,
+            isMobile: false,
+            railCollapsed: true,
+            ...props,
+        },
         global: {
             plugins: [i18n],
             stubs: { Teleport: { template: "<div><slot /></div>" } },
@@ -225,17 +247,117 @@ describe("Sidebar", () => {
         expect(wrapper.find('[data-testid="session-pending-badge"]').text()).toContain("待审批");
     });
 
-    it("starts hidden when open is false", async () => {
+    it("keeps the icon rail mounted and zero-width panel when collapsed on desktop", async () => {
         mockAuth();
-        const wrapper = mount(Sidebar, {
-            props: { open: false, width: 280, isMobile: false },
-            global: {
-                plugins: [i18n],
-                stubs: { Teleport: { template: "<div><slot /></div>" } },
-            },
-        });
+        const wrapper = await mountSidebar({ open: false });
 
-        const aside = wrapper.find("aside");
-        expect(aside.attributes("style")).toContain("width: 0px");
+        // R-D: collapsing the panel must keep the rail width as the main offset.
+        expect(wrapper.find("aside").attributes("style")).toContain("width: 48px");
+        expect(wrapper.find("[data-testid='sidebar-panel']").attributes("style")).toContain(
+            "width: 0px",
+        );
+        expect(wrapper.findComponent(NavRail).exists()).toBe(true);
+        expect(wrapper.find("[data-testid='sidebar-panel']").attributes("aria-hidden")).toBe(
+            "true",
+        );
+        // R-C: the rail itself must stay reachable while the panel is inert.
+        expect(wrapper.find("aside").attributes("aria-hidden")).toBeUndefined();
+        expect(wrapper.find('[data-testid="nav-rail"]').attributes("inert")).toBeUndefined();
+    });
+
+    it("collapses to a zero-width sheet on mobile", async () => {
+        mockAuth();
+        const wrapper = await mountSidebar({ isMobile: true, open: false });
+
+        expect(wrapper.find("aside").attributes("style")).toContain("width: 0px");
+        expect(wrapper.find("aside").attributes("aria-hidden")).toBe("true");
+        expect(wrapper.findComponent(NavRail).exists()).toBe(false);
+    });
+
+    it("moves the workspace identity to the panel header and drops the lone bottom entry", async () => {
+        mockAuth();
+        routeState.name = "workspace";
+        routeState.path = "/workspace/ws-test";
+        const wrapper = await mountSidebar();
+
+        const rows = wrapper.findAll('[data-testid="sidebar-workspace"]');
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.text()).toContain("Default Workspace");
+        expect(rows[0]!.attributes("aria-current")).toBe("page");
+
+        // The workspace row now precedes the session list instead of trailing it.
+        const html = wrapper.html();
+        expect(html.indexOf('data-testid="sidebar-workspace"')).toBeLessThan(
+            html.indexOf('data-testid="sidebar-session-list"'),
+        );
+
+        await rows[0]!.trigger("click");
+        await flushPromises();
+        expect(pushSpy).toHaveBeenCalledWith("/workspace/ws-test");
+    });
+
+    it("filters the session list through the shared search query", async () => {
+        mockAuth();
+        const store = useSessionStore();
+        store.sessions = [
+            {
+                id: "alpha-1",
+                title: "Alpha planning",
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+            },
+            {
+                id: "beta-1",
+                title: "Beta review",
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+            },
+        ];
+        const wrapper = await mountSidebar();
+        const input = wrapper.get('[data-testid="sidebar-session-search"]');
+        expect(input.attributes("placeholder")).toBe("搜索对话...");
+
+        await input.setValue("alpha");
+        await flushPromises();
+
+        expect(store.searchQuery).toBe("alpha");
+        expect(wrapper.text()).toContain("Alpha planning");
+        expect(wrapper.text()).not.toContain("Beta review");
+
+        await wrapper.get('[data-testid="sidebar-search-clear"]').trigger("click");
+        expect(store.searchQuery).toBe("");
+        expect(wrapper.text()).toContain("Beta review");
+    });
+
+    it("resizes the panel with the keyboard on the separator", async () => {
+        mockAuth();
+        const wrapper = await mountSidebar();
+        const separator = wrapper.get('[data-testid="sidebar-resizer"]');
+        expect(separator.attributes("role")).toBe("separator");
+        expect(separator.attributes("aria-valuenow")).toBe("280");
+        expect(separator.attributes("aria-valuemin")).toBe("220");
+        expect(separator.attributes("aria-valuemax")).toBe("360");
+
+        await separator.trigger("keydown", { key: "ArrowRight" });
+        expect(wrapper.emitted("update:width")?.at(-1)).toEqual([296]);
+
+        await separator.trigger("keydown", { key: "Home" });
+        expect(wrapper.emitted("update:width")?.at(-1)).toEqual([220]);
+
+        await separator.trigger("keydown", { key: "End" });
+        expect(wrapper.emitted("update:width")?.at(-1)).toEqual([360]);
+
+        await separator.trigger("keydown", { key: "ArrowLeft" });
+        expect(wrapper.emitted("update:width")?.at(-1)).toEqual([264]);
+    });
+
+    it("forwards rail collapse intent without touching panel state", async () => {
+        mockAuth();
+        const wrapper = await mountSidebar();
+
+        await wrapper.get('[data-testid="nav-rail-toggle"]').trigger("click");
+
+        expect(wrapper.emitted("update:railCollapsed")?.at(-1)).toEqual([false]);
+        expect(wrapper.emitted("update:open")).toBeUndefined();
     });
 });
