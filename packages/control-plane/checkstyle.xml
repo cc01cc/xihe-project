@@ -47,7 +47,7 @@
          constants are allow-listed exactly; every other constant must stay
          UPPER_SNAKE (108 baseline findings: 101 loggers + 7 named below). -->
     <module name="ConstantName">
-      <property name="format" value="^([A-Z][A-Z0-9_]*|logger|log|telemetryLogger|auditLog|wireMock|currentUserId|currentWorkspaceId|currentWorkspacePath|currentUserRole|currentWorkspaceRole)$"/>
+      <property name="format" value="^([A-Z][A-Z0-9_]*|logger|log|telemetryLogger|auditLog|wireMock|currentUserId|currentWorkspaceId|currentWorkspacePath|currentUserRole|currentWorkspaceRole|currentWorkspaceSource)$"/>
     </module>
     <module name="LocalFinalVariableName">
       <property name="severity" value="error"/>
@@ -78,3 +78,4 @@
     </module>
   </module>
 </module>
+

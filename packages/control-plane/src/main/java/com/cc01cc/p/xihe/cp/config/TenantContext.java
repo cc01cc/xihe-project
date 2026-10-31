@@ -11,6 +11,7 @@ public final class TenantContext {
     private static final ThreadLocal<String> currentWorkspacePath = new ThreadLocal<>();
     private static final ThreadLocal<String> currentUserRole = new ThreadLocal<>();
     private static final ThreadLocal<String> currentWorkspaceRole = new ThreadLocal<>();
+    private static final ThreadLocal<String> currentWorkspaceSource = new ThreadLocal<>();
 
     public static void setUserId(String userId) {
         currentUserId.set(userId);
@@ -52,12 +53,22 @@ public final class TenantContext {
         return currentWorkspaceRole.get();
     }
 
+    /** PLAN-0608: how the workspace was resolved (header|claim|default); null when unset. */
+    public static void setWorkspaceSource(String source) {
+        currentWorkspaceSource.set(source);
+    }
+
+    public static String getWorkspaceSource() {
+        return currentWorkspaceSource.get();
+    }
+
     public static void clear() {
         currentUserId.remove();
         currentWorkspaceId.remove();
         currentWorkspacePath.remove();
         currentUserRole.remove();
         currentWorkspaceRole.remove();
+        currentWorkspaceSource.remove();
     }
 
     /**
@@ -101,3 +112,4 @@ public final class TenantContext {
 
     private TenantContext() {}
 }
+
