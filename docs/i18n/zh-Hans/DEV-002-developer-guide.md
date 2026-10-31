@@ -336,6 +336,7 @@ XIHE_VERIFY_PASSWORD=<admin 密码> mise run xihe -- verify \
 - **判定与退出码**：A 档（CP health / 登录 / workspace 可访问 / principal / session+分支 / messages / SSE / 模型列表 / Agent health）必过；B 档 `POST /api/v1/chat` 受理（200/202 且返回 `runId`）保持原语义。`0`=A/B 通过且 run 终态 `succeeded`、`4`=A 通过但 B 前置缺失、`1`=失败（含 run 终态失败）、`2`=缺目标/凭据或派生失败、`5`=run 等待超时（`--wait-seconds`，默认 120；超时先 `POST /api/v1/chat/runs/{runId}/cancel` 再删本次 session）。
 - **清理与残留**：结束或失败时先关闭 SSE，再 `DELETE /api/v1/sessions/{sessionId}` 删除本次创建的 session；本次新建的 agent principal 无可确认的删除接口，保留并在结果中报告（`cleanup.principal`）；不会修改或删除已存在的 principal。审计与模型侧记录可能保留。
 - **agent principal**：建 session 必须带 `agentPrincipalId`；按「显式 `XIHE_VERIFY_AGENT_PRINCIPAL_ID` → workspace 已绑定的第一个 → 自动新建」解析。只有新建后才调 `PUT …/agents/{id}` 绑定——对已有 principal 调该接口会**收窄**它的 workspace cap。诊断只输出白名单状态字段，不打印 Agent 原始日志。
+- **模板与连接前置（PLAN-0601）**：B 档要求 Session 显式绑定「已发布 api-request-template 三元组 + chat provider connection」。CLI 自动解析（`GET /api/v1/config/api-request-templates?layer=user|workspace|instance` 取 published 且与连接 API Type 对齐的模板；连接取 `GET /api/v1/provider-connections` 中 `status=READY` 且 `operation=chat` 的一条），并在建 session 时带上 `providerConnectionId` / `modelProvider` / `modelName` / `contextTemplateLayer|Id|Version`。缺模板报 `VERIFY_TEMPLATE_MISSING`、缺连接报 `VERIFY_CONNECTION_MISSING`（均 exit 2 并给出发布/建连的可操作提示），不再以裸 `409 API_TYPE_REBIND_REQUIRED` 失败；模板发布是 ADMIN 实例层操作（设置页 → 配置 → API 请求模板 → 发布）。
 
 ## 5. 测试入口
 
