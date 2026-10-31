@@ -154,6 +154,26 @@ public class RoleGrantMaterializer {
     }
 
     /**
+     * T4.3 (I5): reconcile a subject whose <b>binding rows</b> changed outside a role edit — the
+     * owner transfer rewrites the two instance-tier bindings and must also move the epoch, exactly
+     * like a tier change does (design §3.4: 「角色/绑定变更 → 同事务重算 + token_version+1」).
+     *
+     * <p>{@link #materializeSubject} deliberately does not bump (a plain re-materialization is not
+     * an authorization change); the transfer is, so it asks for both in one call and keeps the
+     * ordering rule of round-4 P1-1: materialize first, then bump, all inside the caller's
+     * transaction so a rollback leaves the epoch alone.</p>
+     */
+    @Transactional
+    public Result materializeSubjectWithEpochBump(String subjectType, UUID subjectId,
+                                                  UUID actorUserId, String auditWorkspaceId) {
+        Result result = materializeSubject(subjectType, subjectId, actorUserId, auditWorkspaceId);
+        if (AuthzContext.SUBJECT_USER.equals(subjectType)) {
+            bumpUserEpoch(subjectId);
+        }
+        return result;
+    }
+
+    /**
      * Re-materializes every subject bound to one role (role permission change).
      *
      * <p>PLAN-0610 W1c (round-3 P1-2): a role edit changes what its holders may do, so every
