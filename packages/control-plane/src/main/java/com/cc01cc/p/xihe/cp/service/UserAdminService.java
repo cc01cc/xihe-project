@@ -161,6 +161,11 @@ public class UserAdminService {
         dbLockTimeout.apply();
         UUID ownerUserId = lockInstanceOwner();
         User target = lockTarget(targetUserId);
+        // Soft delete is irreversible (decision #3): a re-enable would violate
+        // ck_users_deleted_status (deleted_at non-null requires status=DISABLED) and
+        // surface as an unmapped 500. The API layer therefore refuses it explicitly —
+        // the DB CHECK stays as the safety net, not as the error contract.
+        requireNotDeleted(target);
 
         if (target.getStatus() == newStatus) {
             // No-op: a retry (or a click on the current state) must not kick the
@@ -219,6 +224,10 @@ public class UserAdminService {
         dbLockTimeout.apply();
         UUID ownerUserId = lockInstanceOwner();
         User target = lockTarget(targetUserId);
+        // Same irreversibility rule as the status change: rotating the password of a
+        // deleted account would hand out a credential that cannot log in (login is
+        // blocked by isUsable()) and would exit with a 200 that looks like a recovery.
+        requireNotDeleted(target);
         // A password reset does not change the role or the account state, so the
         // owner and last-admin guards do not apply — only "not yourself" (decision #5).
         guard(actorUserId, target, ownerUserId, false);
@@ -299,9 +308,28 @@ public class UserAdminService {
                     "The instance owner cannot be disabled or deleted; transfer ownership first");
         }
         if (removesAdmin && target.getRole() == UserRole.ADMIN
-                && users.countByRoleAndStatusAndDeletedAtIsNull(UserRole.ADMIN, UserStatus.ACTIVE) <= 1) {
+                && users.countByRoleAndStatusAndDeletedAtIsNull(UserRole.ADMIN, UserStatus.ACTIVE)
+                <= (target.isUsable() ? 1 : 0)) {
+            // The count includes the target only when it is still usable; disabling an
+            // already-disabled/deleted ADMIN removes nothing from the usable set, so the
+            // threshold drops to 0 instead of rejecting a harmless request.
             deny(actorUserId, target, "LATEST_ADMIN", HttpStatus.CONFLICT, "LAST_ADMIN",
                     "The instance must keep at least one usable ADMIN");
+        }
+    }
+
+    /**
+     * PLAN-0581 (merge-audit P1-1): {@code deletedAt != null} is terminal for v1
+     * (decision #3). Without this guard a re-enable reached the DB CHECK
+     * {@code ck_users_deleted_status} and surfaced as an unmapped 500; the API must
+     * answer a contract code instead. The CHECK stays as the safety net.
+     */
+    private void requireNotDeleted(User target) {
+        if (target.getDeletedAt() != null) {
+            logger.info("[LIFECYCLE] service=cp event=user_admin_action_denied target={}"
+                    + " reason=USER_DELETED", target.getId());
+            throw new CpApiException(HttpStatus.CONFLICT, "USER_DELETED",
+                    "A soft-deleted account cannot be modified (deletion is irreversible in v1)");
         }
     }
 

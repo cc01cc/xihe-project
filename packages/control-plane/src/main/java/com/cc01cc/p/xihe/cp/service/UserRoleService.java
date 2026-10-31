@@ -107,8 +107,13 @@ public class UserRoleService {
         // soft-deleted ADMIN cannot log in, so it must not count as the instance's
         // remaining administrator. With the plain row count, "disable admin A" plus
         // "demote admin B" would leave zero usable admins.
+        //
+        // The threshold is 1 only when the target itself is still usable; demoting an
+        // already-disabled ADMIN removes nothing from the usable set, so requiring
+        // count >= 2 there would reject a harmless request (merge-audit P2-1).
         if (previousRole == UserRole.ADMIN && newRole == UserRole.USER
-                && users.countByRoleAndStatusAndDeletedAtIsNull(UserRole.ADMIN, UserStatus.ACTIVE) <= 1) {
+                && users.countByRoleAndStatusAndDeletedAtIsNull(UserRole.ADMIN, UserStatus.ACTIVE)
+                <= (target.isUsable() ? 1 : 0)) {
             deny(actorUserId, target, previousRole, newRole, "LAST_ADMIN",
                     HttpStatus.CONFLICT, "The instance must keep at least one usable ADMIN");
         }

@@ -230,6 +230,58 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
         assertTrue(found, "includeDeleted=true must return the soft-deleted row");
     }
 
+    /**
+     * Merge-audit P1-1: a soft-deleted row is terminal in v1, so re-enabling it must
+     * be a contract 409 — not the DB CHECK violation that used to surface as an
+     * unmapped 500 (the row is reachable from {@code GET /users?includeDeleted=true},
+     * so an operator can really click "enable" on it).
+     */
+    @Test
+    void softDeletedAccountCannotBeModified() throws Exception {
+        String adminToken = adminWithOwner();
+        String userId = userIdOf(register("deleted-guard@test.com"));
+        assertEquals(HttpStatus.NO_CONTENT,
+                delete("/api/v1/users/" + userId, adminToken).getStatusCode());
+
+        ResponseEntity<String> reEnable = patchStatus(adminToken, userId, "ACTIVE");
+        assertEquals(HttpStatus.CONFLICT, reEnable.getStatusCode(), reEnable.getBody());
+        assertTrue(reEnable.getBody().contains("USER_DELETED"), reEnable.getBody());
+        assertFalse(reEnable.getBody().contains("\"status\":500"), "must never be a 500");
+
+        ResponseEntity<String> reset = post(null, "/api/v1/users/" + userId + "/password-reset", adminToken);
+        assertEquals(HttpStatus.CONFLICT, reset.getStatusCode(), reset.getBody());
+        assertTrue(reset.getBody().contains("USER_DELETED"), reset.getBody());
+
+        // The row is untouched: still deleted and still DISABLED.
+        Map<String, Object> row = jdbc.queryForMap(
+                "SELECT status, deleted_at FROM users WHERE id = CAST(? AS UUID)", userId);
+        assertEquals("DISABLED", row.get("status"));
+        assertNotNull(row.get("deleted_at"));
+        // Idempotent soft delete stays a no-op (no second epoch bump on a retry).
+        assertEquals(HttpStatus.NO_CONTENT,
+                delete("/api/v1/users/" + userId, adminToken).getStatusCode());
+        assertEquals(1, tokenVersion(userId));
+    }
+
+    /**
+     * Merge-audit P2-1: the last-admin threshold only applies when the target is
+     * still usable. Soft-deleting an already-DISABLED ADMIN removes nothing from the
+     * usable set, so it must be allowed instead of a misleading 409 LAST_ADMIN.
+     */
+    @Test
+    void removingAnAlreadyDisabledAdminIsNotBlockedAsLastAdmin() throws Exception {
+        String adminToken = adminWithOwner();
+        String disabledAdminId = userIdOf(register("dormant-admin@test.com"));
+        jdbc.update("UPDATE users SET role = 'ADMIN' WHERE id = CAST(? AS UUID)", disabledAdminId);
+        assertEquals(HttpStatus.OK, patchStatus(adminToken, disabledAdminId, "DISABLED").getStatusCode());
+        assertEquals(1, usableAdminCount(), "only the owner is usable now");
+
+        ResponseEntity<String> deleted = delete("/api/v1/users/" + disabledAdminId, adminToken);
+        assertEquals(HttpStatus.NO_CONTENT, deleted.getStatusCode(), deleted.getBody());
+        assertNotNull(jdbc.queryForObject(
+                "SELECT deleted_at FROM users WHERE id = CAST(? AS UUID)", Object.class, disabledAdminId));
+    }
+
     /** Matrix row 3: re-enabling does not revive the dead credentials — the user logs in again. */
     @Test
     void enableDoesNotReviveOldCredentials() throws Exception {

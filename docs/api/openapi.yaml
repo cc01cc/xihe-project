@@ -2922,7 +2922,7 @@ paths:
     patch:
       operationId: changeUserStatus
       summary: Enable or disable an account (PLAN-0581)
-      description: 'ADMIN only. Body {status: ACTIVE|DISABLED} (400 INVALID_STATUS otherwise). ACTIVE->DISABLED revokes both channels in the same transaction, so the next request with an old access token answers 401 AUTHORIZATION_REQUIRED and an old refresh token answers 401 at /auth/refresh; DISABLED->ACTIVE does not revive old credentials (the user logs in again). A request that does not change the status is a 200 no-op (no epoch bump, no audit). Guards: 409 SELF_OPERATION_FORBIDDEN, 409 INSTANCE_OWNER_PROTECTED, 409 LAST_ADMIN; lock wait over cp.lock-timeout-ms = 503 OPERATION_LOCK_TIMEOUT (retryable). Audited as user_status_changed; refusals as user_admin_action_denied.'
+      description: 'ADMIN only. Body {status: ACTIVE|DISABLED} (400 INVALID_STATUS otherwise). A soft-deleted target answers 409 USER_DELETED: v1 deletion is irreversible, so the API refuses to re-enable it instead of letting the ck_users_deleted_status CHECK surface as a 500. ACTIVE->DISABLED revokes both channels in the same transaction, so the next request with an old access token answers 401 AUTHORIZATION_REQUIRED and an old refresh token answers 401 at /auth/refresh; DISABLED->ACTIVE does not revive old credentials (the user logs in again). A request that does not change the status is a 200 no-op (no epoch bump, no audit). Guards: 409 SELF_OPERATION_FORBIDDEN, 409 INSTANCE_OWNER_PROTECTED, 409 LAST_ADMIN; lock wait over cp.lock-timeout-ms = 503 OPERATION_LOCK_TIMEOUT (retryable). Audited as user_status_changed; refusals as user_admin_action_denied.'
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: userId, required: true, schema: { type: string, format: uuid } }
@@ -2943,7 +2943,7 @@ paths:
     post:
       operationId: resetUserPassword
       summary: Admin password reset (PLAN-0581)
-      description: 'ADMIN only. Generates a one-time password, stores only its hash, revokes BOTH channels in the same transaction and returns {temporaryPassword} exactly once; the plaintext never reaches audit_logs, logs or events. 409 SELF_OPERATION_FORBIDDEN when the target is the caller (owner/last-admin guards do not apply: the role and state are untouched). Audited as user_password_reset.'
+      description: 'ADMIN only. Generates a one-time password, stores only its hash, revokes BOTH channels in the same transaction and returns {temporaryPassword} exactly once; the plaintext never reaches audit_logs, logs or events. A soft-deleted target answers 409 USER_DELETED (deletion is irreversible in v1). 409 SELF_OPERATION_FORBIDDEN when the target is the caller (owner/last-admin guards do not apply: the role and state are untouched). Audited as user_password_reset.'
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: userId, required: true, schema: { type: string, format: uuid } }
