@@ -30,6 +30,12 @@ import { useWindowSize } from "@vueuse/core";
 import { useSessionStore } from "../../stores/session";
 
 const props = defineProps<{
+    /**
+     * S5-W2: the shell yielded the navigation panel to protect the workspace main
+     * column. Render-only — the stored `open` state is untouched, so widening the
+     * window restores the panel exactly as the user left it.
+     */
+    forceCollapsed?: boolean;
     open: boolean;
     width: number;
     isMobile: boolean;
@@ -64,18 +70,19 @@ const isWorkspacePage = computed(() => {
 // user width is untouched, so a wider window restores it.
 const { width: viewportWidth } = useWindowSize();
 const effectiveWidth = computed(() => clampNavWidthForViewport(props.width, viewportWidth.value));
+const isOpen = computed(() => Boolean(props.open) && !props.forceCollapsed);
 
 const asideStyle = computed(() => {
     if (props.isMobile) {
-        return { width: props.open ? `min(${props.width}px, calc(100vw - 1rem))` : "0px" };
+        return { width: isOpen.value ? `min(${props.width}px, calc(100vw - 1rem))` : "0px" };
     }
-    const total = RAIL_WIDTH + (props.open ? effectiveWidth.value : 0);
+    const total = RAIL_WIDTH + (isOpen.value ? effectiveWidth.value : 0);
     return { width: `${total}px` };
 });
 
 const panelStyle = computed(() => {
     if (props.isMobile) return { width: "100%" };
-    return { width: props.open ? `${effectiveWidth.value}px` : "0px" };
+    return { width: isOpen.value ? `${effectiveWidth.value}px` : "0px" };
 });
 
 async function startNewChat() {

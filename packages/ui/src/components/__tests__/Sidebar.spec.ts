@@ -97,7 +97,12 @@ const i18n = createI18n({
 });
 
 async function mountSidebar(
-    props: Partial<{ open: boolean; isMobile: boolean; width: number }> = {},
+    props: Partial<{
+        open: boolean;
+        isMobile: boolean;
+        width: number;
+        forceCollapsed: boolean;
+    }> = {},
 ) {
     const wrapper = mount(Sidebar, {
         props: {
@@ -389,5 +394,31 @@ describe("Sidebar", () => {
         // The rail no longer exposes any panel/collapse toggle.
         expect(wrapper.find('[data-testid="nav-rail-panel-toggle"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="nav-rail-toggle"]').exists()).toBe(false);
+    });
+});
+describe("Sidebar nav yield (PLAN-0582 S5-W2)", () => {
+    it("renders rail-only when the shell yielded the panel, without touching the stored state", async () => {
+        mockAuth();
+        const wrapper = await mountSidebar({ open: true, forceCollapsed: true });
+        // The aside collapses to the fixed rail (56px); the panel itself is 0 wide.
+        expect(wrapper.get('[data-testid="sidebar"]').attributes("style")).toContain("width: 56px");
+        expect(wrapper.get('[data-testid="sidebar-panel"]').attributes("style")).toContain(
+            "width: 0px",
+        );
+        // Render-only: no state write happens on its own.
+        expect(wrapper.emitted("update:open")).toBeUndefined();
+    });
+
+    it("leaves the panel rendered when forceCollapsed is false (no false positive)", async () => {
+        mockAuth();
+        const wrapper = await mountSidebar({ open: true, forceCollapsed: false });
+        // jsdom viewport is 1024 -> the panel width is breakpoint-clamped to 240
+        // (S3a audit P1-3), so rail 56 + 240 = 296.
+        expect(wrapper.get('[data-testid="sidebar-panel"]').attributes("style")).toContain(
+            "width: 240px",
+        );
+        expect(wrapper.get('[data-testid="sidebar"]').attributes("style")).toContain(
+            "width: 296px",
+        );
     });
 });

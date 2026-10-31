@@ -1,4 +1,4 @@
-import { computed, ref, watch, type Ref } from "vue";
+import { computed, ref, watch, type InjectionKey, type Ref } from "vue";
 import { useWindowSize } from "@vueuse/core";
 import { logger } from "../lib/logger";
 
@@ -423,6 +423,16 @@ export function clearLayoutStorage(): void {
     }
 }
 
+/** What the workbench publishes so the geometry owner can evaluate the squeeze. */
+export type WorkbenchSqueezeDemand = Omit<
+    WorkbenchSqueezeInput,
+    "workbenchWidth" | "navPanelWidth"
+>;
+
+/** Injection key for the single `useWorkspaceLayout` instance created by AppLayout. */
+export const WORKSPACE_LAYOUT_KEY: InjectionKey<ReturnType<typeof useWorkspaceLayout>> =
+    Symbol("xihe-workspace-layout");
+
 export interface WorkspaceLayoutOptions {
     /** The mobile sheet is a transient overlay and must not persist as desktop layout. */
     isMobile: Ref<boolean>;
@@ -440,8 +450,45 @@ export function useWorkspaceLayout(options: WorkspaceLayoutOptions) {
     const effectiveNavWidth = computed(() =>
         clampNavWidthForViewport(navWidth.value, viewportWidth.value),
     );
-    const railWidth = computed(() => RAIL_WIDTH),
-        navPanelWidth = computed(() => (navOpen.value ? effectiveNavWidth.value : 0)),
+    const railWidth = computed(() => RAIL_WIDTH);
+
+    /**
+     * S5-W2: the workbench publishes what it needs (tree/dock geometry) and this
+     * composable — the single geometry owner — decides the anti-squeeze outcome,
+     * including whether the navigation panel has to yield. The demand is runtime
+     * only: nothing about a yield is ever persisted.
+     */
+    const workbenchDemand = ref<WorkbenchSqueezeDemand | null>(null);
+    function setWorkbenchDemand(demand: WorkbenchSqueezeDemand | null): void {
+        workbenchDemand.value = demand;
+    }
+
+    /** Panel width the user asked for, before any yield. */
+    const requestedNavPanelWidth = computed(() => (navOpen.value ? effectiveNavWidth.value : 0));
+
+    const squeeze = computed<WorkbenchSqueezeResult>(() => {
+        const demand = workbenchDemand.value;
+        const offset = options.isMobile.value ? 0 : RAIL_WIDTH + requestedNavPanelWidth.value;
+        const workbenchWidth = Math.max(0, (viewportWidth.value || 0) - offset);
+        if (!demand) {
+            return {
+                mainWidth: workbenchWidth,
+                treeYielded: false,
+                navYielded: false,
+                forceFloating: false,
+            };
+        }
+        return computeWorkbenchSqueeze({
+            workbenchWidth,
+            ...demand,
+            navPanelWidth: requestedNavPanelWidth.value,
+        });
+    });
+
+    const navYielded = computed(() => squeeze.value.navYielded),
+        navPanelWidth = computed(() =>
+            navOpen.value && !navYielded.value ? effectiveNavWidth.value : 0,
+        ),
         mainOffset = computed(() =>
             options.isMobile.value ? 0 : railWidth.value + navPanelWidth.value,
         );
@@ -477,6 +524,9 @@ export function useWorkspaceLayout(options: WorkspaceLayoutOptions) {
         navOpen,
         navWidth,
         effectiveNavWidth,
+        navYielded,
+        squeeze,
+        setWorkbenchDemand,
         railWidth,
         navPanelWidth,
         mainOffset,
@@ -522,12 +572,21 @@ export interface WorkbenchSqueezeInput {
      * hard floor still wins over the manual preference if floating is not enough.
      */
     allowTreeYield?: boolean;
+    /** Rendered width of the navigation panel that could yield (0 when closed). */
+    navPanelWidth?: number;
+    /**
+     * S3b-style runtime override: `false` when the user just re-opened the nav by
+     * hand. Suppresses the *comfort* yield only — the 640 hard floor still wins.
+     */
+    allowNavYield?: boolean;
 }
 
 export interface WorkbenchSqueezeResult {
     mainWidth: number;
     /** The tree has to collapse so a pinned dock can keep the main column readable. */
     treeYielded: boolean;
+    /** The navigation panel has to collapse to its rail so the floor is reachable. */
+    navYielded: boolean;
     /** The dock has to render as floating to protect the hard floor. */
     forceFloating: boolean;
 }
@@ -540,32 +599,47 @@ export interface WorkbenchSqueezeResult {
 export function computeWorkbenchSqueeze(input: WorkbenchSqueezeInput): WorkbenchSqueezeResult {
     const workbenchWidth = Number.isFinite(input.workbenchWidth) ? input.workbenchWidth : 0;
     const allowTreeYield = input.allowTreeYield !== false;
+    const allowNavYield = input.allowNavYield !== false;
+    const navPanelWidth = Number.isFinite(input.navPanelWidth)
+        ? Math.max(0, input.navPanelWidth ?? 0)
+        : 0;
     const treeCollapsed = Boolean(input.treeCollapsed);
     const tree = treeCollapsed ? TREE_COLLAPSED_WIDTH : input.treeWidth;
     const dockTakesSpace = input.dockOpen && input.dockMode === "pinned";
     let mainWidth = workbenchWidth - tree - (dockTakesSpace ? input.dockWidth : 0);
     let treeYielded = false;
+    let navYielded = false;
 
-    // 1) comfort floor: the tree gives way first (never the dock) unless the user
-    //    expanded it by hand.
-    if (dockTakesSpace && !treeCollapsed && allowTreeYield && mainWidth < MAIN_COMFORT_MIN_WIDTH) {
-        mainWidth += tree - TREE_COLLAPSED_WIDTH;
-        treeYielded = true;
+    // ── comfort floor (720), spec §1.5-C rule 2: tree first, then the nav panel ──
+    // Only a *pinned* dock squeezes the row, so the comfort yield is scoped to it.
+    if (dockTakesSpace && mainWidth < MAIN_COMFORT_MIN_WIDTH) {
+        if (!treeCollapsed && allowTreeYield) {
+            mainWidth += tree - TREE_COLLAPSED_WIDTH;
+            treeYielded = true;
+        }
+        if (mainWidth < MAIN_COMFORT_MIN_WIDTH && navPanelWidth > 0 && allowNavYield) {
+            mainWidth += navPanelWidth;
+            navYielded = true;
+        }
     }
 
-    // 2) hard floor: the dock drops back to floating.
+    // ── hard floor (640), outranks every manual preference ──
     let forceFloating = false;
     if (dockTakesSpace && mainWidth < MAIN_MIN_WIDTH) {
         mainWidth += input.dockWidth;
         forceFloating = true;
     }
-
-    // 3) the hard floor outranks a manual tree expansion: if floating was still not
-    //    enough, the tree collapses anyway (and the caller renders that state).
     if (mainWidth < MAIN_MIN_WIDTH && !treeCollapsed && !treeYielded) {
         mainWidth += tree - TREE_COLLAPSED_WIDTH;
         treeYielded = true;
     }
+    // The nav panel is the last lever: at narrow viewports the rail + panel alone can
+    // eat the floor, so it yields even without a pinned dock (and even if the user
+    // re-opened it by hand — the floor is the higher-priority invariant).
+    if (mainWidth < MAIN_MIN_WIDTH && navPanelWidth > 0 && !navYielded) {
+        mainWidth += navPanelWidth;
+        navYielded = true;
+    }
 
-    return { mainWidth, treeYielded, forceFloating };
+    return { mainWidth, treeYielded, navYielded, forceFloating };
 }

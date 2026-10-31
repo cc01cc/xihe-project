@@ -431,7 +431,7 @@ describe("PLAN-0582 S3b: draggable columns, dock mode and anti-squeeze", () => {
                 dockOpen: true,
                 dockMode: "pinned",
             }),
-        ).toEqual({ mainWidth: 844, treeYielded: false, forceFloating: false });
+        ).toEqual({ mainWidth: 844, treeYielded: false, navYielded: false, forceFloating: false });
 
         // 720 comfort floor: the pinned dock makes the tree yield (240 -> 40).
         expect(
@@ -443,7 +443,7 @@ describe("PLAN-0582 S3b: draggable columns, dock mode and anti-squeeze", () => {
                 dockOpen: true,
                 dockMode: "pinned",
             }),
-        ).toEqual({ mainWidth: 880, treeYielded: true, forceFloating: false });
+        ).toEqual({ mainWidth: 880, treeYielded: true, navYielded: false, forceFloating: false });
 
         // 640 hard floor: even after the tree yields the main column is too narrow,
         // so the dock renders floating and the user value is left untouched.
@@ -468,7 +468,7 @@ describe("PLAN-0582 S3b: draggable columns, dock mode and anti-squeeze", () => {
                 dockOpen: true,
                 dockMode: "floating",
             }),
-        ).toEqual({ mainWidth: 660, treeYielded: false, forceFloating: false });
+        ).toEqual({ mainWidth: 660, treeYielded: false, navYielded: false, forceFloating: false });
 
         // A collapsed tree already contributes only the 40px rail.
         expect(
@@ -555,5 +555,113 @@ describe("PLAN-0582 S3b P1-2 (audit): squeeze consumes the rendered tree state",
         expect(result.forceFloating).toBe(true);
         expect(result.treeYielded).toBe(true);
         expect(result.mainWidth).toBe(900 - 40);
+    });
+});
+
+describe("PLAN-0582 S5-W2: navigation panel yields (spec §1.5-C rule 2, second half)", () => {
+    // Shell arithmetic: rail 56 + clamped panel (240 below 1280, 260 at 1280-1439, 280 above).
+    const navPanelWidth = (viewport) => (viewport < 1280 ? 240 : viewport < 1440 ? 260 : 280);
+    const workbenchWidth = (viewport) => viewport - RAIL_WIDTH - navPanelWidth(viewport);
+
+    it("yields the navigation panel at 900px so the 640 floor becomes reachable", () => {
+        const viewport = 900;
+        const result = computeWorkbenchSqueeze({
+            workbenchWidth: workbenchWidth(viewport), // 900 - 56 - 240 = 604
+            navPanelWidth: navPanelWidth(viewport),
+            treeWidth: 240,
+            treeCollapsed: true, // <1440px starts collapsed (40px rail)
+            dockWidth: 360,
+            dockOpen: true,
+            dockMode: "floating", // <1800 derives floating, so the dock takes no space
+        });
+        expect(result.navYielded).toBe(true);
+        expect(result.mainWidth).toBe(604 - TREE_COLLAPSED_WIDTH + 240); // 804
+        expect(result.mainWidth).toBeGreaterThanOrEqual(MAIN_MIN_WIDTH);
+    });
+
+    it("yields the navigation panel at 1200px with a hand-expanded tree and a pinned dock", () => {
+        const viewport = 1200;
+        const result = computeWorkbenchSqueeze({
+            workbenchWidth: workbenchWidth(viewport), // 1200 - 56 - 240 = 904
+            navPanelWidth: navPanelWidth(viewport),
+            treeWidth: 240,
+            treeCollapsed: false, // expanded by hand
+            dockWidth: 360,
+            dockOpen: true,
+            dockMode: "pinned",
+            allowTreeYield: false, // manual expansion suppresses automatic tree yielding
+        });
+        expect(result.navYielded).toBe(true);
+        // The pinned dock still cannot fit: it floats after the nav has yielded, and
+        // the main column ends up far above the floor.
+        expect(result.forceFloating).toBe(true);
+        expect(result.mainWidth).toBe(904);
+        expect(result.mainWidth).toBeGreaterThanOrEqual(MAIN_MIN_WIDTH);
+    });
+
+    it("restores the navigation panel automatically when the window grows again", () => {
+        const demand = {
+            treeWidth: 240,
+            treeCollapsed: true,
+            dockWidth: 360,
+            dockOpen: true,
+            dockMode: "floating" as const,
+        };
+        const narrow = computeWorkbenchSqueeze({
+            workbenchWidth: workbenchWidth(900),
+            navPanelWidth: navPanelWidth(900),
+            ...demand,
+        });
+        expect(narrow.navYielded).toBe(true);
+
+        // Same runtime state, wider window: the yield is not persisted, so it is gone.
+        const wide = computeWorkbenchSqueeze({
+            workbenchWidth: workbenchWidth(1440),
+            navPanelWidth: navPanelWidth(1440),
+            ...demand,
+        });
+        expect(wide.navYielded).toBe(false);
+        expect(wide.mainWidth).toBe(1440 - RAIL_WIDTH - navPanelWidth(1440) - TREE_COLLAPSED_WIDTH);
+    });
+
+    it("does not yield the navigation panel when nothing is squeezed", () => {
+        const roomy = computeWorkbenchSqueeze({
+            workbenchWidth: workbenchWidth(1920),
+            navPanelWidth: navPanelWidth(1920),
+            treeWidth: 240,
+            treeCollapsed: false,
+            dockWidth: 360,
+            dockOpen: true,
+            dockMode: "pinned",
+        });
+        expect(roomy.navYielded).toBe(false);
+        expect(roomy.mainWidth).toBeGreaterThanOrEqual(MAIN_COMFORT_MIN_WIDTH);
+
+        // A closed nav panel has nothing to yield either (no false positive).
+        const closed = computeWorkbenchSqueeze({
+            workbenchWidth: 900 - RAIL_WIDTH,
+            navPanelWidth: 0,
+            treeWidth: 240,
+            treeCollapsed: true,
+            dockWidth: 360,
+            dockOpen: false,
+            dockMode: "floating",
+        });
+        expect(closed.navYielded).toBe(false);
+    });
+
+    it("keeps the nav panel at 1024px because the main column already clears the floor", () => {
+        const result = computeWorkbenchSqueeze({
+            workbenchWidth: workbenchWidth(1024), // 728
+            navPanelWidth: navPanelWidth(1024),
+            treeWidth: 240,
+            treeCollapsed: true,
+            dockWidth: 360,
+            dockOpen: true,
+            dockMode: "floating",
+        });
+        expect(result.navYielded).toBe(false);
+        expect(result.mainWidth).toBe(728 - TREE_COLLAPSED_WIDTH); // 688 >= 640
+        expect(result.mainWidth).toBeGreaterThanOrEqual(MAIN_MIN_WIDTH);
     });
 });
