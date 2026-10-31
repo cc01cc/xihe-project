@@ -172,7 +172,14 @@ describe("Sidebar", () => {
         expect(pushSpy).not.toHaveBeenCalled();
     });
 
+    // PLAN-0608 I6（预期变更，判据未削弱）：登录不再把回退值写进 tab 上下文，
+    // 因此「点击新建对话前已有 workspace」这件事必须由 **tab 上下文**（用户的显式
+    // 选择）提供，而不是靠 `hydrateWorkspace` 去 `/workspaces/current` 猜一个回退值。
+    // 本用例原本依赖后者；现改为显式播种 tab 上下文，断言（hydrate → 导航到该 ws
+    // 且不建会话）完全不变。
     it("clicking new chat hydrates the workspace before opening the Agent selector", async () => {
+        const { writeTabWorkspaceId } = await import("../../lib/workspaceContext");
+        writeTabWorkspaceId("ws-late");
         const auth = useAuthStore();
         auth.$patch({ token: "mock", user: { id: "u-1", email: "x@xihe.local" } });
         const spy = vi.spyOn(globalThis, "fetch");
