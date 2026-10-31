@@ -66,11 +66,19 @@ public class DataSeeder implements CommandLineRunner {
             admin = userRepository.save(admin);
             log.info("Seeded default admin user: admin@xihe.local");
         }
-        grantDefaultService.ensureUserDefault(admin);
         // PLAN-0580: V85's backfill runs before any account exists on a fresh
         // database, so the seeded admin must claim ownership afterwards. The call
         // is idempotent and never overwrites a pointer moved through the API.
+        //
+        // Order is frozen by spec `authorization.md` §4「实例级写互斥」: the lock
+        // order MUST be `instance_owner` -> target `users` row. `ensureUserDefault`
+        // locks the `users` row first, so claiming ownership afterwards would take
+        // the two locks in the opposite order and form a deadlock pair with
+        // `UserRoleService.changeRole`, which follows the frozen order. Swapping is
+        // safe: `ensureAssigned` only needs the persisted admin row, never the
+        // default grant.
         instanceOwnershipService.ensureAssigned(admin, admin.getId().toString());
+        grantDefaultService.ensureUserDefault(admin);
     }
 
     private static String generatePassword() {
