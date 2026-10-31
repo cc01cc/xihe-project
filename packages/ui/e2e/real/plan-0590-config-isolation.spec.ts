@@ -30,10 +30,7 @@ import {
     seedPage,
     type JourneyContext,
 } from "./helpers/journey";
-import {
-    seedUserGrantPermissions,
-    standardWorkspaceUserPermissions,
-} from "./helpers/user-grants";
+import { seedUserGrantPermissions, standardWorkspaceUserPermissions } from "./helpers/user-grants";
 
 /** A-only workspace-layer values; B's workspace layer stays empty. */
 const A_MAX_INPUT_TOKENS = 98765;
@@ -225,7 +222,7 @@ async function runPlainChat(
     await ensureChatBinding(page, sessionId);
 
     const result = await page.evaluate(
-        async ({ sid, ws, principal, branch, session }) => {
+        async ({ sid, ws, principal, branch }) => {
             const token = localStorage.getItem("xihe-token") ?? "";
             const headers: Record<string, string> = {
                 Authorization: `Bearer ${token}`,
@@ -260,7 +257,8 @@ async function runPlainChat(
                 const chunk = await reader.read().catch(() => ({ value: undefined, done: true }));
                 if (chunk.done || !chunk.value) break;
                 buffer += decoder.decode(chunk.value, { stream: true });
-                if (/"type"\s*:\s*"done"/.test(buffer) || buffer.includes("event:done")) done = true;
+                if (/"type"\s*:\s*"done"/.test(buffer) || buffer.includes("event:done"))
+                    done = true;
             }
             controller.abort();
             await chat;
@@ -276,7 +274,6 @@ async function runPlainChat(
             ws: ctx.workspaceId,
             principal: principalId,
             branch: branchId,
-            session: sessionId,
         },
     );
     await awaitLatestChatRunCompleted(request, ctx.headers, ctx.workspaceId);
@@ -288,8 +285,10 @@ test.describe("@host PLAN-0590 Agent run-config isolation (two workspaces, one p
     test.setTimeout(300000);
 
     let wsA: JourneyContext, wsB: JourneyContext;
-    let principalA = "", principalB = "";
-    let sessionA = "", sessionB = "";
+    let principalA = "",
+        principalB = "";
+    let sessionA = "",
+        sessionB = "";
 
     test.beforeAll(async ({ request }) => {
         test.setTimeout(180000);
