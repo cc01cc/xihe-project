@@ -282,6 +282,13 @@ run = [
 description = "Start PostgreSQL in Docker and CP/Agent/Runtime/UI; does not import config or create provider connections"
 alias = "dev:host"
 
+# PLAN-0603: detached full-stack supervisor (survives terminal/turn exit; waits for readiness).
+# `mise run dev:stack -- --stack 4 --with-pg`; status/stop: `node scripts/dev-stack.mjs status|stop`.
+[tasks."dev:stack"]
+run = "node scripts/dev-stack.mjs start"
+description = "Start CP/Agent/Runtime/UI detached for the current stack (--stack N; --with-pg to include PostgreSQL)"
+alias = "dev:stack"
+
 [tasks."dev:host:import-config"]
 run = "node scripts/xihe.mjs config import config.import.local.jsonc"
 description = "Explicitly import non-secret local config after CP is ready; not part of dev:host startup"

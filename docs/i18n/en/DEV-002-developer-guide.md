@@ -227,6 +227,25 @@ node ../scripts/ports.mjs plan xihe --stack 2      # show that stack's ports wit
 - `dev:host:stop` / `dev:reset` only touch the current stack (label `xihe.stack-id`; a missing label means stack-1).
 - Two concurrent stacks at most are recommended.
 
+#### Detached full-stack supervisor (PLAN-0603)
+
+`mise run dev:host` is a **foreground** mise task: when the terminal / agent turn exits, its child tree is reaped. `node ../scripts/ports.mjs dev xihe` is already detached, but it only starts services that declare a `runner` (xihe: UI only) and always uses the main checkout as cwd. For "survives the turn + four services ready", use the repo supervisor (commands/cwd/stack env are reused from `scripts/stack-run.mjs`):
+
+```bash
+# Run from the A03 checkout root; works in the main checkout and in .worktrees/<name>
+node scripts/dev-stack.mjs start --stack 4 --with-pg
+mise run dev:stack -- --stack 4 --with-pg        # equivalent entry (forwards args)
+node scripts/dev-stack.mjs status --stack 4
+node scripts/dev-stack.mjs stop --stack 4                 # keeps PostgreSQL by default
+node scripts/dev-stack.mjs stop --stack 4 --with-pg       # explicitly stop the PG container (volume kept)
+```
+
+- Services: CP / Agent / Runtime / UI; `start` waits for HTTP readiness (default 300s, `--timeout`) and exits 2 on timeout, pointing at `.xihe-stacks/<n>/logs/*.err.log`.
+- Logs/PIDs: `.xihe-stacks/<n>/logs/<svc>.{out,err}.log` and `dev-stack-pids.json`; `--json` for machine-readable output.
+- `node ../scripts/ports.mjs dev xihe --stack N` delegates to this supervisor; **`--next` is not supported for xihe** (use `--stack`).
+- **Parallel worktrees must use different stacks** (the same stack shares the PG database `xihe_<n>`); first run in a worktree needs `pnpm install --offline` for `packages/ui`, and it is recommended to `. ../scripts/worktree-env.ps1 -Worktree <worktree>` first to externalize `CARGO_TARGET_DIR` / `UV_PROJECT_ENVIRONMENT`.
+- `stop` only kills process trees recorded in the PID file whose command line matches `stack-run.mjs`; it never kills by port blindly.
+
 ### 2.5. Configuration Management (PLAN-042)
 
 #### Architecture Overview

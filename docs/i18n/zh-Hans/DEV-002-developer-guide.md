@@ -165,6 +165,25 @@ mise run xihe -- credential reveal <id> --workspace <wsId> (--password-env <NAME
 
 `real-tool-roundtrip` 最多提交两轮模型提示，可能产生相应费用；Playwright 整条用例自动重试已关闭，失败后需操作者决定是否重跑。
 
+### 模式 A2：detached 全栈（PLAN-0603，并行栈唯一启动路径）
+
+`mise run dev:host` 是**前台** mise 任务：终端/agent turn 结束会连带回收四服务。`node ../scripts/ports.mjs dev xihe` 本身已 detached，但只起 UI 且 cwd 固定主 checkout。需要「跨 turn 存活 + 四服务 ready」时，用仓库内 supervisor（命令/cwd/栈 env 全部复用 `scripts/stack-run.mjs`）：
+
+```bash
+# 在 A03 checkout 根执行；主 checkout 与 .worktrees/<name> 均可
+node scripts/dev-stack.mjs start --stack 4 --with-pg
+mise run dev:stack -- --stack 4 --with-pg        # 等价入口（转发参数）
+node scripts/dev-stack.mjs status --stack 4
+node scripts/dev-stack.mjs stop --stack 4                 # 默认保留 PostgreSQL
+node scripts/dev-stack.mjs stop --stack 4 --with-pg       # 显式停 PG 容器（卷保留）
+```
+
+- 服务 = CP/Agent/Runtime/UI；`start` 等待四服务 HTTP ready（默认 300s，`--timeout` 可调），失败退出码 2 并指向 `.xihe-stacks/<n>/logs/*.err.log`。
+- 日志/pid：`.xihe-stacks/<n>/logs/<svc>.{out,err}.log`、`dev-stack-pids.json`；`--json` 给机器可读输出。
+- `node ../scripts/ports.mjs dev xihe --stack N` 委派到本脚本；xihe **不支持 `--next`**（统一用 `--stack`）。
+- **并行 worktree 必须用不同 stack**（同一 stack 共享 PG 库 `xihe_<n>`）；worktree 首次运行需 `pnpm install --offline`（`packages/ui`），并建议先 `. ../scripts/worktree-env.ps1 -Worktree <worktree>` 外置 `CARGO_TARGET_DIR`/`UV_PROJECT_ENVIRONMENT`。
+- `stop` 只终止 pid 文件记录且命令行匹配 `stack-run.mjs` 的 wrapper 进程树，不按端口盲杀。
+
 ### 模式 B：Docker Compose 全栈（一次性基线）
 
 > 🧊 **已冻结（2026-10-07 用户裁定；2026-10-09 mise 已注释）**：XH 服务容器化与 docker 构建全部暂缓——只有 PostgreSQL 保留容器，其余全 host。本模式命令与 `mise run dev:full` / `dev:backend` 均停用，仅作历史参考；日常启动用 `dev:host`，隔离 E2E 用 `test:e2e:host`。解冻须用户明确裁定并同步 AGENTS/DEV-002/DEV-020。冻结只涉及服务容器化与镜像构建；工作区执行后端不变：`managed_import` 仍只允许 `docker`，`direct_attach` 仍只允许 `windows-mxc`/`windows-host`（见 DEV-031）。
