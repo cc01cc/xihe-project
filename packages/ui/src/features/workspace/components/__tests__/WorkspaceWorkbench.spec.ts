@@ -5,6 +5,7 @@ import { createI18n } from "vue-i18n";
 import type { Router } from "vue-router";
 import WorkspaceWorkbench from "../WorkspaceWorkbench.vue";
 import { useAuthStore } from "../../../../stores/auth";
+import { useWorkspaceStore } from "../../stores/workspace";
 
 vi.mock("vue-router", () => ({
     createRouter: () => ({
@@ -88,6 +89,11 @@ function storedLayout(workspaceId = "workspace-1"): Record<string, unknown> {
     >;
 }
 
+/** S3b P2-9: writes are coalesced, so persistence assertions have to poll. */
+async function expectStored(check: () => void): Promise<void> {
+    await vi.waitFor(check, { timeout: 2000, interval: 20 });
+}
+
 beforeEach(() => {
     setActivePinia(createPinia());
     localStorage.clear();
@@ -149,8 +155,10 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
 
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
-        expect(storedLayout().dockCollapsed).toBe(true);
-        expect(storedLayout().dockTabs).toEqual(["code"]);
+        await expectStored(() => {
+            expect(storedLayout().dockCollapsed).toBe(true);
+            expect(storedLayout().dockTabs).toEqual(["code"]);
+        });
 
         await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
         // Re-opening does not duplicate the tab.
@@ -172,8 +180,10 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         // Middle click closes the remaining tab and the empty dock rolls up.
         await wrapper.get('[data-testid="dock-tab-code"]').trigger("auxclick", { button: 1 });
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
-        expect(storedLayout().dockTabs).toEqual([]);
-        expect(storedLayout().dockCollapsed).toBe(true);
+        await expectStored(() => {
+            expect(storedLayout().dockTabs).toEqual([]);
+            expect(storedLayout().dockCollapsed).toBe(true);
+        });
     });
 
     it("keeps width and collapsed state independent (collapse then re-open restores the width)", async () => {
@@ -182,7 +192,7 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
 
         await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
         await wrapper.get('[data-testid="dock-resizer"]').trigger("keydown", { key: "End" });
-        expect(storedLayout().dockWidth).toBe(480);
+        await expectStored(() => expect(storedLayout().dockWidth).toBe(480));
         expect(wrapper.get('[data-testid="workspace-aux-panel"]').attributes("style")).toContain(
             "width: 480px",
         );
@@ -190,7 +200,7 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         await wrapper.get('[data-testid="workspace-aux-close"]').trigger("click");
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
         // Collapsing must not rewrite the stored width.
-        expect(storedLayout().dockWidth).toBe(480);
+        await expectStored(() => expect(storedLayout().dockWidth).toBe(480));
 
         await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
         expect(wrapper.get('[data-testid="workspace-aux-panel"]').attributes("style")).toContain(
@@ -204,11 +214,11 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
 
         await wrapper.get('[data-testid="workspace-toolbar-toggle-tree"]').trigger("click");
         expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(false);
-        expect(storedLayout().treeCollapsed).toBe(true);
+        await expectStored(() => expect(storedLayout().treeCollapsed).toBe(true));
 
         await wrapper.get('[data-testid="workspace-tree-expand"]').trigger("click");
         expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(true);
-        expect(storedLayout().treeCollapsed).toBe(false);
+        await expectStored(() => expect(storedLayout().treeCollapsed).toBe(false));
     });
 
     it("swaps to a fresh layout when the workspace changes", async () => {
@@ -246,5 +256,29 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         await wrapper.get('[data-testid="workspace-toolbar-files-mobile"]').trigger("click");
 
         expect(localStorage.getItem("xihe-layout-ws:workspace-1")).toBeNull();
+    });
+});
+describe("WorkspaceWorkbench workspace switch (PLAN-0582 S3a audit P0)", () => {
+    it("clears the open file buffer on a mobile workspace switch too", async () => {
+        const wrapper = mountWorkbench({ isMobile: true });
+        await flushPromises();
+        const ws = useWorkspaceStore();
+        ws.openFiles.set("notes.md", {
+            path: "notes.md",
+            content: "workspace A content",
+            originalContent: "workspace A content",
+            modified: true,
+            language: "markdown",
+        });
+        ws.activeFilePath = "notes.md";
+        expect(ws.openFiles.size).toBe(1);
+
+        // Mobile must run the same reset: the sheet renders the tree and the editor,
+        // so a stale buffer would be saved into the *new* workspace.
+        await wrapper.setProps({ workspaceId: "workspace-2" });
+        await flushPromises();
+
+        expect(ws.openFiles.size).toBe(0);
+        expect(ws.activeFilePath).toBeNull();
     });
 });

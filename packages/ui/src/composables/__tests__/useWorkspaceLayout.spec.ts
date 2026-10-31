@@ -6,19 +6,29 @@ import {
     DOCK_WIDTH_MAX,
     DOCK_WIDTH_MIN,
     GLOBAL_LAYOUT_STORAGE_KEY,
+    MAIN_COMFORT_MIN_WIDTH,
+    MAIN_MIN_WIDTH,
     NAV_WIDTH_DEFAULT,
     NAV_WIDTH_MAX,
     NAV_WIDTH_MIN,
     RAIL_WIDTH,
+    TREE_COLLAPSED_WIDTH,
+    TREE_WIDTH_DEFAULT,
+    TREE_WIDTH_MAX,
+    TREE_WIDTH_MIN,
     WORKSPACE_LAYOUT_STORAGE_PREFIX,
     clampDockWidth,
-    clampNavWidthForViewport,
-    defaultWorkspaceLayoutForViewport,
-    hasWorkspaceLayout,
     clampNavWidth,
+    clampNavWidthForViewport,
+    clampTreeWidth,
     clearLayoutStorage,
+    computeWorkbenchSqueeze,
+    createWorkspaceLayoutWriter,
     defaultGlobalLayout,
     defaultWorkspaceLayout,
+    defaultWorkspaceLayoutForViewport,
+    deriveDockMode,
+    hasWorkspaceLayout,
     readGlobalLayout,
     readWorkspaceLayout,
     useWorkspaceLayout,
@@ -113,10 +123,14 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
     it("defaults to a collapsed dock with no tabs and the 360px default width", () => {
         expect(defaultWorkspaceLayout()).toEqual({
             treeCollapsed: false,
+            treeWidth: TREE_WIDTH_DEFAULT,
             dockCollapsed: true,
             dockWidth: DOCK_WIDTH_DEFAULT,
             dockTabs: [],
             activeDockTab: null,
+            dockMode: "floating",
+            dockModeManual: false,
+            dockPolicyDismissed: false,
             openTabs: ["environment", "scheduled-tasks", "settings"],
         });
         expect(readWorkspaceLayout("ws-1")).toEqual(defaultWorkspaceLayout());
@@ -132,27 +146,39 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
     it("round-trips tabs, active tab, width and collapse state", () => {
         writeWorkspaceLayout("ws-1", {
             treeCollapsed: true,
+            treeWidth: 300,
             dockCollapsed: false,
             dockWidth: 420,
             dockTabs: ["code", "monitor"],
             activeDockTab: "monitor",
+            dockMode: "pinned",
+            dockModeManual: true,
+            dockPolicyDismissed: true,
             openTabs: ["environment", "settings"],
         });
 
         expect(readStoredWorkspace("ws-1")).toEqual({
             treeCollapsed: true,
+            treeWidth: 300,
             dockCollapsed: false,
             dockWidth: 420,
             dockTabs: ["code", "monitor"],
             activeDockTab: "monitor",
+            dockMode: "pinned",
+            dockModeManual: true,
+            dockPolicyDismissed: true,
             openTabs: ["environment", "settings"],
         });
         expect(readWorkspaceLayout("ws-1")).toEqual({
             treeCollapsed: true,
+            treeWidth: 300,
             dockCollapsed: false,
             dockWidth: 420,
             dockTabs: ["code", "monitor"],
             activeDockTab: "monitor",
+            dockMode: "pinned",
+            dockModeManual: true,
+            dockPolicyDismissed: true,
             openTabs: ["environment", "settings"],
         });
         // Workspace-scoped: another workspace is untouched.
@@ -197,12 +223,22 @@ describe("useWorkspaceLayout", () => {
         const layout = scope.run(() => useWorkspaceLayout({ isMobile: ref(false) }))!;
 
         expect(layout.railWidth.value).toBe(RAIL_WIDTH);
-        expect(layout.mainOffset.value).toBe(RAIL_WIDTH + NAV_WIDTH_DEFAULT);
+        // S3a audit P1-3: the offset must use the *rendered* (breakpoint-clamped)
+        // width, otherwise a window narrowed after a wide drag leaves a gap.
+        expect(layout.effectiveNavWidth.value).toBe(
+            clampNavWidthForViewport(NAV_WIDTH_DEFAULT, window.innerWidth),
+        );
+        expect(layout.mainOffset.value).toBe(
+            RAIL_WIDTH + clampNavWidthForViewport(NAV_WIDTH_DEFAULT, window.innerWidth),
+        );
 
         layout.setNavWidth(320);
         await nextTick();
 
-        expect(layout.mainOffset.value).toBe(RAIL_WIDTH + 320);
+        expect(layout.mainOffset.value).toBe(
+            RAIL_WIDTH + clampNavWidthForViewport(320, window.innerWidth),
+        );
+        // The stored value stays the user's choice (the clamp is render-only).
         expect(readStored()).toEqual({ navOpen: true, navWidth: 320 });
 
         layout.toggleNav();
@@ -270,5 +306,158 @@ describe("PLAN-0582 S3a: breakpoint helpers (S2 audit P1-1/P1-4)", () => {
         localStorage.setItem("xihe-layout-ws:ws-1", JSON.stringify({ openTabs: [] }));
         expect(hasWorkspaceLayout("ws-1")).toBe(true);
         expect(hasWorkspaceLayout("ws-2")).toBe(false);
+    });
+});
+
+describe("PLAN-0582 S3b: draggable columns, dock mode and anti-squeeze", () => {
+    it("clamps the file tree width to 200-320", () => {
+        expect(clampTreeWidth(TREE_WIDTH_DEFAULT)).toBe(240);
+        expect(clampTreeWidth(120)).toBe(TREE_WIDTH_MIN);
+        expect(clampTreeWidth(999)).toBe(TREE_WIDTH_MAX);
+        expect(clampTreeWidth(Number.NaN)).toBe(TREE_WIDTH_DEFAULT);
+        expect(clampTreeWidth(287.4)).toBe(287);
+    });
+
+    it("derives the dock mode from the single breakpoint constant", () => {
+        expect(deriveDockMode(1920)).toBe("pinned");
+        expect(deriveDockMode(1800)).toBe("pinned");
+        expect(deriveDockMode(1799)).toBe("floating");
+        expect(deriveDockMode(1024)).toBe("floating");
+        // A fresh wide profile derives the pinned mode in its first-run layout.
+        expect(defaultWorkspaceLayoutForViewport(1920).dockMode).toBe("pinned");
+        expect(defaultWorkspaceLayoutForViewport(1440).dockMode).toBe("floating");
+    });
+
+    it("keeps the persisted active dock tab aligned with the capped tab list (P2-7)", () => {
+        const tabs = ["code", "changes", "monitor", "code", "changes", "monitor", "code"] as const;
+        writeWorkspaceLayout("ws-1", {
+            ...defaultWorkspaceLayout(),
+            dockTabs: [...tabs],
+            activeDockTab: "monitor",
+        });
+        const stored = JSON.parse(
+            localStorage.getItem(`${WORKSPACE_LAYOUT_STORAGE_PREFIX}ws-1`) ?? "{}",
+        ) as { dockTabs: string[]; activeDockTab: string | null };
+        expect(stored.dockTabs).toHaveLength(DOCK_MAX_TABS);
+        // The active tab is always a member of the persisted set.
+        expect(stored.dockTabs).toContain(stored.activeDockTab ?? "");
+    });
+
+    it("drops an active tab that is not part of the capped set instead of storing it", () => {
+        writeWorkspaceLayout("ws-1", {
+            ...defaultWorkspaceLayout(),
+            dockTabs: ["code"],
+            activeDockTab: "monitor",
+        });
+        const stored = JSON.parse(
+            localStorage.getItem(`${WORKSPACE_LAYOUT_STORAGE_PREFIX}ws-1`) ?? "{}",
+        ) as { activeDockTab: string | null };
+        expect(stored.activeDockTab).toBe("code");
+    });
+
+    it("persists dock mode, manual flag and the dismissal marker across a reload", () => {
+        writeWorkspaceLayout("ws-1", {
+            ...defaultWorkspaceLayout(),
+            dockMode: "pinned",
+            dockModeManual: true,
+            dockPolicyDismissed: true,
+        });
+        const layout = readWorkspaceLayout("ws-1");
+        expect(layout.dockMode).toBe("pinned");
+        expect(layout.dockModeManual).toBe(true);
+        expect(layout.dockPolicyDismissed).toBe(true);
+    });
+
+    it("coalesces drag writes and flushes the pending value (P2-9)", async () => {
+        const writer = createWorkspaceLayoutWriter("ws-1", 20);
+        writer.schedule({ ...defaultWorkspaceLayout(), treeWidth: 260 });
+        writer.schedule({ ...defaultWorkspaceLayout(), treeWidth: 280 });
+        writer.schedule({ ...defaultWorkspaceLayout(), treeWidth: 300 });
+        // Nothing is written synchronously.
+        expect(localStorage.getItem(`${WORKSPACE_LAYOUT_STORAGE_PREFIX}ws-1`)).toBeNull();
+
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        expect(readWorkspaceLayout("ws-1").treeWidth).toBe(300);
+
+        // flush() persists immediately (unmount / workspace switch).
+        writer.schedule({ ...defaultWorkspaceLayout(), treeWidth: 210 });
+        writer.flush();
+        expect(readWorkspaceLayout("ws-1").treeWidth).toBe(210);
+    });
+
+    it("yields the tree first and only then floats the dock (spec §1.5-C)", () => {
+        // Plenty of room: nothing yields.
+        expect(
+            computeWorkbenchSqueeze({
+                workbenchWidth: 1444,
+                treeWidth: 240,
+                treeCollapsed: false,
+                dockWidth: 360,
+                dockOpen: true,
+                dockMode: "pinned",
+            }),
+        ).toEqual({ mainWidth: 844, treeYielded: false, forceFloating: false });
+
+        // 720 comfort floor: the pinned dock makes the tree yield (240 -> 40).
+        expect(
+            computeWorkbenchSqueeze({
+                workbenchWidth: 1280,
+                treeWidth: 240,
+                treeCollapsed: false,
+                dockWidth: 360,
+                dockOpen: true,
+                dockMode: "pinned",
+            }),
+        ).toEqual({ mainWidth: 880, treeYielded: true, forceFloating: false });
+
+        // 640 hard floor: even after the tree yields the main column is too narrow,
+        // so the dock renders floating and the user value is left untouched.
+        const squeezed = computeWorkbenchSqueeze({
+            workbenchWidth: 1000,
+            treeWidth: 240,
+            treeCollapsed: true,
+            dockWidth: 360,
+            dockOpen: true,
+            dockMode: "pinned",
+        });
+        expect(squeezed.forceFloating).toBe(true);
+        expect(squeezed.mainWidth).toBeGreaterThanOrEqual(MAIN_MIN_WIDTH);
+
+        // Floating never takes space, so nothing has to yield.
+        expect(
+            computeWorkbenchSqueeze({
+                workbenchWidth: 900,
+                treeWidth: 240,
+                treeCollapsed: false,
+                dockWidth: 360,
+                dockOpen: true,
+                dockMode: "floating",
+            }),
+        ).toEqual({ mainWidth: 660, treeYielded: false, forceFloating: false });
+
+        // A collapsed tree already contributes only the 40px rail.
+        expect(
+            computeWorkbenchSqueeze({
+                workbenchWidth: 1200,
+                treeWidth: 300,
+                treeCollapsed: true,
+                dockWidth: 360,
+                dockOpen: true,
+                dockMode: "pinned",
+            }).mainWidth,
+        ).toBe(1200 - TREE_COLLAPSED_WIDTH - 360);
+    });
+
+    it("treats the comfort floor as a tree-yield trigger above the hard floor", () => {
+        const result = computeWorkbenchSqueeze({
+            workbenchWidth: 1200,
+            treeWidth: 240,
+            treeCollapsed: false,
+            dockWidth: 360,
+            dockOpen: true,
+            dockMode: "pinned",
+        });
+        expect(result.treeYielded).toBe(true);
+        expect(result.mainWidth).toBeGreaterThanOrEqual(MAIN_COMFORT_MIN_WIDTH);
     });
 });

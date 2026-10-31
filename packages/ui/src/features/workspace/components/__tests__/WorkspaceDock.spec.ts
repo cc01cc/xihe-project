@@ -14,6 +14,10 @@ const i18n = createI18n({
                 dockCloseTab: "Close this panel",
                 dockResize: "Resize the panel",
                 closePanel: "Close the auxiliary panel",
+                dockModePinned: "Pinned",
+                dockModeFloating: "Floating",
+                dockModeToggleHint: "Toggle pinned/floating for this panel",
+                dockResizeBubble: "Width",
             },
         },
     },
@@ -31,6 +35,8 @@ function mountDock(
         activeTab: string;
         width: number;
         maxVisibleTabs: number;
+        mode: "pinned" | "floating";
+        defaultWidth: number;
     }> = {},
 ) {
     return mount(WorkspaceDock, {
@@ -161,14 +167,43 @@ describe("WorkspaceDock (PLAN-0582 S2)", () => {
         expect(wrapper.emitted("close-tab")).toBeUndefined();
     });
 
-    it("stays out of the flex layout below 1800px and becomes inline above it", () => {
-        const wrapper = mountDock();
-        const classes = wrapper.get('[data-testid="workspace-aux-panel"]').classes();
+    it("derives its layout classes from the dock mode instead of a second breakpoint source", () => {
+        // S3b P2-4: `DOCK_INLINE_MIN_VIEWPORT` is the only breakpoint source; the
+        // classes are its projection, so the old `min-[1800px]:static` is gone.
+        const floating = mountDock();
+        const floatingClasses = floating.get('[data-testid="workspace-aux-panel"]').classes();
+        expect(floatingClasses).toContain("absolute");
+        expect(floatingClasses).toContain("shadow-xl");
+        expect(floatingClasses).toContain("z-20");
+        expect(floatingClasses).not.toContain("min-[1800px]:static");
+        expect(
+            floating.get('[data-testid="workspace-aux-panel"]').attributes("data-dock-mode"),
+        ).toBe("floating");
 
-        // Ruling #3: overlay by default (absolute), flex child only at min-[1800px].
-        expect(classes).toContain("absolute");
-        expect(classes).toContain("min-[1800px]:static");
-        expect(classes).toContain("z-20");
+        const pinned = mountDock({ mode: "pinned" });
+        const pinnedClasses = pinned.get('[data-testid="workspace-aux-panel"]').classes();
+        expect(pinnedClasses).toContain("relative");
+        expect(pinnedClasses).toContain("shadow-none");
+        expect(pinnedClasses).not.toContain("absolute");
+        expect(pinned.get('[data-testid="workspace-aux-panel"]').attributes("data-dock-mode")).toBe(
+            "pinned",
+        );
+    });
+
+    it("toggles the pin from the header with aria-pressed and an i18n label", async () => {
+        const wrapper = mountDock({ mode: "pinned" });
+        const toggle = wrapper.get('[data-testid="dock-mode-toggle"]');
+        expect(toggle.attributes("aria-pressed")).toBe("true");
+        expect(toggle.attributes("title")).toContain("Pinned");
+
+        await toggle.trigger("click");
+        expect(wrapper.emitted("toggle-mode")).toHaveLength(1);
+    });
+
+    it("resets the width on a handle double-click and shows a live bubble while dragging", async () => {
+        const wrapper = mountDock({ width: 460, defaultWidth: 360 });
+        await wrapper.get('[data-testid="dock-resizer"]').trigger("dblclick");
+        expect(wrapper.emitted("update:width")?.at(-1)).toEqual([360]);
     });
 
     it("keeps the configured width as an inline style so widths are independent of mode", () => {

@@ -281,15 +281,21 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
         expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="file-editor-stub"]').exists()).toBe(true);
 
-        const stored = JSON.parse(
-            localStorage.getItem("xihe-layout-ws:workspace-1") ?? "{}",
-        ) as Record<string, unknown>;
-        expect(stored).toMatchObject({
-            treeCollapsed: true,
-            dockCollapsed: false,
-            dockTabs: ["code"],
-            activeDockTab: "code",
-        });
+        // S3b P2-9: writes are coalesced, so poll for the persisted snapshot.
+        await vi.waitFor(
+            () => {
+                const stored = JSON.parse(
+                    localStorage.getItem("xihe-layout-ws:workspace-1") ?? "{}",
+                ) as Record<string, unknown>;
+                expect(stored).toMatchObject({
+                    treeCollapsed: true,
+                    dockCollapsed: false,
+                    dockTabs: ["code"],
+                    activeDockTab: "code",
+                });
+            },
+            { timeout: 2000, interval: 20 },
+        );
 
         // Switching sessions no longer resets the auxiliary panel (S2 semantics).
         sessionStore.currentSessionId = SESSION_B;

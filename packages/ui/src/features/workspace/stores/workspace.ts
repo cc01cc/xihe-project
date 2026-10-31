@@ -165,8 +165,15 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
     async function loadTree() {
         const currentWorkspaceId = workspaceId.value;
-        if (!currentWorkspaceId || loading.value || loadedWorkspaceId.value === currentWorkspaceId)
+        if (!currentWorkspaceId) return;
+        // S3a audit P1-2: a workspace switch can arrive while the previous load is in
+        // flight. Queue it instead of dropping it, otherwise the new workspace keeps
+        // an empty tree and nothing retries it.
+        if (loading.value) {
+            if (loadedWorkspaceId.value !== currentWorkspaceId) loadTreePending += 1;
             return;
+        }
+        if (loadedWorkspaceId.value === currentWorkspaceId) return;
 
         loading.value = true;
         treeError.value = null;
@@ -185,7 +192,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
                     // fall through to the real chain
                 }
             }
-            fileTree.value = await fetchDirectoryTree("");
+            const nodes = await fetchDirectoryTree("");
+            // S3a audit P1-2: the workspace may have changed while awaiting; a stale
+            // result must be dropped instead of painting workspace A's tree under B.
+            if (workspaceId.value !== currentWorkspaceId) return;
+            fileTree.value = nodes;
             loadedWorkspaceId.value = currentWorkspaceId;
         } catch (e) {
             // PLAN-0557/BL-109: route load failures through the stable-code mapping so a
@@ -198,11 +209,14 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             loading.value = false;
             while (loadTreePending > 0) {
                 loadTreePending -= 1;
-                if (currentWorkspaceId !== workspaceId.value || !workspaceId.value) break;
+                const targetId: string = workspaceId.value;
+                if (!targetId) break;
                 loading.value = true;
                 try {
-                    fileTree.value = await fetchDirectoryTree("");
-                    loadedWorkspaceId.value = workspaceId.value;
+                    const nodes = await fetchDirectoryTree("");
+                    if (workspaceId.value !== targetId) continue;
+                    fileTree.value = nodes;
+                    loadedWorkspaceId.value = targetId;
                 } catch (e) {
                     treeError.value = humanizeFileError(e, "加载文件树失败");
                 } finally {
@@ -712,7 +726,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         expandedPaths.value = new Set();
         treeError.value = null;
         loadedWorkspaceId.value = null;
-        loadTreePending = 0;
+        // `loadTreePending` is intentionally kept: a request queued while the previous
+        // workspace was loading is drained for whatever workspace is current then.
     }
 
     return {

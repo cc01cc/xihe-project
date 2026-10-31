@@ -141,3 +141,37 @@ describe("WorkspaceTabBar (PLAN-0582 S3a)", () => {
         expect(wrapper.get('[data-testid="workspace-tab-chat"]').text()).toContain("Session title");
     });
 });
+
+describe("WorkspaceTabBar storage hygiene (PLAN-0582 S3a audit P1-1)", () => {
+    it("does not create the per-workspace layout key just by visiting a route", async () => {
+        routeState.name = "workspace-settings";
+        routeState.path = "/workspace/workspace-1/settings";
+        routeState.fullPath = "/workspace/workspace-1/settings";
+        const wrapper = mountBar();
+        await flushPromises();
+
+        // The workbench distinguishes "no stored layout" (first-run policy) from
+        // "user already chose"; fabricating the key here would silently disable the
+        // ≥1800 "open monitor by default" policy for deep-linked first visits.
+        expect(localStorage.getItem("xihe-layout-ws:workspace-1")).toBeNull();
+        wrapper.unmount();
+    });
+
+    it("only writes once a tab is actually closed", async () => {
+        routeState.name = "workspace-settings";
+        routeState.path = "/workspace/workspace-1/settings";
+        routeState.fullPath = "/workspace/workspace-1/settings";
+        const wrapper = mountBar();
+        await flushPromises();
+        expect(localStorage.getItem("xihe-layout-ws:workspace-1")).toBeNull();
+
+        await wrapper.get('[data-testid="workspace-tab-close-settings"]').trigger("click");
+        await flushPromises();
+
+        const stored = JSON.parse(localStorage.getItem("xihe-layout-ws:workspace-1") ?? "{}") as {
+            openTabs?: string[];
+        };
+        expect(stored.openTabs).not.toContain("settings");
+        wrapper.unmount();
+    });
+});
