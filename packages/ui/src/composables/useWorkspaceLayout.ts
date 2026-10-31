@@ -75,11 +75,6 @@ export interface WorkspaceLayoutState {
     dockMode: DockMode;
     /** S3b: `true` once the user toggled the mode; the derivation then backs off. */
     dockModeManual: boolean;
-    /**
-     * S3b (S2 audit P1-1): set when the user closes/collapses the dock themselves,
-     * so the "≥1800 opens the monitor by default" policy never re-opens it.
-     */
-    dockPolicyDismissed: boolean;
     /** Route tabs opened by the user (the chat tab is implicit and not stored). */
     openTabs: WorkspaceTabId[];
 }
@@ -126,17 +121,56 @@ export function clampNavWidthForViewport(width: number, viewportWidth: number): 
     return Math.min(clampNavWidth(width), breakpointMax);
 }
 
-/** P1-1 (S2 audit): a workspace with no stored layout opens the monitor on wide screens. */
+/**
+ * P1-1 (S2 audit): a workspace with no stored *geometry* opens the monitor on wide
+ * screens. S3a audit P1-1 (S3b fix): "key exists" is not enough — the route tab bar
+ * legitimately persists its own `openTabs` slice before any geometry was written,
+ * and that must not be mistaken for "the user already chose a dock state".
+ */
 export function hasWorkspaceLayout(workspaceId: string): boolean {
     const store = storage();
     if (!workspaceId || !store) return false;
     try {
-        return store.getItem(workspaceLayoutKey(workspaceId)) !== null;
+        const raw = store.getItem(workspaceLayoutKey(workspaceId));
+        if (!raw) return false;
+        const parsed = JSON.parse(raw) as Partial<WorkspaceLayoutState> | null;
+        if (!parsed || typeof parsed !== "object") return false;
+        return (
+            typeof parsed.dockCollapsed === "boolean" ||
+            typeof parsed.treeCollapsed === "boolean" ||
+            typeof parsed.dockWidth === "number" ||
+            typeof parsed.treeWidth === "number"
+        );
     } catch (cause) {
         // Storage can throw on access (Safari private mode, quota, policy). This is
         // called from a render-time computed, so never let it escape as a white screen.
         logger.warn("Failed to inspect the workspace layout key", cause);
         return false;
+    }
+}
+
+/**
+ * S3a audit P1-1 (S3b fix): persist **only** the route-tab slice. Writing the whole
+ * layout from a default-valued read would clobber the geometry the workbench just
+ * stored (e.g. flip "≥1800 opened the monitor" back to "dock closed").
+ */
+export function writeWorkspaceOpenTabs(workspaceId: string, openTabs: WorkspaceTabId[]): void {
+    const store = storage();
+    if (!workspaceId || !store) return;
+    try {
+        const key = workspaceLayoutKey(workspaceId);
+        const raw = store.getItem(key);
+        let parsed: Record<string, unknown> = {};
+        if (raw) {
+            const existing = JSON.parse(raw) as unknown;
+            if (existing && typeof existing === "object" && !Array.isArray(existing)) {
+                parsed = existing as Record<string, unknown>;
+            }
+        }
+        parsed.openTabs = openTabs.filter(isWorkspaceTabId);
+        store.setItem(key, JSON.stringify(parsed));
+    } catch (cause) {
+        logger.warn("Failed to persist the route tab set", cause);
     }
 }
 
@@ -188,7 +222,6 @@ export function defaultWorkspaceLayout(): WorkspaceLayoutState {
         activeDockTab: null,
         dockMode: "floating",
         dockModeManual: false,
-        dockPolicyDismissed: false,
         openTabs: defaultOpenTabs(),
     };
 }
@@ -295,10 +328,7 @@ export function readWorkspaceLayout(workspaceId: string): WorkspaceLayoutState {
                 typeof parsed.dockModeManual === "boolean"
                     ? parsed.dockModeManual
                     : defaults.dockModeManual,
-            dockPolicyDismissed:
-                typeof parsed.dockPolicyDismissed === "boolean"
-                    ? parsed.dockPolicyDismissed
-                    : defaults.dockPolicyDismissed,
+
             openTabs: readOpenTabs(parsed),
         };
     } catch (cause) {
@@ -331,7 +361,6 @@ export function writeWorkspaceLayout(workspaceId: string, state: WorkspaceLayout
                 activeDockTab: active,
                 dockMode: isDockMode(state.dockMode) ? state.dockMode : "floating",
                 dockModeManual: state.dockModeManual,
-                dockPolicyDismissed: state.dockPolicyDismissed,
                 openTabs: state.openTabs.filter(isWorkspaceTabId),
             }),
         );
@@ -481,10 +510,18 @@ export interface WorkbenchSqueezeInput {
     /** Measured width of the workbench row (rail+panel already excluded). */
     workbenchWidth: number;
     treeWidth: number;
+    /** Whether the tree is collapsed **as rendered** (manual expansion included). */
     treeCollapsed: boolean;
     dockWidth: number;
     dockOpen: boolean;
     dockMode: DockMode;
+    /**
+     * S3b P1-2 (audit): `false` when the user expanded the tree by hand. Automatic
+     * yielding must then be suppressed (it would contradict the explicit choice),
+     * and the 640 floor is protected by forcing the dock to floating instead. The
+     * hard floor still wins over the manual preference if floating is not enough.
+     */
+    allowTreeYield?: boolean;
 }
 
 export interface WorkbenchSqueezeResult {
@@ -495,22 +532,39 @@ export interface WorkbenchSqueezeResult {
     forceFloating: boolean;
 }
 
+/**
+ * Pure anti-squeeze evaluation. Inputs are the **rendered** state (that is the S3b
+ * P1-2 fix: feeding the persisted state made the toast lie whenever the user had
+ * expanded the tree manually) and the output only *adds* collapses/floating on top.
+ */
 export function computeWorkbenchSqueeze(input: WorkbenchSqueezeInput): WorkbenchSqueezeResult {
     const workbenchWidth = Number.isFinite(input.workbenchWidth) ? input.workbenchWidth : 0;
-    const tree = input.treeCollapsed ? TREE_COLLAPSED_WIDTH : input.treeWidth;
+    const allowTreeYield = input.allowTreeYield !== false;
+    const treeCollapsed = Boolean(input.treeCollapsed);
+    const tree = treeCollapsed ? TREE_COLLAPSED_WIDTH : input.treeWidth;
     const dockTakesSpace = input.dockOpen && input.dockMode === "pinned";
     let mainWidth = workbenchWidth - tree - (dockTakesSpace ? input.dockWidth : 0);
     let treeYielded = false;
 
-    if (dockTakesSpace && !input.treeCollapsed && mainWidth < MAIN_COMFORT_MIN_WIDTH) {
+    // 1) comfort floor: the tree gives way first (never the dock) unless the user
+    //    expanded it by hand.
+    if (dockTakesSpace && !treeCollapsed && allowTreeYield && mainWidth < MAIN_COMFORT_MIN_WIDTH) {
         mainWidth += tree - TREE_COLLAPSED_WIDTH;
         treeYielded = true;
     }
 
+    // 2) hard floor: the dock drops back to floating.
     let forceFloating = false;
     if (dockTakesSpace && mainWidth < MAIN_MIN_WIDTH) {
         mainWidth += input.dockWidth;
         forceFloating = true;
+    }
+
+    // 3) the hard floor outranks a manual tree expansion: if floating was still not
+    //    enough, the tree collapses anyway (and the caller renders that state).
+    if (mainWidth < MAIN_MIN_WIDTH && !treeCollapsed && !treeYielded) {
+        mainWidth += tree - TREE_COLLAPSED_WIDTH;
+        treeYielded = true;
     }
 
     return { mainWidth, treeYielded, forceFloating };

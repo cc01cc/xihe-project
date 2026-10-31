@@ -78,13 +78,14 @@ const { width: viewportWidth } = useWindowSize();
  */
 function initialLayout(workspaceId: string): WorkspaceLayoutState {
     if (!workspaceId) return defaultWorkspaceLayout();
+    // "≥1800 opens the monitor" is a **first-run** policy: it only applies while no
+    // geometry is stored. S3b P1-1 (audit): there is deliberately no dismissal latch
+    // — a stored `dockCollapsed` is already the user's own choice, and a latch would
+    // keep overriding an explicit re-open on every reload.
     if (!hasWorkspaceLayout(workspaceId)) {
         return defaultWorkspaceLayoutForViewport(viewportWidth.value);
     }
-    const stored = readWorkspaceLayout(workspaceId);
-    // "≥1800 opens the monitor" is a first-run policy only: once the user closed the
-    // dock themselves the stored state is the truth (S2 audit P1-1).
-    return stored.dockPolicyDismissed ? { ...stored, dockCollapsed: true } : stored;
+    return readWorkspaceLayout(workspaceId);
 }
 
 const layout = ref<WorkspaceLayoutState>(initialLayout(props.workspaceId));
@@ -120,6 +121,15 @@ watch(
 );
 
 onBeforeUnmount(() => layoutWriter.flush());
+if (typeof window !== "undefined") {
+    // S3b P2 (audit): a reload/close within the coalescing window would drop the last
+    // write, which reads as "my close was treated as the default". Mirror the
+    // `beforeunload` flush pattern used for the logger (main.ts).
+    window.addEventListener("pagehide", () => layoutWriter.flush());
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") layoutWriter.flush();
+    });
+}
 
 /**
  * Yield order dock → file tree → nav panel (S2 ruling #3). The dock never takes
@@ -175,14 +185,27 @@ const dockMode = computed<DockMode>(() =>
     layout.value.dockModeManual ? layout.value.dockMode : deriveDockMode(viewportWidth.value),
 );
 
+/**
+ * S3b P1-2 (audit): the squeeze must consume the tree state **as rendered**. The
+ * previous version fed the persisted `treeCollapsed` while the manual expansion
+ * short-circuited outside of it, so the computed `mainWidth` assumed a 40px rail
+ * that was actually 240px — the toast lied and the 640 floor could be breached.
+ */
+const treeCollapsedForSqueeze = computed(() =>
+    treeExpandedManually.value ? false : layout.value.treeCollapsed || narrowViewport.value,
+);
+
 const squeeze = computed(() =>
     computeWorkbenchSqueeze({
         workbenchWidth: workbenchWidth.value || viewportWidth.value,
         treeWidth: layout.value.treeWidth,
-        treeCollapsed: layout.value.treeCollapsed,
+        treeCollapsed: treeCollapsedForSqueeze.value,
         dockWidth: layout.value.dockWidth,
         dockOpen: dockOpen.value,
         dockMode: dockMode.value,
+        // A manual expansion is an explicit choice: no automatic yielding, the dock
+        // goes floating instead (the hard floor still overrides if that is not enough).
+        allowTreeYield: !treeExpandedManually.value,
     }),
 );
 
@@ -195,11 +218,9 @@ const dockModeOverruled = computed(
     () => squeeze.value.forceFloating && dockMode.value === "pinned",
 );
 
-const effectiveTreeCollapsed = computed(() => {
-    if (treeExpandedManually.value) return false;
-    if (squeeze.value.treeYielded) return true;
-    return layout.value.treeCollapsed || narrowViewport.value;
-});
+const effectiveTreeCollapsed = computed(
+    () => treeCollapsedForSqueeze.value || squeeze.value.treeYielded,
+);
 
 const treeWidth = computed(() => layout.value.treeWidth);
 const treeResizingWidth = ref<number | null>(null);
@@ -313,7 +334,6 @@ function openDockTab(id: DockTabId): void {
 function toggleDockTab(id: DockTabId): void {
     if (dockOpen.value && activeDockTab.value === id) {
         layout.value.dockCollapsed = true;
-        layout.value.dockPolicyDismissed = true;
         return;
     }
     openDockTab(id);
@@ -332,17 +352,14 @@ function closeDockTab(id: string): void {
     if (layout.value.activeDockTab === id) {
         layout.value.activeDockTab = remaining[0] ?? null;
     }
-    if (remaining.length === 0) {
-        layout.value.dockCollapsed = true;
-        layout.value.dockPolicyDismissed = true;
-    }
+    if (remaining.length === 0) layout.value.dockCollapsed = true;
 }
 
 /** Collapse keeps the tab set and the width: collapse and width are independent. */
 function collapseDock(): void {
+    // Collapsing is itself the stored truth: `initialLayout` only applies the
+    // "≥1800 opens the monitor" default while no geometry exists (S3b P1-1).
     layout.value.dockCollapsed = true;
-    // S2 audit P1-1: an explicit close wins over "≥1800 opens monitor by default".
-    layout.value.dockPolicyDismissed = true;
 }
 
 function setDockWidth(width: number): void {

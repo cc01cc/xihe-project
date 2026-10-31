@@ -34,6 +34,7 @@ import {
     useWorkspaceLayout,
     writeGlobalLayout,
     writeWorkspaceLayout,
+    writeWorkspaceOpenTabs,
 } from "../useWorkspaceLayout";
 import { logger } from "../../lib/logger";
 
@@ -130,7 +131,6 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             activeDockTab: null,
             dockMode: "floating",
             dockModeManual: false,
-            dockPolicyDismissed: false,
             openTabs: ["environment", "scheduled-tasks", "settings"],
         });
         expect(readWorkspaceLayout("ws-1")).toEqual(defaultWorkspaceLayout());
@@ -153,7 +153,6 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             activeDockTab: "monitor",
             dockMode: "pinned",
             dockModeManual: true,
-            dockPolicyDismissed: true,
             openTabs: ["environment", "settings"],
         });
 
@@ -166,7 +165,6 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             activeDockTab: "monitor",
             dockMode: "pinned",
             dockModeManual: true,
-            dockPolicyDismissed: true,
             openTabs: ["environment", "settings"],
         });
         expect(readWorkspaceLayout("ws-1")).toEqual({
@@ -178,7 +176,6 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             activeDockTab: "monitor",
             dockMode: "pinned",
             dockModeManual: true,
-            dockPolicyDismissed: true,
             openTabs: ["environment", "settings"],
         });
         // Workspace-scoped: another workspace is untouched.
@@ -302,10 +299,13 @@ describe("PLAN-0582 S3a: breakpoint helpers (S2 audit P1-1/P1-4)", () => {
         const narrow = defaultWorkspaceLayoutForViewport(1440);
         expect(narrow.dockCollapsed).toBe(true);
         expect(narrow.dockTabs).toEqual([]);
-
+        // S3a audit P1-1 (S3b fix): an openTabs-only payload is NOT stored geometry,
+        // so the first-run policy still applies; any geometry field flips it.
         localStorage.setItem("xihe-layout-ws:ws-1", JSON.stringify({ openTabs: [] }));
-        expect(hasWorkspaceLayout("ws-1")).toBe(true);
+        expect(hasWorkspaceLayout("ws-1")).toBe(false);
         expect(hasWorkspaceLayout("ws-2")).toBe(false);
+        localStorage.setItem("xihe-layout-ws:ws-3", JSON.stringify({ dockCollapsed: true }));
+        expect(hasWorkspaceLayout("ws-3")).toBe(true);
     });
 });
 
@@ -355,17 +355,52 @@ describe("PLAN-0582 S3b: draggable columns, dock mode and anti-squeeze", () => {
         expect(stored.activeDockTab).toBe("code");
     });
 
-    it("persists dock mode, manual flag and the dismissal marker across a reload", () => {
+    it("persists dock mode and the manual flag across a reload", () => {
         writeWorkspaceLayout("ws-1", {
             ...defaultWorkspaceLayout(),
             dockMode: "pinned",
             dockModeManual: true,
-            dockPolicyDismissed: true,
         });
         const layout = readWorkspaceLayout("ws-1");
         expect(layout.dockMode).toBe("pinned");
         expect(layout.dockModeManual).toBe(true);
-        expect(layout.dockPolicyDismissed).toBe(true);
+    });
+
+    // S3b P1-1 (audit): there is no dismissal latch any more — a stored value is the
+    // truth, so an explicit re-open must survive the next load.
+    it("keeps an explicitly re-opened dock open on the next load", () => {
+        writeWorkspaceLayout("ws-1", { ...defaultWorkspaceLayout(), dockCollapsed: false });
+        expect(readWorkspaceLayout("ws-1").dockCollapsed).toBe(false);
+        expect(readWorkspaceLayout("ws-1").dockModeManual).toBe(false);
+    });
+
+    // S3a audit P1-1 (S3b fix): an openTabs-only payload is not "layout chosen yet".
+    it("treats an openTabs-only payload as no stored geometry", () => {
+        writeWorkspaceOpenTabs("ws-1", ["settings"]);
+        expect(hasWorkspaceLayout("ws-1")).toBe(false);
+        // ...and it still preserves whatever geometry is written later.
+        writeWorkspaceLayout("ws-1", { ...defaultWorkspaceLayout(), dockCollapsed: false });
+        expect(hasWorkspaceLayout("ws-1")).toBe(true);
+        expect(readWorkspaceLayout("ws-1").openTabs).toEqual([
+            "environment",
+            "scheduled-tasks",
+            "settings",
+        ]);
+    });
+
+    it("patches only the openTabs slice instead of clobbering the stored geometry", () => {
+        writeWorkspaceLayout("ws-1", {
+            ...defaultWorkspaceLayout(),
+            dockCollapsed: false,
+            dockTabs: ["monitor"],
+            activeDockTab: "monitor",
+        });
+        writeWorkspaceOpenTabs("ws-1", ["settings"]);
+        const layout = readWorkspaceLayout("ws-1");
+        expect(layout.openTabs).toEqual(["settings"]);
+        expect(layout.dockCollapsed).toBe(false);
+        expect(layout.dockTabs).toEqual(["monitor"]);
+        expect(layout.activeDockTab).toBe("monitor");
     });
 
     it("coalesces drag writes and flushes the pending value (P2-9)", async () => {
@@ -459,5 +494,66 @@ describe("PLAN-0582 S3b: draggable columns, dock mode and anti-squeeze", () => {
         });
         expect(result.treeYielded).toBe(true);
         expect(result.mainWidth).toBeGreaterThanOrEqual(MAIN_COMFORT_MIN_WIDTH);
+    });
+});
+
+describe("PLAN-0582 S3b P1-2 (audit): squeeze consumes the rendered tree state", () => {
+    it("never breaches the 640 floor when the tree was expanded by hand (1200px counterexample)", () => {
+        // 1200px viewport -> workbench row ~904 (rail 56 + clamped panel 240 excluded).
+        // Before the fix the math assumed a yielded 40px tree while 240px rendered:
+        // main appeared to be 704 while the real main was 304, and the toast claimed
+        // the dock had gone floating when it had not.
+        const result = computeWorkbenchSqueeze({
+            workbenchWidth: 904,
+            treeWidth: 240,
+            treeCollapsed: false,
+            dockWidth: 360,
+            dockOpen: true,
+            dockMode: "pinned",
+            allowTreeYield: false,
+        });
+        expect(result.forceFloating).toBe(true);
+        // The dock floats, the manually expanded tree stays expanded...
+        expect(result.treeYielded).toBe(false);
+        // ...and the main column is really above the hard floor.
+        expect(result.mainWidth).toBe(904 - 240);
+        expect(result.mainWidth).toBeGreaterThanOrEqual(MAIN_MIN_WIDTH);
+    });
+
+    it("suppresses automatic tree yielding while a manual expansion is active", () => {
+        const input = {
+            workbenchWidth: 1280,
+            treeWidth: 240,
+            treeCollapsed: false,
+            dockWidth: 360,
+            dockOpen: true,
+            dockMode: "pinned" as const,
+        };
+        // Automatic mode: the tree yields first (comfort floor).
+        expect(computeWorkbenchSqueeze(input).treeYielded).toBe(true);
+        // Manual expansion: no automatic yielding. 680 still clears the hard floor,
+        // so the dock stays pinned — a manual choice trades the 720 comfort floor
+        // for the 640 floor, it never breaches it.
+        const manual = computeWorkbenchSqueeze({ ...input, allowTreeYield: false });
+        expect(manual.treeYielded).toBe(false);
+        expect(manual.forceFloating).toBe(false);
+        expect(manual.mainWidth).toBe(1280 - 240 - 360);
+        expect(manual.mainWidth).toBeGreaterThanOrEqual(MAIN_MIN_WIDTH);
+    });
+
+    it("lets the hard floor override a manual expansion when floating is still not enough", () => {
+        const result = computeWorkbenchSqueeze({
+            workbenchWidth: 900,
+            treeWidth: 320,
+            treeCollapsed: false,
+            dockWidth: 320,
+            dockOpen: true,
+            dockMode: "pinned",
+            allowTreeYield: false,
+        });
+        // Floating alone still leaves 580 < 640, so the tree collapses after all.
+        expect(result.forceFloating).toBe(true);
+        expect(result.treeYielded).toBe(true);
+        expect(result.mainWidth).toBe(900 - 40);
     });
 });

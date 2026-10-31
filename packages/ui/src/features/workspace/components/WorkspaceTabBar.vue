@@ -7,7 +7,7 @@ import {
     WORKSPACE_TAB_IDS,
     defaultOpenTabs,
     readWorkspaceLayout,
-    writeWorkspaceLayout,
+    writeWorkspaceOpenTabs,
     type WorkspaceTabId,
 } from "../../../composables/useWorkspaceLayout";
 import { useSessionStore } from "../../../stores/session";
@@ -127,8 +127,10 @@ function persistOpenTabs(next: WorkspaceTabId[]): void {
         next.length === defaults.length && defaults.every((id) => next.includes(id));
     openTabs.value = next;
     if (!props.workspaceId || isDefaultSet) return;
-    const layout = readWorkspaceLayout(props.workspaceId);
-    writeWorkspaceLayout(props.workspaceId, { ...layout, openTabs: next });
+    // Only the tab slice is written: re-writing the whole layout from a
+    // default-valued read would clobber the workbench's stored geometry and silently
+    // disable the ≥1800 "open monitor on first run" policy (S3a audit P1-1).
+    writeWorkspaceOpenTabs(props.workspaceId, next);
 }
 
 /** Visiting a route through any means (tab, deep link, history) opens its tab. */

@@ -326,3 +326,21 @@ describe("WorkspaceWorkbench anti-squeeze (PLAN-0582 S3b §4)", () => {
         wrapper.unmount();
     });
 });
+describe("WorkspaceWorkbench dock policy (PLAN-0582 S3b P1-1 audit)", () => {
+    it("keeps a dock the user explicitly re-opened open on the next mount", async () => {
+        const first = mountWorkbench();
+        await flushPromises();
+        // Open the dock, close it, then open it again (all explicit user actions).
+        await first.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await first.get('[data-testid="workspace-aux-close"]').trigger("click");
+        await first.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await expectStored(() => expect(storedLayout().dockCollapsed).toBe(false));
+        first.unmount();
+
+        // A fresh mount must honour the stored state instead of a dismissal latch.
+        const second = mountWorkbench();
+        await flushPromises();
+        expect(second.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
+        second.unmount();
+    });
+});
