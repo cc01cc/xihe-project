@@ -152,6 +152,87 @@ END $$;`;
     );
 }
 
+/**
+ * PLAN-0610 W3-3: rewrites the subject's workspace-scope membership (one binding per workspace).
+ *
+ * The member surface, the tenant gate, D9 and the grant evaluation all read the workspace-scope
+ * role binding now, so a negative case that used to rely on "the owner has no
+ * MANAGE_WORKSPACE_AGENTS" must first move that subject to a role that really lacks it — the
+ * workspace creator receives `WS_OWNER` automatically. This helper deletes the subject's
+ * workspace-tier binding for that workspace, inserts the requested one and recomputes the
+ * materialized `source='role'` rows of the workspace scope (the materializer's output shape).
+ */
+export function replaceWorkspaceRole(
+    userId: string,
+    workspaceId: string,
+    roleName: "WS_OWNER" | "WS_EDITOR" | "WS_VIEWER",
+): void {
+    const container = process.env.XIHE_E2E_PG_CONTAINER,
+        database = process.env.XIHE_E2E_PG_DATABASE,
+        dbUser = process.env.XIHE_E2E_PG_USER;
+    if (!container || !database || !dbUser) {
+        throw new Error(
+            "isolated PostgreSQL fixture metadata is unavailable; run through scripts/e2e-host.mjs",
+        );
+    }
+    const user = escapeSql(userId);
+    const workspace = escapeSql(workspaceId);
+    const role = escapeSql(roleName);
+    const sql = `
+DO $
+DECLARE
+    v_role UUID;
+BEGIN
+    SELECT id INTO v_role FROM roles WHERE name = '${role}';
+    IF v_role IS NULL THEN
+        RAISE EXCEPTION 'workspace role % is missing', '${role}';
+    END IF;
+
+    DELETE FROM role_bindings
+    WHERE subject_type = 'user' AND subject_id = '${user}'::uuid
+      AND scope_type = 'workspace' AND scope_id = '${workspace}'::uuid;
+
+    INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type, scope_id)
+    VALUES (gen_random_uuid(), v_role, 'user', '${user}'::uuid, 'workspace',
+            '${workspace}'::uuid);
+
+    -- Mirror the legacy row while the table exists (V89 drops it with the read path).
+    INSERT INTO workspace_users (workspace_id, user_id, role, created_at)
+    VALUES ('${workspace}'::uuid, '${user}'::uuid,
+            CASE '${role}' WHEN 'WS_OWNER' THEN 'OWNER'
+                 WHEN 'WS_VIEWER' THEN 'VIEWER' ELSE 'EDITOR' END, NOW())
+    ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = EXCLUDED.role;
+
+    DELETE FROM grants
+    WHERE subject_type = 'user' AND subject_id = '${user}'::uuid AND source = 'role'
+      AND scope_type = 'workspace' AND scope_id = '${workspace}'::uuid;
+
+    INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions,
+                        source, scope_type, scope_id, read_state)
+    SELECT gen_random_uuid(),
+           CASE WHEN b.scope_type = 'instance' THEN 'user' END,
+           CASE WHEN b.scope_type = 'instance' THEN '${user}'::uuid END,
+           'user', '${user}'::uuid,
+           jsonb_build_array(
+               jsonb_build_object('actionClass', rp.action_class)
+               || CASE WHEN rp.resource_pattern = '*'
+                       THEN '{}'::jsonb
+                       ELSE jsonb_build_object('resource', rp.resource_pattern) END
+           ),
+           'role', b.scope_type, b.scope_id, 'read'
+    FROM role_bindings b
+    JOIN role_permissions rp ON rp.role_id = b.role_id
+    WHERE b.subject_type = 'user' AND b.subject_id = '${user}'::uuid
+      AND b.scope_type = 'workspace' AND b.scope_id = '${workspace}'::uuid
+      AND rp.action_class NOT LIKE '%:%';
+END $;`;
+    execFileSync(
+        process.platform === "win32" ? "docker.exe" : "docker",
+        ["exec", container, "psql", "-X", "-A", "-t", "-U", dbUser, "-d", database, "-c", sql],
+        { encoding: "utf8", timeout: 20_000, windowsHide: true },
+    );
+}
+
 function escapeSql(value: string): string {
     return value.replaceAll("'", "''");
 }

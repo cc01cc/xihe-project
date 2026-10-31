@@ -9,7 +9,6 @@ import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -35,7 +34,7 @@ public class GrantAuthorizationService {
     private final GrantPrincipalPathResolver principalPathResolver;
     private final GrantIntersectionEvaluator evaluator;
     private final WorkspaceRepository workspaceRepository;
-    private final WorkspaceUserRepository workspaceUserRepository;
+    private final WorkspaceMembershipService memberships;
 
     public GrantAuthorizationService(AuthorizationGrantRepository grantRepository,
                                      AgentPrincipalRepository agentPrincipalRepository,
@@ -43,14 +42,14 @@ public class GrantAuthorizationService {
                                      GrantPrincipalPathResolver principalPathResolver,
                                      GrantIntersectionEvaluator evaluator,
                                      WorkspaceRepository workspaceRepository,
-                                     WorkspaceUserRepository workspaceUserRepository) {
+                                     WorkspaceMembershipService memberships) {
         this.grantRepository = grantRepository;
         this.agentPrincipalRepository = agentPrincipalRepository;
         this.workspaceAgentRepository = workspaceAgentRepository;
         this.principalPathResolver = principalPathResolver;
         this.evaluator = evaluator;
         this.workspaceRepository = workspaceRepository;
-        this.workspaceUserRepository = workspaceUserRepository;
+        this.memberships = memberships;
     }
 
     /**
@@ -137,7 +136,7 @@ public class GrantAuthorizationService {
         UUID userId = UUID.fromString(request.userId());
         UUID workspaceId = UUID.fromString(request.workspaceId());
         return workspaceRepository.findByIdAndDeletedAtIsNull(workspaceId).isPresent()
-                && workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(workspaceId, userId).isPresent();
+                && memberships.isMember(workspaceId, userId);
     }
 
     /**
@@ -156,3 +155,4 @@ public class GrantAuthorizationService {
         return evaluator.allows(request, List.of(userGrants));
     }
 }
+

@@ -4,7 +4,11 @@ import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { isSessionCreateRequest } from "./helpers/agent-principal";
 import { CP_URL, registerJourneyUser, seedPage } from "./helpers/journey";
-import { replaceUserGrantPermissions, seedUserGrantPermissions } from "./helpers/user-grants";
+import {
+    replaceUserGrantPermissions,
+    replaceWorkspaceRole,
+    seedUserGrantPermissions,
+} from "./helpers/user-grants";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TEMPLATE_PROMPT = "Answer using only the scoped workspace material.";
@@ -492,6 +496,14 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     // PLAN-0610 W6/T6.1: narrow the owner's seeded access-role ceiling to CREATE_ACCOUNT only
     // (the retired direct-row UPDATE is gone; the helper recomputes the materialized role union).
     replaceUserGrantPermissions(ownerUserId, [{ actionClass: "CREATE_ACCOUNT", resource: "*" }]);
+    // PLAN-0610 W3-3: the workspace creator is now bound to WS_OWNER automatically, and WS_OWNER
+    // carries MANAGE_WORKSPACE_AGENTS at workspace scope — so narrowing the instance-level ceiling
+    // above no longer removes the bind permission. The negative case needs a member that really
+    // lacks it: downgrade the same account to WS_EDITOR in this workspace (explicit workspace-role
+    // replacement) instead of switching the whole browser session to a second owner, which would
+    // test the same atom gate with more moving parts. The binding is restored at the end of the
+    // block so the remaining assertions keep an owner.
+    replaceWorkspaceRole(ownerUserId, workspaceA, "WS_EDITOR");
     await page.getByTestId("workspace-toolbar-agents").click();
     await page.getByTestId("agent-principal-name").fill("Create only, no bind permission");
     const createOnlyResponsePromise = page.waitForResponse(
@@ -525,6 +537,9 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
                 `AND user_id = '${ownerUserId}'::uuid AND resource_id = '${unboundOnlyId}'`,
         ),
     ).toBe(0);
+
+    // Restore the owner binding; the page must still be usable afterwards.
+    replaceWorkspaceRole(ownerUserId, workspaceA, "WS_OWNER");
 
     expect(pageErrors).toEqual([]);
     expect(apiRequestFailures).toEqual([]);

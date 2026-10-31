@@ -283,6 +283,9 @@ PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native
 - **写路径与并发**：POST/PATCH/DELETE 事务先 `findByIdForUpdate` 锁工作区行，锁内读 OWNER 计数与成员行——唯一 OWNER 移除/降级 409 `LAST_OWNER`（服务端强制，无角色例外）；POST insert-only（重复 409 `MEMBER_ALREADY_EXISTS`），role 仅接受 EDITOR/VIEWER（OWNER 不经 API 授予；legacy ADMIN/MEMBER 入参 400）。
 - **账号标识**：见 §1a PLAN-0565 条；成员添加按 username 唯一查找（未注册 404 `USER_NOT_FOUND`），响应 `MemberView`（canonical role，存量 ADMIN/MEMBER 行投影 EDITOR，迁移显式后置）。
 - **审计**：`workspace_member_added` / `workspace_member_role_changed` / `workspace_member_removed` 走 durable `audit_logs`（resourceType `workspace_member`，resourceId=目标 userId；detail 仅 role 信息，不落 email）。
+- **成员事实收口（PLAN-0610 W3-3，round-4 P2-5）**：成员读写面不再直接访问 `workspace_users`，统一经 `policy/WorkspaceMembershipService`（唯一 seam）读 `role_bindings(subject_type='user', scope_type='workspace', scope_id=<ws>)` 的 `WS_OWNER`/`WS_EDITOR`/`WS_VIEWER`。同一实现服务成员 API、租户拦截器（`X-Workspace-Id` 校验）、D9 context access、`GrantAuthorizationService` 成员门、附件与 Agent 模板的成员判定，以及 `requireOwnerOrMemberAccess`；「谁能对工作区做什么」的矩阵仍分别属于各自 owner（0565 矩阵在 `WorkspaceMemberService`，instance ADMIN 旁路在 `AccessScopeResolver`/`AuthzContext`）。工作区创建者自动获得 `WS_OWNER` 绑定（取代 `workspace_users` OWNER 写入）；「我的工作区」列表改读绑定（`WorkspaceRepository.findActiveByMemberBinding`），因此经 `PUT /api/v1/bindings` 授予的成员身份立即可见。
+- **过渡与退役**：`workspace_users` 表保留到 V89（W4）；W3-3 期间写入绑定后**镜像**一行 legacy 记录，读取以绑定为准、仅在无绑定时回退 legacy 行（服务端 warn 日志）。镜像与回退随 V89 一并删除，届时成员唯一事实即绑定。
+- **epoch 口径（I4 收敛）**：工作区作用域的角色/绑定变更只做同事务物化 + 能力缓存「立即 + afterCompletion」双失效，**不** bump `token_version`——访问令牌不承载工作区角色，bump 会让被授权者（以及创建工作区的本人）为令牌里根本不存在的声明而全端登出；实例层绑定仍按 I4 bump。`PUT /api/v1/bindings` 对工作区作用域同样适用，并新增 409 `LAST_OWNER`（不得移除工作区最后一枚可用 `WS_OWNER`）。
 
 ## 13. 会话归属与显式工作区通道（PLAN-0608）
 

@@ -250,7 +250,7 @@ class BoundaryRecalcTest extends AbstractIntegrationTest {
         WorkspaceAgentRepository bindingRepository = mock(WorkspaceAgentRepository.class);
         GrantPrincipalPathResolver resolver = mock(GrantPrincipalPathResolver.class);
         WorkspaceRepository workspaceRepository = mock(WorkspaceRepository.class);
-        WorkspaceUserRepository workspaceUserRepository = mock(WorkspaceUserRepository.class);
+        WorkspaceMembershipService memberships = mock(WorkspaceMembershipService.class);
 
         AgentPrincipal principal = new AgentPrincipal();
         principal.setId(principalId);
@@ -258,6 +258,7 @@ class BoundaryRecalcTest extends AbstractIntegrationTest {
         when(principalRepository.findById(principalId)).thenReturn(Optional.of(principal));
         when(workspaceRepository.findByIdAndDeletedAtIsNull(workspaceId))
                 .thenReturn(Optional.of(new Workspace("unit workspace", userId)));
+        when(memberships.isMember(any(), any())).thenReturn(true);
         when(bindingRepository.findById(any(WorkspaceAgentId.class))).thenReturn(Optional.of(
                 new WorkspaceAgent(principalId.toString(), workspaceId.toString(),
                         atoms("read", "write", "SPAWN_AGENT"))));
@@ -276,7 +277,7 @@ class BoundaryRecalcTest extends AbstractIntegrationTest {
 
         GrantAuthorizationService service = new GrantAuthorizationService(grantRepository,
                 principalRepository, bindingRepository, resolver, new GrantIntersectionEvaluator(),
-                workspaceRepository, workspaceUserRepository);
+                workspaceRepository, memberships);
         PolicyRequest request = new PolicyRequest("spawn_agent", List.of("SPAWN_AGENT"), List.of("*"),
                 ToolShape.STRUCTURED, userId, workspaceId.toString(), sessionId);
         return new UnitFixture(grantRepository, bindingRepository, resolver, service, principalId, request);
@@ -352,3 +353,5 @@ class BoundaryRecalcTest extends AbstractIntegrationTest {
         return permissions;
     }
 }
+
+

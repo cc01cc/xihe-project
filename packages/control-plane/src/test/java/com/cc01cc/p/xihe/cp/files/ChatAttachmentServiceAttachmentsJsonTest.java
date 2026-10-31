@@ -3,7 +3,7 @@ package com.cc01cc.p.xihe.cp.files;
 import com.cc01cc.p.xihe.cp.entity.File;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
+import com.cc01cc.p.xihe.cp.policy.WorkspaceMembershipService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
@@ -31,7 +31,7 @@ class ChatAttachmentServiceAttachmentsJsonTest {
             mock(FileRepository.class),
             mock(com.cc01cc.p.xihe.cp.service.SessionAttachmentAnchorService.class),
             mock(WorkspaceRepository.class),
-            mock(WorkspaceUserRepository.class),
+            mock(WorkspaceMembershipService.class),
             new ObjectMapper());
 
     private String ref(String fileId, String type, long size) {
@@ -107,3 +107,4 @@ class ChatAttachmentServiceAttachmentsJsonTest {
         assertTrue(service.imageReferencesFromAttachmentsJson("[]").isEmpty());
     }
 }
+

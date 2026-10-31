@@ -4,7 +4,6 @@ import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceMemberService;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -59,24 +58,24 @@ class MaintenanceWriteFreezeTest {
     @Test
     void memberWritesAreRefusedBeforeAnyRepositoryMutation() {
         WorkspaceRepository workspaces = Mockito.mock(WorkspaceRepository.class);
-        WorkspaceUserRepository members = Mockito.mock(WorkspaceUserRepository.class);
+        WorkspaceMembershipService memberships = Mockito.mock(WorkspaceMembershipService.class);
         UserRepository users = Mockito.mock(UserRepository.class);
-        WorkspaceMemberService service = new WorkspaceMemberService(workspaces, members, users,
+        WorkspaceMemberService service = new WorkspaceMemberService(workspaces, users, memberships,
                 Mockito.mock(AuditLogger.class), freeze("true"));
 
         CpApiException error = assertThrows(CpApiException.class,
                 () -> service.addMember("ws-1", "alice", "EDITOR", "caller-1", "OWNER"));
         assertEquals("MIGRATION_IN_PROGRESS", error.getCode());
-        verify(members, never()).save(any());
+        verify(memberships, never()).assign(any(), any(), any(), any());
         verify(workspaces, never()).findByIdForUpdate(any());
     }
 
     @Test
     void memberWritesProceedWhenTheWindowIsClosed() {
         WorkspaceRepository workspaces = Mockito.mock(WorkspaceRepository.class);
-        WorkspaceUserRepository members = Mockito.mock(WorkspaceUserRepository.class);
+        WorkspaceMembershipService memberships = Mockito.mock(WorkspaceMembershipService.class);
         UserRepository users = Mockito.mock(UserRepository.class);
-        WorkspaceMemberService service = new WorkspaceMemberService(workspaces, members, users,
+        WorkspaceMemberService service = new WorkspaceMemberService(workspaces, users, memberships,
                 Mockito.mock(AuditLogger.class), freeze("false"));
 
         // Passes the freeze and lands in the ordinary authorization path, which rejects the
@@ -86,3 +85,5 @@ class MaintenanceWriteFreezeTest {
         assertTrue(!"MIGRATION_IN_PROGRESS".equals(error.getCode()));
     }
 }
+
+

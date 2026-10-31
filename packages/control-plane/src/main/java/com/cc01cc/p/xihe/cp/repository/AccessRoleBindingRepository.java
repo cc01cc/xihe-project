@@ -47,6 +47,19 @@ public interface AccessRoleBindingRepository extends JpaRepository<AccessRoleBin
     long countActiveUserBindingsForRole(@Param("roleId") UUID roleId,
                                         @Param("status") UserStatus status);
 
+    /**
+     * PLAN-0610 W3-3: how many usable user subjects hold this role in <b>one workspace</b>. The
+     * workspace-scope full-set replacement uses it for the {@code 409 LAST_OWNER} guard, so the
+     * binding API cannot leave a workspace without an owner (the member API already refuses to
+     * remove or downgrade the last owner through {@code WorkspaceMemberService}).
+     */
+    @Query("select count(b) from AccessRoleBinding b join User u on u.id = b.subjectId "
+            + "where b.roleId = :roleId and b.scopeType = 'workspace' and b.scopeId = :scopeId "
+            + "and b.subjectType = 'user' and u.status = :status and u.deletedAt is null")
+    long countActiveUserBindingsForRoleInWorkspace(@Param("roleId") UUID roleId,
+                                                   @Param("scopeId") UUID scopeId,
+                                                   @Param("status") UserStatus status);
+
     @Modifying
     @Query("delete from AccessRoleBinding b where b.subjectType = :subjectType and b.subjectId = :subjectId")
     void deleteBySubject(@Param("subjectType") String subjectType, @Param("subjectId") UUID subjectId);

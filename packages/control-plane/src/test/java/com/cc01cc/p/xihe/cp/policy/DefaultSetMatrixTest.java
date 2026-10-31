@@ -10,6 +10,7 @@ import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;import com.cc01cc.p.xihe.cp.entity.AuditLog;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.User;
+import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.repository.AuditLogRepository;
@@ -221,8 +222,14 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
                 "these action classes are inside the permission vocabulary (spec §2.1), so their "
                         + "deny must come from 未列即 deny rather than a vocabulary miss");
 
+        // PLAN-0610 W3-3: registration also creates a personal workspace and binds the creator to
+        // WS_OWNER, which legitimately carries MANAGE_WORKSPACE_AGENTS *in that workspace*. The
+        // default-set claim is about what the USER tier grants anywhere, so probe a workspace the
+        // subject does not own.
+        String foreignWorkspaceId = foreignWorkspaceId();
         for (String actionClass : OUT_OF_DEFAULT_VOCABULARY) {
-            assertFalse(grantAuthorizationService.allowsUserOnly(request(actionClass, "*")),
+            assertFalse(grantAuthorizationService.allowsUserOnly(
+                            request(actionClass, "*", foreignWorkspaceId)),
                     "spec §3.1: permissions carry no effect; an in-vocabulary action class the "
                             + "default grant does not list is denied: " + actionClass);
         }
@@ -282,9 +289,17 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
         workspaceId = registered.getWorkspaceId();
     }
 
+    /**
+     * The subject's <b>instance-tier</b> materialized rows. PLAN-0610 W3-3 registers a personal
+     * workspace, whose WS_OWNER binding also materializes rows for the same user; this matrix is
+     * about the instance default set, so the workspace scope is excluded here and covered by the
+     * workspace-binding tests.
+     */
     private List<AuthorizationGrant> roleRows(String subjectType, UUID subjectId) {
         return grantRepository.findBySubjectTypeAndSubjectIdAndSource(subjectType, subjectId,
-                GrantSources.ROLE);
+                        GrantSources.ROLE).stream()
+                .filter(grant -> AccessScope.INSTANCE.equals(grant.getScopeType()))
+                .toList();
     }
 
     private Set<String> materializedAtoms(String subjectType, UUID subjectId) {
@@ -325,12 +340,26 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
     private List<AuthorizationGrant> grantRows(String subjectType, UUID subjectId) {
         return grantRepository.findBySubjectTypeAndSubjectId(subjectType, subjectId).stream()
                 .filter(grant -> GrantSources.EVALUATION_SOURCES.contains(grant.getSource()))
+                .filter(grant -> AccessScope.INSTANCE.equals(grant.getScopeType()))
                 .toList();
     }
 
     private PolicyRequest request(String actionClass, String resource) {
+        return request(actionClass, resource, workspaceId);
+    }
+
+    private PolicyRequest request(String actionClass, String resource, String probeWorkspaceId) {
         return new PolicyRequest("probe_tool", List.of(actionClass), List.of(resource),
-                ToolShape.STRUCTURED, userId, workspaceId, null);
+                ToolShape.STRUCTURED, userId, probeWorkspaceId, null);
+    }
+
+    /** A workspace owned by someone else (the subject is not a member). */
+    private String foreignWorkspaceId() {
+        User other = userRepository.saveAndFlush(new User(
+                "matrix-foreign-" + UUID.randomUUID() + "@test.com", "hash", UserRole.USER,
+                "Matrix foreign owner"));
+        return workspaceService.createWorkspace("Matrix foreign workspace", other.getId().toString())
+                .getId().toString();
     }
 }
 

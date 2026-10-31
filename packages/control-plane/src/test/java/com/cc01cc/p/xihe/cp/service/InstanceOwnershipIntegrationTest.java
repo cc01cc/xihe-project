@@ -632,13 +632,17 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
         jdbc.update("DELETE FROM grants WHERE subject_type = 'user' AND subject_id = CAST(? AS UUID)",
                 memberId);
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM grants WHERE subject_type = 'user'"
-                + " AND subject_id = CAST(? AS UUID)", Integer.class, memberId));
+                        + " AND subject_id = CAST(? AS UUID) AND scope_type = 'instance'",
+                Integer.class, memberId));
         int materializedBefore = auditCount("authorization_role_grant_materialized");
 
         assertEquals(HttpStatus.OK, patchRole(ownerToken, memberId, "ADMIN").getStatusCode());
 
-        List<Map<String, Object>> rows = jdbc.queryForList("SELECT permissions::text AS permissions, source"
-                + " FROM grants WHERE subject_type = 'user' AND subject_id = CAST(? AS UUID)", memberId);
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT permissions::text AS permissions, source"
+                        + " FROM grants WHERE subject_type = 'user'"
+                        + " AND subject_id = CAST(? AS UUID) AND scope_type = 'instance'",
+                memberId);
         assertEquals(8, rows.size(), "the missing set is recreated as one row per ADMIN atom");
         assertTrue(rows.stream().allMatch(row -> "role".equals(row.get("source"))),
                 "PLAN-0610 W1a: the materialized source is `role`");
@@ -883,8 +887,11 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
     }
 
     private int atomRowCount(String subjectType, UUID subjectId) {
+        // PLAN-0610 W3-3: instance-tier atoms only — a personal workspace now adds workspace-scope
+        // rows for the same subject, which the workspace tests count separately.
         return jdbc.queryForObject("SELECT COUNT(*) FROM grants WHERE subject_type = ?"
-                + " AND subject_id = ? AND source = 'role'", Integer.class, subjectType, subjectId);
+                + " AND subject_id = ? AND source = 'role' AND scope_type = 'instance'",
+                Integer.class, subjectType, subjectId);
     }
 
     private HttpHeaders authHeaders(String token) {
@@ -910,6 +917,8 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
                         authHeaders(token)), String.class);
     }
 }
+
+
 
 
 

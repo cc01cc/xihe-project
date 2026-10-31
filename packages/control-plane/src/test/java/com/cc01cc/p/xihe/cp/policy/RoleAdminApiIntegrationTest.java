@@ -216,25 +216,32 @@ class RoleAdminApiIntegrationTest extends AbstractIntegrationTest {
         String subjectId = userIdOf(register("binding-subject@test.com"));
         String viewerRoleId = roleId("WS_VIEWER");
 
-        ResponseEntity<String> first = putBindings(superToken, "workspace", workspaceId,
-                List.of(Map.of("subjectId", subjectId, "roleId", viewerRoleId)));
+        List<Map<String, String>> desired = new ArrayList<>(
+                workspaceBindings(superToken, workspaceId));
+        assertTrue(desired.stream().anyMatch(binding -> binding.get("roleId").equals(roleId("WS_OWNER"))),
+                "the creator's WS_OWNER binding is part of the workspace set");
+        desired.add(Map.of("subjectId", subjectId, "roleId", viewerRoleId));
+
+        ResponseEntity<String> first = putBindings(superToken, "workspace", workspaceId, desired);
         assertEquals(HttpStatus.OK, first.getStatusCode(), first.getBody());
         JsonNode firstBody = objectMapper.readTree(first.getBody());
         assertEquals("workspace", firstBody.path("scopeType").asText());
         assertEquals(workspaceId, firstBody.path("scopeId").asText());
-        assertEquals(1, firstBody.path("bindings").size());
-        assertEquals("WS_VIEWER", firstBody.path("bindings").get(0).path("roleName").asText());
+        assertEquals(desired.size(), firstBody.path("bindings").size());
+        assertEquals(2, firstBody.path("bindings").size(),
+                "the workspace owner binding plus the granted viewer");
         int epochAfterFirst = tokenVersion(subjectId);
         int auditsAfterFirst = auditCount("role_bindings_replaced");
-        assertEquals(1, grantRows(subjectId, "workspace"),
+        assertEquals(1, grantRows(subjectId, "workspace", workspaceId),
                 "WS_VIEWER materializes its single read atom in that workspace");
-        assertTrue(epochAfterFirst >= 1, "the affected subject's epoch moved");
+        assertEquals(0, epochAfterFirst,
+                "PLAN-0610 W3-3: a workspace-tier binding does not move the epoch — the token "
+                        + "carries no workspace role, so only the capability cache is invalidated");
 
         // Same body again: a true no-op (no epoch bump, no audit row, no second binding).
-        ResponseEntity<String> second = putBindings(superToken, "workspace", workspaceId,
-                List.of(Map.of("subjectId", subjectId, "roleId", viewerRoleId)));
+        ResponseEntity<String> second = putBindings(superToken, "workspace", workspaceId, desired);
         assertEquals(HttpStatus.OK, second.getStatusCode(), second.getBody());
-        assertEquals(1, objectMapper.readTree(second.getBody()).path("bindings").size());
+        assertEquals(desired.size(), objectMapper.readTree(second.getBody()).path("bindings").size());
         assertEquals(epochAfterFirst, tokenVersion(subjectId), "idempotent PUT must not bump");
         assertEquals(auditsAfterFirst, auditCount("role_bindings_replaced"));
 
@@ -242,13 +249,16 @@ class RoleAdminApiIntegrationTest extends AbstractIntegrationTest {
         ResponseEntity<String> listed = call(HttpMethod.GET,
                 "/api/v1/bindings?scope=workspace&scopeId=" + workspaceId, null, superToken);
         assertEquals(HttpStatus.OK, listed.getStatusCode());
-        assertEquals(1, objectMapper.readTree(listed.getBody()).path("bindings").size());
+        assertEquals(desired.size(), objectMapper.readTree(listed.getBody()).path("bindings").size());
 
-        // An empty set clears the scope, and the materialized atoms go with it.
+        // Dropping the granted binding (keeping the workspace owner) clears the subject's atoms.
+        List<Map<String, String>> ownersOnly = new ArrayList<>(desired);
+        ownersOnly.removeIf(binding -> binding.get("subjectId").equals(subjectId));
         ResponseEntity<String> cleared = putBindings(superToken, "workspace", workspaceId,
-                List.of());
-        assertEquals(0, objectMapper.readTree(cleared.getBody()).path("bindings").size());
-        assertEquals(0, grantRows(subjectId, "workspace"));
+                ownersOnly);
+        assertEquals(1, objectMapper.readTree(cleared.getBody()).path("bindings").size(),
+                "only the workspace owner is left");
+        assertEquals(0, grantRows(subjectId, "workspace", workspaceId));
     }
 
     @Test
@@ -311,16 +321,20 @@ class RoleAdminApiIntegrationTest extends AbstractIntegrationTest {
         String subjectId = userIdOf(register("ws-binding-subject@test.com"));
         String viewerRoleId = roleId("WS_VIEWER");
 
-        ResponseEntity<String> ok = putBindings(superToken, "workspace", workspaceId,
-                List.of(Map.of("subjectId", subjectId, "roleId", viewerRoleId)));
+        List<Map<String, String>> set = new ArrayList<>(workspaceBindings(superToken, workspaceId));
+        set.add(Map.of("subjectId", subjectId, "roleId", viewerRoleId));
+        ResponseEntity<String> ok = putBindings(superToken, "workspace", workspaceId, set);
         assertEquals(HttpStatus.OK, ok.getStatusCode(), ok.getBody());
         assertEquals(workspaceId, objectMapper.readTree(ok.getBody()).path("scopeId").asText());
 
         // An instance-only atom cannot be bound in a workspace (decision #12 / #27).
         String instanceOnlyRoleId = createRole(superToken, "INSTANCE_READER",
                 List.of("read", "MANAGE_ROLES"));
+        List<Map<String, String>> mismatchSet = new ArrayList<>(set);
+        mismatchSet.removeIf(binding -> binding.get("subjectId").equals(subjectId));
+        mismatchSet.add(Map.of("subjectId", subjectId, "roleId", instanceOnlyRoleId));
         ResponseEntity<String> mismatch = putBindings(superToken, "workspace", workspaceId,
-                List.of(Map.of("subjectId", subjectId, "roleId", instanceOnlyRoleId)));
+                mismatchSet);
         assertEquals(HttpStatus.BAD_REQUEST, mismatch.getStatusCode(), mismatch.getBody());
         assertTrue(mismatch.getBody().contains("ROLE_SCOPE_MISMATCH"), mismatch.getBody());
 
@@ -432,6 +446,20 @@ class RoleAdminApiIntegrationTest extends AbstractIntegrationTest {
         return pairs;
     }
 
+    /** The current workspace-scope set as PUT-ready pairs. */
+    private List<Map<String, String>> workspaceBindings(String token, String workspaceId)
+            throws Exception {
+        ResponseEntity<String> listed = call(HttpMethod.GET,
+                "/api/v1/bindings?scope=workspace&scopeId=" + workspaceId, null, token);
+        assertEquals(HttpStatus.OK, listed.getStatusCode(), listed.getBody());
+        List<Map<String, String>> pairs = new ArrayList<>();
+        for (JsonNode binding : objectMapper.readTree(listed.getBody()).path("bindings")) {
+            pairs.add(Map.of("subjectId", binding.path("subjectId").asText(),
+                    "roleId", binding.path("roleId").asText()));
+        }
+        return pairs;
+    }
+
     private ResponseEntity<String> appendInstanceBinding(String token, String subjectId,
                                                          String roleId) throws Exception {
         List<Map<String, String>> desired = new ArrayList<>(instanceBindings(token));
@@ -439,14 +467,20 @@ class RoleAdminApiIntegrationTest extends AbstractIntegrationTest {
         return putBindings(token, "instance", null, desired);
     }
 
-    private int grantRows(String subjectId, String scopeType) {
+    /** Materialized role atoms of one scope (`scopeId` null = every workspace of that type). */
+    private int grantRows(String subjectId, String scopeType, String scopeId) {
         return countRows("SELECT COUNT(*) FROM grants WHERE subject_id = CAST(? AS UUID)"
-                + " AND source = ? AND scope_type = ?", subjectId, "role", scopeType);
+                        + " AND source = ? AND scope_type = ?"
+                        + (scopeId == null ? "" : " AND scope_id = CAST(? AS UUID)"),
+                scopeId == null
+                        ? new Object[] {subjectId, "role", scopeType}
+                        : new Object[] {subjectId, "role", scopeType, scopeId});
     }
 
+    /** Instance-scope binding rows of one subject (workspace memberships excluded). */
     private int bindingRows(String subjectId) {
-        return countRows("SELECT COUNT(*) FROM role_bindings WHERE subject_id = CAST(? AS UUID)",
-                subjectId);
+        return countRows("SELECT COUNT(*) FROM role_bindings WHERE subject_id = CAST(? AS UUID)"
+                + " AND scope_type = 'instance'", subjectId);
     }
 
     private ResponseEntity<String> putBindings(String token, String scope, String scopeId,

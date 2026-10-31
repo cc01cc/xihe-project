@@ -5,12 +5,10 @@ import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceUserId;
 import com.cc01cc.p.xihe.cp.event.WorkspaceEventManager;
 import com.cc01cc.p.xihe.cp.operation.JobStateService;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
+import com.cc01cc.p.xihe.cp.policy.WorkspaceMembershipService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -34,6 +32,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -58,7 +57,7 @@ public class WorkspaceService {
     private static final String DEFAULT_EXECUTION_MODE = "docker";
 
     private final WorkspaceRepository workspaceRepository;
-    private final WorkspaceUserRepository workspaceUserRepository;
+    private final WorkspaceMembershipService memberships;
     private final com.cc01cc.p.xihe.cp.auth.AuthService authService;
     private final WorkspaceExecutionSpecService executionSpecService;
     private final RestTemplate restTemplate;
@@ -70,7 +69,7 @@ public class WorkspaceService {
     private final AuditLogger auditLogger;
 
     public WorkspaceService(WorkspaceRepository workspaceRepository,
-                            WorkspaceUserRepository workspaceUserRepository,
+                            WorkspaceMembershipService memberships,
                             com.cc01cc.p.xihe.cp.auth.AuthService authService,
                             WorkspaceExecutionSpecService executionSpecService,
                             @Qualifier("runtimeCleanupRestTemplate") RestTemplate restTemplate,
@@ -81,7 +80,7 @@ public class WorkspaceService {
                             WorkspaceEventManager workspaceEventManager,
                             AuditLogger auditLogger) {
         this.workspaceRepository = workspaceRepository;
-        this.workspaceUserRepository = workspaceUserRepository;
+        this.memberships = memberships;
         this.authService = authService;
         this.executionSpecService = executionSpecService;
         this.restTemplate = restTemplate;
@@ -103,7 +102,7 @@ public class WorkspaceService {
     @Transactional
     public Workspace getOrCreateDefaultWorkspace(String userId) {
         authService.lockAndConfirmUserExists(userId);
-        List<Workspace> existing = workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId));
+        List<Workspace> existing = memberWorkspaces(UUID.fromString(userId));
         if (!existing.isEmpty()) {
             return existing.get(0);
         }
@@ -178,7 +177,7 @@ public class WorkspaceService {
         if (userId == null || userId.isBlank()) {
             return Optional.empty();
         }
-        return workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId)).stream().findFirst();
+        return memberWorkspaces(UUID.fromString(userId)).stream().findFirst();
     }
 
     @Transactional(readOnly = true)
@@ -188,7 +187,7 @@ public class WorkspaceService {
 
     @Transactional(readOnly = true)
     public List<Workspace> getWorkspacesByUser(String userId) {
-        return workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId));
+        return memberWorkspaces(UUID.fromString(userId));
     }
 
     /**
@@ -202,11 +201,32 @@ public class WorkspaceService {
             return 0;
         }
         try {
-            return workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId)).size();
+            return memberWorkspaces(UUID.fromString(userId)).size();
         } catch (IllegalArgumentException e) {
             // Non-UUID subject (legacy service token / tests): treat as no workspace.
             return 0;
         }
+    }
+
+    /**
+     * PLAN-0610 W3-3: the workspaces a subject belongs to = workspace-scope role bindings ∪ the
+     * transitional {@code workspace_users} rows. Bindings are the truth (a membership granted through
+     * {@code PUT /api/v1/bindings} is visible immediately, which the legacy join alone would miss);
+     * the legacy row keeps pre-W3-3 data and fixtures working until V89 drops the table — delete the
+     * second query together with {@code WorkspaceMembershipService#roleOf}'s fallback.
+     */
+    @Transactional(readOnly = true)
+    private List<Workspace> memberWorkspaces(UUID userId) {
+        Map<UUID, Workspace> byId = new LinkedHashMap<>();
+        for (Workspace workspace : workspaceRepository.findActiveByMemberBinding(userId)) {
+            byId.put(workspace.getId(), workspace);
+        }
+        for (Workspace workspace : workspaceRepository.findActiveByMemberUserId(userId)) {
+            byId.putIfAbsent(workspace.getId(), workspace);
+        }
+        List<Workspace> ordered = new ArrayList<>(byId.values());
+        ordered.sort(java.util.Comparator.comparing(Workspace::getCreatedAt));
+        return ordered;
     }
 
     @Transactional(readOnly = true)
@@ -226,8 +246,8 @@ public class WorkspaceService {
     @Transactional(readOnly = true)
     public Workspace requireAccessibleWorkspace(String workspaceId, String userId) {
         Workspace workspace = requireActiveWorkspace(workspaceId);
-        if (userId == null || workspaceUserRepository
-                .findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId), UUID.fromString(userId)).isEmpty()) {
+        if (userId == null
+                || !memberships.isMember(UUID.fromString(workspaceId), UUID.fromString(userId))) {
             throw new CpApiException(
                     org.springframework.http.HttpStatus.NOT_FOUND,
                     "WORKSPACE_NOT_FOUND",
@@ -253,11 +273,19 @@ public class WorkspaceService {
         return normalized;
     }
 
+    /**
+     * PLAN-0610 W3-3: membership is one fact ({@link WorkspaceMembershipService} over
+     * {@code role_bindings}); the tenant gate, D9 and the member API all read it here instead of
+     * {@code workspace_users} (round-4 P2-5).
+     */
     @Transactional(readOnly = true)
     public boolean isWorkspaceMember(String workspaceId, String userId) {
-        return workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId)).isPresent()
-                && userId != null
-                && workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId), UUID.fromString(userId)).isPresent();
+        if (userId == null) {
+            return false;
+        }
+        UUID workspaceUuid = UUID.fromString(workspaceId);
+        return workspaceRepository.findByIdAndDeletedAtIsNull(workspaceUuid).isPresent()
+                && memberships.isMember(workspaceUuid, UUID.fromString(userId));
     }
 
     /**
@@ -268,25 +296,27 @@ public class WorkspaceService {
      * {@code workspace_forbidden} codes that the OAuth entry maps to its
      * existing 400/401 responses. OAuth's credential service itself no longer
      * touches Workspace data.
+     *
+     * <p>W3-3: "owner" and "member" are the same fact now — the {@code WS_OWNER} /
+     * {@code WS_EDITOR} / {@code WS_VIEWER} binding — so this is a single seam read; the legacy
+     * {@code workspaces.owner_id} column is no longer consulted (V88 backfilled the binding from
+     * it, V89 drops the column).</p>
      */
     @Transactional(readOnly = true)
     public void requireOwnerOrMemberAccess(String workspaceId, String userId) {
         Workspace workspace = workspaceRepository.findById(UUID.fromString(workspaceId))
                 .orElseThrow(() -> new IllegalArgumentException("workspace_not_found"));
-        boolean owner = userId.equals(workspace.getOwnerId());
-        boolean member = workspaceUserRepository.existsById(new WorkspaceUserId(workspaceId, userId));
-        if (!owner && !member) {
+        if (userId == null || !memberships.isMember(workspace.getId(), UUID.fromString(userId))) {
             throw new IllegalArgumentException("workspace_forbidden");
         }
     }
 
     @Transactional(readOnly = true)
     public String resolveWorkspaceRole(String workspaceId, String userId) {
-        if (!isWorkspaceMember(workspaceId, userId)) {
+        if (userId == null) {
             return null;
         }
-        return workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId), UUID.fromString(userId))
-                .map(WorkspaceUser::getRole)
+        return memberships.roleOf(UUID.fromString(workspaceId), UUID.fromString(userId))
                 .map(WorkspaceRole::canonicalName)
                 .orElse(null);
     }
@@ -432,7 +462,10 @@ public class WorkspaceService {
         workspace = workspaceRepository.save(workspace);
         workspace.setStorageRef(workspace.getId().toString());
         workspace = workspaceRepository.save(workspace);
-        workspaceUserRepository.save(new WorkspaceUser(workspace.getId().toString(), ownerId, WorkspaceRole.OWNER));
+        // PLAN-0610 W3-3: the creator is the owner through the WS_OWNER workspace-scope binding
+        // (the seam mirrors the legacy workspace_users row while the table exists).
+        memberships.assign(workspace.getId(), UUID.fromString(ownerId), WorkspaceRole.OWNER,
+                UUID.fromString(ownerId));
 
         String initialSpec = "docker".equals(executionMode)
                 ? "{\"image\":\"" + image + "\",\"profile\":\"" + profile + "\"}"
@@ -753,3 +786,5 @@ public class WorkspaceService {
         }
     }
 }
+
+
