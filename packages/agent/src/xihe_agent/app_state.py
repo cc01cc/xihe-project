@@ -12,6 +12,7 @@ import asyncio
 import json
 import os
 import time
+import weakref
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
@@ -203,7 +204,17 @@ class ShardedMcpRegistry:
         factory: Any = None,
     ):
         self._shards: OrderedDict[str, McpShard] = OrderedDict()
-        self._locks: dict[str, asyncio.Lock] = {}
+        # R3 hardening (2026-10-31): weak values, so a lock entry can never
+        # outlive the calls that hold it. With a strong dict, a failed discovery
+        # or an unknown-workspace ``/reinit`` (``workspaceId`` accepts any
+        # string) created a Lock and returned, leaving an entry indefinitely —
+        # only shard eviction pruned the table. A weak map self-prunes as soon
+        # as the last holder returns, and a concurrent waiter holds a strong
+        # reference, so waiters keep the *same* Lock object and R1 per-workspace
+        # serialization still holds. (Popping the lock by hand in the failure
+        # branch would orphan a queued waiter, letting a third caller create a
+        # second Lock for the same workspace.)
+        self._locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
         self._max_shards = max(1, get_int_env("XIHE_AGENT_MCP_MAX_SHARDS", 16) if max_shards is None else max_shards)
         self._idle_ttl_s = get_int_env("XIHE_AGENT_MCP_IDLE_TTL_S", 1800) if idle_ttl_s is None else idle_ttl_s
         self._factory = factory or self._default_factory

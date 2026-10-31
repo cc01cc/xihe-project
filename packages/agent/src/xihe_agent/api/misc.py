@@ -247,7 +247,12 @@ async def reinit_mcp(workspace_id: str | None = Query(default=None, alias="works
 async def health():
     llm_status = get_llm_initialization_status()
     registry = app_state.mcp_shard_registry
-    tool_names = registry.aggregate_tool_names()
+    # PLAN-0588 I8 hardening (2026-10-31, user ruling): this route is
+    # unauthenticated and ``AGENT_HOST`` defaults to 0.0.0.0, while shards now
+    # span every active tenant. A cross-shard *name* list would disclose which
+    # MCP integrations a tenant wired up, so only counts are exposed here; tool
+    # names stay behind the authenticated ``/tools`` and ``/mcp/reinit`` routes.
+    tool_count = len(registry.aggregate_tool_names())
     from xihe_agent.app_state import _agent_status, _instance_id, _llm_ready, _runtime_config_revision
 
     return {
@@ -259,12 +264,11 @@ async def health():
         "configSync": config_client.last_sync_report,
         "llm": llm_status,
         "cpUrl": CP_URL,
-        # PLAN-0588 spec §4.1: counts only — never workspace ids on this
-        # unauthenticated route (I8).
+        # PLAN-0588 spec §4.1: counts only — never workspace ids, and never a
+        # cross-shard name collection on this unauthenticated route (I8).
         "mcpInitialized": registry.shard_count() > 0,
         "mcpShards": registry.shard_count(),
-        "toolsCount": len(tool_names),
-        "tools": tool_names,
+        "toolsCount": tool_count,
         "version": agent_version(),
         "commit": build_commit(),
         "framework": "langgraph",

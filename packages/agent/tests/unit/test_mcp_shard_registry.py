@@ -7,6 +7,7 @@ the read-only ``mcp_manager`` compat view, and the two observation shapes.
 """
 
 import asyncio
+import gc
 import time
 from typing import Any
 
@@ -213,6 +214,67 @@ async def test_failure_of_one_workspace_does_not_affect_another():
     assert registry.workspace_ids() == ["ws-good"], "a failed workspace leaves no entry behind"
 
 
+# ── R3 hardening: the lock table must not accumulate entries ───────────────
+@pytest.mark.asyncio
+async def test_failed_discovery_does_not_leak_lock_entries():
+    """R3 hardening: a never-succeeding workspace leaves no Lock behind."""
+
+    def factory(workspace_id: str) -> FakeManager:
+        manager = FakeManager(workspace_id)
+        manager.fail = True
+        return manager
+
+    registry = ShardedMcpRegistry(factory=factory, max_shards=16, idle_ttl_s=1800)
+
+    for index in range(100):
+        with pytest.raises(OSError):
+            await registry.get_or_create(f"ws-fail-{index}")
+
+    gc.collect()
+    assert registry.shard_count() == 0
+    assert len(registry._locks) == 0, "failure paths must not accumulate lock entries"
+
+
+@pytest.mark.asyncio
+async def test_unknown_workspace_reinitialize_does_not_leak_lock_entries():
+    """R3 hardening: ``/reinit?workspaceId=<ghost>`` accepts any string."""
+
+    registry, _ = build_registry({})
+
+    for index in range(100):
+        with pytest.raises(McpShardNotFoundError):
+            await registry.reinitialize(f"ghost-{index}")
+
+    gc.collect()
+    assert len(registry._locks) == 0, "unknown-workspace reinit must not accumulate locks"
+
+
+@pytest.mark.asyncio
+async def test_waiter_shares_the_same_lock_object_for_one_workspace():
+    """R1: the self-pruning lock table must never hand out two locks per ws."""
+    gate = asyncio.Event()
+    slow = FakeManager("ws-a", gate=gate)
+    registry, _ = build_registry({"ws-a": slow})
+
+    leader = asyncio.create_task(registry.get_or_create("ws-a"))
+    for _ in range(50):
+        held = registry._locks.get("ws-a")
+        if held is not None and held.locked():
+            break
+        await asyncio.sleep(0)
+    else:
+        raise AssertionError("leader never acquired the workspace lock")
+
+    leader_lock = registry._locks["ws-a"]
+    waiter = asyncio.create_task(registry.get_or_create("ws-a"))
+    await asyncio.sleep(0)
+    assert registry._locks.get("ws-a") is leader_lock, "waiter must reuse the leader's lock"
+
+    gate.set()
+    await asyncio.gather(leader, waiter)
+    assert registry.shard_count() == 1
+
+
 # ── §3.3 reclamation ──────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_max_shards_evicts_lru_entry_and_its_lock():
@@ -367,7 +429,10 @@ def test_health_reports_counts_and_never_workspace_ids(route_registry: ShardedMc
     assert body["mcpShards"] == 2
     assert body["mcpInitialized"] is True
     assert body["toolsCount"] == 2
-    assert sorted(body["tools"]) == ["tool-a", "tool-b"]
+    # I8 hardening (2026-10-31): unauthenticated route exposes counts only; a
+    # cross-shard name list would disclose each tenant's MCP integrations.
+    assert "tools" not in body, "unauth /health must not return tool names (I8)"
+    assert "tool-a" not in response.text and "tool-b" not in response.text
     assert "ws-a" not in response.text and "ws-b" not in response.text
 
 
@@ -376,7 +441,8 @@ def test_health_startup_state_is_boolean_false(route_registry: ShardedMcpRegistr
 
     assert body["mcpInitialized"] is False
     assert body["mcpShards"] == 0
-    assert body["tools"] == []
+    assert body["toolsCount"] == 0
+    assert "tools" not in body, "unauth /health must not return tool names (I8)"
     assert isinstance(body["mcpInitialized"], bool)
 
 
