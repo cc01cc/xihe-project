@@ -25,7 +25,7 @@ public class AgentPrincipalController {
     }
 
     @PostMapping("/api/v1/agent-principals")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> create(@RequestBody(required = false) Map<String, Object> body) {
         if (body == null || body.isEmpty() || body.size() > 2
                 || !body.containsKey("name")

@@ -27,7 +27,6 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/v1/config-locks")
-@PreAuthorize("hasRole('ADMIN')")
 public class ConfigLockController {
 
     /** Lock request body; {@code mode} is optional (v1 always enforce_value). */
@@ -39,6 +38,7 @@ public class ConfigLockController {
         this.adminService = adminService;
     }
 
+    @PreAuthorize("hasAuthority('cap:instance:admin')")
     @GetMapping
     public ResponseEntity<?> catalog(@RequestParam(value = "domain", required = false) String domain) {
         try {
@@ -48,6 +48,7 @@ public class ConfigLockController {
         }
     }
 
+    @PreAuthorize("hasAuthority('cap:instance:admin')")
     @PutMapping("/{domain}/{key}")
     public ResponseEntity<?> lock(@PathVariable String domain, @PathVariable String key,
                                   @RequestBody(required = false) LockRequest body) {
@@ -66,6 +67,7 @@ public class ConfigLockController {
         }
     }
 
+    @PreAuthorize("hasAuthority('cap:instance:admin')")
     @DeleteMapping("/{domain}/{key}")
     public ResponseEntity<?> unlock(@PathVariable String domain, @PathVariable String key,
                                     @RequestParam(value = "revision", required = false) Long revision,

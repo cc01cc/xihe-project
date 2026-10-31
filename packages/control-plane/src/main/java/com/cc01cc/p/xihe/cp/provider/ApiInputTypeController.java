@@ -9,7 +9,6 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/api-input-types")
-@PreAuthorize("hasAnyRole('USER', 'ADMIN')")
 public class ApiInputTypeController {
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -21,6 +20,7 @@ public class ApiInputTypeController {
         this.apiTypes = apiTypes;
     }
 
+    @PreAuthorize("isAuthenticated()")
     @GetMapping
     public Map<String, Object> list() {
         return Map.of("types", apiTypes.list());

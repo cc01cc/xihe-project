@@ -7,6 +7,13 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
+import com.cc01cc.p.xihe.cp.entity.AccessRole;
+import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.policy.AccessScope;
+import com.cc01cc.p.xihe.cp.policy.AuthzContext;
+import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
+import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
@@ -46,6 +53,9 @@ class WorkspaceMemberControllerContractTest extends AbstractIntegrationTest {
     @Autowired private WorkspaceRepository workspaceRepository;
     @Autowired private WorkspaceUserRepository workspaceUserRepository;
     @Autowired private JdbcTemplate jdbcTemplate;
+    @Autowired private AccessRoleRepository accessRoleRepository;
+    @Autowired private AccessRoleBindingRepository accessRoleBindingRepository;
+    @Autowired private AuthzContext authzContext;
 
     private UUID ownerId;
     private UUID workspaceId;
@@ -293,9 +303,19 @@ class WorkspaceMemberControllerContractTest extends AbstractIntegrationTest {
 
     private User adminUser;
 
+    /**
+     * PLAN-0610 W1b-2a: "instance ADMIN" is a role binding, not a claim role — the service-level
+     * capability checks (e.g. WorkspaceMemberService's instance-admin bypass) read
+     * cap:instance:admin from AuthzContext, so the fixture must create the binding.
+     */
     private User adminUser() {
         if (adminUser == null) {
             adminUser = newUser("instance-admin-holder");
+            AccessRole role = accessRoleRepository.findByName(SystemAccessRoleCatalog.ADMIN)
+                    .orElseThrow();
+            accessRoleBindingRepository.save(new AccessRoleBinding(role.getId(), "user",
+                    adminUser.getId(), AccessScope.INSTANCE, null, null));
+            authzContext.invalidate(adminUser.getId());
         }
         return adminUser;
     }
@@ -358,3 +378,7 @@ class WorkspaceMemberControllerContractTest extends AbstractIntegrationTest {
         return body == null ? null : String.valueOf(((Map<?, ?>) body).get("code"));
     }
 }
+
+
+
+

@@ -56,7 +56,7 @@ public class ModelsProxyController {
         this.descriptorService = descriptorService;
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/api/v1/models")
     public ResponseEntity<?> listModels() {
         // PLAN-0557: descriptor assembly failures are local CP problems, not Agent outages.

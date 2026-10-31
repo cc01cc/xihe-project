@@ -43,7 +43,7 @@ public class PolicyController {
         this.sessionService = sessionService;
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/domains")
     public ResponseEntity<?> domains() {
         String userId = TenantContext.getUserId();
@@ -55,7 +55,7 @@ public class PolicyController {
     // adjudication engine — authorization is the grant lookup and the approval trigger is the
     // approval-policy ask list. The permission-rules UI page retires with PLAN-0374 T3.4.
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/tool-faces")
     public ResponseEntity<?> listFaces(@RequestParam String scope) {
         try {
@@ -66,7 +66,7 @@ public class PolicyController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/tool-faces")
     public ResponseEntity<?> upsertFace(@RequestBody Map<String, Object> body) {
         String scope = body == null ? null : String.valueOf(body.get("scope"));
@@ -80,7 +80,7 @@ public class PolicyController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/mode")
     public ResponseEntity<?> getMode(@RequestParam String sessionId) {
         String userId = TenantContext.getUserId();
@@ -107,7 +107,7 @@ public class PolicyController {
      * Session-scoped mode switch. Switching here never changes another session and
      * never changes another session.
      */
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/mode")
     public ResponseEntity<?> setMode(@RequestBody Map<String, Object> body) {
         String sessionId = asString(body, "sessionId");

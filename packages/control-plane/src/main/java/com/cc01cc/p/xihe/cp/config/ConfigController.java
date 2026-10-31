@@ -122,7 +122,7 @@ public class ConfigController {
     // Read (UI)
     // ------------------------------------------------------------------
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/api/v1/config/{domain}")
     public ResponseEntity<Map<String, Object>> getConfig(
             @PathVariable String domain,
@@ -240,7 +240,7 @@ public class ConfigController {
         return filtered;
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/api/v1/config/{domain}/meta")
     public ResponseEntity<Map<String, Object>> getConfigMeta(
             @PathVariable String domain,
@@ -321,7 +321,7 @@ public class ConfigController {
     // Write (UI)
     // ------------------------------------------------------------------
 
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAuthority('cap:instance:admin')")
     @PutMapping("/api/v1/config/instance/{domain}")
     public ResponseEntity<Map<String, Object>> putInstanceConfig(
             @PathVariable String domain,
@@ -329,7 +329,7 @@ public class ConfigController {
         return writeLayer("instance", domain, body, "admin", null, null);
     }
 
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAuthority('cap:instance:admin')")
     @DeleteMapping("/api/v1/config/instance/{domain}/{key}")
     public ResponseEntity<Map<String, Object>> deleteInstanceConfig(
             @PathVariable String domain,
@@ -360,7 +360,7 @@ public class ConfigController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @PutMapping("/api/v1/config/user/{domain}")
     public ResponseEntity<Map<String, Object>> putUserConfig(
             @PathVariable String domain,
@@ -373,7 +373,7 @@ public class ConfigController {
         return writeLayer("user", domain, body, "user", userId, null);
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @PutMapping("/api/v1/config/workspace/{domain}")
     public ResponseEntity<Map<String, Object>> putWorkspaceConfig(
             @PathVariable String domain,
@@ -436,7 +436,7 @@ public class ConfigController {
     // Import / export (management plane, instance layer)
     // ------------------------------------------------------------------
 
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAuthority('cap:instance:admin')")
     @PostMapping("/api/v1/config/import")
     public ResponseEntity<Map<String, Object>> importConfig(
             @RequestParam(value = "layer", defaultValue = "instance") String layer,
@@ -472,7 +472,7 @@ public class ConfigController {
         }
     }
 
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAuthority('cap:instance:admin')")
     @GetMapping("/api/v1/config/export")
     public ResponseEntity<?> exportConfig(
             @RequestParam(value = "layer", defaultValue = "instance") String layer,
@@ -557,7 +557,7 @@ public class ConfigController {
     // MCP stdio servers (decision #27)
     // ------------------------------------------------------------------
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/api/v1/workspaces/{workspaceId}/stdio-servers")
     public ResponseEntity<Map<String, Object>> getStdioServers(
             @PathVariable("workspaceId") String wsId) {
@@ -581,7 +581,7 @@ public class ConfigController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @PutMapping("/api/v1/workspaces/{workspaceId}/stdio-servers")
     public ResponseEntity<Map<String, Object>> putStdioServers(
             @PathVariable("workspaceId") String wsId,
@@ -698,7 +698,7 @@ public class ConfigController {
     // Legacy mixed mcp-config endpoint (Claude Desktop paste experience)
     // ------------------------------------------------------------------
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/api/v1/workspaces/{workspaceId}/mcp-config")
     public ResponseEntity<Map<String, Object>> getMcpConfig(@PathVariable("workspaceId") String wsId) {
         String userId = TenantContext.getUserId();
@@ -710,7 +710,7 @@ public class ConfigController {
         return getMixedMcpConfig(wsId);
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @PutMapping("/api/v1/workspaces/{workspaceId}/mcp-config")
     public ResponseEntity<Map<String, Object>> putMcpConfig(
             @PathVariable("workspaceId") String wsId,

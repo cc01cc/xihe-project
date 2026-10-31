@@ -44,7 +44,7 @@ public class ContextController {
         this.responseMapper = responseMapper;
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN', 'INTERNAL_SERVICE')")
+    @PreAuthorize("hasRole('INTERNAL_SERVICE')")
     @PostMapping("/{sessionId}/events")
     public ResponseEntity<?> appendEvent(
             @PathVariable String sessionId,
@@ -66,7 +66,7 @@ public class ContextController {
         ));
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN', 'INTERNAL_SERVICE')")
+    @PreAuthorize("hasRole('INTERNAL_SERVICE')")
     @PostMapping("/{sessionId}/events/batch")
     public ResponseEntity<?> appendBatch(
             @PathVariable String sessionId,
@@ -128,7 +128,7 @@ public class ContextController {
      * foreign selectors fail closed (404/409) and never fall back to the
      * Session root. Omitting both keeps the legacy Session-root snapshot.
      */
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN', 'INTERNAL_SERVICE')")
+    @PreAuthorize("hasRole('INTERNAL_SERVICE')")
     @GetMapping("/{sessionId}/snapshot")
     public ResponseEntity<?> getSnapshot(
             @PathVariable String sessionId,
@@ -149,7 +149,7 @@ public class ContextController {
                 .body(snapshot.toString());
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN', 'INTERNAL_SERVICE')")
+    @PreAuthorize("hasRole('INTERNAL_SERVICE')")
     @PostMapping("/{sessionId}/refresh-sources")
     public ResponseEntity<?> refreshSources(@PathVariable String sessionId) {
         if (!verifyAccess(sessionId)) {
@@ -162,7 +162,7 @@ public class ContextController {
                 "sourceKey", "AGENTS.md"));
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN', 'INTERNAL_SERVICE')")
+    @PreAuthorize("hasRole('INTERNAL_SERVICE')")
     @GetMapping("/{sessionId}/events")
     public ResponseEntity<?> readEvents(
             @PathVariable String sessionId,
@@ -175,7 +175,7 @@ public class ContextController {
         return ResponseEntity.ok(response);
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN', 'INTERNAL_SERVICE')")
+    @PreAuthorize("hasRole('INTERNAL_SERVICE')")
     @GetMapping("/{sessionId}/events/latest")
     public ResponseEntity<?> latestSequence(@PathVariable String sessionId) {
         if (!verifyAccess(sessionId)) {
@@ -185,7 +185,7 @@ public class ContextController {
         return ResponseEntity.ok(Map.of("sequence", sequence));
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN', 'INTERNAL_SERVICE')")
+    @PreAuthorize("hasRole('INTERNAL_SERVICE')")
     @PostMapping("/{sessionId}/replay")
     public ResponseEntity<?> replay(
             @PathVariable String sessionId,
@@ -211,7 +211,7 @@ public class ContextController {
      * CP-validated {@code branchId} — the whole flow (input projection,
      * prior summary, recovery band, written events) stays on that branch path.
      */
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN', 'INTERNAL_SERVICE')")
+    @PreAuthorize("hasRole('INTERNAL_SERVICE')")
     @PostMapping("/{sessionId}/compact")
     public ResponseEntity<?> compact(
             @PathVariable String sessionId,
@@ -237,7 +237,7 @@ public class ContextController {
         ));
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN', 'INTERNAL_SERVICE')")
+    @PreAuthorize("hasRole('INTERNAL_SERVICE')")
     @PostMapping("/{sourceSessionId}/fork")
     public ResponseEntity<?> fork(
             @PathVariable String sourceSessionId,

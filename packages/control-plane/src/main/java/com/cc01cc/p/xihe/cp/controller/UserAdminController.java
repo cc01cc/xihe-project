@@ -62,7 +62,7 @@ public class UserAdminController {
     }
 
     @GetMapping
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAuthority('cap:instance:admin')")
     public ResponseEntity<Map<String, Object>> list(
             @RequestParam(value = "q", required = false) String q,
             @RequestParam(value = "role", required = false) String role,
@@ -82,13 +82,13 @@ public class UserAdminController {
     }
 
     @GetMapping("/{userId}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAuthority('cap:instance:admin')")
     public ResponseEntity<UserAdminView> detail(@PathVariable String userId) {
         return ResponseEntity.ok(userAdminService.detail(parseUserId(userId)));
     }
 
     @PostMapping
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAuthority('cap:instance:admin')")
     public ResponseEntity<Map<String, Object>> create(
             @RequestBody(required = false) CreateUserRequest request) {
         if (request == null) {
@@ -107,7 +107,7 @@ public class UserAdminController {
     }
 
     @PatchMapping("/{userId}/status")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAuthority('cap:instance:admin')")
     public ResponseEntity<UserAdminView> changeStatus(@PathVariable String userId,
                                                      @RequestBody(required = false) StatusRequest request) {
         UserStatus status = parseStatusFilter(request == null ? null : request.status(), true);
@@ -116,14 +116,14 @@ public class UserAdminController {
     }
 
     @DeleteMapping("/{userId}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAuthority('cap:instance:admin')")
     public ResponseEntity<Void> softDelete(@PathVariable String userId) {
         userAdminService.softDelete(InstanceOwnerController.callerId(), parseUserId(userId));
         return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/{userId}/password-reset")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAuthority('cap:instance:admin')")
     public ResponseEntity<Map<String, Object>> resetPassword(@PathVariable String userId) {
         String temporaryPassword = userAdminService.resetPassword(
                 InstanceOwnerController.callerId(), parseUserId(userId));

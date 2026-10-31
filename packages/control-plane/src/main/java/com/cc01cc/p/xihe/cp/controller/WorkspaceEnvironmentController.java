@@ -66,7 +66,7 @@ public class WorkspaceEnvironmentController {
     }
 
     @GetMapping("/api/v1/workspaces/{workspaceId}/environment")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> getEnvironment(
             @PathVariable String workspaceId,
             Authentication authentication) {
@@ -146,7 +146,7 @@ public class WorkspaceEnvironmentController {
     }
 
     @PatchMapping("/api/v1/workspaces/{workspaceId}/execution-mode")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> changeExecutionMode(
             @PathVariable String workspaceId,
             @RequestBody(required = false) ExecutionModeRequest request,
@@ -178,7 +178,7 @@ public class WorkspaceEnvironmentController {
      * {@code RUNTIME_UNAVAILABLE}.
      */
     @PostMapping("/api/v1/workspaces/capabilities/preflight")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> preflightWorkspaceCapability(
             @RequestBody(required = false) WorkspaceCapabilityPreflightRequest request) {
         String userId = TenantContext.getUserId();
@@ -344,7 +344,7 @@ public class WorkspaceEnvironmentController {
      * via requireAccessibleWorkspace (404 on unknown or foreign workspace).
      */
     @PostMapping("/api/v1/workspaces/{workspaceId}/materialize")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> materialize(
             @PathVariable String workspaceId,
             Authentication authentication) {

@@ -23,7 +23,7 @@ public class RunTraceController {
         this.runTraceReadService = runTraceReadService;
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/api/v1/chat/runs/{runId}/trace")
     public ResponseEntity<?> getTrace(@PathVariable String runId,
                                       @RequestParam(required = false) String cursor,

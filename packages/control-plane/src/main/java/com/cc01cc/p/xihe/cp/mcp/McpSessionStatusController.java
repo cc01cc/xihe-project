@@ -50,7 +50,7 @@ public class McpSessionStatusController {
             "WORKSPACE_BUSY", HttpStatus.CONFLICT,
             "WORKSPACE_MATERIALIZATION_FAILED", HttpStatus.SERVICE_UNAVAILABLE);
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/api/v1/workspaces/{wsId}/mcp/servers")
     public ResponseEntity<?> mcpServers(@PathVariable String wsId) {
         String userId = TenantContext.getUserId();

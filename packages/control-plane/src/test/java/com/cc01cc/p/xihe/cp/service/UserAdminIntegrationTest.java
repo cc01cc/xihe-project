@@ -468,6 +468,10 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
         jdbc.update("UPDATE users SET role = 'USER' WHERE id = CAST(? AS UUID)", ownerId);
         jdbc.update("UPDATE users SET role = 'ADMIN', status = 'ACTIVE' WHERE id = CAST(? AS UUID)",
                 secondAdminId);
+        // The degenerate case needs an ADMIN-gated actor whose ADDRESSABLE row is USER: the
+        // capability now comes from the binding (W1b-2a), so grant it explicitly while the row
+        // stays USER.
+        grantInstanceRole(ownerId, "ADMIN");
         String claimAdminToken = jwtTokenProvider.createAccessToken(
                 ownerId, "instance-owner-admin@test.com", "ADMIN", tokenVersion(ownerId));
         ResponseEntity<String> lastAdmin = patchStatus(claimAdminToken, secondAdminId, "DISABLED");
@@ -607,6 +611,12 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
     private String promoteNewAdmin(String email) throws Exception {
         register(email);
         jdbc.update("UPDATE users SET role = 'ADMIN' WHERE email = ?", actualEmail(email));
+        // PLAN-0610 W1b-2a: the instance-admin annotation gate reads cap:instance:admin, which
+        // comes from the role binding — a users.role UPDATE alone no longer authorizes (the claim
+        // role is a compatibility carrier only).
+        String userId = jdbc.queryForObject("SELECT CAST(id AS VARCHAR) FROM users WHERE email = ?",
+                String.class, actualEmail(email));
+        grantInstanceRole(userId, "ADMIN");
         return email;
     }
 
@@ -699,4 +709,5 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
         return api.exchange(url(path), HttpMethod.DELETE, new HttpEntity<>(authHeaders(token)), String.class);
     }
 }
+
 

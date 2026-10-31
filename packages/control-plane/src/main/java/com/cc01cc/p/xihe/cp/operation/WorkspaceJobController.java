@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.operation;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import org.springframework.security.access.prepost.PreAuthorize;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
@@ -60,6 +61,7 @@ public class WorkspaceJobController {
         this.runtimeJobClient = runtimeJobClient;
     }
 
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/api/v1/workspaces/{workspaceId}/jobs")
     public ResponseEntity<?> list(@PathVariable String workspaceId) {
         String userId = TenantContext.getUserId();
@@ -76,6 +78,7 @@ public class WorkspaceJobController {
         }
     }
 
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/api/v1/workspaces/{workspaceId}/jobs")
     public ResponseEntity<?> start(@PathVariable String workspaceId,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
@@ -116,6 +119,7 @@ public class WorkspaceJobController {
      * the Runtime container files;
      * 归属按 domain jobId + workspace 双键校验。
      */
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/api/v1/workspaces/{workspaceId}/jobs/{jobId}/output")
     public ResponseEntity<?> jobOutput(
             @PathVariable String workspaceId,
@@ -191,6 +195,7 @@ public class WorkspaceJobController {
      * Cancel one durable Workspace Job by canonical {@code jobId}. Its state
      * transition and history row are the sole durable cancellation record.
      */
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/api/v1/workspaces/{workspaceId}/jobs/{jobId}/cancel")
     public ResponseEntity<?> cancelJob(@PathVariable String workspaceId, @PathVariable String jobId) {
         String userId = TenantContext.getUserId();

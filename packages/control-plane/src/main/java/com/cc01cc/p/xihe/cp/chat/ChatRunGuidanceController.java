@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import org.springframework.security.access.prepost.PreAuthorize;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.ChatRunGuidance;
@@ -44,6 +45,7 @@ public class ChatRunGuidanceController {
     public record GuidanceCreateRequest(String content) {
     }
 
+    @PreAuthorize("isAuthenticated()")
     @PostMapping
     public ResponseEntity<?> submit(
             @PathVariable String runId,
@@ -73,6 +75,7 @@ public class ChatRunGuidanceController {
         }
     }
 
+    @PreAuthorize("isAuthenticated()")
     @GetMapping
     public ResponseEntity<?> snapshot(@PathVariable String runId) {
         try {

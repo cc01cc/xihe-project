@@ -25,7 +25,7 @@ class ChatRunContinuationController {
         this.continuations = continuations;
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/api/v1/chat/runs/{sourceRunId}/continue")
     ResponseEntity<Map<String, Object>> continueRun(
             @PathVariable String sourceRunId,

@@ -34,14 +34,14 @@ public class WorkspaceMemberController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public List<MemberView> list(@PathVariable String workspaceId) {
         return memberService.listMembers(workspaceId, TenantContext.getUserId(),
                 TenantContext.getUserRole());
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<MemberView> add(@PathVariable String workspaceId,
             @Valid @RequestBody AddMemberRequest request) {
         MemberView view = memberService.addMember(workspaceId, request.username(),
@@ -50,7 +50,7 @@ public class WorkspaceMemberController {
     }
 
     @PatchMapping("/{userId}")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public MemberView updateRole(@PathVariable String workspaceId,
             @PathVariable String userId,
             @Valid @RequestBody UpdateMemberRoleRequest request) {
@@ -59,7 +59,7 @@ public class WorkspaceMemberController {
     }
 
     @DeleteMapping("/{userId}")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> remove(@PathVariable String workspaceId,
             @PathVariable String userId) {
         memberService.removeMember(workspaceId, userId, TenantContext.getUserId(),

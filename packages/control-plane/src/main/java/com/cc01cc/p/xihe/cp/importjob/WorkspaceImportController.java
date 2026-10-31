@@ -29,7 +29,7 @@ public class WorkspaceImportController {
     }
 
     @PostMapping("/workspaces/{workspaceId}/imports")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> create(@PathVariable String workspaceId, @RequestBody Map<String, Object> body) {
         WorkspaceImport record = service.create(
                 workspaceId,
@@ -50,13 +50,13 @@ public class WorkspaceImportController {
     }
 
     @GetMapping("/workspace-imports/{importId}")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> get(@PathVariable String importId) {
         return ResponseEntity.ok(view(service.get(importId, requireUserId())));
     }
 
     @GetMapping("/workspaces/import-sources")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> listSources(@RequestParam String path) {
         return service.listSourceDirectory(path)
                 .map(ResponseEntity::ok)
@@ -65,13 +65,13 @@ public class WorkspaceImportController {
     }
 
     @PostMapping("/workspace-imports/{importId}/cancel")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> cancel(@PathVariable String importId) {
         return ResponseEntity.ok(view(service.cancel(importId, requireUserId())));
     }
 
     @GetMapping("/workspaces/{workspaceId}/imports")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> list(@PathVariable String workspaceId) {
         return ResponseEntity.ok(service.list(workspaceId, requireUserId()).stream().map(this::view).toList());
     }

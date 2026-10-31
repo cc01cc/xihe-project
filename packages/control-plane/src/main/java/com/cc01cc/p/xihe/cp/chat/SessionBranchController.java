@@ -26,7 +26,7 @@ public class SessionBranchController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> list(@PathVariable String sessionId) {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
@@ -43,7 +43,7 @@ public class SessionBranchController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> create(@PathVariable String sessionId,
                                     @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
                                     @RequestBody(required = false) CreateBranchRequest request) {

@@ -23,7 +23,7 @@ public class ApprovalController {
         this.approvalService = approvalService;
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/{requestId}/decision")
     public ResponseEntity<?> decide(@PathVariable String requestId, @RequestBody Map<String, Object> body) {
         String userId = TenantContext.getUserId();

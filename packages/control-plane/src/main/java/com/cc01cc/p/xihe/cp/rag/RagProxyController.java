@@ -45,7 +45,6 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/api/v1/rag")
-@PreAuthorize("hasAnyRole('USER', 'ADMIN')")
 public class RagProxyController {
 
     private static final Logger logger = LoggerFactory.getLogger(RagProxyController.class);
@@ -72,6 +71,7 @@ public class RagProxyController {
     public record SearchRequest(String query, Integer topK, Double minScore) {
     }
 
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/stats")
     public ResponseEntity<Map<String, Object>> stats() {
         UUID userId = currentUserId();
@@ -84,6 +84,7 @@ public class RagProxyController {
         return ResponseEntity.ok(agentPayload);
     }
 
+    @PreAuthorize("isAuthenticated()")
     @PostMapping(value = "/ingest", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<Map<String, Object>> ingest(
             @RequestParam("file") MultipartFile file,
@@ -135,6 +136,7 @@ public class RagProxyController {
         }
     }
 
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/search")
     public ResponseEntity<Map<String, Object>> search(@RequestBody SearchRequest request) {
         UUID userId = currentUserId();
@@ -161,6 +163,7 @@ public class RagProxyController {
         return ResponseEntity.ok(agentPayload);
     }
 
+    @PreAuthorize("isAuthenticated()")
     @DeleteMapping("/documents/{docId}")
     public ResponseEntity<Map<String, Object>> delete(@PathVariable String docId) {
         UUID userId = currentUserId();

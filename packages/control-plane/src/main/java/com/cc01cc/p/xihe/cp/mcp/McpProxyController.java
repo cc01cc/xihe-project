@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.mcp;
 
 import org.slf4j.Logger;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -229,6 +230,7 @@ public class McpProxyController {
         this.buildVersion = buildVersion;
     }
 
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/api/v1/mcp")
     public ResponseEntity<String> proxy(
             @RequestBody String body,
@@ -264,6 +266,7 @@ public class McpProxyController {
      * 服务端主动推送（GET SSE）在本代理上不存在——直接拒绝，不再转发 Runtime。
      * 客户端若因旧版本协商期待该通道，会得到明确的 405 而不是被挂住的空流。
      */
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/api/v1/mcp")
     public ResponseEntity<String> stream(@RequestHeader HttpHeaders headers) {
         AuthorizationResult authorization = authorize(headers, null);
@@ -277,6 +280,7 @@ public class McpProxyController {
     }
 
     /** 决策 #34：无会话 ⇒ 没有可终止的协议会话，DELETE 同样明确拒绝。 */
+    @PreAuthorize("isAuthenticated()")
     @DeleteMapping("/api/v1/mcp")
     public ResponseEntity<String> disconnect(@RequestHeader HttpHeaders headers) {
         AuthorizationResult authorization = authorize(headers, null);

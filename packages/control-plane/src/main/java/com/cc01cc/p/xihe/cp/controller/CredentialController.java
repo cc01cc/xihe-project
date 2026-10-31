@@ -37,7 +37,6 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/api/v1/credentials")
-@PreAuthorize("hasAnyRole('USER', 'ADMIN')")
 public class CredentialController {
 
     private final CredentialAdminService adminService;
@@ -55,6 +54,7 @@ public class CredentialController {
         this.objectMapper = objectMapper;
     }
 
+    @PreAuthorize("isAuthenticated()")
     @GetMapping
     public ResponseEntity<?> list(@RequestParam(value = "ownerType", required = false) String ownerType,
                                   @RequestParam(value = "ownerId", required = false) String ownerId) {
@@ -74,6 +74,7 @@ public class CredentialController {
         }
     }
 
+    @PreAuthorize("isAuthenticated()")
     @PostMapping
     public ResponseEntity<?> create(@RequestBody CreateCredentialRequest request) {
         String actorUserId = requireActor();
@@ -91,6 +92,7 @@ public class CredentialController {
         }
     }
 
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/{id}/replace")
     public ResponseEntity<?> replace(@PathVariable("id") String id,
                                      @RequestBody ReplaceSecretRequest request) {
@@ -118,6 +120,7 @@ public class CredentialController {
         }
     }
 
+    @PreAuthorize("isAuthenticated()")
     @DeleteMapping("/{id}")
     public ResponseEntity<?> delete(@PathVariable("id") String id) {
         String actorUserId = requireActor();
@@ -144,6 +147,7 @@ public class CredentialController {
         }
     }
 
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/{id}/references")
     public ResponseEntity<?> references(@PathVariable("id") String id) {
         String actorUserId = requireActor();
@@ -170,6 +174,7 @@ public class CredentialController {
      * credential_reveal intersection + step-up + failure throttle; the response
      * carries the plaintext once and is never cacheable (no-store).
      */
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/{id}/reveal")
     public ResponseEntity<?> reveal(@PathVariable("id") String id,
                                     @RequestBody RevealRequest request) {
@@ -201,6 +206,7 @@ public class CredentialController {
      * PLAN-0497 T3.2 (0497 design §方案 6, decision #9): the credentials audit
      * trail read surface consumed by 0498 — owner-visible events, never a value.
      */
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/{id}/events")
     public ResponseEntity<?> events(@PathVariable("id") String id,
             @RequestParam(value = "limit", required = false, defaultValue = "200") int limit) {
@@ -223,6 +229,7 @@ public class CredentialController {
         }
     }
 
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/precheck")
     public ResponseEntity<?> precheck(@RequestBody(required = false) Map<String, Object> request) {
         String actorUserId = requireActor();
@@ -245,11 +252,13 @@ public class CredentialController {
         }
     }
 
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/{id}/bindings")
     public ResponseEntity<?> bind(@PathVariable("id") String id, @RequestBody BindRequest request) {
         return bindOrUnbind(id, request, true);
     }
 
+    @PreAuthorize("isAuthenticated()")
     @DeleteMapping("/{id}/bindings")
     public ResponseEntity<?> unbind(@PathVariable("id") String id, @RequestBody BindRequest request) {
         return bindOrUnbind(id, request, false);

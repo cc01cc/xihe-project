@@ -34,7 +34,7 @@ public class WorkspaceSessionController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> create(@PathVariable String workspaceId,
                                     @RequestBody(required = false) SessionController.CreateSessionRequest request,
                                     @RequestHeader(value = "X-Workspace-Id", required = false) String workspaceHeader) {

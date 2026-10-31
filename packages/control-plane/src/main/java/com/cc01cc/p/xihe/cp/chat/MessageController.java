@@ -37,7 +37,7 @@ public class MessageController {
         this.messageDeletionService = messageDeletionService;
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping
     public ResponseEntity<?> listMessages(@PathVariable String sessionId,
                                           @RequestParam(value = "branchId", required = false) String branchId) {
@@ -76,7 +76,7 @@ public class MessageController {
                 sessionId, workspaceId, rootBranchId, visibility));
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @DeleteMapping("/{messageId}")
     public ResponseEntity<?> deleteMessage(@PathVariable String sessionId, @PathVariable String messageId) {
         String userId = TenantContext.getUserId();

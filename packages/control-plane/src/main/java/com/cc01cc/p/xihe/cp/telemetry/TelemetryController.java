@@ -102,7 +102,7 @@ public class TelemetryController {
     }
 
     @PostMapping("/logs")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> ingestAuth(@RequestBody TelemetryEntry.BatchRequest request) {
         ResponseEntity<?> invalid = validate(request);
         if (invalid != null) {

@@ -43,7 +43,7 @@ public class UserRoleController {
     }
 
     @PatchMapping("/{userId}/role")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAuthority('cap:instance:admin')")
     public ResponseEntity<Map<String, Object>> changeRole(@PathVariable String userId,
                                                          @RequestBody(required = false) RoleRequest request) {
         UserRole newRole = parseRole(request == null ? null : request.role());

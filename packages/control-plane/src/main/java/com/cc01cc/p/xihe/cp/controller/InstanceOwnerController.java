@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.controller;
 
 import com.cc01cc.p.xihe.cp.auth.ClientIpResolver;
+import org.springframework.security.access.prepost.PreAuthorize;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.service.InstanceOwnershipService;
@@ -49,6 +50,7 @@ public class InstanceOwnerController {
         this.clientIpResolver = clientIpResolver;
     }
 
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/owner")
     public ResponseEntity<OwnerView> get() {
         return ResponseEntity.ok(view(ownership.current(), callerId()));

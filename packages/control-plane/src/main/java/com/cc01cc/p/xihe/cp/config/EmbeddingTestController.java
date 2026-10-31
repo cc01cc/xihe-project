@@ -31,7 +31,6 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/api/v1/config/embedding")
-@PreAuthorize("hasAnyRole('USER', 'ADMIN')")
 public class EmbeddingTestController {
 
     private final EmbeddingProfileService profiles;
@@ -73,6 +72,7 @@ public class EmbeddingTestController {
      * read never fails on missing profile/connection; it reports the explicit
      * conflict code instead so the UI can explain the state.
      */
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/effective")
     public ResponseEntity<Map<String, Object>> effective(
             @RequestHeader(value = "X-Workspace-Id", required = false) String headerWorkspaceId,
@@ -121,6 +121,7 @@ public class EmbeddingTestController {
         return ResponseEntity.ok(response);
     }
 
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/test")
     public ResponseEntity<Map<String, Object>> test(
             @RequestBody(required = false) Map<String, Object> body,

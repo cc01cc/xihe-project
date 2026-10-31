@@ -33,7 +33,7 @@ public class ScheduledTaskController {
         this.scheduledTaskApiService = scheduledTaskApiService;
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/api/v1/workspaces/{workspaceId}/scheduled-tasks")
     public ResponseEntity<?> list(@PathVariable String workspaceId,
             @RequestParam(name = "page", defaultValue = "0") int page,
@@ -50,7 +50,7 @@ public class ScheduledTaskController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/api/v1/workspaces/{workspaceId}/scheduled-tasks")
     public ResponseEntity<?> create(@PathVariable String workspaceId,
             @RequestBody ScheduledTaskApiService.CreateRequest request) {
@@ -67,7 +67,7 @@ public class ScheduledTaskController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/api/v1/workspaces/{workspaceId}/scheduled-tasks/{taskId}")
     public ResponseEntity<?> get(@PathVariable String workspaceId, @PathVariable String taskId) {
         String userId = TenantContext.getUserId();
@@ -83,7 +83,7 @@ public class ScheduledTaskController {
     }
 
     /** scheduled→cancelled；missed/expired 用 POST /remove（409 指引）。 */
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @DeleteMapping("/api/v1/workspaces/{workspaceId}/scheduled-tasks/{taskId}")
     public ResponseEntity<?> delete(@PathVariable String workspaceId, @PathVariable String taskId,
             @RequestBody(required = false) ScheduledTaskApiService.DisposeRequest request) {
@@ -101,7 +101,7 @@ public class ScheduledTaskController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/api/v1/workspaces/{workspaceId}/scheduled-tasks/{taskId}/rerun")
     public ResponseEntity<?> rerun(@PathVariable String workspaceId, @PathVariable String taskId,
             @RequestBody(required = false) ScheduledTaskApiService.DisposeRequest request) {
@@ -118,7 +118,7 @@ public class ScheduledTaskController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/api/v1/workspaces/{workspaceId}/scheduled-tasks/{taskId}/remove")
     public ResponseEntity<?> remove(@PathVariable String workspaceId, @PathVariable String taskId,
             @RequestBody(required = false) ScheduledTaskApiService.DisposeRequest request) {
@@ -136,7 +136,7 @@ public class ScheduledTaskController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/api/v1/workspaces/{workspaceId}/scheduled-tasks/{taskId}/postpone")
     public ResponseEntity<?> postpone(@PathVariable String workspaceId, @PathVariable String taskId,
             @RequestBody ScheduledTaskApiService.PostponeRequest request) {

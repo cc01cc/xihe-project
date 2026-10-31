@@ -69,7 +69,7 @@ public class SessionController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> list() {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
@@ -84,7 +84,7 @@ public class SessionController {
     }
 
     @PostMapping("/{sessionId}/fork")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> fork(@PathVariable String sessionId,
                                   @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
                                   @RequestBody(required = false) ForkRequest request) {
@@ -114,7 +114,7 @@ public class SessionController {
     // controller exposes the same operation on /internal/v1 (service-only);
     // this is the browser-reachable entry with USER ownership checks.
     @PostMapping("/{sessionId}/compact")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> compact(@PathVariable String sessionId,
                                      @RequestBody(required = false) Map<String, Object> body) {
         Session session = sessionService.requireCurrent(sessionId, TenantContext.getUserId(), TenantContext.getWorkspaceId());
@@ -161,7 +161,7 @@ public class SessionController {
     }
 
     @GetMapping("/{sessionId}")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> get(@PathVariable String sessionId) {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
@@ -173,7 +173,7 @@ public class SessionController {
     }
 
     @GetMapping("/{sessionId}/derived-state")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> derivedState(@PathVariable String sessionId) {
         try {
             UUID.fromString(sessionId);
@@ -191,7 +191,7 @@ public class SessionController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> create(@RequestBody(required = false) CreateSessionRequest request,
                                     @RequestHeader(value = "X-Workspace-Id", required = false) String workspaceHeader) {
         try {
@@ -213,7 +213,7 @@ public class SessionController {
     }
 
     @PatchMapping("/{sessionId}")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> update(
             @PathVariable String sessionId,
             @RequestBody(required = false) UpdateSessionRequest request) {
@@ -237,7 +237,7 @@ public class SessionController {
     }
 
     @PatchMapping("/{sessionId}/api-request-template")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> updateContextTemplate(@PathVariable String sessionId,
                                                    @RequestBody ContextTemplateBindingRequest request) {
         try {
@@ -255,7 +255,7 @@ public class SessionController {
     }
 
     @DeleteMapping("/{sessionId}")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> delete(@PathVariable String sessionId) {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();

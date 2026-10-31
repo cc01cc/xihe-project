@@ -23,7 +23,6 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/provider-connections")
-@PreAuthorize("hasAnyRole('USER', 'ADMIN')")
 public class ProviderConnectionController {
 
     private static final Logger logger = LoggerFactory.getLogger(ProviderConnectionController.class);
@@ -37,11 +36,13 @@ public class ProviderConnectionController {
         this.catalog = catalog;
     }
 
+    @PreAuthorize("isAuthenticated()")
     @GetMapping
     public ResponseEntity<?> listConnections() {
         return ResponseEntity.ok(Map.of("connections", connections.listVisible()));
     }
 
+    @PreAuthorize("isAuthenticated()")
     @PostMapping
     public ResponseEntity<?> create(@RequestBody ConnectionRequest request) {
         try {
@@ -79,6 +80,7 @@ public class ProviderConnectionController {
         }
     }
 
+    @PreAuthorize("isAuthenticated()")
     @PatchMapping("/{connectionId}")
     public ResponseEntity<?> update(
             @PathVariable String connectionId,
@@ -127,6 +129,7 @@ public class ProviderConnectionController {
         }
     }
 
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/{connectionId}/verify")
     public ResponseEntity<?> verify(@PathVariable String connectionId) {
         try {
@@ -145,12 +148,14 @@ public class ProviderConnectionController {
         }
     }
 
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/{connectionId}/api-type-change-impact")
     public ResponseEntity<?> impact(@PathVariable String connectionId, @RequestParam String apiTypeId,
                                     @RequestParam int version) {
         return ResponseEntity.ok(connections.typeImpact(connectionId, apiTypeId, version));
     }
 
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/{connectionId}/delete-impact")
     public ResponseEntity<?> deleteImpact(@PathVariable String connectionId) {
         try {
@@ -166,6 +171,7 @@ public class ProviderConnectionController {
         }
     }
 
+    @PreAuthorize("isAuthenticated()")
     @DeleteMapping("/{connectionId}")
     public ResponseEntity<?> delete(@PathVariable String connectionId) {
         try {

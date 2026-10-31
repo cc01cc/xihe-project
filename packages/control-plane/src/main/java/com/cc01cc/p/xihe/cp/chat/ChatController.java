@@ -219,14 +219,14 @@ public class ChatController {
         });
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/api/v1/sessions/{sessionId}/follow-ups")
     public ResponseEntity<FollowUpQueueSnapshot> getFollowUpQueue(@PathVariable String sessionId) {
         return ResponseEntity.ok(followUpQueueService.snapshot(
                 sessionId, TenantContext.getUserId(), TenantContext.getWorkspaceId()));
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @DeleteMapping("/api/v1/sessions/{sessionId}/follow-ups/{itemId}")
     public ResponseEntity<FollowUpQueueSnapshot> withdrawFollowUp(
             @PathVariable String sessionId, @PathVariable UUID itemId) {
@@ -294,7 +294,7 @@ public class ChatController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/api/v1/sessions/{sessionId}/follow-ups")
     public ResponseEntity<FollowUpQueueSnapshot> enqueueFollowUp(
             @PathVariable String sessionId,
@@ -307,7 +307,7 @@ public class ChatController {
                 .body(result.snapshot());
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/api/v1/sessions/{sessionId}/follow-ups/continue")
     public ResponseEntity<FollowUpQueueSnapshot> continueFollowUpQueue(@PathVariable String sessionId) {
         FollowUpQueueService.ContinueResult result = followUpQueueService.continueQueue(
@@ -372,7 +372,7 @@ public class ChatController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping(path = "/api/v1/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter events(@RequestParam(name = "sessionId") String sessionId) {
         if (sessionId == null || sessionId.isBlank()) {
@@ -396,7 +396,7 @@ public class ChatController {
         return emitter;
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/api/v1/chat")
     public ResponseEntity<Map<String, Object>> chat(
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyHeader,
@@ -611,7 +611,7 @@ public class ChatController {
 
     // ── PLAN-292 M3 (C2): run status recovery ──────────────────────────────
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/api/v1/chat/runs/{runId}")
     public ResponseEntity<Map<String, Object>> getRunStatus(@PathVariable String runId) {
         String userId = TenantContext.getUserId();
@@ -634,7 +634,7 @@ public class ChatController {
 
     // ── PLAN-0508 T2.2: per-run transport attempt read surface ─────────────
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/api/v1/chat/runs/{runId}/attempts")
     public ResponseEntity<Map<String, Object>> getRunAttempts(@PathVariable String runId) {
         String userId = TenantContext.getUserId();
@@ -663,7 +663,7 @@ public class ChatController {
      * carries {@code waitingOnRunId}/{@code waitingToolCallId}, so no Operation
      * read is involved.
      */
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/api/v1/chat/sessions/{sessionId}/runs")
     public ResponseEntity<Map<String, Object>> listSessionRuns(
             @PathVariable String sessionId,
@@ -684,7 +684,7 @@ public class ChatController {
 
     // ── PLAN-0507: session monitor aggregate (read-only) ───────────────────
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/api/v1/chat/sessions/{sessionId}/monitor")
     public ResponseEntity<Map<String, Object>> getSessionMonitor(@PathVariable String sessionId) {
         String userId = TenantContext.getUserId();
@@ -703,7 +703,7 @@ public class ChatController {
 
     // ── PLAN-275 M1 Task 1.3: Cancel contract ──────────────────────────────
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/api/v1/chat/runs/{runId}/cancel")
     public ResponseEntity<Map<String, Object>> cancelRun(
             @PathVariable String runId,

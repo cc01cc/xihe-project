@@ -33,7 +33,7 @@ public class ContextPublicController {
         this.contextAccessService = contextAccessService;
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/{sessionId}/sources")
     public ResponseEntity<?> sources(@PathVariable String sessionId) {
         String userId = TenantContext.getUserId();

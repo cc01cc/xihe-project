@@ -37,7 +37,7 @@ public class WorkspaceController {
     }
 
     @GetMapping("/current")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> current() {
         String userId = TenantContext.getUserId();
         if (userId == null) {
@@ -51,7 +51,7 @@ public class WorkspaceController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> list() {
         String userId = TenantContext.getUserId();
         if (userId == null) {
@@ -63,7 +63,7 @@ public class WorkspaceController {
     }
 
     @GetMapping("/{workspaceId}")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> get(@PathVariable String workspaceId) {
         String userId = TenantContext.getUserId();
         try {
@@ -74,7 +74,7 @@ public class WorkspaceController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> create(
             @RequestBody(required = false) CreateWorkspaceRequest request,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
@@ -113,7 +113,7 @@ public class WorkspaceController {
     }
 
     @PatchMapping("/{workspaceId}")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> update(
             @PathVariable String workspaceId,
             @RequestBody(required = false) UpdateWorkspaceRequest request) {
@@ -129,7 +129,7 @@ public class WorkspaceController {
     }
 
     @DeleteMapping("/{workspaceId}")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> delete(@PathVariable String workspaceId) {
         String userId = TenantContext.getUserId();
         try {

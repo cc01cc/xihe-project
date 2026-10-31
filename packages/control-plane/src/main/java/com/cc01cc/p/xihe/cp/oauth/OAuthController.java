@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.oauth;
 
 import java.util.Map;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,6 +29,7 @@ public class OAuthController {
         this.workspaceService = workspaceService;
     }
 
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/api/v1/oauth/sessions")
     public ResponseEntity<?> start(Authentication authentication, @RequestBody StartRequest request) {
         try {
@@ -68,6 +70,7 @@ public class OAuthController {
         }
     }
 
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/api/v1/oauth/revoke")
     public ResponseEntity<?> revoke(Authentication authentication, @RequestBody BindingRequest request) {
         try {

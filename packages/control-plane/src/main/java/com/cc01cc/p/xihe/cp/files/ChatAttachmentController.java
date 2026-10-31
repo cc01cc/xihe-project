@@ -34,7 +34,7 @@ public class ChatAttachmentController {
         this.chatAttachmentService = chatAttachmentService;
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @PostMapping
     public ResponseEntity<?> uploadAttachments(
             @PathVariable String sessionId,
@@ -61,7 +61,7 @@ public class ChatAttachmentController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @DeleteMapping("/{fileId}")
     public ResponseEntity<?> deleteAttachment(
             @PathVariable String sessionId,
@@ -83,7 +83,7 @@ public class ChatAttachmentController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/{fileId}")
     public ResponseEntity<?> getAttachmentMetadata(
             @PathVariable String sessionId,

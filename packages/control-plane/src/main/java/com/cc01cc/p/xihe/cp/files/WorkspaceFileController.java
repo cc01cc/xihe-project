@@ -56,7 +56,7 @@ public class WorkspaceFileController {
     }
 
     @GetMapping("/{fileId:[a-fA-F0-9\\\\-]{36}}")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> serveAttachment(@PathVariable String fileId) {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
@@ -96,7 +96,7 @@ public class WorkspaceFileController {
     }
 
     @PostMapping("/upload")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> uploadFile(
             @RequestParam("file") MultipartFile file) {
         try {

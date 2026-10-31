@@ -25,7 +25,7 @@ public class PendingApprovalsController {
         this.approvalService = approvalService;
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/pending")
     public ResponseEntity<?> pending() {
         String userId = TenantContext.getUserId();

@@ -21,7 +21,6 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/agent-templates")
-@PreAuthorize("hasAnyRole('USER', 'ADMIN')")
 public class AgentTemplateController {
 
     private static final Set<String> LAYERS = Set.of("instance", "user", "workspace");
@@ -34,6 +33,7 @@ public class AgentTemplateController {
         this.objectMapper = objectMapper;
     }
 
+    @PreAuthorize("isAuthenticated()")
     @GetMapping
     public ResponseEntity<?> list(@RequestParam(value = "layer", required = false) String layer,
                                   @RequestParam(value = "workspaceId", required = false) String workspaceId) {

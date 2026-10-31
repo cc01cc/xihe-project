@@ -27,7 +27,7 @@ public class WorkspaceEventController {
     }
 
     @GetMapping(path = "/{workspaceId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public SseEmitter events(
             @PathVariable String workspaceId,
             @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId) {

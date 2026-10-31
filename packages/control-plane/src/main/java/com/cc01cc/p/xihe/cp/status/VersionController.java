@@ -46,7 +46,7 @@ public class VersionController {
             ManagementFactory.getRuntimeMXBean().getStartTime()).toString();
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/api/v1/version")
     public Map<String, Object> getVersion() {
         String cpCommit = commit();

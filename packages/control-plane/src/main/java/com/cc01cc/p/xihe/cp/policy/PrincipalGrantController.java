@@ -32,7 +32,6 @@ import java.util.List;
  */
 @RestController
 @RequestMapping("/api/v1/principal-grants")
-@PreAuthorize("hasRole('ADMIN')")
 public class PrincipalGrantController {
 
     /**
@@ -51,6 +50,7 @@ public class PrincipalGrantController {
         this.adminService = adminService;
     }
 
+    @PreAuthorize("hasAuthority('cap:instance:admin')")
     @GetMapping("/{username}")
     public ResponseEntity<?> read(@PathVariable String username) {
         if (!authenticated()) {
@@ -64,6 +64,7 @@ public class PrincipalGrantController {
         }
     }
 
+    @PreAuthorize("hasAuthority('cap:instance:admin')")
     @PatchMapping("/{username}")
     public ResponseEntity<?> patch(@PathVariable String username,
                                    @RequestBody(required = false) PatchBody body) {

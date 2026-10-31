@@ -10,7 +10,6 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/provider-catalog")
-@PreAuthorize("hasAnyRole('USER', 'ADMIN')")
 public class ProviderCatalogController {
 
     private final ProviderCatalogService catalog;
@@ -19,6 +18,7 @@ public class ProviderCatalogController {
         this.catalog = catalog;
     }
 
+    @PreAuthorize("isAuthenticated()")
     @GetMapping
     public ResponseEntity<?> list() {
         return ResponseEntity.ok(Map.of(

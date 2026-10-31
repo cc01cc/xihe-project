@@ -36,7 +36,7 @@ public class WorkspaceRuntimeReleaseController {
     }
 
     @PostMapping("/api/v1/workspaces/{workspaceId}/runtime/release")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> release(
             @PathVariable String workspaceId,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,

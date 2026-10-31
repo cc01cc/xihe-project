@@ -45,7 +45,7 @@ public class RunCheckpointController {
 
     // ── Workspace-scoped checkpoint slices ───────────────────────────────────
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/api/v1/workspaces/{workspaceId}/checkpoints")
     public ResponseEntity<?> list(@PathVariable String workspaceId) {
         ResponseEntity<?> denied = requireWorkspaceAccess(workspaceId);
@@ -55,7 +55,7 @@ public class RunCheckpointController {
         return ResponseEntity.ok(checkpoints.list(workspaceId));
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/api/v1/workspaces/{workspaceId}/checkpoints/revert/preview")
     public ResponseEntity<?> previewRevert(@PathVariable String workspaceId,
                                            @RequestBody(required = false) Map<String, Object> request) {
@@ -81,7 +81,7 @@ public class RunCheckpointController {
         return ResponseEntity.ok(body);
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/api/v1/workspaces/{workspaceId}/checkpoints/revert")
     public ResponseEntity<?> revert(
             @PathVariable String workspaceId,
@@ -122,7 +122,7 @@ public class RunCheckpointController {
         return ResponseEntity.ok(body);
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/api/v1/workspaces/{workspaceId}/checkpoints/blob")
     public ResponseEntity<?> checkpointFile(
             @PathVariable String workspaceId,
@@ -143,7 +143,7 @@ public class RunCheckpointController {
 
     // ── Workspace-scoped git status, retention and sweep ─────────────────────
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/api/v1/workspaces/{workspaceId}/git-status")
     public ResponseEntity<?> workspaceGitStatus(@PathVariable String workspaceId) {
         ResponseEntity<?> denied = requireWorkspaceAccess(workspaceId);
@@ -160,7 +160,7 @@ public class RunCheckpointController {
         return ResponseEntity.ok(body);
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/api/v1/workspaces/{workspaceId}/checkpoints/retention")
     public ResponseEntity<?> retention(@PathVariable String workspaceId) {
         ResponseEntity<?> denied = requireWorkspaceAccess(workspaceId);
@@ -177,7 +177,7 @@ public class RunCheckpointController {
         return ResponseEntity.ok(body);
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/api/v1/workspaces/{workspaceId}/checkpoints/gc")
     public ResponseEntity<?> gc(@PathVariable String workspaceId) {
         ResponseEntity<?> denied = requireWorkspaceAccess(workspaceId);
@@ -191,7 +191,7 @@ public class RunCheckpointController {
         return ResponseEntity.ok(Map.of("counts", outcome.counts()));
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/api/v1/workspaces/{workspaceId}/checkpoints/cleanup")
     public ResponseEntity<?> cleanup(@PathVariable String workspaceId,
                                      @RequestBody(required = false) Map<String, Object> request) {

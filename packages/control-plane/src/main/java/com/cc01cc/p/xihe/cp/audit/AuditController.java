@@ -33,7 +33,6 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/api/v1/audit/entries")
-@PreAuthorize("hasAnyRole('USER', 'ADMIN')")
 public class AuditController {
 
     private static final Logger logger = LoggerFactory.getLogger(AuditController.class);
@@ -46,6 +45,7 @@ public class AuditController {
         this.workspaceService = workspaceService;
     }
 
+    @PreAuthorize("isAuthenticated()")
     @GetMapping
     public ResponseEntity<?> list(
             @RequestParam(required = false) String sessionId,
@@ -86,6 +86,7 @@ public class AuditController {
         }
     }
 
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/{type}/{id}")
     public ResponseEntity<?> detail(@PathVariable String type, @PathVariable String id) {
         try {

@@ -28,7 +28,7 @@ public class StatusController {
         this.healthMonitor = healthMonitor;
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/api/v1/status")
     public Map<String, Object> getStatus() {
         List<Map<String, Object>> services = new ArrayList<>();

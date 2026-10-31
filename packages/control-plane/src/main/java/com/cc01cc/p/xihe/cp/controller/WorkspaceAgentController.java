@@ -25,7 +25,6 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/workspaces/{workspaceId}/agents")
-@PreAuthorize("hasAnyRole('USER', 'ADMIN')")
 public class WorkspaceAgentController {
 
     private final AgentPrincipalService agentPrincipalService;
@@ -36,6 +35,7 @@ public class WorkspaceAgentController {
         this.objectMapper = objectMapper;
     }
 
+    @PreAuthorize("isAuthenticated()")
     @GetMapping
     public ResponseEntity<?> list(@PathVariable String workspaceId) {
         try {
@@ -48,6 +48,7 @@ public class WorkspaceAgentController {
         }
     }
 
+    @PreAuthorize("isAuthenticated()")
     @PutMapping("/{principalId}")
     public ResponseEntity<?> update(@PathVariable String workspaceId, @PathVariable String principalId,
                                     @RequestBody(required = false) Map<String, Object> body) {
@@ -68,6 +69,7 @@ public class WorkspaceAgentController {
         }
     }
 
+    @PreAuthorize("isAuthenticated()")
     @DeleteMapping("/{principalId}")
     public ResponseEntity<?> remove(@PathVariable String workspaceId, @PathVariable String principalId) {
         try {
