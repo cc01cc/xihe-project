@@ -7,6 +7,7 @@ import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.entity.InstanceOwner;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.UserRole;
+import com.cc01cc.p.xihe.cp.entity.UserStatus;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
@@ -93,6 +94,12 @@ public class UserRoleService {
 
         User target = users.findByIdForUpdate(targetUserId).orElseThrow(() -> new CpApiException(
                 HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "User not found"));
+        // PLAN-0581 (merge-audit follow-up): soft delete is terminal for every write
+        // path, not just the status/password ones. Without this, a role change on a
+        // deleted row would answer 200 while really writing (role + epoch bump +
+        // default-grant row + audit) — the same terminal state would get two
+        // different answers depending on which endpoint the operator used.
+        requireNotDeleted(target);
         UserRole previousRole = target.getRole();
         if (previousRole == newRole) {
             return target;
@@ -102,10 +109,19 @@ public class UserRoleService {
             deny(actorUserId, target, previousRole, newRole, "INSTANCE_OWNER_PROTECTED",
                     HttpStatus.CONFLICT, "The instance owner cannot be demoted");
         }
+        // PLAN-0581 corrects the counting basis of PLAN-0580's guard: a DISABLED or
+        // soft-deleted ADMIN cannot log in, so it must not count as the instance's
+        // remaining administrator. With the plain row count, "disable admin A" plus
+        // "demote admin B" would leave zero usable admins.
+        //
+        // The threshold is 1 only when the target itself is still usable; demoting an
+        // already-disabled ADMIN removes nothing from the usable set, so requiring
+        // count >= 2 there would reject a harmless request (merge-audit P2-1).
         if (previousRole == UserRole.ADMIN && newRole == UserRole.USER
-                && users.countByRole(UserRole.ADMIN) <= 1) {
+                && users.countByRoleAndStatusAndDeletedAtIsNull(UserRole.ADMIN, UserStatus.ACTIVE)
+                <= (target.isUsable() ? 1 : 0)) {
             deny(actorUserId, target, previousRole, newRole, "LAST_ADMIN",
-                    HttpStatus.CONFLICT, "The instance must keep at least one ADMIN");
+                    HttpStatus.CONFLICT, "The instance must keep at least one usable ADMIN");
         }
 
         target.setRole(newRole);
@@ -136,6 +152,21 @@ public class UserRoleService {
             return owners.save(new InstanceOwner());
         });
         return owner.getOwnerUserId();
+    }
+
+    /**
+     * PLAN-0581 (merge-audit follow-up): the terminal-state rule shared with
+     * {@code UserAdminService.requireNotDeleted} — kept as a local copy so the 0580
+     * service does not depend on the 0581 admin surface; both answer the same
+     * contract code {@code 409 USER_DELETED} for a soft-deleted target.
+     */
+    private void requireNotDeleted(User target) {
+        if (target.getDeletedAt() != null) {
+            logger.info("[LIFECYCLE] service=cp event=user_role_change_denied target={}"
+                    + " reason=USER_DELETED", target.getId());
+            throw new CpApiException(HttpStatus.CONFLICT, "USER_DELETED",
+                    "A soft-deleted account cannot be modified (deletion is irreversible in v1)");
+        }
     }
 
     private void deny(String actorUserId, User target, UserRole previousRole, UserRole newRole,

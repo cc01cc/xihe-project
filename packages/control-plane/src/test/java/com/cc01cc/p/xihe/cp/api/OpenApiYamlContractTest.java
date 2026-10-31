@@ -314,4 +314,57 @@ class OpenApiYamlContractTest {
             assertTrue(schemas.containsKey("UserRoleView"), "UserRoleView schema is contracted");
         }
     }
+
+    /**
+     * PLAN-0581 T3.1 / verify V9: the user-management surface must be contracted in
+     * the same wave as the implementation — six {@code /api/v1/users*} operations,
+     * the admin view without credential/epoch columns, the status enum and the
+     * closed-registration error code.
+     */
+    @Test
+    void openApiContainsUserManagementRoutesAndRegistrationPolicyCode() throws Exception {
+        Path contract = Path.of("..", "..", "docs", "api", "openapi.yaml");
+        try (InputStream input = Files.newInputStream(contract)) {
+            Map<?, ?> document = new Yaml().load(input);
+            Map<?, ?> paths = (Map<?, ?>) document.get("paths");
+            assertTrue(paths.containsKey("/api/v1/users"), "collection route is contracted");
+            assertTrue(paths.containsKey("/api/v1/users/{userId}"), "detail/delete route is contracted");
+            assertTrue(paths.containsKey("/api/v1/users/{userId}/status"), "status route is contracted");
+            assertTrue(paths.containsKey("/api/v1/users/{userId}/password-reset"),
+                    "password-reset route is contracted");
+            assertTrue(paths.containsKey("/api/v1/users/{userId}/role"),
+                    "the 0580 role route stays contracted");
+
+            Map<?, ?> collection = (Map<?, ?>) paths.get("/api/v1/users");
+            assertTrue(collection.containsKey("get"), "list is contracted");
+            assertTrue(collection.containsKey("post"), "admin create is contracted");
+            Map<?, ?> detail = (Map<?, ?>) paths.get("/api/v1/users/{userId}");
+            assertTrue(detail.containsKey("get"), "detail is contracted");
+            assertTrue(detail.containsKey("delete"), "soft delete is contracted");
+            assertTrue(((Map<?, ?>) paths.get("/api/v1/users/{userId}/status")).containsKey("patch"));
+            assertTrue(((Map<?, ?>) paths.get("/api/v1/users/{userId}/password-reset")).containsKey("post"));
+
+            Map<?, ?> schemas = (Map<?, ?>) ((Map<?, ?>) document.get("components")).get("schemas");
+            Map<?, ?> adminView = (Map<?, ?>) schemas.get("UserAdminView");
+            assertInstanceOf(Map.class, adminView, "UserAdminView schema is contracted");
+            Map<?, ?> viewProps = (Map<?, ?>) adminView.get("properties");
+            for (String field : List.of("id", "email", "username", "name", "role", "status", "deletedAt",
+                    "createdAt")) {
+                assertTrue(viewProps.containsKey(field), "UserAdminView must carry " + field);
+            }
+            for (String forbidden : List.of("passwordHash", "tokenVersion", "sessionVersion")) {
+                assertTrue(!viewProps.containsKey(forbidden),
+                        "UserAdminView must not expose " + forbidden);
+            }
+            String statusSchema = String.valueOf(
+                    ((Map<?, ?>) ((Map<?, ?>) schemas.get("UserStatusRequest")).get("properties")).get("status"));
+            assertTrue(statusSchema.contains("ACTIVE") && statusSchema.contains("DISABLED"),
+                    "status enum is contracted: " + statusSchema);
+            assertTrue(schemas.containsKey("UserAdminPage"), "UserAdminPage schema is contracted");
+            assertTrue(schemas.containsKey("UserCreateRequest"), "UserCreateRequest schema is contracted");
+            assertTrue(schemas.containsKey("UserCreatedResponse"), "UserCreatedResponse schema is contracted");
+            assertTrue(schemas.containsKey("UserPasswordResetResponse"),
+                    "UserPasswordResetResponse schema is contracted");
+        }
+    }
 }

@@ -74,6 +74,18 @@ public class AccessTokenAuthenticator {
             logger.debug("[AUTH] access token rejected reason=unknown_subject userId={}", userId);
             return Optional.empty();
         }
+        // T4 (PLAN-0581, decision: "禁用账号 = 永久不禁用" must be impossible): a
+        // disabled or soft-deleted account never authenticates again, even with a
+        // not-yet-expired token and a matching epoch. The lifecycle write bumps
+        // token_version in the same transaction, so this branch only carries the
+        // window where a stale token was issued before the bump — it must still be
+        // refused rather than trusted. Same fail-closed shape as T1–T3: no
+        // authentication, never an exception (the filter has no try/catch).
+        if (!user.isUsable()) {
+            logger.debug("[AUTH] access token rejected reason=account_not_active userId={}"
+                    + " status={} deleted={}", userId, user.getStatus(), user.getDeletedAt() != null);
+            return Optional.empty();
+        }
 
         Integer claimVersion;
         try {

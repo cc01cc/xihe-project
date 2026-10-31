@@ -111,6 +111,16 @@ xihe 使用单个浏览器 project（chromium），通过 `XIHE_E2E_PROFILE` 区
 
 禁止通过 `test.skip()` 或放宽断言掩盖拓扑缺失。
 
+### 1.3a 会话终止的 E2E 口径（PLAN-0581）
+
+账号被管理员禁用/软删/重置密码后，**双通道同时失效**（access 的 `tv` 与 refresh 的 `sv`），E2E 侧的可判定链路固定为：
+
+1. 用户上下文发一次业务请求 → 网络层出现 **401**（`code=AUTHORIZATION_REQUIRED`，来自 access 通道，不是新错误码）；
+2. 前端的静默刷新（0546 `ensureRefreshed`）打到 `/api/v1/auth/refresh` → **刷新失败**（refresh 通道的 `sv` 不匹配）；
+3. 页面落到 `/login`，且 `localStorage` 的 `xihe-token`／`xihe-refresh-token`／`xihe-user` 三个键均已清除。
+
+反向对照必须同批存在：**角色变更后用户不被登出**（access 401 → 刷新成功 → 重放，刷新出的 access 带新 `role`），用来证明双通道没有被错误地合并成一个开关。这两条属 `browserConsumer` 证据，归 L1/L2 波次执行；API 级的同源断言在 CP 集成测试（`UserAdminIntegrationTest`）里已有。
+
 ## 2. 截图与视觉回归方案
 
 ### 2.1 基线追踪

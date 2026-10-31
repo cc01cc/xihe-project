@@ -197,6 +197,7 @@ class AuthLocalModeTest {
             return new AuthController(authService, workspaceService, localModeService,
                     mock(LoginAttemptService.class), mock(ClientIpResolver.class),
                     mock(com.cc01cc.p.xihe.cp.service.InstanceOwnershipService.class),
+                    mock(com.cc01cc.p.xihe.cp.auth.RegistrationPolicy.class),
                     mock(org.springframework.transaction.PlatformTransactionManager.class));
         }
 
