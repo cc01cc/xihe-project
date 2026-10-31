@@ -292,7 +292,7 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
         Workspace ws = workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId)).stream().findFirst().orElseThrow();
         workspaceId = ws.getId().toString();
         workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
-        authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId);
+        authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId, 0);
         var defaultTemplate = agentTemplateService.resolveForCreation(userId, workspaceId, null);
         AgentPrincipal principal = agentPrincipalService.createPrincipal(
                 userId, "Chat integration principal", null, defaultTemplate.snapshot());

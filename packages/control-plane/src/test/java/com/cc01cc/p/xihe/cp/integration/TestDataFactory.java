@@ -51,11 +51,19 @@ public class TestDataFactory {
         return tokenProvider;
     }
 
-    public static String createWorkspaceToken(String userId, String email, String role, String workspaceId) {
-        return tokenProvider().createAccessToken(userId, email, role, workspaceId);
+    /**
+     * PLAN-0580: the seam builds its own provider and never touches the database,
+     * so the access-token epoch ({@code tv}) cannot be derived here — the caller
+     * states it explicitly. Tests that mint a token for a freshly created user
+     * pass {@code 0}, which is what V85 initializes {@code users.token_version}
+     * to.
+     */
+    public static String createWorkspaceToken(String userId, String email, String role,
+                                              String workspaceId, int tokenVersion) {
+        return tokenProvider().createAccessToken(userId, email, role, workspaceId, tokenVersion);
     }
 
-    public static String createGlobalToken(String userId, String email, String role) {
-        return tokenProvider().createAccessToken(userId, email, role, null);
+    public static String createGlobalToken(String userId, String email, String role, int tokenVersion) {
+        return tokenProvider().createAccessToken(userId, email, role, null, tokenVersion);
     }
 }

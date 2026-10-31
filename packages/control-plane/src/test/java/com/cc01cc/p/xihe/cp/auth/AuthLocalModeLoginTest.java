@@ -42,7 +42,8 @@ class AuthLocalModeLoginTest {
             }
         };
         AuthController controller = new AuthController(authService, workspaceService, localMode,
-                attempts, resolver, mock(PlatformTransactionManager.class));
+                attempts, resolver, mock(com.cc01cc.p.xihe.cp.service.InstanceOwnershipService.class),
+                mock(PlatformTransactionManager.class));
 
         controller.login(new LoginRequest("local@test.com", "pw-12345678"),
                 new MockHttpServletRequest());

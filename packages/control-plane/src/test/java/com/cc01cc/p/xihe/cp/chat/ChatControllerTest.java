@@ -255,7 +255,7 @@ class ChatControllerTest extends AbstractH2Test {
         Workspace ws = workspaceRepository.save(new Workspace("chat-test-workspace", userId));
         workspaceId = ws.getId().toString();
         workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
-        authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId);
+        authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId, 0);
 
         var defaultTemplate = agentTemplateService.resolveForCreation(userId, workspaceId, null);
         AgentPrincipal principal = agentPrincipalService.createPrincipal(
@@ -855,7 +855,7 @@ class ChatControllerTest extends AbstractH2Test {
         Workspace ws2 = workspaceRepository.save(new Workspace("chat-test-other", user2.getId().toString()));
         workspaceUserRepository.save(new WorkspaceUser(ws2.getId().toString(), user2.getId().toString(), WorkspaceRole.OWNER));
         String token2 = jwtTokenProvider.createAccessToken(
-                user2.getId().toString(), email2, "USER", ws2.getId().toString());
+                user2.getId().toString(), email2, "USER", ws2.getId().toString(), 0);
 
         HttpHeaders headers2 = new HttpHeaders();
         headers2.setBearerAuth(token2);

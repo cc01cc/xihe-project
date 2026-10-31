@@ -189,8 +189,8 @@ class SessionWorkspaceBindingNegativeTest extends AbstractH2Test {
         workspaceB = b.getId().toString();
         workspaceUserRepository.save(new WorkspaceUser(workspaceB, userId, WorkspaceRole.OWNER));
 
-        tokenA = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceA);
-        tokenB = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceB);
+        tokenA = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceA, 0);
+        tokenB = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceB, 0);
 
         ProviderConnection chatConnection = ChatBindingTestSupport.ensureChatConnection(
                 providerConnectionRepository, "USER", userId, "plan-0348");

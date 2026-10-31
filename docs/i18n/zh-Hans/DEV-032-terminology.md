@@ -30,6 +30,8 @@ updated: 2026-10-25
 | **owner** | A. workspace **权限角色**（成员 owner/admin） | `workspace 角色 owner` 或 `角色=owner` | 裸 `owner` 指操作锁持有者 | 与 RBAC 一致 |
 | | B. 生命周期 **工作区操作锁持有者** | **`workspace operation lock holder`**（中文：**工作区生命周期操作锁持有者**） | 裸 `owner`、`active owner` 无操作锁上下文；`execution lease holder`（旧名） | PLAN-0474；Runtime materialization 与显式删除的进程内互斥 |
 | | C. **资源归属**（连接、工作区、会话挂在谁名下） | **`资源归属 owner`**（英文：*resource owner*；字段写 `owner_type` / `owner_id`） | 用裸 `owner` 指归属；把归属与「workspace 角色 owner」混用 | 连接归属 ≠ 成员角色；目标态 `owner_type` 可含 `AGENT`（见 §1.1） |
+| | D. **实例所有权**（这台实例归哪个 ADMIN 管，单例可转移） | **`实例 owner`**（英文：*instance owner*；表 `instance_owner`、字段 `owner_user_id`） | 裸 `owner`；`超级管理员` / `SUPER_ADMIN`（不存在此角色） | PLAN-0580；能力集合与所有权基数分开：owner **不是**第三种平台角色，仍是 `ADMIN` |
+| **tv** | access token epoch（签发时抄下的 `users.token_version`） | **`token 代次`**（英文：*access-token epoch*；claim 名固定 `tv`） | 与 JWT `iat`/`exp` 混用；把 `token_version` 说成「密码版本」 | PLAN-0580 §4.1；角色变更使其 +1，旧 token 下一次请求即 401 |
 | **role** | A. 平台身份 | **`平台角色`**（*platform role*，值 `ADMIN` / `USER`，来自 JWT `role` claim） | 裸 `role` 指 workspace 角色 | 判定入口 `@PreAuthorize`；见 §1.1 |
 | | B. workspace 内身份 | **`workspace 角色`**（值 `OWNER` / `MEMBER`；`ADMIN` / `VIEWER` 为悬空枚举值，未落库） | 裸 `role` 指平台角色 | 见 §1.1 与 backlog「身份与权限模型」 |
 | **L1 / L2 / L3** | 上下文注入槽 L0–L3 | **`context L1`**（中文：**上下文 L1 槽**） | 裸 `L1` | 0340 模型 |

@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import jakarta.persistence.LockModeType;
 import com.cc01cc.p.xihe.cp.entity.User;
+import com.cc01cc.p.xihe.cp.entity.UserRole;
 
 import java.util.Optional;
 
@@ -21,4 +22,7 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select u from User u where u.id = :id")
     Optional<User> findByIdForUpdate(UUID id);
+
+    /** PLAN-0580 I2: last-admin guard reads the ADMIN count under the instance lock. */
+    long countByRole(UserRole role);
 }

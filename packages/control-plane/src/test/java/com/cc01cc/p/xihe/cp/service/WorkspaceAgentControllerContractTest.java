@@ -163,7 +163,7 @@ class WorkspaceAgentControllerContractTest extends AbstractIntegrationTest {
         principalId = principal.getId();
         addGrant("read", "*");
         addPrincipalGrant("read", "*");
-        token = TestDataFactory.createWorkspaceToken(userId.toString(), user.getEmail(), "USER", workspaceId.toString());
+        token = TestDataFactory.createWorkspaceToken(userId.toString(), user.getEmail(), "USER", workspaceId.toString(), 0);
     }
 
     private void addGrant(String actionClass, String resource) throws Exception {

@@ -190,9 +190,9 @@ class PrincipalGrantAuthorizationIntegrationTest extends AbstractIntegrationTest
         workspaceUserRepository.saveAndFlush(new WorkspaceUser(workspaceId.toString(),
                 targetId.toString(), WorkspaceRole.OWNER));
 
-        adminToken = TestDataFactory.createGlobalToken(adminId.toString(), admin.getEmail(), "ADMIN");
+        adminToken = TestDataFactory.createGlobalToken(adminId.toString(), admin.getEmail(), "ADMIN", 0);
         targetToken = TestDataFactory.createWorkspaceToken(targetId.toString(), target.getEmail(),
-                "USER", workspaceId.toString());
+                "USER", workspaceId.toString(), 0);
     }
 
     private static String shortId() {

@@ -105,7 +105,7 @@ class ChatAttachmentControllerTest extends AbstractH2Test {
         workspaceId = ws.getId().toString();
         workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
 
-        authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId);
+        authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId, 0);
 
         sessionId = UUID.randomUUID().toString();
         Session session = new Session(workspaceId, userId, "Attachment Test");
@@ -316,7 +316,7 @@ class ChatAttachmentControllerTest extends AbstractH2Test {
                 new RegisterRequest(otherEmail, TestDataFactory.PASSWORD, "Other"), AuthResponse.class);
         User other = userRepository.findByEmail(otherEmail).orElseThrow();
         workspaceUserRepository.save(new WorkspaceUser(workspaceId, other.getId().toString(), WorkspaceRole.MEMBER));
-        String otherToken = jwtTokenProvider.createAccessToken(other.getId().toString(), otherEmail, "USER", workspaceId);
+        String otherToken = jwtTokenProvider.createAccessToken(other.getId().toString(), otherEmail, "USER", workspaceId, 0);
 
         ResponseEntity<Map> response = restTemplate.exchange(
                 baseUrl + "/api/v1/sessions/" + sessionId + "/attachments/" + owned.getId().toString(),

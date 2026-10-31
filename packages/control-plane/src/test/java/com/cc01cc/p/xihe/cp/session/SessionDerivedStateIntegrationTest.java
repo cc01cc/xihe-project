@@ -154,7 +154,7 @@ class SessionDerivedStateIntegrationTest extends AbstractIntegrationTest {
         User other = users.save(new User("invisible-" + UUID.randomUUID() + "@test.com", "hash",
                 UserRole.USER, "Invisible user"));
         String otherToken = jwtTokenProvider.createAccessToken(other.getId().toString(), other.getEmail(),
-                "USER", workspace.getId().toString());
+                "USER", workspace.getId().toString(), 0);
 
         ResponseEntity<Map> notWorkspaceMember = restTemplate.exchange(
                 baseUrl + "/api/v1/sessions/" + parent.getId() + "/derived-state",
@@ -172,7 +172,7 @@ class SessionDerivedStateIntegrationTest extends AbstractIntegrationTest {
                 baseUrl + "/api/v1/sessions/" + parent.getId() + "/derived-state",
                 HttpMethod.GET, new HttpEntity<>(new HttpHeaders()), Map.class);
         String serviceToken = jwtTokenProvider.createAccessToken(owner.getId().toString(), owner.getEmail(),
-                "SERVICE", workspace.getId().toString());
+                "SERVICE", workspace.getId().toString(), 0);
         ResponseEntity<Map> forbiddenRole = restTemplate.exchange(
                 baseUrl + "/api/v1/sessions/" + parent.getId() + "/derived-state",
                 HttpMethod.GET, bearer(serviceToken), Map.class);

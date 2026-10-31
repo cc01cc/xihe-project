@@ -44,6 +44,13 @@ flowchart LR
 - PLAN-0565 账号标识（裁定 #7）：`users.username` NOT NULL UNIQUE（`^[a-z][a-z0-9]{0,31}$`，字母开头，V82 回填）；注册可选自填（留空由 email 本地部分生成默认、冲突加序号，非法 400 `USERNAME_INVALID`/占用 409 `USERNAME_TAKEN`）；`LoginRequest` 字段由 `email` 改为 `identifier`——含 `@` 按 email 解析、否则按 username 解析，登录限流键与失败审计同步改口径（email 值仍 mask、username 公开可明文）。
 - 契约见 [`spec/security/authentication.md`](../../../spec/security/authentication.md) §4/§5 与 `docs/api/inventory.md`。
 
+## 1b. 实例所有权与 access token epoch（PLAN-0580）
+
+- **实例 owner 是单例指针，不是第三种角色**：表 `instance_owner`（`id SMALLINT PK` + `CHECK (id = 1)`，行内 `owner_user_id` / `assigned_at` / `assigned_by`），指向的用户必须仍是 `users.role = 'ADMIN'`（不变式 I1）。所有权经 `PUT /api/v1/instance/owner` 转移：只有**当前 owner** 可发起（普通 ADMIN 仍 403 `NOT_INSTANCE_OWNER`），必须口令复核（401 `INVALID_CREDENTIALS`，复用 PLAN-0558 失败计数与 BCrypt 并发槽，不新增计数器），成功写 durable 审计 `instance_owner_transferred`；旧 owner 保持 ADMIN。
+- **读面不泄漏账号标识**：`GET /api/v1/instance/owner` 任意已认证用户可读，返回 `{ownerUserId, assignedAt, isCurrentUser}`；无 ADMIN 时两个 owner 字段为 `null` 且 **200**（非 404）。响应刻意不含 `username`/`email`/`name` —— `/api/v1/users*` 是 ADMIN 面（PLAN-0581），在此暴露 owner 账号名等于给出账号枚举旁路。
+- **守卫与写序**：`PATCH /api/v1/users/{userId}/role`（ADMIN-only）在单一事务内按固定顺序执行「实例锁 → 守卫 → `users.role` → default 集 resync（仅 `subject_type='user'`）→ `users.token_version + 1` → 审计」；锁序恒为 `instance_owner` 单例行 → 目标 `users` 行，首语句 `dbLockTimeout.apply()`（锁超时 → 503 `OPERATION_LOCK_TIMEOUT`，与 409 状态冲突严格区分）。守卫优先级：owner 保护（409 `INSTANCE_OWNER_PROTECTED`，审计 `user_role_change_denied` 用独立事务落库）先于 last-admin（409 `LAST_ADMIN`）；角色未变的请求是 200 空操作，不 bump 也不写审计。
+- **access token epoch（`tv`）**：access token 除签名外还携带 `tv`（签发时的 `users.token_version`），唯一生产签发点 `AuthService.issueTokens`。每个请求由 `config/AccessTokenAuthenticator` 做一次按主键的用户行读取并比对，**三态 fail-closed**（`sub` 非 UUID / 用户行不存在 / `tv` 缺失或不匹配）一律按未认证处理 → 401 `AUTHORIZATION_REQUIRED`，**不得**变成 500；`JwtAuthenticationFilter` 与 `TenantContextInterceptor` 共用这一判定，撤销后的 token 既不建立 `Authentication` 也不写租户上下文。`InternalTokenFilter` 的 `cp.agent-api-token` 不是用户 access token，仍不写用户租户语义。详见 [`spec/security/authorization.md`](../../../spec/security/authorization.md) §4/§4.1。
+
 ## 2. 会话级持久 SSE（PLAN-230）
 
 - `SseEmitterManager` 按 `{sessionId, generation, emitter}` 存储，单会话单活；新连接替换旧连接（`chat_sse_replaced`），旧 `onCompletion` 用 `removeIfCurrent` 身份比对保护（误删记 `stale_cleanup_ignored`）。

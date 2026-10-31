@@ -2807,6 +2807,54 @@ paths:
         '200': { description: Audit entry detail (internal tier), content: { application/json: { schema: { $ref: '#/components/schemas/InternalAuditEntryDetailResponse' } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '404': { description: AUDIT_ENTRY_NOT_FOUND (unknown id), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/instance/owner:
+    get:
+      operationId: getInstanceOwner
+      summary: Read the instance owner pointer (PLAN-0580)
+      description: 'Any authenticated user. Returns ownerUserId/assignedAt/isCurrentUser; both owner fields are null when the instance has no ADMIN yet (HTTP 200, never 404). The response MUST NOT carry username/email/name: the users surface is ADMIN-only (PLAN-0581), so exposing the owner handle here would be an account-enumeration side channel.'
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: 'Instance owner view', content: { application/json: { schema: { $ref: '#/components/schemas/InstanceOwnerView' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+    put:
+      operationId: transferInstanceOwner
+      summary: Transfer instance ownership (PLAN-0580)
+      description: 'Current owner only: an ADMIN who is not the owner gets 403 NOT_INSTANCE_OWNER. Body {targetUserId, password}; the password is re-verified against the caller row (401 INVALID_CREDENTIALS, counted by the PLAN-0558 lockout, no new counter). target must exist (404 USER_NOT_FOUND) and be ADMIN (409 OWNER_TARGET_NOT_ADMIN). One transaction: instance lock -> owner check -> target check -> password -> single-row UPDATE -> durable audit instance_owner_transferred (detail from/to, never the password). The previous owner stays ADMIN. localMode answers 409 LOCAL_SINGLE_USER_MODE; a lock wait over cp.lock-timeout-ms answers 503 OPERATION_LOCK_TIMEOUT.'
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InstanceOwnerTransferRequest' }
+      responses:
+        '200': { description: 'New owner view', content: { application/json: { schema: { $ref: '#/components/schemas/InstanceOwnerView' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /api/v1/users/{userId}/role:
+    patch:
+      operationId: changeUserRole
+      summary: Change an instance role (PLAN-0580)
+      description: 'ADMIN only. Body {role: ADMIN|USER}; any other value is 400 INVALID_ROLE. One transaction, fixed order: instance lock -> guards -> users.role -> default-grant resync (subject_type=user only) -> users.token_version + 1 -> audit user_role_changed. Guard priority: the current owner cannot be demoted (409 INSTANCE_OWNER_PROTECTED, audited as user_role_change_denied), then the last ADMIN cannot be removed (409 LAST_ADMIN). A request that does not change the role is a no-op 200 with no epoch bump and no audit row. The epoch bump invalidates every access token issued before it: the next request with such a token answers 401 AUTHORIZATION_REQUIRED. localMode answers 409 LOCAL_SINGLE_USER_MODE; a lock wait over cp.lock-timeout-ms answers 503 OPERATION_LOCK_TIMEOUT (safe to retry).'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: userId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserRoleChangeRequest' }
+      responses:
+        '200': { description: 'Role view', content: { application/json: { schema: { $ref: '#/components/schemas/UserRoleView' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer }
@@ -2825,6 +2873,29 @@ components:
           schema: { type: string, enum: [no-store] }
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
   schemas:
+    InstanceOwnerView:
+      type: object
+      description: 'PLAN-0580 owner pointer. Deliberately carries no account identifiers (no username/email/name): the users surface is ADMIN-only.'
+      properties:
+        ownerUserId: { type: string, format: uuid, nullable: true, description: 'null when the instance has no ADMIN yet' }
+        assignedAt: { type: string, format: date-time, nullable: true, description: 'ISO-8601 instant; null together with ownerUserId' }
+        isCurrentUser: { type: boolean, description: 'true when the requesting principal is the current owner' }
+    InstanceOwnerTransferRequest:
+      type: object
+      required: [targetUserId, password]
+      properties:
+        targetUserId: { type: string, format: uuid }
+        password: { type: string, description: 'The current owner''s login password (re-authentication, never stored or logged)' }
+    UserRoleView:
+      type: object
+      properties:
+        userId: { type: string, format: uuid }
+        role: { type: string, enum: [ADMIN, USER] }
+    UserRoleChangeRequest:
+      type: object
+      required: [role]
+      properties:
+        role: { type: string, enum: [ADMIN, USER] }
     ContextEventReadView:
       type: object
       additionalProperties: false

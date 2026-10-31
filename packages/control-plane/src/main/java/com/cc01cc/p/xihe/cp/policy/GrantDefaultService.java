@@ -111,6 +111,61 @@ public class GrantDefaultService {
         grantRepository.saveAndFlush(grant);
     }
 
+    /**
+     * PLAN-0580 #6/#13 (decision #6): rewrite the user's {@code source=default}
+     * grant to the permission set of its current role, in the same transaction
+     * as the role change. Updates the existing row in place (keeps its id,
+     * granter and read_state so the audit chain stays intact); creates it when
+     * missing.
+     *
+     * <p><b>Scope is {@code subjectType="user"} only</b> (decision #13): the
+     * {@code subjectType="agent"} default rows minted by
+     * {@link #ensureAgentSessionDefault(Session)} are the permission snapshot of
+     * an already-created Session and stay frozen after a role change — the same
+     * model as PLAN-0494 #13 ("binding only affects new sessions"). V5.1 asserts
+     * this "unchanged" outcome on purpose.
+     */
+    @Transactional
+    public void resyncUserDefault(User user) {
+        if (user == null || user.getId() == null || user.getRole() == null) {
+            throw new IllegalArgumentException("A persisted user and role are required for default grants");
+        }
+        dbLockTimeout.apply();
+        User lockedUser = userLock.lockAndFind(user.getId())
+                .orElseThrow(() -> new IllegalArgumentException("User not found"));
+        resyncDefault("user", lockedUser.getId(), lockedUser.getRole(), lockedUser.getId().toString(), null);
+    }
+
+    private void resyncDefault(String subjectType, UUID subjectId, UserRole role,
+                               String actorUserId, String workspaceId) {
+        ArrayNode permissions = defaultPermissions(role);
+        List<AuthorizationGrant> existing = grantRepository.findBySubjectTypeAndSubjectId(subjectType, subjectId)
+                .stream()
+                .filter(grant -> "default".equals(grant.getSource()))
+                .toList();
+        if (existing.isEmpty()) {
+            AuthorizationGrant grant = new AuthorizationGrant();
+            grant.setId(UUID.randomUUID());
+            grant.setSubjectType(subjectType);
+            grant.setSubjectId(subjectId);
+            grant.setPermissions(permissions);
+            grant.setSource("default");
+            grant.setReadState("read");
+            AuthorizationGrant saved = grantRepository.save(grant);
+            auditLogger.recordDurableChange(actorUserId, workspaceId,
+                    "authorization_default_grant_created", "grant", saved.getId().toString(),
+                    "source=default subjectType=" + subjectType + " userRole=" + role.name());
+            return;
+        }
+        for (AuthorizationGrant grant : existing) {
+            grant.setPermissions(permissions);
+            grantRepository.save(grant);
+            auditLogger.recordDurableChange(actorUserId, workspaceId,
+                    "authorization_default_grant_synced", "grant", grant.getId().toString(),
+                    "source=default subjectType=" + subjectType + " userRole=" + role.name());
+        }
+    }
+
     private void ensureDefault(String subjectType, UUID subjectId, UserRole role,
                                String actorUserId, String workspaceId) {
         if (grantRepository.existsBySubjectTypeAndSubjectIdAndSource(subjectType, subjectId, "default")) {

@@ -32,7 +32,7 @@ class JwtTokenProviderTest {
 
     @Test
     void generateTokenReturnsValidJwt() {
-        String token = provider.createAccessToken("user-1", "test@test.com", "USER", "workspace-1");
+        String token = provider.createAccessToken("user-1", "test@test.com", "USER", "workspace-1", 0);
 
         assertNotNull(token);
         assertEquals(3, token.split("\\.").length);
@@ -41,7 +41,7 @@ class JwtTokenProviderTest {
 
     @Test
     void generateTokenHandlesNullWorkspaceId() {
-        String token = provider.createAccessToken("user-1", "test@test.com", "USER", null);
+        String token = provider.createAccessToken("user-1", "test@test.com", "USER", null, 0);
 
         assertNotNull(token);
         assertTrue(provider.validateToken(token));
@@ -49,28 +49,28 @@ class JwtTokenProviderTest {
 
     @Test
     void getUserIdFromTokenExtractsCorrectId() {
-        String token = provider.createAccessToken("user-42", "test@test.com", "USER", null);
+        String token = provider.createAccessToken("user-42", "test@test.com", "USER", null, 0);
 
         assertEquals("user-42", provider.getUserIdFromToken(token));
     }
 
     @Test
     void getEmailFromTokenExtractsCorrectEmail() {
-        String token = provider.createAccessToken("user-1", "someone@example.com", "USER", null);
+        String token = provider.createAccessToken("user-1", "someone@example.com", "USER", null, 0);
 
         assertEquals("someone@example.com", provider.getEmailFromToken(token));
     }
 
     @Test
     void getRoleFromTokenExtractsCorrectRole() {
-        String token = provider.createAccessToken("user-1", "test@test.com", "ADMIN", null);
+        String token = provider.createAccessToken("user-1", "test@test.com", "ADMIN", null, 0);
 
         assertEquals("ADMIN", provider.getRoleFromToken(token));
     }
 
     @Test
     void getWorkspaceIdFromTokenExtractsCorrectWorkspace() {
-        String token = provider.createAccessToken("user-1", "test@test.com", "USER", "ws-xyz");
+        String token = provider.createAccessToken("user-1", "test@test.com", "USER", "ws-xyz", 0);
 
         assertEquals("ws-xyz", provider.getWorkspaceIdFromToken(token));
     }
@@ -89,7 +89,7 @@ class JwtTokenProviderTest {
 
     @Test
     void validateTokenRejectsTamperedToken() {
-        String validToken = provider.createAccessToken("user-1", "test@test.com", "USER", null);
+        String validToken = provider.createAccessToken("user-1", "test@test.com", "USER", null, 0);
         String[] parts = validToken.split("\\.");
         String tamperedPayload = Base64.getUrlEncoder().withoutPadding()
                 .encodeToString("{\"sub\":\"attacker\"}".getBytes(StandardCharsets.UTF_8));
@@ -129,7 +129,7 @@ class JwtTokenProviderTest {
 
     @Test
     void validateRefreshTokenRejectsAccessToken() {
-        String accessToken = provider.createAccessToken("user-1", "test@test.com", "USER", null);
+        String accessToken = provider.createAccessToken("user-1", "test@test.com", "USER", null, 0);
 
         assertFalse(provider.validateRefreshToken(accessToken));
     }
@@ -148,7 +148,7 @@ class JwtTokenProviderTest {
         assertTrue(provider.validateRefreshToken(refreshToken));
         assertEquals("user-1", provider.getUserIdFromRefreshToken(refreshToken));
 
-        String newAccessToken = provider.createAccessToken("user-1", "test@test.com", "USER", null);
+        String newAccessToken = provider.createAccessToken("user-1", "test@test.com", "USER", null, 0);
         assertTrue(provider.validateToken(newAccessToken));
         assertEquals("user-1", provider.getUserIdFromToken(newAccessToken));
     }
