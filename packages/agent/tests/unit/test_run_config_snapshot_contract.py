@@ -107,6 +107,18 @@ def test_chat_without_workspace_resolves_without_workspace_layer(monkeypatch: py
     assert resolver.calls == [(None, "u-3")]
 
 
+def test_payload_workspace_wins_over_process_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # I2: the process env binding must never leak into a run's identity.
+    monkeypatch.setenv("XIHE_WORKSPACE_ID", "process-bound-ws")
+    resolver = _RecordingResolver(_snapshot())
+    monkeypatch.setattr(chat_api, "run_config_resolver", resolver)
+    monkeypatch.setattr(chat_api, "validate_snapshot", lambda data: (_raise("no dispatch"), None))
+
+    _post_chat({"workspaceId": "payload-ws", "userId": "u-5"})
+
+    assert resolver.calls == [("payload-ws", "u-5")]
+
+
 def test_supervisor_gate_uses_run_snapshot_not_process_global(monkeypatch: pytest.MonkeyPatch) -> None:
     resolver = _RecordingResolver(_snapshot(**{"agent-runtime": {"useSupervisor": "true"}}))
     monkeypatch.setattr(chat_api, "run_config_resolver", resolver)
