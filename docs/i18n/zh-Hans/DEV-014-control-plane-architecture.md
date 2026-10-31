@@ -255,3 +255,11 @@ PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native
 - **写路径与并发**：POST/PATCH/DELETE 事务先 `findByIdForUpdate` 锁工作区行，锁内读 OWNER 计数与成员行——唯一 OWNER 移除/降级 409 `LAST_OWNER`（服务端强制，无角色例外）；POST insert-only（重复 409 `MEMBER_ALREADY_EXISTS`），role 仅接受 EDITOR/VIEWER（OWNER 不经 API 授予；legacy ADMIN/MEMBER 入参 400）。
 - **账号标识**：见 §1a PLAN-0565 条；成员添加按 username 唯一查找（未注册 404 `USER_NOT_FOUND`），响应 `MemberView`（canonical role，存量 ADMIN/MEMBER 行投影 EDITOR，迁移显式后置）。
 - **审计**：`workspace_member_added` / `workspace_member_role_changed` / `workspace_member_removed` 走 durable `audit_logs`（resourceType `workspace_member`，resourceId=目标 userId；detail 仅 role 信息，不落 email）。
+
+## 13. 会话归属与显式工作区通道（PLAN-0608）
+
+- **两条通道，一个判定**：`POST /api/v1/workspaces/{workspaceId}/sessions`（路径形式，优先）与 `X-Workspace-Id`（header，0559 解析）都汇入 `SessionCreationService` 的同一处 `SessionWorkspaceResolver`；两者同时给出且不一致返回 `400 WORKSPACE_CONTEXT_CONFLICT`，不允许「先到先得」的隐式选择。
+- **B-narrow（只兜会话创建）**：两者都未给出且调用者活跃成员工作区 > 1 时返回 `409 WORKSPACE_CONTEXT_REQUIRED`；恰好 1 个（或 0 个）维持既有回退语义（回退到首个成员工作区 / 下游 401）。该收窄**只作用于会话创建**——`PolicyController`、`WorkspaceFileController`、`ChatAttachmentController` 仍使用既有回退值。
+- **来源可判**：`TenantContext.workspaceSource` 记录本次解析来源（`header|claim|default`），与既有 `[TENANT] workspace_resolved … source=` DEBUG 日志同源，供排障与判据使用。
+- **UI 口径（I6）**：登录不再把「登录响应里的工作区」写进 tab 上下文（那是回退值，不是用户选择）；无上下文时进入工作区选择页；创建会话走路径形式，`400/409` 时回到选择页而非只弹 toast。
+

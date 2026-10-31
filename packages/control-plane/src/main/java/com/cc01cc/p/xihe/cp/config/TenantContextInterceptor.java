@@ -130,6 +130,9 @@ public class TenantContextInterceptor implements HandlerInterceptor {
 
     private void applyWorkspace(String workspaceId, String userId, String source) {
         TenantContext.setWorkspaceId(workspaceId);
+        // PLAN-0608 (T1.6 / review P1-5): make the resolution source observable so
+        // "which input decided this workspace" is judgeable rather than inferred.
+        TenantContext.setWorkspaceSource(source);
         String workspaceRole = workspaceService.resolveWorkspaceRole(workspaceId, userId);
         if (workspaceRole != null) {
             TenantContext.setWorkspaceRole(workspaceRole);

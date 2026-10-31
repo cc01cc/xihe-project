@@ -118,6 +118,47 @@ class TenantContextInterceptorTest {
         assertEquals(WORKSPACE_ID, TenantContext.getWorkspaceId());
     }
 
+    // ── PLAN-0608 T1.6 / review P1-5: the resolution source must be observable ──
+    @Test
+    void headerSourceIsRecorded() throws Exception {
+        assertTrue(interceptor.preHandle(request("POST", "/api/v1/sessions", WORKSPACE_ID),
+                new MockHttpServletResponse(), new Object()));
+
+        assertEquals("header", TenantContext.getWorkspaceSource());
+    }
+
+    @Test
+    void claimSourceIsRecorded() throws Exception {
+        when(jwtTokenProvider.getWorkspaceIdFromToken(TOKEN)).thenReturn(OTHER_WORKSPACE_ID);
+
+        assertTrue(interceptor.preHandle(request("GET", "/api/v1/sessions", null),
+                new MockHttpServletResponse(), new Object()));
+
+        assertEquals("claim", TenantContext.getWorkspaceSource());
+    }
+
+    @Test
+    void defaultSourceIsRecordedForFallback() throws Exception {
+        Workspace workspace = mock(Workspace.class);
+        when(workspace.getId()).thenReturn(UUID.fromString(WORKSPACE_ID));
+        when(workspaceService.findCurrentWorkspace(USER_ID)).thenReturn(Optional.of(workspace));
+
+        assertTrue(interceptor.preHandle(request("POST", "/api/v1/sessions", null),
+                new MockHttpServletResponse(), new Object()));
+
+        assertEquals("default", TenantContext.getWorkspaceSource());
+    }
+
+    @Test
+    void clearResetsTheRecordedSource() throws Exception {
+        assertTrue(interceptor.preHandle(request("POST", "/api/v1/sessions", WORKSPACE_ID),
+                new MockHttpServletResponse(), new Object()));
+
+        TenantContext.clear();
+
+        assertEquals(null, TenantContext.getWorkspaceSource());
+    }
+
     private MockHttpServletRequest request(String method, String uri, String workspaceHeader) {
         MockHttpServletRequest request = new MockHttpServletRequest(method, uri);
         request.addHeader("Authorization", "Bearer " + TOKEN);

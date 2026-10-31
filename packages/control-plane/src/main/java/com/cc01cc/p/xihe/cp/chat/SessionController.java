@@ -46,6 +46,7 @@ public class SessionController {
     private final ChatRunCancellationService chatRunCancellationService;
     private final SseEmitterManager sseEmitterManager;
     private final com.cc01cc.p.xihe.cp.operation.JobScopeClosureService jobScopeClosureService;
+    private final SessionCreationService sessionCreationService;
 
     public SessionController(SessionService sessionService,
                              SessionForkService sessionForkService,
@@ -54,7 +55,8 @@ public class SessionController {
                              ChatActiveRunRegistry activeRunRegistry,
                              ChatRunCancellationService chatRunCancellationService,
                              SseEmitterManager sseEmitterManager,
-                             com.cc01cc.p.xihe.cp.operation.JobScopeClosureService jobScopeClosureService) {
+                             com.cc01cc.p.xihe.cp.operation.JobScopeClosureService jobScopeClosureService,
+                             SessionCreationService sessionCreationService) {
         this.sessionService = sessionService;
         this.sessionForkService = sessionForkService;
         this.derivedStateService = derivedStateService;
@@ -63,6 +65,7 @@ public class SessionController {
         this.chatRunCancellationService = chatRunCancellationService;
         this.sseEmitterManager = sseEmitterManager;
         this.jobScopeClosureService = jobScopeClosureService;
+        this.sessionCreationService = sessionCreationService;
     }
 
     @GetMapping
@@ -189,22 +192,24 @@ public class SessionController {
 
     @PostMapping
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
-    public ResponseEntity<?> create(@RequestBody(required = false) CreateSessionRequest request) {
-        String userId = TenantContext.getUserId();
-        String workspaceId = TenantContext.getWorkspaceId();
+    public ResponseEntity<?> create(@RequestBody(required = false) CreateSessionRequest request,
+                                    @RequestHeader(value = "X-Workspace-Id", required = false) String workspaceHeader) {
         try {
-            String title = request == null ? null : request.title();
-            String modelProvider = request == null ? null : request.modelProvider();
-            String modelName = request == null ? null : request.modelName();
-            String providerConnectionId = request == null ? null : request.providerConnectionId();
-            String agentPrincipalId = request == null ? null : request.agentPrincipalId();
-            ContextTemplateService.TemplateSelection templateSelection = templateSelection(request);
-            Session session = sessionService.createAgentSession(userId, workspaceId, title,
-                    modelProvider, modelName, providerConnectionId, agentPrincipalId, templateSelection);
+            Session session = sessionCreationService.create(TenantContext.getUserId(), null, workspaceHeader,
+                    paramsFrom(request));
             return ResponseEntity.status(HttpStatus.CREATED).body(toView(session));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
+    }
+
+    /** PLAN-0608: shared request mapping for both creation surfaces. */
+    static SessionCreationService.Params paramsFrom(CreateSessionRequest request) {
+        if (request == null) {
+            return new SessionCreationService.Params(null, null, null, null, null, null);
+        }
+        return new SessionCreationService.Params(request.title(), request.modelProvider(), request.modelName(),
+                request.providerConnectionId(), request.agentPrincipalId(), templateSelection(request));
     }
 
     @PatchMapping("/{sessionId}")
@@ -291,7 +296,7 @@ public class SessionController {
         }
     }
 
-    private static Map<String, Object> toView(Session session) {
+    static Map<String, Object> toView(Session session) {
         Map<String, Object> view = new LinkedHashMap<>();
         view.put("id", session.getId());
         view.put("workspaceId", session.getWorkspaceId());
@@ -381,3 +386,5 @@ public class SessionController {
                 request.contextTemplateId(), request.contextTemplateVersion());
     }
 }
+
+
