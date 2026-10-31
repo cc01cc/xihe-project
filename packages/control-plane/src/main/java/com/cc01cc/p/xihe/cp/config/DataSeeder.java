@@ -34,13 +34,16 @@ public class DataSeeder implements CommandLineRunner {
     private final PasswordEncoder passwordEncoder;
     private final GrantDefaultService grantDefaultService;
     private final LocalModeService localModeService;
+    private final com.cc01cc.p.xihe.cp.service.InstanceOwnershipService instanceOwnershipService;
 
     public DataSeeder(UserRepository userRepository, PasswordEncoder passwordEncoder,
-                      GrantDefaultService grantDefaultService, LocalModeService localModeService) {
+                      GrantDefaultService grantDefaultService, LocalModeService localModeService,
+                      com.cc01cc.p.xihe.cp.service.InstanceOwnershipService instanceOwnershipService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.grantDefaultService = grantDefaultService;
         this.localModeService = localModeService;
+        this.instanceOwnershipService = instanceOwnershipService;
     }
 
     static String seededAdminPassword() {
@@ -64,6 +67,10 @@ public class DataSeeder implements CommandLineRunner {
             log.info("Seeded default admin user: admin@xihe.local");
         }
         grantDefaultService.ensureUserDefault(admin);
+        // PLAN-0580: V85's backfill runs before any account exists on a fresh
+        // database, so the seeded admin must claim ownership afterwards. The call
+        // is idempotent and never overwrites a pointer moved through the API.
+        instanceOwnershipService.ensureAssigned(admin, admin.getId().toString());
     }
 
     private static String generatePassword() {

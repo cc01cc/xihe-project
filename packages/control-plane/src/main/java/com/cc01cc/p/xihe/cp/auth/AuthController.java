@@ -52,17 +52,20 @@ public class AuthController {
     private final LoginAttemptService loginAttemptService;
     private final ClientIpResolver clientIpResolver;
     private final TransactionTemplate transactionTemplate;
+    private final com.cc01cc.p.xihe.cp.service.InstanceOwnershipService instanceOwnershipService;
 
     public AuthController(AuthService authService, WorkspaceService workspaceService,
                           LocalModeService localModeService,
                           LoginAttemptService loginAttemptService,
                           ClientIpResolver clientIpResolver,
+                          com.cc01cc.p.xihe.cp.service.InstanceOwnershipService instanceOwnershipService,
                           PlatformTransactionManager transactionManager) {
         this.authService = authService;
         this.workspaceService = workspaceService;
         this.localModeService = localModeService;
         this.loginAttemptService = loginAttemptService;
         this.clientIpResolver = clientIpResolver;
+        this.instanceOwnershipService = instanceOwnershipService;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
@@ -97,6 +100,12 @@ public class AuthController {
         try {
             AuthResponse response = transactionTemplate.execute(status -> {
                 User user = authService.registerUser(request, localModeService.enabled());
+                // PLAN-0580 decision #10: in local single-user mode the first (and
+                // only) account is ADMIN, so it also becomes the instance owner in
+                // the same transaction. Idempotent: an existing pointer stays.
+                if (localModeService.enabled()) {
+                    instanceOwnershipService.ensureAssigned(user, user.getId().toString());
+                }
                 return withDefaultWorkspace(user);
             });
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
