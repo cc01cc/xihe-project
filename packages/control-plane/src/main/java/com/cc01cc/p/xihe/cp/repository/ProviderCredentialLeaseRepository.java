@@ -15,6 +15,11 @@ public interface ProviderCredentialLeaseRepository extends JpaRepository<Provide
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<ProviderCredentialLease> findByLeaseHash(String leaseHash);
 
+    /** PLAN-0605: the redeemed lease bound to a run gates the internal attachment byte channel. */
+    Optional<ProviderCredentialLease> findFirstByRunIdAndRedeemedAtIsNotNullAndRevokedAtIsNullOrderByCreatedAtDesc(
+            String runId);
+
     List<ProviderCredentialLease> findByProviderConnectionIdAndRedeemedAtIsNullAndRevokedAtIsNull(
             String providerConnectionId);
 }
+

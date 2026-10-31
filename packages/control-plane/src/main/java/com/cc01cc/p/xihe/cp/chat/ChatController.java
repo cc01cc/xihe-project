@@ -1030,6 +1030,13 @@ public class ChatController {
                     throw new IllegalStateException("ChatRun Session is missing its AgentPrincipal binding");
                 }
                 agentRequest.put("contextTemplateSnapshot", persistedRun.context().contextTemplateSnapshot());
+                // PLAN-0605: image references (ids + metadata only). Bytes stay behind the
+                // run-bound internal route; the Agent pulls them lazily while rendering.
+                List<Map<String, Object>> imageReferences =
+                        chatAttachmentService.imageReferencesForMessage(persistedRun.userMessageId());
+                if (!imageReferences.isEmpty()) {
+                    agentRequest.put("images", imageReferences);
+                }
                 addRagCredentials(agentRequest, persistedRun.context().contextTemplateSnapshot(),
                         userId, workspaceId, sessionId, runId);
                 Map<String, Object> componentSources =
@@ -2114,3 +2121,5 @@ public class ChatController {
         }
     }
 }
+
+

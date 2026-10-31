@@ -179,12 +179,14 @@ public class ChatRunReadService {
     Optional<ExecutionRun> findExecutionRun(String runId) {
         return chatRunRepository.findById(UUID.fromString(runId))
                 .map(run -> new ExecutionRun(run.getProvider(), run.getModel(), run.getProviderConnectionId(),
-                        run.getConnectionRevision(), new ContextTemplateSourceService.RunContext(
+                        run.getConnectionRevision(), run.getUserMessageId(),
+                        new ContextTemplateSourceService.RunContext(
                         run.getSessionId(), run.getWorkspaceId(), run.getUserId(),
                         run.getContextTemplateSnapshot()), continuationDescriptor(run)));
     }
 
     record ExecutionRun(String provider, String model, String providerConnectionId, Long connectionRevision,
+                        String userMessageId,
                         ContextTemplateSourceService.RunContext context,
                         ContinuationDescriptor continuation) {
     }
@@ -222,3 +224,4 @@ public class ChatRunReadService {
                                    ContinuationDescriptor continuation) {
     }
 }
+

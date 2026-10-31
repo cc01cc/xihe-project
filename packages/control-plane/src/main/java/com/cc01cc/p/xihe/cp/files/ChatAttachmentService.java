@@ -43,6 +43,10 @@ public class ChatAttachmentService {
 
     private static final Logger logger = LoggerFactory.getLogger(ChatAttachmentService.class);
     private static final long MAX_FILE_SIZE = 500L * 1024 * 1024;
+    /** PLAN-0605 D6 ceilings for the image channel (enforced again on byte streaming). */
+    public static final int MAX_IMAGES_PER_MESSAGE = 4;
+    private static final java.util.Set<String> SUPPORTED_IMAGE_MIMES =
+            java.util.Set.of("image/png", "image/jpeg", "image/webp");
 
     private static final Map<String, String> EXTENSION_TO_MIME = Map.ofEntries(
         Map.entry("png", "image/png"),
@@ -236,6 +240,36 @@ public class ChatAttachmentService {
     }
 
     @Transactional
+
+    /**
+     * PLAN-0605: reference-only `images[]` payload for the Agent dispatch. Bytes never
+     * travel here; the Agent pulls them back over the run-bound internal route. Only
+     * png/jpeg/webp within the per-image ceiling qualify, at most four per message.
+     */
+    public List<Map<String, Object>> imageReferencesForMessage(String messageId) {
+        if (messageId == null || messageId.isBlank()) {
+            return List.of();
+        }
+        List<Map<String, Object>> references = new ArrayList<>();
+        for (File attachment : fileRepository.findByMessageId(messageId)) {
+            String mime = attachment.getMimeType() == null
+                    ? "" : attachment.getMimeType().toLowerCase(java.util.Locale.ROOT);
+            if (!SUPPORTED_IMAGE_MIMES.contains(mime)
+                    || attachment.getSizeBytes() > AttachmentContentService.MAX_IMAGE_BYTES) {
+                continue;
+            }
+            Map<String, Object> ref = new java.util.LinkedHashMap<>();
+            ref.put("attachmentId", attachment.getId().toString());
+            ref.put("mimeType", mime);
+            ref.put("sizeBytes", attachment.getSizeBytes());
+            references.add(ref);
+            if (references.size() >= MAX_IMAGES_PER_MESSAGE) {
+                break;
+            }
+        }
+        return List.copyOf(references);
+    }
+
     public void deleteSessionAttachments(String sessionId) {
         List<File> files = fileRepository.findBySessionIdOrderByIdAsc(sessionId);
         for (File candidate : files) {
@@ -576,3 +610,4 @@ public class ChatAttachmentService {
                 .collect(Collectors.toSet());
     }
 }
+

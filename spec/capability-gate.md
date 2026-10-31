@@ -18,6 +18,14 @@
   - MUST NOT 产生 `tools/call`、MUST NOT 写文件、MUST NOT 生成 assistant 内容；
   - MUST NOT 静默改用其他 apiType/provider（无隐式路由切换）。
 
+## 2a. Vision 渲染顺序（PLAN-0605；M2 裁定 B：渲染器后置变换）
+
+- 顺序 MUST 为：模板渲染 → `validate_body` → 能力门（`tools` 门、`vision` 门）→ **渲染器变换** → `begin_attempt()` → 出网。
+- 渲染器变换 MUST 同时满足三个条件才生效：`images` 非空、该 `apiTypeId` 在 `VISION_RENDERERS` 内、本轮存在 `role=user` 消息。
+- 变换范围 MUST 仅限**本轮最后一条 user 消息**：`content` 由字符串改写为 `[{type:"text",text:<原字符串>}, {type:"image_url",image_url:{url:"data:<mime>;base64,…"}}…]`；**原文本 MUST 逐字保留**，其它消息与字段 MUST 原样透传。
+- 字节来源 MUST 唯一：Agent 凭 `runId` 调 CP 内部路由 `GET /internal/v1/attachments/{id}/content?runId=`（run/workspace/attachment 三元归属 + lease 已 redeem）；字节 MUST 只在内存中组装 data URL，MUST NOT 落盘、MUST NOT 进日志/SSE/DB/审计。
+- 取字节失败（403/404/413/超时/网络）MUST 以稳定码 `LLM_VISION_ATTACHMENT_UNAVAILABLE` 失败，**MUST NOT 静默降级为纯文本请求**（降级即本门要修的缺陷形态）。
+- 模板本身 MUST 保持纯文本槽位；本变换属 apiType 渲染器职责，不新增模板变量、不改快照校验规则。
 ## 3. 不受门禁的路径
 
 - `tools` 为空（纯文本）的请求 MUST NOT 被该门拦截。
@@ -48,3 +56,4 @@
 
 - 关闭判据（BL-149）：显式失败 / 0 出网 / `attempt=0` / 0 `tools/call` / 0 文件 / 支持即执行 / 真实预算合规 / 模型级残余已登记。
 - 证据：`plans/PLAN-0591-XH-provider-tool-capability/evidence/` 下 `v1-fail-closed.md`、`v2-support-executes.md`、`v3-capability-matrix.md`、`v4-text-path.md`、`v6-ui.md`、`v7-audit.md`、`m3-e2e-verification.md`、`m4-real-lane.md`、`m5-bl149-closeout.md`。
+

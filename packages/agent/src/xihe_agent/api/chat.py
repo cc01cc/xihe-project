@@ -55,6 +55,7 @@ from xihe_agent.interfaces.tool import ToolSpec
 from xihe_agent.llm.api_request import ApiRequestError, render_request, uses_rag_context, validate_snapshot
 from xihe_agent.llm.base import LLMConfig, parse_model_params
 from xihe_agent.llm.models import fetch_model_catalog  # noqa: F401  (import parity with prior main)
+from xihe_agent.llm.vision_render import fetch_image_data_urls, normalize_image_refs
 from xihe_agent.rag.chat_context import retrieve_chat_context
 
 router = APIRouter()
@@ -533,6 +534,24 @@ async def chat(request: Request):
                 def publish_transport(event_type: str, payload: dict[str, Any]) -> None:
                     transport_events.put_nowait(AgentEvent(type=event_type, data=payload))
 
+                # PLAN-0605: image refs only (never bytes). The capability gate decides
+                # first — an unsupported apiType must fail closed before any transport
+                # attempt, and a supported one pulls bytes lazily over the internal route.
+                image_refs = normalize_image_refs(data.get("images"))
+                image_data_urls: list[str] = []
+                if image_refs:
+                    from xihe_agent.llm.api_sender import vision_route_supported
+
+                    if not vision_route_supported(api_type.id, grant.get("visionSupported") is True):
+                        raise ApiRequestError("LLM_VISION_ROUTE_UNSUPPORTED")
+                    image_data_urls = await fetch_image_data_urls(
+                        image_refs,
+                        cp_url=CP_URL,
+                        service_token=CP_API_TOKEN,
+                        run_id=run_id,
+                        workspace_id=workspace_id,
+                    )
+
                 model = ApiChatModel(
                     api_type=api_type,
                     grant=grant,
@@ -553,6 +572,7 @@ async def chat(request: Request):
                     token_estimator=_estimate_native_body_tokens,
                     transport_sink=publish_transport,
                     include_initial_messages=continuation is not None,
+                    image_data_urls=image_data_urls,
                 )
                 request_runner = LangGraphRunner(model_factory=lambda _model: model, event_store=cp_event_store_client)
                 # The Runner owns approval/durable/tool execution. This prompt is
@@ -821,3 +841,4 @@ async def chat(request: Request):
 
 
 __all__ = ["router", "_rag_config_defaults", "problem_details"]
+
