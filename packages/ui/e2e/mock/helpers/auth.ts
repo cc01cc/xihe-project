@@ -429,7 +429,15 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
         sessions.map((session) => [session.id, createRootBranch(now)]),
     );
 
-    await page.route("**/api/v1/sessions", async (route) => {
+    // PLAN-0608 C′: the UI now creates sessions on the workspace-addressed path
+    // (`POST /api/v1/workspaces/{workspaceId}/sessions`). Registering only the
+    // legacy glob made every `createSession: true` stub silently fall through to
+    // the `**/api/v1/**` catch-all, which answers `200 {}` — a *silent* failure
+    // that reads as success to the spec. Match both surfaces by regex instead.
+    const matchesSessionCreate = (url: string) =>
+        /\/(?:api\/v1\/sessions|api\/v1\/workspaces\/[^/]+\/sessions)$/.test(new URL(url).pathname);
+
+    await page.route(matchesSessionCreate, async (route) => {
         if (route.request().method() === "GET") {
             await route.fulfill({
                 status: 200,
