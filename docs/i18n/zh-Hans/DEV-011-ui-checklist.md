@@ -5,7 +5,7 @@ lang: zh-Hans
 sidebar_group: "开发指南"
 sidebar_order: 11
 created: 2026-05-31
-updated: 2026-09-03
+updated: 2026-10-31
 status: active
 ---
 
@@ -89,3 +89,9 @@ status: active
 - [ ] `chat-with-messages` — 有消息的聊天页
 - [ ] `theme-default-light` — 浅色主题页
 - [ ] `theme-dark-persisted-chat` — 深色模式聊天页
+- [ ] `workspace-3col-1920` — 工作台三栏（rail + 面板 + 树/主/dock）@1920
+- [ ] `workspace-dock-overlay-1440` — dock 浮层态 @1440（含阴影，主列不参与 flex）
+- [ ] `workspace-rail-collapsed` — 导航面板收起后的 rail 态
+- [ ] `workspace-tree-empty` — 文件树空态（新建文件主按钮 + 上传次按钮 + 拖拽提示）
+
+> **平台限制（勿误读为回归）**：基线比对**只在 Linux 生效**（`packages/ui/e2e/helpers/visual.ts:16-26`：非 Linux 直接打 `visual-baseline-platform` annotation 并 return）。Windows 上跑出的「通过」= 未比对，只能**人工复核 actual/diff**；记录时必须写「Linux lane 未跑」。

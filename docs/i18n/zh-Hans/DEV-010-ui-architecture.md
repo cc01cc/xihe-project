@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 10
 status: active
 created: 2026-09-03
-updated: 2026-10-10
+updated: 2026-10-31
 ---
 
 # DEV-010: UI 架构
@@ -42,9 +42,10 @@ updated: 2026-10-10
 | `/workspace/:workspaceId` | WorkspaceView（AppLayout 内） | 文件编辑器与 Workspace Chat；可处于无 Session 空态 |
 | `/workspace/:workspaceId/chat/:sessionId` | WorkspaceView（AppLayout 内） | 选中该 Workspace 内的 Session 并显示 Chat |
 | `/workspace/:workspaceId/environment` | WorkspaceEnvironmentView（AppLayout 内） | Workspace 执行环境 |
-| `/workspace/:workspaceId/settings` | WorkspaceSettingsView（AppLayout 内，PLAN-0560） | 常规（OWNER 可改名/删除）/ 配置（workspace 层 9 域）/ MCP 三区块；`?tab=config|mcp` 直达 |
+| `/workspace/:workspaceId/settings` | WorkspaceSettingsView（AppLayout 内，PLAN-0560） | 常规（OWNER 可改名/删除）/ 配置（workspace 层 9 域）/ MCP 三区块；`?tab=config\|mcp` 直达 |
+| `/workspace/:workspaceId/scheduled-tasks` | WorkspaceScheduledTasksView（AppLayout 内） | 定时任务；作为**中间标签栏**的一个标签参与路由投影（`router/index.ts`） |
 
-所有 Workspace 路由共用 `AppLayout`。Chat 是 Workspace feature 内的 Session 视图，不再有独立 `/chat` 路由；旧的未匹配路径回退到 `/workspace`。Session id 不能替代 Workspace id（PLAN-222）。
+所有 Workspace 路由共用 `AppLayout`。`AppLayout` 是**两层左栏 + 主区**：最左 `NavRail`（固定 **56px** 纯图标，无文字标签）+ 导航面板（默认 **280px**，可收起/可拖 220–360）+ 主区。工作台内容由 `WorkspaceWorkbench` 承载（结构见下一条），顶部有**中间标签栏** `WorkspaceTabBar`（现有路由的投影，不新增路由；`chat` 恒开、其余三个为按 workspace 持久化的打开集合）。Chat 是 Workspace feature 内的 Session 视图，不再有独立 `/chat` 路由；旧的未匹配路径回退到 `/workspace`。Session id 不能替代 Workspace id（PLAN-222）。
 
 ## 2. 视图分层
 
@@ -52,9 +53,9 @@ updated: 2026-10-10
 - **ChatPanel**（`features/workspace/chat/components/ChatPanel.vue`）：Workspace Chat 的内嵌对话组件（消息列表 + 输入框 + SSEStream）；接收 `sessionId` prop；附件写入入口 `handleSend`。
 - **FollowUpQueuePanel**（`features/workspace/chat/components/FollowUpQueuePanel.vue`，PLAN-0442）：ChatPanel 内联的 durable Follow-up 队列面，纯 snapshot 驱动——FIFO 计数（含硬上限 5）、逐项撤回、整队暂停时的 Continue、容量 footer；admitted child 不提供撤回，attempted `child_ambiguous` completed 项以消息状态回显。Run 进行中 `InputArea` 以 `chat-queue-button` 提供显式「排队」（`POST /api/v1/sessions/{sessionId}/follow-ups`，带 Idempotency-Key），与普通发送语义区分——队列未清空时普通发送由 CP 409 拒绝。刷新/重连后由 snapshot 恢复，不依赖 SSE 内存态；设计预览与用户视觉批准见 `plans/PLAN-0442-XH-run-guidance-follow-up/design.md` 决策 #24。
 - **GuidancePanel**（`features/workspace/chat/components/GuidancePanel.vue` + `composables/useGuidance.ts`，PLAN-0530）：运行中 Run 的独立「指导当前运行」面，与 Send/Follow-up/Stop 完全分离（独立 i18n 命名空间 `chat.guidance*`）。数据唯一源自 CP 快照 `GET /api/v1/chat/runs/{runId}/guidance`（无 Guidance SSE 事件，裁定候选①）；提交走 `POST .../guidance` + `Idempotency-Key`。按 CP `sequence` 升序展示来源/时间/状态（`pending`/`consumed`/`terminal_expired`）。输入仅当 UI 投影状态 ∈ `{executing, thinking, awaiting_approval}` 时可用（映射 CP `{running, streaming, awaiting_approval}`）；Run 终态后输入隐藏但 **列表保留**（`ChatPanel.lastRunId`），切换 Session 时清空。刷新时机：挂载、提交后、streaming 停止、`runRecovery` 信号、会话 SSE 重连（`handleDerivedStateRefresh`）。终态收敛见 `spec/session/chat-run-operation.md` §Run Guidance。错误恢复（PLAN-0536）：`409 GUIDANCE_RUN_NOT_ACTIVE` → 内联横幅 + **清空草稿**（`useGuidance.submit` 返回 `ok|clear|keep` 判别结果）；其余错误保留草稿。前者无法在浏览器断言（409 到达时 Run 已非活跃、输入按 §3.1 卸载），由 `__tests__/GuidancePanel.spec.ts` 覆盖。
-- **WorkspaceToolbar**：Session 下拉（保留 workspace route 切换）+ Environment 入口 + Workspace settings 入口（PLAN-0560：路由跳转到 `/workspace/:id/settings`，弹窗退役）+ 上传/刷新；移动端收敛为 ＋ 新建对话 + ⋯ 溢出菜单。
+- **WorkspaceToolbar**：只保留**聊天级**控件（上传/刷新等）；**会话下拉已删除**（PLAN-0582 T4.1/S1）——会话切换只走导航面板；页面级入口（Environment / Settings / 定时任务）改由**中间标签栏**承接（`WorkspaceTabBar`，S3a），不再在工具栏按路由整页跳转；移动端收敛为 ＋ 新建对话 + ⋯ 溢出菜单。
 - **FileNodeMenu**（`features/workspace/components/FileNodeMenu.vue`）：reka-ui `ContextMenu` 封装；文件：Rename/Move/Duplicate/Copy Path/Delete；目录：New File/New Directory/Rename/Move；文本走 `write_file` MCP，二进制走 `POST /api/v1/files/upload` FormData（PLAN-262 M0/B-3）。
-- **Sidebar**：「New Chat」在当前 Workspace 打开创建 Session 流程；Session 列表点击跳 `/workspace/:workspaceId/chat/:sessionId`；「Workspace」按钮跳 `/workspace/:currentWorkspaceId`（缺失时 fail-closed）。
+- **Sidebar（导航面板）**：面板头 = **工作区行**（当前工作区名/切换/新建/导入/成员入口）+ 新建对话 + 会话搜索框 + 会话树；「New Chat」在当前 Workspace 打开创建 Session 流程；Session 列表点击跳 `/workspace/:workspaceId/chat/:sessionId`。**底部孤立「Workspace」导航项已删除**（PLAN-0582 S1）：工作区入口只在面板头，`<1024` 时面板变 sheet 抽屉；缺失工作区时 fail-closed。
 
 ## 3. 五组件族
 

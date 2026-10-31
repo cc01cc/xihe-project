@@ -5,7 +5,7 @@ lang: en
 sidebar_group: "Developer Guide"
 sidebar_order: 11
 created: 2026-05-31
-updated: 2026-09-19
+updated: 2026-10-31
 status: active
 ---
 
@@ -83,6 +83,11 @@ status: active
 - [ ] `register-page` — Register page full render
 - [ ] `chat-empty` — Empty chat page + sidebar
 - [ ] `chat-with-messages` — Chat page with messages
-- [ ] `theme-light-settings` — Light theme settings page (three icons visible)
-- [ ] `theme-dark-settings` — Dark theme settings page
+- [ ] `theme-default-light` — Light theme page
 - [ ] `theme-dark-persisted-chat` — Dark mode chat page
+- [ ] `workspace-3col-1920` — Workbench three columns (rail + panel + tree/main/dock) @1920
+- [ ] `workspace-dock-overlay-1440` — Dock overlay mode @1440 (shadow, main column not part of flex)
+- [ ] `workspace-rail-collapsed` — Rail state after the navigation panel is collapsed
+- [ ] `workspace-tree-empty` — File tree empty state (primary create-file + secondary upload + drag hint)
+
+> **Platform limitation (do not misread as a regression)**: baseline comparison **only runs on Linux** (`packages/ui/e2e/helpers/visual.ts:16-26`: on non-Linux it attaches a `visual-baseline-platform` annotation and returns). A "pass" on Windows means **not compared** — it can only be reviewed manually via actual/diff, and the record must state "Linux lane not run".
