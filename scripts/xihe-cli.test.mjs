@@ -591,6 +591,43 @@ test('dev check does not create the host root or print environment secrets', asy
   assert.equal(JSON.stringify(result).includes(TEST_KEY), false);
 });
 
+test('dev check reports the frozen docker workspace backend by default (PLAN-0612 M4)', async (t) => {
+  const cp = await startCpMock();
+  t.after(cp.close);
+  const result = await runCommand(['dev', 'check', '--json'], {
+    env: { ...cp.env },
+    spawnSyncImpl: () => ({ status: 0, stdout: 'tool version\n', stderr: '' }),
+    portProbeFn: async () => ({ free: true }),
+    promptSecret: noPrompt,
+  });
+
+  const backend = result.data.checks.find((check) => check.name === 'workspace-backend');
+  assert.ok(backend, 'workspace-backend check must be present');
+  assert.equal(backend.status, 'docker=disabled (frozen) / direct_attach=available');
+  assert.deepEqual(result.data.workspaceBackend, {
+    docker: 'disabled',
+    dockerFrozen: true,
+    directAttach: 'available',
+  });
+  assert.match(backend.hint, /direct_attach/);
+});
+
+test('dev check reports an enabled docker backend when explicitly injected (PLAN-0612 M4)', async (t) => {
+  const cp = await startCpMock();
+  t.after(cp.close);
+  const result = await runCommand(['dev', 'check', '--json'], {
+    env: { ...cp.env, XIHE_WORKSPACE_DOCKER_BACKEND: 'enabled' },
+    spawnSyncImpl: () => ({ status: 0, stdout: 'tool version\n', stderr: '' }),
+    portProbeFn: async () => ({ free: true }),
+    promptSecret: noPrompt,
+  });
+
+  const backend = result.data.checks.find((check) => check.name === 'workspace-backend');
+  assert.equal(backend.status, 'docker=enabled / direct_attach=available');
+  assert.equal(result.data.workspaceBackend.dockerFrozen, false);
+  assert.equal(backend.hint, undefined);
+});
+
 test('dev check reports an actionable owner hint for occupied ports (PLAN-0612 M3)', async (t) => {
   const cp = await startCpMock();
   t.after(cp.close);
@@ -1104,7 +1141,9 @@ async function startVerifyCpMock({
         json(response, workspaceStatus, { code: 'WORKSPACE_NOT_FOUND' });
         return;
       }
-      json(response, 200, { id: 'ws-1' });
+      // PLAN-0612 M4: verify preflights the workspace execution backend; a direct_attach
+      // workspace is not affected by the frozen docker backend.
+      json(response, 200, { id: 'ws-1', storageMode: 'direct_attach', executionMode: 'windows-host' });
       return;
     }
     if (pathname === '/api/v1/workspaces/ws-1/agents' && request.method === 'GET') {

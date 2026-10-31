@@ -163,6 +163,10 @@ flowchart LR
 - **创建前能力预检**：`POST /api/v1/workspaces/capabilities/preflight`（USER/ADMIN）入参 `{storageMode: direct_attach, hostPath, executionMode}`，经 CP 复用 Runtime `capabilities/direct-attach/probe` 返回 `BackendCapabilitySnapshot` + `checkedAt`。Runtime 可达时 `available:false`（含 `reason`，如 `MXC_EXECUTABLE_MISSING`）仍是 200；Runtime 不可达/非法响应 → `502 RUNTIME_UNAVAILABLE`。CP 不缓存、不硬编码后端可用性。
 - **能力 reason 保真**：`environment.capability` 与预检都保留 Runtime 返回的具体 `reason`（不再折叠为 `DIRECT_ATTACH_UNAVAILABLE`），UI 据此显示不可用原因。
 - **模式切换**：`PATCH /api/v1/workspaces/{workspaceId}/execution-mode` 仅 Workspace owner/platform admin；运行中 Job → `409 WORKSPACE_BUSY`（不自动重放）；切换前重新 probe，成功后旧 execution binding 由 Runtime 终止（PLAN-0379 T3.5）。
+- **Docker 后端冻结门（PLAN-0612 M4，2026-10-31 裁定）**：开关是静态 env `XIHE_WORKSPACE_DOCKER_BACKEND`（默认 `disabled`，非法值启动失败，见 [DEV-003](DEV-003-config-management.md) §2）。`disabled` 时：
+  - 创建：`POST /api/v1/workspaces` 且有效 `storageMode=managed_import`（含缺省）→ `409 BACKEND_DISABLED`，detail 指向 `direct_attach` 与 [DEV-031](DEV-031-sandbox-backend-contract.md)，**先于**任何行/execution spec 写入；
+  - 既有 docker 工作区：`POST …/materialize`、`POST …/jobs`（启动 Job）、`POST /api/v1/files/upload`、`POST /api/v1/workspaces/{id}/imports` → `503 BACKEND_DISABLED`（fail-closed，不静默回退宿主）；读面（`GET …/environment`、Job 列表/输出、import 查询、附件下载）与 `PATCH …/execution-mode`（迁移出口）、`…/cancel`、release 保持可用，避免把已有数据/清理路径一并锁死；
+  - 运行时内部不新增 docker 分支改动（2026-10-25 冻结补充）；`test:e2e:host` 显式注入 `enabled` 是唯一豁免。
 - **目录选择**：UI 复用 `GET /api/v1/workspaces/import-sources?path=`（Runtime-visible source browser），浏览器不伪造宿主绝对路径；UI 不新增相对/绝对路径限制，路径合法性由 Runtime 校验。
 
 ## 8c. Agent principal / Workspace Agent API（PLAN-0374）

@@ -3,7 +3,9 @@ package com.cc01cc.p.xihe.cp.files;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
+import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeWorkspaceFileClient;
+import com.cc01cc.p.xihe.cp.service.WorkspaceBackendPolicy;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,14 +41,17 @@ public class WorkspaceFileController {
 
     private final ChatAttachmentService chatAttachmentService;
     private final WorkspaceService workspaceService;
+    private final WorkspaceBackendPolicy backendPolicy;
     private final RuntimeWorkspaceFileClient runtimeFileClient;
 
     public WorkspaceFileController(
             ChatAttachmentService chatAttachmentService,
             WorkspaceService workspaceService,
+            WorkspaceBackendPolicy backendPolicy,
             RuntimeWorkspaceFileClient runtimeFileClient) {
         this.chatAttachmentService = chatAttachmentService;
         this.workspaceService = workspaceService;
+        this.backendPolicy = backendPolicy;
         this.runtimeFileClient = runtimeFileClient;
     }
 
@@ -105,6 +110,10 @@ public class WorkspaceFileController {
                 return ProblemDetailsHandler.problemResponse(
                         HttpStatus.NOT_FOUND, "WORKSPACE_NOT_FOUND", "Workspace not found");
             }
+            // PLAN-0612 M4: an existing docker workspace's file operations fail closed (503)
+            // while the backend is frozen; direct_attach workspaces are unaffected.
+            Workspace workspace = workspaceService.requireAccessibleWorkspace(wsId, userId);
+            backendPolicy.requireOperationAllowed(workspace);
             if (file.getSize() > MAX_UPLOAD_SIZE) {
                 return ProblemDetailsHandler.problemResponse(
                         HttpStatus.PAYLOAD_TOO_LARGE, "PAYLOAD_TOO_LARGE",
@@ -120,6 +129,8 @@ public class WorkspaceFileController {
                         HttpStatus.BAD_GATEWAY, "RUNTIME_UNAVAILABLE", "Runtime rejected the upload");
             }
             return ResponseEntity.ok(Map.of("path", originalName, "size", file.getSize()));
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         } catch (IOException e) {
             logger.error("Upload failed", e);
             return ProblemDetailsHandler.problemResponse(

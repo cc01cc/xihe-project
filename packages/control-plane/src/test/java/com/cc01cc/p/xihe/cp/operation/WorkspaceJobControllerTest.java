@@ -4,6 +4,7 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeJobClient;
+import com.cc01cc.p.xihe.cp.service.WorkspaceBackendPolicy;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,6 +28,7 @@ class WorkspaceJobControllerTest {
     private JobStateService jobStateService;
     private WorkspaceJobStartService workspaceJobStartService;
     private WorkspaceService workspaceService;
+    private WorkspaceBackendPolicy backendPolicy;
     private WorkspaceJobController controller;
 
     @BeforeEach
@@ -34,9 +36,10 @@ class WorkspaceJobControllerTest {
         jobStateService = Mockito.mock(JobStateService.class);
         workspaceJobStartService = Mockito.mock(WorkspaceJobStartService.class);
         workspaceService = Mockito.mock(WorkspaceService.class);
+        backendPolicy = Mockito.mock(WorkspaceBackendPolicy.class);
         controller = new WorkspaceJobController(jobStateService, workspaceJobStartService,
                 Mockito.mock(WorkspaceJobCancellationService.class), workspaceService,
-                Mockito.mock(RuntimeJobClient.class));
+                backendPolicy, Mockito.mock(RuntimeJobClient.class));
         TenantContext.setUserId("user-1");
     }
 
@@ -81,6 +84,23 @@ class WorkspaceJobControllerTest {
                         "session", null, null, "ui", null));
 
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        verify(workspaceJobStartService, Mockito.never()).start(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void startRefusesDockerWorkspaceWhileBackendFrozen() {
+        workspaceWithMode("docker");
+        Mockito.doThrow(new CpApiException(HttpStatus.SERVICE_UNAVAILABLE, "BACKEND_DISABLED",
+                        "workspace runs on the frozen docker backend"))
+                .when(backendPolicy).requireOperationAllowed(any());
+
+        ResponseEntity<?> response = controller.start("workspace-1", "key-1",
+                new WorkspaceJobStartService.StartRequest("echo", List.of(), null, 0L,
+                        "session", null, null, "ui", null));
+
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, response.getStatusCode());
+        assertNotNull(response.getBody());
+        assertEquals("BACKEND_DISABLED", ((Map<?, ?>) response.getBody()).get("code"));
         verify(workspaceJobStartService, Mockito.never()).start(any(), any(), any(), any(), any());
     }
 

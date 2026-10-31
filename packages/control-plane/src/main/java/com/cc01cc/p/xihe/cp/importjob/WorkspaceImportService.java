@@ -1,7 +1,9 @@
 package com.cc01cc.p.xihe.cp.importjob;
 
+import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceImport;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceImportRepository;
+import com.cc01cc.p.xihe.cp.service.WorkspaceBackendPolicy;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeWorkspaceImportClient;
@@ -18,19 +20,25 @@ import java.util.Optional;
 public class WorkspaceImportService {
     private final WorkspaceImportRepository repository;
     private final WorkspaceService workspaceService;
+    private final WorkspaceBackendPolicy backendPolicy;
     private final RuntimeWorkspaceImportClient runtimeClient;
 
     public WorkspaceImportService(WorkspaceImportRepository repository, WorkspaceService workspaceService,
+                                  WorkspaceBackendPolicy backendPolicy,
                                   RuntimeWorkspaceImportClient runtimeClient) {
         this.repository = repository;
         this.workspaceService = workspaceService;
+        this.backendPolicy = backendPolicy;
         this.runtimeClient = runtimeClient;
     }
 
     @Transactional
     public WorkspaceImport create(String workspaceId, String ownerId, String sourcePath,
                                   String excludeRules, String idempotencyKey) {
-        workspaceService.requireAccessibleWorkspace(workspaceId, ownerId);
+        Workspace workspace = workspaceService.requireAccessibleWorkspace(workspaceId, ownerId);
+        // PLAN-0612 M4: imports write into the workspace through the Runtime; docker
+        // workspaces fail closed (503 BACKEND_DISABLED) while the backend is frozen.
+        backendPolicy.requireOperationAllowed(workspace);
         if (sourcePath == null || sourcePath.isBlank()) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "IMPORT_SOURCE_REQUIRED", "sourcePath is required");
         }

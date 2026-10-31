@@ -11,6 +11,7 @@ import com.cc01cc.p.xihe.cp.repository.WorkspaceLifecycleOperationRepository;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeJobClient;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeWorkspaceClient;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeWorkspaceFileClient;
+import com.cc01cc.p.xihe.cp.service.WorkspaceBackendPolicy;
 import com.cc01cc.p.xihe.cp.service.WorkspaceExecutionSpecService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.slf4j.Logger;
@@ -36,6 +37,7 @@ public class WorkspaceEnvironmentController {
     private static final Logger logger = LoggerFactory.getLogger(WorkspaceEnvironmentController.class);
 
     private final WorkspaceService workspaceService;
+    private final WorkspaceBackendPolicy backendPolicy;
     private final WorkspaceExecutionSpecService executionSpecService;
     private final RuntimeHeartbeatState heartbeatState;
     private final RuntimeJobClient runtimeJobClient;
@@ -45,6 +47,7 @@ public class WorkspaceEnvironmentController {
 
     public WorkspaceEnvironmentController(
             WorkspaceService workspaceService,
+            WorkspaceBackendPolicy backendPolicy,
             WorkspaceExecutionSpecService executionSpecService,
             RuntimeHeartbeatState heartbeatState,
             RuntimeJobClient runtimeJobClient,
@@ -52,6 +55,7 @@ public class WorkspaceEnvironmentController {
             JobStateService jobStateService,
             WorkspaceLifecycleOperationRepository lifecycleOperations) {
         this.workspaceService = workspaceService;
+        this.backendPolicy = backendPolicy;
         this.executionSpecService = executionSpecService;
         this.heartbeatState = heartbeatState;
         this.runtimeJobClient = runtimeJobClient;
@@ -345,7 +349,10 @@ public class WorkspaceEnvironmentController {
             Authentication authentication) {
         String userId = authentication == null ? TenantContext.getUserId() : authentication.getName();
         try {
-            workspaceService.requireAccessibleWorkspace(workspaceId, userId);
+            // PLAN-0612 M4: materialization executes against the Runtime; docker workspaces
+            // fail closed (503 BACKEND_DISABLED) while the backend is frozen.
+            Workspace workspace = workspaceService.requireAccessibleWorkspace(workspaceId, userId);
+            backendPolicy.requireOperationAllowed(workspace);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
