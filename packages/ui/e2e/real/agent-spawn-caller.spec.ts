@@ -12,6 +12,7 @@ import {
     seedPage,
 } from "./helpers/journey";
 import { workspaceChatPath } from "../../src/lib/routes";
+import { seedUserGrantPermissions } from "./helpers/user-grants";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const fakeLlmUrl = new URL(CP_URL);
@@ -54,16 +55,11 @@ function scalarCount(sql: string): number {
 }
 
 function seedUserSpawnPermissions(userId: string, workspaceId: string): void {
-    const permissions = JSON.stringify([
+    seedUserGrantPermissions(userId, [
         { actionClass: "CREATE_ACCOUNT", resource: "*" },
         { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: workspaceId },
         { actionClass: "SPAWN_AGENT", resource: "*" },
-    ]).replaceAll("'", "''");
-    queryIsolatedPostgres(`
-    INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions, source, read_state)
-    VALUES (gen_random_uuid(), 'user', '${userId}'::uuid, 'user', '${userId}'::uuid,
-            '${permissions}'::jsonb, 'direct', 'read')
-  `);
+    ]);
 }
 
 function addPrincipalSpawnGrant(principalId: string): void {

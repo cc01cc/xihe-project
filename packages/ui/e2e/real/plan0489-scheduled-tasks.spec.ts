@@ -8,6 +8,7 @@ import {
 } from "./helpers/agent-principal";
 import { actionableErrors, collectPageErrors } from "./helpers/console";
 import { CP_URL, evidenceDir, registerJourneyUser, type JourneyContext } from "./helpers/journey";
+import { seedUserGrantPermissions } from "./helpers/user-grants";
 
 const EVIDENCE_DIR = evidenceDir("plan0489-scheduled-tasks");
 
@@ -67,15 +68,10 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
     }
 
     function seedScheduledTaskGrants(userId: string): void {
-        const permissions = JSON.stringify([
+        seedUserGrantPermissions(userId, [
             { actionClass: "CREATE_SCHEDULED_TASK", resource: "*" },
             { actionClass: "MANAGE_SCHEDULED_TASK", resource: "*" },
-        ]).replace(/'/g, "''");
-        queryIsolatedPostgres(
-            `INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions, source, read_state) ` +
-                `VALUES (gen_random_uuid(), 'user', '${userId}'::uuid, 'user', '${userId}'::uuid, ` +
-                `'${permissions}'::jsonb, 'direct', 'read')`,
-        );
+        ]);
     }
 
     /** T2.2 构造 missed：把 next_fire_at 拨到 grace（10min）之前，等扫描标 missed——无生产钩子。 */
