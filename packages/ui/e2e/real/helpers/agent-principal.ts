@@ -23,6 +23,18 @@ function seedPrincipalManagementGrant(
     ]);
 }
 
+/**
+ * PLAN-0608 C′: session creation now has TWO surfaces —
+ * `POST /api/v1/sessions` (legacy header-only) and
+ * `POST /api/v1/workspaces/{workspaceId}/sessions` (path form, what the UI sends).
+ * Matching only the legacy path made every `waitForResponse`/`waitForRequest`
+ * around a UI-created session hang until timeout, so all e2e matchers go through
+ * this single predicate instead of `url().endsWith("/api/v1/sessions")`.
+ */
+export function isSessionCreateRequest(url: string, method: string): boolean {
+    if (method !== "POST") return false;
+    return /^\/api\/v1\/(workspaces\/[^/]+\/)?sessions$/.test(new URL(url).pathname);
+}
 export async function provisionWorkspaceAgentPrincipal(
     request: APIRequestContext,
     auth: AgentAuth,
@@ -105,9 +117,8 @@ export async function createWorkspaceSessionWithPrincipal(
     await expect(principalSelect).toBeVisible();
     await principalSelect.selectOption(principalId);
 
-    const responsePromise = page.waitForResponse(
-        (response) =>
-            response.url().endsWith("/api/v1/sessions") && response.request().method() === "POST",
+    const responsePromise = page.waitForResponse((response) =>
+        isSessionCreateRequest(response.url(), response.request().method()),
     );
     await page.getByTestId("workspace-create-agent-session").click();
     const response = await responsePromise;

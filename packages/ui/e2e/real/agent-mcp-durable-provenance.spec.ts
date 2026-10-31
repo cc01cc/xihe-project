@@ -9,6 +9,7 @@ import {
     seedPage,
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
+import { isSessionCreateRequest } from "./helpers/agent-principal";
 import { generateE2EPassword } from "./helpers/password";
 import { seedUserGrant } from "./helpers/user-grants";
 
@@ -124,9 +125,8 @@ test("@host PLAN-0387 T3.2 — CP checks durable Agent MCP tool-call provenance"
     const agentSelect = page.getByTestId("workspace-agent-principal-select");
     await expect(agentSelect).toBeVisible();
     await agentSelect.selectOption({ index: 1 });
-    const sessionCreatedPromise = page.waitForResponse(
-        (response) =>
-            response.url().endsWith("/api/v1/sessions") && response.request().method() === "POST",
+    const sessionCreatedPromise = page.waitForResponse((response) =>
+        isSessionCreateRequest(response.url(), response.request().method()),
     );
     await page.getByTestId("workspace-create-agent-session").click();
     const sessionCreated = await sessionCreatedPromise;

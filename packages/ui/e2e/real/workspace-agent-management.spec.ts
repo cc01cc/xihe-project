@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
+import { isSessionCreateRequest } from "./helpers/agent-principal";
 import { CP_URL, registerJourneyUser, seedPage } from "./helpers/journey";
 import { seedUserGrantPermissions } from "./helpers/user-grants";
 
@@ -455,10 +456,7 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
 
     const attemptedSessionPosts: string[] = [];
     page.on("request", (outgoingRequest) => {
-        if (
-            outgoingRequest.url().endsWith("/api/v1/sessions") &&
-            outgoingRequest.method() === "POST"
-        ) {
+        if (isSessionCreateRequest(outgoingRequest.url(), outgoingRequest.method())) {
             attemptedSessionPosts.push(outgoingRequest.url());
         }
     });

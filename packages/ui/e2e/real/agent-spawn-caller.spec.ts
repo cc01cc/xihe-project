@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { isSessionCreateRequest } from "./helpers/agent-principal";
 import { test, expect } from "@playwright/test";
 import {
     CP_URL,
@@ -365,9 +366,8 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
     const principalPicker = page.getByTestId("workspace-agent-principal-select");
     await expect(principalPicker).toBeVisible();
     await principalPicker.selectOption(principalId);
-    const sessionResponsePromise = page.waitForResponse(
-        (response) =>
-            response.url().endsWith("/api/v1/sessions") && response.request().method() === "POST",
+    const sessionResponsePromise = page.waitForResponse((response) =>
+        isSessionCreateRequest(response.url(), response.request().method()),
     );
     await page.getByTestId("workspace-create-agent-session").click();
     const sessionResponse = await sessionResponsePromise;
