@@ -117,14 +117,14 @@ const router = createRouter({
                     component: () => import("../views/settings/AuditView.vue"),
                 },
                 {
-                    // PLAN-0585 M2: ADMIN-only principal grant surface (nav item is ADMIN-gated too).
+                    // PLAN-0610 W5c: the principal-grant page is retired (CP answers 410
+                    // PRINCIPAL_GRANTS_RETIRED since W2). The old path stays as a redirect so an
+                    // existing bookmark lands on the replacement instead of a blank route.
                     path: "principal-grants",
-                    name: "settings-principal-grants",
-                    component: () => import("../views/settings/PrincipalGrantsView.vue"),
+                    redirect: { name: "settings-roles" },
                 },
                 {
-                    // PLAN-0610 W5b: access-role definitions + bindings (ADMIN-gated, same as above;
-                    // W5c retires the principal-grant page once `source='direct'` is gone).
+                    // PLAN-0610 W5b: access-role definitions + bindings (ADMIN-gated).
                     path: "roles",
                     name: "settings-roles",
                     component: () => import("../views/settings/RolesView.vue"),

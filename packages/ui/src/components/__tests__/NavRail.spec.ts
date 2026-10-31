@@ -133,7 +133,9 @@ describe("NavRail (PLAN-0582 S2: fixed 56px icon-only rail)", () => {
         ).toBe("page");
         expect(settingsRail.get('[data-testid="nav-rail-settings"]').exists()).toBe(true);
 
-        routeState.path = "/settings/principal-grants";
+        // PLAN-0610 W5c: the admin module now owns the role surface; the principal-grant page is
+        // retired (that path redirects here).
+        routeState.path = "/settings/roles";
         const adminWrapper = await mountRail();
         expect(adminWrapper.get('[data-testid="nav-rail-admin"]').attributes("aria-current")).toBe(
             "page",

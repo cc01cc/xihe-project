@@ -235,11 +235,13 @@ async function unbind(agent: WorkspaceAgentBinding) {
                     <p class="mt-1 text-xs text-muted-foreground">
                         {{ t("workspace.agentCreatePermissionNote") }}
                     </p>
-                    <!-- PLAN-0585 M2 / F-02: admins get a direct path to the grant panel instead of
-                         a dead end; non-admins keep the actionable text above. -->
+                    <!-- PLAN-0610 W5c: the principal-grant page is retired. Granting
+                         CREATE_ACCOUNT / MANAGE_WORKSPACE_AGENTS now means binding a role that carries
+                         those atoms, so the affordance points at the role/binding surface (F-02: an
+                         admin must never hit a dead end). Non-admins keep the text above. -->
                     <router-link
                         v-if="authStore.isAdmin"
-                        to="/settings/principal-grants"
+                        to="/settings/roles"
                         data-testid="agent-grant-panel-link"
                         class="mt-1 inline-block text-xs text-primary underline"
                     >
