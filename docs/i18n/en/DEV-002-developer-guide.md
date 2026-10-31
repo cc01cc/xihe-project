@@ -227,6 +227,13 @@ node ../scripts/ports.mjs plan xihe --stack 2      # show that stack's ports wit
 - `dev:host:stop` / `dev:reset` only touch the current stack (label `xihe.stack-id`; a missing label means stack-1).
 - Two concurrent stacks at most are recommended.
 
+#### Rust build cache and worktree isolation (PLAN-0596)
+
+- **Default: one `CARGO_TARGET_DIR` per worktree.** `. ../scripts/worktree-env.ps1 -Worktree <name>` externalizes it under `one/.local/cargo-target/<name>` (and `UV_PROJECT_ENVIRONMENT` under `one/.local/venvs/<name>`). Do not point several worktrees at the same target: concurrent builds serialize on the target lock, and on Windows a running service holds the exe, so the other worktree's build fails.
+- **Measured (2026-10-31 scratch):** two checkouts with identical source/profile shared one target: second cold build 48.9s → **0.3s**, disk 2×2.606GB → **2.606GB**. The benefit only applies when source/toolchain/profile match; real parallel branches differ, so the default stays isolated (user acceptance would be required to change it).
+- **Sweep scope:** `mise run clean:runtime-sweep` only touches the single target resolved by the current `cargo metadata` (in-tree in a plain shell, the external dir after dot-sourcing `worktree-env.ps1`); it never scans other projects under `.local/cargo-target`. `--maxsize 12GB` is interpreted as MiB (≈11.18 GiB).
+- **Permanent delete:** `mise run clean` runs `rm -rf logs packages/*/target packages/*/dist packages/*/coverage` with **no recycle bin and no prompt**; stop builds/services and confirm those are rebuildable artifacts first. Treat caches as "delete and rebuild", not cross-drive backup.
+
 ### 2.5. Configuration Management (PLAN-042)
 
 #### Architecture Overview
