@@ -3,7 +3,6 @@ package com.cc01cc.p.xihe.cp.config;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Map;
 import java.util.UUID;
