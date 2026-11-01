@@ -87,8 +87,9 @@ async function identityOf(page: Page, request: APIRequestContext): Promise<Ident
         name?: string;
         capabilities?: { isInstanceAdmin?: boolean; isInstanceSuper?: boolean };
     };
+    // PLAN-0614：空白起步的账号**没有**工作区，所以这里不再强制 URL 带 workspace；
+    // 需要工作区的调用方自己断言（例如 G2-a 在 openOrCreateWorkspace 之后断言）。
     const workspaceId = page.url().match(/\/workspace\/([0-9a-f-]{36})/i)?.[1] ?? "";
-    expect(workspaceId, "identity must carry a workspace").toMatch(/^[0-9a-f-]{36}$/i);
     return {
         id: raw.id,
         email: raw.email,
@@ -110,7 +111,9 @@ async function identityOf(page: Page, request: APIRequestContext): Promise<Ident
  * 条目"或"WorkspaceView"，就一直轮询；两者择一后再走各自路径。
  */
 async function settleIntoWorkspace(page: Page): Promise<string> {
-    const landing = await pollLanding(page);
+    // 空白起步（PLAN-0614）：`picker-empty` 是合法落点，但**进不去工作区** —— 这时必须由调用方
+    // 走"建第一个工作区"（`openOrCreateWorkspace`）。这里只接受"有条目的选择面"或"工作区视图"。
+    const landing = await pollLanding(page, ["picker", "workspace"]);
     if (landing === "picker") {
         const item = page.locator('[data-testid^="workspace-picker-item-"]').first();
         await expect
@@ -136,16 +139,42 @@ async function settleIntoWorkspace(page: Page): Promise<string> {
     return new URL(page.url()).pathname.match(/\/workspace\/([0-9a-f-]{36})/i)![1];
 }
 
-/** localMode 下无 token 访问受保护路由会自动免密重登（等价于真实用户刷新）。 */
-async function openWorkspace(page: Page): Promise<string> {
-    await page.goto("/workspace", { waitUntil: "load" });
-    return settleIntoWorkspace(page);
+/** localMode 下无 token 访问受保护路由会自动免密重登（等价于真实用户刷新）。
+ *
+ * 空白起步后"进入工作区"不再等价于"导航到 /workspace"（可能先落在空态），所以入口统一走
+ * `openOrCreateWorkspace()`：已有工作区就进，没有就经首屏引导建一个。
+ */
+// ── PLAN-0611 T5.2：六步走查截图（与断言同源） ────────────────────────────────
+/**
+ * 截图目录：`one/plans/PLAN-0611-…/evidence/t5.2-screenshots/`。
+ * 从 `packages/ui` 往上 5 层是 workspace 根（one/），避免把机器绝对路径写进 spec。
+ */
+const SCREENSHOT_DIR = process.env.XIHE_E2E_SCREENSHOT_DIR
+    ? path.resolve(process.env.XIHE_E2E_SCREENSHOT_DIR)
+    : path.resolve(
+          process.cwd(),
+          "../../../../..",
+          "plans/PLAN-0611-XH-first-run-goldpath/evidence/t5.2-screenshots",
+      );
+
+/**
+ * 截图。**必须在某个断言通过之后调用**（与断言同源，不是摆拍）；不引入任何等待/超时。
+ * 同时把文件名写进 annotation，矩阵运行时能从报告里核对"哪张图由哪次断言产出"。
+ */
+async function shot(page: Page, name: string): Promise<void> {
+    mkdirSync(SCREENSHOT_DIR, { recursive: true });
+    const file = path.join(SCREENSHOT_DIR, `${name}.png`);
+    await page.screenshot({ path: file, fullPage: true });
+    test.info().annotations.push({ type: "goldpath-screenshot", description: `${name}.png` });
 }
 
 /**
- * `/workspace` 的两种合法落点（G1-d 用）。
+ * `/workspace` 的三种合法落点（G1-d 用）。
  *
- * - `picker`：tab 上下文为空 ⇒ `WorkspacePicker` 渲染且至少列出自己的工作区；
+ * - `picker-empty`：tab 上下文为空**且账号还没有任何工作区** ⇒ PLAN-0614 的"空白起步"首屏
+ *   （`workspace-picker-empty` + 「创建你的第一个工作区」按钮）。注册不再自动建工作区，
+ *   所以这是新账号的**正常**落点，不是失败。
+ * - `picker`：tab 上下文为空但账号已有工作区 ⇒ `WorkspacePicker` 列出条目等用户选；
  * - `workspace`：守卫已恢复 tab 上下文 ⇒ **WorkspaceView 已挂载**（`workspace-toolbar-add` 是外壳
  *   的一部分，随组件挂载即渲染）。
  *
@@ -155,20 +184,29 @@ async function openWorkspace(page: Page): Promise<string> {
  * `failureCount=3..8` 的时间窗里假失败（closed 车道 4 次里 1 次）。**一个断言只证一个属性。**
  * 内容是否滞后改为信息性观测（见 G1-d 里的 `content=ready|lagging` annotation），不参与断言。
  *
- * 返回 `none` 表示两种落点都没出现 —— 那就是真正的失败，断言不允许它通过。
+ * 返回 `none` 表示三种落点都没出现 —— 那就是真正的失败，断言不允许它通过。
  * 只用 testid 判定、不读 DOM 文本：文案会随 i18n 变，结构不会。
  */
-async function workspaceLanding(page: Page): Promise<"picker" | "workspace" | "none"> {
-    const pickerItem = page.locator('[data-testid^="workspace-picker-item-"]').first();
-    if (await pickerItem.isVisible().catch(() => false)) return "picker";
+type Landing = "picker-empty" | "picker" | "workspace" | "none";
+
+async function visible(page: Page, testId: string): Promise<boolean> {
+    return page
+        .getByTestId(testId)
+        .isVisible()
+        .catch(() => false);
+}
+
+async function workspaceLanding(page: Page): Promise<Landing> {
+    if (await visible(page, "workspace-picker-empty")) return "picker-empty";
     if (
         await page
-            .getByTestId("workspace-toolbar-add")
+            .locator('[data-testid^="workspace-picker-item-"]')
+            .first()
             .isVisible()
             .catch(() => false)
-    ) {
-        return "workspace";
-    }
+    )
+        return "picker";
+    if (await visible(page, "workspace-toolbar-add")) return "workspace";
     return "none";
 }
 
@@ -177,45 +215,46 @@ async function workspaceContentReady(page: Page, timeoutMs = 3_000): Promise<boo
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
         for (const testId of ["workspace-file-tree", "workspace-empty-state"]) {
-            if (
-                await page
-                    .getByTestId(testId)
-                    .isVisible()
-                    .catch(() => false)
-            )
-                return true;
+            if (await visible(page, testId)) return true;
         }
         await new Promise((resolve) => setTimeout(resolve, 100));
     }
     return false;
 }
 
-/** 轮询到"两种合法落点之一"并返回它（`none` 不算落点，继续等）。 */
-async function pollLanding(page: Page): Promise<"picker" | "workspace"> {
-    let observed: "picker" | "workspace" | "none" = "none";
+/** 轮询到允许的落点之一并返回它（`none` 与不在白名单里的落点都会继续等）。 */
+async function pollLanding(
+    page: Page,
+    allowed: Landing[] = ["picker-empty", "picker", "workspace"],
+): Promise<Landing> {
+    let observed: Landing = "none";
     await expect
         .poll(async () => (observed = await workspaceLanding(page)), {
             timeout: 60000,
             intervals: [250, 500],
         })
-        .toMatch(/^(picker|workspace)$/);
-    return observed as "picker" | "workspace";
+        .toMatch(new RegExp(`^(${allowed.join("|")})$`));
+    return observed;
 }
 
+/** G1-d 的落点白名单：三种都合法（空白起步后 `picker-empty` 是常态）。 */
+const ANY_LANDING: Landing[] = ["picker-empty", "picker", "workspace"];
+
 /**
- * Lead 裁定 (b)：金路径里由用户**自己新建一个 `direct_attach` 工作区**再聊天。
+ * 金路径里由用户**自己新建一个 `direct_attach` 工作区**（PLAN-0614：注册不再建工作区，
+ * 所以这也是"第一个工作区"的必经路径；PLAN-0611 决策 #7 要求工作区一律 `direct_attach`）。
  *
- * 背景（BL-171）：`getOrCreateDefaultWorkspace()` 建出的默认工作区是 `managed_import` +
- * `executionMode=docker`，而工作区 Docker 后端按 2026-10-31 裁定已冻结 ⇒ 在那个工作区里
- * Chat 永远 `chat_handoff_failed`（runtime 连 sandbox 容器都建不出来）。design 决策 #7 也早就写了
- * "工作区一律用 `direct_attach`"。所以首条回复必须在 direct_attach 工作区里拿。
+ * 两种入口复用同一条对话框流程：
+ * - `picker`：空白起步首屏的「创建你的第一个工作区」按钮（`workspace-picker-create`）；
+ * - `toolbar`：已在工作区内时工作区工具条的"添加 Workspace"（`workspace-toolbar-add`），G2-e 用。
  *
  * 全流程走真实 UI（含 source browser 与 preflight），不绕过 preflight 硬填路径：
- * 目录在建在本次隔离 host root 下，Runtime 通过 `import-sources` 真的能读到它。
+ * 目录建在本次隔离 host root 下，Runtime 通过 `import-sources` 真的能读到它。
  */
-async function createDirectAttachWorkspace(
+async function createWorkspaceViaDialog(
     page: Page,
     request: APIRequestContext,
+    opener: "picker" | "toolbar",
 ): Promise<string> {
     const runId = process.env.XIHE_E2E_RUN_ID ?? "";
     expect(runId, "gold path needs the isolated e2e-host runner (XIHE_E2E_RUN_ID)").not.toBe("");
@@ -223,7 +262,9 @@ async function createDirectAttachWorkspace(
     const hostDir = path.join(hostRoot, `goldpath-direct-${Date.now()}`);
     mkdirSync(hostDir, { recursive: true });
 
-    await page.getByTestId("workspace-toolbar-add").click();
+    await page
+        .getByTestId(opener === "picker" ? "workspace-picker-create" : "workspace-toolbar-add")
+        .click();
     await expect(page.getByTestId("workspace-create-dialog")).toBeVisible({ timeout: 20000 });
     await page.getByTestId("workspace-storage-direct").click();
     await page.getByTestId("workspace-source-path").fill(hostDir);
@@ -274,6 +315,25 @@ async function createDirectAttachWorkspace(
     await page.goto(`/workspace/${workspaceId}`, { waitUntil: "load" });
     await expect(page.getByTestId("workspace-empty-state")).toBeVisible({ timeout: 45000 });
     return workspaceId;
+}
+
+/** 从空白起步首屏建"第一个工作区"（PLAN-0614 T3.4）。 */
+async function createFirstWorkspace(page: Page, request: APIRequestContext): Promise<string> {
+    await expect(page.getByTestId("workspace-picker-empty")).toBeVisible({ timeout: 30000 });
+    return createWorkspaceViaDialog(page, request, "picker");
+}
+
+/**
+ * 进入工作区；**空白起步**时先建第一个（PLAN-0614：注册不再自动建工作区）。
+ *
+ * G2/G3 的起点统一走这里：已有工作区就选/进，没有就经首屏引导建一个 —— 这正是新手真实路径。
+ */
+async function openOrCreateWorkspace(page: Page, request: APIRequestContext): Promise<string> {
+    await page.goto("/workspace", { waitUntil: "load" });
+    const landing = await pollLanding(page, ANY_LANDING);
+    if (landing === "picker-empty") return createFirstWorkspace(page, request);
+    if (landing === "workspace") return settleIntoWorkspace(page);
+    return settleIntoWorkspace(page);
 }
 
 /**
@@ -447,6 +507,9 @@ test.describe("@host gold path G1 — blank instance first run (localMode)", () 
         await expect(page.locator("#name")).toBeVisible({ timeout: 45000 });
         await expect(page.locator("#password")).toHaveCount(0);
         await expect(page.locator('form button[type="submit"]')).toBeDisabled();
+
+        // 证据：首跑 onboarding（T5.2 第 1 步），与上面 5 条断言同源。
+        await shot(page, "01-onboarding");
     });
 
     test("G1-b the first account flips bootstrap-status and lands in the workspace", async ({
@@ -473,11 +536,19 @@ test.describe("@host gold path G1 — blank instance first run (localMode)", () 
         expect((await readBootstrap(request)).initialized).toBe(true);
 
         // 首跑页的 SPA 推送/缓存存在竞态；这里做一次"刷新等价"的重新导航：bootstrap 已
-        // initialized=true，localMode 守卫会免密进入（真实用户的下一步动作）。
+        // initialized=true，localMode 守卫会免密重登（真实用户的下一步动作）。
         await page.goto("/workspace", { waitUntil: "load" });
-        await settleIntoWorkspace(page);
-        await expect(page.getByTestId("workspace-empty-state")).toBeVisible({ timeout: 45000 });
+
+        // PLAN-0614（空白起步）：注册**不再**建工作区 ⇒ 首屏是空态选择面，不是工作区视图。
+        // 原断言（等 `workspace-empty-state` / 自动出现的 Default Workspace）是旧语义，必须换掉。
+        await expect(page.getByTestId("workspace-picker-empty")).toBeVisible({ timeout: 45000 });
+        await expect(page.getByTestId("workspace-picker-create")).toBeVisible({ timeout: 20000 });
+        // 断言"确实没有工作区"：选择面里不该有任何条目（不是"列出了但没渲染"）。
+        await expect(page.locator('[data-testid^="workspace-picker-item-"]')).toHaveCount(0);
         expect(await tokenOf(page)).toBeTruthy();
+
+        // 证据：空态首屏（T5.2 第 2 步），与上面的断言同源。
+        await shot(page, "02-empty-picker");
 
         // PLAN-0610：首用户是 SUPER_ADMIN 绑定（不再是 users.role 字符串）。
         const identity = await identityOf(page, request);
@@ -485,6 +556,93 @@ test.describe("@host gold path G1 — blank instance first run (localMode)", () 
             true,
         );
         await expect(page.getByTestId("nav-rail-settings")).toBeVisible({ timeout: 20000 });
+    });
+
+    test("G1-b2 the empty state creates the first workspace and enters it", async ({
+        page,
+        request,
+    }) => {
+        const before = await readBootstrap(request);
+        test.skip(
+            !before.initialized,
+            "needs a bootstrapped first account (G1-b or --bootstrap-user=register)",
+        );
+
+        // 承接 G1-b：账号已注册但没有任何工作区。
+        await page.goto("/workspace", { waitUntil: "load" });
+        await expect(page.getByTestId("workspace-picker-empty")).toBeVisible({ timeout: 45000 });
+
+        // 点「创建你的第一个工作区」→ 对话框（direct_attach + source browser + preflight）。
+        await page.getByTestId("workspace-picker-create").click();
+        await expect(page.getByTestId("workspace-create-dialog")).toBeVisible({ timeout: 20000 });
+        await page.getByTestId("workspace-storage-direct").click();
+        const hostDir = path.join(
+            path.resolve(process.cwd(), "../../.tmp/e2e-host", process.env.XIHE_E2E_RUN_ID ?? ""),
+            `goldpath-first-${Date.now()}`,
+        );
+        mkdirSync(hostDir, { recursive: true });
+        await page.getByTestId("workspace-source-path").fill(hostDir);
+        await page.getByTestId("workspace-source-read").click();
+        await expect(page.getByTestId("workspace-source-browser")).toBeVisible({ timeout: 20000 });
+        await shot(page, "03-create-workspace-dialog");
+        await page.getByTestId("workspace-source-use").click();
+
+        const token = await tokenOf(page);
+        const preflight = async (executionMode: "windows-mxc" | "windows-host") => {
+            const response = await request.post(
+                `${CP_URL}/api/v1/workspaces/capabilities/preflight`,
+                {
+                    headers: bearer(token),
+                    data: { storageMode: "direct_attach", hostPath: hostDir, executionMode },
+                },
+            );
+            expect(response.ok(), await response.text()).toBeTruthy();
+            return (await response.json()) as { available: boolean; reason?: string };
+        };
+        const mxc = await preflight("windows-mxc");
+        if (mxc.available) {
+            await page.getByTestId("workspace-execution-mode-mxc").click();
+        } else {
+            const host = await preflight("windows-host");
+            expect(host.available, `no direct_attach backend (mxc=${String(mxc.reason)})`).toBe(
+                true,
+            );
+            await page.getByTestId("workspace-execution-mode-host").click();
+            await page.getByTestId("workspace-host-risk-ack").click();
+        }
+        await page.getByTestId("workspace-execution-next").click();
+        await page.getByTestId("workspace-create-name").fill("First Workspace");
+        const createdResponse = page.waitForResponse(
+            (response) =>
+                response.url().endsWith("/api/v1/workspaces") &&
+                response.request().method() === "POST",
+        );
+        await page.getByTestId("workspace-create-submit").click();
+        const created = await createdResponse;
+        expect([200, 201], await created.text()).toContain(created.status());
+        const workspaceId = String(((await created.json()) as { id?: string }).id ?? "");
+
+        // 创建成功后选择面自动进入该工作区（PLAN-0614 M2 的 handleCreated）。
+        await expect(page).toHaveURL(new RegExp(`/workspace/${workspaceId}$`, "i"), {
+            timeout: 45000,
+        });
+        await expect(page.getByTestId("workspace-empty-state")).toBeVisible({ timeout: 45000 });
+        await shot(page, "04-workspace-view");
+
+        // 移动 viewport 代表性截图（DEV-020）：同一 context 新页签共享 localStorage token。
+        const mobile = await page.context().newPage();
+        try {
+            await mobile.setViewportSize({ width: 390, height: 844 });
+            await mobile.goto(`/workspace/${workspaceId}`, { waitUntil: "load" });
+            // 窄屏下文件树不常驻，得先点工具栏的「Files」把面板打开 —— 正是移动用户的真实动作。
+            await mobile.getByTestId("workspace-toolbar-files-mobile").click();
+            await expect(mobile.getByTestId("workspace-empty-state")).toBeVisible({
+                timeout: 45000,
+            });
+            await shot(mobile, "07-mobile-workspace");
+        } finally {
+            await mobile.close();
+        }
     });
 
     test("G1-c a fresh browser context re-enters without the login form", async ({
@@ -499,7 +657,8 @@ test.describe("@host gold path G1 — blank instance first run (localMode)", () 
         const page = await context.newPage();
         try {
             await page.goto("/workspace", { waitUntil: "load" });
-            await settleIntoWorkspace(page);
+            // PLAN-0614：新账号没有工作区 ⇒ 落点是空态选择面（`picker-empty`），也是合法重入。
+            await pollLanding(page, ANY_LANDING);
             await expect(page.locator("#identifier")).toHaveCount(0);
             expect(await tokenOf(page), "local-login must mint a token").toBeTruthy();
         } finally {
@@ -511,7 +670,7 @@ test.describe("@host gold path G1 — blank instance first run (localMode)", () 
         page,
         request,
     }) => {
-        await openWorkspace(page);
+        await openOrCreateWorkspace(page, request);
         await page.getByTestId("nav-rail-logout").click();
 
         // BL-150 B（0612 M6）：登出把后续决策交给路由守卫；localMode 下守卫用
@@ -532,15 +691,12 @@ test.describe("@host gold path G1 — blank instance first run (localMode)", () 
             })
             .toMatch(/^\/workspace(\/[0-9a-f-]{36})?$/i);
 
-        // (3) 只接受两种真实落点，二者必居其一（pollling，无固定等待）：
-        //     - `workspace-picker` 内的条目：tab 上下文为空 ⇒ 需要用户选工作区；
-        //     - WorkspaceView 的文件树 / 空态：守卫已恢复 tab 上下文 ⇒ 直接进入。
-        //     现状见 BL-169：localMode 免密分支会 `writeTabWorkspace(res.workspaceId)`，所以
-        //     goldpath 车道落到第二种；virgin 车道（G1-a/b/c）仍会先看到选择面。断言不锁定
-        //     其中一种，但"什么都没渲染"必须失败。
-        await expect
-            .poll(() => workspaceLanding(page), { timeout: 45000, intervals: [250, 500] })
-            .toMatch(/^(picker|workspace)$/);
+        // (3) PLAN-0614：落点三态都合法（polling，无固定等待）：
+        //     - `picker-empty`：账号**还没有任何工作区** ⇒ 空白起步首屏（注册不再建工作区）；
+        //     - `picker`：已有工作区但 tab 上下文为空 ⇒ 等用户选；
+        //     - `workspace`：守卫恢复了 tab 上下文（或落在"第一个活跃工作区"）⇒ 直接进入。
+        //     "什么都没渲染"仍然是失败（可证伪性保留）。
+        await pollLanding(page, ANY_LANDING);
 
         // 记录这次断言实际观察到的事实（供 evidence 引用）。不是探针：不挂 console/pageerror
         // 监听，只把落点、picker 条目数与 WorkspaceView 的 testid 计数写进报告 annotation。
@@ -633,7 +789,7 @@ test.describe("@host gold path G2 — zero to first reply through the UI", () =>
     }) => {
         // 草案的 principal-grants 自授步骤已随 PLAN-0610 W2 退役；localMode 首用户直接持
         // SUPER_ADMIN（design 决策 #1），这里断言"管理面直接可用 + 能力投影正确"。
-        await openWorkspace(page);
+        await openOrCreateWorkspace(page, request);
         const identity = await identityOf(page, request);
         expect(identity.isInstanceSuper).toBe(true);
 
@@ -648,8 +804,11 @@ test.describe("@host gold path G2 — zero to first reply through the UI", () =>
         await expect(page.getByTestId("nav-rail-admin")).toBeVisible({ timeout: 20000 });
     });
 
-    test("G2-c create and bind an Agent through the workspace dialog", async ({ page }) => {
-        const workspaceId = await openWorkspace(page);
+    test("G2-c create and bind an Agent through the workspace dialog", async ({
+        page,
+        request,
+    }) => {
+        const workspaceId = await openOrCreateWorkspace(page, request);
 
         await page.getByTestId("workspace-toolbar-agents").click();
         await expect(page.getByTestId("workspace-agent-management-dialog")).toBeVisible({
@@ -684,12 +843,16 @@ test.describe("@host gold path G2 — zero to first reply through the UI", () =>
         await page.getByTestId("agent-principal-bind").click();
         expect((await bindResponse).status()).toBe(200);
         expect(workspaceId).toMatch(/^[0-9a-f-]{36}$/i);
+
+        // 证据：Agent 管理面板（创建 + 绑定完成态，T5.2 第 5 步），与上面的 201/200 断言同源。
+        await shot(page, "05-agent-session");
     });
 
     test("G2-d create a session with the bound Agent (201) and the composer appears", async ({
         page,
+        request,
     }) => {
-        await openWorkspace(page);
+        await openOrCreateWorkspace(page, request);
 
         await page.getByTestId("workspace-create-session").click();
         const principalSelect = page.getByTestId("workspace-agent-principal-select");
@@ -721,11 +884,11 @@ test.describe("@host gold path G2 — zero to first reply through the UI", () =>
         // 本用例比其它 G2 步骤长（建工作区 + 建/绑 Agent + 建会话 + 聊天 + reload），单独放宽超时。
         test.setTimeout(300_000);
         // 先进入默认工作区（拿到工作区工具条的入口），再从中新建 direct_attach 工作区。
-        await openWorkspace(page);
+        await openOrCreateWorkspace(page, request);
         // Lead 裁定 (b)：首条回复必须在 `direct_attach` 工作区里拿（BL-171：自动建的默认工作区是
         // `managed_import/docker`，而工作区 Docker 后端按 2026-10-31 裁定冻结 ⇒ chat 必
         // `chat_handoff_failed`）。这条用例因此自包含：建工作区 → 建并绑定 Agent → 建会话 → 聊天。
-        const workspaceId = await createDirectAttachWorkspace(page, request);
+        const workspaceId = await createWorkspaceViaDialog(page, request, "toolbar");
         await createAndBindAgentInCurrentWorkspace(page);
 
         await page.getByTestId("workspace-create-session").click();
@@ -786,6 +949,9 @@ test.describe("@host gold path G2 — zero to first reply through the UI", () =>
             .toBeGreaterThan(0);
         await expect(page.getByTestId("message-error")).toHaveCount(0);
 
+        // 证据：首条回复（T5.2 第 6 步），与上面的"气泡可见 + 文本非空 + 无错误"断言同源。
+        await shot(page, "06-first-reply");
+
         await page.reload({ waitUntil: "load" });
         await expect
             .poll(async () => page.locator('[data-slot="message"]').count(), {
@@ -810,8 +976,9 @@ test.describe("@host gold path G3 — provider connection to selectable model", 
 
     test("G3-a a UI-created connection verifies READY against the fake provider", async ({
         page,
+        request,
     }) => {
-        await openWorkspace(page);
+        await openOrCreateWorkspace(page, request);
         await page.goto("/settings/config", { waitUntil: "load" });
 
         // 实例层的 LLM 分区是只读提示（`settings.providerInstanceNote`），ProviderHub 只在
@@ -877,7 +1044,7 @@ test.describe("@host gold path G3 — provider connection to selectable model", 
         page,
         request,
     }) => {
-        const workspaceId = await openWorkspace(page);
+        const workspaceId = await openOrCreateWorkspace(page, request);
         const token = await tokenOf(page);
 
         const list = await request.get(`${CP_URL}/api/v1/sessions`, { headers: bearer(token) });
@@ -904,7 +1071,7 @@ test.describe("@gap gold path G4 — failure readability (target state)", () => 
             true,
             "BL-152 未修：当前直出 `LLM_NOT_CONFIGURED: Agent LLM is not ready: missing_credentials`（英文技术码）",
         );
-        await openWorkspace(page);
+        await openOrCreateWorkspace(page, request);
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 25000 });
         await page.getByTestId("chat-input").fill("配置缺失时我该看到什么？");
         await page.getByTestId("chat-send-button").click();
