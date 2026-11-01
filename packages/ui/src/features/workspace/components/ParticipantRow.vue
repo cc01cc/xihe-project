@@ -28,12 +28,35 @@ const props = defineProps<{
     canMention: boolean;
     /** 正在移除该行（请求在途），避免重复点击。 */
     removing?: boolean;
+    /** 策略保存中（避免重复提交）。 */
+    saving?: boolean;
 }>();
 
-const emit = defineEmits<{ remove: [participant: SessionParticipantView] }>();
+function emitWake(wakePolicy: ParticipantWakePolicy): void {
+    emit("policy", props.participant, { wakePolicy });
+}
+
+function emitRespond(respondPolicy: ParticipantRespondPolicy): void {
+    emit("policy", props.participant, { respondPolicy });
+}
+
+const emit = defineEmits<{
+    remove: [participant: SessionParticipantView];
+    mention: [name: string];
+    policy: [
+        participant: SessionParticipantView,
+        change: { wakePolicy?: ParticipantWakePolicy; respondPolicy?: ParticipantRespondPolicy },
+    ];
+}>();
 
 /** 破坏性操作走两次点击确认（与 0622 的禁用 Agent 同一形状），不做 alertdialog。 */
 const confirmingRemove = ref(false);
+
+/** 提及：只把 `@displayName` 交给父级插入草稿 —— 面板**不发送**任何消息。 */
+function requestMention(): void {
+    if (!props.canMention) return;
+    emit("mention", displayName.value);
+}
 
 function requestRemove(): void {
     if (!props.canManage || props.removing) return;
@@ -164,13 +187,52 @@ const disabled = computed(() => Boolean(props.participant.disabledAt));
                     >{{ t("workspace.participantDisabledBadge") }}</span
                 >
             </p>
+            <!-- 策略：只读文字 + （有 manage 时）可编辑下拉。**先渲染，保存成功后才改值**。 -->
             <p class="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
                 <span :data-testid="`participant-wake-indicator-${participant.participantId}`">
-                    {{ t("workspace.participantWakeLabel") }}: {{ wakeLabel }}
+                    {{ t("workspace.participantWakeLabel") }}:
                 </span>
+                <select
+                    v-if="canManage && participant.role !== 'PRIMARY'"
+                    class="rounded border bg-background px-1 py-0.5 text-[10px] disabled:opacity-50"
+                    :data-testid="`participant-wake-select-${participant.participantId}`"
+                    :value="participant.wakePolicy"
+                    :disabled="saving"
+                    @change="
+                        emitWake(
+                            ($event.target as HTMLSelectElement).value as ParticipantWakePolicy,
+                        )
+                    "
+                >
+                    <option value="ALL_MESSAGES">
+                        {{ t("workspace.participantWakeAllMessages") }}
+                    </option>
+                    <option value="MENTION">{{ t("workspace.participantWakeMention") }}</option>
+                </select>
+                <span v-else>{{ wakeLabel }}</span>
                 <span :data-testid="`participant-respond-indicator-${participant.participantId}`">
-                    {{ t("workspace.participantRespondLabel") }}: {{ respondLabel }}
+                    {{ t("workspace.participantRespondLabel") }}:
                 </span>
+                <select
+                    v-if="canManage && participant.role !== 'PRIMARY'"
+                    class="rounded border bg-background px-1 py-0.5 text-[10px] disabled:opacity-50"
+                    :data-testid="`participant-respond-select-${participant.participantId}`"
+                    :value="participant.respondPolicy"
+                    :disabled="saving"
+                    @change="
+                        emitRespond(
+                            ($event.target as HTMLSelectElement).value as ParticipantRespondPolicy,
+                        )
+                    "
+                >
+                    <option value="ALWAYS">{{ t("workspace.participantRespondAlways") }}</option>
+                    <option value="WHEN_MENTIONED">
+                        {{ t("workspace.participantRespondWhenMentioned") }}
+                    </option>
+                    <option value="JUDGE">{{ t("workspace.participantRespondJudge") }}</option>
+                    <option value="MUTED">{{ t("workspace.participantRespondMuted") }}</option>
+                </select>
+                <span v-else>{{ respondLabel }}</span>
             </p>
             <!-- M1a：仅 AGENT 有模型意图（契约字段，缺失不猜）。 -->
             <p
@@ -193,6 +255,7 @@ const disabled = computed(() => Boolean(props.participant.disabledAt));
                         ? t('workspace.participantMentionAction')
                         : t('workspace.participantMentionDenied')
                 "
+                @click="requestMention"
             >
                 {{ t("workspace.participantMentionAction") }}
             </button>

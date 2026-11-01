@@ -117,6 +117,13 @@ const boundWorkspaceAgents = computed(() =>
     workspaceAgents.value.filter((agent) => agent.bound === true && agent.disabled !== true),
 );
 
+/** PLAN-0623：dock 参与者面板的「提及」→ composer 草稿（不发送）。 */
+const chatPanelRef = ref<InstanceType<typeof ChatPanel> | null>(null);
+
+function handleParticipantMention(name: string): void {
+    chatPanelRef.value?.insertMention?.(name);
+}
+
 const sessionId = computed(() => {
     const current = sessionStore.currentSession;
     if (routeSessionId.value) {
@@ -327,6 +334,7 @@ watch([workspaceId, routeSessionId], () => {
             @files="showMobileFiles = true"
             @mobile-toggle-changes="handleToggleChanges"
             @mobile-toggle-monitor="handleToggleMonitor"
+            @mention="handleParticipantMention"
         >
             <template #center>
                 <!-- Conversation is the main column; the workbench renders it for desktop. -->
@@ -420,7 +428,12 @@ watch([workspaceId, routeSessionId], () => {
                             {{ t("workspace.openAgentManagement") }}
                         </button>
                     </div>
-                    <ChatPanel v-if="sessionId" :session-id="sessionId" tool-mode="workspace" />
+                    <ChatPanel
+                        v-if="sessionId"
+                        ref="chatPanelRef"
+                        :session-id="sessionId"
+                        tool-mode="workspace"
+                    />
                     <div v-else class="flex flex-1 flex-col items-center justify-center gap-2">
                         <p class="text-sm text-muted-foreground">{{ t("workspace.noSession") }}</p>
                         <button

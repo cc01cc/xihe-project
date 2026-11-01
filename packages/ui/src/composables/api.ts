@@ -80,6 +80,8 @@ import type {
     ScheduledTaskListPage,
 } from "../types";
 import type {
+    ParticipantRespondPolicy as RespondPolicy,
+    ParticipantWakePolicy as WakePolicy,
     SessionParticipantCapabilities,
     SessionParticipantListResponse,
     SessionParticipantView,
@@ -2359,6 +2361,26 @@ export const api = {
      * PLAN-0623 D23-26：移除 = **soft disable**（CP 只置 `disabled_at`，行与游标保留）。
      * 因此调用方在 204 之后必须重新拉列表，行仍会在（带 disabled 徽标），而不是消失。
      */
+    /**
+     * PLAN-0623 改策略：`PATCH …/participants/{id}`，**只带变更字段**。
+     *
+     * 已知错误码（CP 契约）：`PARTICIPANT_PRIMARY_IMMUTABLE`（PRIMARY 不可改/不可移除）。
+     * 其它 4xx 由调用方按 `ApiError.problem.code` 映射，不直显英文 detail。
+     */
+    async updateSessionParticipant(
+        sessionId: string,
+        participantId: string,
+        body: { wakePolicy?: WakePolicy; respondPolicy?: RespondPolicy },
+    ): Promise<void> {
+        await request<void>(
+            `/sessions/${encodeURIComponent(sessionId)}/participants/${encodeURIComponent(participantId)}`,
+            {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+            },
+        );
+    },
     async removeSessionParticipant(sessionId: string, participantId: string): Promise<void> {
         await request<void>(
             `/sessions/${encodeURIComponent(sessionId)}/participants/${encodeURIComponent(participantId)}`,

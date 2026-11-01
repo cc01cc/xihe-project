@@ -68,6 +68,8 @@ const emit = defineEmits<{
     files: [];
     "mobile-toggle-changes": [];
     "mobile-toggle-monitor": [];
+    /** PLAN-0623：参与者面板的「提及」冒泡到页面层，由它转给 composer。 */
+    mention: [name: string];
 }>();
 
 const { t } = useI18n();
@@ -546,7 +548,10 @@ watch(
                 </template>
                 <template #members>
                     <!-- PLAN-0623 U1：按会话挂载；无会话时面板自身渲染 participants-empty。 -->
-                    <SessionParticipantsPanel :session-id="sessionId ?? null" />
+                    <SessionParticipantsPanel
+                        :session-id="sessionId ?? null"
+                        @mention="emit('mention', $event)"
+                    />
                 </template>
             </WorkspaceDock>
         </div>

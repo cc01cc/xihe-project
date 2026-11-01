@@ -392,6 +392,16 @@ watch(
 
 const streamComponent = ref<InstanceType<typeof SSEStream> | null>(null);
 const inputComponent = ref<InstanceType<typeof InputArea> | null>(null);
+
+/**
+ * PLAN-0623：把「提及」转交给输入框（`@displayName` 插入草稿，不发送）。
+ * 由 WorkspaceView 通过 ref 调用，dock 里的参与者面板不直接持有 composer。
+ */
+function insertMention(name: string): void {
+    inputComponent.value?.insertMention?.(name);
+}
+
+defineExpose({ insertMention });
 let previousSessionId: string | null = null;
 
 watch(

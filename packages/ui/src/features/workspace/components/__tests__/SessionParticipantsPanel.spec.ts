@@ -17,6 +17,7 @@ vi.mock("../../../../composables/api", async (importOriginal) => {
             ...actual.api,
             getSessionParticipants: vi.fn<() => Promise<SessionParticipantListResponse>>(),
             removeSessionParticipant: vi.fn<() => Promise<void>>(),
+            updateSessionParticipant: vi.fn<() => Promise<void>>(),
         },
     };
 });
@@ -25,6 +26,7 @@ import { api } from "../../../../composables/api";
 
 const getParticipants = vi.mocked(api.getSessionParticipants);
 const removeParticipant = vi.mocked(api.removeSessionParticipant);
+const apiUpdate = vi.mocked(api.updateSessionParticipant);
 
 const ALL_CAPS: SessionParticipantCapabilities = { view: true, manage: true, mention: true };
 
@@ -220,5 +222,129 @@ describe("SessionParticipantsPanel rows and gating (PLAN-0623 U2/F-01)", () => {
         expect(wrapper.find('[data-testid="participant-disabled-badge-p-human"]').exists()).toBe(
             true,
         );
+    });
+});
+
+describe("SessionParticipantsPanel T3.6/T3.7 and policy editing (PLAN-0623)", () => {
+    it("uses a different empty wording when a session is selected", async () => {
+        getParticipants.mockResolvedValueOnce({ participants: [], capabilities: ALL_CAPS });
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        const empty = wrapper.get('[data-testid="participants-empty"]');
+        expect(empty.text()).toMatch(/还没有|no participants/i);
+        expect(empty.text()).not.toMatch(/选择一个会话|Select a session/i);
+    });
+
+    it("keeps the select-a-session wording when there is no session", async () => {
+        const wrapper = mountPanel({ sessionId: null });
+        await flushPromises();
+
+        const empty = wrapper.get('[data-testid="participants-empty"]');
+        expect(empty.text()).toMatch(/选择一个会话|Select a session/i);
+    });
+
+    it("treats an HTTP 403 as forbidden, not as an empty list and not as a load error", async () => {
+        const { ApiError } = await import("../../../../composables/api");
+        getParticipants.mockRejectedValueOnce(
+            new ApiError({
+                status: 403,
+                code: "PARTICIPANT_CAP_DENIED",
+                detail: "denied",
+                requestId: "req-1",
+            }),
+        );
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="participants-forbidden"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="participants-error"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="participants-empty"]').exists()).toBe(false);
+    });
+
+    it("sends only the changed policy field and refetches on success", async () => {
+        getParticipants.mockResolvedValueOnce({ participants: [HUMAN], capabilities: ALL_CAPS });
+        apiUpdate.mockResolvedValueOnce(undefined);
+        getParticipants.mockResolvedValueOnce({
+            participants: [{ ...HUMAN, wakePolicy: "ALL_MESSAGES" }],
+            capabilities: ALL_CAPS,
+        });
+
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        const select = wrapper.get('[data-testid="participant-wake-select-p-human"]');
+        expect(select.attributes("data-pending")).toBeUndefined();
+        await select.setValue("ALL_MESSAGES");
+        await flushPromises();
+
+        expect(apiUpdate).toHaveBeenCalledWith("session-1", "p-human", {
+            wakePolicy: "ALL_MESSAGES",
+        });
+        expect(getParticipants).toHaveBeenCalledTimes(2);
+    });
+
+    it("shows the localized PRIMARY message and keeps the old value when PATCH is refused", async () => {
+        const { ApiError } = await import("../../../../composables/api");
+        getParticipants.mockResolvedValueOnce({ participants: [HUMAN], capabilities: ALL_CAPS });
+        apiUpdate.mockRejectedValueOnce(
+            new ApiError({
+                status: 409,
+                code: "PARTICIPANT_PRIMARY_IMMUTABLE",
+                detail: "PRIMARY is immutable",
+                requestId: "req-2",
+            }),
+        );
+
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        await wrapper
+            .get('[data-testid="participant-wake-select-p-human"]')
+            .setValue("ALL_MESSAGES");
+        await flushPromises();
+
+        expect(wrapper.get('[data-testid="participants-error-detail"]').text()).toBe(
+            i18n.global.t("workspace.participantPrimaryImmutable"),
+        );
+        // 旧值保留：props 没变，下拉仍回到原值。
+        expect(
+            (
+                wrapper.get('[data-testid="participant-wake-select-p-human"]')
+                    .element as HTMLSelectElement
+            ).value,
+        ).toBe("MENTION");
+    });
+
+    it("never offers policy selects for the PRIMARY participant", async () => {
+        getParticipants.mockResolvedValueOnce({ participants: [AGENT], capabilities: ALL_CAPS });
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="participant-wake-select-p-agent"]').exists()).toBe(
+            false,
+        );
+        expect(wrapper.find('[data-testid="participant-mention-p-agent"]').exists()).toBe(true);
+    });
+
+    it("emits the display name when the mention action is allowed", async () => {
+        getParticipants.mockResolvedValueOnce({ participants: [HUMAN], capabilities: ALL_CAPS });
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        await wrapper.get('[data-testid="participant-mention-p-human"]').trigger("click");
+        expect(wrapper.emitted("mention")).toEqual([["Ada Lovelace"]]);
+    });
+
+    it("does not emit a mention when the capability denies it", async () => {
+        getParticipants.mockResolvedValueOnce({
+            participants: [HUMAN],
+            capabilities: { view: true, manage: true, mention: false },
+        });
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        await wrapper.get('[data-testid="participant-mention-p-human"]').trigger("click");
+        expect(wrapper.emitted("mention")).toBeUndefined();
     });
 });

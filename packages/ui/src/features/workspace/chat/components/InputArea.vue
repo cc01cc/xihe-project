@@ -309,6 +309,11 @@ function attachmentObjectUrl(file: File): string {
     return URL.createObjectURL(file);
 }
 
+function focusInput(): void {
+    const element = document.querySelector<HTMLTextAreaElement>('[data-testid="chat-input"]');
+    element?.focus();
+}
+
 function clearDraft() {
     input.value = "";
     attachments.value = [];
@@ -316,7 +321,24 @@ function clearDraft() {
     attachmentErrors.value = {};
 }
 
-defineExpose({ clearDraft });
+/**
+ * PLAN-0623：把 `@displayName` 插入草稿（参与者面板的"提及"）。
+ * 只改本地草稿，不发消息 —— 发送仍走用户自己的发送动作。
+ */
+function insertMention(name: string): void {
+    const mention = `@${name}`;
+    const current = input.value;
+    if (!current.trim()) {
+        input.value = `${mention} `;
+    } else if (current.endsWith(" ") || current.endsWith("\n")) {
+        input.value = `${current}${mention} `;
+    } else {
+        input.value = `${current} ${mention} `;
+    }
+    focusInput();
+}
+
+defineExpose({ clearDraft, insertMention });
 </script>
 
 <template>
