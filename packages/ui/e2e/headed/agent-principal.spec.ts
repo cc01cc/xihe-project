@@ -503,6 +503,10 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
 
         // 真实 UI 的"两次确认"是**同一个按钮点两次**（第一次进入确认态、按钮文案变成确认文案；
         // 第二次才发 POST），不是 alertdialog —— 旧 spec 假设了对话框，所以 15s 等不到元素。
+        //
+        // 用例自足性：共享栈上工作区里可能已有**多个**已绑定 agent（每跑一次 S1 就多一个），
+        // 所以"工作区只剩一个 agent"不是可靠前提。先把 S1 建的那个禁用（S3a 证据），
+        // 再把其余仍可用的逐个禁用，直到工作区真的没有可用 agent。
         const disableButton = page.getByTestId(`workspace-agent-disable-${principalId}`);
         const idleLabel = (await disableButton.textContent()) ?? "";
         await disableButton.click();
@@ -534,6 +538,35 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
             name: "s3a-agent-disabled-badge",
             assertion: "disable 两次确认后出现「已禁用」徽标",
         });
+
+        // 把工作区里**其余**仍可用的 agent 也禁用掉，直到没有可用 agent（不依赖"只有一个 agent"）。
+        // 上限 12 次防止意外死循环；每次操作都等真实 204/200 响应，不做 sleep。
+        for (let round = 0; round < 12; round += 1) {
+            const remaining = page.locator(
+                '[data-testid^="workspace-agent-disable-"]:not([disabled])',
+            );
+            const count = await remaining.count();
+            if (count === 0) break;
+            const testId = (await remaining.first().getAttribute("data-testid")) ?? "";
+            const otherId = testId.replace("workspace-agent-disable-", "");
+            if (otherId === principalId) break; // S1 的已禁用（本轮首个用例已处理）
+            const button = page.getByTestId(testId);
+            const label = (await button.textContent()) ?? "";
+            await button.click();
+            await expect(button).not.toHaveText(label, { timeout: 15000 });
+            const response = page.waitForResponse(
+                (candidate) =>
+                    new URL(candidate.url()).pathname ===
+                        `/api/v1/agent-principals/${otherId}/disable` &&
+                    candidate.request().method() === "POST",
+            );
+            await button.click();
+            const answered = await response;
+            expect([200, 204], await answered.text()).toContain(answered.status());
+            await expect(page.getByTestId(`agent-disabled-badge-${otherId}`)).toBeVisible({
+                timeout: 20000,
+            });
+        }
 
         await page.keyboard.press("Escape");
         await expect(page.getByTestId("workspace-agent-management-dialog")).toBeHidden({
