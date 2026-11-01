@@ -238,7 +238,10 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         attachPageDiagnostics(page);
     });
 
-    test.afterEach((_fixtures, testInfo) => {
+    // Playwright 要求 afterEach 的第一个参数是**解构模式**（fixtures），不能是普通标识符；
+    // oxlint 的 no-empty-pattern 不理解这个 API 契约，所以对下一行显式豁免。
+    // eslint-disable-next-line no-empty-pattern
+    test.afterEach(({}, testInfo) => {
         if (testInfo.status === "failed" || testInfo.status === "timedOut") {
             failedTests.push(`${testInfo.title} [${testInfo.status}]`);
         } else if (testInfo.status === "skipped") {
