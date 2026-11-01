@@ -1,12 +1,12 @@
 # Agent principal 与 Workspace 绑定
 
 > 契约状态：`active`  
-> 实现状态：`partial`（PLAN-0374 principal/Workspace binding、T3.1b/T3.3、V5/V6/V7 已验收；fork/branch producer 归 PLAN-0409/0410，Agent 铸造/多层审批后置 BL-70/71）
+> 实现状态：`partial`（PLAN-0374 principal/Workspace binding、T3.1b/T3.3、V5/V6/V7 已验收；**scope 三档 `PERSONAL`/`WORKSPACE`/`INSTANCE` 与三段授权由 PLAN-0622 承接，尚未实现**；fork/branch producer 归 PLAN-0409/0410，Agent 铸造/多层审批后置 BL-70/71）
 > Profile：`security`  
-> Owner：PLAN-0374（canonical binding；spawn caller amendment per PLAN-0407 #53）
-> 消费者：CP 授权/Session/Chat admission、Workspace Agent 管理 API、UI Agent 管理与 Session 选择、PLAN-0407/0409/0410  
+> Owner：PLAN-0374（canonical binding；spawn caller amendment per PLAN-0407 #53）；scope 三档与三段授权 amendment per PLAN-0622  
+> 消费者：CP 授权/Session/Chat admission、Workspace Agent 管理 API、UI Agent 管理与 Session 选择、PLAN-0407/0409/0410、PLAN-0622/0623  
 > 来源：PLAN-0374（原承接 BL-18/BL-29；2026-09-23 G2 已冻结入 PLAN-0407 承接，执行中；本地稿 `plans/PLAN-0374-XH-agent-workspace-scope/spec/agent/principal-workspace-binding.md`）  
-> 更新日期：2026-10-30
+> 更新日期：2026-11-02
 
 ## 范围
 
@@ -30,6 +30,43 @@ Agent 独立主体（`agent_principals`）、Workspace 绑定 cap（`workspace_a
 principal grants、Workspace binding cap、Session instance cap 是三个独立约束面；不引入 `users.type` Agent 身份或 polymorphic membership。
 
 Fork 实现归属：0374 定义并验证 stable principal 与独立授权 root 不变量；fork API、child Session producer 与复制流程由 PLAN-0409 唯一实现。
+
+## scope 三档与三段授权（PLAN-0622 增补，实现状态 `partial`）
+
+> 本节由 PLAN-0622 承接；**契约先定、实现随 M1 推进**。动作/atom 的 canonical 正文仍在 `spec/security/principal-workspace-scope.md`，本节只写 Agent 侧的档位与三段关系。
+
+### scope 属于绑定，不属于 principal
+
+**scope 是「绑定式 scope」（BL-29 冻结语义），不是 principal 自带的授权范围。**
+
+- `PERSONAL` / `WORKSPACE` / `INSTANCE` 三档标注的是「这是谁的主体、默认给谁用」（列在 `agent_principals.scope`，属**归属/可见性**标注）；
+- **它不授予任何 permission 原子**。主体的有效范围来自**绑定的位置**：`workspace_agents` 行（在哪用）× 该主体的 grants ∩ binding cap（允许什么）；
+- 因此禁止把 `principal.scope` 读作 authorization scope（也不是 OAuth/provider scope）；「INSTANCE 档可全实例用」只描述**可被发现/可绑**，不描述「权限更大」——INSTANCE 主体的动作仍受其自身 grants 与 Session cap 收口。
+
+| scope | 谁创建 | 可见 / 可用 | 绑定要求 | 禁用权 |
+|---|---|---|---|---|
+| `PERSONAL` | 主体 owner 本人（`CREATE_OWN_AGENT`，user scope；要求 `owner_user_id` 非空） | 仅 owner + 被绑到的 Workspace 成员 | owner 可绑到自己有绑定权限的 Workspace；绑定时 `owner_user_id` **必须**等于绑定操作者 | owner / instance ADMIN |
+| `WORKSPACE` | 该 Workspace 内有 `MANAGE_WORKSPACE_AGENTS` 的人 | 该 Workspace 成员（现行语义不变） | **需要** `workspace_agents` 行 | Workspace OWNER / instance ADMIN |
+| `INSTANCE` | instance ADMIN（`CREATE_ACCOUNT`，resource `*`） | 全实例可发现 | **不需要**绑定即可用 | 仅 instance ADMIN |
+
+约束：`scope` 与 `owner_user_id` 成对限定——`PERSONAL` 必须非空、其余两档必须为空（`ck_agent_principals_owner`）；存量 principal 一次性回填 `WORKSPACE`（它们本就只能靠 binding 使用）。
+
+### 三段授权（创建 / 绑定 / 使用）彼此独立
+
+| 段 | 动作 | action | 作用域 | 说明 |
+|---|---|---|---|---|
+| **创建** | 建 `PERSONAL` | **`CREATE_OWN_AGENT`（新增）** | user | 普通用户建自己的主体；不得用它建 WORKSPACE/INSTANCE 档 |
+| | 建 `WORKSPACE` | `MANAGE_WORKSPACE_AGENTS` | workspace | 在工作区内建 |
+| | 建 `INSTANCE` | `CREATE_ACCOUNT` | instance（resource `*`） | 仅 ADMIN |
+| **绑定** | 挂到 Workspace | `MANAGE_WORKSPACE_AGENTS` | workspace（具体 UUID，禁 `*`） | 可授予他人 ⇒ 被授予者能在别人的 Workspace 里绑**自己**的 `PERSONAL` 主体；**不能**绑别人的 `PERSONAL` |
+| **使用** | 会话里选用 | **无额外 action** | — | = 成员身份 + 可见性（三档可见集）+ 该主体的 grants ∩ binding cap；不新增「使用」原子 |
+
+不变式：
+
+1. 三个创建 action 与绑定 action **默认 deny、彼此独立**，不得别名合并，也不得由 `CREATE_ACCOUNT`/模板写权限隐式覆盖（沿用本 SPEC 条款 #4）。
+2. `PERSONAL` 绑定必须 owner 本人执行（`owner_user_id ==` 绑定操作者），否则拒绝——防止 A 把 B 的私有主体带进 Workspace。
+3. `INSTANCE` 档无需绑定，但**使用仍受 cap 与 Session cap 收口**；「无需绑定」不等于「不受限」。
+4. 授权判定仍唯一由 `GrantAuthorizationService` 内核承担；本 SPEC 不建第二裁决点。
 
 ## 规范条款与不变式
 

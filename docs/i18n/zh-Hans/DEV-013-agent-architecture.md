@@ -29,9 +29,11 @@ Agent 执行、role/scope 绑定传播、Context/Tool 消费边界与 principal/
 - [`spec/agent/execution.md`](../../../spec/agent/execution.md)
 - [`spec/agent/role-scope-binding.md`](../../../spec/agent/role-scope-binding.md)
 - [`spec/agent/context-tool.md`](../../../spec/agent/context-tool.md)
-- [`spec/agent/principal-workspace-binding.md`](../../../spec/agent/principal-workspace-binding.md)（`active`，PLAN-0374 V42 波次已实现）
+- [`spec/agent/principal-workspace-binding.md`](../../../spec/agent/principal-workspace-binding.md)（`active`，PLAN-0374 V42 波次已实现；**scope 三档 + 三段授权由 PLAN-0622 增补，`partial` 未实现**）
 
 execution/role/context 三份仍是目标态边界；独立 Agent principal、Workspace 绑定与 Session principal schema/入口已由 PLAN-0374 实现，PLAN-0381/0382 未冻结字段仍未实现。
+
+**目标态主体词汇（PLAN-0622/0623，未实现）**：`agent principal`（独立主体，有自己的 grants/cap）与 `human principal`/`service principal` 并列；`principal scope` 三档 `PERSONAL`/`WORKSPACE`/`INSTANCE` 只描述"这是谁的主体"（**绑定式 scope**：有效范围来自绑定 ∩ grants，不是 principal 自带范围）；`session participant`（principal × session，含会话角色/**唤醒策略**/**回应策略**——看得见 ≠ 会被唤醒）由 PLAN-0623 承接。正名与反例见 [DEV-032 §1.1a](DEV-032-terminology.md)；Agent 侧不新增任何"自选连接"能力（agent 只表达 provider+model 意图，凭证运行时解析）。
 
 ## 2. 接口层
 
