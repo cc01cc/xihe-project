@@ -5,6 +5,7 @@ const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { expectPlatformScreenshot } from "../helpers/visual";
+import { ensureWorkspace } from "./helpers/workspace";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 
@@ -24,7 +25,7 @@ test.describe("Mobile Viewport (390x844)", () => {
         });
         const body = await r.json();
         authToken = body.accessToken;
-        authWorkspaceId = body.workspaceId;
+        authWorkspaceId = await ensureWorkspace(request, body.accessToken);
         // On mobile the conversation column is unmounted (WorkspaceView v-if);
         // the chat FAB only renders once a Session exists. Seed one via API.
         await request.post(`${CP_URL}/api/v1/sessions`, {

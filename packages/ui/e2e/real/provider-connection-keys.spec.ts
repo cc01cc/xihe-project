@@ -1,6 +1,7 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
 import { expectPlatformScreenshot } from "../helpers/visual";
+import { ensureWorkspace } from "./helpers/workspace";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
@@ -18,7 +19,11 @@ async function register(request: APIRequestContext, name: string): Promise<Auth>
     });
     expect(response.status(), await response.text()).toBe(201);
     const body = await response.json();
-    return { accessToken: body.accessToken, workspaceId: body.workspaceId };
+    // PLAN-0614: registration no longer creates a workspace — create one explicitly.
+    return {
+        accessToken: body.accessToken,
+        workspaceId: await ensureWorkspace(request, body.accessToken),
+    };
 }
 
 async function installAuth(page: Page, auth: Auth) {

@@ -31,6 +31,7 @@ import {
 } from "./helpers/journey";
 import { createWorkspaceSessionWithPrincipal } from "./helpers/agent-principal";
 import { seedUserGrant } from "./helpers/user-grants";
+import { ensureWorkspace } from "./helpers/workspace";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
@@ -200,7 +201,7 @@ test("@host credential acquisition — manual ask, delivery, memory-only value",
     );
     const auth = await reg.json(),
         authToken: string = auth.accessToken,
-        wsId: string = auth.workspaceId;
+        wsId = await ensureWorkspace(request, auth.accessToken);
     const authHeaders = {
         Authorization: `Bearer ${authToken}`,
         "Content-Type": "application/json",

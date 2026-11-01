@@ -1,6 +1,7 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
 import { expectPlatformScreenshot } from "../helpers/visual";
+import { ensureWorkspace } from "./helpers/workspace";
 
 /**
  * PLAN-0602 runtime language switch — the 7-item checklist from
@@ -63,7 +64,7 @@ async function registerFixtureUser(request: APIRequestContext): Promise<FixtureU
     expect(response.status(), `register -> ${JSON.stringify(body)}`).toBe(201);
     return {
         token: body.accessToken,
-        workspaceId: body.workspaceId,
+        workspaceId: await ensureWorkspace(request, body.accessToken),
         identity: {
             id: body.user.id,
             email: body.user.email ?? email,

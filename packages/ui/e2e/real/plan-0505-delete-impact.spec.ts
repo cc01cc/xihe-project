@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
+import { ensureWorkspace } from "./helpers/workspace";
 
 const CP_URL = `http://127.0.0.1:${process.env.XIHE_CP_PORT || "12631"}`,
     PROVIDER_ID = "custom-openai-compatible",
@@ -17,7 +18,8 @@ async function register(request: APIRequestContext, name: string): Promise<Auth>
     const body = await response.json();
     return {
         accessToken: body.accessToken,
-        workspaceId: body.workspaceId,
+        // PLAN-0614: registration no longer creates a workspace — create one explicitly.
+        workspaceId: await ensureWorkspace(request, body.accessToken),
         userId: body.user.id,
     };
 }

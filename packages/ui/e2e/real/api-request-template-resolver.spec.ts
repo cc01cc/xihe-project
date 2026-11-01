@@ -4,6 +4,7 @@ import { test, expect } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
 import { provisionWorkspaceAgentPrincipal } from "./helpers/agent-principal";
 import { ensureAgentWorkspaceBinding } from "./helpers/journey";
+import { ensureWorkspace } from "./helpers/workspace";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 
@@ -55,6 +56,7 @@ test.describe("@host PLAN-0439 owner-scope connection resolver matrix", () => {
         });
         expect(registration.status()).toBe(201);
         const auth: { accessToken: string; workspaceId: string } = await registration.json();
+        auth.workspaceId = await ensureWorkspace(request, auth.accessToken);
         const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
             name: "Resolver Matrix",
         });

@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
+import { ensureWorkspace } from "./helpers/workspace";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const HOST_ROOT = path.resolve(
@@ -30,6 +31,8 @@ test.describe("@host PLAN-0470 MCP configuration UI consumer", () => {
             refreshToken: string;
             workspaceId: string;
         };
+        // PLAN-0614: registration no longer creates a workspace; create one explicitly.
+        auth.workspaceId = await ensureWorkspace(request, auth.accessToken);
         const deleteDefault = await request.delete(
             `${CP_URL}/api/v1/workspaces/${auth.workspaceId}`,
             { headers: { Authorization: `Bearer ${auth.accessToken}` } },
@@ -61,6 +64,8 @@ test.describe("@host PLAN-0470 MCP configuration UI consumer", () => {
             accessToken: string;
             workspaceId: string;
         };
+        // PLAN-0614: registration no longer creates a workspace; create one explicitly.
+        refreshedAuth.workspaceId = await ensureWorkspace(request, refreshedAuth.accessToken);
         expect(refreshedAuth.workspaceId).toBe(workspace.id);
         await page.addInitScript(
             ({ token, workspaceId }) => {

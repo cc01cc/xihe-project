@@ -1,5 +1,6 @@
 import { generateE2EPassword } from "./helpers/password";
 import { test, expect } from "@playwright/test";
+import { ensureWorkspace } from "./helpers/workspace";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
@@ -30,7 +31,7 @@ test.describe("@host MCP — stdio session (PLAN-0347)", () => {
         ).toBeTruthy();
         const auth = await register.json(),
             authToken: string = auth.accessToken,
-            wsId: string = auth.workspaceId;
+            wsId = await ensureWorkspace(request, auth.accessToken);
 
         const userHeaders = {
             Authorization: `Bearer ${authToken}`,

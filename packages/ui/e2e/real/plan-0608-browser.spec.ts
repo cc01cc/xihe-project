@@ -1,5 +1,6 @@
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
+import { ensureWorkspace } from "./helpers/workspace";
 import { CP_URL, evidenceDir } from "./helpers/journey";
 import { provisionWorkspaceAgentPrincipal } from "./helpers/agent-principal";
 
@@ -41,6 +42,8 @@ async function registerAccount(request: APIRequestContext, name: string): Promis
         user?: { id?: string };
         userId?: string;
     };
+    // PLAN-0614: registration no longer creates a workspace; create one explicitly.
+    body.workspaceId = await ensureWorkspace(request, body.accessToken);
     const userId = body.user?.id ?? body.userId;
     expect(userId, "register must return the user id").toBeTruthy();
     return {

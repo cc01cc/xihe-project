@@ -4,6 +4,7 @@ import { generateE2EPassword } from "./helpers/password";
 import { awaitLatestChatRunCompleted, ensureAgentWorkspaceBinding } from "./helpers/journey";
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { ensureWorkspace } from "./helpers/workspace";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 // e2e-host passes XIHE_WORKSPACE_HOST_ROOT to the runtime process but not to
@@ -43,7 +44,7 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
         );
         const auth = await reg.json();
         sharedAuth = auth.accessToken;
-        sharedWs = auth.workspaceId;
+        sharedWs = await ensureWorkspace(request, auth.accessToken);
         sharedHeaders = {
             Authorization: `Bearer ${auth.accessToken}`,
             "Content-Type": "application/json",

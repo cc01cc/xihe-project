@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { generateE2EPassword } from "./helpers/password";
+import { ensureWorkspace } from "./helpers/workspace";
 import { seedUserGrant } from "./helpers/user-grants";
 import {
     ensureAgentWorkspaceBinding,
@@ -123,6 +124,8 @@ async function bootstrapSession(request: APIRequestContext, page: Page): Promise
         register.status(),
     );
     const auth = (await register.json()) as { accessToken: string; workspaceId: string };
+    // PLAN-0614: registration no longer creates a workspace; create one explicitly.
+    auth.workspaceId = await ensureWorkspace(request, auth.accessToken);
     const headers = {
         Authorization: `Bearer ${auth.accessToken}`,
         "Content-Type": "application/json",

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { collectPageErrors, actionableErrors } from "./helpers/console";
+import { ensureWorkspace } from "./helpers/workspace";
 import { generateE2EPassword } from "./helpers/password";
 
 // PLAN-0573: the UI must not issue merged `GET /config/{domain}` requests for
@@ -79,6 +80,8 @@ test.describe.serial("@host PLAN-0573 config domain filter", () => {
             accessToken: string;
             workspaceId: string;
         };
+        // PLAN-0614: registration no longer creates a workspace; create one explicitly.
+        registered.workspaceId = await ensureWorkspace(request, registered.accessToken);
         // Register returns only tokens — hydrate the user object the SPA seeds
         // from /auth/me (role=USER drives the non-admin filter path).
         const me = await request.get(`${CP_URL}/api/v1/auth/me`, {

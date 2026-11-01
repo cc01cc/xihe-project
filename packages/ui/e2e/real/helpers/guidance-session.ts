@@ -1,5 +1,6 @@
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
 import { generateE2EPassword } from "./password";
+import { ensureWorkspace } from "./workspace";
 import { createWorkspaceSessionWithPrincipal } from "./agent-principal";
 import {
     ensureAgentWorkspaceBinding,
@@ -40,8 +41,10 @@ export async function registerAndCreateGuidanceSession(
             },
         });
     expect([200, 201], await register.text()).toContain(register.status());
-    const authBody = (await register.json()) as { accessToken: string; workspaceId: string },
-        authHeaders = {
+    const authBody = (await register.json()) as { accessToken: string; workspaceId: string };
+    // PLAN-0614: registration no longer creates a workspace — create one explicitly.
+    authBody.workspaceId = await ensureWorkspace(request, authBody.accessToken);
+    const authHeaders = {
             Authorization: `Bearer ${authBody.accessToken}`,
             "Content-Type": "application/json",
         },

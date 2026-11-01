@@ -1,4 +1,5 @@
 import { generateE2EPassword } from "./helpers/password";
+import { ensureWorkspace } from "./helpers/workspace";
 import { expectPlatformScreenshot } from "../helpers/visual";
 
 import { test, expect, type Page } from "@playwright/test";
@@ -34,6 +35,8 @@ async function registerUser(
         workspaceId: string;
         user: { id: string; username?: string };
     };
+    // PLAN-0614: registration no longer creates a workspace; create one explicitly.
+    auth.workspaceId = await ensureWorkspace(request, auth.accessToken);
     // PLAN-0565 ruling #7: blank usernames derive from the email local part.
     const derived = auth.user.username ?? email.split("@")[0].replace(/[^a-z0-9]/g, "");
     return {

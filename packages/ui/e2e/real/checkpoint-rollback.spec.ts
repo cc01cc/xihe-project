@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
+import { ensureWorkspace } from "./helpers/workspace";
 import {
     ensureAgentWorkspaceBinding,
     ensureChatBinding,
@@ -508,6 +509,8 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
             reg.status(),
         );
         const auth = (await reg.json()) as { accessToken: string; workspaceId: string };
+        // PLAN-0614: registration no longer creates a workspace; create one explicitly.
+        auth.workspaceId = await ensureWorkspace(request, auth.accessToken);
         sharedAuth = auth.accessToken;
         sharedWs = auth.workspaceId;
         agentBindingWorkspaceId = auth.workspaceId;

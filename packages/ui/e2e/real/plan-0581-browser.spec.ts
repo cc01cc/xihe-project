@@ -1,5 +1,6 @@
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
+import { ensureWorkspace } from "./helpers/workspace";
 import { CP_URL, evidenceDir } from "./helpers/journey";
 
 // PLAN-0581 T3.3 — 浏览器侧验收：管理员停用账号后，用户上下文的**下一请求** 401 →
@@ -38,6 +39,8 @@ async function registerUser(request: APIRequestContext, name: string) {
         user?: { id?: string };
         userId?: string;
     };
+    // PLAN-0614: registration no longer creates a workspace; create one explicitly.
+    body.workspaceId = await ensureWorkspace(request, body.accessToken);
     const userId = body.user?.id ?? body.userId;
     expect(userId, "register must return the user id").toBeTruthy();
     return {

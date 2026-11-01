@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { generateE2EPassword } from "./helpers/password";
+import { ensureWorkspace } from "./helpers/workspace";
 
 const RUNTIME_URL = `http://localhost:${process.env.XIHE_RUNTIME_PORT || "12633"}`;
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`,
@@ -21,7 +22,7 @@ test.describe("@host Runtime M1 — dev:host E2E via Playwright CLI", () => {
         });
         expect(register.ok()).toBeTruthy();
         const auth = await register.json(),
-            wsId = auth.workspaceId;
+            wsId = await ensureWorkspace(request, auth.accessToken);
 
         // Session/auth creation only creates logical Workspace state.
         const before = await request.get(

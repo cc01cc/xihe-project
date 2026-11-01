@@ -4,6 +4,7 @@ import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
 import { test, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
+import { ensureWorkspace } from "./helpers/workspace";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan0390-workspace-job");
@@ -32,7 +33,7 @@ test.describe("@host PLAN-0390 workspace job start", () => {
         );
         const auth = await reg.json();
         sharedAuth = auth.accessToken;
-        sharedWs = auth.workspaceId;
+        sharedWs = await ensureWorkspace(request, auth.accessToken);
         sharedHeaders = {
             Authorization: `Bearer ${auth.accessToken}`,
             "Content-Type": "application/json",

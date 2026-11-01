@@ -5,6 +5,7 @@ import {
 } from "./helpers/agent-principal";
 import { generateE2EPassword } from "./helpers/password";
 import { ensureChatBinding, getRootBranchId } from "./helpers/journey";
+import { ensureWorkspace } from "./helpers/workspace";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
@@ -23,7 +24,11 @@ async function register(request: APIRequestContext, name: string): Promise<Auth>
     });
     expect(response.ok()).toBe(true);
     const body = await response.json();
-    return { accessToken: body.accessToken, workspaceId: body.workspaceId };
+    // PLAN-0614: registration no longer creates a workspace — create one explicitly.
+    return {
+        accessToken: body.accessToken,
+        workspaceId: await ensureWorkspace(request, body.accessToken),
+    };
 }
 
 async function sessionId(request: APIRequestContext, auth: Auth): Promise<string> {

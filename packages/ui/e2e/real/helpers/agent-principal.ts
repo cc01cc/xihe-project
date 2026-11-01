@@ -44,6 +44,14 @@ export async function provisionWorkspaceAgentPrincipal(
         Authorization: `Bearer ${auth.accessToken}`,
         "Content-Type": "application/json",
     };
+    // PLAN-0614: fail fast when the caller forgot `ensureWorkspace()`. Passing a null workspace
+    // would seed a grant row with `resource = null`, and the real failure would surface much later
+    // (workspace-scoped 404/403 deep inside the agent flow) instead of here.
+    if (!auth.workspaceId) {
+        throw new Error(
+            "provisionWorkspaceAgentPrincipal requires a workspace; call ensureWorkspace() first",
+        );
+    }
     const me = await request.get(`${CP_URL}/api/v1/auth/me`, { headers });
     expect(me.ok(), await me.text()).toBe(true);
     const { id: userId } = (await me.json()) as { id: string };

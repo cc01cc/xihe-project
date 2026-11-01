@@ -9,6 +9,7 @@ import {
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
 import { seedUserGrant } from "./helpers/user-grants";
+import { ensureWorkspace } from "./helpers/workspace";
 
 // PLAN-0493 T0.2 loop/no-progress observation lane: drive repeat-prone prompts
 // over the real provider and record the RAW tool-call sequences the model
@@ -77,6 +78,8 @@ async function registerOrLoginStable(
     let workspaceId: string;
     if (reg.ok()) {
         const body = (await reg.json()) as { accessToken: string; workspaceId: string };
+        // PLAN-0614: registration no longer creates a workspace; create one explicitly.
+        body.workspaceId = await ensureWorkspace(request, body.accessToken);
         token = body.accessToken;
         workspaceId = body.workspaceId;
     } else {
@@ -85,6 +88,8 @@ async function registerOrLoginStable(
         });
         expect(login.ok(), `login ${login.status()}: ${await login.text()}`).toBeTruthy();
         const body = (await login.json()) as { accessToken: string; workspaceId: string };
+        // PLAN-0614: registration no longer creates a workspace; create one explicitly.
+        body.workspaceId = await ensureWorkspace(request, body.accessToken);
         token = body.accessToken;
         workspaceId = body.workspaceId;
     }

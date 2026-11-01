@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
+import { ensureWorkspace } from "./helpers/workspace";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
@@ -48,7 +49,11 @@ test.describe("@host Workspace import", () => {
             `register ${tag} failed: ${response.status()} ${await response.text()}`,
         ).toContain(response.status());
         const body = await response.json();
-        const user = { token: body.accessToken as string, wsId: String(body.workspaceId ?? "") };
+        // PLAN-0614: registration no longer creates a workspace — create one explicitly.
+        const user = {
+            token: body.accessToken as string,
+            wsId: await ensureWorkspace(request, body.accessToken as string),
+        };
         expect(user.wsId).toBeTruthy();
         users.push(user);
         return user;

@@ -6,6 +6,7 @@ import { ensureAgentWorkspaceBinding, getRootBranchId } from "./helpers/journey"
 import { seedUserGrant } from "./helpers/user-grants";
 import { test, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
+import { ensureWorkspace } from "./helpers/workspace";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
@@ -72,7 +73,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
         );
         const auth = await reg.json();
         sharedAuth = auth.accessToken;
-        sharedWs = auth.workspaceId;
+        sharedWs = await ensureWorkspace(request, auth.accessToken);
         sharedHeaders = {
             Authorization: `Bearer ${auth.accessToken}`,
             "Content-Type": "application/json",

@@ -2,6 +2,7 @@ import { test, expect, type APIRequestContext, type Page } from "@playwright/tes
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
+import { ensureWorkspace } from "./helpers/workspace";
 import {
     createWorkspaceSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
@@ -19,7 +20,11 @@ async function register(request: APIRequestContext, name: string): Promise<Auth>
     });
     expect(response.ok()).toBe(true);
     const body = await response.json();
-    return { accessToken: body.accessToken, workspaceId: body.workspaceId };
+    // PLAN-0614: registration no longer creates a workspace — create one explicitly.
+    return {
+        accessToken: body.accessToken,
+        workspaceId: await ensureWorkspace(request, body.accessToken),
+    };
 }
 
 function authHeaders(auth: Auth): Record<string, string> {

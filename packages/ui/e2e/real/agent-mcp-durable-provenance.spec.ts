@@ -10,6 +10,7 @@ import {
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
 import { isSessionCreateRequest } from "./helpers/agent-principal";
+import { ensureWorkspace } from "./helpers/workspace";
 import { generateE2EPassword } from "./helpers/password";
 import { seedUserGrant } from "./helpers/user-grants";
 
@@ -52,6 +53,8 @@ test("@host PLAN-0387 T3.2 — CP checks durable Agent MCP tool-call provenance"
         `register failed: ${registered.status()} ${await registered.text()}`,
     ).toContain(registered.status());
     const auth = (await registered.json()) as { accessToken: string; workspaceId: string };
+    // PLAN-0614: registration no longer creates a workspace; create one explicitly.
+    auth.workspaceId = await ensureWorkspace(request, auth.accessToken);
     const workspaceId = auth.workspaceId;
     const headers = {
         Authorization: `Bearer ${auth.accessToken}`,

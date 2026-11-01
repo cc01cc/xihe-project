@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { ensureWorkspace } from "./helpers/workspace";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 
@@ -20,6 +21,7 @@ test.describe("Workspace environment status", () => {
         });
         expect(registration.status()).toBe(201);
         const auth = await registration.json();
+        auth.workspaceId = await ensureWorkspace(request, auth.accessToken);
         expect(auth.workspaceId).toBeTruthy();
 
         await page.addInitScript(

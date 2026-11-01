@@ -9,6 +9,7 @@ import {
 } from "./helpers/journey";
 import type { JourneyContext } from "./helpers/journey";
 import { seedUserGrantPermissions } from "./helpers/user-grants";
+import { ensureWorkspace } from "./helpers/workspace";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`,
     LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
@@ -118,7 +119,7 @@ test("@host guidance is consumed after an approved tool batch", async ({ page, r
     const userId = ((await me.json()) as { id: string }).id,
         principalId = await createApprovalAgent(request, {
             userId,
-            workspaceId: authBody.workspaceId,
+            workspaceId: await ensureWorkspace(request, authBody.accessToken),
             headers: authHeaders,
         });
 
@@ -128,7 +129,7 @@ test("@host guidance is consumed after an approved tool batch", async ({ page, r
     await waitForControlPlaneAgentReady(request, authHeaders);
     seedPage(page, {
         authToken: authBody.accessToken,
-        workspaceId: authBody.workspaceId,
+        workspaceId: await ensureWorkspace(request, authBody.accessToken),
     } as JourneyContext);
     await page.goto(`/workspace/${authBody.workspaceId}`, { waitUntil: "load" });
     await createWorkspaceSessionWithPrincipal(page, principalId);

@@ -4,7 +4,9 @@ import { getRootBranchId } from "./helpers/journey";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
+import type { APIRequestContext } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import { ensureWorkspace } from "./helpers/workspace";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`,
     SERVICE_TOKEN = process.env.XIHE_CP_API_TOKEN;
@@ -19,7 +21,7 @@ type RegisteredAuth = {
     workspaceId: string;
 };
 
-async function registerAuth(name: string): Promise<RegisteredAuth> {
+async function registerAuth(request: APIRequestContext, name: string): Promise<RegisteredAuth> {
     const email = `${name}-${Date.now()}@test.com`;
     const reg = await fetch(`${CP_URL}/api/v1/auth/register`, {
         method: "POST",
@@ -27,23 +29,27 @@ async function registerAuth(name: string): Promise<RegisteredAuth> {
         body: JSON.stringify({ email, password: SHARED_PASSWORD, name }),
     });
     const body = await reg.json();
-    return { accessToken: body.accessToken, workspaceId: body.workspaceId };
+    // PLAN-0614: registration no longer creates a workspace — create one explicitly.
+    return {
+        accessToken: body.accessToken,
+        workspaceId: await ensureWorkspace(request, body.accessToken),
+    };
 }
 
-async function registerAndGetToken(name: string): Promise<string> {
-    return (await registerAuth(name)).accessToken;
+async function registerAndGetToken(request: APIRequestContext, name: string): Promise<string> {
+    return (await registerAuth(request, name)).accessToken;
 }
 
 test.describe("Cross-Module — Full Chain Chat", () => {
     test("chat page loads after login", async ({ page }) => {
-        const token = await registerAndGetToken("chain");
+        const token = await registerAndGetToken(request, "chain");
         await page.addInitScript((t) => localStorage.setItem("xihe-token", t), token);
 
         await gotoWorkspaceWithChat(page);
     });
 
     test("sends message and renders response in the UI", async ({ page, request }) => {
-        const auth = await registerAuth("chain-msg");
+        const auth = await registerAuth(request, "chain-msg");
         await page.addInitScript((t) => localStorage.setItem("xihe-token", t), auth.accessToken);
 
         await gotoWorkspaceWithChat(page);
@@ -125,7 +131,7 @@ test.describe("Cross-Module — Full Chain Chat", () => {
     });
 
     test("mcp tools/list returns tools", async ({ page }) => {
-        const auth = await registerAuth("mcp-test");
+        const auth = await registerAuth(request, "mcp-test");
         await page.addInitScript(
             ({ token, workspaceId }) => {
                 localStorage.setItem("xihe-token", token);
@@ -147,7 +153,7 @@ test.describe("Cross-Module — Full Chain Chat", () => {
     });
 
     test("mcp config save and reload persists", async ({ page, request }) => {
-        const auth = await registerAuth("mcp-persist"),
+        const auth = await registerAuth(request, "mcp-persist"),
             token = auth.accessToken;
         await page.addInitScript(
             ({ token, workspaceId }) => {
@@ -198,7 +204,7 @@ test.describe("Cross-Module — Full Chain Chat", () => {
     });
 
     test("mcp config with invalid json shows error toast", async ({ page, request }) => {
-        const auth = await registerAuth("mcp-invalid"),
+        const auth = await registerAuth(request, "mcp-invalid"),
             token = auth.accessToken;
         await page.addInitScript((t) => localStorage.setItem("xihe-token", t), token);
 
@@ -215,7 +221,7 @@ test.describe("Cross-Module — Full Chain Chat", () => {
     });
 
     test("@host mcp initialize negotiates 2026 protocol via CP", async ({ page, request }) => {
-        const auth = await registerAuth("mcp-session");
+        const auth = await registerAuth(request, "mcp-session");
         await page.addInitScript((t) => localStorage.setItem("xihe-token", t), auth.accessToken);
 
         // MCP 2026-07-28 discover lifecycle does not require a session-id.
@@ -264,6 +270,8 @@ test.describe("Cross-Module — Full Chain Chat", () => {
         expect(registration.ok()).toBe(true);
         const auth = await registration.json(),
             serverId = randomUUID();
+        // PLAN-0614: this block registers inline; ensure the workspace before using the id.
+        auth.workspaceId = await ensureWorkspace(request, auth.accessToken);
         const fakeOAuthPort = process.env.XIHE_FAKE_OAUTH_PORT || "13640",
             uiPort = process.env.XIHE_UI_PORT || "12630";
         const redirectUri = `http://localhost:${uiPort}/settings/config`;
@@ -325,6 +333,8 @@ test.describe("Cross-Module — Full Chain Chat", () => {
         expect(registration.ok()).toBe(true);
         const auth = await registration.json(),
             serverId = randomUUID();
+        // PLAN-0614: this block registers inline; ensure the workspace before using the id.
+        auth.workspaceId = await ensureWorkspace(request, auth.accessToken);
         const fakeOAuthPort = process.env.XIHE_FAKE_OAUTH_PORT || "13640";
         const fakeMcpPort = process.env.XIHE_FAKE_MCP_PORT || "13641",
             cpPort = process.env.XIHE_CP_PORT || "12631";

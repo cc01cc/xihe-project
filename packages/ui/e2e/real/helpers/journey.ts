@@ -7,6 +7,7 @@ import path from "node:path";
 import { generateE2EPassword } from "./password";
 import { expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
+import { ensureWorkspace } from "./workspace";
 
 export const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 
@@ -74,10 +75,14 @@ export async function registerJourneyUser(
     expect([200, 201], `register failed: ${reg.status()} ${await reg.text()}`).toContain(
         reg.status(),
     );
-    const auth = (await reg.json()) as { accessToken: string; workspaceId: string };
+    const auth = (await reg.json()) as { accessToken: string; workspaceId: string | null };
+    // PLAN-0614: registration no longer creates a workspace — create one explicitly so the
+    // journey fixtures keep a real workspace id (the Docker workspace backend is frozen, so this
+    // must be a direct_attach workspace; see helpers/workspace.ts).
+    const workspaceId = await ensureWorkspace(request, auth.accessToken);
     return {
         authToken: auth.accessToken,
-        workspaceId: auth.workspaceId,
+        workspaceId,
         headers: {
             Authorization: `Bearer ${auth.accessToken}`,
             "Content-Type": "application/json",

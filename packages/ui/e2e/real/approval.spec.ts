@@ -8,6 +8,7 @@ import {
 } from "./helpers/journey";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { expectPlatformScreenshot } from "../helpers/visual";
+import { ensureWorkspace } from "./helpers/workspace";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
@@ -117,7 +118,7 @@ test("@host Chat approval — approve, reject and persistence in one flow", asyn
     );
     const auth = await reg.json(),
         authToken: string = auth.accessToken,
-        wsId: string = auth.workspaceId;
+        wsId = await ensureWorkspace(request, auth.accessToken);
     const authHeaders = {
         Authorization: `Bearer ${authToken}`,
         "Content-Type": "application/json",

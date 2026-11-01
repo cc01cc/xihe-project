@@ -1,5 +1,6 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
+import { ensureWorkspace } from "./helpers/workspace";
 import {
     ensureAgentWorkspaceBinding,
     sendChat,
@@ -50,7 +51,11 @@ async function register(request: APIRequestContext): Promise<Auth> {
     });
     expect(response.status(), await response.text()).toBe(201);
     const body = await response.json();
-    return { accessToken: body.accessToken, workspaceId: body.workspaceId };
+    // PLAN-0614: registration no longer creates a workspace — create one explicitly.
+    return {
+        accessToken: body.accessToken,
+        workspaceId: await ensureWorkspace(request, body.accessToken),
+    };
 }
 
 async function installAuth(page: Page, auth: Auth) {

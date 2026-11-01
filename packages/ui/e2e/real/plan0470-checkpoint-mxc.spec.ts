@@ -12,6 +12,7 @@ import {
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
 import { generateE2EPassword } from "./helpers/password";
+import { ensureWorkspace } from "./helpers/workspace";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const HOST_ROOT = path.resolve(
@@ -101,6 +102,8 @@ test.describe("@host PLAN-0470 checkpoint direct-attach MXC consumer", () => {
             workspaceId: string;
         };
 
+        // PLAN-0614: registration no longer creates a workspace; create one explicitly.
+        registered.workspaceId = await ensureWorkspace(request, registered.accessToken);
         const deleteDefault = await request.delete(
             `${CP_URL}/api/v1/workspaces/${registered.workspaceId}`,
             { headers: { Authorization: `Bearer ${registered.accessToken}` } },
@@ -129,6 +132,8 @@ test.describe("@host PLAN-0470 checkpoint direct-attach MXC consumer", () => {
         });
         expect(refreshed.ok(), await refreshed.text()).toBeTruthy();
         const auth = (await refreshed.json()) as { accessToken: string; workspaceId: string };
+        // PLAN-0614: registration no longer creates a workspace; create one explicitly.
+        auth.workspaceId = await ensureWorkspace(request, auth.accessToken);
         expect(auth.workspaceId).toBe(workspace.id);
         const headers = {
             Authorization: `Bearer ${auth.accessToken}`,

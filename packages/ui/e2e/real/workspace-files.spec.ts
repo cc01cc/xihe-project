@@ -1,4 +1,5 @@
 import { generateE2EPassword } from "./helpers/password";
+import { ensureWorkspace } from "./helpers/workspace";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect, type APIRequestContext } from "@playwright/test";
@@ -108,7 +109,8 @@ test.describe("@host Workspace — File Panel & Delete Flow", () => {
         });
         const auth = await r.json();
         authToken = auth.accessToken;
-        wsId = auth.workspaceId;
+        // PLAN-0614: registration no longer creates a workspace — create one explicitly.
+        wsId = await ensureWorkspace(request, authToken);
 
         const mcpHeaders = {
             Authorization: `Bearer ${authToken}`,
@@ -357,6 +359,8 @@ test.describe("@host Workspace — File Panel & Delete Flow", () => {
             },
         });
         const registered = (await r.json()) as { accessToken: string; workspaceId: string };
+        // PLAN-0614: registration no longer creates a workspace; create one explicitly.
+        registered.workspaceId = await ensureWorkspace(request, registered.accessToken);
         expect(registered.workspaceId, "register must return a workspaceId").toBeTruthy();
         // PLAN-0586 round-2 fixture (Lead ruling A): same registered user owns an extra,
         // materialized, empty workspace; membership is a hard precondition above.

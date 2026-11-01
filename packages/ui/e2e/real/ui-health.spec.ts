@@ -1,5 +1,6 @@
 import { generateE2EPassword } from "./helpers/password";
 import { startRequestTracker, waitForPageErrorWindow } from "./helpers/ui-stability";
+import { ensureWorkspace } from "./helpers/workspace";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
@@ -92,7 +93,8 @@ test.describe("UI Health — Console, Overflow, Hit-Test", () => {
         });
         const auth = await r.json();
         authToken = auth.accessToken;
-        workspaceId = auth.workspaceId;
+        // PLAN-0614: registration no longer creates a workspace — create one explicitly.
+        workspaceId = await ensureWorkspace(request, authToken);
         // Workspace-first landing never auto-creates a Session (PLAN-0328 M3 T3.7);
         // seed one so the health key selector (textarea) exists on every visit.
         await request.post(`${CP_URL}/api/v1/sessions`, {
