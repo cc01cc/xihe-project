@@ -253,9 +253,13 @@ node scripts/e2e-host-detached.mjs --timeout-min 25 --auth-lane=ratelimit \
 
 生产与日常 host 栈默认限流开启（不注入 = 既有默认值）；`XIHE_E2E_EXTERNAL_SERVER=1` 复用模式不在该车道判定内。限流的产品侧根因（IPv6 回环豁免失效）另见 PLAN-0571。
 
-### 3.3b 工作区 docker 后端豁免（PLAN-0612 M4）
+### 3.3b 工作区 docker 后端冻结（PLAN-0612 M4 → **PLAN-0618 完全冻结**）
 
-`test:e2e:host` 是「工作区 docker 执行后端冻结」的**唯一豁免**（2026-10-31 用户裁定）：runner 在 CP `serviceEnv` 里**显式注入** `XIHE_WORKSPACE_DOCKER_BACKEND=enabled`（`scripts/e2e-host.mjs` 的 `commonCpEnv`），不依赖开发者 shell 预设；未注入即 CP 默认 `disabled`（创建 `managed_import` → 409、既有 docker 工作区执行/文件/环境操作 → 503，见 [DEV-014 §8b](DEV-014-control-plane-architecture.md)、[DEV-003 §2](DEV-003-config-management.md)）。因此本车道产生的 `managed_import` 用例不受冻结门影响，其他车道（含手工 `node scripts/xihe.mjs …`）仍按冻结口径预检。
+2026-10-31 的"`test:e2e:host` 唯一豁免"**已被 PLAN-0618（2026-11-01 用户裁定）supersede**：测试面与产品面、默认值一起冻结。
+
+- runner 不再为"跑 docker 用例"注入 `XIHE_WORKSPACE_DOCKER_BACKEND=enabled`；CP 侧按默认 `disabled` 行走（`POST /api/v1/workspaces` 缺 `storageMode` → `400 INVALID_REQUEST`、显式 `managed_import` → `409 BACKEND_DISABLED`、既有 docker 工作区 → `503`，见 [DEV-014 §8b](DEV-014-control-plane-architecture.md)、[DEV-003 §2](DEV-003-config-management.md)）。
+- 真依赖容器的 spec 从批次剔除；恢复收集用 `--include-docker-frozen`（**口径由 PLAN-0618 M3 定稿**，本轮文档按此写）。
+- 冻结清单（哪些 spec、为什么、解冻后验证什么）只维护在 `plans/PLAN-0618-XH-docker-freeze-complete/evidence/m3-frozen-tests.md`，本文不复制条目；三面冻结范围与解冻步骤见 [DEV-018](DEV-018-known-issues.md)「docker 后端冻结范围」。
 
 ### 3.4 时间预算与网络分类（PLAN-0586）
 
