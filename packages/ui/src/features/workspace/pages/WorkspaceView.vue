@@ -110,6 +110,9 @@ const routeSessionId = computed(() => (route.params.sessionId as string | undefi
  * 未绑定 → CP 403「not bound」；已禁用 → CP 409 `AGENT_PRINCIPAL_DISABLED`。
  * 把它们列出来等于把用户送进一个必然失败的点击。
  */
+/** D27：空选择的原因（"none-bound" 未绑定 / "all-disabled" 已绑定但全被禁用）。 */
+const agentUnavailableReason = ref<"" | "none-bound" | "all-disabled">("");
+
 const boundWorkspaceAgents = computed(() =>
     workspaceAgents.value.filter((agent) => agent.bound === true && agent.disabled !== true),
 );
@@ -197,12 +200,15 @@ async function createSessionForWorkspace() {
     try {
         await auth.selectWorkspace(workspaceId.value);
         workspaceAgents.value = await api.getWorkspaceAgents(workspaceId.value);
-        // PLAN-0622 D26：列表是三类并集，未绑定的主体不能建会话（CP 403 not bound），
-        // 所以选择器只列 bound=true，避免用户盲选后收到一个不可操作的失败。
+        // PLAN-0622 D26/D27：列表是三类并集；未绑定 → CP 403 not bound，已禁用 → CP 409。
+        // 两者都不可选，但**原因不同**，对用户必须分开说（错误归因会让人去重复绑定）。
         if (boundWorkspaceAgents.value.length === 0) {
-            toast.error(t("workspace.noBoundAgent"));
+            const anyBound = workspaceAgents.value.some((agent) => agent.bound === true);
+            agentUnavailableReason.value = anyBound ? "all-disabled" : "none-bound";
+            toast.error(t(anyBound ? "workspace.noEnabledAgent" : "workspace.noBoundAgent"));
             return null;
         }
+        agentUnavailableReason.value = "";
         selectedAgentPrincipalId.value = "";
         showAgentSelection.value = true;
         return null;
@@ -390,6 +396,29 @@ watch([workspaceId, routeSessionId], () => {
                                 {{ usageSource }}
                             </span>
                         </div>
+                    </div>
+                    <!-- PLAN-0622 D27：工作区没有「可用」agent 时必须说明**真实原因**，
+                         不能一律说"尚未绑定"（用户会去重复绑定一个已经绑好的 agent）。 -->
+                    <div
+                        v-if="agentUnavailableReason"
+                        class="mx-4 mt-3 flex flex-wrap items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-700"
+                        data-testid="workspace-agent-unavailable-hint"
+                    >
+                        <span>
+                            {{
+                                agentUnavailableReason === "all-disabled"
+                                    ? t("workspace.noEnabledAgent")
+                                    : t("workspace.noBoundAgent")
+                            }}
+                        </span>
+                        <button
+                            type="button"
+                            class="rounded border border-amber-500/50 px-2 py-0.5"
+                            data-testid="workspace-agent-unavailable-manage"
+                            @click="showAgentManagementDialog = true"
+                        >
+                            {{ t("workspace.openAgentManagement") }}
+                        </button>
                     </div>
                     <ChatPanel v-if="sessionId" :session-id="sessionId" tool-mode="workspace" />
                     <div v-else class="flex flex-1 flex-col items-center justify-center gap-2">

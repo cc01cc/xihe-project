@@ -19,10 +19,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
-import {
-    createWorkspaceSessionWithPrincipal,
-    openAgentSessionSelector,
-} from "../real/helpers/agent-principal";
+import { createWorkspaceSessionWithPrincipal } from "../real/helpers/agent-principal";
 import { ensureWorkspace } from "../real/helpers/workspace";
 
 const RUN_ID = process.env.XIHE_E2E_RUN_ID || `headed-0622-${Date.now()}`;
@@ -543,14 +540,22 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
             timeout: 15000,
         });
 
-        // 与 S2 同一真实入口（空态按钮只在没有任何会话时才渲染，S2 已建过会话）。
-        await openAgentSessionSelector(page);
-        const principalSelect = page.getByTestId("workspace-agent-principal-select");
-        // D26/D27 之后的唯一合法实现：选择器过滤为 `bound && !disabled`，
-        // 所以禁用的 agent **必须从选项里消失**（不是"灰掉"）。
+        // 工作区此刻已**没有可用 agent**（唯一绑定的那个刚被禁用），所以正确的 UX 不是弹出选择器，
+        // 而是说明真实原因（"已绑定的 Agent 已被禁用"）+ 给出去管理的入口；选择器不该出现。
+        await page.getByTestId("sidebar-new-chat").click();
+        const unavailableHint = page.getByTestId("workspace-agent-unavailable-hint");
+        await expect(unavailableHint, "the UI must explain why no Agent is selectable").toBeVisible(
+            {
+                timeout: 20000,
+            },
+        );
+        await expect(unavailableHint).toHaveText(/禁用|disabled/i);
         await expect(
-            principalSelect.locator(`option[value="${principalId}"]`),
-            "a disabled agent must be absent from the new-session selector",
+            unavailableHint.getByTestId("workspace-agent-unavailable-manage"),
+        ).toBeVisible();
+        await expect(
+            page.getByTestId("workspace-agent-principal-select"),
+            "no selector may open when nothing is selectable",
         ).toHaveCount(0);
         await shot(page, {
             id: "S3b",

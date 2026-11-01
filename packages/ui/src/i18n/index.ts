@@ -229,6 +229,8 @@ const messages = {
             chooseAgentLabel: "此工作区由哪个 Agent 处理？",
             chooseAgentPlaceholder: "选择已绑定的 Agent",
             noBoundAgent: "此工作区尚未绑定 Agent",
+            noEnabledAgent: "已绑定的 Agent 已被禁用，请在 Agent 管理中启用或绑定新的 Agent",
+            openAgentManagement: "打开 Agent 管理",
             viewerReadOnly: "当前工作区为只读（VIEWER），无法修改内容",
             agentLoadFailed: "加载工作区 Agent 失败",
             bindAgentAndSend: "绑定并发送",
@@ -2231,6 +2233,9 @@ const messages = {
             chooseAgentLabel: "Which Agent should handle this Workspace chat?",
             chooseAgentPlaceholder: "Select a bound Agent",
             noBoundAgent: "No Agent is bound to this Workspace",
+            noEnabledAgent:
+                "The bound Agents are disabled. Enable one or bind a new Agent in Agent management.",
+            openAgentManagement: "Open Agent management",
             viewerReadOnly: "This Workspace is read-only (VIEWER)",
             agentLoadFailed: "Failed to load Workspace Agents",
             bindAgentAndSend: "Bind and send",
