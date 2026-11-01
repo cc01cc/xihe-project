@@ -353,6 +353,27 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
             },
         );
 
+        // CP 不变式（D23-13）：会话创建事务内必须播种**恰好一行** role=PRIMARY。
+        // 这条断言先行，是为了让"CP 少播种 PRIMARY"在**这里**失败并说明原因，
+        // 而不是让 S2 在后面渲染层莫名失败（2026-11-02 实测过这个缺口）。
+        const seeded = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}/participants`, {
+            headers: { Authorization: `Bearer ${token}`, "X-Workspace-Id": workspaceId },
+        });
+        expect(seeded.status(), await seeded.text()).toBe(200);
+        const seededBody = (await seeded.json()) as {
+            participants: Array<{ role: string; principalKind: string }>;
+        };
+        const seededPrimary = seededBody.participants.filter((item) => item.role === "PRIMARY");
+        expect(
+            seededPrimary.length,
+            `PRIMARY seeding missing: session ${sessionId} has ${seededBody.participants.length} participant(s) ` +
+                `and ${seededPrimary.length} role=PRIMARY. CP must insert exactly one PRIMARY row inside the ` +
+                `session-creation transaction (D23-13) — this is a control-plane defect, not a UI one.`,
+        ).toBe(1);
+        agentParticipantId = seededBody.participants[0]
+            ? String(agentParticipantId)
+            : agentParticipantId;
+
         // 用例自造状态：把当前用户作为 HUMAN MEMBER 加入会话（会话已有 AGENT PRIMARY）。
         const me = await request.get(`${CP_URL}/api/v1/auth/me`, {
             headers: { Authorization: `Bearer ${token}` },
