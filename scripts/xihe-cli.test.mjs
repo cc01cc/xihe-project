@@ -3432,3 +3432,92 @@ test('agent CLI: create/list/bind/unbind/disable + provider limit are idempotent
     await new Promise((resolve) => server.close(resolve));
   }
 });
+test('run-agent-e2e: usage 2, scope gate 3, and a full A5+A6 pass against a fake CP', async () => {
+  const { main } = await import('./xihe-cli/run-agent-e2e.mjs');
+  const env = { XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD };
+
+  let chats = 0;
+  let scopeMode = 'missing';
+  const patches = [];
+  const state = { agents: [] };
+  const fakeFetch = async (url, init = {}) => {
+    const target = new URL(url);
+    const method = init.method ?? 'GET';
+    const body = init.body ? JSON.parse(init.body) : null;
+    const respond = (status, payload, headers = {}) => new Response(JSON.stringify(payload), {
+      status, headers: { 'Content-Type': 'application/json', ...headers },
+    });
+    if (target.pathname === '/api/v1/auth/login' && method === 'POST') {
+      return respond(200, { accessToken: 'runner-token', tokenType: 'Bearer', expiresIn: 900 });
+    }
+    if (target.pathname === '/api/v1/agent-principals' && method === 'GET') {
+      return scopeMode === 'ok'
+        ? respond(200, { principals: [] })
+        : respond(404, { code: 'NOT_FOUND' });
+    }
+    if (target.pathname === '/api/v1/agent-principals' && method === 'POST') {
+      return respond(201, { principalId: 'p-9', scope: body.scope, name: body.name });
+    }
+    if (target.pathname === '/api/v1/workspaces/ws-1/agents' && method === 'GET') {
+      return respond(200, { agents: state.agents });
+    }
+    if (target.pathname === '/api/v1/workspaces/ws-1/agents/p-9' && method === 'PUT') {
+      state.agents = [{ principalId: 'p-9', name: 'e2e', source: 'personal', permissionsSnapshot: [] }];
+      return respond(200, { principalId: 'p-9' });
+    }
+    if (target.pathname === '/api/v1/workspaces/ws-1/agents/p-9' && method === 'DELETE') {
+      state.agents = [];
+      return new Response(null, { status: 204 });
+    }
+    if (target.pathname === '/api/v1/provider-connections' && method === 'GET') {
+      return respond(200, { connections: [{ id: 'c-1', status: 'READY', enabled: true, connectionKey: 'c-1', manualModels: ['gpt-5'] }] });
+    }
+    if (target.pathname === '/api/v1/provider-connections/c-1' && method === 'PATCH') {
+      patches.push(body);
+      return respond(200, { connection: { id: 'c-1', ...body } });
+    }
+    if (target.pathname === '/api/v1/config/api-request-templates' && method === 'GET') {
+      return respond(200, { templates: [{ id: 't-1', status: 'published', version: 1 }] });
+    }
+    if (target.pathname === '/api/v1/sessions' && method === 'POST') {
+      return respond(201, { id: 's-1' });
+    }
+    if (target.pathname === '/api/v1/sessions/s-1/branches' && method === 'GET') {
+      return respond(200, { items: [{ branchId: 'b-1' }] });
+    }
+    if (target.pathname === '/api/v1/sessions/s-1' && method === 'DELETE') {
+      return new Response(null, { status: 204 });
+    }
+    if (target.pathname === '/api/v1/chat' && method === 'POST') {
+      if (patches.length >= 2) return respond(202, { runId: 'run-after' });
+      chats += 1;
+      if (chats === 1) return respond(202, { runId: 'run-1' });
+      return respond(429, { code: 'RESOURCE_EXHAUSTED', retryAfterSeconds: 1, resourceKind: 'CONNECTION', scope: 'ws-1' }, { 'Retry-After': '1' });
+    }
+    if (target.pathname.startsWith('/api/v1/chat/runs/') && method === 'POST') {
+      return respond(200, {});
+    }
+    return respond(404, { code: 'NOT_FOUND' });
+  };
+  const usage = await main(['--ui-workspace', 'ws-1', '--json']);
+  assert.equal(usage, 2, 'missing --cp is a usage error');
+
+  const scopeUnsupported = await main(['--cp', 'http://cp-fake', '--ui-workspace', 'ws-1', '--json'], { env, fetchImpl: fakeFetch });
+  assert.equal(scopeUnsupported, 3, 'CP without M1.2 must exit 3, not pass');
+
+  scopeMode = 'ok'; // CP M1.2 delivered from here on
+  const { runAgentE2E } = await import('./xihe-cli/run-agent-e2e.mjs');
+  const pass = await runAgentE2E({
+    env,
+    fetchImpl: fakeFetch,
+    options: { '--cp': 'http://cp-fake', '--ui-workspace': 'ws-1' },
+  });
+  assert.equal(pass.exitCode, 0, JSON.stringify(pass.data?.steps ?? pass.error));
+  assert.equal(pass.data.personal.principalId, 'p-9');
+  assert.equal(pass.data.limit.status, 'PASS');
+  assert.equal(pass.data.session.id, 's-1');
+  assert.equal(pass.data.limit.detail.includes('kind=CONNECTION'), true);
+  assert.equal(patches.length, 2, 'set maxInflight=1 then restore');
+  assert.equal(patches[0].maxInflight, 1);
+  assert.equal(pass.data.steps.at(-1).name, 'cleanup session');
+});
