@@ -318,6 +318,10 @@ async function createPrincipal() {
         defaultModelName.value = "";
         allowedModels.value = [];
         permissions.value = [];
+        // 真栈 bug（2026-11-02）：创建成功后必须重新拉列表，否则用户要关掉重开面板才看到新主体
+        // （bind/unbind/disable 三处都调了 loadAgents，创建这处漏了）。放在 status 之前，
+        // 因为 loadAgents 会清空 status。
+        await loadAgents();
         status.value = t("workspace.agentPrincipalCreated");
     } catch (cause) {
         error.value = agentErrorMessage(
