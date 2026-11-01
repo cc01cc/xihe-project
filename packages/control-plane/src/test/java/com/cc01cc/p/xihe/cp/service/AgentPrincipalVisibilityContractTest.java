@@ -184,6 +184,28 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
     }
 
     // -----------------------------------------------------------------------------------------
+    // D27: the list must carry `disabled`, or a successful disable is invisible in the UI (S3).
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    void aDisabledPrincipalIsReportedInTheListAndAnActiveOneIsNot() {
+        User owner = newUser("d27-owner");
+        grantDefaultService.ensureUserDefault(owner);
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("D27 ws", owner.getId().toString());
+        workspaces.add(workspace.getId());
+        UUID disabled = createPersonal(owner, "D27 disabled");
+        UUID active = createPersonal(owner, "D27 active");
+
+        assertEquals(HttpStatus.NO_CONTENT, exchange(HttpMethod.POST,
+                "/api/v1/agent-principals/" + disabled + "/disable", globalToken(owner), null).getStatusCode());
+
+        List<Map<String, Object>> agents = listAgents(owner, workspace);
+        assertTrue(disabledOf(agents, disabled), "D27: the disabled flag must reach the list projection");
+        assertFalse(disabledOf(agents, active));
+        assertFalse(boundOf(agents, disabled), "the row is unbound and disabled — both flags must be honest");
+    }
+
+    // -----------------------------------------------------------------------------------------
     // O6: disable needs the tier's authority — a stranger cannot disable somebody else's agent.
     // -----------------------------------------------------------------------------------------
 
@@ -347,6 +369,14 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
                 "plan0622-" + label + "-" + UUID.randomUUID() + "@test.com", "hash", label));
         users.add(user.getId());
         return user;
+    }
+
+    private boolean disabledOf(List<Map<String, Object>> agents, UUID principalId) {
+        return agents.stream()
+                .filter(item -> principalId.toString().equals(String.valueOf(item.get("principalId"))))
+                .map(item -> Boolean.TRUE.equals(item.get("disabled")))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("principal not listed: " + principalId));
     }
 
     private boolean boundOf(List<Map<String, Object>> agents, UUID principalId) {
