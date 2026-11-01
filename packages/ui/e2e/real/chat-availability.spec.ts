@@ -70,7 +70,27 @@ async function messages(request: APIRequestContext, auth: Auth, id: string) {
     return response.ok() ? await response.json() : [];
 }
 
-async function openChat(page: Page, auth: Auth, sessionId = "") {
+async function openChat(
+    page: Page,
+    request: APIRequestContext,
+    auth: Auth,
+    sessionId = "",
+): Promise<string> {
+    // BL-177 classification B: `/workspace` no longer lands on a composer that creates the Session
+    // implicitly. Since PLAN-0614 blank start it is the workspace home, and its "create chat" CTA
+    // needs an Agent principal the blank-start account does not have — so clicking it leaves the
+    // empty state up and the composer never appears (the reproduced 10s textarea timeout). Provision
+    // the principal + Session explicitly, exactly like the real lane documents, and open its route.
+    let chatSessionId = sessionId;
+    if (!chatSessionId) {
+        const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
+            name: "Chat availability agent",
+        });
+        chatSessionId = await createSessionWithPrincipal(request, auth, {
+            principalId,
+            title: "Chat availability",
+        });
+    }
     await page.addInitScript(
         ({ token, workspaceId }) => {
             localStorage.setItem("xihe-token", token);
@@ -82,12 +102,28 @@ async function openChat(page: Page, auth: Auth, sessionId = "") {
         },
         { token: auth.accessToken, workspaceId: auth.workspaceId },
     );
-    // BL-148: the real lane has no auto-created session, so open the Chat route
-    // for the Session the spec provisioned explicitly.
-    await page.goto(sessionId ? `/workspace/${auth.workspaceId}/chat/${sessionId}` : "/workspace", {
+    await page.goto(`/workspace/${auth.workspaceId}/chat/${chatSessionId}`, {
         waitUntil: "load",
     });
-    await expect(page.locator("textarea")).toBeVisible({ timeout: 10000 });
+    await expect(page.locator("textarea")).toBeVisible({ timeout: 20000 });
+    return chatSessionId;
+}
+
+/**
+ * Mock lane landing walk: register → workspace picker → workspace view. Drives only visible
+ * affordances (event-driven waits, no fixed sleeps) and returns nothing; the case asserts what the
+ * blank-start landing must offer.
+ */
+async function openWorkspaceFromLanding(page: Page, auth: Auth): Promise<void> {
+    await page.addInitScript(
+        (token) => localStorage.setItem("xihe-token", token),
+        auth.accessToken,
+    );
+    await page.goto("/workspace", { waitUntil: "load" });
+    // PLAN-0608 I6 / PLAN-0614: without a tab context the app shows the workspace picker.
+    const pickerItem = page.locator('[data-testid^="workspace-picker-item-"]').first();
+    await pickerItem.waitFor({ state: "visible", timeout: 15000 });
+    await pickerItem.click();
 }
 
 async function expectNoHorizontalOverflow(page: Page) {
@@ -104,7 +140,7 @@ test.describe("PLAN-247 Chat availability @host", () => {
             request,
         }) => {
             const auth = await register(request, "missing-credentials");
-            await openChat(page, auth);
+            await openChat(page, request, auth);
 
             const text = `missing-${Date.now()}`,
                 textarea = page.locator("textarea");
@@ -132,7 +168,7 @@ test.describe("PLAN-247 Chat availability @host", () => {
             request,
         }) => {
             const auth = await register(request, "invalid-credentials");
-            await openChat(page, auth);
+            await openChat(page, request, auth);
 
             const text = `invalid-${Date.now()}`,
                 textarea = page.locator("textarea");
@@ -166,7 +202,7 @@ test.describe("PLAN-247 Chat availability @host", () => {
                 if (/\/api\/v1\/mcp|tools\/list/.test(outgoing.url()))
                     mcpRequests.push(outgoing.url());
             });
-            await openChat(page, auth);
+            await openChat(page, request, auth);
 
             const trigger = page.getByTestId("model-popover-trigger");
             await expect(trigger).toBeVisible();
@@ -233,6 +269,48 @@ test.describe("PLAN-247 Chat availability @host", () => {
         });
     }
 
+    // BL-177: the mock lane used to collect ZERO cases from this spec — `mode` defaults to `mock`
+    // and no branch matched it ("No tests found"), so mock-full never covered this spec at all.
+    //
+    // It cannot simply reuse the success-lane case (classification A, reproduced):
+    //   * scripts/e2e-host.mjs seeds the mock lane with `profile.model = mock` — there is no
+    //     fake-openai / fake-deepseek catalog, which is exactly what that case asserts;
+    //   * and the blank-start UI creates a Session only through the agent-selection dialog, which needs
+    //     an Agent *bound to the workspace*; a fresh account has none, so the empty-state CTA cannot
+    //     reach a composer (that is also why the success-lane reproduction stopped at `textarea`).
+    //
+    // What the mock lane *can* assert without weakening anything is the property this spec is named
+    // for and the exact thing that regressed: from the blank-start landing, chat must stay reachable.
+    if (mode === "mock") {
+        test("blank-start landing keeps the chat entry point reachable", async ({
+            page,
+            request,
+        }) => {
+            const auth = await register(request, "mock-availability");
+            await openWorkspaceFromLanding(page, auth);
+
+            // No Session yet: the workspace view must still offer both entry points to chat.
+            await expect(page.getByTestId("workspace-create-session")).toBeVisible({
+                timeout: 15000,
+            });
+            await expect(page.getByTestId("sidebar-new-chat")).toBeVisible();
+
+            // Chat availability also means the addressable surface answers: the Session list is a
+            // real 200 with an empty page (not a 401 logout, not a 409 context error).
+            const sessions = await request.get(`${CP_URL}/api/v1/sessions`, {
+                headers: {
+                    Authorization: `Bearer ${auth.accessToken}`,
+                    "X-Workspace-Id": auth.workspaceId,
+                },
+            });
+            expect(sessions.status(), await sessions.text()).toBe(200);
+            const body = (await sessions.json()) as { sessions?: unknown[] };
+            expect(body.sessions ?? []).toHaveLength(0);
+
+            await expectNoHorizontalOverflow(page);
+        });
+    }
+
     if (mode === "real") {
         test("real Xiaomi streams a reply and persists the canonical binding", async ({
             page,
@@ -258,7 +336,7 @@ test.describe("PLAN-247 Chat availability @host", () => {
                 { accessToken: auth.accessToken, workspaceId: auth.workspaceId },
                 { principalId, title: "Real Xiaomi chat" },
             );
-            await openChat(page, auth, chatSessionId);
+            await openChat(page, request, auth, chatSessionId);
             await ensureChatBinding(page, chatSessionId);
             // Re-enter the route so the store refetches the now-bound session.
             await page.reload({ waitUntil: "load" });
@@ -328,7 +406,7 @@ test.describe("PLAN-247 Chat availability @host", () => {
             request,
         }) => {
             const auth = await register(request, "ambiguous-disconnect");
-            await openChat(page, auth);
+            await openChat(page, request, auth);
 
             const id = await sessionId(request, auth),
                 text = `disconnect-${Date.now()}`;
