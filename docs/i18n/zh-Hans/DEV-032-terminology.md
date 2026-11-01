@@ -63,7 +63,7 @@ updated: 2026-10-25
 | | B. 凭据管理器登记的独立对象（`credentials` 表） | **`credential 对象`（凭据对象）** | 与 A 混用；笼统写「用户的凭据」 | 0495；owner 两级（USER/WORKSPACE）、lease/reveal 单通道交付；`spec/security/credential-management.md` |
 | **轮换 / rotation** | A. MCP session-id 签名密钥更替 | `签名密钥轮换`（MCP session-id） | 裸「轮换」指 B | DEV-016 |
 | | B. credential 域主密钥更替（key ring） | **`credential 主密钥轮换`（key ring rotation）** | 与 A 混用 | 0495；两阶段 + CAS + 按 key_version 列计数（退役校验） |
-| **attempt** | A. MCP 执行域的工具尝试 | **`tool attempt`**（`agent_tool_attempts` 域） | 裸 `attempt` 指传输尝试 | 0464 执行域 |
+| **attempt** | A. MCP 执行域的工具尝试 | **`tool attempt`**（表 **`mcp_attempts`**，`V50__mcp_execution_domain.sql:46`；Java 侧 `McpAttemptRepository`） | 裸 `attempt` 指传输尝试；**不要把 `operation_attempts`（V2 跨模块旧账本）当工具尝试表**；也不存在 `agent_tool_attempts` 这个名字（2026-11-02 标识对账实测 0 命中） | 0464 执行域 |
 | | B. provider HTTP 传输尝试（单次 LLM HTTP dispatch） | **`transport attempt`（传输尝试）**；表 `chat_run_transport_attempts`，正名事件 `transport_progress`/`transport_attempt` | 与 tool attempt 混用；称「请求记录/HTTP 调用记录」 | 0508；outcome `success/error/timeout/aborted/partial`；阶段 `attempt_started/first_chunk/streaming/attempt_finished` |
 
 ### 1.1 主体与角色（2026-09-17 增补）
