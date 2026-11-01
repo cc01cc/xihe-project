@@ -33,34 +33,174 @@ const GOLDPATH_PASSWORD = process.env.XIHE_E2E_GOLDPATH_PASSWORD ?? "";
 const FAKE_LLM_MODEL = "fake-openai";
 
 /**
- * M3 新增 testid 清单（来源 `plans/PLAN-0622-.../evidence/m3-ui.md`）。
- * `verifiedInDevelop: false` = 当前 develop UI 尚未落该 testid（待 UI 合并后复核），
- * 走查报告据此给出"待核数"，不把未落盘的 testid 当成已验证事实。
+ * PLAN-0622 M3/M4 testid 清单 —— 记录**当前实际状态**（verify V11 的归档依据）。
+ *
+ * 状态语义（比 `verifiedInDevelop` 布尔值更能说明问题）：
+ * - `asserted`：develop 已存在该 testid，且本次 headed 走查**真的断言过**它；
+ * - `exists-unasserted`：develop 已存在，但本 spec 没有断言（`note` 写为什么走不到）；
+ * - `blocked`：UI 侧已实现，但**缺 CP 字段或前置**导致真机无法断言（`note` 写卡在哪个前置）。
+ *
+ * 2026-11-02 实测基线：S1 PASS / S2 PASS / S3 FAIL（CP D27 缺 `disabled`）/
+ * S4 未执行（`test.describe.configure({ mode: "serial" })`，S3 失败后连带跳过）。
  */
-const EXPECTED_TESTIDS: Array<{ id: string; scene: string; verifiedInDevelop: boolean }> = [
-    { id: "agent-principal-scope", scene: "S1", verifiedInDevelop: false },
-    { id: "agent-scope-unavailable", scene: "S1", verifiedInDevelop: false },
-    { id: "agent-default-model-provider", scene: "S1", verifiedInDevelop: false },
-    { id: "agent-default-model-name", scene: "S1", verifiedInDevelop: false },
-    { id: "agent-default-model-error", scene: "S1", verifiedInDevelop: false },
-    { id: "agent-allowed-model-add", scene: "S1", verifiedInDevelop: false },
-    { id: "agent-scope-badge-", scene: "S1/S2", verifiedInDevelop: false },
-    { id: "agent-default-model-", scene: "S1", verifiedInDevelop: false },
-    { id: "agent-disabled-badge-", scene: "S3", verifiedInDevelop: false },
-    { id: "workspace-agent-disable-", scene: "S3", verifiedInDevelop: false },
-    { id: "agent-bind-forbidden-hint", scene: "S2", verifiedInDevelop: false },
-    { id: "message-resource-exhausted", scene: "S4", verifiedInDevelop: false },
-    { id: "message-resource-exhausted-hint", scene: "S4", verifiedInDevelop: false },
-    { id: "agent-principal-name", scene: "S1", verifiedInDevelop: true },
-    { id: "agent-principal-create", scene: "S1", verifiedInDevelop: true },
-    { id: "agent-principal-bind", scene: "S2", verifiedInDevelop: true },
-    { id: "workspace-agent-management-dialog", scene: "S1–S3", verifiedInDevelop: true },
-    { id: "workspace-create-session", scene: "S2/S3", verifiedInDevelop: true },
-    { id: "workspace-agent-principal-select", scene: "S2/S3", verifiedInDevelop: true },
-    { id: "workspace-create-agent-session", scene: "S2", verifiedInDevelop: true },
-    { id: "chat-input", scene: "S4", verifiedInDevelop: true },
-    { id: "chat-send-button", scene: "S4", verifiedInDevelop: true },
-    { id: "message-retry-button", scene: "S4", verifiedInDevelop: true },
+type TestIdStatus = "asserted" | "exists-unasserted" | "blocked";
+
+const EXPECTED_TESTIDS: Array<{
+    id: string;
+    scene: string;
+    status: TestIdStatus;
+    note: string;
+}> = [
+    // ── asserted：develop 已存在且本次走查断言过 ─────────────────────────────────────────
+    {
+        id: "agent-principal-scope",
+        scene: "S1",
+        status: "asserted",
+        note: "scope 下拉选 PERSONAL（S1 PASS）",
+    },
+    {
+        id: "agent-principal-name",
+        scene: "S1",
+        status: "asserted",
+        note: "填名 + 创建 201（S1 PASS）",
+    },
+    {
+        id: "agent-principal-create",
+        scene: "S1",
+        status: "asserted",
+        note: "创建按钮触发 POST /agent-principals（S1 PASS）",
+    },
+    {
+        id: "agent-default-model-provider",
+        scene: "S1",
+        status: "asserted",
+        note: "默认模型 provider 填写（S1 PASS）",
+    },
+    {
+        id: "agent-default-model-name",
+        scene: "S1",
+        status: "asserted",
+        note: "默认模型 name 填写（S1 PASS）",
+    },
+    {
+        id: "agent-scope-badge-",
+        scene: "S1/S2",
+        status: "asserted",
+        note: "data-agent-scope=personal + 文案含「个人」（S1/S2 PASS）",
+    },
+    {
+        id: "workspace-agent-management-dialog",
+        scene: "S1–S3",
+        status: "asserted",
+        note: "面板可见/可关闭（S1–S3）",
+    },
+    {
+        id: "agent-bind-row-",
+        scene: "S2",
+        status: "asserted",
+        note: "本轮修复新增的行级绑定；S2 2.7s PASS（替代不存在的空态按钮入口）",
+    },
+    {
+        id: "workspace-agent-principal-select",
+        scene: "S2/S3",
+        status: "asserted",
+        note: "经 sidebar-new-chat → ?newChat=1 打开（S2 PASS）",
+    },
+    {
+        id: "workspace-create-agent-session",
+        scene: "S2",
+        status: "asserted",
+        note: "建会话 201（S2 PASS）",
+    },
+    {
+        id: "workspace-agent-disable-",
+        scene: "S3",
+        status: "asserted",
+        note: "两次点击确认：首次点击后文案变「再次点击确认禁用」（S3 已走到该断言）",
+    },
+
+    // ── blocked：UI 已实现，缺 CP 字段/前置 ─────────────────────────────────────────────
+    {
+        id: "agent-disabled-badge-",
+        scene: "S3",
+        status: "blocked",
+        note: "卡在 CP D27：WorkspaceAgentView 无 disabled 字段 ⇒ UI 的 v-if=agent.disabled 永不成立（POST 已 204 但徽标不渲染）",
+    },
+    {
+        id: "message-resource-exhausted",
+        scene: "S4",
+        status: "blocked",
+        note: "卡在 CP D28（governor 准入前移到 202 之前）；且本次 S4 因 serial 模式被 S3 失败连带跳过，从未执行",
+    },
+    {
+        id: "message-resource-exhausted-hint",
+        scene: "S4",
+        status: "blocked",
+        note: "同 message-resource-exhausted：等 D28 + S4 真正跑起来",
+    },
+
+    // ── exists-unasserted：develop 已存在，本 spec 未断言（原因见 note）──────────────────
+    {
+        id: "agent-scope-unavailable",
+        scene: "S1",
+        status: "exists-unasserted",
+        note: "只在「权限投影未就绪」时渲染；走查账号是 OWNER，走不到该分支",
+    },
+    {
+        id: "agent-default-model-error",
+        scene: "S1",
+        status: "exists-unasserted",
+        note: "只在非法模型输入时渲染；S1 只填合法值",
+    },
+    {
+        id: "agent-allowed-model-add",
+        scene: "S1",
+        status: "exists-unasserted",
+        note: "allowedModels 为可选项，S1 未使用",
+    },
+    {
+        id: "agent-default-model-",
+        scene: "S1",
+        status: "exists-unasserted",
+        note: "行内默认模型展示，S1 未断言",
+    },
+    {
+        id: "agent-unbound-badge-",
+        scene: "S2",
+        status: "exists-unasserted",
+        note: "本轮 D26 新增；仅由组件测试覆盖（真机未断言）",
+    },
+    {
+        id: "agent-principal-bind",
+        scene: "S2",
+        status: "exists-unasserted",
+        note: "创建区块内的绑定；已有行级绑定后走不到（保留为 fallback）",
+    },
+    {
+        id: "agent-bind-forbidden-hint",
+        scene: "S2",
+        status: "exists-unasserted",
+        note: "403 兜底文案；S2 现在能建会话，不进入该分支",
+    },
+    {
+        id: "workspace-create-session",
+        scene: "S2/S3",
+        status: "exists-unasserted",
+        note: "仅空态渲染；本 spec 已改走 sidebar-new-chat，不再点击它",
+    },
+    {
+        id: "chat-input",
+        scene: "S4",
+        status: "exists-unasserted",
+        note: "S4 未执行（serial：S3 失败后跳过）",
+    },
+    { id: "chat-send-button", scene: "S4", status: "exists-unasserted", note: "S4 未执行（同上）" },
+    {
+        id: "message-retry-button",
+        scene: "S4",
+        status: "exists-unasserted",
+        note: "S4 未执行（同上）",
+    },
 ];
 
 type StepRecord = {
@@ -167,7 +307,7 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
 
     test.afterAll(() => {
         mkdirSync(RUN_DIR, { recursive: true });
-        const pendingTestids = EXPECTED_TESTIDS.filter((item) => !item.verifiedInDevelop);
+        const pendingTestids = EXPECTED_TESTIDS.filter((item) => item.status !== "asserted");
         writeFileSync(
             path.join(RUN_DIR, "report.json"),
             `${JSON.stringify(
@@ -186,6 +326,10 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
                     notCovered,
                     expectedTestIds: {
                         total: EXPECTED_TESTIDS.length,
+                        asserted: EXPECTED_TESTIDS.filter((item) => item.status === "asserted")
+                            .length,
+                        blocked: EXPECTED_TESTIDS.filter((item) => item.status === "blocked")
+                            .length,
                         pendingVerification: pendingTestids.length,
                         items: EXPECTED_TESTIDS,
                     },
@@ -342,10 +486,17 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         const disableButton = page.getByTestId(`workspace-agent-disable-${principalId}`);
         const idleLabel = (await disableButton.textContent()) ?? "";
         await disableButton.click();
+        // 实现里的"确认态"标记 = 按钮文案换成 workspace.confirmAgentDisable
+        //（zh「再次点击确认禁用」/ en「Click again to confirm disable」）；没有 aria-pressed /
+        // data-confirming，所以只能按文案断言 —— 但必须是**确认文案**，不能只断言"变了"。
         await expect(
             disableButton,
             "first click must switch the button into confirm state",
         ).not.toHaveText(idleLabel, { timeout: 15000 });
+        await expect(
+            disableButton,
+            "the confirm state must read as an explicit confirmation",
+        ).toHaveText(/再次点击|确认|Confirm/i, { timeout: 15000 });
         const disableResponse = page.waitForResponse(
             (response) =>
                 new URL(response.url()).pathname ===
