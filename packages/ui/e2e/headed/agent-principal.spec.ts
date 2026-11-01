@@ -195,8 +195,8 @@ const EXPECTED_TESTIDS: Array<{
     {
         id: "message-retry-button",
         scene: "S4",
-        status: "exists-unasserted",
-        note: "S4 未执行（同上）",
+        status: "asserted",
+        note: "2026-11-02 真机 S4 PASS：可见 + 文案是「重试」（不是 i18n key）+ 断言不得匹配 /^[a-z]+\\.[a-zA-Z]+$/",
     },
 ];
 
