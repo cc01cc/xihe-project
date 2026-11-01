@@ -5,6 +5,7 @@ import { generateE2EPassword } from "./helpers/password";
 import { actionableErrors, collectPageErrors } from "./helpers/console";
 import { test, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
+import { dockerFrozenIncluded, dockerFrozenReason } from "./helpers/docker-frozen";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan0350-workspace-events");
@@ -167,6 +168,15 @@ test.describe("@host PLAN-0350 workspace file events", () => {
         page,
         request,
     }) => {
+        // PLAN-0618 M5 / B: this case calls `POST /workspaces/{id}/materialize`, i.e. the docker
+        // materialization entry point. With the backend frozen CP answers 502 runtime_unavailable
+        // before any Runtime watcher is installed, so the SSE delivery below can never be observed.
+        test.skip(
+            !dockerFrozenIncluded,
+            dockerFrozenReason(
+                "after an external host write into the workspace, the workspace events stream delivers a file_changed event carrying only Workspace-relative POSIX paths (no host root / drive letter) and a sequence number",
+            ),
+        );
         // Unauthorized subscribers fail closed (V1).
         const denied = await request.get(`${CP_URL}/api/v1/workspaces/${wsId}/events`, {
             headers: { Authorization: `Bearer ${otherAuth}` },

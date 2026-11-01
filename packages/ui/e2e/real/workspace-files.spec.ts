@@ -1,5 +1,5 @@
 import { generateE2EPassword } from "./helpers/password";
-import { ensureWorkspace } from "./helpers/workspace";
+import { createDirectAttachWorkspace, ensureWorkspace } from "./helpers/workspace";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect, type APIRequestContext } from "@playwright/test";
@@ -40,12 +40,11 @@ async function createMaterializedEmptyWorkspace(
     request: APIRequestContext,
     token: string,
 ): Promise<{ workspaceId: string; headers: McpHeaders }> {
-    const created = await request.post(`${CP_URL}/api/v1/workspaces`, {
-        headers: { Authorization: `Bearer ${token}` },
-        data: { name: `E2E Empty ${Date.now()}` },
-    });
-    expect(created.ok(), await created.text()).toBe(true);
-    const workspaceId = ((await created.json()) as { id: string }).id;
+    // PLAN-0618 M5 / A1+A2: `storageMode` is required now (400 INVALID_REQUEST otherwise), and the
+    // docker backend is frozen, so this fixture must create an explicit `direct_attach` workspace
+    // (isolated hostPath + preflight-selected execution mode) through the shared helper instead of
+    // posting a bare `{ name }`.
+    const workspaceId = await createDirectAttachWorkspace(request, token);
     expect(workspaceId, "workspace create must return an id").toBeTruthy();
 
     const membership = await request.get(`${CP_URL}/api/v1/workspaces/${workspaceId}`, {
