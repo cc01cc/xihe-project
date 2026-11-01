@@ -16,6 +16,9 @@ vi.mock("../../composables/api", () => ({
     },
     onAuthTokensRefreshed: vi.fn<(cb: (accessToken: string) => void) => void>(),
     registerForceLogout: vi.fn<(fn: () => void) => void>(),
+    // PLAN-0612 / BL-181: the store now registers the 409 recovery hook, so the module mock
+    // must expose it — otherwise every test in this file dies at import time.
+    registerWorkspaceContextRequired: vi.fn<(fn: () => void) => void>(),
 }));
 
 const mockUser: User = { id: "u1", email: "test@test.com", name: "Test" },
