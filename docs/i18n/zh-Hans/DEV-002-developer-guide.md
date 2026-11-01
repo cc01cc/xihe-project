@@ -50,6 +50,8 @@ mise run setup
 
 前置：Node 22+ / pnpm 10+ / Python 3.12+ + uv / Java 25+ + Maven 3.9 / Rust 1.97.1+ / Docker（Desktop for Windows 需 WSL2 集成）。
 
+> **本仓库可单独 clone 运行（PLAN-0612）**：不依赖上层 ONE 工作区。`mise run check:standalone`（`mise.toml:395`）会导出无父级副本并验证 `stack-run`/`dev check` 不依赖 one 根；端口默认值的**事实源在本仓库** `scripts/lib/stack-ports.mjs`，ONE 侧 `config/ports.mjs` 只是编排镜像（见「模式 D」末两条）。
+
 模块级等价命令：
 
 | 模块 | 命令 |
@@ -244,6 +246,8 @@ node scripts/stack-run.mjs env-json --stack 2
 - 非法或未登记的 `XIHE_STACK_ID`（如 `stack-9`、`foo`）启动即失败，不回退默认栈。
 - `dev:host:stop` / `dev:reset` 只作用于当前栈的进程、compose project 与沙箱容器（按 `xihe.stack-id` 标签；无标签视为 stack-1）。
 - 建议同时最多 2 套栈（每栈一套 PG + 四个服务）。
+- **端口事实源（PLAN-0612）**：默认端口的唯一事实源在本仓库 `scripts/lib/stack-ports.mjs`（`STACK_PORTS` + `deriveStack()`）；ONE 工作区的 `config/ports.mjs` 只是编排镜像。改任一侧必须在**同批**改另一侧，并用 `mise run check:ports`（`mise.toml:401`，逐栈 × 逐端口 + 派生字段 + `.env.dev` 自洽性）校验；ONE 不存在时该门**显式 skip**（不是失败），保证单独 clone 可用。
+- **单 clone 自检**：`mise run check:standalone`（`mise.toml:395`）导出无父级副本并验证启动/自检不依赖 one 根。
 
 ## 4. 全栈调试（自 DEV-005-fullstack 并入）
 
@@ -331,7 +335,7 @@ XIHE_VERIFY_PASSWORD=<admin 密码> mise run xihe -- verify \
   --stack 2 --email admin@xihe.local --workspace <wsId> --yes
 ```
 
-- **目标必须显式**：`--stack`、`--email`、`--workspace` 三项必填，缺失即失败（exit 2），CLI 从不回退到登录响应的默认 workspace；`--yes` 只确认执行提示，不替代目标参数。非交互未加 `--yes` 时需 TTY 交互确认。
+- **目标必须显式**：`--stack`、`--email`、`--workspace` 三项必填，缺失即失败（exit 2），CLI 从不回退到登录响应里的 workspace（0614 起登录只返回该账号**第一个活跃** workspace，新账号可为空）；`--yes` 只确认执行提示，不替代目标参数。非交互未加 `--yes` 时需 TTY 交互确认。
 - **凭据**：密码取 `XIHE_VERIFY_PASSWORD`，回退 `XIHE_DEV_ADMIN_PASSWORD`（OS env > `.env` 文件链），TTY 下可无回显输入；无密码 exit 2，token 不回显。密码用 `mise run reset-admin` 生成（目标栈按 `-StackId` > `XIHE_STACK_ID` 解析，栈内按 `--url` > `XIHE_CP_DATASOURCE_URL` > `XIHE_PG_PORT`/`POSTGRES_DB` 解析，运行时会打印实际目标）。
 - **栈派生**：经 `node scripts/stack-run.mjs env-json --stack <id>` 取端口；非法/未登记栈 exit 2。
 - **副作用**：会创建 agent principal（workspace 尚无绑定时）、session 与 chat run，并真实调用模型 provider，可能产生费用；请使用隔离栈与测试 workspace，并先确认执行提示。

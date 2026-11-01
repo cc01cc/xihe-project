@@ -36,9 +36,11 @@ mise run xihe -- --help
 
 `.env` 与 `.env.dev` 已作为安全基线入库，无需复制或覆盖；个人凭据写入 gitignored 的 `.env.local`，不得提交或写入日志。日常开发中 PostgreSQL 使用 Docker，其余服务由 mise 在宿主机启动。`dev:host` 不会导入配置或创建 Provider Connection；需要时运行 `mise run dev:host:import-config` 和 `mise run dev:host:provider-init`。UI 默认端口为 `12630`（stack-1；并行多栈见 [DEV-002](DEV-002-developer-guide.md)「模式 D」）。`mise run dev:full` **已冻结禁用（2026-10-07：仅 PostgreSQL 保留容器，服务全 host；mise.toml 已注释）**，日常走 `dev:host`；环境说明见 [DEV-002](DEV-002-developer-guide.md)。
 
+**本仓库可单独 clone 运行**，不依赖上层 ONE 工作区：`mise run check:standalone`（`mise.toml:395`）自检「不依赖 one 根」。端口默认值的**事实源在本仓库** `scripts/lib/stack-ports.mjs`；ONE 侧的 `config/ports.mjs` 只是编排镜像，改任一侧须同批改另一侧，并由 `mise run check:ports`（`mise.toml:401`）做 parity 校验（ONE 不存在时显式 skip）。
+
 开发管理员密码通过 `mise run reset-admin` 临时重置；命令输出只用于本地登录，不要保存到脚本、源码或日志。
 
-**空白实例首跑**（本地模式免密 onboarding → 建 Agent → 首条回复，以及「看到什么算成功」的逐条判据）见 [DEV-033](DEV-033-first-run-gold-path.md)。
+**首用是空白起步**：注册/登录后**不会自动创建任何工作区**（响应里的 `workspaceId` 可为 `null`），首屏是空态；点「创建你的第一个工作区」用 **`direct_attach`**（选一个宿主目录，执行模式由能力预检决定）建出第一个工作区，再建 Agent 与会话。完整步骤与「看到什么算成功」的逐条判据见 [DEV-033](DEV-033-first-run-gold-path.md)。
 
 ## 2. 架构
 

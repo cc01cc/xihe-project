@@ -85,6 +85,8 @@ mise install
 
 If the current shell hasn't executed `mise activate`, root tasks are recommended to use `mise run ...` format. `task` / `Taskfile.yml` have been removed (PLAN-245 M5); `mise run ...` is the only entry point.
 
+> **This repository runs from a single clone (PLAN-0612)** — no parent ONE workspace required. `mise run check:standalone` (`mise.toml:395`) exports a parent-less copy and verifies `stack-run` / `dev check` do not need the one root. Port defaults are **sourced from this repository** (`scripts/lib/stack-ports.mjs`); the ONE-side `config/ports.mjs` is only a mirror for orchestration (see the last two bullets of "Parallel host stacks").
+
 ```bash
 node --version  # v22+
 pnpm --version  # v10+
@@ -227,6 +229,8 @@ node scripts/stack-run.mjs env-json --stack 2      # print that stack's derived 
 - Unregistered ids (`stack-9`, `foo`) fail fast instead of falling back to stack-1.
 - `dev:host:stop` / `dev:reset` only touch the current stack (label `xihe.stack-id`; a missing label means stack-1).
 - Two concurrent stacks at most are recommended.
+- **Port source of truth (PLAN-0612)**: default ports live in this repository (`scripts/lib/stack-ports.mjs`, `STACK_PORTS` + `deriveStack()`); the ONE workspace `config/ports.mjs` is only a mirror for orchestration. Changing one side requires changing the other **in the same batch**, verified by `mise run check:ports` (`mise.toml:401`: per stack × per port, derived fields, and `.env.dev` self-consistency); when ONE is absent that gate **skips explicitly** (not a failure), so a standalone clone stays usable.
+- **Single-clone self-check**: `mise run check:standalone` (`mise.toml:395`) exports a parent-less copy and verifies startup/self-check do not depend on the one root.
 
 #### Detached full-stack supervisor (PLAN-0603)
 
@@ -491,7 +495,7 @@ XIHE_VERIFY_PASSWORD=<admin password> mise run xihe -- verify \
   --stack 2 --email admin@xihe.local --workspace <wsId> --yes
 ```
 
-- **Explicit target**: `--stack`, `--email` and `--workspace` are all required and missing values fail (exit 2). The CLI never falls back to the default workspace from the login response; `--yes` only confirms the execution prompt and never replaces a target flag. Without `--yes` a TTY confirmation is required.
+- **Explicit target**: `--stack`, `--email` and `--workspace` are all required and missing values fail (exit 2). The CLI never falls back to the workspace from the login response (since 0614 login only returns the account's **first active** workspace, which may be null for a new account); `--yes` only confirms the execution prompt and never replaces a target flag. Without `--yes` a TTY confirmation is required.
 - **Credentials**: the password comes from `XIHE_VERIFY_PASSWORD`, falling back to `XIHE_DEV_ADMIN_PASSWORD` (OS env > `.env` chain); a TTY prompt is used without echo. No password exits 2 and the token is never echoed. Generate a password with `mise run reset-admin`; it resolves the target stack as `-StackId` > `XIHE_STACK_ID` and the target database as `--url` > `XIHE_CP_DATASOURCE_URL` > `localhost:$XIHE_PG_PORT/$POSTGRES_DB` (default `12634/xihe_1`, matching the post-0533 `xihe_<n>` naming) and prints the target it used.
 - **Stack derivation**: ports come from `node scripts/stack-run.mjs env-json --stack <id>`; an unknown stack exits 2.
 - **Side effects**: creates an agent principal (when the workspace has none bound), a session and a chat run, and really calls the model provider, which may incur cost. Use an isolated stack and a test workspace, and confirm the prompt first.

@@ -126,6 +126,7 @@ updated: 2026-10-25
 - **WSL2 OOM**: 修改 vitest config 前应先在 one workspace 侧清理 WSL 资源（清理脚本属 one 工具，见 one 的 `docker` / `windows` skill 文档；本仓库不依赖它，单独 clone 可跳过）
 - **Container name**: `docker compose up -d` 前先 `docker rm -f xihe-*` 清理残留
 - **Native host boundary**: 日常 host 开发只允许 PostgreSQL 运行在 Docker；CP、Agent、Runtime、UI 必须由 mise 作为 Windows 原生任务启动。不要使用不带服务筛选的 `docker compose up -d`，否则会误启动后三个后端容器。
+- **工作区 Docker 后端已冻结（PLAN-0612 M4，2026-10-31 用户裁定）**：开关 `XIHE_WORKSPACE_DOCKER_BACKEND` 默认 `disabled` ⇒ **新建工作区必须 `direct_attach`**（`managed_import` 在创建时直接返回 `409 BACKEND_DISABLED`，先于任何行/execution spec 写入）；既有 docker 工作区的 materialize / Job 启动 / 上传 / imports 返回 `503 BACKEND_DISABLED`（fail-closed，不回退宿主），读面与 `PATCH …/execution-mode` 迁移出口保持可用。产品面（UI/CLI）在调用前必须显式提示不可用并指向 `direct_attach`，不得让用户走到容器创建才收到原始错误。契约见 [DEV-014](DEV-014-control-plane-architecture.md) §8b 与 [DEV-031](DEV-031-sandbox-backend-contract.md)；`test:e2e:host` 是唯一豁免（仍需该后端出证据）。
 - **Native host startup**: 使用 `mise run dev:host`；该任务先执行 `docker compose up -d --wait postgres`，再并行管理四个原生服务。`mise run dev:host:watch` 由 Node watcher 监督健康端点并在任务组故障后重启。
 - **Native host shutdown**: 在运行 `mise run dev:host` 的终端按 Ctrl+C 清理原生任务，再执行 `mise run dev:host:stop` 停止 PostgreSQL。不要依赖残留 PID 或手工猜测进程。
 - **Dev data reset**: 使用 `mise run dev:reset` 先查看 dry-run；确认本地数据可丢弃后才使用 `pwsh -File scripts/dev-reset.ps1 -Reset`。该命令会先备份数据库、重建项目卷并将 host workspace 目录送入回收站，不删除 Runtime device identity。
