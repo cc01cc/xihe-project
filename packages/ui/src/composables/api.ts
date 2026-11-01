@@ -79,6 +79,7 @@ import type {
     ScheduledTaskDisposeResult,
     ScheduledTaskListPage,
 } from "../types";
+import type { SessionParticipantView } from "../types/participant";
 import { clearTabWorkspace, readTabWorkspaceId } from "../lib/workspaceContext";
 
 const API_BASE = "/api/v1";
@@ -2284,6 +2285,49 @@ export const api = {
      * PLAN-0622（CP `13e54cad` 冻结）：响应信封是 `{agents:[…]}`，item 里 `permissionsSnapshot`
      * 取代旧的 `permissions`。**只认这一种形状**（不写双形状兼容），解包后才交给调用方。
      */
+    /**
+     * PLAN-0623 D23-25：会话参与者列表。**严格信封** —— 只认 `{participants:[…]}`。
+     *
+     * 不做双形状兼容（`Array.isArray(x) ? x : x.participants`）：那会让"契约破了"表现为
+     * "能跑"，把问题推到以后。形状不符就抛错，并把**实际收到的顶层键**写进信息，
+     * 便于区分"契约变了"（收到 `["items"]`）和"网络/网关问题"（收到 HTML 之类）。
+     *
+     * `{participants: []}` 是**合法**的（确实没有参与者），与"形状错误"是两件事。
+     */
+    async getSessionParticipants(sessionId: string): Promise<SessionParticipantView[]> {
+        const raw = await request<unknown>(
+            `/sessions/${encodeURIComponent(sessionId)}/participants`,
+        );
+        if (Array.isArray(raw)) {
+            throw new Error(
+                `getSessionParticipants: unexpected payload (received a bare array of length ${raw.length}; ` +
+                    `expected an object with a "participants" array)`,
+            );
+        }
+        if (!raw || typeof raw !== "object") {
+            throw new Error(
+                `getSessionParticipants: unexpected payload (received ${raw === null ? "null" : typeof raw}; ` +
+                    `expected an object with a "participants" array)`,
+            );
+        }
+        const record = raw as Record<string, unknown>;
+        if (!("participants" in record)) {
+            const keys = Object.keys(record);
+            throw new Error(
+                `getSessionParticipants: unexpected payload (received keys: [${keys
+                    .map((key) => JSON.stringify(key))
+                    .join(", ")}]; expected a "participants" array)`,
+            );
+        }
+        const participants = record.participants;
+        if (!Array.isArray(participants)) {
+            // 键在、但类型错：与"键缺失"分开报，便于一眼定位是契约变更还是网关返回异常。
+            throw new Error(
+                `getSessionParticipants: "participants" is not an array (received ${participants === null ? "null" : typeof participants})`,
+            );
+        }
+        return participants as SessionParticipantView[];
+    },
     async getWorkspaceAgents(workspaceId: string): Promise<WorkspaceAgentBinding[]> {
         const raw = await request<{ agents: WorkspaceAgentBinding[] }>(
             `/workspaces/${encodeURIComponent(workspaceId)}/agents`,
