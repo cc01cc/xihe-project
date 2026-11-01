@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { expect, type APIRequestContext, type Page } from "@playwright/test";
+import { expect, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 import { CP_URL } from "./journey";
 import { seedUserGrantPermissions, standardWorkspaceUserPermissions } from "./user-grants";
 
@@ -118,13 +118,53 @@ export async function createSessionWithPrincipal(
     return id as string;
 }
 
+async function isVisible(locator: Locator): Promise<boolean> {
+    return locator.isVisible().catch(() => false);
+}
+
+/**
+ * 失败时把"当前页面处于哪个分支"写进报错。之前 S2 只看到 `locator.click: Test timeout`
+ * （等 `workspace-create-session` 180s），无法判断是"已有会话"还是"入口换了"。
+ */
+async function describeSessionCreationState(page: Page): Promise<string> {
+    const emptyStateButton = await page.getByTestId("workspace-create-session").count();
+    const agentSelect = await page.getByTestId("workspace-agent-principal-select").count();
+    return (
+        `agent session creation did not reach the selector: url=${page.url()} ` +
+        `emptyStateCreateButton=${emptyStateButton} agentSelect=${agentSelect}`
+    );
+}
+
+/**
+ * 真实用户入口是「新建对话」（`?newChat=1`）——`WorkspaceView` 看到该 query 就自己调用
+ * `createSessionForWorkspace()` 打开 agent 选择器。
+ *
+ * 不能点 `workspace-create-session`：那是**空态**按钮（`WorkspaceView.vue` 的 `v-else` 分支），
+ * 而 `sessionId` 只要 store 里有当前会话就为真（`WorkspaceView.vue` 的 computed），此时按钮根本
+ * 不渲染 —— S2 曾因此干等 180s 超时。
+ */
 export async function createWorkspaceSessionWithPrincipal(
     page: Page,
     principalId: string,
 ): Promise<string> {
-    await page.getByTestId("workspace-create-session").click();
     const principalSelect = page.getByTestId("workspace-agent-principal-select");
-    await expect(principalSelect).toBeVisible();
+    // `?newChat=1` 的 watcher 可能已经打开了选择器，此时不要再点入口（重复点击会重置已选值）。
+    if (!(await isVisible(principalSelect))) {
+        const desktopEntry = page.getByTestId("sidebar-new-chat");
+        const mobileEntry = page.getByTestId("workspace-toolbar-new-chat-mobile");
+        if (await isVisible(desktopEntry)) {
+            await desktopEntry.click();
+        } else if (await isVisible(mobileEntry)) {
+            await mobileEntry.click();
+        } else {
+            throw new Error(
+                `no new-chat entry point is visible: ${await describeSessionCreationState(page)}`,
+            );
+        }
+    }
+    await expect(principalSelect, await describeSessionCreationState(page)).toBeVisible({
+        timeout: 30000,
+    });
     await principalSelect.selectOption(principalId);
 
     const responsePromise = page.waitForResponse((response) =>
