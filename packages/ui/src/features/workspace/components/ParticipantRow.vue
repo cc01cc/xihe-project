@@ -11,7 +11,7 @@
  *
  * 模型意图（`defaultModelProvider/Name`）契约里还没有，行内暂不显示；等 M1a 联表补字段。
  */
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import type {
     ParticipantRespondPolicy,
@@ -20,7 +20,38 @@ import type {
     SessionParticipantView,
 } from "../../../types/participant";
 
-const props = defineProps<{ participant: SessionParticipantView }>();
+const props = defineProps<{
+    participant: SessionParticipantView;
+    /** U2：`capabilities.manage` —— false 时移除/改策略在**点击前**就禁用（F-01 形状）。 */
+    canManage: boolean;
+    /** U2：`capabilities.mention` —— false 时 @ 入口禁用。 */
+    canMention: boolean;
+    /** 正在移除该行（请求在途），避免重复点击。 */
+    removing?: boolean;
+}>();
+
+const emit = defineEmits<{ remove: [participant: SessionParticipantView] }>();
+
+/** 破坏性操作走两次点击确认（与 0622 的禁用 Agent 同一形状），不做 alertdialog。 */
+const confirmingRemove = ref(false);
+
+function requestRemove(): void {
+    if (!props.canManage || props.removing) return;
+    if (!confirmingRemove.value) {
+        confirmingRemove.value = true;
+        return;
+    }
+    confirmingRemove.value = false;
+    emit("remove", props.participant);
+}
+
+/** M1a：仅 AGENT 有模型意图；HUMAN 为 null（契约字段，不猜）。 */
+const modelIntent = computed(() => {
+    const provider = props.participant.defaultModelProvider,
+        name = props.participant.defaultModelName;
+    if (!provider && !name) return "";
+    return `${provider ?? "—"} / ${name ?? "—"}`;
+});
 
 const { t } = useI18n();
 
@@ -141,6 +172,50 @@ const disabled = computed(() => Boolean(props.participant.disabledAt));
                     {{ t("workspace.participantRespondLabel") }}: {{ respondLabel }}
                 </span>
             </p>
+            <!-- M1a：仅 AGENT 有模型意图（契约字段，缺失不猜）。 -->
+            <p
+                v-if="modelIntent"
+                class="mt-1 text-[10px] text-muted-foreground"
+                :data-testid="`participant-model-${participant.participantId}`"
+            >
+                {{ modelIntent }}
+            </p>
+        </div>
+        <div class="flex shrink-0 flex-col items-end gap-1">
+            <!-- U2/F-01：无权限时**点击前**禁用，并给出原因，而不是点了才 403。 -->
+            <button
+                type="button"
+                class="rounded border px-1.5 py-0.5 text-[10px] disabled:opacity-50"
+                :data-testid="`participant-mention-${participant.participantId}`"
+                :disabled="!canMention || disabled"
+                :title="
+                    canMention
+                        ? t('workspace.participantMentionAction')
+                        : t('workspace.participantMentionDenied')
+                "
+            >
+                {{ t("workspace.participantMentionAction") }}
+            </button>
+            <button
+                type="button"
+                class="rounded border px-1.5 py-0.5 text-[10px] text-destructive disabled:opacity-50"
+                :data-testid="`participant-remove-${participant.participantId}`"
+                :disabled="
+                    !canManage || disabled || removing === true || participant.role === 'PRIMARY'
+                "
+                :title="
+                    canManage
+                        ? t('workspace.participantRemoveAction')
+                        : t('workspace.participantManageDenied')
+                "
+                @click="requestRemove"
+            >
+                {{
+                    confirmingRemove
+                        ? t("workspace.participantRemoveConfirm")
+                        : t("workspace.participantRemoveAction")
+                }}
+            </button>
         </div>
     </li>
 </template>

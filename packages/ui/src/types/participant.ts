@@ -41,4 +41,25 @@ export interface SessionParticipantView {
     source?: ParticipantSource | null;
     disabledAt?: string | null;
     readCursor?: ParticipantReadCursor | null;
+    /** PLAN-0623 M1a：仅 AGENT 非空；HUMAN 为 null（CP 联表 agent_principals 提供）。 */
+    defaultModelProvider?: string | null;
+    defaultModelName?: string | null;
+}
+
+/**
+ * PLAN-0623 U2：GET 响应里的 capability 三键（`view`/`manage`/`mention`）。
+ *
+ * ⚠️ 契约缺口（已报 Lead）：`openapi.yaml` 的 `SessionParticipantListResponse` 目前**只声明
+ * `participants`**，`capabilities` 是 M1a 实现额外返回的块 —— 需要 CP 把它补进 openapi/inventory。
+ * 在补齐前，UI 侧按**失败关闭**处理：缺 capabilities 时 `manage`/`mention` 一律 false。
+ */
+export interface SessionParticipantCapabilities {
+    view: boolean;
+    manage: boolean;
+    mention: boolean;
+}
+
+export interface SessionParticipantListResponse {
+    participants: SessionParticipantView[];
+    capabilities: SessionParticipantCapabilities;
 }
