@@ -235,6 +235,7 @@ export async function runAgentE2E({ env, fetchImpl = fetch, options }) {
   step('A6 prep session', 'PASS', `session=${sessionId}`);
 
   let branchId = null;
+  let extraSessionId = null;
   try {
     const branches = await client.call('GET', `/api/v1/sessions/${encodeURIComponent(sessionId)}/branches`);
     branchId = Array.isArray(branches.body?.items) ? branches.body.items[0]?.branchId : null;
@@ -243,11 +244,26 @@ export async function runAgentE2E({ env, fetchImpl = fetch, options }) {
     }
     step('A6 prep branch', 'PASS', `branch=${branchId}`);
 
+    // 跨 session 并发（同一 connection）：会话级互斥是既有两层设计，不能靠 governor 取代。
+    const extraSession = await client.call('POST', '/api/v1/sessions', {
+      body: bindingRequestBody(resolved.binding, { title: 'xihe-agent-e2e-b', agentPrincipalId: personal.principalId }),
+    });
+    extraSessionId = typeof extraSession.body?.id === 'string' ? extraSession.body.id : null;
+    let extraBranchId = null;
+    if (extraSessionId) {
+      const extraBranches = await client.call('GET', `/api/v1/sessions/${encodeURIComponent(extraSessionId)}/branches`);
+      extraBranchId = Array.isArray(extraBranches.body?.items) ? extraBranches.body.items[0]?.branchId : null;
+    }
+    step('A6 prep second session', extraSessionId && extraBranchId ? 'PASS' : 'WARN', `session=${extraSessionId ?? 'none'} branch=${extraBranchId ?? 'none'}`);
+    const chatTargets = [{ sessionId, branchId }];
+    if (extraSessionId && extraBranchId) chatTargets.push({ sessionId: extraSessionId, branchId: extraBranchId });
+
     const limit = await runResourceLimitProbe({
       client,
       connectionId: resolved.binding.connectionId,
       sessionId,
       branchId,
+      chatTargets,
     });
     step('A6 RESOURCE_EXHAUSTED 429', limit.status, limit.detail, limit.evidence
       ?? { code: limit.code ?? null, connectionId: resolved.binding.connectionId });
@@ -284,6 +300,10 @@ export async function runAgentE2E({ env, fetchImpl = fetch, options }) {
   } finally {
     const deleted = await client.call('DELETE', `/api/v1/sessions/${encodeURIComponent(sessionId)}`);
     step('cleanup session', deleted.status === 204 || deleted.status === 200 ? 'PASS' : 'WARN', `HTTP ${deleted.status}`);
+    if (extraSessionId) {
+      const extraDeleted = await client.call('DELETE', `/api/v1/sessions/${encodeURIComponent(extraSessionId)}`);
+      step('cleanup second session', extraDeleted.status === 204 || extraDeleted.status === 200 ? 'PASS' : 'WARN', `HTTP ${extraDeleted.status}`);
+    }
   }
 }
 

@@ -3188,6 +3188,17 @@ test('verify probes: PERSONAL lifecycle and limit 429 are provisional until CP d
   assert.equal(wrongSource.status, 'FAIL');
   assert.equal(wrongSource.code, 'PERSONAL_SOURCE_MISMATCH');
 
+  const notPersisted = await runResourceLimitProbe({
+    client: fakeClient((method) => {
+      if (method === 'GET') return { status: 200, body: { connections: [{ id: 'c-1' }] }, code: null };
+      if (method === 'PATCH') return { status: 200, body: { connection: { id: 'c-1' } }, code: null };
+      return { status: 404, body: { code: 'NOT_FOUND' }, code: 'NOT_FOUND' };
+    }),
+    connectionId: 'c-1', sessionId: 's-1', branchId: 'b-1',
+  });
+  assert.equal(notPersisted.status, 'SKIP_PROVISIONAL');
+  assert.equal(notPersisted.code, 'LIMIT_NOT_PERSISTED');
+  assert.match(notPersisted.detail, /UNLIMITED/);
   const limitUnsupported = await runResourceLimitProbe({
     client: fakeClient((method, pathname) => {
       if (method === 'GET') return { status: 200, body: { connections: [{ id: 'c-1' }] }, code: null };
@@ -3203,7 +3214,7 @@ test('verify probes: PERSONAL lifecycle and limit 429 are provisional until CP d
   const trapCalls = [];
   const limited = await runResourceLimitProbe({
     client: fakeClient((method, pathname, options) => {
-      if (method === 'GET') return { status: 200, body: { connections: [{ id: 'c-1' }] }, code: null };
+      if (method === 'GET') return { status: 200, body: { connections: [{ id: 'c-1', maxInflight: patchCount >= 1 ? 1 : undefined }] }, code: null };
       if (method === 'PATCH') {
         patchCount += 1;
         trapCalls.push(options.body);
@@ -3231,7 +3242,7 @@ test('verify probes: PERSONAL lifecycle and limit 429 are provisional until CP d
   // A6 must reject a bare 429: code + retryAfterSeconds + resourceKind + scope + header.
   const bad429 = await runResourceLimitProbe({
     client: fakeClient((method, pathname, options) => {
-      if (method === 'GET') return { status: 200, body: { connections: [{ id: 'c-1' }] }, code: null };
+      if (method === 'GET') return { status: 200, body: { connections: [{ id: 'c-1', maxInflight: 1 }] }, code: null };
       if (method === 'PATCH') return { status: 200, body: { connection: { id: 'c-1', ...options.body } }, code: null };
       if (method === 'POST' && pathname === '/api/v1/chat') {
         return { status: 429, body: { code: 'RESOURCE_EXHAUSTED' }, code: 'RESOURCE_EXHAUSTED', retryAfter: '1' };
@@ -3508,7 +3519,7 @@ test('run-agent-e2e: usage 2, scope gate 3, and a full A5+A6 pass against a fake
       return new Response(null, { status: 204 });
     }
     if (target.pathname === '/api/v1/provider-connections' && method === 'GET') {
-      return respond(200, { connections: [{ id: 'c-1', status: 'READY', enabled: true, connectionKey: 'c-1', manualModels: ['gpt-5'] }] });
+      return respond(200, { connections: [{ id: 'c-1', status: 'READY', enabled: true, connectionKey: 'c-1', manualModels: ['gpt-5'], ...(patches.length > 0 ? { maxInflight: 1 } : {}) }] });
     }
     if (target.pathname === '/api/v1/provider-connections/c-1' && method === 'PATCH') {
       patches.push(body);
@@ -3559,5 +3570,5 @@ test('run-agent-e2e: usage 2, scope gate 3, and a full A5+A6 pass against a fake
   assert.equal(pass.data.limit.detail.includes('kind=CONNECTION'), true);
   assert.equal(patches.length, 2, 'set maxInflight=1 then restore');
   assert.equal(patches[0].maxInflight, 1);
-  assert.equal(pass.data.steps.at(-1).name, 'cleanup session');
+  assert.equal(pass.data.steps.at(-1).name, 'cleanup second session');
 });

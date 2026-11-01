@@ -384,7 +384,7 @@ export async function runWorkspaceLifecycleProbe({ client, workspaceId }) {
  * with Retry-After, and the connection recovers after the limit is restored.
  * Provisional until the CP Resource Governor is delivered (T1.6).
  */
-export async function runResourceLimitProbe({ client, connectionId, sessionId, branchId }) {
+export async function runResourceLimitProbe({ client, connectionId, sessionId, branchId, chatTargets }) {
   if (!sessionId || !branchId) {
     return provisionalProbe('NO_SESSION', '没有可用于限额探测的 session/branch');
   }
@@ -406,18 +406,32 @@ export async function runResourceLimitProbe({ client, connectionId, sessionId, b
     }
     return { status: 'FAIL', code: patched.code ?? 'LIMIT_PATCH_FAILED', detail: `HTTP ${patched.status}` };
   }
-  // CP 当前连接视图不一定回显 maxInflight（M1.5 部分接线）；PATCH 200 后直接验证行为：
-  // 4 发并发里出现 429 RESOURCE_EXHAUSTED 才算 governor 生效，不回显不构成 provisional 理由。
-  const echoed = patched.body?.connection ?? patched.body;
-  const limitEchoed = echoed?.maxInflight === 1;
 
-  const chat = (label) => client.call('POST', '/api/v1/chat', {
-    body: { sessionId, branchId, content: `xihe verify limit probe ${label}` },
+  // CP 修复前：PATCH 返回 200 但连接读面不投影限额 ⇒ 限额没有持久化，governor 恒为 UNLIMITED。
+  // 这是"配置写不进去"的精确阻塞原因，不是"没观测到 429"（后者会把 CP bug 归因到用例）。
+  const reRead = await client.call('GET', '/api/v1/provider-connections');
+  const reReadList = Array.isArray(reRead.body?.connections) ? reRead.body.connections : [];
+  const reReadTarget = reReadList.find((item) => item?.id === target.id);
+  const limitEchoed = reRead.status === 200 && reReadTarget?.maxInflight === 1;
+  if (!limitEchoed) {
+    await client.call('PATCH', patchPath, { body: { maxInflight: originalLimit } });
+    return provisionalProbe(
+      'LIMIT_NOT_PERSISTED',
+      'PATCH 限额未持久化，governor 恒为 UNLIMITED（CP 修复中）',
+    );
+  }
+
+  // 跨 session 并发（同一 connection）：会话级互斥是既有两层设计，不应由 governor 取代。
+  const targets = Array.isArray(chatTargets) && chatTargets.length > 0
+    ? chatTargets
+    : Array.from({ length: 4 }, () => ({ sessionId, branchId }));
+  const chat = (label, chatTarget = targets[0]) => client.call('POST', '/api/v1/chat', {
+    body: { sessionId: chatTarget.sessionId, branchId: chatTarget.branchId, content: `xihe verify limit probe ${label}` },
     timeoutMs: 5_000,
   });
   let results;
   try {
-    results = await Promise.all([chat('a'), chat('b'), chat('c'), chat('d')]);
+    results = await Promise.all(targets.map((chatTarget, index) => chat(`p${index}`, chatTarget)));
   } finally {
     // Restore in every outcome: a leaked maxInflight would break the stack for later runs.
     await client.call('PATCH', patchPath, { body: { maxInflight: originalLimit } });
@@ -438,15 +452,17 @@ export async function runResourceLimitProbe({ client, connectionId, sessionId, b
     && typeof result.retryAfter === 'string' && result.retryAfter !== '');
   if (!throttled) {
     const detail429 = results.find((result) => result.status === 429);
+    const sessionCount = new Set(targets.map((item) => item.sessionId)).size;
     return {
       status: 'FAIL',
       code: 'LIMIT_NOT_ENFORCED',
       detail: detail429
-        ? `429 缺契约字段（code=${detail429.code ?? 'none'}` 
+        ? `429 缺契约字段（code=${detail429.code ?? 'none'}`
           + ` retryAfterSeconds=${JSON.stringify(detail429.body?.retryAfterSeconds ?? null)}`
           + ` resourceKind=${detail429.body?.resourceKind ?? 'none'} scope=${detail429.body?.scope ?? 'none'}`
           + ` headerRetryAfter=${detail429.retryAfter ?? 'none'}）`
-        : `并发 4 次 chat 未命中 429 RESOURCE_EXHAUSTED（statuses=${results.map((item) => item.status).join(',')}）`,
+        : `跨 ${sessionCount} 个 session 并发 ${targets.length} 条 chat 未命中 429 RESOURCE_EXHAUSTED`
+          + `（statuses=${results.map((item) => item.status).join(',')}）`,
     };
   }
   const recovered = await chat('after-restore');
