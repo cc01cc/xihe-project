@@ -1470,8 +1470,12 @@ test('verify reuses a pre-existing principal without rebinding it', async (t) =>
 
   assert.equal(result.exitCode, 0);
   assert.equal(result.data.cleanup.principal.status, 'pre_existing');
-  assert.equal(cp.state.calls.some((call) => call.pathname === '/api/v1/agent-principals'), false);
-  assert.equal(cp.state.calls.some((call) => call.method === 'PUT'), false);
+  // PLAN-0622 A5: verify additionally probes a PERSONAL principal; this mock does not
+  // echo scope, so the probe must stay provisional instead of pretending to pass.
+  assert.equal(result.data.personal.status, 'SKIP_PROVISIONAL');
+  const principalCreates = cp.state.calls.filter((call) => call.pathname === '/api/v1/agent-principals');
+  assert.ok(principalCreates.length >= 1, 'A5 probe creates its own PERSONAL principal');
+  assert.equal(cp.state.calls.some((call) => call.method === 'PUT'), false, 'reuses the pre-existing principal without rebinding');
 });
 
 test('config export defaults to includeSecrets=false and returns the JSONC text', async (t) => {
@@ -3106,4 +3110,85 @@ test('credential commands keep a single parseable --json envelope', async (t) =>
     assert.equal(parsed.ok, true, argv.join(' '));
     assert.equal(parsed.data.kind, expectedKinds[index], argv.join(' '));
   }
+});
+
+test('verify probes: PERSONAL lifecycle and limit 429 are provisional until CP delivers the contract', async () => {
+  const { runPersonalLifecycleProbe, runResourceLimitProbe } = await import('./xihe-cli/verify.mjs');
+  const calls = [];
+  const fakeClient = (handler) => ({ call: async (method, pathname, options = {}) => {
+    calls.push(`${method} ${pathname}`);
+    return handler(method, pathname, options);
+  } });
+
+  const unsupported = await runPersonalLifecycleProbe({
+    client: fakeClient(() => ({ status: 400, body: { code: 'INVALID_REQUEST' }, code: 'INVALID_REQUEST' })),
+    workspaceId: 'ws-1',
+  });
+  assert.equal(unsupported.status, 'SKIP_PROVISIONAL');
+  assert.equal(unsupported.code, 'SCOPE_UNSUPPORTED');
+
+  const bindings = new Set();
+  const lifecycle = await runPersonalLifecycleProbe({
+    client: fakeClient((method, pathname) => {
+      if (method === 'POST' && pathname === '/api/v1/agent-principals') {
+        return { status: 201, body: { principalId: 'p-1', scope: 'PERSONAL' }, code: null };
+      }
+      if (method === 'PUT' && pathname.includes('/agents/p-1')) { bindings.add('p-1'); return { status: 200, body: {}, code: null }; }
+      if (method === 'DELETE' && pathname.includes('/agents/p-1')) { bindings.delete('p-1'); return { status: 204, body: null, code: null }; }
+      if (method === 'GET' && pathname.endsWith('/agents')) {
+        return { status: 200, body: { agents: [...bindings].map((principalId) => ({ principalId, source: 'personal' })) }, code: null };
+      }
+      return { status: 404, body: { code: 'NOT_FOUND' }, code: 'NOT_FOUND' };
+    }),
+    workspaceId: 'ws-1',
+  });
+  assert.equal(lifecycle.status, 'PASS', JSON.stringify(lifecycle));
+  assert.equal(lifecycle.principalId, 'p-1');
+
+  const wrongSource = await runPersonalLifecycleProbe({
+    client: fakeClient((method, pathname) => {
+      if (method === 'POST') return { status: 201, body: { principalId: 'p-1', scope: 'PERSONAL' }, code: null };
+      if (method === 'PUT') return { status: 200, body: {}, code: null };
+      if (method === 'GET') return { status: 200, body: { agents: [{ principalId: 'p-1', source: 'workspace' }] }, code: null };
+      return { status: 404, body: {}, code: 'NOT_FOUND' };
+    }),
+    workspaceId: 'ws-1',
+  });
+  assert.equal(wrongSource.status, 'FAIL');
+  assert.equal(wrongSource.code, 'PERSONAL_SOURCE_MISMATCH');
+
+  const limitUnsupported = await runResourceLimitProbe({
+    client: fakeClient((method, pathname) => {
+      if (method === 'GET') return { status: 200, body: { connections: [{ id: 'c-1' }] }, code: null };
+      return { status: 404, body: { code: 'NOT_FOUND' }, code: 'NOT_FOUND' };
+    }),
+    connectionId: 'c-1', sessionId: 's-1', branchId: 'b-1',
+  });
+  assert.equal(limitUnsupported.status, 'SKIP_PROVISIONAL');
+  assert.equal(limitUnsupported.code, 'LIMIT_UNSUPPORTED');
+
+  let chatCount = 0;
+  let patchCount = 0;
+  const trapCalls = [];
+  const limited = await runResourceLimitProbe({
+    client: fakeClient((method, pathname, options) => {
+      if (method === 'GET') return { status: 200, body: { connections: [{ id: 'c-1' }] }, code: null };
+      if (method === 'PATCH') {
+        patchCount += 1;
+        trapCalls.push(options.body);
+        return { status: 200, body: { connection: { id: 'c-1', ...options.body } }, code: null };
+      }
+      if (method === 'POST' && pathname === '/api/v1/chat') {
+        if (patchCount >= 2) return { status: 202, body: { runId: 'run-after' }, code: null };
+        chatCount += 1;
+        if (chatCount === 1) return { status: 202, body: { runId: 'run-1' }, code: null };
+        return { status: 429, body: { code: 'RESOURCE_EXHAUSTED' }, code: 'RESOURCE_EXHAUSTED', retryAfter: '1' };
+      }
+      if (method === 'POST' && pathname.includes('/cancel')) return { status: 200, body: {}, code: null };
+      return { status: 404, body: {}, code: 'NOT_FOUND' };
+    }),
+    connectionId: 'c-1', sessionId: 's-1', branchId: 'b-1',
+  });
+  assert.equal(limited.status, 'PASS', JSON.stringify(limited));
+  assert.equal(trapCalls.length, 2, 'the probe restores maxInflight');
 });
