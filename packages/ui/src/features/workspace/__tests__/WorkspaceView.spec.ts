@@ -69,6 +69,8 @@ const i18n = createI18n({
                 chooseAgentLabel: "Choose Agent",
                 chooseAgentPlaceholder: "Select Agent",
                 noBoundAgent: "No bound Agent",
+                noEnabledAgent: "The bound Agents are disabled",
+                openAgentManagement: "Open Agent management",
                 agentLoadFailed: "Failed to load Agents",
                 bindAgentAndSend: "Bind and send",
                 agentManagement: "Agent management",
@@ -467,4 +469,35 @@ it("lists only bound and enabled agents in the session selector", async () => {
     expect(options).toContain("agent-bound");
     expect(options, "an unbound agent must not be selectable").not.toContain("agent-unbound");
     expect(options, "a disabled agent must not be selectable").not.toContain("agent-disabled");
+});
+
+// PLAN-0622 D27 连带：工作区里的 agent 都**已绑定但被禁用**时，不能对用户说"尚未绑定"
+// （那是错误归因 —— 用户会去重复绑定一个已经绑好的 agent）。UI 必须给出可操作的原因。
+it("explains that the bound agents are disabled instead of claiming nothing is bound", async () => {
+    mockedApi.getSessions.mockResolvedValue({ sessions: [] });
+    mockedApi.getWorkspaceAgents.mockResolvedValue([
+        {
+            principalId: "agent-bound-disabled",
+            name: "Bound but disabled",
+            templateId: null,
+            templateName: null,
+            createdAt: new Date().toISOString(),
+            source: "personal",
+            permissionsSnapshot: [],
+            bound: true,
+            disabled: true,
+        },
+    ]);
+    const wrapper = mountView();
+    await flushPromises();
+    await wrapper.find('[data-testid="workspace-create-session"]').trigger("click");
+    await flushPromises();
+
+    const hint = wrapper.find('[data-testid="workspace-agent-unavailable-hint"]');
+    expect(hint.exists(), "the UI must explain why no agent is selectable").toBe(true);
+    expect(hint.text()).toMatch(/禁用|disabled/i);
+    expect(
+        wrapper.find('[data-testid="workspace-agent-principal-select"]').exists(),
+        "no selector when nothing is selectable",
+    ).toBe(false);
 });
