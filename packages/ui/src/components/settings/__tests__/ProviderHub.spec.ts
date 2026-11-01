@@ -937,3 +937,60 @@ describe("PLAN-0591 tool capability visibility", () => {
         expect("capability" in provider.defaultApiType).toBe(false);
     });
 });
+
+// ── PLAN-0622 Resource Governor：连接页限额随 PATCH 提交（Block B 的接线证据） ─────────────
+describe("ProviderHub connection resource limits (PLAN-0622)", () => {
+    it("submits the edited limits together with the connection PATCH", async () => {
+        const limited = { ...user, maxInflight: 2, maxQueue: 4 } as typeof user;
+        vi.mocked(listProviderConnections).mockResolvedValue({ connections: [limited] });
+        vi.mocked(updateProviderConnection).mockResolvedValue(limited);
+        const wrapper = mount(ProviderHub, { props: { scope: "USER" } });
+        await flushPromises();
+
+        // 打开「管理」对话框（与既有用例相同的真实入口，不是点卡片本身）。
+        const row = wrapper.findAll('[data-testid="provider-connection-example"]')[0]!;
+        await row
+            .findAll("button")
+            .find((button) => button.text() === i18n.global.t("settings.providerHub.manage"))!
+            .trigger("click");
+        await flushPromises();
+        const modal = wrapper.get('[data-testid="provider-connection-modal"]');
+        // 限额区只在编辑已有连接时出现，并回显当前值。
+        expect(modal.find('[data-testid="connection-resource-limits"]').exists()).toBe(true);
+        expect(
+            modal.get<HTMLInputElement>('[data-testid="connection-limit-max-inflight"]').element
+                .value,
+        ).toBe("2");
+
+        await modal.get('[data-testid="connection-limit-max-inflight"]').setValue("6");
+        await modal.get('[data-testid="connection-limit-window-seconds"]').setValue("30");
+        await modal.get("form").trigger("submit");
+        await flushPromises();
+
+        expect(updateProviderConnection).toHaveBeenCalledWith(
+            limited.id,
+            expect.objectContaining({ maxInflight: 6, maxQueue: 4, windowSeconds: 30 }),
+        );
+        wrapper.unmount();
+    });
+
+    it("blocks the PATCH when a limit is not a positive integer", async () => {
+        vi.mocked(listProviderConnections).mockResolvedValue({ connections: [user] });
+        const wrapper = mount(ProviderHub, { props: { scope: "USER" } });
+        await flushPromises();
+
+        const row = wrapper.findAll('[data-testid="provider-connection-example"]')[0]!;
+        await row
+            .findAll("button")
+            .find((button) => button.text() === i18n.global.t("settings.providerHub.manage"))!
+            .trigger("click");
+        await flushPromises();
+        const modal = wrapper.get('[data-testid="provider-connection-modal"]');
+        await modal.get('[data-testid="connection-limit-max-inflight"]').setValue("0");
+        await modal.get("form").trigger("submit");
+        await flushPromises();
+
+        expect(updateProviderConnection).not.toHaveBeenCalled();
+        wrapper.unmount();
+    });
+});

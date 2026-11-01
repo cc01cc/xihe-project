@@ -437,6 +437,47 @@ describe("Workspace Agent management API", () => {
         );
     });
 
+    it("unwraps the frozen {agents:[…]} envelope and never the legacy bare array", async () => {
+        // PLAN-0622（CP `13e54cad`）：list 契约是 `{agents:[…]}`，item 用 `permissionsSnapshot`。
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    agents: [
+                        {
+                            principalId: "principal-1",
+                            name: "Personal agent",
+                            templateId: null,
+                            templateName: null,
+                            createdAt: "2026-11-02T00:00:00Z",
+                            source: "personal",
+                            permissionsSnapshot: [],
+                        },
+                    ],
+                }),
+        } as Response);
+
+        const agents = await api.getWorkspaceAgents("workspace-1");
+
+        expect(fetchSpy).toHaveBeenCalledWith(
+            "/api/v1/workspaces/workspace-1/agents",
+            expect.objectContaining({ headers: expect.any(Object) }),
+        );
+        expect(agents).toHaveLength(1);
+        expect(agents[0].source).toBe("personal");
+        expect(agents[0].permissionsSnapshot).toEqual([]);
+    });
+
+    it("disables a principal through the dedicated 204 route", async () => {
+        fetchSpy.mockResolvedValueOnce({ ok: true, status: 204 } as Response);
+
+        await api.disableAgentPrincipal("principal-1");
+
+        expect(fetchSpy).toHaveBeenCalledWith(
+            "/api/v1/agent-principals/principal-1/disable",
+            expect.objectContaining({ method: "POST" }),
+        );
+    });
     it("creates a principal without creating a Workspace binding", async () => {
         fetchSpy.mockResolvedValueOnce({
             ok: true,
@@ -449,7 +490,7 @@ describe("Workspace Agent management API", () => {
                 }),
         } as Response);
 
-        const result = await api.createAgentPrincipal("Research Agent");
+        const result = await api.createAgentPrincipal({ name: "Research Agent" });
 
         expect(fetchSpy).toHaveBeenCalledWith(
             "/api/v1/agent-principals",

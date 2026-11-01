@@ -97,6 +97,24 @@ export interface ProviderConnection {
     lastVerifiedAt?: string | null;
     lastErrorCode?: string | null;
     revision: number;
+    /**
+     * PLAN-0622 Resource Governor（连接级）：`null`/缺省 = 不限额。
+     * 超限时 CP 返回 `429 RESOURCE_EXHAUSTED` + `Retry-After`。
+     */
+    maxInflight?: number | null;
+    maxQueue?: number | null;
+    windowTokenBudget?: number | null;
+    windowSeconds?: number | null;
+    /** 模型级限额（同一连接下不同模型配额可不同）。 */
+    modelLimits?: ConnectionModelLimit[] | null;
+}
+
+export interface ConnectionModelLimit {
+    provider: string;
+    model: string;
+    maxInflight?: number | null;
+    windowTokenBudget?: number | null;
+    windowSeconds?: number | null;
 }
 
 export interface ProviderConnectionInput {
@@ -115,4 +133,10 @@ export interface ProviderConnectionInput {
     expectedRevision?: number;
     connectionDefaultTemplateRef?: import("../services/apiRequestTemplates").TemplateRef;
     confirmedTypeChange?: boolean;
+    /** PLAN-0622：连接级资源限额（PATCH 时可只带这几项）。 */
+    maxInflight?: number | null;
+    maxQueue?: number | null;
+    windowTokenBudget?: number | null;
+    windowSeconds?: number | null;
+    modelLimits?: ConnectionModelLimit[] | null;
 }

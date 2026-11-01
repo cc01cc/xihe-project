@@ -418,6 +418,9 @@ export const useChatStore = defineStore("chat", () => {
             runId?: string;
             retryable?: boolean;
             outcome?: string;
+            /** PLAN-0622：429 RESOURCE_EXHAUSTED 的等待秒数与资源种类。 */
+            retryAfterSeconds?: number;
+            resourceKind?: string;
         },
     ) {
         const messageId = streamingMessageId.value[sessionId];
@@ -447,6 +450,9 @@ export const useChatStore = defineStore("chat", () => {
             message.errorCode = error.code;
             message.error = error.detail;
             message.retryable = error.retryable ?? true;
+            // PLAN-0622：429 配额/并发耗尽的等待秒数与资源种类，供 MessageItem 出本地化话术。
+            message.retryAfterSeconds = error.retryAfterSeconds;
+            message.resourceKind = error.resourceKind;
             message.runId = error.runId ?? message.runId;
             const ambiguous = error.outcome === "ambiguous",
                 partial = !ambiguous && (hasTextContent || error.outcome === "partial");

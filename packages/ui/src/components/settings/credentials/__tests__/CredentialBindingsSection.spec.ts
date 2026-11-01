@@ -46,6 +46,9 @@ async function mountSection(): Promise<VueWrapper> {
 beforeEach(() => {
     vi.clearAllMocks();
     mockedApi.listWorkspaces.mockResolvedValue([{ id: "ws-1", name: "Workspace One" }] as never);
+    // PLAN-0622（CP `13e54cad`）：item 用 `permissionsSnapshot` 且 `source` 必填。
+    // 注意：这里 mock 的是 **api 客户端边界**（`api.getWorkspaceAgents` 已经解包成数组），
+    // `{agents:[…]}` 信封由 `composables/__tests__/api.spec.ts` 用真实 fetch mock 断言。
     mockedApi.getWorkspaceAgents.mockResolvedValue([
         {
             principalId: "principal-bound",
@@ -53,7 +56,8 @@ beforeEach(() => {
             templateId: null,
             templateName: null,
             createdAt: "2026-10-13T00:00:00Z",
-            permissions: [
+            source: "workspace",
+            permissionsSnapshot: [
                 { actionClass: "credential_use", resource: `credential:${CREDENTIAL_ID}` },
             ],
         },
@@ -63,7 +67,8 @@ beforeEach(() => {
             templateId: null,
             templateName: null,
             createdAt: "2026-10-13T00:00:00Z",
-            permissions: [],
+            source: "workspace",
+            permissionsSnapshot: [],
         },
     ]);
     mockedApi.bindCredential.mockResolvedValue({
