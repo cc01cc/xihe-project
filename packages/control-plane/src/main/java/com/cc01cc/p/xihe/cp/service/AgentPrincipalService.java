@@ -527,10 +527,24 @@ public class AgentPrincipalService {
                 principal.getDisabledAt());
     }
 
+    /**
+     * PLAN-0622 M1.3 (checklist C1–C6): <b>the single computation entry</b> for "what may this
+     * principal do in this workspace".
+     *
+     * <p>Contract:</p>
+     * <ul>
+     *   <li>explicit ids only — no {@code TenantContext} read, so 0623 can call it from a run
+     *       worker thread outside any request (C6);</li>
+     *   <li>no caching (V16): every call re-reads the binding and the principal's grants, so a
+     *       revoked or narrowed binding takes effect on the next submission;</li>
+     *   <li>scoped: an unbound workspace answers {@code 403}, it never falls back to another
+     *       workspace's binding (C5);</li>
+     *   <li>a disabled principal answers {@code 409 AGENT_PRINCIPAL_DISABLED} (state conflict, not
+     *       a permission problem).</li>
+     * </ul>
+     */
     @Transactional(readOnly = true)
-    public JsonNode resolveSessionCap(String principalIdValue, String workspaceIdValue) {
-        UUID principalId = parseUuid(principalIdValue, "INVALID_AGENT_PRINCIPAL");
-        UUID workspaceId = parseUuid(workspaceIdValue, "INVALID_WORKSPACE");
+    public JsonNode resolveCapFor(UUID principalId, UUID workspaceId) {
         ActiveWorkspaceBinding binding = requireActiveWorkspaceBinding(principalId, workspaceId);
         AgentPrincipal principal = binding.principal();
         Set<GrantIntersectionEvaluator.PermissionAtom> principalPermissions = evaluator.union(
@@ -541,11 +555,30 @@ public class AgentPrincipalService {
         return toJson(retainCovered(bindingPermissions, principalPermissions));
     }
 
+    /** String adapter for wire-facing callers; parsing only, one computation (C1). */
+    @Transactional(readOnly = true)
+    public JsonNode resolveCapFor(String principalIdValue, String workspaceIdValue) {
+        return resolveCapFor(parseUuid(principalIdValue, "INVALID_AGENT_PRINCIPAL"),
+                parseUuid(workspaceIdValue, "INVALID_WORKSPACE"));
+    }
+
+    /**
+     * Pre-0622 name. It only parses the wire strings and delegates — keeping it as a second
+     * implementation would be exactly the "two computation points" the checklist forbids (C1).
+     */
+    @Transactional(readOnly = true)
+    public JsonNode resolveSessionCap(String principalIdValue, String workspaceIdValue) {
+        return resolveCapFor(principalIdValue, workspaceIdValue);
+    }
+
+    /**
+     * PLAN-0622 M1.3: existence check expressed through the single entry — the binding/active
+     * invariants are resolved once, in {@link #resolveCapFor(UUID, UUID)}.
+     */
     @Transactional(readOnly = true)
     public void requireActiveWorkspaceBinding(String principalIdValue, String workspaceIdValue) {
-        UUID principalId = parseUuid(principalIdValue, "INVALID_AGENT_PRINCIPAL");
-        UUID workspaceId = parseUuid(workspaceIdValue, "INVALID_WORKSPACE");
-        requireActiveWorkspaceBinding(principalId, workspaceId);
+        resolveCapFor(parseUuid(principalIdValue, "INVALID_AGENT_PRINCIPAL"),
+                parseUuid(workspaceIdValue, "INVALID_WORKSPACE"));
     }
 
     private ActiveWorkspaceBinding requireActiveWorkspaceBinding(UUID principalId, UUID workspaceId) {
@@ -560,7 +593,8 @@ public class AgentPrincipalService {
     public JsonNode deriveSpawnChildCap(JsonNode parentSessionSnapshot, String principalId, String workspaceId) {
         Set<GrantIntersectionEvaluator.PermissionAtom> parentPermissions = parsePermissions(parentSessionSnapshot);
         Set<GrantIntersectionEvaluator.PermissionAtom> currentCap = parsePermissions(
-                resolveSessionCap(principalId, workspaceId));
+                resolveCapFor(parseUuid(principalId, "INVALID_AGENT_PRINCIPAL"),
+                        parseUuid(workspaceId, "INVALID_WORKSPACE")));
         Set<GrantIntersectionEvaluator.PermissionAtom> intersection = new LinkedHashSet<>();
         for (GrantIntersectionEvaluator.PermissionAtom atom : parentPermissions) {
             if (isCoveredBy(atom, currentCap)) {
