@@ -1781,6 +1781,8 @@ const messages = {
             email: "邮箱",
             username: "用户名",
             usernameHint: "可选，留空则根据邮箱自动生成",
+            usernameRule: "1–32 位小写字母或数字，需以字母开头",
+            usernameInvalid: "用户名需为 1–32 位小写字母或数字，并以字母开头（例如 zhangsan）",
             password: "密码",
             confirmPassword: "确认密码",
             submit: "注册",
@@ -3804,6 +3806,9 @@ const messages = {
             email: "Email",
             username: "Username",
             usernameHint: "Optional; left blank one is derived from your email",
+            usernameRule: "1-32 lowercase letters or digits, starting with a letter",
+            usernameInvalid:
+                "Username must be 1-32 lowercase letters or digits and start with a letter (e.g. zhangsan)",
             password: "Password",
             confirmPassword: "Confirm Password",
             submit: "Register",

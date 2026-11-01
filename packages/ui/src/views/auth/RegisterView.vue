@@ -21,6 +21,16 @@ const passwordMismatch = computed(() => {
     return !!(confirmPassword.value && password.value !== confirmPassword.value);
 });
 
+/**
+ * PLAN-0621 F-05：CP 的用户名规则是 `^[a-z][a-z0-9]{0,31}$`（1–32 位小写字母/数字、字母开头）。
+ * 之前没有前端校验：用户填完提交才被 `400 USERNAME_INVALID` 打回，且 detail 是英文。
+ * 这里做**前置拦截**（留空合法 —— 由 CP 从邮箱派生），错误文案走 i18n。
+ */
+const USERNAME_PATTERN = /^[a-z][a-z0-9]{0,31}$/;
+const usernameInvalid = computed(
+    () => username.value.trim() !== "" && !USERNAME_PATTERN.test(username.value.trim()),
+);
+
 function rateLimitMessage(): string | null {
     if (auth.lastError?.code !== "AUTH_RATE_LIMITED") return null;
     const seconds = auth.lastError.retryAfterSeconds;
@@ -29,6 +39,11 @@ function rateLimitMessage(): string | null {
 
 async function handleSubmit() {
     if (phase.value !== "idle" || !email.value || !password.value) return;
+    if (usernameInvalid.value) {
+        // 不发请求：规则在客户端就能判定，没必要让用户等一次 400。
+        localError.value = t("register.usernameInvalid");
+        return;
+    }
     if (password.value !== confirmPassword.value) {
         localError.value = t("common.passwordMismatch");
         return;
@@ -92,8 +107,19 @@ async function handleSubmit() {
                         autocomplete="username"
                         :disabled="busy"
                         :placeholder="t('register.usernameHint')"
+                        :aria-invalid="usernameInvalid"
                         class="w-full px-3 py-2 rounded-md border bg-background focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-60"
                     />
+                    <p
+                        v-if="usernameInvalid"
+                        data-testid="register-username-invalid"
+                        class="mt-1 text-xs text-destructive"
+                    >
+                        {{ t("register.usernameInvalid") }}
+                    </p>
+                    <p v-else class="mt-1 text-xs text-muted-foreground">
+                        {{ t("register.usernameRule") }}
+                    </p>
                 </div>
                 <div>
                     <label class="block text-sm font-medium mb-1" for="password">{{
