@@ -430,6 +430,19 @@ export interface WorkspaceAgentPermission {
     resource?: string;
 }
 
+/** CP 的 `GET /api/v1/me/permissions` 投影（PLAN-0621 F-01：前端唯一的权威能力来源）。 */
+export interface SelfPermissionsView {
+    userId: string;
+    instanceCapabilities: string[];
+    instancePermissions: Array<{ actionClass: string; resource: string }>;
+    workspaces?: Array<{
+        workspaceId: string;
+        workspaceRole?: string;
+        workspaceAdmin?: boolean;
+        permissions?: Array<{ actionClass: string; resource: string }>;
+    }>;
+}
+
 export interface WorkspaceAgentCapResponse {
     principalId: string;
     workspaceId: string;
@@ -2214,6 +2227,14 @@ export const api = {
         return request<WorkspaceAgentBinding[]>(
             `/workspaces/${encodeURIComponent(workspaceId)}/agents`,
         );
+    },
+    /**
+     * PLAN-0621 F-01：`GET /api/v1/me/permissions` 是 CP 的**权威能力投影**
+     * （`CapabilityProjectionService.SelfPermissions`）。UI 用它判断"能否创建 Agent principal"，
+     * 而不是从 `isInstanceAdmin` 之类的粗略标志猜——授权来自角色绑定里的原子，不是角色名。
+     */
+    getSelfPermissions(): Promise<SelfPermissionsView> {
+        return request<SelfPermissionsView>("/me/permissions");
     },
     /**
      * PLAN-0610 W3-2a: the access-role definition surface. The atom vocabulary is **not** in the UI —

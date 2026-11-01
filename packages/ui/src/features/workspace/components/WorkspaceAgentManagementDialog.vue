@@ -10,6 +10,7 @@ import {
     type AgentTemplateSummary,
     type WorkspaceAgentBinding,
     type WorkspaceAgentPermission,
+    type SelfPermissionsView,
 } from "../../../composables/api";
 
 const props = defineProps<{
@@ -36,6 +37,12 @@ const createdPrincipal = ref<AgentPrincipalCreateResponse | null>(null);
 const permissions = ref<WorkspaceAgentPermission[]>([]),
     editingPrincipalId = ref<string | null>(null);
 const unbindConfirmationId = ref<string | null>(null);
+/**
+ * PLAN-0621 F-01：能否创建 principal 只看 CP 的权威能力投影（`GET /me/permissions` 里是否含
+ * `CREATE_ACCOUNT` 原子）。`null` = 还不知道（尚未加载 / 加载失败），此时**按无权限处理**
+ * （fail-closed：宁可让用户看到"去申请"，也不让他点了才吃 403）。
+ */
+const canCreatePrincipal = ref<boolean | null>(null);
 
 watch(
     () => props.open,
@@ -43,9 +50,25 @@ watch(
         if (open) {
             void loadAgents();
             void loadTemplates();
+            void loadCreateCapability();
         }
     },
 );
+
+async function loadCreateCapability() {
+    canCreatePrincipal.value = null;
+    try {
+        const self: SelfPermissionsView = await api.getSelfPermissions();
+        const atoms = self.instancePermissions ?? [];
+        canCreatePrincipal.value =
+            atoms.some((atom) => atom.actionClass === "CREATE_ACCOUNT") ||
+            (self.instanceCapabilities ?? []).includes("CREATE_ACCOUNT");
+    } catch (cause) {
+        // 拿不到权威投影时按"无权限"处理，但保留失败原因（不静默）。
+        canCreatePrincipal.value = false;
+        error.value = cause instanceof ApiError ? cause.message : t("workspace.agentLoadFailed");
+    }
+}
 
 async function loadAgents() {
     loading.value = true;
@@ -238,15 +261,24 @@ async function unbind(agent: WorkspaceAgentBinding) {
                     <!-- PLAN-0610 W5c: the principal-grant page is retired. Granting
                          CREATE_ACCOUNT / MANAGE_WORKSPACE_AGENTS now means binding a role that carries
                          those atoms, so the affordance points at the role/binding surface (F-02: an
-                         admin must never hit a dead end). Non-admins keep the text above. -->
+                         admin must never hit a dead end).
+                         PLAN-0621 F-01：没有 CREATE_ACCOUNT 的普通用户同样要看到这条路（原先只有
+                         admin 能看到链接），并且创建按钮在**点击之前**就禁用——不要让人点完才吃 403。 -->
                     <router-link
-                        v-if="authStore.isAdmin"
+                        v-if="authStore.isAdmin || canCreatePrincipal === false"
                         to="/settings/roles"
                         data-testid="agent-grant-panel-link"
                         class="mt-1 inline-block text-xs text-primary underline"
                     >
                         {{ t("workspace.agentGrantPanelLink") }}
                     </router-link>
+                    <p
+                        v-if="canCreatePrincipal === false"
+                        data-testid="agent-create-forbidden-hint"
+                        class="mt-1 text-xs text-muted-foreground"
+                    >
+                        {{ t("workspace.agentCreateForbidden") }}
+                    </p>
                 </div>
                 <label class="block space-y-1 text-sm">
                     <span>{{ t("workspace.agentName") }}</span>
@@ -300,7 +332,9 @@ async function unbind(agent: WorkspaceAgentBinding) {
                     type="submit"
                     data-testid="agent-principal-create"
                     class="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
-                    :disabled="!name.trim() || saving || !!createdPrincipal"
+                    :disabled="
+                        !name.trim() || saving || !!createdPrincipal || canCreatePrincipal !== true
+                    "
                 >
                     {{ t("workspace.createAgentPrincipal") }}
                 </button>

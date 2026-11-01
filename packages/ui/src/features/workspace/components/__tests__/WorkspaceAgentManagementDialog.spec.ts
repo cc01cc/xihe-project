@@ -10,7 +10,22 @@ const apiMock = vi.hoisted(() => ({
     createAgentPrincipal: vi.fn<(name: string, templateId?: string) => Promise<unknown>>(),
     updateWorkspaceAgentCap: vi.fn<() => Promise<unknown>>(),
     deleteWorkspaceAgent: vi.fn<() => Promise<void>>(),
+    // PLAN-0621 F-01：权威能力投影（CP `GET /me/permissions`）。
+    getSelfPermissions: vi.fn<() => Promise<unknown>>(),
 }));
+
+const CREATE_ACCOUNT_GRANTED = {
+    userId: "99999999-9999-4999-8999-999999999999",
+    instanceCapabilities: ["CREATE_ACCOUNT"],
+    instancePermissions: [{ actionClass: "CREATE_ACCOUNT", resource: "*" }],
+    workspaces: [],
+};
+const CREATE_ACCOUNT_MISSING = {
+    userId: "99999999-9999-4999-8999-999999999999",
+    instanceCapabilities: [],
+    instancePermissions: [{ actionClass: "READ", resource: "*" }],
+    workspaces: [],
+};
 
 vi.mock("../../../../composables/api", async (importOriginal) => {
     const actual = (await importOriginal()) as Record<string, unknown>;
@@ -57,6 +72,7 @@ beforeEach(() => {
     });
     apiMock.updateWorkspaceAgentCap.mockResolvedValue({});
     apiMock.deleteWorkspaceAgent.mockResolvedValue(undefined);
+    apiMock.getSelfPermissions.mockResolvedValue(CREATE_ACCOUNT_GRANTED);
 });
 
 afterEach(() => {
@@ -100,5 +116,68 @@ describe("WorkspaceAgentManagementDialog F-02 grant hint (PLAN-0585 M2 / PLAN-06
 
         expect(wrapper.find('[data-testid="agent-grant-panel-link"]').exists()).toBe(false);
         expect(wrapper.text()).toContain("角色与绑定");
+    });
+});
+
+// PLAN-0621 F-01：没有 CREATE_ACCOUNT 的用户在**点击之前**就该知道结果。
+describe("WorkspaceAgentManagementDialog F-01 create gating (PLAN-0621)", () => {
+    /** 真实用法：组件常驻、`:open` 由 false → true 触发加载（watch 非 immediate），测试照此复现。 */
+    async function mountOpenedDialog() {
+        const wrapper = mount(WorkspaceAgentManagementDialog, {
+            attachTo: document.body,
+            props: { open: false, workspaceId: WORKSPACE_ID },
+            global: {
+                plugins: [i18n],
+                stubs: { RouterLink: { props: ["to"], template: '<a :href="to"><slot /></a>' } },
+            },
+        });
+        await wrapper.setProps({ open: true });
+        await flushPromises();
+        return wrapper;
+    }
+
+    it("disables creation and points at the role surface when the CP projection lacks CREATE_ACCOUNT", async () => {
+        admin.value = false;
+        apiMock.getSelfPermissions.mockResolvedValue(CREATE_ACCOUNT_MISSING);
+        const wrapper = await mountOpenedDialog();
+        await flushPromises();
+
+        const button = wrapper.find('[data-testid="agent-principal-create"]');
+        expect(button.exists()).toBe(true);
+        expect(button.attributes("disabled")).toBeDefined();
+        // 复用既有文案，不新写一份（概念/文案膨胀门）。
+        expect(wrapper.find('[data-testid="agent-create-forbidden-hint"]').exists()).toBe(true);
+        expect(wrapper.text()).toContain("CREATE_ACCOUNT");
+        const link = wrapper.find('[data-testid="agent-grant-panel-link"]');
+        expect(link.exists()).toBe(true);
+        expect(link.attributes("href")).toBe("/settings/roles");
+        expect(wrapper.html()).not.toContain("/settings/principal-grants");
+    });
+
+    it("keeps creation enabled when the CP projection grants CREATE_ACCOUNT", async () => {
+        admin.value = false;
+        apiMock.getSelfPermissions.mockResolvedValue(CREATE_ACCOUNT_GRANTED);
+        apiMock.createAgentPrincipal.mockResolvedValue({
+            principalId: "77777777-7777-4777-8777-777777777777",
+            name: "delegate",
+            permissions: [],
+        });
+        const wrapper = await mountOpenedDialog();
+
+        await wrapper.find('[data-testid="agent-principal-name"]').setValue("delegate");
+        const button = wrapper.find('[data-testid="agent-principal-create"]');
+        expect(button.attributes("disabled")).toBeUndefined();
+        expect(wrapper.find('[data-testid="agent-create-forbidden-hint"]').exists()).toBe(false);
+    });
+
+    it("fails closed when the projection cannot be loaded, without inventing a permission", async () => {
+        admin.value = false;
+        apiMock.getSelfPermissions.mockRejectedValue(new ApiError("FORBIDDEN"));
+        const wrapper = await mountOpenedDialog();
+        await flushPromises();
+
+        expect(
+            wrapper.find('[data-testid="agent-principal-create"]').attributes("disabled"),
+        ).toBeDefined();
     });
 });
