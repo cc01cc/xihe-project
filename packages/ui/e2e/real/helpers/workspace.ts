@@ -79,6 +79,39 @@ export async function ensureWorkspace(
     return directAttempt.workspaceId;
 }
 
+/**
+ * 显式建一个 `direct_attach` 工作区（**不经** managed_import 试探）。
+ *
+ * 用途：spec 需要一个**额外**的、确定是 direct_attach 的工作区（例如 workspace-files 的
+ * "空工作区文件树" 夹具）。PLAN-0618 之后 `storageMode` 是**必填无默认值** —— 只发 `{ name }`
+ * 会被 CP 以 `400 INVALID_REQUEST: storageMode is required` 拒绝，所以这里把三件套一次给全：
+ * `storageMode` + 隔离根下的 `hostPath` + 真实 preflight 选出的 `executionMode`。
+ */
+export async function createDirectAttachWorkspace(
+    request: APIRequestContext,
+    authToken: string,
+): Promise<string> {
+    expect(authToken, "createDirectAttachWorkspace needs an access token").toBeTruthy();
+    const headers = {
+        Authorization: `Bearer ${authToken}`,
+        "Content-Type": "application/json",
+    };
+    const hostPath = isolatedWorkspaceHostPath();
+    const executionMode = await probeExecutionMode(request, headers, hostPath);
+    const attempt = await createWorkspace(request, headers, {
+        storageMode: "direct_attach",
+        hostPath,
+        executionMode,
+    });
+    if (!attempt.ok) {
+        throw new Error(
+            `create direct_attach workspace failed: ${attempt.status} ${attempt.code} ${attempt.detail}`,
+        );
+    }
+    await expectStorageMode(request, headers, attempt.workspaceId, "direct_attach");
+    return attempt.workspaceId;
+}
+
 /** 回读工作区，断言 storageMode 与本次实际走的分支一致。 */
 async function expectStorageMode(
     request: APIRequestContext,
