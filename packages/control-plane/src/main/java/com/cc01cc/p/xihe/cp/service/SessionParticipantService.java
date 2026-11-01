@@ -148,6 +148,37 @@ public class SessionParticipantService {
         return toView(saved, null);
     }
 
+    /** D23-13: the PRIMARY row's fixed position — the V92 backfill and every creation path agree. */
+    private static final int PRIMARY_ORDER_INDEX = 10;
+
+    /**
+     * D23-13: keeps "a Session that has an Agent principal has exactly one PRIMARY participant" true
+     * on every path that establishes the principal — Session creation and the later bind of a
+     * principal-null placeholder.
+     *
+     * <p>Runs inside the caller's transaction on purpose: a Session without its PRIMARY (or a PRIMARY
+     * without its cursor row) is the inconsistency this method exists to prevent. Idempotent: an
+     * existing PRIMARY is left untouched, so create-then-bind cannot produce two.</p>
+     *
+     * <p>A principal-null Session (the 0614 placeholder) returns early — there is no conversation
+     * principal yet, so inventing a PRIMARY would fake one. That emptiness is deliberate.</p>
+     */
+    @Transactional
+    public void ensurePrimaryParticipant(UUID sessionId, String agentPrincipalId) {
+        if (sessionId == null || agentPrincipalId == null || agentPrincipalId.isBlank()) {
+            return;
+        }
+        if (participantRepository.existsBySessionIdAndRole(sessionId, SessionParticipant.ROLE_PRIMARY)) {
+            return;
+        }
+        SessionParticipant saved = participantRepository.save(new SessionParticipant(
+                sessionId, SessionParticipant.KIND_AGENT,
+                parseUuid(agentPrincipalId, "INVALID_AGENT_PRINCIPAL"),
+                SessionParticipant.ROLE_PRIMARY, PRIMARY_ORDER_INDEX,
+                SessionParticipant.WAKE_ALL_MESSAGES, SessionParticipant.RESPOND_ALWAYS));
+        // R7: the PRIMARY reads from the beginning — the same rule the V92 backfill applies.
+        cursorRepository.save(new SessionParticipantCursor(saved.getId(), 0L, 0));
+    }
     @Transactional
     public ParticipantView update(String actorId, String workspaceId, String sessionId,
                                   String participantId, UpdateRequest request) {

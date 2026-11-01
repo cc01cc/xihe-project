@@ -60,6 +60,7 @@ public class ChatSubmissionService {
     private final DbLockTimeout dbLockTimeout;
     private final ObjectMapper objectMapper;
     private final AgentPrincipalService agentPrincipalService;
+    private final com.cc01cc.p.xihe.cp.service.SessionParticipantService sessionParticipantService;
     private final com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService;
     private final EntityManager entityManager;
     private final ApprovalService approvalService;
@@ -89,7 +90,8 @@ public class ChatSubmissionService {
                                  McpInvocationService mcpInvocationService,
                                  EventStoreService eventStoreService,
                                  com.cc01cc.p.xihe.cp.files.ChatAttachmentService chatAttachmentService,
-                                 ToolCallSnapshotService toolCallSnapshotService) {
+                                 ToolCallSnapshotService toolCallSnapshotService,
+                                 com.cc01cc.p.xihe.cp.service.SessionParticipantService sessionParticipantService) {
         this.chatRunRepository = chatRunRepository;
         this.inboxRepository = inboxRepository;
         this.messageRepository = messageRepository;
@@ -99,6 +101,7 @@ public class ChatSubmissionService {
         this.dbLockTimeout = dbLockTimeout;
         this.objectMapper = objectMapper;
         this.agentPrincipalService = agentPrincipalService;
+        this.sessionParticipantService = sessionParticipantService;
         this.branchPathService = branchPathService;
         this.entityManager = entityManager;
         this.approvalService = approvalService;
@@ -684,6 +687,9 @@ public class ChatSubmissionService {
                 throw new IllegalStateException("Unable to serialize Agent Session permission cap", e);
             }
             session.setAgentPrincipalId(requestedPrincipalId);
+            // D23-13: binding the principal of a principal-null placeholder also creates its PRIMARY —
+            // otherwise the placeholder would keep a conversation without a main participant forever.
+            sessionParticipantService.ensurePrimaryParticipant(sessionUuid, requestedPrincipalId);
             session.setAgentPermissionsSnapshot(cap);
         } else if (requestedPrincipalId != null
                 && !session.getAgentPrincipalId().equals(requestedPrincipalId)) {

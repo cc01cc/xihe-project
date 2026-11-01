@@ -32,6 +32,7 @@ public class SessionService {
     private ApiRequestTemplateService apiRequestTemplates;
 
     private final SessionRepository sessionRepository;
+    private final SessionParticipantService sessionParticipantService;
     private final SessionForkRequestRepository forkRequestRepository;
     private final SessionBranchRepository sessionBranchRepository;
     private final MessageRepository messageRepository;
@@ -64,7 +65,8 @@ public class SessionService {
                           ContextService contextService,
                           McpInvocationService mcpInvocationService,
                           GrantDefaultService grantDefaultService,
-                          WorkspaceBackendPolicy backendPolicy) {
+                          WorkspaceBackendPolicy backendPolicy,
+            SessionParticipantService sessionParticipantService) {
         this.sessionRepository = sessionRepository;
         this.forkRequestRepository = forkRequestRepository;
         this.sessionBranchRepository = sessionBranchRepository;
@@ -80,6 +82,7 @@ public class SessionService {
         this.contextService = contextService;
         this.mcpInvocationService = mcpInvocationService;
         this.grantDefaultService = grantDefaultService;
+        this.sessionParticipantService = sessionParticipantService;
     }
 
     @Transactional(readOnly = true)
@@ -131,7 +134,10 @@ public class SessionService {
         session.setModelName(modelName);
         bindProviderConnection(session, userId, workspaceId, providerConnectionId, modelProvider);
         bindApiTemplate(session, templateSelection);
-        return sessionRepository.save(session);
+        Session saved = sessionRepository.save(session);
+        // D23-13: the PRIMARY is part of creating a Session, not of the first message — same transaction.
+        sessionParticipantService.ensurePrimaryParticipant(saved.getId(), agentPrincipalId);
+        return saved;
     }
 
     @Transactional
@@ -162,7 +168,10 @@ public class SessionService {
         child.setSpawnedAt(Instant.now());
         bindProviderConnection(child, userId, workspaceId,
                 source.getProviderConnectionId(), source.getModelProvider());
-        return sessionRepository.saveAndFlush(child);
+        Session savedChild = sessionRepository.saveAndFlush(child);
+        // D23-13: a fork is a new conversation too — it gets its own PRIMARY.
+        sessionParticipantService.ensurePrimaryParticipant(savedChild.getId(), agentPrincipalId);
+        return savedChild;
     }
 
     @Transactional
