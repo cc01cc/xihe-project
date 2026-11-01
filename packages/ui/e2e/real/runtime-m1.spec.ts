@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { generateE2EPassword } from "./helpers/password";
 import { ensureWorkspace } from "./helpers/workspace";
+import { dockerFrozenIncluded, dockerFrozenReason } from "./helpers/docker-frozen";
 
 const RUNTIME_URL = `http://localhost:${process.env.XIHE_RUNTIME_PORT || "12633"}`;
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`,
@@ -13,6 +14,12 @@ test.describe("@host Runtime M1 — dev:host E2E via Playwright CLI", () => {
     test("targeted file operation materializes one coding Sandbox, then delete preserves the contract", async ({
         request,
     }) => {
+        test.skip(
+            !dockerFrozenIncluded,
+            dockerFrozenReason(
+                "a docker-backed coding Sandbox is materialized for a targeted file operation, and delete preserves the WorkspaceStorage contract",
+            ),
+        );
         const register = await request.post(`${CP_URL}/api/v1/auth/register`, {
             data: {
                 email: `runtime-m1-${Date.now()}@test.com`,

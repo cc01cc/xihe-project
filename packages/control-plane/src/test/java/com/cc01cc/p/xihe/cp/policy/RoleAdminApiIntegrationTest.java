@@ -59,6 +59,9 @@ class RoleAdminApiIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.cc01cc.p.xihe.cp.integration.WorkspaceFixture workspaceFixture;
+
     @Autowired
     private RoleGrantMaterializer materializer;
 
@@ -491,10 +494,10 @@ class RoleAdminApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     private String createWorkspace(String token) throws Exception {
-        ResponseEntity<String> created = call(HttpMethod.POST, "/api/v1/workspaces",
-                Map.of("name", "role-api-" + UUID.randomUUID()), token);
-        assertEquals(HttpStatus.CREATED, created.getStatusCode(), created.getBody());
-        return objectMapper.readTree(created.getBody()).path("id").asText();
+        // PLAN-0618: the public create route requires an explicit direct_attach payload + Runtime probe;
+        // these tests exercise the role API, so the carrier workspace comes from the fixture instead.
+        return workspaceFixture.createOwnedWorkspace("role-api-" + UUID.randomUUID(), userIdOf(token))
+                .getId().toString();
     }
 
     private ResponseEntity<String> call(HttpMethod method, String path, Object body, String token) {

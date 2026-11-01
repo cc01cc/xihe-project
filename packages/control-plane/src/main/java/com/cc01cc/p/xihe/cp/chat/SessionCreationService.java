@@ -90,6 +90,10 @@ public class SessionCreationService {
             workspaceId = pathWorkspace;
         }
 
+        // PLAN-0618 M1 (BL-178): a session on the frozen docker backend is refused before any row is
+        // written, with the same 503 BACKEND_DISABLED the other workspace operations return.
+        sessionService.requireBackendUsableWorkspace(workspaceId);
+
         Session session = sessionService.createAgentSession(userId, workspaceId,
                 params == null ? null : params.title(),
                 params == null ? null : params.modelProvider(),

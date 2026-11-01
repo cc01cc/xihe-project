@@ -449,6 +449,10 @@ public class ChatController {
 
         try {
             sessionService.requireWorkspace(userId, workspaceId);
+            // PLAN-0618 M1 (BL-178): the frozen docker backend is refused here — before the SSE and
+            // circuit-breaker checks — so the client sees the contract's 503 BACKEND_DISABLED instead
+            // of a raw Runtime transport error.
+            sessionService.requireBackendUsableWorkspace(workspaceId);
         } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }

@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.crossmodule;
 
+import org.junit.jupiter.api.Tag;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
@@ -155,9 +156,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
     void createWorkspaceDoesNotCallRuntime() {
         // Lazy workspace execution: CP only persists metadata; the Runtime
         // materializes the Sandbox when it fetches the WorkspaceExecutionSpec.
-        createdWorkspace = workspaceService.createWorkspace(
-                "test-ws-" + UUID.randomUUID().toString().substring(0, 8),
-                UUID.randomUUID().toString());
+        createdWorkspace = workspaceService.createWorkspace("test-ws-" + UUID.randomUUID().toString().substring(0, 8), null, UUID.randomUUID().toString(), "coding", null, "managed_import", null, "docker", null);
 
         assertNotNull(createdWorkspace.getId());
         assertEquals(createdWorkspace.getId().toString(), createdWorkspace.getStorageRef());
@@ -254,8 +253,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
                 .willReturn(aResponse().withStatus(200)));
 
         String ownerId = UUID.randomUUID().toString();
-        createdWorkspace = workspaceService.createWorkspace(
-                "del-ws-" + UUID.randomUUID().toString().substring(0, 8), ownerId);
+        createdWorkspace = workspaceService.createWorkspace("del-ws-" + UUID.randomUUID().toString().substring(0, 8), null, ownerId, "coding", null, "managed_import", null, "docker", null);
 
         workspaceService.deleteWorkspace(createdWorkspace.getId().toString(), ownerId);
 
@@ -269,8 +267,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
     @Test
     void deleteWorkspaceRunsRuntimeThenOrphansJobsThenCompletesEvents() {
         String ownerId = createWorkspaceOwner("delete-order");
-        createdWorkspace = workspaceService.createWorkspace(
-                "del-order-" + UUID.randomUUID().toString().substring(0, 8), ownerId);
+        createdWorkspace = workspaceService.createWorkspace("del-order-" + UUID.randomUUID().toString().substring(0, 8), null, ownerId, "coding", null, "managed_import", null, "docker", null);
         String workspaceId = createdWorkspace.getId().toString();
         String storageRef = createdWorkspace.getStorageRef();
         String runtimeJobId = "runtime-job-" + UUID.randomUUID();
@@ -334,8 +331,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
                 .willReturn(aResponse().withStatus(500)));
 
         String ownerId = createWorkspaceOwner("offline-ws");
-        createdWorkspace = workspaceService.createWorkspace(
-                "offline-ws-" + UUID.randomUUID().toString().substring(0, 8), ownerId);
+        createdWorkspace = workspaceService.createWorkspace("offline-ws-" + UUID.randomUUID().toString().substring(0, 8), null, ownerId, "coding", null, "managed_import", null, "docker", null);
         String workspaceId = createdWorkspace.getId().toString();
         UUID jobId = createRunningWorkspaceJob(workspaceId, ownerId, "offline-job-" + UUID.randomUUID());
 
@@ -356,8 +352,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
                 .willReturn(aResponse().withHeader("Content-Type", "application/json")
                         .withBody("{\"jobsEnumerationFailed\":true}")));
         String ownerId = createWorkspaceOwner("enumeration-failed");
-        createdWorkspace = workspaceService.createWorkspace(
-                "enum-failed-" + UUID.randomUUID().toString().substring(0, 8), ownerId);
+        createdWorkspace = workspaceService.createWorkspace("enum-failed-" + UUID.randomUUID().toString().substring(0, 8), null, ownerId, "coding", null, "managed_import", null, "docker", null);
         UUID jobId = createRunningWorkspaceJob(
                 createdWorkspace.getId().toString(), ownerId, "enumeration-job-" + UUID.randomUUID());
 
@@ -368,10 +363,11 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
                 workspaceJobHistoryRepository.findByJobIdOrderBySequenceAsc(jobId).getLast().getEventType());
     }
 
+    @Tag("docker-frozen")
     @Test
     void materializeProxiesToRuntimeAndReturns202() {
         String ownerId = UUID.randomUUID().toString();
-        createdWorkspace = workspaceService.createWorkspace("mat-ws", ownerId);
+        createdWorkspace = workspaceService.createWorkspace("mat-ws", null, ownerId, "coding", null, "managed_import", null, "docker", null);
         String target = createdWorkspace.getId().toString();
         wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/workspaces/" + target + "/materialize"))
                 .willReturn(aResponse().withStatus(202)
@@ -404,7 +400,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
                 urlEqualTo("/internal/v1/runtime/workspaces/" + target + "/materialize")));
     }
 
-    @Test
+        @Test
     void materializeRejectsForeignWorkspaceWith404() {
         String token = registerAndLogin();
         org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
@@ -418,12 +414,13 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         assertEquals("WORKSPACE_NOT_FOUND", response.getBody().get("code"));
     }
 
+    @Tag("docker-frozen")
     @Test
     void materializePassesThroughRuntime409WorkspaceDestroying() {
         // PLAN-0345 T2.4b (decision #11): the destroying-conflict must reach the
         // caller as 409 WORKSPACE_DESTROYING, never collapsed into 502.
         String ownerId = UUID.randomUUID().toString();
-        createdWorkspace = workspaceService.createWorkspace("mat409-ws", ownerId);
+        createdWorkspace = workspaceService.createWorkspace("mat409-ws", null, ownerId, "coding", null, "managed_import", null, "docker", null);
         String target = createdWorkspace.getId().toString();
         wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/workspaces/" + target + "/materialize"))
                 .willReturn(aResponse().withStatus(409)
@@ -457,10 +454,11 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         assertEquals("WORKSPACE_DESTROYING", response.getBody().get("code"));
     }
 
+    @Tag("docker-frozen")
     @Test
     void materializeReturns502WhenRuntimeUnreachable() {
         String ownerId = UUID.randomUUID().toString();
-        createdWorkspace = workspaceService.createWorkspace("mat502-ws", ownerId);
+        createdWorkspace = workspaceService.createWorkspace("mat502-ws", null, ownerId, "coding", null, "managed_import", null, "docker", null);
         String target = createdWorkspace.getId().toString();
         wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/workspaces/" + target + "/materialize"))
                 .willReturn(aResponse().withStatus(500)));
@@ -490,14 +488,34 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         }
     }
 
-    /** PLAN-0614: register no longer creates a workspace; fixtures create one through the API. */
+    /**
+     * PLAN-0614: register no longer creates a workspace; fixtures create one through the API.
+     * PLAN-0618: `storageMode` is required and the docker backend is frozen, so this fixture states the
+     * direct_attach contract explicitly (the class' WireMock Runtime stub answers the preflight).
+     */
+    /** PLAN-0618: creating a direct_attach workspace asks the Runtime for a capability probe first. */
+    private void stubDirectAttachProbe() {
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/capabilities/direct-attach/probe"))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"contractVersion\":\"v1\",\"backendKind\":\"windows-host\","
+                                + "\"backendRevision\":\"builtin\",\"maturity\":\"stable\","
+                                + "\"executionMode\":\"windows-host\",\"available\":true}")));
+    }
+
     private String createFixtureWorkspace(String token) {
+        stubDirectAttachProbe();
         org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
         headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
         headers.setBearerAuth(token);
         org.springframework.http.ResponseEntity<java.util.Map> created = restTemplate.postForEntity(
                 url("/api/v1/workspaces"),
-                new org.springframework.http.HttpEntity<>(java.util.Map.of(), headers), java.util.Map.class);
+                new org.springframework.http.HttpEntity<>(java.util.Map.of(
+                        "name", "fixture-ws-" + UUID.randomUUID().toString().substring(0, 8),
+                        "storageMode", "direct_attach",
+                        "hostPath", tempWorkspace.toString(),
+                        "executionMode", "windows-host"), headers), java.util.Map.class);
         assertEquals(201, created.getStatusCode().value(), String.valueOf(created.getBody()));
         return (String) created.getBody().get("id");
     }
@@ -521,10 +539,14 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
         headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
         headers.setBearerAuth(token);
+        stubDirectAttachProbe();
         org.springframework.http.ResponseEntity<java.util.Map> response = restTemplate.postForEntity(
                 url("/api/v1/workspaces"),
                 new org.springframework.http.HttpEntity<>(java.util.Map.of(
-                        "name", "Created Workspace", "profile", "strict"), headers),
+                        "name", "Created Workspace",
+                        "storageMode", "direct_attach",
+                        "hostPath", tempWorkspace.toString(),
+                        "executionMode", "windows-host"), headers),
                 java.util.Map.class);
 
         assertEquals(201, response.getStatusCode().value());
@@ -549,9 +571,13 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
         headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
         headers.setBearerAuth(token);
+        stubDirectAttachProbe();
         org.springframework.http.ResponseEntity<java.util.Map> created = restTemplate.postForEntity(
                 url("/api/v1/workspaces"),
-                new org.springframework.http.HttpEntity<>(java.util.Map.of("name", "Second Workspace"), headers),
+                new org.springframework.http.HttpEntity<>(java.util.Map.of("name", "Second Workspace",
+                        "storageMode", "direct_attach",
+                        "hostPath", tempWorkspace.toString(),
+                        "executionMode", "windows-host"), headers),
                 java.util.Map.class);
         assertEquals(201, created.getStatusCode().value());
 
@@ -567,7 +593,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         assertEquals(1, response.getBody().size());
     }
 
-    @Test
+        @Test
     void workspaceImportCanBeQueuedWithoutSession() {
         wireMock.resetAll();
         wireMock.stubFor(post(urlPathMatching("/internal/v1/runtime/workspaces/.*/imports"))
@@ -619,7 +645,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         assertEquals("cancelled", cancelled.getBody().get("status"));
     }
 
-    @Test
+        @Test
     void environmentUsesPerWorkspaceStatusInsteadOfGlobalHeartbeat() {
         String email = "env-status-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
         org.springframework.http.ResponseEntity<java.util.Map> registration = restTemplate.postForEntity(

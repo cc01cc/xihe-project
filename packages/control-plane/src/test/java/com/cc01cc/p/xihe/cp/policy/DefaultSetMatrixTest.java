@@ -282,7 +282,7 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
         com.cc01cc.p.xihe.cp.entity.User user = authService.registerUser(new RegisterRequest(
                 "default-matrix-" + UUID.randomUUID() + "@test.com", "matrix-test-password",
                 "Default matrix test"));
-        AuthResponse registered = authService.issueTokens(user, workspaceService.createWorkspace("Fixture Workspace", null, user.getId().toString()).getId().toString());
+        AuthResponse registered = authService.issueTokens(user, workspaceFixture.createOwnedWorkspace("Fixture Workspace", user.getId().toString()).getId().toString());
         userId = registered.getUser().getId();
         workspaceId = registered.getWorkspaceId();
     }
@@ -355,7 +355,7 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
     private String foreignWorkspaceId() {
         User other = userRepository.saveAndFlush(new User("matrix-foreign-" + UUID.randomUUID() + "@test.com", "hash",
                 "Matrix foreign owner"));
-        return workspaceService.createWorkspace("Matrix foreign workspace", other.getId().toString())
+        return workspaceFixture.createOwnedWorkspace("Matrix foreign workspace", other.getId().toString())
                 .getId().toString();
     }
 }

@@ -42,7 +42,7 @@ class WorkspaceServiceTest {
     @Test
     void createWorkspace_persistsToDb() {
         String userId = java.util.UUID.randomUUID().toString();
-        Workspace ws = workspaceService.createWorkspace("persist-test", userId);
+        Workspace ws = workspaceService.createWorkspace("persist-test", null, userId, "coding", null, "managed_import", null, "docker", null);
         assertNotNull(workspaceRepository.findByIdAndDeletedAtIsNull(ws.getId()).orElse(null));
         assertEquals("persist-test", ws.getName());
     }
@@ -50,8 +50,8 @@ class WorkspaceServiceTest {
     @Test
     void createWorkspace_secondCallForSameOwnerCreatesAnotherWorkspace() {
         String userId = java.util.UUID.randomUUID().toString();
-        Workspace first = workspaceService.createWorkspace("first", userId);
-        Workspace second = workspaceService.createWorkspace("second", userId);
+        Workspace first = workspaceService.createWorkspace("first", null, userId, "coding", null, "managed_import", null, "docker", null);
+        Workspace second = workspaceService.createWorkspace("second", null, userId, "coding", null, "managed_import", null, "docker", null);
         assertNotEquals(first.getId(), second.getId());
         assertEquals(2, workspaceService.getWorkspacesByUser(userId).size());
     }
@@ -59,7 +59,7 @@ class WorkspaceServiceTest {
     @Test
     void getWorkspace_returnsWorkspace() {
         String userId = java.util.UUID.randomUUID().toString();
-        Workspace ws = workspaceService.createWorkspace("get-test", userId);
+        Workspace ws = workspaceService.createWorkspace("get-test", null, userId, "coding", null, "managed_import", null, "docker", null);
         Workspace found = workspaceService.getWorkspace(ws.getId().toString());
         assertEquals(ws.getId(), found.getId());
     }
@@ -73,7 +73,7 @@ class WorkspaceServiceTest {
     @Test
     void createWorkspace_assignsOwnerRole() {
         String userId = java.util.UUID.randomUUID().toString();
-        Workspace ws = workspaceService.createWorkspace("role-test", userId);
+        Workspace ws = workspaceService.createWorkspace("role-test", null, userId, "coding", null, "managed_import", null, "docker", null);
         assertTrue(workspaceFixture.roleOf(ws.getId(), UUID.fromString(userId))
                 .map(role -> role == WorkspaceRole.OWNER)
                 .orElse(false));
@@ -82,7 +82,7 @@ class WorkspaceServiceTest {
     @Test
     void deleteWorkspace_runtimeUnavailableStillDeletesLogically() {
         String userId = java.util.UUID.randomUUID().toString();
-        Workspace ws = workspaceService.createWorkspace("delete-test", userId);
+        Workspace ws = workspaceService.createWorkspace("delete-test", null, userId, "coding", null, "managed_import", null, "docker", null);
         // STO-1: Runtime cleanup is best-effort after commit; an unreachable
         // Runtime must not roll back or block the logical delete.
         assertDoesNotThrow(() -> workspaceService.deleteWorkspace(ws.getId().toString(), userId));
@@ -104,7 +104,7 @@ class WorkspaceServiceTest {
                 "a fresh account starts empty (no system-created workspace)");
         assertTrue(workspaceService.getWorkspacesByUser(user.getId().toString()).isEmpty(),
                 "the read must not create anything");
-        Workspace first = workspaceService.createWorkspace("default-test", user.getId().toString());
+        Workspace first = workspaceService.createWorkspace("default-test", null, user.getId().toString(), "coding", null, "managed_import", null, "docker", null);
         Workspace second = workspaceService.firstActiveWorkspace(user.getId().toString()).orElseThrow();
         assertEquals(first.getId(), second.getId());
     }
@@ -112,8 +112,7 @@ class WorkspaceServiceTest {
     @Test
     void createWorkspace_profilePassthroughAndImageAllowlist() {
         String userId = java.util.UUID.randomUUID().toString();
-        Workspace ws = workspaceService.createWorkspace(
-                "strict-test", null, userId, "STRICT", null);
+        Workspace ws = workspaceService.createWorkspace("strict-test", null, userId, "STRICT", null, "managed_import", null, "docker", null);
         assertNotNull(workspaceRepository.findByIdAndDeletedAtIsNull(ws.getId()).orElse(null));
     }
 
@@ -122,7 +121,7 @@ class WorkspaceServiceTest {
         String userId = java.util.UUID.randomUUID().toString();
         com.cc01cc.p.xihe.cp.config.CpApiException e = assertThrows(
                 com.cc01cc.p.xihe.cp.config.CpApiException.class,
-                () -> workspaceService.createWorkspace("bad-profile", null, userId, "containerd", null));
+                () -> workspaceService.createWorkspace("bad-profile", null, userId, "containerd", null, "managed_import", null, "docker", null));
         assertEquals("INVALID_PROFILE", e.getCode());
         assertEquals(org.springframework.http.HttpStatus.BAD_REQUEST, e.getStatus());
     }
@@ -132,8 +131,7 @@ class WorkspaceServiceTest {
         String userId = java.util.UUID.randomUUID().toString();
         com.cc01cc.p.xihe.cp.config.CpApiException e = assertThrows(
                 com.cc01cc.p.xihe.cp.config.CpApiException.class,
-                () -> workspaceService.createWorkspace(
-                        "bad-image", null, userId, "coding", "evil/image:latest"));
+                () -> workspaceService.createWorkspace("bad-image", null, userId, "coding", "evil/image:latest", "managed_import", null, "docker", null));
         assertEquals("INVALID_IMAGE", e.getCode());
         assertEquals(org.springframework.http.HttpStatus.BAD_REQUEST, e.getStatus());
     }

@@ -22,6 +22,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ConfigControllerTest extends AbstractH2Test {
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.cc01cc.p.xihe.cp.integration.WorkspaceFixture workspaceFixture;
+
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
 
@@ -34,7 +37,7 @@ class ConfigControllerTest extends AbstractH2Test {
     private String workspaceIdFor(String token) {
         String userId = jwtTokenProvider.getUserIdFromToken(token);
         // PLAN-0614: register no longer creates a workspace; the fixture creates the caller's own.
-        return workspaceService.createWorkspace("Config fixture workspace", userId).getId().toString();
+        return workspaceFixture.createOwnedWorkspace("Config fixture workspace", userId).getId().toString();
     }
 
     @Test

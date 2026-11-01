@@ -520,7 +520,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
         outsiderUserId = outsider.getId();
 
         Workspace workspace = workspaceRepository.saveAndFlush(
-                new Workspace("Template read workspace"));
+                TestDataFactory.directAttachWorkspace("Template read workspace"));
         workspaceId = workspace.getId();
         // PLAN-0610 W4b: the member is a plain EDITOR. WS_OWNER materializes
         // MANAGE_WORKSPACE_AGENTS/workspace:admin by design, which would mask the gate under test.

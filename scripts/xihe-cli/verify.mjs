@@ -354,7 +354,9 @@ export async function runVerify({
         'A3 workspace access',
         'BACKEND_DISABLED',
         `Workspace ${workspaceId} runs on the frozen docker execution backend; verification would execute in it. `
-          + 'Use a direct_attach workspace (windows-host/windows-mxc), or set XIHE_WORKSPACE_DOCKER_BACKEND=enabled for the test lane.',
+          + 'Use a direct_attach workspace (windows-host/windows-mxc). The docker backend is frozen together with '
+          + 'its product surface (UI/CLI) and the E2E docker-frozen markers; thaw them together with '
+          + 'XIHE_WORKSPACE_DOCKER_BACKEND=enabled (E2E additionally needs --include-docker-frozen).',
       );
     }
     step('A3 workspace access', 'PASS');

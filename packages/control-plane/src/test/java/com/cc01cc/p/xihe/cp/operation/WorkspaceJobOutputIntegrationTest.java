@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.operation;
 
+import org.junit.jupiter.api.Tag;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
@@ -144,6 +145,7 @@ class WorkspaceJobOutputIntegrationTest extends AbstractIntegrationTest {
         return new RuntimeJobClient.JobOutputResult(true, false, objectMapper.valueToTree(body));
     }
 
+    @Tag("docker-frozen")
     @Test
     void returnsChunkAndAppliesDefaultAndMaxLimit() {
         String jobId = UUID.randomUUID().toString();

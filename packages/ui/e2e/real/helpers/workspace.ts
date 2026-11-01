@@ -36,9 +36,11 @@ export async function ensureWorkspace(
     // 语义：**还原 0614 之前的那个默认工作区**，而不是"统一换成 direct_attach"。
     //
     // 0614 之前，注册会顺带建一个 `managed_import`（docker 执行后端）工作区；大量既有 real spec
-    // 断言的正是容器语义（Sandbox 物化、容器 job、导入落盘）。host E2E 车道是「工作区 Docker
-    // 后端冻结」的**唯一豁免**（DEV-020 §3.3b；runner 只把 `XIHE_WORKSPACE_DOCKER_BACKEND=enabled`
-    // 注入 CP 进程，**没有**注入 Playwright 进程，所以这里不能靠 env 判断）。
+    // 断言的正是容器语义（Sandbox 物化、容器 job、导入落盘）。host E2E 车道原本是「工作区 Docker
+    // 后端冻结」的唯一豁免（DEV-020 §3.3b），**PLAN-0618 起该豁免已随产品面一起冻结、解冻时一起恢复**：
+    // 车道默认注入 `XIHE_WORKSPACE_DOCKER_BACKEND=disabled`，容器语义用例改用 `docker-frozen.ts` 的
+    // case 级标记（`--include-docker-frozen` 一次性恢复）。另外 runner 只把该 env 注入 CP 进程，
+    // **没有**注入 Playwright 进程，所以这里不能靠 env 判断。
     //
     // 因此按**行为**判别，而不是按 env 猜：先按旧默认建 `managed_import`；只有当 CP 明确回答
     // `409 BACKEND_DISABLED`（该车道确实冻结了 docker 后端）时，才回退到 `direct_attach` + 真实

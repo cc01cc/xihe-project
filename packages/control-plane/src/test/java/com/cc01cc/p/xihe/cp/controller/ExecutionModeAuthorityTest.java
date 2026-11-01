@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.controller;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -104,29 +106,28 @@ class ExecutionModeAuthorityTest extends AbstractH2Test {
         assertEquals(HttpStatus.CREATED, registration.getStatusCode());
         assertNotNull(registration.getBody());
         userToken = (String) registration.getBody().get("accessToken");
-        workspaceId = createWorkspaceViaApi(userToken);
+        java.util.Map<?, ?> user = (java.util.Map<?, ?>) registration.getBody().get("user");
+        workspaceId = createWorkspaceViaApi((String) user.get("id"));
         assertNotNull(workspaceId, "PLAN-0614: the fixture creates the workspace explicitly");
     }
 
     /**
-     * PLAN-0614: register/login no longer create a workspace, so fixtures that need one create it via
-     * the public API (blank body = historical managed_import default; the H2 lane enables the docker
-     * backend for fixtures).
+     * PLAN-0614/0618: register/login no longer create a workspace. This class checks *who may switch the
+     * execution mode* (not how the workspace was created), so the row is seeded through the fixture —
+     * the public API now requires an explicit {@code storageMode=direct_attach} plus a Runtime probe,
+     * and this lane has no Runtime.
      */
-    private String createWorkspaceViaApi(String token) {
-        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
-        headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
-        headers.setBearerAuth(token);
-        ResponseEntity<Map> created = restTemplate.postForEntity(url("/api/v1/workspaces"),
-                new org.springframework.http.HttpEntity<>(Map.of(), headers), Map.class);
-        assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
-        return (String) created.getBody().get("id");
+    @org.springframework.beans.factory.annotation.Autowired
+    private WorkspaceFixture workspaceFixture;
+
+    private String createWorkspaceViaApi(String ownerId) {
+        return workspaceFixture.createOwnedWorkspace("execution-mode-ws", ownerId).getId().toString();
     }
 
     @Test
     void internalServiceBearerIsRejectedAndExecutionModeStaysUnchanged() {
-        assertEquals("docker", workspaceRow().getExecutionMode(),
-                "fixture sanity: a fresh workspace starts on the docker execution mode");
+        assertEquals("windows-host", workspaceRow().getExecutionMode(),
+                "fixture sanity: a fresh workspace starts on the direct_attach execution mode");
 
         ResponseEntity<Map> rejected = exchangeExecutionMode(INTERNAL_SERVICE_TOKEN, "windows-host");
 
@@ -134,7 +135,7 @@ class ExecutionModeAuthorityTest extends AbstractH2Test {
                 "the service bearer carries only ROLE_INTERNAL_SERVICE, never USER/ADMIN");
         assertNotNull(rejected.getBody());
         assertEquals("FORBIDDEN", rejected.getBody().get("code"));
-        assertEquals("docker", workspaceRow().getExecutionMode(),
+        assertEquals("windows-host", workspaceRow().getExecutionMode(),
                 "a rejected Agent-side PATCH must leave executionMode exactly as it was");
     }
 

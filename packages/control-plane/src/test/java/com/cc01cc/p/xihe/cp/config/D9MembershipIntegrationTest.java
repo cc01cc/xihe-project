@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.config;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
@@ -32,6 +34,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * answers first.
  */
 class D9MembershipIntegrationTest extends AbstractIntegrationTest {
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private WorkspaceFixture workspaceFixture;
     @Autowired private com.cc01cc.p.xihe.cp.service.WorkspaceService workspaceService;
 
     private static final String INTERNAL_TOKEN = "dev-token-not-secure";
@@ -70,8 +75,8 @@ class D9MembershipIntegrationTest extends AbstractIntegrationTest {
         assertEquals(HttpStatus.CREATED, member.getStatusCode(), member.getBody());
         memberId = objectMapper.readTree(member.getBody()).path("user").path("id").asText();
         // PLAN-0614: register no longer creates a workspace; the fixture creates the member's own.
-        workspaceId = workspaceService
-                .createWorkspace("D9 member workspace", UUID.fromString(memberId).toString())
+        workspaceId = workspaceFixture
+                .createOwnedWorkspace("D9 member workspace", UUID.fromString(memberId).toString())
                 .getId().toString();
 
         ResponseEntity<String> outsider = restTemplate.postForEntity(url("/api/v1/auth/register"),

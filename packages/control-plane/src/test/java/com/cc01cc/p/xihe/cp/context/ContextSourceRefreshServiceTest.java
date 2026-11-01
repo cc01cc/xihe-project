@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.context;
 
+import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
@@ -59,7 +60,7 @@ class ContextSourceRefreshServiceTest extends AbstractH2Test {
     private RuntimeContextSourceClient runtimeContextSourceClient;
 
     private Workspace createWorkspace(String userId) {
-        Workspace ws = new Workspace("test-ws");
+        Workspace ws = TestDataFactory.directAttachWorkspace("test-ws");
         ws = workspaceRepository.save(ws);
         workspaceFixture.bindWorkspaceRole(ws.getId().toString(), userId, WorkspaceRole.OWNER);
         return ws;

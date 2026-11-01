@@ -8,6 +8,7 @@ import { seedUserGrant } from "./helpers/user-grants";
 import { test, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { ensureWorkspace } from "./helpers/workspace";
+import { dockerFrozenIncluded, dockerFrozenReason } from "./helpers/docker-frozen";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
@@ -329,6 +330,12 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         page,
         request,
     }) => {
+        test.skip(
+            !dockerFrozenIncluded,
+            dockerFrozenReason(
+                "stdio MCP session status badges (ready / restarting / no-session) are projected into the workspace settings page",
+            ),
+        );
         mkdirSync(EVIDENCE_DIR, { recursive: true });
         // 一次 PUT 配置三个 server（配置 hash 变化会让 Runtime 停掉全部会话，禁止二次 PUT）：
         // A=可用 fixture；B=不存在的命令（重试预算耗尽后 failed）；C=无 command 的配置

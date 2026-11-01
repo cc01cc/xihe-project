@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.crossmodule;
 
+import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
@@ -85,7 +86,7 @@ class ApprovalAgentIntegrationTest extends AbstractWireMockTest {
         token = registerAndLogin();
 
         userId = jwtTokenProvider.getUserIdFromToken(token);
-        Workspace ws = new Workspace("Approval Agent Test");
+        Workspace ws = TestDataFactory.directAttachWorkspace("Approval Agent Test");
         ws = workspaceRepository.save(ws);
         workspaceId = ws.getId().toString();
         workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);

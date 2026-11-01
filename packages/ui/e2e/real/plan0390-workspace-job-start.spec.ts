@@ -5,6 +5,7 @@ import { generateE2EPassword } from "./helpers/password";
 import { test, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { ensureWorkspace } from "./helpers/workspace";
+import { dockerFrozenIncluded, dockerFrozenReason } from "./helpers/docker-frozen";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan0390-workspace-job");
@@ -88,6 +89,12 @@ test.describe("@host PLAN-0390 workspace job start", () => {
         page,
         request,
     }) => {
+        test.skip(
+            !dockerFrozenIncluded,
+            dockerFrozenReason(
+                "a real container Job starts idempotently (202 + backendKind=docker), its output streams, and cancel archives the terminal state",
+            ),
+        );
         const marker = `xihe0390-${Date.now()}`;
         // Runtime 的 background wrapper 用 `sh -c "$command" xihe-shell "$@"` 执行：
         // `command` 是 shell 命令字符串，不能传 `sh` 当命令（会立即退出、零输出）。
@@ -205,6 +212,12 @@ test.describe("@host PLAN-0390 workspace job start", () => {
     test("reports explicit runtime failure when the sandbox is gone, and 404 after destroy", async ({
         request,
     }) => {
+        test.skip(
+            !dockerFrozenIncluded,
+            dockerFrozenReason(
+                "a real container Job whose sandbox is destroyed from outside reports an explicit runtime failure, and destroy yields 404",
+            ),
+        );
         const marker = `xihe0390-destroy-${Date.now()}`;
         const started = await startJob(
             request,

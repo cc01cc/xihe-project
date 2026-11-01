@@ -36,6 +36,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         "cp.oauth.encryption-key=", "cp.oauth.allow-dev-key=true"
 })
 class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.cc01cc.p.xihe.cp.integration.WorkspaceFixture workspaceFixture;
     @Autowired private com.cc01cc.p.xihe.cp.service.WorkspaceService workspaceService;
     @Autowired private ObjectMapper json;
     @Autowired private ConfigService config;
@@ -69,7 +72,7 @@ class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
         token = response.getBody().getAccessToken();
         userId = response.getBody().getUser().getId();
         // PLAN-0614: register no longer creates a workspace; the fixture creates it explicitly.
-        workspaceId = workspaceService.createWorkspace("Template HTTP workspace", userId).getId().toString();
+        workspaceId = workspaceFixture.createOwnedWorkspace("Template HTTP workspace", userId).getId().toString();
     }
 
     @Test
@@ -249,8 +252,8 @@ class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
         assertEquals(201, second.getStatusCode().value());
         String userB = second.getBody().getUser().getId();
         // PLAN-0614: register no longer creates a workspace; the second account creates its own.
-        String secondWorkspaceId = workspaceService
-                .createWorkspace("Template HTTP second workspace", userB).getId().toString();
+        String secondWorkspaceId = workspaceFixture
+                .createOwnedWorkspace("Template HTTP second workspace", userB).getId().toString();
         var connectionB = createConnectionAs(second.getBody().getAccessToken(), secondWorkspaceId,
                 "custom-openai-compatible", "USER", "shared-key", "manual",
                 java.util.List.of("m1"), null, null, "https://provider.invalid/v1", "isolated-test-only");

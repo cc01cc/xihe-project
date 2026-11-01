@@ -66,7 +66,7 @@ mise run dev:host:check   # mise.toml:307（可选：只读预检 工具/Docker/
 ## 4. 从空态到第一条回复
 
 1. **建第一个工作区**：点空态里的「创建你的第一个工作区」（`workspace-picker-create`）→ 打开真实的创建对话框：
-   - 存储模式选 **`direct_attach`**（`workspace-storage-direct`）。`managed_import` 走 docker 执行后端，已按冻结/不可用对待，会被 CP 直接拒绝（`409 BACKEND_DISABLED`，见 [DEV-014](DEV-014-control-plane-architecture.md) §8b）；
+   - 存储模式选 **`direct_attach`**（`workspace-storage-direct`）——这也是**唯一可选**的存储方式（`storageMode` 必填、无默认值：省略 → `400 INVALID_REQUEST`）。`managed_import` 走 docker 执行后端，已按完全冻结对待，会被 CP 直接拒绝（`409 BACKEND_DISABLED`，见 [DEV-014](DEV-014-control-plane-architecture.md) §8b）；
    - 填**宿主目录**（`workspace-source-path`）→「读取目录」（`workspace-source-read`）→ 目录浏览确认（`workspace-source-browser`）→「使用该目录」（`workspace-source-use`）；
    - 执行模式由**能力预检**决定：`windows-mxc` 可用则用 `windows-mxc`，否则退 `windows-host`（宿主执行需勾风险确认）。
 2. **提交** → `POST /api/v1/workspaces` **201** → 地址变为 `/workspace/<newId>`，工作区视图显示「工作区暂无文件」（`workspace-empty-state`）。
@@ -174,7 +174,9 @@ runner 的三个 gold path flag（`scripts/e2e-host.mjs:438-440`，默认**全�
 | CP 启动即退出，日志提示本地模式需回环 | 只设了 `XIHE_LOCAL_MODE=true`，没设 `SERVER_ADDRESS=127.0.0.1`（或 `XIHE_ENV=prod`） | 补齐三条件（§3） |
 | 登录后是空白页面、没有任何工作区 | **正常**（0614 起不再自动创建工作区） | 点「创建你的第一个工作区」（§4 第 1 步） |
 | 创建对话框里目录读不出来 | 路径不是 Runtime 可见的宿主目录，或后端不可用 | 换一个真实存在的宿主目录；先跑 `POST /api/v1/workspaces/capabilities/preflight` 看 `available=false` 的 `reason` |
-| 建工作区返回 `409 BACKEND_DISABLED` | 选了 `managed_import`（docker 后端已冻结） | 改选 `direct_attach` |
+| 建工作区返回 `409 BACKEND_DISABLED` | 选了 `managed_import`（docker 后端已完全冻结） | 改选 `direct_attach` |
+| 建工作区返回 `400 INVALID_REQUEST` | 请求没带 `storageMode`（该字段必填、无默认值，PLAN-0618） | 显式传 `direct_attach` + `hostPath` + `executionMode`；UI 对话框默认即 `direct_attach` |
+| 发消息/建会话返回 `503 BACKEND_DISABLED` | 目标工作区是既有 docker（`managed_import`）工作区，执行后端已冻结 | 新建一个 `direct_attach` 工作区后继续（详见 [DEV-018](DEV-018-known-issues.md)） |
 | 发消息 `503 LLM_NOT_CONFIGURED` | 没有可用模型/连接（`missing_credentials`） | 建连接并 verify 到 `READY`；这是 G4-a 的现状（BL-152），不是本文路径的失败 |
 | 发消息 `409 API_TYPE_REBIND_REQUIRED` | 会话没有钉住「连接 + 模板三元组」 | 用 UI 建会话，或 API 显式带三元组 |
 | `POST /local-login` 404 | 非回环来源 / 非单用户实例（门禁 fail-closed 404） | 用 `127.0.0.1`/`localhost` 打开；确认实例只有一个可登录账号 |

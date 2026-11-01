@@ -59,9 +59,10 @@ const auth = useAuthStore();
 
 const step = ref<Step>("select_storage_mode"),
     /**
-     * PLAN-0612 M4.3: `managed_import` runs only on the workspace Docker backend, which the
-     * 2026-10-31 ruling treats as frozen/unavailable. It is therefore not offered, and
-     * `direct_attach` is the default so a user who clicks straight through gets a usable workspace.
+     * PLAN-0612 M4.3 hid the managed card (backend frozen 2026-10-31); PLAN-0618 made the freeze
+     * complete (product + tests + defaults frozen together, 2026-11-01), so `managed_import` is
+     * not offered at all and `direct_attach` is the default: a user who clicks straight through
+     * still gets a usable workspace. Unfreezing restores both the card and the backend switch.
      */
     managedImportAvailable = false,
     storageMode = ref<WorkspaceStorageMode>("direct_attach");

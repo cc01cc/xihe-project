@@ -90,7 +90,7 @@ XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账�
 | **root** | Runtime 进程的存储基目录 | **host root（宿主存储基目录）**；`XIHE_WORKSPACE_HOST_ROOT` 是历史名 | 裸 `root` 指某个 workspace 的目录 |
 | | managed workspace 内容目录 | **workspace path**（`<hostRoot>/<storageRef>`） | 把 host root 说成 workspace path |
 | | 一个 Workspace 的多个物理根 | **multi-root（多根，BL-94）** | 用“多建几个 Workspace”冒充多根 |
-| **storage mode** | XH 管理的副本 | **`managed_import`** | 说成“用户自选目录就地打开” |
+| **storage mode** | XH 管理的副本 | **`managed_import`**（**已冻结，解冻后恢复**：PLAN-0618 起不可用于新建/执行） | 说成“用户自选目录就地打开” |
 | | 用户目录就地挂载 | **`direct_attach`** | 说成 host root 的子目录 |
 | **reason** | Runtime capture 返回的原因 | **capture reason** | 裸 `reason` 与 gate/durable 混用 |
 | | CP `unrollable_reason` 持久化值 | **durable reason** | 把 capture reason 直接当 durable |

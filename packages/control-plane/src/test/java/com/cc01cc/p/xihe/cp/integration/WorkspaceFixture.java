@@ -56,9 +56,80 @@ public class WorkspaceFixture {
      * Creates a workspace and binds its owner, replacing fixture code that relied on the retired
      * {@code workspaces.owner_id} column. Returns the persisted row.
      */
+    /**
+     * PLAN-0618 M2.5 (Lead 裁定): the fixture default is the **product's current shape**, not the
+     * frozen docker one — `direct_attach` + a real host directory + `windows-host`. The docker backend
+     * is frozen, so seeding docker rows by default would keep "the test world" on a backend the product
+     * refuses; it would also make every chat/session test collide with the M1 backend gate (503).
+     *
+     * <p>This is a fixture writing the row explicitly, not the product choosing `windows-host` for a
+     * user, so it does not weaken the "windows-host is an explicit user choice" rule.
+     *
+     * <p>The host directory lives under one per-JVM root in the system temp dir; the root and every
+     * per-workspace child are registered with `deleteOnExit` (JVM deletes in reverse registration order,
+     * so children go before the root) — no unmanaged leftovers.
+     */
+    private static final class HostDirectories {
+        private static java.nio.file.Path root;
+
+        private static synchronized java.nio.file.Path root() {
+            if (root == null) {
+                try {
+                    root = java.nio.file.Files.createTempDirectory("xihe-fixture-ws");
+                } catch (java.io.IOException cause) {
+                    throw new IllegalStateException("cannot create the fixture host root", cause);
+                }
+                root.toFile().deleteOnExit();
+            }
+            return root;
+        }
+
+        private static String next() {
+            java.nio.file.Path child = root().resolve(java.util.UUID.randomUUID().toString());
+            try {
+                java.nio.file.Files.createDirectories(child);
+            } catch (java.io.IOException cause) {
+                throw new IllegalStateException("cannot create the fixture host directory", cause);
+            }
+            child.toFile().deleteOnExit();
+            return child.toAbsolutePath().toString();
+        }
+    }
+
+    /** The product's current workspace shape (PLAN-0618: docker is frozen). */
+    private static Workspace directAttachShaped(String name) {
+        Workspace workspace = new Workspace(name);
+        workspace.setStorageMode("direct_attach");
+        workspace.setHostPath(HostDirectories.next());
+        workspace.setExecutionMode("windows-host");
+        return workspace;
+    }
+
+    /**
+     * Explicit docker-shaped row, ONLY for tests that verify docker semantics (creation gate 409,
+     * import pipeline, workspace jobs, backend policy). Every use is registered in
+     * `plans/PLAN-0618-XH-docker-freeze-complete/evidence/m2-defaults.md` and feeds the M3 freeze list.
+     */
+    private static Workspace dockerShaped(String name) {
+        Workspace workspace = new Workspace(name);
+        workspace.setStorageMode("managed_import");
+        workspace.setExecutionMode("docker");
+        return workspace;
+    }
+
     @Transactional
     public Workspace createOwnedWorkspace(String name, String ownerId) {
-        Workspace workspace = workspaces.save(new Workspace(name));
+        return createOwnedWorkspace(name, ownerId, directAttachShaped(name));
+    }
+
+    /** Explicit docker-shaped workspace for the (few) tests that verify docker-only semantics. */
+    @Transactional
+    public Workspace createDockerOwnedWorkspace(String name, String ownerId) {
+        return createOwnedWorkspace(name, ownerId, dockerShaped(name));
+    }
+
+    private Workspace createOwnedWorkspace(String name, String ownerId, Workspace shape) {
+        Workspace workspace = workspaces.save(shape);
         workspace.setStorageRef(workspace.getId().toString());
         Workspace saved = workspaces.saveAndFlush(workspace);
         bindWorkspaceRole(saved.getId(), UUID.fromString(ownerId), WorkspaceRole.OWNER);
@@ -98,7 +169,7 @@ public class WorkspaceFixture {
     /** Creates a workspace row without any membership (tests that seed their own bindings). */
     @Transactional
     public Workspace createWorkspace(String name) {
-        Workspace workspace = workspaces.save(new Workspace(name));
+        Workspace workspace = workspaces.save(directAttachShaped(name));
         workspace.setStorageRef(workspace.getId().toString());
         return workspaces.saveAndFlush(workspace);
     }

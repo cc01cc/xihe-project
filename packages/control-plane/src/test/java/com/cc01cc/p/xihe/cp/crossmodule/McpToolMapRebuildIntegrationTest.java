@@ -45,6 +45,9 @@ import org.springframework.test.context.DynamicPropertySource;
  */
 class McpToolMapRebuildIntegrationTest extends AbstractWireMockTest {
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.cc01cc.p.xihe.cp.integration.WorkspaceFixture workspaceFixture;
+
     private static final String STDIO_SERVER = "e2e-stdio";
 
     @Autowired
@@ -81,7 +84,7 @@ class McpToolMapRebuildIntegrationTest extends AbstractWireMockTest {
         token = registerAndLogin();
         userId = jwtTokenProvider.getUserIdFromToken(token);
         // PLAN-0614: register no longer creates a workspace; the fixture creates the caller's own.
-        wsId = workspaceService.createWorkspace("Tool map workspace", userId).getId().toString();
+        wsId = workspaceFixture.createOwnedWorkspace("Tool map workspace", userId).getId().toString();
         catalogService.replaceStdioConfigs(wsId, Map.of(STDIO_SERVER, objectMapper.createObjectNode()
                 .put("command", "node")));
         Session session = new Session(wsId, userId, "PLAN-0583 tool map rebuild");

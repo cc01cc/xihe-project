@@ -29,7 +29,7 @@ import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMoc
 // materialize/import/jobs, so an inlined test property overrides it (the frozen-by-default contract
 // is asserted by WorkspaceBackendPolicyTest).
 @org.springframework.test.context.TestPropertySource(
-        properties = "XIHE_WORKSPACE_DOCKER_BACKEND=enabled")
+        properties = "XIHE_WORKSPACE_DOCKER_BACKEND=disabled")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 public abstract class AbstractWireMockTest {
 

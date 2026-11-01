@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -44,6 +46,9 @@ import org.springframework.web.client.RestTemplate;
  * SQL snapshot.
  */
 class UserAdminIntegrationTest extends AbstractIntegrationTest {
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private WorkspaceFixture workspaceFixture;
 
     private static final String PASSWORD = "User-admin-pass-1";
 
@@ -502,8 +507,8 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
         String workspaceOwnerToken = register("ws-owner@test.com");
         String workspaceOwnerId = userIdOf(workspaceOwnerToken);
         // PLAN-0614: register no longer creates a workspace; the fixture creates the owner's own.
-        String workspaceId = workspaceService
-                .createWorkspace("User admin plane workspace", workspaceOwnerId)
+        String workspaceId = workspaceFixture
+                .createOwnedWorkspace("User admin plane workspace", workspaceOwnerId)
                 .getId().toString();
         String memberId = userIdOf(register("ws-member@test.com"));
         // PLAN-0610 W4b: membership is the WS_VIEWER binding (workspace_users is gone).

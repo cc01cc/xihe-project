@@ -34,6 +34,11 @@ const jarModeArg = process.argv.find((arg) => arg.startsWith('--jar-mode='))
 const jarMode = jarModeArg?.slice('--jar-mode='.length) ?? 'auto'
 const batchArg = process.argv.find((arg) => arg.startsWith('--batch='))
 const batchName = batchArg?.slice('--batch='.length) ?? ''
+// PLAN-0618: the docker workspace backend is frozen, so the docker-bound specs/cases are not collected by
+// default. `--include-docker-frozen` restores them (one switch; inventory in
+// plans/PLAN-0618-XH-docker-freeze-complete/evidence/m3-frozen-tests.md).
+const includeDockerFrozen = process.argv.includes('--include-docker-frozen')
+process.env.XIHE_E2E_INCLUDE_DOCKER_FROZEN = includeDockerFrozen ? '1' : '0'
 const reportNameArg = process.argv.find((arg) => arg.startsWith('--report-name='))
 const reportName = reportNameArg?.slice('--report-name='.length) ?? ''
 if (!['auto', 'use', 'rebuild', 'run', 'native'].includes(jarMode)) {
@@ -432,7 +437,8 @@ function printRunnerHelp() {
 usage: node scripts/e2e-host.mjs [runner flags] [playwright args...]
 
 runner flags:
-  --llm-mode=<mode>     spec gate mode (mock default; also real / write_file / approval / spawn_agent / history-marker / job / job-cancel / exec_command / overflow / success)
+  --include-docker-frozen  collect the docker-frozen specs/cases too (default: skipped as "DOCKER_FROZEN")
+--llm-mode=<mode>     spec gate mode (mock default; also real / write_file / approval / spawn_agent / history-marker / job / job-cancel / exec_command / overflow / success)
   --batch=<name>        expand a batch from scripts/e2e-batches.jsonc; the batch llm-mode applies unless --llm-mode is explicit
   --auth-lane=<lane>    CP auth env lane (PLAN-0566 D6): exempt (default, register dimension off) | ratelimit (lowered thresholds + loopback trusted proxies for auth-lockout / auth-rate-limit)
   --first-run=local     PLAN-0611 gold path: empty DB + XIHE_LOCAL_MODE=true + SERVER_ADDRESS=127.0.0.1, no seeded admin (default: off)
@@ -2055,7 +2061,7 @@ async function main() {
       // PLAN-0612 M4: the host E2E lane is the single documented exemption from the
       // frozen workspace docker backend; inject it explicitly instead of relying on a
       // developer's shell env.
-      XIHE_WORKSPACE_DOCKER_BACKEND: 'enabled',
+      XIHE_WORKSPACE_DOCKER_BACKEND: 'disabled',
       // PLAN-0611 (Lead ruling D): the CP↔Runtime WebSocket channel is a readiness concern in every
       // boot mode, not a native-image nicety. `xihe.channel.enabled` defaults to false in
       // application.properties, so without this env a non-native boot silently stays on HTTP
