@@ -73,6 +73,23 @@ final class CpModuleAssignment implements SliceAssignment {
         if (name.startsWith("Policy") || name.startsWith("ToolFace") || name.startsWith("AuthorizationGrant")) {
             return "policy";
         }
+        // PLAN-0610: the dynamic RBAC slice (roles / role_permissions / role_bindings) is part of the
+        // authorization surface, so its entities, repositories and admin services belong to "policy"
+        // rather than growing a new module for one capability family. MemberView is the public
+        // projection of workspace membership (PLAN-0565), so it stays with the workspace slice.
+        if (name.startsWith("AccessRole") || name.startsWith("RoleAdmin") || name.startsWith("RoleController")
+                || name.startsWith("RoleGrantMaterializer") || name.startsWith("SystemAccessRole")
+                || name.startsWith("MePermissions")) {
+            return "policy";
+        }
+        if (name.equals("MemberView")) {
+            return "workspace";
+        }
+        // PLAN-0470: the Context EventStore/projection family (entities, repositories and services)
+        // is its own slice; without this the classification gate cannot even import the model.
+        if (name.startsWith("Context") || name.startsWith("EventStore") || name.equals("CompactionNoticePort")) {
+            return "context";
+        }
         if (name.startsWith("Config") || name.equals("ImportService") || name.equals("ExportService")) {
             return "config";
         }
