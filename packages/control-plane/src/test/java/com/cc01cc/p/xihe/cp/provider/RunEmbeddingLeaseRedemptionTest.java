@@ -32,7 +32,9 @@ class RunEmbeddingLeaseRedemptionTest {
         var json = new ObjectMapper();
         var service = new ProviderCredentialLeaseService(repository, mock(ProviderConnectionRepository.class),
                 mock(ProviderConnectionService.class), catalog, types, json,
-                mock(ProviderCredentialAccess.class));
+                mock(ProviderCredentialAccess.class),
+                mock(com.cc01cc.p.xihe.cp.repository.ProviderConnectionModelLimitRepository.class),
+                new com.cc01cc.p.xihe.cp.policy.ResourceGovernor());
         ReflectionTestUtils.setField(service, "requestTemplates", templates);
         var connection = new ProviderConnection();
         connection.setId(UUID.randomUUID());

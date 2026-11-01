@@ -202,6 +202,29 @@ public class ProblemDetailsHandler {
         return problem(status, code, detail, request);
     }
 
+    /**
+     * PLAN-0622 M1.5 (R6/R7): a resource-governor refusal is a {@code 429 RESOURCE_EXHAUSTED} whose
+     * retry hint is carried on <b>both</b> channels — the {@code Retry-After} header and
+     * {@code retryAfterSeconds} in the body always hold the same value — together with
+     * {@code resourceKind}/{@code scope} for diagnosis. It is never a 503: the dependency is
+     * healthy, the caller is over its configured limit.
+     */
+    @ExceptionHandler(ResourceExhaustedException.class)
+    public ResponseEntity<Map<String, Object>> resourceExhausted(ResourceExhaustedException exception,
+                                                                HttpServletRequest request) {
+        logger.warn("Resource exhausted at {}: kind={} scope={} retryAfter={}s", request.getRequestURI(),
+                exception.getResourceKind(), exception.getScope(), exception.getRetryAfterSeconds());
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("Retry-After", Integer.toString(exception.getRetryAfterSeconds()));
+        headers.put("Cache-Control", "no-store");
+        Map<String, Object> extra = new LinkedHashMap<>();
+        extra.put("retryAfterSeconds", exception.getRetryAfterSeconds());
+        extra.put("resourceKind", exception.getResourceKind());
+        extra.put("scope", exception.getScope());
+        return problemResponse(HttpStatus.TOO_MANY_REQUESTS, "RESOURCE_EXHAUSTED",
+                exception.getMessage(), headers, extra);
+    }
+
     @ExceptionHandler({IllegalArgumentException.class, HttpMessageNotReadableException.class,
             MethodArgumentNotValidException.class})
     public ResponseEntity<Map<String, Object>> badRequest(Exception exception, HttpServletRequest request) {

@@ -54,7 +54,9 @@ class ProviderCredentialLeaseServiceAgentPrincipalRoutingTest {
                 mock(ProviderCatalogService.class),
                 mock(ApiInputTypeService.class),
                 new ObjectMapper(),
-                credentialAccess);
+                credentialAccess,
+                mock(com.cc01cc.p.xihe.cp.repository.ProviderConnectionModelLimitRepository.class),
+                new com.cc01cc.p.xihe.cp.policy.ResourceGovernor());
         ApiRequestTemplateService templates = mock(ApiRequestTemplateService.class);
         ReflectionTestUtils.setField(leases, "requestTemplates", templates);
         connection = new ProviderConnection();
