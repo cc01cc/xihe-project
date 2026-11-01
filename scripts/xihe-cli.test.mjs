@@ -3182,7 +3182,12 @@ test('verify probes: PERSONAL lifecycle and limit 429 are provisional until CP d
         if (patchCount >= 2) return { status: 202, body: { runId: 'run-after' }, code: null };
         chatCount += 1;
         if (chatCount === 1) return { status: 202, body: { runId: 'run-1' }, code: null };
-        return { status: 429, body: { code: 'RESOURCE_EXHAUSTED' }, code: 'RESOURCE_EXHAUSTED', retryAfter: '1' };
+        return {
+          status: 429,
+          body: { code: 'RESOURCE_EXHAUSTED', retryAfterSeconds: 1, resourceKind: 'CONNECTION', scope: 'ws-1' },
+          code: 'RESOURCE_EXHAUSTED',
+          retryAfter: '1',
+        };
       }
       if (method === 'POST' && pathname.includes('/cancel')) return { status: 200, body: {}, code: null };
       return { status: 404, body: {}, code: 'NOT_FOUND' };
@@ -3191,6 +3196,23 @@ test('verify probes: PERSONAL lifecycle and limit 429 are provisional until CP d
   });
   assert.equal(limited.status, 'PASS', JSON.stringify(limited));
   assert.equal(trapCalls.length, 2, 'the probe restores maxInflight');
+
+  // A6 must reject a bare 429: code + retryAfterSeconds + resourceKind + scope + header.
+  const bad429 = await runResourceLimitProbe({
+    client: fakeClient((method, pathname, options) => {
+      if (method === 'GET') return { status: 200, body: { connections: [{ id: 'c-1' }] }, code: null };
+      if (method === 'PATCH') return { status: 200, body: { connection: { id: 'c-1', ...options.body } }, code: null };
+      if (method === 'POST' && pathname === '/api/v1/chat') {
+        return { status: 429, body: { code: 'RESOURCE_EXHAUSTED' }, code: 'RESOURCE_EXHAUSTED', retryAfter: '1' };
+      }
+      if (method === 'POST' && pathname.includes('/cancel')) return { status: 200, body: {}, code: null };
+      return { status: 404, body: {}, code: 'NOT_FOUND' };
+    }),
+    connectionId: 'c-1', sessionId: 's-1', branchId: 'b-1',
+  });
+  assert.equal(bad429.status, 'FAIL');
+  assert.equal(bad429.code, 'LIMIT_NOT_ENFORCED');
+  assert.match(bad429.detail, /resourceKind=none/);
 });
 
 test('agent CLI: create/list/bind/unbind/disable + provider limit are idempotent and machine readable', async () => {
@@ -3326,7 +3348,8 @@ test('agent CLI: create/list/bind/unbind/disable + provider limit are idempotent
     const listed = await run(['agent', 'list', '--json']);
     assert.equal(listed.exitCode, 0);
     assert.equal(listed.data.kind, 'agent-list');
-    assert.equal(listed.data.items.length, 1);
+    assert.equal(listed.data.principals.length, 1);
+    assert.equal(listed.data.principals[0].principalId, 'p-1');
 
     const bound = await run(['agent', 'bind', '--principal', 'p-1', '--workspace', 'ws-1', '--json']);
     assert.equal(bound.exitCode, 0);
@@ -3337,8 +3360,11 @@ test('agent CLI: create/list/bind/unbind/disable + provider limit are idempotent
 
     const wsAgents = await run(['agent', 'list', '--workspace', 'ws-1', '--json']);
     assert.equal(wsAgents.exitCode, 0);
-    assert.equal(wsAgents.data.items.length, 1);
-    assert.equal(wsAgents.data.items[0].source, 'personal');
+    // PLAN-0622 contract v1: pass the {agents:[...]} envelope through unchanged.
+    assert.ok(Array.isArray(wsAgents.data.agents), 'workspace list must keep the envelope');
+    assert.equal(wsAgents.data.agents.length, 1);
+    assert.equal(wsAgents.data.agents[0].source, 'personal');
+    assert.equal(wsAgents.data.agents[0].permissionsSnapshot, undefined);
 
     const unbound = await run(['agent', 'unbind', '--principal', 'p-1', '--workspace', 'ws-1', '--json']);
     assert.equal(unbound.exitCode, 0);
@@ -3380,6 +3406,24 @@ test('agent CLI: create/list/bind/unbind/disable + provider limit are idempotent
     assert.equal(shown.data.limits.maxInflight, 2);
     assert.equal(shown.data.limits.windowSeconds, 60);
     assert.equal(shown.data.limits.modelLimits[0].maxInflight, 1);
+
+    // PLAN-0622 contract v1: modelLimits is a full replacement (clear / inherit / null).
+    const clearModels = await run(['provider', 'limit', 'set', '--connection', 'conn-1', '--clear-model-limits', '--json']);
+    assert.equal(clearModels.exitCode, 0);
+    assert.deepEqual(state.patchBodies[1].modelLimits, []);
+
+    const clearedGlobal = await run(['provider', 'limit', 'set', '--connection', 'conn-1', '--max-inflight', 'none', '--json']);
+    assert.equal(clearedGlobal.exitCode, 0);
+    assert.equal(state.patchBodies[2].maxInflight, null);
+
+    const clearedModel = await run(['provider', 'limit', 'set', '--connection', 'conn-1',
+      '--model', 'openai:gpt-5', '--max-inflight', 'none', '--json']);
+    assert.equal(clearedModel.exitCode, 0);
+    assert.deepEqual(state.patchBodies[3].modelLimits, [{ provider: 'openai', model: 'gpt-5', maxInflight: null }]);
+
+    const inherited = await run(['provider', 'limit', 'set', '--connection', 'conn-1', '--max-inflight', '3', '--json']);
+    assert.equal(inherited.exitCode, 0);
+    assert.equal('modelLimits' in state.patchBodies[4], false, 'omitting modelLimits must inherit');
 
     const unknownConnection = await run(['provider', 'limit', 'show', '--connection', 'nope', '--json']);
     assert.equal(unknownConnection.exitCode, 1);

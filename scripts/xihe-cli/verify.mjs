@@ -348,14 +348,25 @@ export async function runResourceLimitProbe({ client, connectionId, sessionId, b
       await client.call('POST', `/api/v1/chat/runs/${encodeURIComponent(runId)}/cancel`, { body: {} });
     }
   }
+  const RESOURCE_KINDS = new Set(['CONNECTION', 'MODEL', 'FILE_WRITE', 'PROCESS', 'JOB', 'MCP']);
   const throttled = results.find((result) => result.status === 429
     && result.code === 'RESOURCE_EXHAUSTED'
+    && (typeof result.body?.retryAfterSeconds === 'number'
+      || /^\d+$/.test(String(result.body?.retryAfterSeconds ?? '')))
+    && RESOURCE_KINDS.has(result.body?.resourceKind)
+    && typeof result.body?.scope === 'string' && result.body.scope !== ''
     && typeof result.retryAfter === 'string' && result.retryAfter !== '');
   if (!throttled) {
+    const detail429 = results.find((result) => result.status === 429);
     return {
       status: 'FAIL',
       code: 'LIMIT_NOT_ENFORCED',
-      detail: `并发 4 次 chat 未命中 429 RESOURCE_EXHAUSTED+Retry-After（statuses=${results.map((item) => item.status).join(',')}）`,
+      detail: detail429
+        ? `429 缺契约字段（code=${detail429.code ?? 'none'}` 
+          + ` retryAfterSeconds=${JSON.stringify(detail429.body?.retryAfterSeconds ?? null)}`
+          + ` resourceKind=${detail429.body?.resourceKind ?? 'none'} scope=${detail429.body?.scope ?? 'none'}`
+          + ` headerRetryAfter=${detail429.retryAfter ?? 'none'}）`
+        : `并发 4 次 chat 未命中 429 RESOURCE_EXHAUSTED（statuses=${results.map((item) => item.status).join(',')}）`,
     };
   }
   const recovered = await chat('after-restore');
@@ -372,7 +383,8 @@ export async function runResourceLimitProbe({ client, connectionId, sessionId, b
   }
   return {
     status: 'PASS',
-    detail: `429 RESOURCE_EXHAUSTED retry-after=${throttled.retryAfter}；恢复限额后 chat 已受理`,
+    detail: `429 RESOURCE_EXHAUSTED kind=${throttled.body.resourceKind} scope=${throttled.body.scope}`
+      + ` retryAfterSeconds=${throttled.body.retryAfterSeconds} header=${throttled.retryAfter}；恢复限额后 chat 已受理`,
   };
 }
 

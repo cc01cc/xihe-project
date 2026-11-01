@@ -177,23 +177,37 @@ export async function createAgent({ apiBase, fetchImpl, token, options }) {
   return { kind: 'agent-created', created: true, idempotent: false, principal: created.body, principalId };
 }
 
-/** `agent list [--workspace ws] [--scope s]`. */
+/**
+ * `agent list [--workspace ws] [--scope s]`.
+ *
+ * PLAN-0622 contract v1 (CP 13e54cad): the wire envelopes are `{agents:[...]}`
+ * (workspace view; items carry `source` + `permissionsSnapshot`) and
+ * `{principals:[...]}` (principal view, optional scope/workspaceId filter). Both
+ * are passed through as-is — no flattening and no legacy array fallback.
+ */
 export async function listAgents({ apiBase, fetchImpl, token, options }) {
   const workspaceId = options['--workspace']?.trim() || '';
-  if (workspaceId) {
+  const scope = options['--scope'] ? normalizeAgentScope(options['--scope']) : null;
+  if (workspaceId && !scope) {
     const response = await callApi({
       apiBase, fetchImpl, token, method: 'GET', path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/agents`, workspaceId,
     });
     expectStatus(response, 'workspace agent listing');
-    const items = Array.isArray(response.body) ? response.body
-      : Array.isArray(response.body?.agents) ? response.body.agents : [];
-    return { kind: 'agent-list', scope: null, workspaceId, items };
+    if (!Array.isArray(response.body?.agents)) {
+      throw new CliError('AGENT_LIST_ENVELOPE_INVALID', 'CP returned no {agents:[...]} envelope for the workspace agent listing.', {}, 1);
+    }
+    return { kind: 'agent-list', scope: null, workspaceId, agents: response.body.agents };
   }
-  const scope = options['--scope'] ? normalizeAgentScope(options['--scope']) : null;
-  const response = await listPrincipals({ apiBase, fetchImpl, token, scope });
+  const workspaceQuery = workspaceId ? `&workspaceId=${encodeURIComponent(workspaceId)}` : '';
+  const query = scope
+    ? `?scope=${encodeURIComponent(scope)}${workspaceQuery}`
+    : (workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : '');
+  const response = await callApi({ apiBase, fetchImpl, token, method: 'GET', path: `/api/v1/agent-principals${query}` });
   expectStatus(response, 'agent principal listing');
-  const items = Array.isArray(response.body?.principals) ? response.body.principals : [];
-  return { kind: 'agent-list', scope, workspaceId: null, items };
+  if (!Array.isArray(response.body?.principals)) {
+    throw new CliError('AGENT_LIST_ENVELOPE_INVALID', 'CP returned no {principals:[...]} envelope for the agent principal listing.', {}, 1);
+  }
+  return { kind: 'agent-list', scope, workspaceId: workspaceId || null, principals: response.body.principals };
 }
 
 function requireWorkspace(options) {
@@ -258,8 +272,9 @@ export async function disableAgent({ apiBase, fetchImpl, token, options }) {
 
 function parsePositiveInt(raw, flag) {
   const text = String(raw ?? '').trim();
+  if (/^(none|null)$/i.test(text)) return null;
   if (!/^\d+$/.test(text) || Number(text) <= 0) {
-    throw usageError(`${flag} must be a positive integer.`);
+    throw usageError(`${flag} must be a positive integer or "none".`);
   }
   return Number(text);
 }
@@ -267,9 +282,12 @@ function parsePositiveInt(raw, flag) {
 /**
  * Walk `provider limit set` args in order so `--model p:m` starts a per-model limit
  * block: the following `--max-inflight/--max-queue/--tokens/--window` apply to it.
+ * PLAN-0622 contract v1: `modelLimits` is a full replacement — `--clear-model-limits`
+ * sends `[]` (clear all), omitting it inherits the connection-level limits, and a
+ * `none` value sends `null` (clear that one limit).
  */
 export function parseLimitArgs(args) {
-  const values = { modelLimits: [] };
+  const values = { modelLimits: [], clearModelLimits: false };
   let currentModel = null;
   const setGlobalOrModel = (key, flag, value) => {
     if (currentModel) {
@@ -285,8 +303,14 @@ export function parseLimitArgs(args) {
     const separator = token.indexOf('=');
     const flag = separator === -1 ? token : token.slice(0, separator);
     let value = separator === -1 ? undefined : token.slice(separator + 1);
-    if (!['--connection', '--max-inflight', '--max-queue', '--tokens', '--window', '--model', '--email'].includes(flag)) {
+    if (!['--connection', '--max-inflight', '--max-queue', '--tokens', '--window', '--model', '--clear-model-limits', '--email'].includes(flag)) {
       throw usageError(`Unknown option ${flag}.`);
+    }
+    if (flag === '--clear-model-limits') {
+      if (value !== undefined) throw usageError('--clear-model-limits does not take a value.');
+      values.clearModelLimits = true;
+      currentModel = null;
+      continue;
     }
     if (value === undefined) {
       value = args[index + 1];
@@ -338,11 +362,13 @@ export async function setProviderLimits({ apiBase, fetchImpl, token, options }) 
   for (const key of ['maxInflight', 'maxQueue', 'windowTokenBudget', 'windowSeconds']) {
     if (options[key] !== undefined) body[key] = options[key];
   }
-  if (Array.isArray(options.modelLimits) && options.modelLimits.length > 0) {
+  if (options.clearModelLimits === true) {
+    body.modelLimits = [];
+  } else if (Array.isArray(options.modelLimits) && options.modelLimits.length > 0) {
     body.modelLimits = options.modelLimits;
   }
   if (Object.keys(body).length === 0) {
-    throw usageError('Provide at least one limit (--max-inflight/--max-queue/--tokens --window/--model ...).');
+    throw usageError('Provide at least one limit (--max-inflight/--max-queue/--tokens --window/--model .../--clear-model-limits).');
   }
   const response = await callApi({
     apiBase, fetchImpl, token, method: 'PATCH',
