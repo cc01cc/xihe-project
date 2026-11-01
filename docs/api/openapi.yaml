@@ -792,7 +792,6 @@ paths:
         (R7): the server advances them off the event stream, client reporting lands in 0624.
         A participant view deliberately carries **no** cap snapshot — the cap is resolved live via
         `resolveCapFor(principalId, workspaceId)` (Lead ruling 2026-11-02, D23-20 follow-up).
-      x-plan-0623: { milestone: M0, status: contract-only, implemented-in: M1 }
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }]
       responses:
@@ -811,7 +810,6 @@ paths:
         D23-13: the PRIMARY participant is unique, cannot be removed and cannot be transferred — a
         second PRIMARY is rejected with 409 `PARTICIPANT_PRIMARY_EXISTS`. The default policies come
         from R3 (MEMBER/GUARD: wake=MENTION, respond=WHEN_MENTIONED); callers may override them.
-      x-plan-0623: { milestone: M0, status: contract-only, implemented-in: M1 }
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }]
       requestBody:
@@ -839,7 +837,6 @@ paths:
         D23-13: policy changes are allowed, removal/transfer of the PRIMARY is not (409
         `PARTICIPANT_PRIMARY_IMMUTABLE`). Disabling keeps the row and its cursor for audit/history
         (`disabled_at`), which is why "remove" is a soft disable in 0623.
-      x-plan-0623: { milestone: M0, status: contract-only, implemented-in: M1 }
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: sessionId, required: true, schema: { type: string } }
@@ -862,13 +859,12 @@ paths:
     delete:
       operationId: removeSessionParticipant
       summary: Remove a member/guard participant (the PRIMARY is not removable)
-      x-plan-0623: { milestone: M0, status: contract-only, implemented-in: M1 }
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: sessionId, required: true, schema: { type: string } }
         - { in: path, name: participantId, required: true, schema: { type: string } }
       responses:
-        '204': { description: Participant removed }
+        '204': { description: 'Participant soft-disabled (D23-26): the row, its order_index and its cursor are kept, GET keeps returning it with disabledAt set, and a second DELETE is an idempotent 204.' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409':
@@ -909,7 +905,7 @@ paths:
         '503': { description: 'BACKEND_DISABLED — the session belongs to a workspace on the frozen docker execution backend; the run is refused before dispatch (PLAN-0618 / BL-178)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403':
-          description: Workspace access denied or Session lacks an active Workspace-bound Agent principal
+          description: Workspace access denied, Session lacks an active Workspace-bound Agent principal, or asParticipantId was supplied without the participant-speak authorization (403 PARTICIPANT_CAP_DENIED, PLAN-0623 D23-08)
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -3605,7 +3601,7 @@ components:
          name: { type: [string, 'null'] }
          state: { type: string, enum: [success, error, partial, ambiguous, cancelled] }
          terminalAt: { type: string, format: date-time }
-    ChatRequest: { type: object, required: [sessionId, branchId, content], properties: { sessionId: { type: string }, branchId: { type: string, format: uuid, description: Required selected branch; included in Chat idempotency request hash. }, content: { type: string }, agentPrincipalId: { type: [string, 'null'], format: uuid, description: Required to bind a principal-null empty placeholder; if supplied for a bound Session it must match the persisted principal. }, provider: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, model: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, toolMode: { type: string, enum: [none, workspace], default: none }, attachments: { type: array, items: { type: string } }, toolTimeouts: { type: object, description: 'PLAN-0308 T1.9/T3.1: optional per-tool timeout request (per-call), the highest-priority input to the CP-computed tool budget. Values are positive integer seconds, max 30 (code constant MAX_BUDGET_SECONDS, shared with the DB config ceiling); invalid or oversized values are rejected with 400 INVALID_REQUEST (never silently clamped); sync waits >30s belong to async jobs.', additionalProperties: { type: integer, minimum: 1, maximum: 30 }, example: { execute_command: 20 } } } }
+    ChatRequest: { type: object, required: [sessionId, branchId, content], properties: { sessionId: { type: string }, branchId: { type: string, format: uuid, description: Required selected branch; included in Chat idempotency request hash. }, content: { type: string }, agentPrincipalId: { type: [string, 'null'], format: uuid, description: Required to bind a principal-null empty placeholder; if supplied for a bound Session it must match the persisted principal. }, asParticipantId: { type: [string, 'null'], format: uuid, description: 'PLAN-0623 D23-08: speak as an added participant — the Run and its messages answer under that identity. Adding a member never grants this; the caller must own the conversation and may only speak as themselves (HUMAN) or as an AGENT they own. Unauthorized use answers 403 PARTICIPANT_CAP_DENIED.' }, provider: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, model: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, toolMode: { type: string, enum: [none, workspace], default: none }, attachments: { type: array, items: { type: string } }, toolTimeouts: { type: object, description: 'PLAN-0308 T1.9/T3.1: optional per-tool timeout request (per-call), the highest-priority input to the CP-computed tool budget. Values are positive integer seconds, max 30 (code constant MAX_BUDGET_SECONDS, shared with the DB config ceiling); invalid or oversized values are rejected with 400 INVALID_REQUEST (never silently clamped); sync waits >30s belong to async jobs.', additionalProperties: { type: integer, minimum: 1, maximum: 30 }, example: { execute_command: 20 } } } }
     ChatRunResumePendingRequest:
       type: object
       additionalProperties: false
@@ -3648,20 +3644,32 @@ components:
         respondPolicy: { type: string, enum: [ALWAYS, WHEN_MENTIONED, JUDGE, MUTED] }
         source: { type: string, enum: [workspace, personal, instance] }
         disabledAt: { type: [string, 'null'], format: date-time }
+        defaultModelProvider: { type: [string, 'null'], description: 'AGENT participants only: the participant agent model intent; null for HUMAN.' }
+        defaultModelName: { type: [string, 'null'], description: 'AGENT participants only: the participant agent model intent; null for HUMAN.' }
         readCursor:
           type: [object, 'null']
-          description: R7 — read-only in 0623; advanced by the server off the event stream
+          description: 'R7 — read-only in 0623; advanced by the server off the event stream. null when the participant has no cursor row yet — the UI relies on null rather than an empty object.'
           properties:
             lastReadEventSeq: { type: integer }
             mentionCount: { type: integer }
             updatedAt: { type: string, format: date-time }
     SessionParticipantListResponse:
       type: object
-      required: [participants]
+      required: [participants, capabilities]
       properties:
         participants:
           type: array
           items: { $ref: '#/components/schemas/SessionParticipantView' }
+        capabilities: { $ref: '#/components/schemas/SessionParticipantCapabilities' }
+    SessionParticipantCapabilities:
+      type: object
+      additionalProperties: false
+      required: [view, manage, mention]
+      description: 'What the caller may do in this conversation, computed at read time and never cached (PLAN-0623). manage = Session owner or MANAGE_WORKSPACE_AGENTS; view and mention are true whenever the list is readable — a caller who may not read the list gets 403 instead of an empty list with false flags.'
+      properties:
+        view: { type: boolean }
+        manage: { type: boolean }
+        mention: { type: boolean }
     SessionParticipantCreateRequest:
       type: object
       required: [principalKind, principalId]

@@ -239,7 +239,7 @@ class SessionParticipantServiceTest {
         CpApiException refused = assertThrows(CpApiException.class,
                 () -> service.authorizeAsParticipant(OWNER, WORKSPACE, SESSION_ID.toString(),
                         someoneElse.getId().toString()));
-        assertEquals("PARTICIPANT_IMPERSONATION_FORBIDDEN", refused.getCode(),
+        assertEquals("PARTICIPANT_CAP_DENIED", refused.getCode(),
                 "D23-08: speaking as another human is impersonation, not delegation");
         assertEquals(HttpStatus.FORBIDDEN, refused.getStatus());
     }
@@ -266,7 +266,7 @@ class SessionParticipantServiceTest {
         CpApiException refused = assertThrows(CpApiException.class,
                 () -> service.authorizeAsParticipant(OWNER, WORKSPACE, SESSION_ID.toString(),
                         agentRow.getId().toString()));
-        assertEquals("PARTICIPANT_IMPERSONATION_FORBIDDEN", refused.getCode(),
+        assertEquals("PARTICIPANT_CAP_DENIED", refused.getCode(),
                 "D23-08: managing members never means speaking as their agent");
     }
 
@@ -288,7 +288,7 @@ class SessionParticipantServiceTest {
         CpApiException refused = assertThrows(CpApiException.class,
                 () -> service.authorizeAsParticipant(OWNER, WORKSPACE, SESSION_ID.toString(),
                         agentRow.getId().toString()));
-        assertEquals("PARTICIPANT_IMPERSONATION_FORBIDDEN", refused.getCode(),
+        assertEquals("PARTICIPANT_CAP_DENIED", refused.getCode(),
                 "a PERSONAL agent owned by someone else is not yours to speak for");
     }
 

@@ -77,6 +77,7 @@ public class ChatController {
     private final FollowUpQueueService followUpQueueService;
     private final SessionService sessionService;
     private final AgentPrincipalService agentPrincipalService;
+    private final com.cc01cc.p.xihe.cp.service.SessionParticipantService sessionParticipantService;
     private final ChatAttachmentService chatAttachmentService;
     private final HealthMonitor healthMonitor;
     private final RequestQueue requestQueue;
@@ -137,6 +138,7 @@ public class ChatController {
             FollowUpQueueService followUpQueueService,
             SessionService sessionService,
             AgentPrincipalService agentPrincipalService,
+            com.cc01cc.p.xihe.cp.service.SessionParticipantService sessionParticipantService,
             ChatAttachmentService chatAttachmentService,
             ChatActiveRunRegistry activeRunRegistry,
             HealthMonitor healthMonitor,
@@ -171,6 +173,7 @@ public class ChatController {
         this.followUpQueueService = followUpQueueService;
         this.sessionService = sessionService;
         this.agentPrincipalService = agentPrincipalService;
+        this.sessionParticipantService = sessionParticipantService;
         this.chatAttachmentService = chatAttachmentService;
         this.activeRunRegistry = activeRunRegistry;
         this.governor = governor;
@@ -431,6 +434,12 @@ public class ChatController {
                     "INVALID_REQUEST", "agentPrincipalId must be a UUID string");
         }
         String agentPrincipalId = (String) rawPrincipalId;
+        Object rawAsParticipantId = request.get("asParticipantId");
+        if (rawAsParticipantId != null && !(rawAsParticipantId instanceof String)) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
+                    "INVALID_REQUEST", "asParticipantId must be a UUID string");
+        }
+        String asParticipantId = (String) rawAsParticipantId;
         String provider = (String) request.get("provider");
         String model = (String) request.get("model");
         String toolMode = (String) request.getOrDefault("toolMode", "none");
@@ -460,6 +469,17 @@ public class ChatController {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
 
+        // PLAN-0623 D23-08: `asParticipantId` lets the conversation owner speak *as* an added
+        // participant (the agent answers under that identity). Adding a member never grants this —
+        // it is a separate authorization, so it is gated in the request thread and answers 403
+        // PARTICIPANT_CAP_DENIED before any run exists.
+        if (asParticipantId != null && !asParticipantId.isBlank()) {
+            try {
+                sessionParticipantService.authorizeAsParticipant(userId, workspaceId, sessionId, asParticipantId);
+            } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
+                return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+            }
+        }
         String requestId = currentRequestId();
         String runId = UUID.randomUUID().toString();
         if (!sseManager.hasEmitter(sessionId)) {
