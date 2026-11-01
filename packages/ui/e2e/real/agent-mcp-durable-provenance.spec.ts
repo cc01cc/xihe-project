@@ -59,6 +59,8 @@ test("@host PLAN-0387 T3.2 — CP checks durable Agent MCP tool-call provenance"
     const headers = {
         Authorization: `Bearer ${auth.accessToken}`,
         "Content-Type": "application/json",
+        // D21: WORKSPACE-scope principal creation requires an explicit workspace context.
+        "X-Workspace-Id": workspaceId,
     };
     const me = await request.get(`${CP_URL}/api/v1/auth/me`, { headers });
     expect(me.ok(), await me.text()).toBe(true);
@@ -102,7 +104,7 @@ test("@host PLAN-0387 T3.2 — CP checks durable Agent MCP tool-call provenance"
 
     const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
         headers,
-        data: { name: "Provenance Writer", templateId },
+        data: { name: "Provenance Writer", templateId, scope: "WORKSPACE" },
     });
     expect(principalResponse.status(), await principalResponse.text()).toBe(201);
     const principalId = ((await principalResponse.json()) as { principalId: string }).principalId;

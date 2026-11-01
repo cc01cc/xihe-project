@@ -1470,8 +1470,12 @@ test('verify reuses a pre-existing principal without rebinding it', async (t) =>
 
   assert.equal(result.exitCode, 0);
   assert.equal(result.data.cleanup.principal.status, 'pre_existing');
-  assert.equal(cp.state.calls.some((call) => call.pathname === '/api/v1/agent-principals'), false);
-  assert.equal(cp.state.calls.some((call) => call.method === 'PUT'), false);
+  // PLAN-0622 A5: verify additionally probes a PERSONAL principal; this mock does not
+  // echo scope, so the probe must stay provisional instead of pretending to pass.
+  assert.equal(result.data.personal.status, 'SKIP_PROVISIONAL');
+  const principalCreates = cp.state.calls.filter((call) => call.pathname === '/api/v1/agent-principals');
+  assert.ok(principalCreates.length >= 1, 'A5 probe creates its own PERSONAL principal');
+  assert.equal(cp.state.calls.some((call) => call.method === 'PUT'), false, 'reuses the pre-existing principal without rebinding');
 });
 
 test('config export defaults to includeSecrets=false and returns the JSONC text', async (t) => {
@@ -3106,4 +3110,414 @@ test('credential commands keep a single parseable --json envelope', async (t) =>
     assert.equal(parsed.ok, true, argv.join(' '));
     assert.equal(parsed.data.kind, expectedKinds[index], argv.join(' '));
   }
+});
+
+test('verify probes: PERSONAL lifecycle and limit 429 are provisional until CP delivers the contract', async () => {
+  const { runPersonalLifecycleProbe, runResourceLimitProbe } = await import('./xihe-cli/verify.mjs');
+  const calls = [];
+  const fakeClient = (handler) => ({ call: async (method, pathname, options = {}) => {
+    calls.push(`${method} ${pathname}`);
+    return handler(method, pathname, options);
+  } });
+
+  const unsupported = await runPersonalLifecycleProbe({
+    client: fakeClient(() => ({ status: 400, body: { code: 'INVALID_REQUEST' }, code: 'INVALID_REQUEST' })),
+    workspaceId: 'ws-1',
+  });
+  assert.equal(unsupported.status, 'SKIP_PROVISIONAL');
+  assert.equal(unsupported.code, 'SCOPE_UNSUPPORTED');
+
+  const bindings = new Set();
+  const lifecycle = await runPersonalLifecycleProbe({
+    client: fakeClient((method, pathname) => {
+      if (method === 'POST' && pathname === '/api/v1/agent-principals') {
+        return { status: 201, body: { principalId: 'p-1', scope: 'PERSONAL' }, code: null };
+      }
+      if (method === 'PUT' && pathname.includes('/agents/p-1')) { bindings.add('p-1'); return { status: 200, body: {}, code: null }; }
+      if (method === 'DELETE' && pathname.includes('/agents/p-1')) { bindings.delete('p-1'); return { status: 204, body: null, code: null }; }
+      if (method === 'GET' && pathname.endsWith('/agents')) {
+        return { status: 200, body: { agents: [...bindings].map((principalId) => ({ principalId, source: 'personal' })) }, code: null };
+      }
+      return { status: 404, body: { code: 'NOT_FOUND' }, code: 'NOT_FOUND' };
+    }),
+    workspaceId: 'ws-1',
+  });
+  assert.equal(lifecycle.status, 'PASS', JSON.stringify(lifecycle));
+  assert.equal(lifecycle.principalId, 'p-1');
+
+  const wrongSource = await runPersonalLifecycleProbe({
+    client: fakeClient((method, pathname) => {
+      if (method === 'POST') return { status: 201, body: { principalId: 'p-1', scope: 'PERSONAL' }, code: null };
+      if (method === 'PUT') return { status: 200, body: {}, code: null };
+      if (method === 'GET') return { status: 200, body: { agents: [{ principalId: 'p-1', source: 'workspace' }] }, code: null };
+      return { status: 404, body: {}, code: 'NOT_FOUND' };
+    }),
+    workspaceId: 'ws-1',
+  });
+  assert.equal(wrongSource.status, 'FAIL');
+  assert.equal(wrongSource.code, 'PERSONAL_SOURCE_MISMATCH');
+
+  const limitUnsupported = await runResourceLimitProbe({
+    client: fakeClient((method, pathname) => {
+      if (method === 'GET') return { status: 200, body: { connections: [{ id: 'c-1' }] }, code: null };
+      return { status: 404, body: { code: 'NOT_FOUND' }, code: 'NOT_FOUND' };
+    }),
+    connectionId: 'c-1', sessionId: 's-1', branchId: 'b-1',
+  });
+  assert.equal(limitUnsupported.status, 'SKIP_PROVISIONAL');
+  assert.equal(limitUnsupported.code, 'LIMIT_UNSUPPORTED');
+
+  let chatCount = 0;
+  let patchCount = 0;
+  const trapCalls = [];
+  const limited = await runResourceLimitProbe({
+    client: fakeClient((method, pathname, options) => {
+      if (method === 'GET') return { status: 200, body: { connections: [{ id: 'c-1' }] }, code: null };
+      if (method === 'PATCH') {
+        patchCount += 1;
+        trapCalls.push(options.body);
+        return { status: 200, body: { connection: { id: 'c-1', ...options.body } }, code: null };
+      }
+      if (method === 'POST' && pathname === '/api/v1/chat') {
+        if (patchCount >= 2) return { status: 202, body: { runId: 'run-after' }, code: null };
+        chatCount += 1;
+        if (chatCount === 1) return { status: 202, body: { runId: 'run-1' }, code: null };
+        return {
+          status: 429,
+          body: { code: 'RESOURCE_EXHAUSTED', retryAfterSeconds: 1, resourceKind: 'CONNECTION', scope: 'ws-1' },
+          code: 'RESOURCE_EXHAUSTED',
+          retryAfter: '1',
+        };
+      }
+      if (method === 'POST' && pathname.includes('/cancel')) return { status: 200, body: {}, code: null };
+      return { status: 404, body: {}, code: 'NOT_FOUND' };
+    }),
+    connectionId: 'c-1', sessionId: 's-1', branchId: 'b-1',
+  });
+  assert.equal(limited.status, 'PASS', JSON.stringify(limited));
+  assert.equal(trapCalls.length, 2, 'the probe restores maxInflight');
+
+  // A6 must reject a bare 429: code + retryAfterSeconds + resourceKind + scope + header.
+  const bad429 = await runResourceLimitProbe({
+    client: fakeClient((method, pathname, options) => {
+      if (method === 'GET') return { status: 200, body: { connections: [{ id: 'c-1' }] }, code: null };
+      if (method === 'PATCH') return { status: 200, body: { connection: { id: 'c-1', ...options.body } }, code: null };
+      if (method === 'POST' && pathname === '/api/v1/chat') {
+        return { status: 429, body: { code: 'RESOURCE_EXHAUSTED' }, code: 'RESOURCE_EXHAUSTED', retryAfter: '1' };
+      }
+      if (method === 'POST' && pathname.includes('/cancel')) return { status: 200, body: {}, code: null };
+      return { status: 404, body: {}, code: 'NOT_FOUND' };
+    }),
+    connectionId: 'c-1', sessionId: 's-1', branchId: 'b-1',
+  });
+  assert.equal(bad429.status, 'FAIL');
+  assert.equal(bad429.code, 'LIMIT_NOT_ENFORCED');
+  assert.match(bad429.detail, /resourceKind=none/);
+});
+
+test('agent CLI: create/list/bind/unbind/disable + provider limit are idempotent and machine readable', async () => {
+  const state = {
+    principals: [],
+    bindings: new Map(),
+    connections: [{ id: 'conn-1', providerId: 'openai', label: 'primary' }],
+    createRequests: 0,
+    patchBodies: [],
+    disabled: new Set(),
+  };
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    if (url.pathname === '/actuator/health') { json(response, 200, { status: 'UP' }); return; }
+    if (url.pathname === '/api/v1/auth/login' && request.method === 'POST') {
+      json(response, 200, { accessToken: 'agent-cli-token', tokenType: 'Bearer', expiresIn: 900 });
+      return;
+    }
+    if (url.pathname === '/api/v1/agent-principals' && request.method === 'GET') {
+      const scope = url.searchParams.get('scope');
+      const principals = scope
+        ? state.principals.filter((item) => item.scope === scope)
+        : state.principals;
+      json(response, 200, { principals });
+      return;
+    }
+    if (url.pathname === '/api/v1/agent-principals' && request.method === 'POST') {
+      state.createRequests += 1;
+      const body = await requestBody(request);
+      const principal = { principalId: `p-${state.principals.length + 1}`, scope: 'WORKSPACE', ...body };
+      state.principals.push(principal);
+      json(response, 201, principal);
+      return;
+    }
+    if (url.pathname === '/api/v1/agent-principals/disabled-missing/disable' && request.method === 'POST') {
+      json(response, 404, { code: 'AGENT_PRINCIPAL_NOT_FOUND', detail: 'nope' });
+      return;
+    }
+    const disableMatch = url.pathname.match(/^\/api\/v1\/agent-principals\/([^/]+)\/disable$/);
+    if (disableMatch && request.method === 'POST') {
+      const principalId = decodeURIComponent(disableMatch[1]);
+      if (state.disabled.has(principalId)) {
+        json(response, 409, { code: 'AGENT_PRINCIPAL_ALREADY_DISABLED' });
+        return;
+      }
+      state.disabled.add(principalId);
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+    const workspaceAgentsMatch = url.pathname.match(/^\/api\/v1\/workspaces\/([^/]+)\/agents$/);
+    if (workspaceAgentsMatch && request.method === 'GET') {
+      const workspaceId = decodeURIComponent(workspaceAgentsMatch[1]);
+      const agents = [...state.bindings.entries()]
+        .filter(([key]) => key.startsWith(`${workspaceId}:`))
+        .map(([, value]) => value);
+      json(response, 200, { agents });
+      return;
+    }
+    const bindMatch = url.pathname.match(/^\/api\/v1\/workspaces\/([^/]+)\/agents\/([^/]+)$/);
+    if (bindMatch && (request.method === 'PUT' || request.method === 'DELETE')) {
+      const workspaceId = decodeURIComponent(bindMatch[1]);
+      const principalId = decodeURIComponent(bindMatch[2]);
+      const key = `${workspaceId}:${principalId}`;
+      if (request.method === 'PUT') {
+        if (state.bindings.has(key)) {
+          json(response, 409, { code: 'WORKSPACE_AGENT_ALREADY_BOUND' });
+          return;
+        }
+        state.bindings.set(key, { principalId, name: 'cli-agent', source: 'personal' });
+        json(response, 200, { principalId });
+        return;
+      }
+      if (!state.bindings.has(key)) {
+        json(response, 404, { code: 'WORKSPACE_AGENT_NOT_BOUND' });
+        return;
+      }
+      state.bindings.delete(key);
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+    if (url.pathname === '/api/v1/provider-connections' && request.method === 'GET') {
+      json(response, 200, { connections: state.connections });
+      return;
+    }
+    const patchMatch = url.pathname.match(/^\/api\/v1\/provider-connections\/([^/]+)$/);
+    if (patchMatch && request.method === 'PATCH') {
+      const body = await requestBody(request);
+      state.patchBodies.push(body);
+      const index = state.connections.findIndex((item) => item.id === decodeURIComponent(patchMatch[1]));
+      if (index === -1) { json(response, 404, { code: 'CONNECTION_NOT_FOUND' }); return; }
+      state.connections[index] = { ...state.connections[index], ...body, modelLimits: body.modelLimits ?? state.connections[index].modelLimits };
+      json(response, 200, { connection: state.connections[index] });
+      return;
+    }
+    json(response, 404, { code: 'NOT_FOUND' });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  const env = {
+    XIHE_CP_PORT: String(port),
+    XIHE_CP_URL: `http://127.0.0.1:${port}`,
+    XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD,
+  };
+  const noPrompt = async () => { throw new Error('must not prompt'); };
+  const run = (argv) => runCommand(argv, { env, promptSecret: noPrompt, stdout: sink(), stderr: sink() });
+  try {
+    const created = await run(['agent', 'create', '--scope', 'personal', '--name', 'cli-agent',
+      '--template', 'tpl-1', '--default-model', 'openai:gpt-5', '--allow-model', 'openai:gpt-5',
+      '--allow-model', 'openai:gpt-5-mini', '--json']);
+    assert.equal(created.exitCode, 0);
+    assert.equal(created.data.kind, 'agent-created');
+    assert.equal(created.data.created, true);
+    assert.equal(created.data.principalId, 'p-1');
+    assert.equal(created.data.principal.scope, 'PERSONAL');
+    assert.deepEqual(created.data.principal.allowedModels, [
+      { provider: 'openai', model: 'gpt-5' },
+      { provider: 'openai', model: 'gpt-5-mini' },
+    ]);
+    assert.deepEqual(created.data.principal.defaultModelProvider, 'openai');
+    assert.equal(created.data.principal.defaultModelName, 'gpt-5');
+
+    const again = await run(['agent', 'create', '--scope', 'personal', '--name', 'cli-agent',
+      '--template', 'tpl-1', '--default-model', 'openai:gpt-5', '--allow-model', 'openai:gpt-5',
+      '--allow-model', 'openai:gpt-5-mini', '--json']);
+    assert.equal(again.exitCode, 0);
+    assert.equal(again.data.created, false);
+    assert.equal(again.data.idempotent, true);
+    assert.equal(again.data.principalId, 'p-1');
+    assert.equal(state.createRequests, 1, 'repeat create must not POST again');
+
+    const listed = await run(['agent', 'list', '--json']);
+    assert.equal(listed.exitCode, 0);
+    assert.equal(listed.data.kind, 'agent-list');
+    assert.equal(listed.data.principals.length, 1);
+    assert.equal(listed.data.principals[0].principalId, 'p-1');
+
+    const bound = await run(['agent', 'bind', '--principal', 'p-1', '--workspace', 'ws-1', '--json']);
+    assert.equal(bound.exitCode, 0);
+    assert.equal(bound.data.alreadyBound, false);
+    const rebound = await run(['agent', 'bind', '--principal', 'p-1', '--workspace', 'ws-1', '--json']);
+    assert.equal(rebound.exitCode, 0, 'repeat bind must be an idempotent success');
+    assert.equal(rebound.data.alreadyBound, true);
+
+    const wsAgents = await run(['agent', 'list', '--workspace', 'ws-1', '--json']);
+    assert.equal(wsAgents.exitCode, 0);
+    // PLAN-0622 contract v1: pass the {agents:[...]} envelope through unchanged.
+    assert.ok(Array.isArray(wsAgents.data.agents), 'workspace list must keep the envelope');
+    assert.equal(wsAgents.data.agents.length, 1);
+    assert.equal(wsAgents.data.agents[0].source, 'personal');
+    assert.equal(wsAgents.data.agents[0].permissionsSnapshot, undefined);
+
+    const unbound = await run(['agent', 'unbind', '--principal', 'p-1', '--workspace', 'ws-1', '--json']);
+    assert.equal(unbound.exitCode, 0);
+    const unboundAgain = await run(['agent', 'unbind', '--principal', 'p-1', '--workspace', 'ws-1', '--json']);
+    assert.equal(unboundAgain.exitCode, 0, 'repeat unbind must be an idempotent success');
+    assert.equal(unboundAgain.data.alreadyUnbound, true);
+
+    const disabled = await run(['agent', 'disable', '--principal', 'p-1', '--json']);
+    assert.equal(disabled.exitCode, 0);
+    assert.equal(disabled.data.alreadyDisabled, false);
+    const disabledAgain = await run(['agent', 'disable', '--principal', 'p-1', '--json']);
+    assert.equal(disabledAgain.exitCode, 0);
+    assert.equal(disabledAgain.data.alreadyDisabled, true);
+
+    const missing = await run(['agent', 'disable', '--principal', 'disabled-missing', '--json']);
+    assert.equal(missing.exitCode, 1, 'CP 4xx is a business failure');
+    assert.equal(missing.error.code, 'AGENT_PRINCIPAL_NOT_FOUND', 'CP code must pass through');
+
+    const usage = await run(['agent', 'create', '--scope', 'bogus', '--name', 'x', '--json']);
+    assert.equal(usage.exitCode, 2, 'usage errors exit 2');
+    assert.equal(usage.error.code, 'INVALID_ARGUMENT');
+
+    const quota = await run(['provider', 'limit', 'set', '--connection', 'conn-1', '--tokens', '100', '--json']);
+    assert.equal(quota.exitCode, 2, '--tokens without --window is a usage error');
+
+    const limits = await run(['provider', 'limit', 'set', '--connection', 'conn-1', '--max-inflight', '2',
+      '--tokens', '100', '--window', '60', '--model', 'openai:gpt-5', '--max-inflight', '1', '--json']);
+    assert.equal(limits.exitCode, 0);
+    assert.equal(limits.data.kind, 'provider-limits');
+    assert.deepEqual(state.patchBodies[0], {
+      maxInflight: 2,
+      windowTokenBudget: 100,
+      windowSeconds: 60,
+      modelLimits: [{ provider: 'openai', model: 'gpt-5', maxInflight: 1 }],
+    });
+
+    const shown = await run(['provider', 'limit', 'show', '--connection', 'conn-1', '--json']);
+    assert.equal(shown.exitCode, 0);
+    assert.equal(shown.data.limits.maxInflight, 2);
+    assert.equal(shown.data.limits.windowSeconds, 60);
+    assert.equal(shown.data.limits.modelLimits[0].maxInflight, 1);
+
+    // PLAN-0622 contract v1: modelLimits is a full replacement (clear / inherit / null).
+    const clearModels = await run(['provider', 'limit', 'set', '--connection', 'conn-1', '--clear-model-limits', '--json']);
+    assert.equal(clearModels.exitCode, 0);
+    assert.deepEqual(state.patchBodies[1].modelLimits, []);
+
+    const clearedGlobal = await run(['provider', 'limit', 'set', '--connection', 'conn-1', '--max-inflight', 'none', '--json']);
+    assert.equal(clearedGlobal.exitCode, 0);
+    assert.equal(state.patchBodies[2].maxInflight, null);
+
+    const clearedModel = await run(['provider', 'limit', 'set', '--connection', 'conn-1',
+      '--model', 'openai:gpt-5', '--max-inflight', 'none', '--json']);
+    assert.equal(clearedModel.exitCode, 0);
+    assert.deepEqual(state.patchBodies[3].modelLimits, [{ provider: 'openai', model: 'gpt-5', maxInflight: null }]);
+
+    const inherited = await run(['provider', 'limit', 'set', '--connection', 'conn-1', '--max-inflight', '3', '--json']);
+    assert.equal(inherited.exitCode, 0);
+    assert.equal('modelLimits' in state.patchBodies[4], false, 'omitting modelLimits must inherit');
+
+    const unknownConnection = await run(['provider', 'limit', 'show', '--connection', 'nope', '--json']);
+    assert.equal(unknownConnection.exitCode, 1);
+    assert.equal(unknownConnection.error.code, 'CONNECTION_NOT_FOUND');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+test('run-agent-e2e: usage 2, scope gate 3, and a full A5+A6 pass against a fake CP', async () => {
+  const { main } = await import('./xihe-cli/run-agent-e2e.mjs');
+  const env = { XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD };
+
+  let chats = 0;
+  let scopeMode = 'missing';
+  const patches = [];
+  const state = { agents: [] };
+  const fakeFetch = async (url, init = {}) => {
+    const target = new URL(url);
+    const method = init.method ?? 'GET';
+    const body = init.body ? JSON.parse(init.body) : null;
+    const respond = (status, payload, headers = {}) => new Response(JSON.stringify(payload), {
+      status, headers: { 'Content-Type': 'application/json', ...headers },
+    });
+    if (target.pathname === '/api/v1/auth/login' && method === 'POST') {
+      return respond(200, { accessToken: 'runner-token', tokenType: 'Bearer', expiresIn: 900 });
+    }
+    if (target.pathname === '/api/v1/agent-principals' && method === 'GET') {
+      return scopeMode === 'ok'
+        ? respond(200, { principals: [] })
+        : respond(404, { code: 'NOT_FOUND' });
+    }
+    if (target.pathname === '/api/v1/agent-principals' && method === 'POST') {
+      return respond(201, { principalId: 'p-9', scope: body.scope, name: body.name });
+    }
+    if (target.pathname === '/api/v1/workspaces/ws-1/agents' && method === 'GET') {
+      return respond(200, { agents: state.agents });
+    }
+    if (target.pathname === '/api/v1/workspaces/ws-1/agents/p-9' && method === 'PUT') {
+      state.agents = [{ principalId: 'p-9', name: 'e2e', source: 'personal', permissionsSnapshot: [] }];
+      return respond(200, { principalId: 'p-9' });
+    }
+    if (target.pathname === '/api/v1/workspaces/ws-1/agents/p-9' && method === 'DELETE') {
+      state.agents = [];
+      return new Response(null, { status: 204 });
+    }
+    if (target.pathname === '/api/v1/provider-connections' && method === 'GET') {
+      return respond(200, { connections: [{ id: 'c-1', status: 'READY', enabled: true, connectionKey: 'c-1', manualModels: ['gpt-5'] }] });
+    }
+    if (target.pathname === '/api/v1/provider-connections/c-1' && method === 'PATCH') {
+      patches.push(body);
+      return respond(200, { connection: { id: 'c-1', ...body } });
+    }
+    if (target.pathname === '/api/v1/config/api-request-templates' && method === 'GET') {
+      return respond(200, { templates: [{ id: 't-1', status: 'published', version: 1 }] });
+    }
+    if (target.pathname === '/api/v1/sessions' && method === 'POST') {
+      return respond(201, { id: 's-1' });
+    }
+    if (target.pathname === '/api/v1/sessions/s-1/branches' && method === 'GET') {
+      return respond(200, { items: [{ branchId: 'b-1' }] });
+    }
+    if (target.pathname === '/api/v1/sessions/s-1' && method === 'DELETE') {
+      return new Response(null, { status: 204 });
+    }
+    if (target.pathname === '/api/v1/chat' && method === 'POST') {
+      if (patches.length >= 2) return respond(202, { runId: 'run-after' });
+      chats += 1;
+      if (chats === 1) return respond(202, { runId: 'run-1' });
+      return respond(429, { code: 'RESOURCE_EXHAUSTED', retryAfterSeconds: 1, resourceKind: 'CONNECTION', scope: 'ws-1' }, { 'Retry-After': '1' });
+    }
+    if (target.pathname.startsWith('/api/v1/chat/runs/') && method === 'POST') {
+      return respond(200, {});
+    }
+    return respond(404, { code: 'NOT_FOUND' });
+  };
+  const usage = await main(['--ui-workspace', 'ws-1', '--json']);
+  assert.equal(usage, 2, 'missing --cp is a usage error');
+
+  const scopeUnsupported = await main(['--cp', 'http://cp-fake', '--ui-workspace', 'ws-1', '--json'], { env, fetchImpl: fakeFetch });
+  assert.equal(scopeUnsupported, 3, 'CP without M1.2 must exit 3, not pass');
+
+  scopeMode = 'ok'; // CP M1.2 delivered from here on
+  const { runAgentE2E } = await import('./xihe-cli/run-agent-e2e.mjs');
+  const pass = await runAgentE2E({
+    env,
+    fetchImpl: fakeFetch,
+    options: { '--cp': 'http://cp-fake', '--ui-workspace': 'ws-1' },
+  });
+  assert.equal(pass.exitCode, 0, JSON.stringify(pass.data?.steps ?? pass.error));
+  assert.equal(pass.data.personal.principalId, 'p-9');
+  assert.equal(pass.data.limit.status, 'PASS');
+  assert.equal(pass.data.session.id, 's-1');
+  assert.equal(pass.data.limit.detail.includes('kind=CONNECTION'), true);
+  assert.equal(patches.length, 2, 'set maxInflight=1 then restore');
+  assert.equal(patches[0].maxInflight, 1);
+  assert.equal(pass.data.steps.at(-1).name, 'cleanup session');
 });

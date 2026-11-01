@@ -81,7 +81,7 @@ test.describe("@host Session branch path", () => {
 
         const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
             headers: workspaceHeaders,
-            data: { name: "Session Branch Agent", templateId },
+            data: { scope: "WORKSPACE", name: "Session Branch Agent", templateId },
         });
         expect(principalResponse.status(), await principalResponse.text()).toBe(201);
         principalId = ((await principalResponse.json()) as { principalId: string }).principalId;

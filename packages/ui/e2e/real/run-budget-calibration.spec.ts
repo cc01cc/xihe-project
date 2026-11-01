@@ -200,7 +200,7 @@ async function createPrincipal(
     expect(templateWrite.status(), await templateWrite.text()).toBe(200);
     const principalRes = await request.post(`${CP_URL}/api/v1/agent-principals`, {
         headers: auth.headers,
-        data: { name: options.name, templateId },
+        data: { scope: "WORKSPACE", name: options.name, templateId },
     });
     expect(principalRes.status(), await principalRes.text()).toBe(201);
     const principalId = ((await principalRes.json()) as { principalId: string }).principalId;

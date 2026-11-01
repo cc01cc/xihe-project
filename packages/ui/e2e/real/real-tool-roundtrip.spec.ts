@@ -96,7 +96,7 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
         expect(templateWrite.status(), await templateWrite.text()).toBe(200);
         const principalRes = await request.post(`${CP_URL}/api/v1/agent-principals`, {
             headers: setupHeaders,
-            data: { name: "Real Compat Agent", templateId },
+            data: { scope: "WORKSPACE", name: "Real Compat Agent", templateId },
         });
         expect(principalRes.status(), await principalRes.text()).toBe(201);
         const principalId = ((await principalRes.json()) as { principalId: string }).principalId;

@@ -247,7 +247,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
 
     const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
         headers: workspaceHeaders,
-        data: { name: "CP MCP Spawn E2E" },
+        data: { scope: "WORKSPACE", name: "CP MCP Spawn E2E" },
     });
     expect(principalResponse.status(), await principalResponse.text()).toBe(201);
     const principalId = requireUuid(
