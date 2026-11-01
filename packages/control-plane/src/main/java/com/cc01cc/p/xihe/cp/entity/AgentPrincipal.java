@@ -44,6 +44,31 @@ public class AgentPrincipal {
     @Column(name = "disabled_at")
     private Instant disabledAt;
 
+    /**
+     * PLAN-0622 (T0.2/V90): the sharing tier. {@code PERSONAL} principals belong to exactly one
+     * human ({@link #ownerUserId}); {@code WORKSPACE} ones are shared inside a workspace through a
+     * {@code workspace_agents} row; {@code INSTANCE} ones are visible instance-wide and may only be
+     * bound by instance administration.
+     */
+    @Column(name = "scope", nullable = false, length = 16)
+    private String scope = "WORKSPACE";
+
+    /** Only ever set for {@code PERSONAL}; the DB CHECK constraint keeps the two in sync. */
+    @Column(name = "owner_user_id", columnDefinition = "uuid")
+    private UUID ownerUserId;
+
+    /** Model intent only — the principal never holds a provider connection (resolved at run time). */
+    @Column(name = "default_model_provider", columnDefinition = "TEXT")
+    private String defaultModelProvider;
+
+    @Column(name = "default_model_name", columnDefinition = "TEXT")
+    private String defaultModelName;
+
+    /** {@code [{provider,model}]} or null = unrestricted. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "allowed_models", columnDefinition = "jsonb")
+    private JsonNode allowedModels;
+
     public AgentPrincipal() {}
 
     @PrePersist
@@ -76,4 +101,21 @@ public class AgentPrincipal {
 
     public Instant getDisabledAt() { return disabledAt; }
     public void setDisabledAt(Instant disabledAt) { this.disabledAt = disabledAt; }
+
+    public String getScope() { return scope; }
+    public void setScope(String scope) { this.scope = scope; }
+
+    public UUID getOwnerUserId() { return ownerUserId; }
+    public void setOwnerUserId(UUID ownerUserId) { this.ownerUserId = ownerUserId; }
+
+    public String getDefaultModelProvider() { return defaultModelProvider; }
+    public void setDefaultModelProvider(String defaultModelProvider) {
+        this.defaultModelProvider = defaultModelProvider;
+    }
+
+    public String getDefaultModelName() { return defaultModelName; }
+    public void setDefaultModelName(String defaultModelName) { this.defaultModelName = defaultModelName; }
+
+    public JsonNode getAllowedModels() { return allowedModels; }
+    public void setAllowedModels(JsonNode allowedModels) { this.allowedModels = allowedModels; }
 }

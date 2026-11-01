@@ -3,9 +3,12 @@ package com.cc01cc.p.xihe.cp.service;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.auth.AuthService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
+import com.cc01cc.p.xihe.cp.policy.AuthzContext;
+import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
 import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.ToolShape;
@@ -45,6 +48,11 @@ import java.util.UUID;
 @Service
 public class AgentPrincipalService {
 
+    /** PLAN-0622: the three sharing tiers (frozen wire vocabulary). */
+    public static final String SCOPE_PERSONAL = "PERSONAL";
+    public static final String SCOPE_WORKSPACE = "WORKSPACE";
+    public static final String SCOPE_INSTANCE = "INSTANCE";
+
     private final AgentPrincipalRepository agentPrincipalRepository;
     private final AuthorizationGrantRepository grantRepository;
     private final AuthService authService;
@@ -55,6 +63,7 @@ public class AgentPrincipalService {
     private final AuditLogger auditLogger;
     private final ObjectMapper objectMapper;
     private final AgentTemplateService agentTemplateService;
+    private final AuthzContext authzContext;
 
     public AgentPrincipalService(AgentPrincipalRepository agentPrincipalRepository,
                                  AuthorizationGrantRepository grantRepository,
@@ -65,7 +74,8 @@ public class AgentPrincipalService {
                                  GrantIntersectionEvaluator evaluator,
                                  AuditLogger auditLogger,
                                  ObjectMapper objectMapper,
-                                 AgentTemplateService agentTemplateService) {
+                                 AgentTemplateService agentTemplateService,
+                                 AuthzContext authzContext) {
         this.agentPrincipalRepository = agentPrincipalRepository;
         this.grantRepository = grantRepository;
         this.authService = authService;
@@ -76,18 +86,162 @@ public class AgentPrincipalService {
         this.auditLogger = auditLogger;
         this.objectMapper = objectMapper;
         this.agentTemplateService = agentTemplateService;
+        this.authzContext = authzContext;
     }
 
     /** Authorizes, resolves a caller-readable snapshot, and creates a principal atomically. */
     @Transactional
-    public AgentPrincipal createPrincipalFromTemplate(String actorUserId, String name, String templateId) {
+    /**
+     * PLAN-0622 M1.1: creation is one of three tiers, and each tier has its **own** action atom
+     * (D8: never alias-merged).
+     *
+     * <ul>
+     *   <li>{@code PERSONAL} — user tier, {@code CREATE_OWN_AGENT}; the owner is always the caller
+     *       (the frozen body has no {@code ownerUserId}, so an admin can never mint one "for
+     *       somebody else");</li>
+     *   <li>{@code WORKSPACE} — workspace tier, {@code MANAGE_WORKSPACE_AGENTS} for the request
+     *       workspace; without a workspace context this fails explicitly with
+     *       {@code 409 WORKSPACE_CONTEXT_REQUIRED} instead of guessing;</li>
+     *   <li>{@code INSTANCE} — instance tier, {@code CREATE_ACCOUNT}.</li>
+     * </ul>
+     *
+     * <p>An omitted {@code scope} keeps the pre-0622 behaviour: instance-wide creation when the
+     * caller has no workspace context, workspace-tier creation when it does. The wire contract
+     * documents {@code WORKSPACE} as the DB default, but the historical callers (UI before M3,
+     * e2e helpers) create principals with an instance token and no scope field.</p>
+     */
+    public AgentPrincipal createPrincipalFromTemplate(String actorUserId, String name, String templateId,
+                                                      String requestedScope, String defaultModelProvider,
+                                                      String defaultModelName, JsonNode allowedModels) {
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         requireUser(actorId);
-        requireUserAction(actorId, ToolFaceRegistry.ACTION_CREATE_ACCOUNT, "*", null);
+        UUID workspaceContext = currentWorkspaceContext();
+        boolean explicitScope = requestedScope != null && !requestedScope.isBlank();
+        String scope = resolveCreationScope(requestedScope);
+        requireCreationAction(actorId, scope, workspaceContext, explicitScope);
         AgentTemplateService.ResolvedTemplate resolved = agentTemplateService.resolveForCreation(
                 actorUserId, null, templateId);
         String resolvedTemplateId = optionalText(resolved.snapshot(), "templateId");
-        return createPrincipal(actorUserId, name, resolvedTemplateId, resolved.snapshot());
+        return createPrincipal(actorUserId, name, resolvedTemplateId, resolved.snapshot(), scope,
+                "PERSONAL".equals(scope) ? actorId : null,
+                defaultModelProvider, defaultModelName, allowedModels);
+    }
+
+    /** Legacy signature kept for the pre-0622 callers; same semantics as an omitted scope. */
+    public AgentPrincipal createPrincipalFromTemplate(String actorUserId, String name, String templateId) {
+        return createPrincipalFromTemplate(actorUserId, name, templateId, null, null, null, null);
+    }
+
+    /**
+     * Omitted {@code scope} resolves to {@code WORKSPACE} — the same default M0's migration applied
+     * to every pre-existing row (V90 backfill). The legacy authorization (CREATE_ACCOUNT) is kept
+     * separately in {@link #requireCreationAction} so a pre-0622 caller keeps its old gate.
+     */
+    private String resolveCreationScope(String requestedScope) {
+        if (requestedScope == null || requestedScope.isBlank()) {
+            return SCOPE_WORKSPACE;
+        }
+        String normalized = requestedScope.trim().toUpperCase(java.util.Locale.ROOT);
+        if (!SCOPE_PERSONAL.equals(normalized) && !SCOPE_WORKSPACE.equals(normalized)
+                && !SCOPE_INSTANCE.equals(normalized)) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_AGENT_SCOPE",
+                    "scope must be one of PERSONAL, WORKSPACE, INSTANCE");
+        }
+        return normalized;
+    }
+
+    private void requireCreationAction(UUID actorId, String scope, UUID workspaceContext,
+                                       boolean explicitScope) {
+        if (!explicitScope) {
+            // Pre-0622 body ({name[, templateId]}): the tier is now WORKSPACE, but the authorization
+            // stays the historical instance-level CREATE_ACCOUNT so no legacy caller gains or loses
+            // an authority it did not have before this milestone.
+            requireUserAction(actorId, ToolFaceRegistry.ACTION_CREATE_ACCOUNT, "*", null);
+            return;
+        }
+        if (SCOPE_PERSONAL.equals(scope)) {
+            requireUserAction(actorId, ToolFaceRegistry.ACTION_OWN_AGENT, "*", null);
+            return;
+        }
+        if (SCOPE_WORKSPACE.equals(scope)) {
+            if (workspaceContext == null) {
+                // Never guess a workspace: an ambiguous create would land in the wrong tenant.
+                // The status distinguishes "you may create in some workspace but did not name one"
+                // (409, actionable: send X-Workspace-Id) from "you have no workspace-tier authority
+                // at all" (403) — the capability projection decides, never an unscoped grant read.
+                AuthzContext.Capabilities capabilities = authzContext.capabilitiesFor(actorId);
+                boolean adminsSomeWorkspace = capabilities.workspaceAdminAll()
+                        || !capabilities.workspaceAdminWorkspaces().isEmpty();
+                throw new CpApiException(
+                        adminsSomeWorkspace ? HttpStatus.CONFLICT : HttpStatus.FORBIDDEN,
+                        adminsSomeWorkspace ? "WORKSPACE_CONTEXT_REQUIRED" : "FORBIDDEN",
+                        adminsSomeWorkspace
+                                ? "Creating a WORKSPACE-scope agent principal requires a workspace context"
+                                : ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS
+                                        + " permission is required");
+            }
+            requireUserAction(actorId, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS,
+                    workspaceContext.toString(), workspaceContext);
+            return;
+        }
+        requireUserAction(actorId, ToolFaceRegistry.ACTION_CREATE_ACCOUNT, "*", null);
+    }
+
+    /**
+     * The workspace context of this request, or {@code null} when the caller only has the implicit
+     * "first active membership" fallback.
+     *
+     * <p>{@code TenantContextInterceptor} resolves header → legacy token claim → first active
+     * membership ({@code workspaceSource=default}). The last one is a convenience for reads; a
+     * WORKSPACE-scope <b>write</b> must be explicit, otherwise a create lands in whichever workspace
+     * happens to be first (test: {@code workspaceScopeNeedsWorkspaceContext...}).</p>
+     */
+    private UUID currentWorkspaceContext() {
+        String workspaceId = TenantContext.getWorkspaceId();
+        if (workspaceId == null || workspaceId.isBlank()) {
+            return null;
+        }
+        String source = TenantContext.getWorkspaceSource();
+        if (source == null || "default".equals(source)) {
+            return null;
+        }
+        return parseUuid(workspaceId, "INVALID_WORKSPACE_CONTEXT");
+    }
+
+    /**
+     * PLAN-0622 §2: the principal declares a model <b>intent</b> ({@code provider + model}) plus an
+     * optional allow-list; it never holds a connection. Provider and model are both-or-neither and
+     * every allow-list entry needs both halves — a half-filled intent would silently fall back to
+     * the workspace default, which is exactly the ambiguity this contract removes.
+     */
+    private JsonNode normalizeModelIntent(String provider, String model, JsonNode allowedModels) {
+        String normalizedProvider = provider == null || provider.isBlank() ? null : provider.trim();
+        String normalizedModel = model == null || model.isBlank() ? null : model.trim();
+        if ((normalizedProvider == null) != (normalizedModel == null)) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_AGENT_PRINCIPAL",
+                    "defaultModelProvider and defaultModelName must be set together");
+        }
+        if (allowedModels == null || allowedModels.isNull()) {
+            return null;
+        }
+        if (!allowedModels.isArray()) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_AGENT_PRINCIPAL",
+                    "allowedModels must be an array of {provider, model}");
+        }
+        ArrayNode normalized = objectMapper.createArrayNode();
+        for (JsonNode entry : allowedModels) {
+            String entryProvider = optionalText(entry, "provider");
+            String entryModel = optionalText(entry, "model");
+            if (entryProvider == null || entryModel == null) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_AGENT_PRINCIPAL",
+                        "Every allowedModels entry needs both provider and model");
+            }
+            ObjectNode node = objectMapper.createObjectNode();
+            node.put("provider", entryProvider.trim());
+            node.put("model", entryModel.trim());
+            normalized.add(node);
+        }
+        return normalized.isEmpty() ? null : normalized;
     }
 
     /**
@@ -106,10 +260,28 @@ public class AgentPrincipalService {
                 ? instructions.asText() : null;
     }
 
-    /** The caller authorizes CREATE_ACCOUNT and supplies a server-resolved immutable template snapshot. */
+    /**
+     * The caller authorizes CREATE_ACCOUNT and supplies a server-resolved immutable template
+     * snapshot. The tier defaults to {@code WORKSPACE} (M0's backfill default); a caller that wants
+     * an INSTANCE principal passes the scope through {@link #createPrincipalFromTemplate}.
+     */
     @Transactional
     public AgentPrincipal createPrincipal(String actorUserId, String name, String templateId,
                                           JsonNode templateSnapshot) {
+        return createPrincipal(actorUserId, name, templateId, templateSnapshot, SCOPE_WORKSPACE, null,
+                null, null, null);
+    }
+
+    /**
+     * PLAN-0622 M1.1: the tier, the owner and the model intent are decided by
+     * {@link #createPrincipalFromTemplate} (authorization) and written here; this method only
+     * enforces the invariants that must hold for **every** write path.
+     */
+    @Transactional
+    public AgentPrincipal createPrincipal(String actorUserId, String name, String templateId,
+                                          JsonNode templateSnapshot, String scope, UUID ownerUserId,
+                                          String defaultModelProvider, String defaultModelName,
+                                          JsonNode allowedModels) {
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         if (!authService.userExists(actorId)) {
             throw new CpApiException(
@@ -123,6 +295,18 @@ public class AgentPrincipalService {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_TEMPLATE_SNAPSHOT",
                     "Template ID does not match the frozen snapshot");
         }
+        String resolvedScope = scope == null || scope.isBlank() ? SCOPE_WORKSPACE : scope;
+        // Invariant mirror of ck_agent_principals_owner: PERSONAL owns exactly one human, every
+        // other tier owns nobody. The DB constraint is the backstop, not the only guard.
+        if (SCOPE_PERSONAL.equals(resolvedScope) && ownerUserId == null) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_AGENT_PRINCIPAL",
+                    "A PERSONAL agent principal requires an owner");
+        }
+        if (!SCOPE_PERSONAL.equals(resolvedScope) && ownerUserId != null) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_AGENT_PRINCIPAL",
+                    "Only PERSONAL agent principals carry an owner");
+        }
+        JsonNode modelIntent = normalizeModelIntent(defaultModelProvider, defaultModelName, allowedModels);
 
         Set<GrantIntersectionEvaluator.PermissionAtom> templatePermissions =
                 parsePermissions(templateSnapshot.get("permissions"));
@@ -146,6 +330,11 @@ public class AgentPrincipalService {
         principal.setTemplateId(templateId);
         principal.setTemplateSnapshot(templateSnapshot.deepCopy());
         principal.setCreatedByUserId(actorId.toString());
+        principal.setScope(resolvedScope);
+        principal.setOwnerUserId(ownerUserId);
+        principal.setDefaultModelProvider(defaultModelProvider);
+        principal.setDefaultModelName(defaultModelName);
+        principal.setAllowedModels(modelIntent);
         AgentPrincipal savedPrincipal = agentPrincipalRepository.saveAndFlush(principal);
 
         // PLAN-0470 #22: the grant write itself is Policy-owned.
@@ -156,7 +345,14 @@ public class AgentPrincipalService {
                 grantPermissions);
 
         ObjectNode detail = objectMapper.createObjectNode();
-        detail.put("authorizationAction", "CREATE_ACCOUNT");
+        // PLAN-0622 M1.1: the audit record carries the tier (checklist risk #7) and the action that
+        // authorized it, so a reviewer can tell a PERSONAL create from an INSTANCE one.
+        detail.put("authorizationAction", switch (resolvedScope) {
+            case SCOPE_PERSONAL -> ToolFaceRegistry.ACTION_OWN_AGENT;
+            case SCOPE_WORKSPACE -> ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS;
+            default -> ToolFaceRegistry.ACTION_CREATE_ACCOUNT;
+        });
+        detail.put("scope", resolvedScope);
         if (templateId != null) {
             detail.put("templateId", templateId);
         }
@@ -176,6 +372,7 @@ public class AgentPrincipalService {
         requireWorkspaceMember(actorId, workspaceId);
         requireWorkspaceAgentManagement(actorId, workspaceId);
         AgentPrincipal principal = requireActivePrincipal(principalId);
+        requireBindingAuthorityForScope(actorId, principal);
 
         Set<GrantIntersectionEvaluator.PermissionAtom> cap = parsePermissions(requestedPermissions);
         Set<GrantIntersectionEvaluator.PermissionAtom> principalPermissions = evaluator.union(
@@ -346,6 +543,37 @@ public class AgentPrincipalService {
     private void requireWorkspaceAgentManagement(UUID actorId, UUID workspaceId) {
         requireUserAction(actorId, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS,
                 workspaceId.toString(), workspaceId);
+    }
+
+    /**
+     * PLAN-0622 M1.1 (O4): {@code MANAGE_WORKSPACE_AGENTS} is necessary but no longer sufficient.
+     *
+     * <ul>
+     *   <li>{@code PERSONAL} — only its owner may bind it; otherwise A could drag B's private agent
+     *       into A's workspace (and 0623 would then run B's agent under A's approval chain).</li>
+     *   <li>{@code INSTANCE} — only instance administration may bind it; a workspace owner is not
+     *       automatically instance administration.</li>
+     *   <li>{@code WORKSPACE} — the existing workspace gate is the whole rule.</li>
+     * </ul>
+     *
+     * <p>Distinct codes on purpose: {@code 403 AGENT_PRINCIPAL_OWNER_MISMATCH} and
+     * {@code 403 INSTANCE_ADMIN_REQUIRED} tell the caller which authority is missing without
+     * disclosing whether the principal exists (the caller already reached this point with a valid
+     * workspace gate, so the principal id is theirs).</p>
+     */
+    private void requireBindingAuthorityForScope(UUID actorId, AgentPrincipal principal) {
+        String scope = principal.getScope() == null ? SCOPE_WORKSPACE : principal.getScope();
+        if (SCOPE_PERSONAL.equals(scope)) {
+            if (!actorId.equals(principal.getOwnerUserId())) {
+                throw new CpApiException(HttpStatus.FORBIDDEN, "AGENT_PRINCIPAL_OWNER_MISMATCH",
+                        "A PERSONAL agent principal may only be bound by its owner");
+            }
+            return;
+        }
+        if (SCOPE_INSTANCE.equals(scope) && !CapabilityAuthorities.isInstanceAdmin()) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "INSTANCE_ADMIN_REQUIRED",
+                    "An INSTANCE-scope agent principal may only be bound by instance administration");
+        }
     }
 
     /**
