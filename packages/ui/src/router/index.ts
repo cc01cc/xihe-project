@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from "vue-router";
 import { api } from "../composables/api";
+import { logger } from "../lib/logger";
 import {
     migrateLegacyWorkspace,
     readTabWorkspaceId,
@@ -193,6 +194,31 @@ router.beforeEach(async (to) => {
                     writeTabWorkspace({
                         id: res.workspaceId,
                         name: "Default Workspace",
+                    });
+                }
+                // PLAN-0611: the guard writes localStorage, but the Pinia store may already exist
+                // (`main.ts` mounts the app before the initial navigation resolves), so its
+                // in-memory token/user would stay "signed out" — `isAuthenticated`/`isAdmin` false
+                // until a manual reload, i.e. no admin surfaces on a first passwordless entry.
+                // Adopt the session so it behaves exactly like a real sign-in. The import is dynamic
+                // on purpose: `stores/auth.ts` imports this router singleton, so a static import
+                // would create a module cycle.
+                try {
+                    const { useAuthStore } = await import("../stores/auth");
+                    useAuthStore().adoptGuardSession(
+                        res.accessToken,
+                        res.user,
+                        res.workspace ??
+                            (res.workspaceId
+                                ? { id: res.workspaceId, name: "Default Workspace" }
+                                : null),
+                        res.refreshToken,
+                    );
+                } catch (error) {
+                    // No active Pinia (unit tests) or a broken store: the localStorage write above
+                    // still lets the guard finish, so log instead of blocking entry.
+                    logger.warn("Failed to adopt the local-mode session into the store", {
+                        error: String(error),
                     });
                 }
                 return true;

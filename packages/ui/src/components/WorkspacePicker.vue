@@ -11,7 +11,7 @@ import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { api, ApiError, type ApiWorkspace } from "../composables/api";
-import { readTabWorkspaceId, writeTabWorkspace } from "../lib/workspaceContext";
+import { clearTabWorkspace, readTabWorkspaceId, writeTabWorkspace } from "../lib/workspaceContext";
 import { logger } from "../lib/logger";
 
 const { t } = useI18n();
@@ -38,12 +38,27 @@ async function openWorkspace(workspace: ApiWorkspace): Promise<void> {
 }
 
 onMounted(async () => {
-    // A tab that already has a context goes straight to it (the router guard
-    // normally does this, but a deep link can construct this view directly).
+    // BL-172: this view must never be able to sit on the loading state forever.
+    // The old early-return branch below redirected and returned *before* the `finally`
+    // that clears `loading`, so a bounce-back (WorkspaceView answers 400
+    // WORKSPACE_CONTEXT_CONFLICT / fails its authorization check and returns here per
+    // PLAN-0608 C′) showed "正在加载工作区…" indefinitely — an empty picker with a
+    // perfectly healthy `GET /workspaces`. Clearing the context before redirecting also
+    // matters: `readTabWorkspaceId()` would still be set, so the next mount would take
+    // the same branch again (bounce loop).
     const existing = readTabWorkspaceId();
     if (existing) {
-        await router.replace({ name: "workspace", params: { workspaceId: existing } });
-        return;
+        clearTabWorkspace();
+        try {
+            await router.replace({ name: "workspace", params: { workspaceId: existing } });
+            return;
+        } catch (cause) {
+            logger.error(
+                "Workspace picker redirect failed: " +
+                    (cause instanceof Error ? cause.message : String(cause)),
+            );
+            // Fall through to the list: the redirect target was unusable.
+        }
     }
     try {
         workspaces.value = await api.listWorkspaces();

@@ -6,6 +6,7 @@ import { useConfigStore } from "./stores/config";
 import { useAuthStore } from "./stores/auth";
 import { useSessionStore } from "./stores/session";
 import { Toaster } from "./components/ui/sonner";
+import router from "./router";
 
 const theme = useTheme();
 provide(ThemeInjectionKey, theme);
@@ -14,6 +15,10 @@ const authStore = useAuthStore(),
     configStore = useConfigStore(),
     sessionStore = useSessionStore();
 onMounted(async () => {
+    // PLAN-0611: the initial navigation may still be resolving here — it can also perform the
+    // localMode passwordless sign-in. Reading `isAuthenticated` before it settles sees the store's
+    // pre-navigation state and skips every post-login load (config domains, sessions).
+    await router.isReady();
     if (!authStore.isAuthenticated) return;
     // PLAN-0610 W5a: the cached user may predate the capability projection (no `capabilities`
     // field) or its capabilities may have been changed by another administrator. Refresh once

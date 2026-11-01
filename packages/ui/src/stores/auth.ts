@@ -131,6 +131,35 @@ export const useAuthStore = defineStore("auth", () => {
         rotateAnonSessionId();
     }
 
+    /**
+     * PLAN-0611 (BL-169 的姊妹问题): 采用**路由守卫**写下的免密会话。
+     *
+     * 守卫（`router/index.ts` 的 localMode 分支）直接写 localStorage 后放行；此时 store 可能已经被
+     * 创建（`main.ts` 先 `app.mount()`，App.vue 的 setup 会实例化 store，而初始导航尚未结束），
+     * 内存里的 `token/user` 会一直停在"未登录"：`isAuthenticated`/`isAdmin` 全为 false，免密进入后
+     * 看不到管理入口，刷新一次才正常。
+     *
+     * 与 {@link _saveToken} 的关键区别：**不清 tab 上下文**。守卫刚写入的就是本次要进入的工作区，
+     * 清掉会把人弹回选择面 —— I6 的"登录响应里的 workspace 不是用户选择"不适用于守卫的显式写入。
+     */
+    function adoptGuardSession(
+        accessToken: string,
+        guardUser: User,
+        guardWorkspace: ApiWorkspace | null,
+        guardRefreshToken?: string,
+    ) {
+        token.value = accessToken;
+        user.value = guardUser;
+        workspace.value = guardWorkspace;
+        localStorage.setItem("xihe-token", accessToken);
+        localStorage.setItem("xihe-user", JSON.stringify(guardUser));
+        if (guardRefreshToken) {
+            refreshToken.value = guardRefreshToken;
+            localStorage.setItem("xihe-refresh-token", guardRefreshToken);
+        }
+        rotateAnonSessionId();
+    }
+
     /** PLAN-0565 ruling #7: identifier is email or username. */
     async function login(identifier: string, password: string) {
         loading.value = true;
@@ -414,6 +443,7 @@ export const useAuthStore = defineStore("auth", () => {
         login,
         register,
         localLogin,
+        adoptGuardSession,
         refreshCapabilities,
         logout,
         hydrateWorkspace,

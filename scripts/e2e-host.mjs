@@ -122,7 +122,62 @@ let fakeOAuthPort = process.env.XIHE_FAKE_OAUTH_PORT ?? String(portBase + 10)
 let fakeMcpPort = process.env.XIHE_FAKE_MCP_PORT ?? String(portBase + 11)
 let fakeLlmPort = process.env.XIHE_FAKE_LLM_PORT ?? String(portBase + 12)
 const llmModeArg = process.argv.find((arg) => arg.startsWith('--llm-mode='))
-const requestedLlmMode = process.env.XIHE_E2E_LLM_MODE ?? llmModeArg?.slice('--llm-mode='.length) ?? batch?.llmMode
+// PLAN-0611 M1: gold-path first-run lane. Defaults are off so every existing
+// batch keeps its current boot shape; the flags only change CP bootstrap env.
+const firstRunArg = process.argv.find((arg) => arg.startsWith('--first-run='))
+let firstRun = firstRunArg ? firstRunArg.slice('--first-run='.length) : (batch?.firstRun ?? '')
+const bootstrapUserArg = process.argv.find((arg) => arg.startsWith('--bootstrap-user='))
+const bootstrapUser = bootstrapUserArg
+  ? bootstrapUserArg.slice('--bootstrap-user='.length)
+  : (batch?.bootstrapUser ?? 'none')
+const registrationPolicyArg = process.argv.find((arg) => arg.startsWith('--registration-policy='))
+let registrationPolicy = registrationPolicyArg
+  ? registrationPolicyArg.slice('--registration-policy='.length)
+  : (batch?.registrationPolicy ?? 'open')
+/**
+ * PLAN-0611 M1 follow-up: a persistent stack records the lane it was booted with (`firstRun` /
+ * `registrationPolicy` in the state file). A reuse run must be able to *select that same lane*,
+ * otherwise the gold-path spec skips itself on the very stack that is a first-run stack — and there
+ * is no way to iterate on it, because the flags are forbidden together with
+ * `XIHE_E2E_EXTERNAL_SERVER=1` (they also control boot). This is a read-only peek used by the
+ * validation below and by the reuse branch; it never boots anything.
+ */
+function persistentLane() {
+  if (!externalServer || !existsSync(stateFile)) return {}
+  try {
+    const state = JSON.parse(readFileSync(stateFile, 'utf8'))
+    return { firstRun: state.firstRun ?? '', registrationPolicy: state.registrationPolicy ?? '' }
+  } catch {
+    return {}
+  }
+}
+const reuseLane = persistentLane()
+if (firstRun && firstRun !== 'local') {
+  console.error(`[e2e-host] invalid --first-run=${firstRun}; expected local (the only supported first-run lane)`)
+  process.exit(2)
+}
+if (bootstrapUser !== 'register' && bootstrapUser !== 'none') {
+  console.error(`[e2e-host] invalid --bootstrap-user=${bootstrapUser}; expected register|none`)
+  process.exit(2)
+}
+if (registrationPolicy !== 'open' && registrationPolicy !== 'closed') {
+  console.error(`[e2e-host] invalid --registration-policy=${registrationPolicy}; expected open|closed`)
+  process.exit(2)
+}
+if (bootstrapUser === 'register' && firstRun !== 'local') {
+  console.error('[e2e-host] --bootstrap-user=register requires --first-run=local')
+  process.exit(2)
+}
+if (firstRun && externalServer && reuseLane.firstRun !== 'local') {
+  console.error('[e2e-host] --first-run=local boots its own stack; it cannot be combined with XIHE_E2E_EXTERNAL_SERVER=1 (only a reuse of a stack recorded with firstRun=local may select the lane)')
+  process.exit(2)
+}
+// A first-run lane that seeds nobody has no account to import the fake profile with,
+// so its natural readiness state is "not ready" unless the caller asked for a mode.
+const requestedLlmMode = process.env.XIHE_E2E_LLM_MODE
+  ?? llmModeArg?.slice('--llm-mode='.length)
+  ?? batch?.llmMode
+  ?? (firstRun === 'local' && bootstrapUser === 'none' ? 'missing' : undefined)
 const batchSpecs = batch?.specs ?? []
 const checkpointSaverProbeRequested = process.argv.some((arg) => {
   const normalized = arg.replaceAll('\\', '/')
@@ -160,6 +215,7 @@ if (authLane !== 'exempt' && authLane !== 'ratelimit') {
   throw new Error(`invalid --auth-lane value: ${authLane} (expected exempt|ratelimit)`)
 }
 const skipRuntime = process.argv.includes('--skip-runtime')
+
 // Supplementary real-provider sampling (PLAN-247, requires explicit user
 // approval per run). The key travels only via this env var into the CP Admin
 // API import below; it is never logged, never written to fixtures, and never
@@ -180,6 +236,11 @@ const realRoute = process.env.XIHE_E2E_REAL_ROUTE ?? 'native'
 const fakeMcpAccessToken = randomPassword(24)
 const fakeMcpResumeControlToken = checkpointResumeRequested ? randomPassword(32) : ''
 let e2eAdminPassword = randomPassword(24)
+// PLAN-0611 M1: localMode first-run has no seeded admin; `--bootstrap-user=register`
+// creates the first account itself and later configures the fake LLM profile with it.
+/** @type {{ email: string, password: string, accessToken: string } | null} */
+let goldpathAccount = null
+
 // PLAN-0547 decision #3: e2e-host deliberately does NOT read the .env chain — its admin
 // password is self-generated per run (or taken from the harness state at :1602) so E2E
 // runs stay hermetic and cannot be influenced by a developer's .env.local.
@@ -374,6 +435,9 @@ runner flags:
   --llm-mode=<mode>     spec gate mode (mock default; also real / write_file / approval / spawn_agent / history-marker / job / job-cancel / exec_command / overflow / success)
   --batch=<name>        expand a batch from scripts/e2e-batches.jsonc; the batch llm-mode applies unless --llm-mode is explicit
   --auth-lane=<lane>    CP auth env lane (PLAN-0566 D6): exempt (default, register dimension off) | ratelimit (lowered thresholds + loopback trusted proxies for auth-lockout / auth-rate-limit)
+  --first-run=local     PLAN-0611 gold path: empty DB + XIHE_LOCAL_MODE=true + SERVER_ADDRESS=127.0.0.1, no seeded admin (default: off)
+  --bootstrap-user=<u>  register | none (default none); register creates the first localMode account and configures the fake LLM profile with it
+  --registration-policy=<p>  open | closed (default open); injected as XIHE_AUTH_REGISTRATION_POLICY (localMode still exempts the first account)
   --list-batches        list batch names, modes and spec counts, then exit
   --report-name=<file>  write the Playwright JSON report to .local/dev/<file> (adds the list,json reporter unless one is given)
   --jar-mode=<mode>     CP boot artifact policy: auto (default) | use | rebuild | run | native (fail-closed; enables the CP↔Runtime WebSocket channel)
@@ -632,6 +696,35 @@ async function waitForRuntimeChannelHandshake(child, timeoutMs = readinessTimeou
     await new Promise((resolve) => setTimeout(resolve, 250))
   }
   throw new Error(`Runtime WebSocket hello/welcome was not confirmed within ${timeoutMs}ms (${lastError})`)
+}
+
+/**
+ * PLAN-0611 (Lead ruling D): turn a channel-handshake timeout into an actionable failure.
+ *
+ * The symptom that hid G2-e was a *silent* breaker: the runtime never received a channel URL, the CP
+ * logged `event=circuitBreakerOpen service=runtime failureCount=…` forever, and the only visible
+ * effect was "no assistant reply". So the thrown error carries the CP-side breaker evidence.
+ */
+async function channelHandshakeFailure(error) {
+  const detail = error instanceof Error ? error.message : String(error)
+  let breaker = 'cp.log not readable yet'
+  try {
+    const cpLog = await readFile(join(e2eLogDir, 'cp.log'), 'utf8')
+    const opens = cpLog.split('\n').filter((line) => line.includes('circuitBreakerOpen service=runtime'))
+    const last = opens[opens.length - 1] ?? ''
+    const failureCount = last.match(/failureCount=(\d+)/)?.[1] ?? '?'
+    breaker = opens.length === 0
+      ? 'no circuitBreakerOpen service=runtime line in cp.log'
+      : `circuitBreakerOpen count=${opens.length} lastFailureCount=${failureCount}`
+  } catch (cause) {
+    breaker = `cp.log unreadable: ${cause instanceof Error ? cause.message : String(cause)}`
+  }
+  return new Error(
+    `${detail} | CP runtime breaker: ${breaker} | the CP serves the channel only when `
+    + 'XIHE_CHANNEL_ENABLED=true (the runner now sets it in every boot mode) and the runtime needs '
+    + 'XIHE_CHANNEL_URL; if this still fails in mvn mode the mode does not establish the channel — '
+    + 'boot with --jar-mode=native and record that finding',
+  )
 }
 
 async function stopProcess(child) {
@@ -1159,22 +1252,72 @@ async function startFixtures(only = null) {
   }
 }
 
-async function configureFakeLlm() {
+/**
+ * PLAN-0611 M1: localMode + `--bootstrap-user=register`. Runs after CP health:
+ * register the first account (localMode exempts the registration policy) and keep
+ * the token so the profile import below is authorised by that SUPER_ADMIN user.
+ */
+async function bootstrapFirstRunAccount() {
   const cpBaseUrl = `http://127.0.0.1:${cpPort}`
-  const login = await fetch(`${cpBaseUrl}/api/v1/auth/login`, {
+  const email = `goldpath-${Date.now()}@test.local`
+  const password = `Goldpath-${randomBytes(6).toString('hex')}`
+  const response = await fetch(`${cpBaseUrl}/api/v1/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ identifier: 'admin@xihe.local', password: e2eAdminPassword }),
+    body: JSON.stringify({ email, password, name: 'Gold Path First Account' }),
   })
-  if (!login.ok) throw new Error(`fake LLM admin login failed: HTTP ${login.status}`)
-  const loginBody = await login.json()
-  if (typeof loginBody?.accessToken !== 'string' || loginBody.accessToken.length === 0) {
-    const responseKeys = loginBody && typeof loginBody === 'object'
-      ? Object.keys(loginBody).sort().join(',')
-      : '<non-object>'
-    throw new Error(`fake LLM admin login response omitted accessToken; responseKeys=${responseKeys}`)
+  if (!response.ok) {
+    throw new Error(`first-run bootstrap registration failed: HTTP ${response.status} ${(await response.text()).slice(0, 500)}`)
   }
-  console.log(`[e2e-host] fake LLM admin login responseKeys=${Object.keys(loginBody).sort().join(',')} accessTokenChars=${loginBody.accessToken.length} tokenType=${loginBody.tokenType ?? '<missing>'}`)
+  const body = await response.json()
+  if (typeof body?.accessToken !== 'string' || body.accessToken.length === 0) {
+    throw new Error('first-run bootstrap registration omitted accessToken')
+  }
+  goldpathAccount = { email, password, accessToken: body.accessToken }
+  // PLAN-0611 M2 取证：withDefaultWorkspace 应回填 workspaceId；空值说明注册分支没建工作区。
+  const workspaceId = body?.workspaceId ?? body?.workspace?.id ?? ''
+  const workspaceKeys = body && typeof body === 'object'
+    ? Object.keys(body).sort().join(',')
+    : '<non-object>'
+  console.log(`[e2e-host] first-run account registered email=${email} status=${response.status}`
+    + ` userId=${body?.user?.id ?? '<missing>'} workspaceId=${workspaceId || '<empty>'}`
+    + ` responseKeys=${workspaceKeys}`)
+  if (!workspaceId) {
+    console.warn('[e2e-host] first-run bootstrap response carried no workspaceId (withDefaultWorkspace did not backfill)')
+  }
+}
+
+async function configureFakeLlm() {
+  const cpBaseUrl = `http://127.0.0.1:${cpPort}`
+  if (firstRun === 'local') {
+    if (bootstrapUser === 'none') {
+      console.log('[e2e-host] first-run lane without --bootstrap-user=register: skipping llm-provider config (readiness stays not-ready)')
+      return
+    }
+    if (!goldpathAccount) await bootstrapFirstRunAccount()
+  }
+  let accessToken
+  if (goldpathAccount) {
+    accessToken = goldpathAccount.accessToken
+    console.log('[e2e-host] fake LLM config authorised by the first-run bootstrap account')
+  } else {
+    const login = await fetch(`${cpBaseUrl}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identifier: 'admin@xihe.local', password: e2eAdminPassword }),
+    })
+    if (!login.ok) throw new Error(`fake LLM admin login failed: HTTP ${login.status}`)
+    const loginBody = await login.json()
+    if (typeof loginBody?.accessToken !== 'string' || loginBody.accessToken.length === 0) {
+      const responseKeys = loginBody && typeof loginBody === 'object'
+        ? Object.keys(loginBody).sort().join(',')
+        : '<non-object>'
+      throw new Error(`fake LLM admin login response omitted accessToken; responseKeys=${responseKeys}`)
+    }
+    console.log(`[e2e-host] fake LLM admin login responseKeys=${Object.keys(loginBody).sort().join(',')} accessTokenChars=${loginBody.accessToken.length} tokenType=${loginBody.tokenType ?? '<missing>'}`)
+    accessToken = loginBody.accessToken
+  }
+
   if (realXiaomiKey) {
     // PLAN-0372 decision #A: the default native route (tools rejected by
     // design). PLAN-0372 decision #B: `openai-compat` reuses the same MiMo
@@ -1187,7 +1330,7 @@ async function configureFakeLlm() {
     const imported = await fetch(`${cpBaseUrl}/api/v1/config/import`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${loginBody.accessToken}`,
+        Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ 'llm-provider': llmProvider }),
@@ -1226,7 +1369,7 @@ async function configureFakeLlm() {
   const imported = await fetch(`${cpBaseUrl}/api/v1/config/import`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${loginBody.accessToken}`,
+      Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(config),
@@ -1296,7 +1439,8 @@ function resolveRuntimeBinary() {
 async function runPlaywright() {
   // PLAN-0375: runner-owned flags must never reach the Playwright CLI.
   const runnerOnlyArgs = new Set(['--keep', '--skip-runtime', '--persistent', '--teardown', '--skip-preflight', '--validate-at-end', '--list-batches', '--help', '-h'])
-  const runnerOnlyPrefixes = ['--llm-mode=', '--batch=', '--report-name=', '--jar-mode=', '--auth-lane=']
+  const runnerOnlyPrefixes = ['--llm-mode=', '--batch=', '--report-name=', '--jar-mode=', '--auth-lane=',
+    '--first-run=', '--bootstrap-user=', '--registration-policy=']
   const testArgs = process.argv.slice(2).filter(
     (arg) => !runnerOnlyArgs.has(arg) && !runnerOnlyPrefixes.some((prefix) => arg.startsWith(prefix)),
   )
@@ -1409,6 +1553,16 @@ async function runPlaywright() {
       // themselves (skip in the default `exempt` full-matrix lane instead of
       // failing on thresholds that only the `ratelimit` lane lowers).
       XIHE_E2E_AUTH_LANE: authLane,
+      // PLAN-0611 M1: gold-path lane gates + the bootstrap account the runner created.
+      XIHE_E2E_FIRST_RUN: firstRun,
+      XIHE_E2E_REGISTRATION_POLICY: registrationPolicy,
+      ...(goldpathAccount
+        ? {
+            XIHE_E2E_GOLDPATH_ACCOUNT: '1',
+            XIHE_E2E_GOLDPATH_EMAIL: goldpathAccount.email,
+            XIHE_E2E_GOLDPATH_PASSWORD: goldpathAccount.password,
+          }
+        : {}),
       XIHE_E2E_ADMIN_PASSWORD: e2eAdminPassword,
       XIHE_E2E_AGENT_RESTART_ENV: JSON.stringify(agentRestartEnv),
       XIHE_E2E_AGENT_DB_CONFIG_PRESENT: agentDatabaseConfigPresent === false ? 'false' : 'unknown',
@@ -1810,6 +1964,15 @@ async function main() {
         // D4: reuse-mode logins (configureFakeLlm, UI fixtures) must present the
         // stack's admin password, not this process's fresh random one.
         if (state.adminPassword) e2eAdminPassword = state.adminPassword
+        if (state.goldpathAccount) goldpathAccount = state.goldpathAccount
+        // PLAN-0611 M1 follow-up: also restore the lane gates (`XIHE_E2E_FIRST_RUN` /
+        // `XIHE_E2E_REGISTRATION_POLICY` reach Playwright below). Without this a reuse run on a
+        // first-run stack would make goldpath-first-run.spec skip itself as if it were a full stack.
+        if (!firstRun && state.firstRun) {
+          firstRun = state.firstRun
+          console.log(`[e2e-host] reuse: restored first-run lane from the persistent stack (--first-run=${firstRun})`)
+        }
+        if (state.registrationPolicy) registrationPolicy = state.registrationPolicy
         runIdForTests = state.runId
     // PLAN-0465: PG fixture 元数据同样由栈 runId 派生——端口/fixture 已恢复
     // （PLAN-0365 root cause A）但 pg project/DB 名仍取本进程 runId，导致
@@ -1881,12 +2044,25 @@ async function main() {
       XIHE_AGENT_URL: `http://127.0.0.1:${agentPort}/internal/v1/agent/chat`,
       XIHE_AGENT_BASE_URL: `http://127.0.0.1:${agentPort}`,
       XIHE_RUNTIME_URL: `http://127.0.0.1:${runtimePort}`,
-      XIHE_DEV_ADMIN_PASSWORD: e2eAdminPassword,
+      // PLAN-0611 M1: the first-run lane owns its bootstrap (no seeded admin).
+      ...(firstRun === 'local'
+        ? {
+            XIHE_LOCAL_MODE: 'true',
+            SERVER_ADDRESS: '127.0.0.1',
+            XIHE_AUTH_REGISTRATION_POLICY: registrationPolicy,
+          }
+        : { XIHE_DEV_ADMIN_PASSWORD: e2eAdminPassword }),
       // PLAN-0612 M4: the host E2E lane is the single documented exemption from the
       // frozen workspace docker backend; inject it explicitly instead of relying on a
       // developer's shell env.
       XIHE_WORKSPACE_DOCKER_BACKEND: 'enabled',
-      ...(useCpNative ? { XIHE_CHANNEL_ENABLED: 'true' } : {}),
+      // PLAN-0611 (Lead ruling D): the CP↔Runtime WebSocket channel is a readiness concern in every
+      // boot mode, not a native-image nicety. `xihe.channel.enabled` defaults to false in
+      // application.properties, so without this env a non-native boot silently stays on HTTP
+      // heartbeats and the CP's runtime circuit breaker opens
+      // (`event=circuitBreakerOpen service=runtime failureCount=…`); chat runs then fail with no
+      // chat-side error line to look at.
+      XIHE_CHANNEL_ENABLED: 'true',
     }
     if (useCpJar) console.log(`[e2e-host] CP boot via fat jar ${cpBootPlan.jar.name} (${cpBootPlan.reason})`)
     else if (useCpNative) console.log(`[e2e-host] CP boot via native executable ${cpBootPlan.executable.name} (${cpBootPlan.reason})`)
@@ -2006,13 +2182,20 @@ async function main() {
             XIHE_RUNTIME_PORT: runtimePort,
             XIHE_CP_URL: `http://127.0.0.1:${cpPort}`,
             XIHE_WORKSPACE_IMAGE: 'xihe/workspace:latest',
-            ...(useCpNative ? { XIHE_CHANNEL_URL: `http://127.0.0.1:${cpPort}` } : {}),
+            // Lead ruling D: the outbound channel URL is not native-only. Without it
+            // `runtime/src/channel.rs` falls back to HTTP heartbeat and the CP breaker opens.
+            XIHE_CHANNEL_URL: `http://127.0.0.1:${cpPort}`,
             ...(process.env.CARGO_TARGET_DIR ? { CARGO_TARGET_DIR: process.env.CARGO_TARGET_DIR } : {}),
           },
           healthUrl: `http://127.0.0.1:${runtimePort}/health`,
         })
         await waitForHttp('Runtime readiness', `http://127.0.0.1:${runtimePort}/ready`)
-        if (useCpNative) await waitForRuntimeChannelHandshake(runtimeProcess)
+        // Lead ruling D: gate every boot mode on the channel handshake, not just the native one.
+        // A silent breaker is exactly what hid the G2-e failure, so a timeout must name the CP-side
+        // breaker state instead of only saying "channel not confirmed".
+        await waitForRuntimeChannelHandshake(runtimeProcess).catch(async (error) => {
+          throw await channelHandshakeFailure(error)
+        })
       })()]),
       launchUIVite(),
     ]
@@ -2042,6 +2225,10 @@ async function main() {
       // D4: reuse-mode runs must authenticate against the stack that is already
       // up; the dev admin password is regenerated per process otherwise.
       adminPassword: e2eAdminPassword,
+      // PLAN-0611 M1: reuse-mode spec runs need the same bootstrap account identity.
+      goldpathAccount,
+      firstRun,
+      registrationPolicy,
     }, null, 2))
     console.log(`[e2e-host] persistent stack ready; state written to ${stateFile}`)
     console.log('[e2e-host] run specs with: XIHE_E2E_EXTERNAL_SERVER=1 node scripts/e2e-host.mjs --llm-mode=<mode> <specs...>')

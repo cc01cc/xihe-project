@@ -9,6 +9,7 @@ import { useChatStore } from "../chat/stores/chat";
 import { ApiError, api, type WorkspaceAgentBinding } from "../../../composables/api";
 import { useWorkspaceSSE } from "../composables/useWorkspaceSSE";
 import { logger } from "../../../lib/logger";
+import { clearTabWorkspace } from "../../../lib/workspaceContext";
 import { toast } from "vue-sonner";
 import { FolderTree } from "@lucide/vue";
 import { useMediaQuery } from "@vueuse/core";
@@ -220,6 +221,11 @@ async function confirmCreateAgentSession() {
         const code = cause instanceof ApiError ? cause.problem.code : "";
         if (code === "WORKSPACE_CONTEXT_REQUIRED" || code === "WORKSPACE_CONTEXT_CONFLICT") {
             showAgentSelection.value = false;
+            // BL-172: clear the tab context before going back to the picker. The router
+            // guard's workspace-home branch re-redirects to `/workspace/<tabId>` whenever a
+            // tab context exists, so leaving it set turned this recovery into a bounce loop
+            // (and the picker's early-return branch then never cleared its loading state).
+            clearTabWorkspace();
             await router.push({ name: "workspace-home" });
         }
         return null;
