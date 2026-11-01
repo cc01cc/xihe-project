@@ -100,6 +100,8 @@ public class WorkspaceAgentController {
         result.put("source", view.source());
         // D26: whether this row is bound to the workspace (visible-without-binding rows are false).
         result.put("bound", view.bound());
+        // D27: `disabledAt` is projected as a boolean — the UI gates badges/buttons on it.
+        result.put("disabled", view.disabled());
         return result;
     }
 
