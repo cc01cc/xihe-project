@@ -303,7 +303,7 @@ onUnmounted(() => {
                     data-testid="message-retry-button"
                     @click="emit('retry', message.id)"
                 >
-                    {{ t("chat.retry") }}
+                    {{ t("common.retry") }}
                 </button>
             </div>
 

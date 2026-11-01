@@ -126,14 +126,14 @@ const EXPECTED_TESTIDS: Array<{
     {
         id: "message-resource-exhausted",
         scene: "S4",
-        status: "blocked",
-        note: "卡在 CP D28（governor 准入前移到 202 之前）；且本次 S4 因 serial 模式被 S3 失败连带跳过，从未执行",
+        status: "asserted",
+        note: "2026-11-02 真机 S4 PASS：显示「连接并发已满，约 2 秒后重试」（resourceKind 本地化，D14 字段在 UI 可见）",
     },
     {
         id: "message-resource-exhausted-hint",
         scene: "S4",
-        status: "blocked",
-        note: "同 message-resource-exhausted：等 D28 + S4 真正跑起来",
+        status: "asserted",
+        note: "2026-11-02 真机 S4 PASS：文案「也可以在上方模型/连接选择器里换一个连接后再试。」按语义断言（在哪里换 + 可再试）",
     },
 
     // ── exists-unasserted：develop 已存在，本 spec 未断言（原因见 note）──────────────────
@@ -674,7 +674,13 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         await expect(exhausted).toHaveText(/2/);
         // 准入 429 没有 run，但 `message-retry-button` 的条件是 `error && retryable`
         //（`MessageItem.vue` 的 canRetry），与 run 无关 ⇒ 这条断言不是放宽：它必须存在。
-        await expect(page.getByTestId("message-retry-button")).toBeVisible({ timeout: 20000 });
+        const retryButton = page.getByTestId("message-retry-button");
+        await expect(retryButton).toBeVisible({ timeout: 20000 });
+        // 存在 ≠ 文案对：真机截图抓到过按钮直接回显 i18n key（`chat.retry`）。
+        await expect(retryButton, "a raw i18n key must never reach the user").not.toHaveText(
+            /^[a-z]+\.[a-zA-Z]+$/,
+        );
+        await expect(retryButton).toHaveText(/重试|retry/i);
         await shot(page, {
             id: "S4",
             name: "s4-resource-exhausted-localized",
