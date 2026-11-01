@@ -365,43 +365,43 @@ class DomainSchemaMigrationTest {
         executeUpdate("INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('" + sessionId
                 + "'::uuid, '" + workspaceId + "'::uuid, '" + userId + "'::uuid, 'cp-session')");
         UUID checkpointId = UUID.randomUUID();
-        executeUpdate("INSERT INTO run_checkpoints (id, workspace_id, slice_ref, captured_at, source_run_id, "
+        executeUpdate("INSERT INTO run_checkpoints (id, workspace_id, root_id, slice_ref, captured_at, source_run_id, "
                 + "source_session_id, predecessor_ref, changed_files, opaque_nested_repos, state) VALUES ('"
-                + checkpointId + "'::uuid, '" + workspaceId + "'::uuid, 'refs/xihe/slices/1-ab12', NOW(), '"
+                + checkpointId + "'::uuid, '" + workspaceId + "'::uuid, '" + runId + "', 'refs/xihe/slices/1-ab12', NOW(), '"
                 + runId + "'::uuid, '" + sessionId + "'::uuid, 'refs/xihe/slices/0-cdef', '[]', '[]', 'captured')");
         assertEquals(1, scalarInt("SELECT count(*) FROM run_checkpoints WHERE source_run_id = '"
                 + runId + "'::uuid"));
 
         SQLException duplicate = assertThrows(SQLException.class,
-                () -> executeUpdate("INSERT INTO run_checkpoints (id, workspace_id, slice_ref, state) "
-                        + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + workspaceId + "'::uuid, "
+                () -> executeUpdate("INSERT INTO run_checkpoints (id, workspace_id, root_id, slice_ref, state) "
+                        + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + workspaceId + "'::uuid, 'root-" + UUID.randomUUID() + "', "
                         + "'refs/xihe/slices/1-ab12', 'captured')"));
         assertTrue(duplicate.getMessage().contains("uq_run_checkpoints_workspace_slice"),
                 duplicate.getMessage());
 
         SQLException duplicateSourceRun = assertThrows(SQLException.class,
-                () -> executeUpdate("INSERT INTO run_checkpoints (id, workspace_id, slice_ref, source_run_id, state) "
-                        + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + workspaceId + "'::uuid, "
+                () -> executeUpdate("INSERT INTO run_checkpoints (id, workspace_id, root_id, slice_ref, source_run_id, state) "
+                        + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + workspaceId + "'::uuid, 'root-" + UUID.randomUUID() + "', "
                         + "'refs/xihe/slices/1-different', '" + runId + "'::uuid, 'captured')"));
         assertTrue(duplicateSourceRun.getMessage().contains("uq_run_checkpoints_workspace_source_run"),
                 duplicateSourceRun.getMessage());
 
         SQLException badState = assertThrows(SQLException.class,
-                () -> executeUpdate("INSERT INTO run_checkpoints (id, workspace_id, slice_ref, state) "
+                () -> executeUpdate("INSERT INTO run_checkpoints (id, workspace_id, root_id, slice_ref, state) "
                         + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + workspaceId
-                        + "'::uuid, 'refs/xihe/slices/bad', 'bogus')"));
+                        + "'::uuid, 'root-bad', 'refs/xihe/slices/bad', 'bogus')"));
         assertTrue(badState.getMessage().contains("ck_run_checkpoints_state"), badState.getMessage());
 
         // degraded rows carry the frozen capture-failure reason.
-        executeUpdate("INSERT INTO run_checkpoints (id, workspace_id, state, unrollable_reason) "
+        executeUpdate("INSERT INTO run_checkpoints (id, workspace_id, root_id, state, unrollable_reason) "
                 + "VALUES ('" + UUID.randomUUID() + "'::uuid, '"
-                + workspaceId + "'::uuid, 'degraded', 'UNAVAILABLE')");
+                + workspaceId + "'::uuid, 'root-" + UUID.randomUUID() + "', 'degraded', 'UNAVAILABLE')");
         assertEquals(1, scalarInt("SELECT count(*) FROM run_checkpoints WHERE workspace_id = '"
                 + workspaceId + "'::uuid AND state = 'degraded' AND unrollable_reason = 'UNAVAILABLE'"));
 
         // Slice state vocabulary accepts abnormal captures and no old interval state.
-        executeUpdate("INSERT INTO run_checkpoints (id, workspace_id, state) "
-                + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + workspaceId + "'::uuid, 'abnormal-captured')");
+        executeUpdate("INSERT INTO run_checkpoints (id, workspace_id, root_id, state) "
+                + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + workspaceId + "'::uuid, 'root-" + UUID.randomUUID() + "', 'abnormal-captured')");
         assertEquals(1, scalarInt("SELECT count(*) FROM run_checkpoints WHERE workspace_id = '"
                 + workspaceId + "'::uuid AND state = 'abnormal-captured'"));
 
