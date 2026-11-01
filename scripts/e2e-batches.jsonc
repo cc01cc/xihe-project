@@ -165,6 +165,11 @@
       "registrationPolicy": "closed",
       "specs": ["e2e/real/goldpath-first-run.spec.ts"]
     },
+    "headed": {
+      "description": "PLAN-0621 headed walkthrough S1-S8 (needs XIHE_E2E_HEADED=1 + XIHE_E2E_BROWSER_CHANNEL=chrome-beta + XIHE_E2E_EXTERNAL_SERVER=1 against a persistent stack; screenshots go to .tmp/xh-headed-walkthrough/runs/<runId>/, never to the repo)",
+      "llmMode": "mock",
+      "specs": ["e2e/headed"]
+    },
     "goldpath-web": {
       "description": "PLAN-0611 single-case candidate for smoke (pass --grep G2-e); keeps the ~1.5 min budget",
       "llmMode": "success",

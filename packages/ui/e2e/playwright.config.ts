@@ -15,7 +15,7 @@ const viewport = (() => {
 
 export default defineConfig({
     testDir: "..",
-    testMatch: ["e2e/mock/*.spec.ts", "e2e/real/*.spec.ts"],
+    testMatch: ["e2e/mock/*.spec.ts", "e2e/real/*.spec.ts", "e2e/headed/*.spec.ts"],
     timeout: 30000,
     retries: 1,
     use: {

@@ -221,6 +221,27 @@ node scripts/e2e-host.mjs --llm-mode=disconnect e2e/real/chat-availability.spec.
 
 `--llm-mode` 只选择受控 fixture 行为：missing 不提供 key，invalid 让 models/chat 返回 401，success 返回至少两个 SSE token，disconnect 在首个 token 后断开。可用 `XIHE_E2E_HEADED=1` 和 `XIHE_E2E_BROWSER_CHANNEL=chrome-beta` 启用 Chrome Beta headed 模式；每轮仍使用独立 DB、host root、端口和 evidence 输出。
 
+### 3.1b 有头走查批次（PLAN-0621）
+
+有头走查是**人眼可复核**的场景批次（每步 `test.step` + 截图 + 断言），与无头批次**互不收集**：它放在 `packages/ui/e2e/headed/`，而 `mock-full` / `real-full` 的 specs 是目录级 `e2e/real`，因此默认批次永远不含它（`--batch=headed` 才跑）。
+
+```powershell
+# 1) 起持久隔离栈（关键：必须带 --bootstrap-user=register，否则 Agent 报 llmReady=missing_credentials，
+#    runner 直接判栈未就绪）
+node scripts/e2e-host.mjs --persistent --llm-mode=mock --first-run=local --bootstrap-user=register
+
+# 2) 有头走查（复用上面那套栈；Chrome Beta 全机单窗口，跑前确认没有其它有头会话）
+$env:XIHE_E2E_EXTERNAL_SERVER="1"; $env:XIHE_E2E_HEADED="1"; $env:XIHE_E2E_BROWSER_CHANNEL="chrome-beta"
+node scripts/e2e-host.mjs --batch=headed --retries=0
+
+# 3) 收尾
+node scripts/e2e-host.mjs --teardown
+```
+
+- **证据落点**：`packages/ui/.tmp/xh-headed-walkthrough/runs/<XIHE_E2E_RUN_ID>/`（`shots/NN-*.png` + `report.json`（每步 step/URL/断言/截图）+ `console-errors.log`）。截图是本地工件，**不提交**。
+- **`--bootstrap-user=register` 的必要性**：不传时栈虽起来，但没有账号导入 fake provider profile ⇒ Agent `llmReady=missing_credentials` ⇒ runner 判"栈未就绪"，后续任何 spec 都跑不了。这是 2026-11-02 实测踩到的坑。
+- **不进常规门禁**：需要真实显示器 + Chrome Beta，慢且环境敏感；`mise run validate` 与 smoke/mock-full 基线都不含 headed（证明：`npx playwright test e2e/real --list` = 213 tests / 83 files，headed 命中 0；`npx playwright test e2e/headed --list` = 8 tests / 1 file）。
+- **走查发现的问题先记账后修**：finding 进 `plans/PLAN-0621-*/evidence/findings.md`，修复前必须先补一条能复现的断言（详见该计划 design §4）。
 ### 3.2 E2E-only 时序屏障（PLAN-0536）
 
 需要确定性排列「浏览器请求已到 CP」与「真实状态变更」时，不要在测试里 mock 服务端响应——那证明不了真实状态校验。CP 提供 `@Profile("e2e")` 的 Run-scoped 屏障（`/internal/v1/e2e/guidance-barrier`），仅 host runner 的服务 token 可调用；`dev`/`prod` 不激活该 profile，路由不存在。
