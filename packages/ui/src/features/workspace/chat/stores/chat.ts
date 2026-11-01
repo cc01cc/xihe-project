@@ -435,7 +435,30 @@ export const useChatStore = defineStore("chat", () => {
         },
     ) {
         const messageId = streamingMessageId.value[sessionId];
-        if (!messageId) return;
+        if (!messageId) {
+            // 真实链路：占位气泡只在 SSE `onStart` 里创建（SSEStream.vue），而 D28 的 429 发生在
+            // **准入**（202 之前），不会产生任何 SSE 事件 ⇒ 原来的 `return` 会把整条错误静默丢掉，
+            // 用户点发送后界面什么都不显示。业务错误必须有自己的气泡。
+            if (!INTERNAL_STREAM_ERROR_CODES.has(error.code)) {
+                addMessage(sessionId, {
+                    id: crypto.randomUUID(),
+                    sessionId,
+                    role: "assistant",
+                    content: "",
+                    timestamp: new Date().toISOString(),
+                    errorCode: error.code,
+                    error: error.detail,
+                    retryable: error.retryable ?? true,
+                    retryAfterSeconds: error.retryAfterSeconds,
+                    resourceKind: error.resourceKind,
+                    runId: error.runId,
+                    runStatus: "failed",
+                    terminalOutcome: "error",
+                });
+                setSessionRunState(sessionId, "error", error.runId);
+            }
+            return;
+        }
 
         const message = messages.value[sessionId]?.find((msg) => msg.id === messageId);
         if (message) {

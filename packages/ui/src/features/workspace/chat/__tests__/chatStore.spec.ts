@@ -377,6 +377,42 @@ describe("useChatStore", () => {
         expect(store.isStreaming("s1")).toBe(false);
     });
 
+    // 真实链路（Lead 的怀疑 1，已由 SSEStream.vue:67 证实）：占位气泡只在 `onStart`
+    //（第一个 SSE 事件）里创建，而 D28 的 429 发生在**准入**、根本不会有任何 SSE 事件。
+    // 所以"有气泡时别删"覆盖不到真实分支 —— 这里必须覆盖"压根没有气泡"。
+    it("creates an error bubble when an admission 429 arrives before any stream event", () => {
+        const store = useChatStore();
+        expect(store.getMessages("s1")).toEqual([]);
+
+        store.markStreamingError("s1", {
+            code: "RESOURCE_EXHAUSTED",
+            detail: "connection concurrency limit reached",
+            retryable: true,
+            outcome: "error",
+            retryAfterSeconds: 2,
+            resourceKind: "CONNECTION",
+        });
+
+        const messages = store.getMessages("s1");
+        expect(messages, "an admission rejection must still be visible").toHaveLength(1);
+        expect(messages[0].role).toBe("assistant");
+        expect(messages[0].errorCode).toBe("RESOURCE_EXHAUSTED");
+        expect(messages[0].error).toBeTruthy();
+        expect(messages[0].retryAfterSeconds).toBe(2);
+        expect(messages[0].resourceKind).toBe("CONNECTION");
+        expect(messages[0].runStatus).toBe("failed");
+    });
+
+    // 内部流哨兵在没有占位气泡时仍然什么都不创建（清理路径不变）。
+    it("creates nothing for an internal stream failure without a placeholder", () => {
+        const store = useChatStore();
+        store.markStreamingError("s1", {
+            code: "AGENT_STREAM_FAILED",
+            detail: "Agent stream failed",
+            outcome: "error",
+        });
+        expect(store.getMessages("s1")).toEqual([]);
+    });
     // golden path 守卫：内部流错误（无内容）仍然走清理，别把这条规则整体废掉。
     it("removes an empty assistant for an internal stream failure", () => {
         const store = useChatStore();
