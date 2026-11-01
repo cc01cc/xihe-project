@@ -201,8 +201,10 @@ class WorkspaceJobStartIntegrationTest extends AbstractIntegrationTest {
         String jobId = (String) job.get("jobId");
         assertNotNull(jobId);
         assertEquals("workspace", job.get("scope"));
-        assertEquals("docker", job.get("backendKind"));
-        assertEquals("docker", job.get("executionMode"));
+        // PLAN-0618: the carrier workspace is now the product's direct_attach shape (the docker backend
+        // is frozen); this case verifies the durable Job row + dispatch, not container semantics.
+        assertEquals("windows-host", job.get("backendKind"));
+        assertEquals("windows-host", job.get("executionMode"));
         assertEquals("running", job.get("status"));
         assertEquals("job-1", job.get("runtimeJobId"));
         assertNull(job.get("sessionId"));
@@ -212,8 +214,8 @@ class WorkspaceJobStartIntegrationTest extends AbstractIntegrationTest {
                 jobStateService.findByJobId(UUID.fromString(jobId)).orElseThrow();
         assertEquals("running", archive.status());
         assertEquals("workspace", archive.scope());
-        assertEquals("docker", archive.backendKind());
-        assertEquals("docker", archive.executionMode());
+        assertEquals("windows-host", archive.backendKind());
+        assertEquals("windows-host", archive.executionMode());
         assertEquals("ui", archive.source());
         assertEquals("user", archive.actorType());
         assertEquals("not_started", archive.cleanupStatus());
