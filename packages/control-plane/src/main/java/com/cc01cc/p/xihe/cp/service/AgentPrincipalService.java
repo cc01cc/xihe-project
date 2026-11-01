@@ -436,8 +436,13 @@ public class AgentPrincipalService {
     }
 
     /**
-     * PLAN-0622 M1.2: every row carries {@code source}, derived from the principal's tier — the
-     * binding itself does not know which tier it points at, and a client must not have to guess.
+     * PLAN-0622 M1.2 / V4 / D26: the union of the workspace's bindings, the caller's own PERSONAL
+     * principals and every INSTANCE principal. Every row carries {@code source} (what the principal
+     * <i>is</i>) and {@code bound} (whether it is bound to this workspace).
+     *
+     * <p>{@code bound=false} means "visible here, but not yet usable in this workspace": a Session
+     * still needs an active binding, so a session picker must filter on it. PERSONAL/INSTANCE are
+     * visible without a binding — they are not <b>session-usable</b> without one.</p>
      */
     @Transactional(readOnly = true)
     public List<WorkspaceAgentView> listWorkspaceAgents(String actorUserId, UUID workspaceId) {
@@ -452,7 +457,7 @@ public class AgentPrincipalService {
                         .map(principal -> new WorkspaceAgentView(principal.getId(), principal.getName(),
                                 principal.getTemplateId(), optionalText(principal.getTemplateSnapshot(), "templateName"),
                                 principal.getCreatedAt(), binding.getPermissionsSnapshot().deepCopy(),
-                                sourceOf(principal)))
+                                sourceOf(principal), true))
                         .orElseThrow(() -> new CpApiException(HttpStatus.INTERNAL_SERVER_ERROR,
                                 "AGENT_PRINCIPAL_INCONSISTENT", "Workspace Agent binding has no principal")))
                 .forEach(view -> merged.put(view.principalId(), view));
@@ -480,7 +485,7 @@ public class AgentPrincipalService {
     private WorkspaceAgentView unboundView(AgentPrincipal principal, JsonNode cap) {
         return new WorkspaceAgentView(principal.getId(), principal.getName(), principal.getTemplateId(),
                 optionalText(principal.getTemplateSnapshot(), "templateName"), principal.getCreatedAt(), cap,
-                sourceOf(principal));
+                sourceOf(principal), false);
     }
 
     /** Without a binding there is no narrowing cap: the principal's own atoms are the whole cap. */
@@ -881,7 +886,7 @@ public class AgentPrincipalService {
 
     public record WorkspaceAgentView(UUID principalId, String name, String templateId,
                                      String templateName, Instant createdAt, JsonNode permissions,
-                                     String source) {}
+                                     String source, boolean bound) {}
 
     private record ActiveWorkspaceBinding(AgentPrincipal principal, WorkspaceAgent workspaceAgent) {}
 }
