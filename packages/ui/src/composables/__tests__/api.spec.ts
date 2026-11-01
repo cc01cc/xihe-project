@@ -2100,3 +2100,69 @@ describe("apiErrorFromResponse Resource Governor fields (PLAN-0622)", () => {
         expect(error.problem.resourceKind).toBeUndefined();
     });
 });
+
+// PLAN-0623 D23-25：严格信封。契约是 `{participants:[…]}` 就只认它；形状不符**显式失败**，
+// 绝不做 `Array.isArray(x) ? x : x.participants` 这种双形状兼容（那会让"契约破了"表现为"能跑"）。
+describe("getSessionParticipants strict envelope (PLAN-0623 D23-25)", () => {
+    function mockPayload(payload: unknown) {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve(payload),
+        } as unknown as Response);
+    }
+
+    const PARTICIPANT = {
+        participantId: "participant-1",
+        principalKind: "AGENT",
+        principalId: "9f1d0c1e-1111-4111-8111-aaaaaaaaaaaa",
+        displayName: "Research Agent",
+        role: "PRIMARY",
+        orderIndex: 10,
+        wakePolicy: "ALL_MESSAGES",
+        respondPolicy: "ALWAYS",
+        source: "workspace",
+        disabledAt: null,
+        readCursor: null,
+    };
+
+    it("returns the participants array for the documented envelope", async () => {
+        mockPayload({ participants: [PARTICIPANT] });
+
+        await expect(api.getSessionParticipants(SESSION_ID)).resolves.toEqual([PARTICIPANT]);
+        expect(fetchSpy.mock.calls[0]?.[0]).toContain(
+            `/api/v1/sessions/${SESSION_ID}/participants`,
+        );
+    });
+
+    it("accepts an empty array as a real empty participant list", async () => {
+        mockPayload({ participants: [] });
+        await expect(api.getSessionParticipants(SESSION_ID)).resolves.toEqual([]);
+    });
+
+    it("rejects when the envelope key is missing and names the keys it did receive", async () => {
+        mockPayload({ items: [PARTICIPANT] });
+
+        await expect(api.getSessionParticipants(SESSION_ID)).rejects.toThrow(/items/);
+    });
+
+    it("rejects when participants is not an array", async () => {
+        mockPayload({ participants: "not-an-array" });
+
+        await expect(api.getSessionParticipants(SESSION_ID)).rejects.toThrow(
+            /participants.*not an array|not an array.*participants/i,
+        );
+    });
+
+    it("rejects a bare top-level array instead of accepting both shapes", async () => {
+        mockPayload([PARTICIPANT]);
+
+        await expect(api.getSessionParticipants(SESSION_ID)).rejects.toThrow(/array/i);
+    });
+
+    it("rejects a non-object payload with a diagnostic message", async () => {
+        mockPayload(null);
+
+        await expect(api.getSessionParticipants(SESSION_ID)).rejects.toThrow(/payload/i);
+    });
+});
