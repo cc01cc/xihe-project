@@ -360,6 +360,35 @@ async function disableAgent(agent: WorkspaceAgentBinding) {
     }
 }
 
+/**
+ * 真栈 S2 bug（2026-11-02）：`GET /workspaces/{ws}/agents` 会返回调用者自己的 PERSONAL/INSTANCE
+ * 主体（含**未绑定**的），但未绑定时建会话会被 CP 403 拒绝（"not bound"）。原先 bind 入口只在
+ * "刚创建"区块里，关掉重开就没了 —— 用户视角是死路。这里给**每一行**一个绑定入口：PUT 是幂等
+ * 的 setWorkspaceCap，已绑定行重存当前快照也不会产生副作用。
+ */
+async function bindExistingAgent(agent: WorkspaceAgentBinding) {
+    if (saving.value || canManageWorkspaceAgents.value !== true) return;
+    saving.value = true;
+    error.value = "";
+    try {
+        await api.updateWorkspaceAgentCap(
+            props.workspaceId,
+            agent.principalId,
+            agent.permissionsSnapshot ?? [],
+        );
+        await loadAgents();
+        status.value = t("workspace.agentBound");
+    } catch (cause) {
+        error.value = agentErrorMessage(
+            cause,
+            "workspace.agentBindForbidden",
+            "workspace.agentBindFailed",
+        );
+    } finally {
+        saving.value = false;
+    }
+}
+
 async function bindCreatedPrincipal() {
     const principal = createdPrincipal.value;
     if (!principal || saving.value) return;
@@ -795,6 +824,16 @@ async function unbind(agent: WorkspaceAgentBinding) {
                             </p>
                         </div>
                         <div class="flex shrink-0 flex-col items-end gap-1">
+                            <!-- 真栈 S2 bug：已有 agent 也必须能在这里绑定到本工作区（幂等 PUT）。 -->
+                            <button
+                                type="button"
+                                class="rounded-md border px-2 py-1 text-xs disabled:opacity-50"
+                                :data-testid="`agent-bind-row-${agent.principalId}`"
+                                :disabled="saving || canManageWorkspaceAgents !== true"
+                                @click="bindExistingAgent(agent)"
+                            >
+                                {{ t("workspace.bindAgent") }}
+                            </button>
                             <button
                                 type="button"
                                 class="rounded-md border px-2 py-1 text-xs"

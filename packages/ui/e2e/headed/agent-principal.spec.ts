@@ -256,7 +256,13 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         await expect(page.getByTestId("workspace-toolbar-agents")).toBeVisible({ timeout: 45000 });
         await openAgentDialog(page);
 
-        const bindButton = page.getByTestId("agent-principal-bind");
+        // 真实 UI 操作序列：面板列表里**每一行**都有绑定入口（`agent-bind-row-<id>`）。
+        // 创建区块里的 `agent-principal-bind` 只在"刚创建未绑定"时出现，关掉重开就没有了 ——
+        // 这正是 S2 之前失败的原因（点不到 → fallback 等对话框提示 → 超时）。
+        let boundInUi = false;
+        const rowBind = page.getByTestId(`agent-bind-row-${principalId}`);
+        const createSectionBind = page.getByTestId("agent-principal-bind");
+        const bindButton = (await rowBind.count()) > 0 ? rowBind : createSectionBind;
         if ((await bindButton.count()) > 0) {
             const bindResponse = page.waitForResponse(
                 (response) =>
@@ -267,10 +273,11 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
             await bindButton.first().click();
             const bound = await bindResponse;
             expect([200, 201, 204], await bound.text()).toContain(bound.status());
+            boundInUi = true;
         } else {
             recordNotCovered(
                 "S2-bind",
-                "Agent 管理面板未渲染 agent-principal-bind（该行可能已绑定或 UI 尚未合入 0622 M3）",
+                "Agent 管理面板既没有 agent-bind-row-<id> 也没有 agent-principal-bind（UI 未合入行级绑定）",
             );
         }
 
@@ -297,6 +304,8 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
                 assertion: `会话空态可选 PERSONAL agent 并建会话成功 session=${sessionId}`,
             });
         } catch (error) {
+            // 绑定已经成功过 ⇒ 建会话再失败就是真回归，必须响（不再用对话框提示兜底）。
+            if (boundInUi) throw error;
             // 无 MANAGE_WORKSPACE_AGENTS 时必须给可操作文案（fail-closed），而不是静默失败。
             const forbiddenHint = page.getByTestId("agent-bind-forbidden-hint");
             await expect(
