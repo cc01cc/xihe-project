@@ -425,3 +425,54 @@ describe("WorkspaceAgentManagementDialog list refresh after create", () => {
         wrapper.unmount();
     });
 });
+
+// ── 真栈 S2 bug（Lead 2026-11-02）：已存在的（未绑定）agent 在面板里没有绑定入口 ────────────────
+// CP 的 GET /workspaces/{ws}/agents 现在会返回调用者自己的 PERSONAL/INSTANCE 主体（V4），
+// 但它们**未绑定**时无法建会话（403 not bound）；而 UI 只在"刚创建"的区块里给 bind 按钮，
+// 关掉重开后就没有入口了 —— 用户视角是死路。
+describe("WorkspaceAgentManagementDialog bind an existing agent row", () => {
+    const existing = {
+        principalId: "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb",
+        name: "Existing personal",
+        templateId: null,
+        templateName: null,
+        createdAt: "2026-11-02T00:00:00Z",
+        source: "personal",
+        permissionsSnapshot: [],
+    };
+
+    it("offers a row-level bind that PUTs the workspace cap and refreshes the list", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([existing]);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
+        apiMock.updateWorkspaceAgentCap.mockResolvedValue({});
+        const wrapper = await mountOpenedDialog();
+
+        const bindRow = wrapper.find(`[data-testid="agent-bind-row-${existing.principalId}"]`);
+        expect(
+            bindRow.exists(),
+            "an existing agent row must offer a way to bind it to this workspace",
+        ).toBe(true);
+
+        await bindRow.trigger("click");
+        await flushPromises();
+
+        expect(apiMock.updateWorkspaceAgentCap).toHaveBeenCalledWith(
+            WORKSPACE_ID,
+            existing.principalId,
+            [],
+        );
+        // 绑定后必须重新读取列表（与创建后的刷新同一口径）。
+        expect(apiMock.getWorkspaceAgents).toHaveBeenCalledTimes(2);
+        wrapper.unmount();
+    });
+
+    it("keeps the row-level bind disabled without MANAGE_WORKSPACE_AGENTS (fail-closed)", async () => {
+        admin.value = false;
+        apiMock.getWorkspaceAgents.mockResolvedValue([existing]);
+        apiMock.getSelfPermissions.mockResolvedValue(PERSONAL_ONLY);
+        const wrapper = await mountOpenedDialog();
+        const bindRow = wrapper.find(`[data-testid="agent-bind-row-${existing.principalId}"]`);
+        expect(bindRow.attributes("disabled")).toBeDefined();
+        wrapper.unmount();
+    });
+});
