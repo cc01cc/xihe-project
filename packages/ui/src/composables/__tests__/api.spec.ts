@@ -2034,3 +2034,69 @@ describe("workspace header (PLAN-0559)", () => {
         expect(localStorage.getItem("xihe-workspace")).toBeNull();
     });
 });
+
+// PLAN-0622 D14：429 的 `resourceKind` / `retryAfterSeconds` 是**契约字段**，必须穿过
+// ApiError 传到 UI；否则 MessageItem 只能落到兜底文案「资源」，用户不知道是连接还是模型不够。
+describe("apiErrorFromResponse Resource Governor fields (PLAN-0622)", () => {
+    function mock429(body: Record<string, unknown>, headers: Record<string, string> = {}) {
+        fetchSpy.mockResolvedValueOnce({
+            ok: false,
+            status: 429,
+            headers: { get: (name: string) => headers[name.toLowerCase()] ?? null },
+            json: () => Promise.resolve(body),
+        } as unknown as Response);
+    }
+
+    async function thrown(): Promise<ApiError> {
+        try {
+            await api.getWorkspaceAgents(WORKSPACE_ID);
+        } catch (cause) {
+            if (cause instanceof ApiError) return cause;
+            throw cause;
+        }
+        throw new Error("expected the request to reject");
+    }
+
+    it("carries resourceKind and retryAfterSeconds from the problem body", async () => {
+        mock429({
+            type: "https://xihe.dev/problems/resource-exhausted",
+            title: "Too Many Requests",
+            status: 429,
+            code: "RESOURCE_EXHAUSTED",
+            detail: "connection concurrency limit reached",
+            resourceKind: "CONNECTION",
+            retryAfterSeconds: 2,
+            scope: WORKSPACE_ID,
+        });
+
+        const error = await thrown();
+        expect(error.problem.code).toBe("RESOURCE_EXHAUSTED");
+        expect(error.problem.resourceKind).toBe("CONNECTION");
+        expect(error.problem.retryAfterSeconds).toBe(2);
+        expect(error.retryAfterSeconds).toBe(2);
+    });
+
+    it("falls back to the Retry-After header when the body has no retryAfterSeconds", async () => {
+        mock429(
+            {
+                status: 429,
+                code: "RESOURCE_EXHAUSTED",
+                detail: "model capacity",
+                resourceKind: "MODEL",
+            },
+            { "retry-after": "7" },
+        );
+
+        const error = await thrown();
+        expect(error.retryAfterSeconds).toBe(7);
+        // header 里只有秒数、没有 kind ⇒ kind 只能来自 body。
+        expect(error.problem.resourceKind).toBe("MODEL");
+    });
+
+    it("leaves resourceKind undefined when the body has none (no invented default)", async () => {
+        mock429({ status: 429, code: "RESOURCE_EXHAUSTED", detail: "unknown resource" });
+
+        const error = await thrown();
+        expect(error.problem.resourceKind).toBeUndefined();
+    });
+});

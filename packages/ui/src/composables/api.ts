@@ -1804,10 +1804,14 @@ export async function apiErrorFromResponse(res: Response): Promise<never> {
         /* non-JSON upstream error */
     }
     const retryAfterHeader = res.headers?.get?.("Retry-After");
-    const retryAfterSeconds =
+    const retryAfterHeaderSeconds =
         retryAfterHeader && /^[0-9]+$/.test(retryAfterHeader)
             ? Number(retryAfterHeader)
             : undefined;
+    // PLAN-0622 D14：`retryAfterSeconds` / `resourceKind` 是 429 契约字段，必须穿过 ApiError
+    // 才能到 UI（否则 MessageItem 只能兜底成「资源」，用户不知道是连接不够还是模型不够）。
+    // body 优先（header 只有秒数、没有 kind），header 只作为秒数的回退。
+    const retryAfterSeconds = problem.retryAfterSeconds ?? retryAfterHeaderSeconds;
     throw new ApiError(
         {
             type: problem.type,
@@ -1821,6 +1825,8 @@ export async function apiErrorFromResponse(res: Response): Promise<never> {
             model: problem.model,
             retryable: problem.retryable,
             outcome: problem.outcome,
+            retryAfterSeconds,
+            resourceKind: problem.resourceKind,
         },
         retryAfterSeconds,
     );

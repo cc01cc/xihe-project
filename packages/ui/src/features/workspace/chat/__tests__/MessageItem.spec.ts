@@ -224,6 +224,21 @@ describe("MessageItem RESOURCE_EXHAUSTED hint (PLAN-0622)", () => {
         wrapper.unmount();
     });
 
+    // D14：`resourceKind` 必须让用户看到**具体**是哪种资源不够；「资源」只在真的未知时才出现。
+    it("renders the concrete CONNECTION wording instead of the unknown-resource fallback", async () => {
+        const wrapper = mountWithError({ resourceKind: "CONNECTION", retryAfterSeconds: 2 });
+        const exhausted = wrapper.get('[data-testid="message-resource-exhausted"]');
+        expect(exhausted.text()).toBe("连接并发已满，约 2 秒后重试");
+        expect(exhausted.text()).not.toContain("资源");
+        wrapper.unmount();
+    });
+
+    it("falls back to the unknown-resource wording only when resourceKind is absent", async () => {
+        const wrapper = mountWithError({ resourceKind: undefined, retryAfterSeconds: 2 });
+        const exhausted = wrapper.get('[data-testid="message-resource-exhausted"]');
+        expect(exhausted.text()).toContain("资源");
+        wrapper.unmount();
+    });
     it.each([
         ["CONNECTION", "连接"],
         ["FILE_WRITE", "文件写入"],
