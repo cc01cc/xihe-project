@@ -98,7 +98,7 @@ public class NativeAotRuntimeHints implements RuntimeHintsRegistrar {
         "com.cc01cc.p.xihe.cp.controller.RuntimeExecutionSpecController$WorkspaceExecutionSpecResponse",
         "com.cc01cc.p.xihe.cp.runtime.RuntimeCheckpointClient$ChangedFile",
         // request side (Jackson deserialization; canonical constructor)
-        "com.cc01cc.p.xihe.cp.chat.SessionController$CreateSessionRequest",
+        "com.cc01cc.p.xihe.cp.chat.SessionRequests$CreateSessionRequest",
         "com.cc01cc.p.xihe.cp.chat.SessionController$UpdateSessionRequest",
         "com.cc01cc.p.xihe.cp.checkpoint.AgentGraphCheckpointService$LineageRequest",
         "com.cc01cc.p.xihe.cp.checkpoint.AgentGraphCheckpointService$PutCheckpointRequest",

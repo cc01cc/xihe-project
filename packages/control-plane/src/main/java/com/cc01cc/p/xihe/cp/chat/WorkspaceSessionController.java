@@ -36,12 +36,12 @@ public class WorkspaceSessionController {
     @PostMapping
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> create(@PathVariable String workspaceId,
-                                    @RequestBody(required = false) SessionController.CreateSessionRequest request,
+                                    @RequestBody(required = false) SessionRequests.CreateSessionRequest request,
                                     @RequestHeader(value = "X-Workspace-Id", required = false) String workspaceHeader) {
         try {
             Session session = sessionCreationService.create(TenantContext.getUserId(), workspaceId, workspaceHeader,
-                    SessionController.paramsFrom(request));
-            return ResponseEntity.status(HttpStatus.CREATED).body(SessionController.toView(session));
+                    SessionRequests.paramsFrom(request));
+            return ResponseEntity.status(HttpStatus.CREATED).body(SessionViews.toView(session));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }

@@ -64,6 +64,19 @@ public class WorkspaceRuntimeReleaseService {
         return applicationContext.getBean(WorkspaceRuntimeReleaseService.class);
     }
 
+    /**
+     * PLAN-0615 (BL-179 B1–B3): the workspace's most recent lifecycle operation, for the environment
+     * projection. Lives here because this service owns {@code workspace_lifecycle_operations};
+     * controllers must not reach for the repository themselves.
+     */
+    @Transactional(readOnly = true)
+    public Optional<WorkspaceLifecycleOperation> latestForWorkspace(UUID workspaceId) {
+        if (workspaceId == null) {
+            return Optional.empty();
+        }
+        return operations.findFirstByWorkspaceIdOrderByCreatedAtDesc(workspaceId);
+    }
+
     public ReleaseOutcome release(String workspaceId, String userId, String idempotencyKey) {
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "IDEMPOTENCY_KEY_REQUIRED",
