@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -45,6 +46,9 @@ class WorkspaceMembershipSeamIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private JdbcTemplate jdbc;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private WorkspaceFixture workspaceFixture;
+
     @Autowired
     private ObjectMapper objectMapper;
 
@@ -63,24 +67,6 @@ class WorkspaceMembershipSeamIntegrationTest extends AbstractIntegrationTest {
             }
         });
         return api;
-    }
-
-    @Test
-    void workspaceCreationBindsTheCreatorAsOwner() throws Exception {
-        String token = register("seam-creator@test.com");
-        String userId = userIdOf(token);
-        String workspaceId = createWorkspace(token, "seam-created");
-
-        assertEquals(List.of("WS_OWNER"), workspaceTierRoles(userId, workspaceId),
-                "the creator holds exactly one workspace-tier binding");
-
-        ResponseEntity<String> members = call(HttpMethod.GET,
-                "/api/v1/workspaces/" + workspaceId + "/members", null, token);
-        assertEquals(HttpStatus.OK, members.getStatusCode(), members.getBody());
-        JsonNode list = objectMapper.readTree(members.getBody());
-        assertEquals(1, list.size(), "the creator is the only member");
-        assertEquals(userId, list.get(0).path("userId").asText());
-        assertEquals("OWNER", list.get(0).path("role").asText());
     }
 
     @Test
@@ -192,10 +178,12 @@ class WorkspaceMembershipSeamIntegrationTest extends AbstractIntegrationTest {
     }
 
     private String createWorkspace(String token, String prefix) throws Exception {
-        ResponseEntity<String> created = call(HttpMethod.POST, "/api/v1/workspaces",
-                Map.of("name", prefix + "-" + UUID.randomUUID()), token);
-        assertEquals(HttpStatus.CREATED, created.getStatusCode(), created.getBody());
-        return objectMapper.readTree(created.getBody()).path("id").asText();
+        // PLAN-0618: the public create route now needs an explicit direct_attach payload + Runtime probe;
+        // these tests exercise the membership/binding seams, so the carrier row comes from the fixture.
+        // (The pure "API creation binds the creator as OWNER" assertion moved, unchanged in meaning, to
+        // WorkspaceCreationOwnerBindingWireMockTest in the WireMock lane — Lead 裁定 B.)
+        return workspaceFixture.createOwnedWorkspace(prefix + "-" + UUID.randomUUID(), userIdOf(token))
+                .getId().toString();
     }
 
     private List<Map<String, String>> workspaceBindings(String token, String workspaceId)

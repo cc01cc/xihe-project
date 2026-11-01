@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
@@ -54,7 +55,7 @@ class RunTraceControllerIntegrationTest extends AbstractIntegrationTest {
         owner = userRepository.saveAndFlush(new User("run-trace-api-owner-" + UUID.randomUUID() + "@test.com",
                 "test-hash", "Run Trace API owner"));
         workspace = workspaceRepository.saveAndFlush(
-                new Workspace("Run Trace API owner workspace"));
+                TestDataFactory.directAttachWorkspace("Run Trace API owner workspace"));
         workspaceFixture.bindWorkspaceRole(workspace.getId().toString(), owner.getId().toString(), WorkspaceRole.OWNER);
 
         session = new Session(workspace.getId().toString(), owner.getId().toString(),
@@ -131,7 +132,7 @@ class RunTraceControllerIntegrationTest extends AbstractIntegrationTest {
                 HttpStatus.FORBIDDEN, "FORBIDDEN");
 
         otherWorkspace = workspaceRepository.saveAndFlush(
-                new Workspace("Run Trace API second workspace"));
+                TestDataFactory.directAttachWorkspace("Run Trace API second workspace"));
         workspaceFixture.bindWorkspaceRole(otherWorkspace.getId().toString(), owner.getId().toString(), WorkspaceRole.OWNER);
         assertProblem(getTrace(tracePath, token(owner, otherWorkspace)),
                 HttpStatus.FORBIDDEN, "FORBIDDEN");

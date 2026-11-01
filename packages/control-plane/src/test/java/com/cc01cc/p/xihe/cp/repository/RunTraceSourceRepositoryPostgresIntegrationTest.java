@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.repository;
 
+import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
@@ -61,7 +62,7 @@ class RunTraceSourceRepositoryPostgresIntegrationTest extends AbstractIntegratio
         userId = user.getId();
 
         Workspace workspace = workspaceRepository.saveAndFlush(
-                new Workspace("Run Trace repository test"));
+                TestDataFactory.directAttachWorkspace("Run Trace repository test"));
         workspaceId = workspace.getId();
         workspaceFixture.bindWorkspaceRole(workspaceId.toString(), userId.toString(), WorkspaceRole.OWNER);
 

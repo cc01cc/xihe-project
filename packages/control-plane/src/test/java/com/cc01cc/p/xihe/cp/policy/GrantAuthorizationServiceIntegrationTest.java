@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
@@ -236,7 +237,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         setBindingCap(workspaceId, atoms("read", "write"));
 
         Workspace unjoinedWorkspace = workspaceRepository.save(
-                new Workspace("Unjoined grant path test"));
+                TestDataFactory.directAttachWorkspace("Unjoined grant path test"));
         unjoinedWorkspaceId = unjoinedWorkspace.getId();
         Session unboundWorkspaceSession = saveAgentSession(unjoinedWorkspaceId, userId,
                 "Unbound workspace agent", atoms("read", "write"));

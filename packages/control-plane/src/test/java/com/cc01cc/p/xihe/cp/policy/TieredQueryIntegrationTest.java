@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
@@ -165,7 +166,7 @@ class TieredQueryIntegrationTest extends AbstractIntegrationTest {
                 "out-of-chain sessions are denied even inside the same workspace");
 
         otherWorkspaceId = workspaceRepository.save(
-                new Workspace("Tier1 foreign ws")).getId().toString();
+                TestDataFactory.directAttachWorkspace("Tier1 foreign ws")).getId().toString();
         Session foreign = new Session(otherWorkspaceId, userId, "Tier1 foreign");
         foreign.setId(UUID.randomUUID());
         sessionRepository.saveAndFlush(foreign);
@@ -311,7 +312,7 @@ class TieredQueryIntegrationTest extends AbstractIntegrationTest {
                 "hash", "Tier query test"));
         userId = user.getId().toString();
         workspaceId = workspaceRepository.save(
-                new Workspace("Tier query test")).getId().toString();
+                TestDataFactory.directAttachWorkspace("Tier query test")).getId().toString();
         if (withPrincipal) {
             AgentPrincipal principal = new AgentPrincipal();
             principal.setName("Tier query principal");

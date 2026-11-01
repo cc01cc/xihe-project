@@ -322,7 +322,7 @@ class WorkspaceMemberControllerContractTest extends AbstractIntegrationTest {
         ownerId = owner.getId();
         ownerUsername = owner.getUsername();
         Workspace workspace = workspaceRepository.saveAndFlush(
-                new Workspace("Member matrix test"));
+                TestDataFactory.directAttachWorkspace("Member matrix test"));
         workspaceId = workspace.getId();
         workspaceFixture.bindWorkspaceRole(workspaceId.toString(), ownerId.toString(), WorkspaceRole.OWNER);
         ownerToken = TestDataFactory.createGlobalToken(ownerId.toString(), owner.getEmail(), "USER", 0);

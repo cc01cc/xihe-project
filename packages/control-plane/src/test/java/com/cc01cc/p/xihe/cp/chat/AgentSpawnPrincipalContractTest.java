@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
@@ -693,7 +694,7 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
     private ParentFixture fixtureInOtherWorkspace() {
         ensureWorkspace();
         Workspace otherWorkspace = workspaceRepository.saveAndFlush(
-                new Workspace("Cross-workspace gate test"));
+                TestDataFactory.directAttachWorkspace("Cross-workspace gate test"));
         String otherWorkspaceId = otherWorkspace.getId().toString();
         additionalWorkspaceIds.add(otherWorkspace.getId());
 

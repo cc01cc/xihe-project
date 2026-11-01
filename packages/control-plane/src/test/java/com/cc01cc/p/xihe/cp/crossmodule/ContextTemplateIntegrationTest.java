@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.crossmodule;
 
+import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
@@ -128,7 +129,7 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
         token = registerAndLogin();
 
         userId = jwtTokenProvider.getUserIdFromToken(token);
-        Workspace ws = new Workspace("Context Template Test");
+        Workspace ws = TestDataFactory.directAttachWorkspace("Context Template Test");
         ws = workspaceRepository.save(ws);
         workspaceId = ws.getId().toString();
         workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
@@ -582,4 +583,3 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
         }
     }
 }
-

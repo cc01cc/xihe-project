@@ -8,6 +8,41 @@ import java.util.Base64;
 
 public class TestDataFactory {
 
+    private static java.nio.file.Path hostRoot;
+
+    /**
+     * PLAN-0618: a <b>persisted</b> fixture row must satisfy the product shape — the database rejects
+     * {@code direct_attach} without a hostPath ({@code ck_workspaces_direct_attach_path}). Tests that
+     * seed a workspace row directly (rather than through {@code WorkspaceFixture}) use this factory
+     * instead of {@code new Workspace(name)}.
+     *
+     * <p>The host directory is created lazily once per JVM under the system temp dir and registered with
+     * {@code deleteOnExit}; each workspace gets its own child directory (also deleteOnExit).
+     */
+    public static com.cc01cc.p.xihe.cp.entity.Workspace directAttachWorkspace(String name) {
+        com.cc01cc.p.xihe.cp.entity.Workspace workspace =
+                new com.cc01cc.p.xihe.cp.entity.Workspace(name);
+        workspace.setStorageMode("direct_attach");
+        workspace.setExecutionMode("windows-host");
+        workspace.setHostPath(hostPath());
+        return workspace;
+    }
+
+    private static synchronized String hostPath() {
+        try {
+            if (hostRoot == null) {
+                hostRoot = java.nio.file.Files.createTempDirectory("xihe-testdata-ws");
+                hostRoot.toFile().deleteOnExit();
+            }
+            java.nio.file.Path child = hostRoot.resolve(java.util.UUID.randomUUID().toString());
+            java.nio.file.Files.createDirectories(child);
+            child.toFile().deleteOnExit();
+            return child.toAbsolutePath().toString();
+        } catch (java.io.IOException cause) {
+            throw new IllegalStateException("cannot create the fixture host directory", cause);
+        }
+    }
+
     private TestDataFactory() {}
 
     public static final String SECRET = "test-jwt-secret-key-for-testing-purposes";
