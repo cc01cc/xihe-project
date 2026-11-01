@@ -46,6 +46,7 @@ sidebar_order: 0
 - [DEV-030: 文档规范与归属制](DEV-030-documentation-layout-and-frontmatter.md)
 - [DEV-031: 沙盒后端契约](DEV-031-sandbox-backend-contract.md)
 - [DEV-032: 术语规范（一词多义与多词一义）](DEV-032-terminology.md)
+- [DEV-033: 新手首跑（gold path）](DEV-033-first-run-gold-path.md)
 
 ## 项目级 SPEC（Agent/GitHub-only）
 

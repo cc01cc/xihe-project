@@ -67,6 +67,8 @@ mise run setup
 mise run dev:host
 ```
 
+> 首次接触 XH（空白实例 → 首条回复）请直接看 [DEV-033](DEV-033-first-run-gold-path.md)：本文只讲环境与运行模式，DEV-033 讲本地模式三条件、onboarding 步骤与「看到什么算成功」的逐条判据。
+
 ```mermaid
 %%{init: {'theme': 'neutral'}}%%
 sequenceDiagram
@@ -345,7 +347,7 @@ XIHE_VERIFY_PASSWORD=<admin 密码> mise run xihe -- verify \
 - CP 静态检查：`mise run lint:cp` 对 `checkstyle.xml` **全部规则**按 error 阻断（基线 0 违规；规则与项目约定对齐后风格告警已清零，详见 PLAN-0458 evidence），不得回退为 warning 或全局抑制。
 - Agent 静态检查：`mise run lint:agent` 的 mypy 对 `src/` 真实阻断（`pyproject.toml` 已移除全局 `ignore_errors`，当前 0 error）；发现类型错误必须修复，不得以全局/整模块 ignore 换取绿灯。
 - 集成：`mise run test:integration`（T2；T3 需 Docker）。
-- E2E：`mise run test:e2e:compose`（**已冻结 2026-10-07，mise 已注释，勿用**；旧名 `test:e2e` 一并冻结）；`mise run test:e2e:host` 由 `scripts/e2e-host.mjs` 自举每轮隔离 PostgreSQL 与 CP/Agent/Runtime/UI host 服务、独立 DB/host root，并在成功/失败/中断时收尾。自举 E2E 前先停止日常 `dev:host`，避免 Runtime 可执行文件被占用；复用栈需显式使用 `--persistent` / `XIHE_E2E_EXTERNAL_SERVER=1`。PLAN-0584 Native Image lane 用 `--jar-mode=native`，不会静默退回 Jar/Maven。
+- E2E：`mise run test:e2e:compose`（**已冻结 2026-10-07，mise 已注释，勿用**；旧名 `test:e2e` 一并冻结）；`mise run test:e2e:host` 由 `scripts/e2e-host.mjs` 自举每轮隔离 PostgreSQL 与 CP/Agent/Runtime/UI host 服务、独立 DB/host root，并在成功/失败/中断时收尾。自举 E2E 前先停止日常 `dev:host`，避免 Runtime 可执行文件被占用；复用栈需显式使用 `--persistent` / `XIHE_E2E_EXTERNAL_SERVER=1`。PLAN-0584 Native Image lane 用 `--jar-mode=native`，不会静默退回 Jar/Maven。新手首跑车道用 `--batch=goldpath` / `goldpath-closed` / `goldpath-first-run`（含义与跳过原因见 [DEV-033](DEV-033-first-run-gold-path.md) §5.4）。
 
 - 全量：`mise run validate:full`。策略详见 DEV-020/021/022/023。
 

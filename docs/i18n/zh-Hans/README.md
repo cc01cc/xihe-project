@@ -38,6 +38,8 @@ mise run xihe -- --help
 
 开发管理员密码通过 `mise run reset-admin` 临时重置；命令输出只用于本地登录，不要保存到脚本、源码或日志。
 
+**空白实例首跑**（本地模式免密 onboarding → 建 Agent → 首条回复，以及「看到什么算成功」的逐条判据）见 [DEV-033](DEV-033-first-run-gold-path.md)。
+
 ## 2. 架构
 
 UI 与 Agent 是两个独立操作主体。Control Plane（CP）提供共享的路由、权限与审计；Runtime 提供受限的工作区执行能力。
@@ -122,7 +124,7 @@ flowchart LR
 ```bash
 mise run validate        # lint + typecheck + build + test
 mise run validate:full   # 增加集成与 E2E（需要 Docker）
-mise run test:e2e:host   # Host E2E：先运行 dev:host，每轮使用隔离环境
+mise run test:e2e:host   # Host E2E：先停 dev:host（见 DEV-002 §5），每轮使用隔离环境
 ```
 
 测试策略见 DEV-020/021/022/023；环境清理与 host 运行要求见 [DEV-002](DEV-002-developer-guide.md)。
@@ -135,6 +137,7 @@ mise run test:e2e:host   # Host E2E：先运行 dev:host，每轮使用隔离环
 |---|---|
 | [DEV-001](DEV-001-system-architecture.md) | 系统架构与通信协议 |
 | [DEV-002](DEV-002-developer-guide.md) | 环境搭建、运行模式与调试 |
+| [DEV-033](DEV-033-first-run-gold-path.md) | 新手首跑：空白实例 → 首条回复（判据与 spec 断言映射） |
 | [DEV-003](DEV-003-config-management.md) | ConfigService、环境变量与配置导入 |
 | [DEV-004](DEV-004-logging.md) | 日志、脱敏与泄露扫描 |
 | [USER-001](USER-001-user-guide.md) | 用户指南 |

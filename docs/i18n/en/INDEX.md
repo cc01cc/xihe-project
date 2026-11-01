@@ -26,6 +26,7 @@ General-purpose Agent tool platform.
 - [DEV-030: Documentation Layout and Frontmatter](DEV-030-documentation-layout-and-frontmatter.md)
 - [DEV-031: Sandbox Backend Contract](DEV-031-sandbox-backend-contract.md)
 - [DEV-032: Terminology (Polysemy and Synonyms)](DEV-032-terminology.md)
+- [DEV-033: First Run (Gold Path)](DEV-033-first-run-gold-path.md)
 - [RFC-001: Session Domain Model](RFC-001-session-domain-model.md)
 - [ADR-001: Session Store Boundary](ADR-001-session-store-boundary.md)
 

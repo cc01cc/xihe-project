@@ -28,6 +28,8 @@ mise run xihe -- --help
 
 The UI uses port `12630` by default (stack-1; parallel stacks shift the whole block, see "模式 D" in DEV-002). `dev:host` does not import config or create a provider connection; use the explicit `mise run dev:host:import-config` / `mise run dev:host:provider-init` tasks when needed. See [DEV-002](docs/i18n/zh-Hans/DEV-002-developer-guide.md). `mise run dev:full` is **frozen (2026-10-07: only PostgreSQL remains in Docker; services run on host)** and commented out in `mise.toml` — use `dev:host`.
 
+New to XH? The blank-instance → first-reply path (local-mode onboarding, first Agent, first message, plus what "success" looks like — each criterion mapped to a spec assertion) is [DEV-033](docs/i18n/en/DEV-033-first-run-gold-path.md).
+
 ## 2. Architecture
 
 People and agents are separate operating entities. The Control Plane provides shared routing, access control, and audit; Runtime supplies bounded workspace execution.
@@ -92,6 +94,7 @@ Dependency details are maintained in the [UI manifest](packages/ui/package.json)
 | [Chinese documentation index](docs/i18n/zh-Hans/INDEX.md) | Architecture, development, configuration, testing, and known issues |
 | [English documentation](docs/i18n/en/) | English architecture, logging, test strategy, and ADRs |
 | [User guide](docs/i18n/zh-Hans/USER-001-user-guide.md) | Product usage |
+| [First run / gold path (DEV-033)](docs/i18n/en/DEV-033-first-run-gold-path.md) | Blank instance → first assistant reply; each success criterion mapped to an E2E assertion |
 | [AGENTS.md](AGENTS.md) | Project conventions and development commands |
 | [Project contract index](spec/README.md) | Agent/GitHub-only contracts; not rendered by the documentation site |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes |
