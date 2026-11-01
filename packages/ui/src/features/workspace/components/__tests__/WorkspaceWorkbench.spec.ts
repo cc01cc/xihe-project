@@ -438,3 +438,36 @@ describe("WorkspaceWorkbench dock policy (PLAN-0582 S3b P1-1 audit)", () => {
         second.unmount();
     });
 });
+
+// PLAN-0623 U1：参与者面板按**会话**挂载，与 monitor 同构；tab 默认不打开。
+describe("WorkspaceWorkbench participants tab (PLAN-0623 U1)", () => {
+    it("does not open the participants tab by itself", async () => {
+        const wrapper = mountWorkbench();
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="dock-tab-members"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="session-participants-panel"]').exists()).toBe(false);
+        // 持久化里也不会被写入（默认 dockTabs 为空。
+        expect(storedLayout().dockTabs ?? []).not.toContain("members");
+        wrapper.unmount();
+    });
+
+    it("renders the participants empty state when the tab is open without a session", async () => {
+        localStorage.setItem(
+            "xihe-layout-ws:workspace-1",
+            JSON.stringify({
+                dockCollapsed: false,
+                dockTabs: ["members"],
+                activeDockTab: "members",
+            }),
+        );
+
+        const wrapper = mountWorkbench({ sessionId: null });
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="dock-tab-members"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="session-participants-panel"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="participants-empty"]').exists()).toBe(true);
+        wrapper.unmount();
+    });
+});

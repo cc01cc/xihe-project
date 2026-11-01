@@ -43,7 +43,7 @@ export const DOCK_MAX_TABS = 6;
 export const DOCK_INLINE_MIN_VIEWPORT = 1800;
 
 /** Dock tabs that have a panel implementation today (S3 adds `context`/`approval`). */
-export const DOCK_TAB_IDS = ["code", "changes", "monitor"] as const;
+export const DOCK_TAB_IDS = ["code", "changes", "monitor", "members"] as const;
 export type DockTabId = (typeof DOCK_TAB_IDS)[number];
 
 /**

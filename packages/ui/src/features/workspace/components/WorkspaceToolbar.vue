@@ -14,6 +14,7 @@ import {
     MoreHorizontal,
     PanelLeft,
     Plus,
+    Users,
 } from "@lucide/vue";
 import {
     workspacePath,
@@ -33,6 +34,7 @@ const props = defineProps<{
     codeOpen?: boolean;
     changesOpen?: boolean;
     monitorOpen?: boolean;
+    membersOpen?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -43,6 +45,7 @@ const emit = defineEmits<{
     toggleCode: [];
     toggleChanges: [];
     toggleMonitor: [];
+    toggleMembers: [];
 }>();
 
 const { t } = useI18n();
@@ -262,6 +265,23 @@ function overflowNav(navigate: () => void) {
                 @click="emit('toggleMonitor')"
             >
                 <Activity class="size-3.5" />
+            </button>
+            <!-- PLAN-0623 U1：参与者面板入口（与 monitor 同构；移动端由 dock 溢出菜单进入）。 -->
+            <button
+                type="button"
+                data-testid="workspace-toolbar-members"
+                class="p-1.5 rounded transition-colors"
+                :class="
+                    membersOpen
+                        ? 'bg-accent text-foreground'
+                        : 'text-muted-foreground hover:bg-accent'
+                "
+                :title="t('workspace.toggleMembers')"
+                :aria-label="t('workspace.toggleMembers')"
+                :aria-pressed="membersOpen === true"
+                @click="emit('toggleMembers')"
+            >
+                <Users class="size-3.5" />
             </button>
             <button
                 type="button"

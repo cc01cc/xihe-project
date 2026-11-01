@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { effectScope, nextTick, ref } from "vue";
 import {
     DOCK_MAX_TABS,
+    DOCK_TAB_IDS,
     DOCK_WIDTH_DEFAULT,
     DOCK_WIDTH_MAX,
     DOCK_WIDTH_MIN,
@@ -29,6 +30,7 @@ import {
     defaultWorkspaceLayoutForViewport,
     deriveDockMode,
     hasWorkspaceLayout,
+    isDockTabId,
     readGlobalLayout,
     readWorkspaceLayout,
     useWorkspaceLayout,
@@ -663,5 +665,35 @@ describe("PLAN-0582 S5-W2: navigation panel yields (spec §1.5-C rule 2, second 
         expect(result.navYielded).toBe(false);
         expect(result.mainWidth).toBe(728 - TREE_COLLAPSED_WIDTH); // 688 >= 640
         expect(result.mainWidth).toBeGreaterThanOrEqual(MAIN_MIN_WIDTH);
+    });
+});
+
+// PLAN-0623 U1/U4：新增 dock tab 不得影响既有持久化，也不得默认打开。
+describe("PLAN-0623 members dock tab", () => {
+    it("knows the members tab id", () => {
+        expect(DOCK_TAB_IDS).toContain("members");
+        expect(isDockTabId("members")).toBe(true);
+        // 旧 id 仍然有效（不能因为加新 id 把旧值判废）。
+        expect(isDockTabId("monitor")).toBe(true);
+    });
+
+    it("keeps a workspace whose stored tabs predate the members tab", () => {
+        localStorage.setItem(
+            `${WORKSPACE_LAYOUT_STORAGE_PREFIX}ws-legacy`,
+            JSON.stringify({
+                dockCollapsed: false,
+                dockTabs: ["code", "changes", "monitor"],
+                activeDockTab: "changes",
+            }),
+        );
+
+        const stored = readWorkspaceLayout("ws-legacy");
+        // 不注入 members、不重置成默认值、active 保持原样。
+        expect(stored.dockTabs).toEqual(["code", "changes", "monitor"]);
+        expect(stored.activeDockTab).toBe("changes");
+        expect(stored.dockCollapsed).toBe(false);
+        // 默认布局里也没有 members（⇒ 不会被动打开）。
+        expect(defaultWorkspaceLayout().dockTabs).toEqual([]);
+        expect(defaultWorkspaceLayout().activeDockTab).toBeNull();
     });
 });

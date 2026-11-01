@@ -12,4 +12,5 @@ export const DOCK_TAB_LABEL_KEYS: Record<DockTabId, string> = {
     code: "workspace.panelCode",
     changes: "workspace.panelChanges",
     monitor: "workspace.panelMonitor",
+    members: "workspace.panelMembers",
 };

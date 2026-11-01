@@ -36,6 +36,7 @@ import FileTreePanel from "./FileTreePanel.vue";
 import FileEditor from "./FileEditor.vue";
 import WorkspaceChangesPanel from "./WorkspaceChangesPanel.vue";
 import SessionMonitorPanel from "../monitor/SessionMonitorPanel.vue";
+import SessionParticipantsPanel from "./SessionParticipantsPanel.vue";
 import { DOCK_TAB_LABEL_KEYS, type DockTab } from "./workspaceDockTabs";
 
 /**
@@ -151,6 +152,8 @@ const activeDockTab = computed(() => layout.value.activeDockTab);
 const codeOpen = computed(() => dockOpen.value && activeDockTab.value === "code");
 const changesOpen = computed(() => dockOpen.value && activeDockTab.value === "changes");
 const monitorOpen = computed(() => dockOpen.value && activeDockTab.value === "monitor");
+/** PLAN-0623 U1：参与者面板与 monitor 同构（按会话挂载），tab 默认不打开。 */
+const membersOpen = computed(() => dockOpen.value && activeDockTab.value === "members");
 
 const dockTabs = computed<DockTab[]>(() =>
     layout.value.dockTabs.map((id) => ({ id, label: t(DOCK_TAB_LABEL_KEYS[id]) })),
@@ -424,6 +427,7 @@ watch(
             :monitor-open="
                 isMobile ? (mobileChangesOpen ?? false) && mobileAuxTab === 'monitor' : monitorOpen
             "
+            :members-open="isMobile ? false : membersOpen"
             @import-source="emit('importSource')"
             @agents="emit('agents')"
             @add-workspace="emit('addWorkspace')"
@@ -431,6 +435,7 @@ watch(
             @toggle-code="handleToggleCode"
             @toggle-changes="handleToggleChanges"
             @toggle-monitor="handleToggleMonitor"
+            @toggle-members="toggleDockTab('members')"
         />
 
         <!-- Mobile keeps the editor-first body with files/chat as sheets (ruling #9). -->
@@ -538,6 +543,10 @@ watch(
                     <div v-else class="p-4 text-xs text-muted-foreground">
                         {{ t("workspace.noSession") }}
                     </div>
+                </template>
+                <template #members>
+                    <!-- PLAN-0623 U1：按会话挂载；无会话时面板自身渲染 participants-empty。 -->
+                    <SessionParticipantsPanel :session-id="sessionId ?? null" />
                 </template>
             </WorkspaceDock>
         </div>
