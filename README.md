@@ -28,7 +28,9 @@ mise run xihe -- --help
 
 The UI uses port `12630` by default (stack-1; parallel stacks shift the whole block, see "模式 D" in DEV-002). `dev:host` does not import config or create a provider connection; use the explicit `mise run dev:host:import-config` / `mise run dev:host:provider-init` tasks when needed. See [DEV-002](docs/i18n/zh-Hans/DEV-002-developer-guide.md). `mise run dev:full` is **frozen (2026-10-07: only PostgreSQL remains in Docker; services run on host)** and commented out in `mise.toml` — use `dev:host`.
 
-New to XH? The blank-instance → first-reply path (local-mode onboarding, first Agent, first message, plus what "success" looks like — each criterion mapped to a spec assertion) is [DEV-033](docs/i18n/en/DEV-033-first-run-gold-path.md).
+**This repository runs from a single clone** — no parent ONE workspace required: `mise run check:standalone` (`mise.toml:395`) verifies "no dependency on the one root". Port defaults are **sourced from this repository** (`scripts/lib/stack-ports.mjs`); the ONE-side `config/ports.mjs` is only a mirror for orchestration — change one side and you must change the other in the same batch, with `mise run check:ports` (`mise.toml:401`) asserting parity (it skips explicitly when ONE is absent).
+
+**First use starts blank**: register/login no longer create any workspace (the response `workspaceId` may be `null`), so the first screen is an empty state; click "create your first workspace" and use **`direct_attach`** (pick a host directory; the capability preflight decides the execution mode) before creating an Agent and a session. Full steps and the per-criterion "what success looks like" table are in [DEV-033](docs/i18n/en/DEV-033-first-run-gold-path.md).
 
 ## 2. Architecture
 
