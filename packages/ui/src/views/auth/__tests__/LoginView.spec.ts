@@ -141,6 +141,17 @@ describe("LoginView local-mode entry (BL-150 A)", () => {
         expect(wrapper.find('[data-testid="login-local-mode"]').exists()).toBe(false);
     });
 
+    // PLAN-0612 T6.3：非 localMode（普通部署）**不得**走到免密端点 —— 这是 BL-150 改动最需要
+    // 防的回归：一旦条件写反，托管部署上的登录页会去 POST /auth/local-login（CP 侧 404/403）。
+    it("never calls the passwordless endpoint on a hosted (non-localMode) instance", async () => {
+        const hosted = await mountWithLocalMode(false);
+        expect(hosted.find('[data-testid="login-local-mode"]').exists()).toBe(false);
+        expect(authMock.localLogin).not.toHaveBeenCalled();
+        // 普通表单仍是唯一入口。
+        expect(hosted.find("#identifier").exists()).toBe(true);
+        expect(hosted.find("#password").exists()).toBe(true);
+    });
+
     it("signs in passwordlessly and enters the workspace", async () => {
         authMock.localLogin.mockResolvedValue(true);
         pushMock.mockResolvedValue(undefined);

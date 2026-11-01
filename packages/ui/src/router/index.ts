@@ -9,6 +9,7 @@ import {
     writeTabWorkspaceId,
 } from "../lib/workspaceContext";
 import { resolveLocalModeLanding } from "../lib/workspaceLanding";
+import { resolveUnauthenticatedEntry } from "../lib/authEntry";
 
 const router = createRouter({
     history: createWebHistory(),
@@ -182,10 +183,13 @@ router.beforeEach(async (to) => {
 
     if (requiresAuth && !token) {
         const bootstrap = await resolveBootstrap();
-        if (!bootstrap.initialized) {
+        // PLAN-0612 T6.3：入口三态抽成纯函数（`lib/authEntry.ts`），才能对"非 localMode 仍跳
+        // /login"这类回归做单测；这里的分支顺序与抽取前逐字一致。
+        const entry = resolveUnauthenticatedEntry(bootstrap);
+        if (entry === "onboarding") {
             return { name: "onboarding", query: { redirect: to.fullPath } };
         }
-        if (bootstrap.localMode) {
+        if (entry === "local-login") {
             try {
                 // PLAN-0614 决策 #5 / BL-173：落点优先级 = 已有 tab 上下文（记住上次选择）→
                 // localLogin 返回的第一个活跃工作区 → 都没有则停在选择面（空态可操作）。

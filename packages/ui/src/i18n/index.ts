@@ -1770,7 +1770,7 @@ const messages = {
             register: "注册",
             noAccount: "没有账号？",
             hasAccount: "已有账号？",
-            localLogin: "本机模式免密登录",
+            localLogin: "本地模式免密登录",
             localLoggingIn: "正在登录…",
             localModeHint: "本机单用户模式：回环访问可直接进入，无需密码",
             localSingleUserRequired: "本机实例不是单用户状态，请使用账号密码登录",
@@ -1796,7 +1796,7 @@ const messages = {
             email: "邮箱",
             name: "显示名称",
             password: "密码",
-            localHint: "本机模式无需密码，可留空。",
+            localHint: "本地模式无需密码，可留空。",
             submit: "创建并进入",
             creating: "创建中…",
             failed: "创建失败，请重试",
@@ -3794,7 +3794,7 @@ const messages = {
             localLoggingIn: "Signing in…",
             localModeHint: "Local single-user mode: loopback access needs no password",
             localSingleUserRequired:
-                "This local instance is not single-user; sign in with an account",
+                "This local instance is not single-user; sign in with your email and password instead",
         },
         register: {
             title: "Register",
