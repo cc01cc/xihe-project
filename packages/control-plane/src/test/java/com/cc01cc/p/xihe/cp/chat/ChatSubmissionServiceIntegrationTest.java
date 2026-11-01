@@ -169,7 +169,10 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         principal.setDisabledAt(java.time.Instant.now());
         agentPrincipalRepository.saveAndFlush(principal);
         String disabledPrincipalRunId = UUID.randomUUID().toString();
-        assertRejectedWithoutWrites(disabledPrincipalRunId, persistedSession, user, workspace);
+        // PLAN-0622 V15 (Lead ruling 2026-11-02): a disabled principal is a STATE CONFLICT (409
+        // AGENT_PRINCIPAL_DISABLED), not a permission problem, so it must not be masked as 403.
+        assertRejectedWithoutWrites(disabledPrincipalRunId, persistedSession, user, workspace,
+                HttpStatus.CONFLICT, "AGENT_PRINCIPAL_DISABLED");
     }
 
     @Test
@@ -371,10 +374,43 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         return saveBoundChatSession(session, user);
     }
 
+
+    // ---------------------------------------------------------------------------------------------
+    // PLAN-0622 V15 (Lead ruling): disabling takes effect on the NEXT submission of an EXISTING
+    // session — the first submission already succeeded, the second one is refused with 409.
+    // ---------------------------------------------------------------------------------------------
+
+    @Test
+    void disablingAPrincipalBlocksTheSecondSubmissionOfAnExistingSession() throws Exception {
+        ChatFixture fixture = createChatFixture("v15-second-submission");
+
+        String firstRunId = UUID.randomUUID().toString();
+        ChatSubmissionService.Submission first = submit(firstRunId, fixture.session(), fixture.user(),
+                fixture.workspace(), "first message", fixture.principal().getId().toString());
+        assertEquals(UUID.fromString(firstRunId), first.run().getId());
+
+        fixture.principal().setDisabledAt(java.time.Instant.now());
+        agentPrincipalRepository.saveAndFlush(fixture.principal());
+
+        String secondRunId = UUID.randomUUID().toString();
+        CpApiException error = assertThrows(CpApiException.class,
+                () -> submit(secondRunId, fixture.session(), fixture.user(), fixture.workspace(),
+                        "second message", fixture.principal().getId().toString()));
+        assertEquals(HttpStatus.CONFLICT, error.getStatus());
+        assertEquals("AGENT_PRINCIPAL_DISABLED", error.getCode());
+        assertTrue(chatRunRepository.findById(UUID.fromString(secondRunId)).isEmpty(),
+                "a refused submission must not persist a run");
+    }
     private void assertRejectedWithoutWrites(String runId, Session session, User user, Workspace workspace) {
+        assertRejectedWithoutWrites(runId, session, user, workspace, HttpStatus.FORBIDDEN, "FORBIDDEN");
+    }
+
+    private void assertRejectedWithoutWrites(String runId, Session session, User user, Workspace workspace,
+                                             HttpStatus expectedStatus, String expectedCode) {
         CpApiException error = assertThrows(CpApiException.class,
                 () -> submit(runId, session, user, workspace, "rejected message"));
-        assertEquals("FORBIDDEN", error.getCode());
+        assertEquals(expectedStatus, error.getStatus());
+        assertEquals(expectedCode, error.getCode());
         assertTrue(chatRunRepository.findById(UUID.fromString(runId)).isEmpty());
         assertTrue(messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId().toString()).isEmpty());
         assertFalse(mcpInvocationRepository.existsBySessionId(session.getId().toString()));

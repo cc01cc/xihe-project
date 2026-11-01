@@ -121,7 +121,7 @@ public class SessionService {
         if (agentPrincipalId == null || agentPrincipalId.isBlank()) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "agentPrincipalId is required");
         }
-        com.fasterxml.jackson.databind.JsonNode cap = agentPrincipalService.resolveSessionCap(
+        com.fasterxml.jackson.databind.JsonNode cap = agentPrincipalService.resolveCapFor(
                 agentPrincipalId, workspaceId);
         Session session = new Session(workspaceId, userId, normalizeTitle(title));
         session.setId(UUID.randomUUID());
@@ -144,7 +144,7 @@ public class SessionService {
                     "A fork requires a stable AgentPrincipal on the source Session");
         }
 
-        com.fasterxml.jackson.databind.JsonNode currentCap = agentPrincipalService.resolveSessionCap(
+        com.fasterxml.jackson.databind.JsonNode currentCap = agentPrincipalService.resolveCapFor(
                 agentPrincipalId, workspaceId);
         Session child = new Session(workspaceId, userId, normalizeTitle("Fork of " + source.getTitle()));
         child.setId(childSessionId);

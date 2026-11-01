@@ -236,6 +236,100 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
     // helpers
     // -----------------------------------------------------------------------------------------
 
+    // -----------------------------------------------------------------------------------------
+    // V4: the list is the union of three sources — an UNBOUND PERSONAL/INSTANCE principal must be
+    // visible without a binding (the S1 headed walk-through caught the binding-only version).
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    void anUnboundPersonalPrincipalIsListedWithThePersonalSource() {
+        User owner = newUser("unbound-owner");
+        grantDefaultService.ensureUserDefault(owner);
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Unbound ws", owner.getId().toString());
+        workspaces.add(workspace.getId());
+        UUID personal = createPersonal(owner, "Unbound personal");
+
+        List<Map<String, Object>> agents = listAgents(owner, workspace);
+
+        assertEquals("personal", sourceOf(agents, personal), "a PERSONAL principal needs no binding to be visible");
+        assertTrue(agents.stream().allMatch(item -> item.containsKey("permissionsSnapshot")), agents.toString());
+    }
+
+    @Test
+    void anUnboundInstancePrincipalIsListedWithTheInstanceSource() {
+        User owner = newUser("unbound-instance-owner");
+        grantDefaultService.ensureUserDefault(owner);
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Unbound inst ws", owner.getId().toString());
+        workspaces.add(workspace.getId());
+        UUID instance = createInstancePrincipal(owner);
+
+        List<Map<String, Object>> agents = listAgents(owner, workspace);
+
+        assertEquals("instance", sourceOf(agents, instance));
+    }
+
+    @Test
+    void anotherUsersPersonalPrincipalIsNotListed() {
+        User alice = newUser("o5-alice");
+        User bob = newUser("o5-bob");
+        grantDefaultService.ensureUserDefault(alice);
+        grantDefaultService.ensureUserDefault(bob);
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("O5 ws", alice.getId().toString());
+        workspaces.add(workspace.getId());
+        UUID bobPersonal = createPersonal(bob, "Bob private");
+
+        List<Map<String, Object>> agents = listAgents(alice, workspace);
+
+        assertTrue(agents.stream().noneMatch(item -> bobPersonal.toString()
+                        .equals(String.valueOf(item.get("principalId")))),
+                "O5: another account's PERSONAL principal must never leak into the list: " + agents);
+    }
+
+    @Test
+    void aBoundPersonalPrincipalKeepsThePersonalSourceAndAppearsOnce() {
+        User owner = newUser("both-owner");
+        grantDefaultService.ensureUserDefault(owner);
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Both ws", owner.getId().toString());
+        workspaces.add(workspace.getId());
+        UUID personal = createPersonal(owner, "Bound personal");
+        bindViaApi(owner, workspace.getId(), personal);
+
+        List<Map<String, Object>> agents = listAgents(owner, workspace);
+
+        long rows = agents.stream().filter(item -> personal.toString()
+                .equals(String.valueOf(item.get("principalId")))).count();
+        assertEquals(1, rows, "deduplicated by principal id: " + agents);
+        assertEquals("personal", sourceOf(agents, personal), "source describes what it is, not that it is bound");
+    }
+
+    @Test
+    void theListIsOrderedBySourceThenName() {
+        User owner = newUser("order-owner");
+        grantDefaultService.ensureUserDefault(owner);
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Order ws", owner.getId().toString());
+        workspaces.add(workspace.getId());
+        UUID workspaceScoped = createWithScope(
+                workspaceToken(owner, workspace.getId(), WorkspaceRole.OWNER), "Z workspace", "WORKSPACE");
+        bindViaApi(owner, workspace.getId(), workspaceScoped);
+        createPersonal(owner, "A personal");
+        createInstancePrincipal(owner);
+
+        List<String> sources = listAgents(owner, workspace).stream()
+                .map(item -> String.valueOf(item.get("source"))).toList();
+
+        assertEquals(List.of("workspace", "personal", "instance"), sources, "stable source order");
+    }
+
+    private List<Map<String, Object>> listAgents(User caller, Workspace workspace) {
+        ResponseEntity<Map> response = exchange(HttpMethod.GET,
+                "/api/v1/workspaces/" + workspace.getId() + "/agents",
+                workspaceToken(caller, workspace.getId(), WorkspaceRole.OWNER), null);
+        assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
+        List<Map<String, Object>> agents = (List<Map<String, Object>>) response.getBody().get("agents");
+        assertNotNull(agents, "the response must be the frozen {agents:[...]} envelope");
+        return agents;
+    }
+
     /** Seeds a real instance ADMIN tier binding (capability authority reads bindings, not grants). */
     private void makeInstanceAdmin(User user) {
         var adminRole = accessRoleRepository.findByName("ADMIN")

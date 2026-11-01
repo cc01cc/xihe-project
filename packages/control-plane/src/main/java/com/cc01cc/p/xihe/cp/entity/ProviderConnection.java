@@ -76,6 +76,19 @@ public class ProviderConnection {
     @Column(nullable = false)
     private long revision = 1;
 
+    /** PLAN-0622 M1.5: resource-governor ceilings; {@code null} = not configured = unlimited. */
+    @Column(name = "max_inflight")
+    private Integer maxInflight;
+
+    @Column(name = "max_queue")
+    private Integer maxQueue;
+
+    @Column(name = "window_token_budget")
+    private Long windowTokenBudget;
+
+    @Column(name = "window_seconds")
+    private Integer windowSeconds;
+
     @Column(name = "last_verified_at")
     private Instant lastVerifiedAt;
 
@@ -141,6 +154,14 @@ public class ProviderConnection {
     public void setManualModels(String manualModels) { this.manualModels = manualModels; }
     public long getRevision() { return revision; }
     public void setRevision(long revision) { this.revision = revision; }
+    public Integer getMaxInflight() { return maxInflight; }
+    public void setMaxInflight(Integer maxInflight) { this.maxInflight = maxInflight; }
+    public Integer getMaxQueue() { return maxQueue; }
+    public void setMaxQueue(Integer maxQueue) { this.maxQueue = maxQueue; }
+    public Long getWindowTokenBudget() { return windowTokenBudget; }
+    public void setWindowTokenBudget(Long windowTokenBudget) { this.windowTokenBudget = windowTokenBudget; }
+    public Integer getWindowSeconds() { return windowSeconds; }
+    public void setWindowSeconds(Integer windowSeconds) { this.windowSeconds = windowSeconds; }
     public Instant getLastVerifiedAt() { return lastVerifiedAt; }
     public void setLastVerifiedAt(Instant lastVerifiedAt) { this.lastVerifiedAt = lastVerifiedAt; }
     public String getLastErrorCode() { return lastErrorCode; }

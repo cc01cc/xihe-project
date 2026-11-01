@@ -981,6 +981,11 @@ public class ChatController {
                 String effectiveModel = persistedRun.model() == null ? model : persistedRun.model();
                 ProviderCredentialLeaseService.IssuedLease credentialLease = null;
                 if (persistedRun.providerConnectionId() != null) {
+                    // PLAN-0622 M1.4: the run's credential authority is the Session's frozen
+                    // principal cap (checklist C3), not a live re-resolution — a later cap change
+                    // never widens or narrows an already bound Session's credential arm.
+                    Session leaseSession = sessionService.requireCurrent(sessionId, userId, workspaceId);
+                    String leasePrincipalId = leaseSession.getAgentPrincipalId();
                     credentialLease = credentialLeases.issue(
                             userId,
                             workspaceId,
@@ -989,7 +994,10 @@ public class ChatController {
                             persistedRun.providerConnectionId(),
                             effectiveProvider,
                             effectiveModel,
-                            persistedRun.connectionRevision());
+                            persistedRun.connectionRevision(),
+                            null,
+                            leasePrincipalId,
+                            leasePrincipalId == null ? null : leaseSession.getAgentPermissionsSnapshot());
                 }
                 Map<String, Object> agentRequest = new java.util.LinkedHashMap<>();
                 agentRequest.put("sessionId", sessionId);

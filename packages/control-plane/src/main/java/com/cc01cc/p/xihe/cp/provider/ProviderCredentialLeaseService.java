@@ -1,10 +1,16 @@
 package com.cc01cc.p.xihe.cp.provider;
 
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
+import com.cc01cc.p.xihe.cp.policy.CredentialUseCap;
+import com.cc01cc.p.xihe.cp.policy.LimitSpec;
+import com.cc01cc.p.xihe.cp.policy.ResourceGovernor;
+import com.cc01cc.p.xihe.cp.policy.ResourceKey;
 import com.cc01cc.p.xihe.cp.entity.ProviderCredentialLease;
 import com.cc01cc.p.xihe.cp.repository.ProviderCredentialLeaseRepository;
+import com.cc01cc.p.xihe.cp.repository.ProviderConnectionModelLimitRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,6 +46,8 @@ public class ProviderCredentialLeaseService {
     private final ApiInputTypeService apiTypes;
     private final ObjectMapper objectMapper;
     private final ProviderCredentialAccess credentialAccess;
+    private final ProviderConnectionModelLimitRepository modelLimitRepository;
+    private final ResourceGovernor governor;
     private final SecureRandom random = new SecureRandom();
 
     public ProviderCredentialLeaseService(
@@ -49,7 +57,9 @@ public class ProviderCredentialLeaseService {
             ProviderCatalogService catalog,
             ApiInputTypeService apiTypes,
             ObjectMapper objectMapper,
-            ProviderCredentialAccess credentialAccess) {
+            ProviderCredentialAccess credentialAccess,
+            ProviderConnectionModelLimitRepository modelLimitRepository,
+            ResourceGovernor governor) {
         this.repository = repository;
         this.connectionRepository = connectionRepository;
         this.connectionService = connectionService;
@@ -57,6 +67,8 @@ public class ProviderCredentialLeaseService {
         this.apiTypes = apiTypes;
         this.objectMapper = objectMapper;
         this.credentialAccess = credentialAccess;
+        this.modelLimitRepository = modelLimitRepository;
+        this.governor = governor;
     }
 
     @Transactional
@@ -102,13 +114,47 @@ public class ProviderCredentialLeaseService {
             String model,
             Long expectedRevision,
             Duration ttl) {
+        return issue(userId, workspaceId, sessionId, runId, providerConnectionId, providerId, model,
+                expectedRevision, ttl, null, null);
+    }
+
+    /**
+     * PLAN-0622 M1.4 (K3): the agent-principal overload. It is the <b>only</b> new signature —
+     * every legacy overload keeps its shape and reaches this one with a null principal, which
+     * routes to the untouched three-argument gate (byte-equivalent to pre-0622 behaviour).
+     *
+     * <p>{@code agentCap} is the principal's frozen permission cap (the Session snapshot resolved
+     * through {@code AgentPrincipalService.resolveCapFor}); it only answers whether the principal
+     * carries {@code credential_use} for this credential. The visibility conjunction is enforced
+     * in {@code ProviderCredentialAccess} (K4), not here.</p>
+     */
+    @Transactional
+    public IssuedLease issue(
+            String userId,
+            String workspaceId,
+            String sessionId,
+            String runId,
+            String providerConnectionId,
+            String providerId,
+            String model,
+            Long expectedRevision,
+            Duration ttl,
+            String agentPrincipalId,
+            JsonNode agentCap) {
         ProviderConnection connection = requestTemplates.lockConnection(providerConnectionId);
         if (expectedRevision != null && connection.getRevision() != expectedRevision) {
             throw com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService.conflict(
                     "STALE_PROVIDER_CONNECTION", "Provider connection revision is stale");
         }
         connectionService.requireUsableForOwner(providerConnectionId, userId, workspaceId);
-        credentialAccess.requireUsable(connection.getCredentialId(), userId, workspaceId);
+        if (agentPrincipalId == null || agentPrincipalId.isBlank()) {
+            credentialAccess.requireUsable(connection.getCredentialId(), userId, workspaceId);
+        } else {
+            String credentialId = connection.getCredentialId() == null
+                    ? null : connection.getCredentialId().toString();
+            credentialAccess.requireUsableForAgentPrincipal(connection.getCredentialId(), userId, workspaceId,
+                    agentPrincipalId, CredentialUseCap.grants(agentCap, credentialId));
+        }
         // PLAN-0485 round-4 item 4: the connection's API Type operation governs
         // lease validation instead of the presence of a runId. Chat admission
         // keeps its explicit chat gate; a Run-bound embedding lease (0416) and
@@ -126,6 +172,16 @@ public class ProviderCredentialLeaseService {
             throw com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService.conflict(
                     "STALE_PROVIDER_CONNECTION", "Provider connection revision is stale");
         }
+        // PLAN-0622 M1.5 (R2): admission happens **before** anything is persisted — a refused
+        // request must not leave a lease row behind. The slot TTL is the credential lease's own
+        // lifetime, so a lost terminal callback degrades to "the limit heals when the lease
+        // expires" instead of a permanently exhausted ceiling (R5's documented bottom line).
+        LimitSpec connectionLimits = new LimitSpec(connection.getMaxInflight(), connection.getMaxQueue(),
+                connection.getWindowTokenBudget(), connection.getWindowSeconds());
+        Duration slotTtl = ttl == null ? DEFAULT_TTL : ttl;
+        governor.tryAcquire(ResourceKey.connection(connection.getId().toString()), connectionLimits, slotTtl);
+        governor.tryAcquire(ResourceKey.model(connection.getId().toString(), providerId, model),
+                modelLimits(connection.getId(), providerId, model, connectionLimits), slotTtl);
         String token = "pl_" + randomToken();
         ProviderCredentialLease lease = new ProviderCredentialLease();
         lease.setId(UUID.randomUUID());
@@ -197,6 +253,24 @@ public class ProviderCredentialLeaseService {
                 apiKey, connection.getRevision(), connection.getModelDiscovery(), manualModels,
                 connection.getConnectionKey(), connection.getApiTypeId(),
                 connection.getApiTypeVersion(), operation, toolsSupported, visionSupported);
+    }
+
+    /**
+     * PLAN-0622 M1.5: model-level overrides inherit the connection level for every omitted
+     * dimension ({@code null} = inherit). Without a matching row the connection limits apply.
+     */
+    private LimitSpec modelLimits(UUID connectionId, String providerId, String model, LimitSpec connectionLimits) {
+        return modelLimitRepository.findByConnectionId(connectionId).stream()
+                .filter(row -> providerId.equals(row.getProvider()) && model.equals(row.getModel()))
+                .findFirst()
+                .map(row -> new LimitSpec(
+                        row.getMaxInflight() == null ? connectionLimits.maxInflight() : row.getMaxInflight(),
+                        connectionLimits.maxQueue(),
+                        row.getWindowTokenBudget() == null
+                                ? connectionLimits.windowTokenBudget() : row.getWindowTokenBudget(),
+                        row.getWindowSeconds() == null
+                                ? connectionLimits.windowSeconds() : row.getWindowSeconds()))
+                .orElse(connectionLimits);
     }
 
     private String randomToken() {

@@ -27,10 +27,12 @@ ON CONFLICT (role_id, action_class, resource_pattern) DO NOTHING;
 -- Backfill the materialized atom for every user subject holding one of the three instance tier
 -- roles. One row per atom (V87 uq_grants_role_atom): the NOT EXISTS guard keeps the statement
 -- idempotent and the jsonb shape identical to RoleGrantMaterializer#atomArray (wildcard resource is
--- omitted).
+-- omitted). DISTINCT ON (subject_id) because a subject may hold more than one tier binding (for
+-- example USER and ADMIN); without it the second binding violates uq_grants_role_atom.
 INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions, source,
                     scope_type, scope_id, read_state)
-SELECT gen_random_uuid(), 'user', b.subject_id, 'user', b.subject_id,
+SELECT DISTINCT ON (b.subject_id)
+       gen_random_uuid(), 'user', b.subject_id, 'user', b.subject_id,
        jsonb_build_array(jsonb_build_object('actionClass', 'CREATE_OWN_AGENT')),
        'role', 'instance', NULL, 'read'
 FROM role_bindings b
@@ -46,4 +48,5 @@ WHERE b.subject_type = 'user'
         AND g.source = 'role'
         AND g.scope_type = 'instance'
         AND g.scope_id IS NULL
-        AND g.permissions -> 0 ->> 'actionClass' = 'CREATE_OWN_AGENT');
+        AND g.permissions -> 0 ->> 'actionClass' = 'CREATE_OWN_AGENT')
+ORDER BY b.subject_id;

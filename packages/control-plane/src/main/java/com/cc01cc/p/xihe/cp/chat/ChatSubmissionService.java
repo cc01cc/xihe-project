@@ -671,7 +671,7 @@ public class ChatSubmissionService {
                 throw new CpApiException(HttpStatus.CONFLICT, "SESSION_PRINCIPAL_BINDING_CONFLICT",
                         "Only an empty, unbound Session can be assigned an Agent principal");
             }
-            com.fasterxml.jackson.databind.JsonNode cap = agentPrincipalService.resolveSessionCap(
+            com.fasterxml.jackson.databind.JsonNode cap = agentPrincipalService.resolveCapFor(
                     requestedPrincipalId, workspaceId);
             try {
                 int updated = sessionRepository.bindAgentPrincipalIfNull(sessionUuid, requestedPrincipalId,
@@ -704,6 +704,12 @@ public class ChatSubmissionService {
         try {
             agentPrincipalService.requireActiveWorkspaceBinding(path.principalId().toString(), workspaceId);
         } catch (CpApiException e) {
+            // PLAN-0622 V15 (Lead ruling): a disabled principal is a state conflict (409), not a
+            // permission problem. Masking it as 403 would tell the caller to ask for access it
+            // already has.
+            if ("AGENT_PRINCIPAL_DISABLED".equals(e.getCode())) {
+                throw e;
+            }
             throw agentSessionForbidden();
         }
         return session;

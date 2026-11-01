@@ -446,7 +446,8 @@ public class AgentPrincipalService {
         workspaceService.requireActiveWorkspace(workspaceId.toString());
         requireWorkspaceMember(actorId, workspaceId);
 
-        return workspaceAgentRepository.findByIdWorkspaceId(workspaceId).stream()
+        java.util.Map<UUID, WorkspaceAgentView> merged = new java.util.LinkedHashMap<>();
+        workspaceAgentRepository.findByIdWorkspaceId(workspaceId).stream()
                 .map(binding -> agentPrincipalRepository.findById(binding.getId().getPrincipalId())
                         .map(principal -> new WorkspaceAgentView(principal.getId(), principal.getName(),
                                 principal.getTemplateId(), optionalText(principal.getTemplateSnapshot(), "templateName"),
@@ -454,7 +455,38 @@ public class AgentPrincipalService {
                                 sourceOf(principal)))
                         .orElseThrow(() -> new CpApiException(HttpStatus.INTERNAL_SERVER_ERROR,
                                 "AGENT_PRINCIPAL_INCONSISTENT", "Workspace Agent binding has no principal")))
-                .toList();
+                .forEach(view -> merged.put(view.principalId(), view));
+        // V4: the list is the union of three sources, not the binding table. A PERSONAL or INSTANCE
+        // principal is usable without a binding, so it must be listed without one; putIfAbsent keeps
+        // one row per principal, and the bound row already carries the scope-derived source.
+        agentPrincipalRepository.findByScopeAndOwnerUserId(SCOPE_PERSONAL, actorId)
+                .forEach(principal -> merged.putIfAbsent(principal.getId(),
+                        unboundView(principal, principalOnlyCap(principal.getId()))));
+        agentPrincipalRepository.findByScope(SCOPE_INSTANCE)
+                .forEach(principal -> merged.putIfAbsent(principal.getId(),
+                        unboundView(principal, principalOnlyCap(principal.getId()))));
+        return merged.values().stream().sorted(WORKSPACE_AGENT_LIST_ORDER).toList();
+    }
+
+    /** Stable list order: workspace → personal → instance, then name, then id (D24). */
+    private static final java.util.Map<String, Integer> SOURCE_ORDER =
+            java.util.Map.of("workspace", 0, "personal", 1, "instance", 2);
+
+    static final java.util.Comparator<WorkspaceAgentView> WORKSPACE_AGENT_LIST_ORDER = java.util.Comparator
+            .comparingInt((WorkspaceAgentView view) -> SOURCE_ORDER.getOrDefault(view.source(), 9))
+            .thenComparing(view -> view.name() == null ? "" : view.name().toLowerCase(java.util.Locale.ROOT))
+            .thenComparing(view -> view.principalId().toString());
+
+    private WorkspaceAgentView unboundView(AgentPrincipal principal, JsonNode cap) {
+        return new WorkspaceAgentView(principal.getId(), principal.getName(), principal.getTemplateId(),
+                optionalText(principal.getTemplateSnapshot(), "templateName"), principal.getCreatedAt(), cap,
+                sourceOf(principal));
+    }
+
+    /** Without a binding there is no narrowing cap: the principal's own atoms are the whole cap. */
+    private JsonNode principalOnlyCap(UUID principalId) {
+        return toJson(evaluator.union(grantRepository.findBySubjectTypeAndSubjectId(
+                GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId)));
     }
 
     /** Wire vocabulary of the list projection: {@code workspace|personal|instance}. */
@@ -527,10 +559,24 @@ public class AgentPrincipalService {
                 principal.getDisabledAt());
     }
 
+    /**
+     * PLAN-0622 M1.3 (checklist C1–C6): <b>the single computation entry</b> for "what may this
+     * principal do in this workspace".
+     *
+     * <p>Contract:</p>
+     * <ul>
+     *   <li>explicit ids only — no {@code TenantContext} read, so 0623 can call it from a run
+     *       worker thread outside any request (C6);</li>
+     *   <li>no caching (V16): every call re-reads the binding and the principal's grants, so a
+     *       revoked or narrowed binding takes effect on the next submission;</li>
+     *   <li>scoped: an unbound workspace answers {@code 403}, it never falls back to another
+     *       workspace's binding (C5);</li>
+     *   <li>a disabled principal answers {@code 409 AGENT_PRINCIPAL_DISABLED} (state conflict, not
+     *       a permission problem).</li>
+     * </ul>
+     */
     @Transactional(readOnly = true)
-    public JsonNode resolveSessionCap(String principalIdValue, String workspaceIdValue) {
-        UUID principalId = parseUuid(principalIdValue, "INVALID_AGENT_PRINCIPAL");
-        UUID workspaceId = parseUuid(workspaceIdValue, "INVALID_WORKSPACE");
+    public JsonNode resolveCapFor(UUID principalId, UUID workspaceId) {
         ActiveWorkspaceBinding binding = requireActiveWorkspaceBinding(principalId, workspaceId);
         AgentPrincipal principal = binding.principal();
         Set<GrantIntersectionEvaluator.PermissionAtom> principalPermissions = evaluator.union(
@@ -541,11 +587,30 @@ public class AgentPrincipalService {
         return toJson(retainCovered(bindingPermissions, principalPermissions));
     }
 
+    /** String adapter for wire-facing callers; parsing only, one computation (C1). */
+    @Transactional(readOnly = true)
+    public JsonNode resolveCapFor(String principalIdValue, String workspaceIdValue) {
+        return resolveCapFor(parseUuid(principalIdValue, "INVALID_AGENT_PRINCIPAL"),
+                parseUuid(workspaceIdValue, "INVALID_WORKSPACE"));
+    }
+
+    /**
+     * Pre-0622 name. It only parses the wire strings and delegates — keeping it as a second
+     * implementation would be exactly the "two computation points" the checklist forbids (C1).
+     */
+    @Transactional(readOnly = true)
+    public JsonNode resolveSessionCap(String principalIdValue, String workspaceIdValue) {
+        return resolveCapFor(principalIdValue, workspaceIdValue);
+    }
+
+    /**
+     * PLAN-0622 M1.3: existence check expressed through the single entry — the binding/active
+     * invariants are resolved once, in {@link #resolveCapFor(UUID, UUID)}.
+     */
     @Transactional(readOnly = true)
     public void requireActiveWorkspaceBinding(String principalIdValue, String workspaceIdValue) {
-        UUID principalId = parseUuid(principalIdValue, "INVALID_AGENT_PRINCIPAL");
-        UUID workspaceId = parseUuid(workspaceIdValue, "INVALID_WORKSPACE");
-        requireActiveWorkspaceBinding(principalId, workspaceId);
+        resolveCapFor(parseUuid(principalIdValue, "INVALID_AGENT_PRINCIPAL"),
+                parseUuid(workspaceIdValue, "INVALID_WORKSPACE"));
     }
 
     private ActiveWorkspaceBinding requireActiveWorkspaceBinding(UUID principalId, UUID workspaceId) {
@@ -560,7 +625,8 @@ public class AgentPrincipalService {
     public JsonNode deriveSpawnChildCap(JsonNode parentSessionSnapshot, String principalId, String workspaceId) {
         Set<GrantIntersectionEvaluator.PermissionAtom> parentPermissions = parsePermissions(parentSessionSnapshot);
         Set<GrantIntersectionEvaluator.PermissionAtom> currentCap = parsePermissions(
-                resolveSessionCap(principalId, workspaceId));
+                resolveCapFor(parseUuid(principalId, "INVALID_AGENT_PRINCIPAL"),
+                        parseUuid(workspaceId, "INVALID_WORKSPACE")));
         Set<GrantIntersectionEvaluator.PermissionAtom> intersection = new LinkedHashSet<>();
         for (GrantIntersectionEvaluator.PermissionAtom atom : parentPermissions) {
             if (isCoveredBy(atom, currentCap)) {
