@@ -137,6 +137,34 @@ const noProgressReason = computed(() =>
     props.message.errorCode === "RUN_NO_PROGRESS" ? t("chat.noProgressReason") : null,
 );
 
+/**
+ * PLAN-0622 Resource Governor：`429 RESOURCE_EXHAUSTED` 不显示 CP 英文 detail，
+ * 而是按 `resourceKind` + `retryAfterSeconds` 给本地化、可操作的说明。
+ */
+const resourceExhausted = computed(() => props.message.errorCode === "RESOURCE_EXHAUSTED");
+const resourceKindLabel = computed(() => {
+    const kind = props.message.resourceKind;
+    if (!kind) return t("chat.resourceKindUnknown");
+    // CP 的 resourceKind 是 SNAKE_CASE（FILE_WRITE），映射到 `chat.resourceKindFileWrite`。
+    const pascal = kind
+        .split("_")
+        .map((part) => part.charAt(0) + part.slice(1).toLowerCase())
+        .join("");
+    const key = `chat.resourceKind${pascal}`;
+    const label = t(key);
+    return label === key ? t("chat.resourceKindUnknown") : label;
+});
+const resourceExhaustedText = computed(() => {
+    const seconds = props.message.retryAfterSeconds;
+    if (typeof seconds === "number" && seconds > 0) {
+        return t("chat.resourceExhausted", {
+            kind: resourceKindLabel.value,
+            seconds,
+        });
+    }
+    return t("chat.resourceExhaustedNoWait", { kind: resourceKindLabel.value });
+});
+
 onUnmounted(() => {
     props.message.attachments?.forEach((attachment) => {
         if (attachment.url.startsWith("blob:")) {
@@ -243,6 +271,17 @@ onUnmounted(() => {
                     >
                     <span data-testid="message-budget-exhausted-hint" class="text-muted-foreground">
                         {{ t("chat.budgetExhaustedHint") }}
+                    </span>
+                </template>
+                <template v-else-if="resourceExhausted">
+                    <span data-testid="message-resource-exhausted">{{
+                        resourceExhaustedText
+                    }}</span>
+                    <span
+                        data-testid="message-resource-exhausted-hint"
+                        class="text-muted-foreground"
+                    >
+                        {{ t("chat.resourceExhaustedHint") }}
                     </span>
                 </template>
                 <template v-else-if="noProgressReason">

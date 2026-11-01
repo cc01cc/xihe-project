@@ -42,6 +42,8 @@ vi.mock("../../../composables/api", async (importOriginal) => {
             getWorkspaceAgents: vi.fn<typeof apiModule.api.getWorkspaceAgents>(),
             getAgentTemplates: vi.fn<typeof apiModule.api.getAgentTemplates>(),
             createAgentPrincipal: vi.fn<typeof apiModule.api.createAgentPrincipal>(),
+            // PLAN-0622：创建入口由 CP 能力投影驱动（缺这个 mock 会 fail-closed 到禁用）。
+            getSelfPermissions: vi.fn<typeof apiModule.api.getSelfPermissions>(),
         },
     };
 });
@@ -162,6 +164,12 @@ beforeEach(() => {
         ],
     });
     mockedApi.getWorkspaceAgents.mockResolvedValue([]);
+    mockedApi.getSelfPermissions.mockResolvedValue({
+        userId: "user-1",
+        instanceCapabilities: ["CREATE_ACCOUNT"],
+        instancePermissions: [{ actionClass: "CREATE_ACCOUNT", resource: "*" }],
+        workspaces: [],
+    } as never);
     mockedApi.getAgentTemplates.mockImplementation(async (layer) => ({
         layer,
         workspaceId: layer === "workspace" ? "workspace-1" : null,
@@ -314,7 +322,8 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
                 templateId: null,
                 templateName: null,
                 createdAt: new Date().toISOString(),
-                permissions: [],
+                source: "workspace",
+                permissionsSnapshot: [],
             },
         ]);
         mockedApi.createSession.mockResolvedValue({
@@ -355,7 +364,8 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
                 templateId: null,
                 templateName: null,
                 createdAt: new Date().toISOString(),
-                permissions: [],
+                source: "workspace",
+                permissionsSnapshot: [],
             },
         ]);
         const wrapper = mountView();
@@ -383,9 +393,12 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
         await wrapper.find('[data-testid="agent-principal-create-form"]').trigger("submit");
         await flushPromises();
 
+        // PLAN-0622：创建改用对象入参（携带 scope/模型意图）；本用例只断言模板字段原样透传。
         expect(mockedApi.createAgentPrincipal).toHaveBeenCalledWith(
-            "Template-backed",
-            "template-1",
+            expect.objectContaining({
+                name: "Template-backed",
+                templateId: "template-1",
+            }),
         );
         expect(wrapper.find('[data-testid="unbound-agent-principal"]').text()).toContain(
             "principal-created",

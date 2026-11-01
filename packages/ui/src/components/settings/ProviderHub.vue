@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ConnectionResourceLimits from "./ConnectionResourceLimits.vue";
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
@@ -83,6 +84,25 @@ const loading = ref(false),
     formOpen = ref(false);
 const selectedProvider = ref<ProviderDefinition | null>(null),
     editingConnection = ref<ProviderConnection | null>(null);
+/**
+ * PLAN-0622：连接级资源限额由 `ConnectionResourceLimits` 组件收集（它从 `editingConnection`
+ * 初始化并上抛变更），保存时随 PATCH 合并；`null` = 还没收到组件值（新建连接时为 null）。
+ */
+const resourceLimits = ref<{
+    maxInflight: number | null;
+    maxQueue: number | null;
+    windowTokenBudget: number | null;
+    windowSeconds: number | null;
+    modelLimits: Array<{
+        provider: string;
+        model: string;
+        maxInflight?: number | null;
+        windowTokenBudget?: number | null;
+        windowSeconds?: number | null;
+    }>;
+} | null>(null);
+/** 限额表单的校验结论由子组件暴露（`hasError`），保存前读一次，非法就不发请求。 */
+const limitsRef = ref<{ hasError: boolean } | null>(null);
 const formScope = ref<"USER" | "WORKSPACE">("USER"),
     saving = ref(false),
     verifyingId = ref<string | null>(null);
@@ -603,6 +623,9 @@ function formatVerifiedAt(value?: string | null): string {
 function resetForm(provider: ProviderDefinition, connection?: ProviderConnection) {
     selectedProvider.value = provider;
     editingConnection.value = connection ?? null;
+    // 换连接时清空上一轮的限额草稿，交给组件从新连接重新初始化。
+    resourceLimits.value = null;
+
     formScope.value = connection?.scope ?? props.scope;
     form.label =
         connection?.label ??
@@ -782,6 +805,11 @@ async function save() {
     // PLAN-0555: warn early but let the server's unique index decide; the 409
     // below is the authoritative answer (another writer may race).
     if (duplicateLabel) toast.warning(t("settings.providerHub.toastLabelDuplicate"));
+    // PLAN-0622：限额必须是正整数（留空 = 不限额）；非法就不发请求。
+    if (limitsRef.value?.hasError) {
+        toast.error(t("settings.providerHub.limitsPositiveInteger"));
+        return;
+    }
 
     saving.value = true;
     try {
@@ -810,6 +838,8 @@ async function save() {
                 .split(/[,\n]/)
                 .map((item) => item.trim())
                 .filter(Boolean),
+            // PLAN-0622：限额只在编辑已有连接时随 PATCH 提交（新建时由 CP 取默认）。
+            ...(existing && resourceLimits.value ? resourceLimits.value : {}),
         };
         const connection = editingConnection.value
             ? await updateProviderConnection(editingConnection.value.id, input)
@@ -2094,6 +2124,15 @@ onMounted(() => {
                             t("settings.providerHub.discoveryHint")
                         }}</span>
                     </label>
+                    <!-- PLAN-0622 Resource Governor：连接级限额（只在编辑已有连接时出现；
+                         无编辑权限时组件自身只读，保存时随 PATCH 一起提交）。 -->
+                    <ConnectionResourceLimits
+                        ref="limitsRef"
+                        class="mt-4"
+                        :connection="editingConnection"
+                        :readonly="props.readonly"
+                        @update:limits="resourceLimits = $event"
+                    />
                     <label v-if="form.modelDiscovery === 'manual'" class="mt-4 block">
                         <span class="mb-1.5 block text-xs font-semibold">{{
                             t("settings.providerHub.fieldManualModels")

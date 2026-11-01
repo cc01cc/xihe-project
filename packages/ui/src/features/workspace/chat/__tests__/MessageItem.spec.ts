@@ -188,3 +188,59 @@ describe("MessageItem no-progress terminal (PLAN-0493)", () => {
         wrapper.unmount();
     });
 });
+
+// ── PLAN-0622 Resource Governor：429 的提示必须本地化、可操作，且绝不直显英文 detail ──────
+describe("MessageItem RESOURCE_EXHAUSTED hint (PLAN-0622)", () => {
+    function mountWithError(error: Record<string, unknown>) {
+        return mount(MessageItem, {
+            props: {
+                message: {
+                    id: "message-429",
+                    sessionId: "session-1",
+                    role: "assistant",
+                    content: "",
+                    timestamp: "2026-11-02T00:00:00Z",
+                    errorCode: "RESOURCE_EXHAUSTED",
+                    error: "Resource exhausted: model concurrency limit reached",
+                    retryable: true,
+                    ...error,
+                },
+            },
+            global: { plugins: [i18n, createPinia()] },
+        });
+    }
+
+    it("renders a localized wait hint for a model limit and never the CP English detail", async () => {
+        const wrapper = mountWithError({ resourceKind: "MODEL", retryAfterSeconds: 12 });
+        const hint = wrapper.get('[data-testid="message-resource-exhausted"]');
+        expect(hint.text()).toContain("12");
+        expect(hint.text()).toContain("模型");
+        // 不许直显英文 detail 原文。
+        expect(wrapper.text()).not.toContain("Resource exhausted: model concurrency limit reached");
+        expect(wrapper.text()).not.toContain("RESOURCE_EXHAUSTED");
+        expect(
+            wrapper.get('[data-testid="message-resource-exhausted-hint"]').text().length,
+        ).toBeGreaterThan(0);
+        wrapper.unmount();
+    });
+
+    it.each([
+        ["CONNECTION", "连接"],
+        ["FILE_WRITE", "文件写入"],
+        ["PROCESS", "进程"],
+        ["JOB", "任务"],
+        ["MCP", "MCP 调用"],
+    ])("names the %s resource kind in Chinese", (kind, label) => {
+        const wrapper = mountWithError({ resourceKind: kind, retryAfterSeconds: 5 });
+        expect(wrapper.get('[data-testid="message-resource-exhausted"]').text()).toContain(label);
+        wrapper.unmount();
+    });
+
+    it("falls back to a generic retry hint when the CP sends no wait time", async () => {
+        const wrapper = mountWithError({ resourceKind: "CONNECTION" });
+        const text = wrapper.get('[data-testid="message-resource-exhausted"]').text();
+        expect(text).toContain("连接");
+        expect(text).not.toContain("秒");
+        wrapper.unmount();
+    });
+});

@@ -38,7 +38,7 @@ const workspaces = ref<ApiWorkspace[]>([]),
 const credentialResource = computed(() => `${CREDENTIAL_RESOURCE_PREFIX}${props.credentialId}`);
 
 function isBound(agent: WorkspaceAgentBinding): boolean {
-    return agent.permissions.some(
+    return agent.permissionsSnapshot.some(
         (permission) =>
             permission.actionClass === CREDENTIAL_USE_ACTION &&
             permission.resource === credentialResource.value,

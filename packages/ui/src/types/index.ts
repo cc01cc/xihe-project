@@ -579,6 +579,9 @@ export interface Message {
     errorCode?: string;
     error?: string;
     retryable?: boolean;
+    /** PLAN-0622 Resource Governor（429 RESOURCE_EXHAUSTED）：建议等待秒数与资源种类。 */
+    retryAfterSeconds?: number;
+    resourceKind?: string;
     /** PLAN-0341 U3 case B: prior attempt content kept but marked abandoned. */
     interrupted?: boolean;
 }

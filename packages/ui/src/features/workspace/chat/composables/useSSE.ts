@@ -68,6 +68,9 @@ export interface SSECallbacks {
 export interface SSEErrorPayload {
     code: string;
     detail: string;
+    /** PLAN-0622：429 `RESOURCE_EXHAUSTED` 的等待秒数与资源种类（用于本地化提示）。 */
+    retryAfterSeconds?: number;
+    resourceKind?: string;
     requestId?: string;
     runId?: string;
     provider?: string;
@@ -182,6 +185,9 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                 model: error.problem.model,
                 retryable: error.problem.retryable,
                 outcome: error.problem.outcome,
+                retryAfterSeconds:
+                    error.problem.retryAfterSeconds ?? error.retryAfterSeconds ?? undefined,
+                resourceKind: error.problem.resourceKind,
             };
         }
         return {

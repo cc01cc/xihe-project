@@ -97,6 +97,10 @@ export interface ProblemDetails {
     model?: string;
     retryable?: boolean;
     outcome?: string;
+    /** PLAN-0622 Resource Governor：429 时 CP 给出的建议等待秒数（header `Retry-After` 同源）。 */
+    retryAfterSeconds?: number;
+    /** 资源种类：CONNECTION / MODEL / FILE_WRITE / PROCESS / JOB / MCP —— 用于更准确的话术。 */
+    resourceKind?: string;
 }
 
 export interface ApiWorkspace {
@@ -392,13 +396,50 @@ export interface SessionListResponse {
     workspace?: ApiWorkspace;
 }
 
+/**
+ * PLAN-0622 冻结契约：agent 主体三档共享范围。
+ * - `PERSONAL`：属于某个用户的私有 agent（创建需 `CREATE_OWN_AGENT`）；
+ * - `WORKSPACE`：工作区共享（创建/绑定需 `MANAGE_WORKSPACE_AGENTS`）；
+ * - `INSTANCE`：实例通用（创建需 `CREATE_ACCOUNT`，仅 ADMIN）。
+ */
+export type AgentPrincipalScope = "PERSONAL" | "WORKSPACE" | "INSTANCE";
+
+/** 列表行上的来源标签：这条绑定是"本工作区/个人/实例"的 agent。 */
+export type WorkspaceAgentSource = "workspace" | "personal" | "instance";
+
+/** agent 只声明模型**意图**（provider + model），不绑死具体连接（凭证运行时解析）。 */
+export interface AgentModelRef {
+    provider: string;
+    model: string;
+}
+
 export interface WorkspaceAgentBinding {
     principalId: string;
     name: string;
     templateId: string | null;
     templateName: string | null;
     createdAt: string;
-    permissions: Array<{ actionClass: string; resource?: string }>;
+    /** PLAN-0622（CP `13e54cad`）：`permissions` 已改名 `permissionsSnapshot`，且 `source` 必填。 */
+    permissionsSnapshot: Array<{ actionClass: string; resource?: string }>;
+    source: WorkspaceAgentSource;
+    scope?: AgentPrincipalScope;
+    ownerUserId?: string | null;
+    defaultModelProvider?: string | null;
+    defaultModelName?: string | null;
+    /** `null`/缺省 = 不限制可用模型集。 */
+    allowedModels?: AgentModelRef[] | null;
+    /** PLAN-0622：被禁用后新会话不可选。 */
+    disabled?: boolean;
+}
+
+export interface AgentPrincipalCreateInput {
+    name: string;
+    templateId?: string;
+    scope?: AgentPrincipalScope;
+    defaultModelProvider?: string;
+    defaultModelName?: string;
+    /** `undefined` = 不限制；空数组也按"不限制"处理，避免误锁死。 */
+    allowedModels?: AgentModelRef[];
 }
 
 export interface AgentPrincipalCreateResponse {
@@ -406,6 +447,11 @@ export interface AgentPrincipalCreateResponse {
     templateId: string | null;
     templateName: string | null;
     createdAt: string;
+    scope?: AgentPrincipalScope;
+    ownerUserId?: string | null;
+    defaultModelProvider?: string | null;
+    defaultModelName?: string | null;
+    allowedModels?: AgentModelRef[] | null;
 }
 
 export interface AgentTemplateSummary {
@@ -2223,10 +2269,15 @@ export const api = {
             }),
         );
     },
-    getWorkspaceAgents(workspaceId: string): Promise<WorkspaceAgentBinding[]> {
-        return request<WorkspaceAgentBinding[]>(
+    /**
+     * PLAN-0622（CP `13e54cad` 冻结）：响应信封是 `{agents:[…]}`，item 里 `permissionsSnapshot`
+     * 取代旧的 `permissions`。**只认这一种形状**（不写双形状兼容），解包后才交给调用方。
+     */
+    async getWorkspaceAgents(workspaceId: string): Promise<WorkspaceAgentBinding[]> {
+        const raw = await request<{ agents: WorkspaceAgentBinding[] }>(
             `/workspaces/${encodeURIComponent(workspaceId)}/agents`,
         );
+        return raw.agents;
     },
     /**
      * PLAN-0621 F-01：`GET /api/v1/me/permissions` 是 CP 的**权威能力投影**
@@ -2292,10 +2343,29 @@ export const api = {
         if (layer === "workspace" && workspaceId) query.set("workspaceId", workspaceId);
         return request<AgentTemplateLayerResponse>(`/agent-templates?${query.toString()}`);
     },
-    createAgentPrincipal(name: string, templateId?: string): Promise<AgentPrincipalCreateResponse> {
+    /**
+     * PLAN-0622 冻结契约 body：`{name, templateId?, scope?, defaultModelProvider?,
+     * defaultModelName?, allowedModels?}`。只发传进来的字段——`undefined` 表示"不设置"，
+     * 由 CP 决定默认（不要把空字符串/空数组硬塞进去）。
+     */
+    createAgentPrincipal(input: AgentPrincipalCreateInput): Promise<AgentPrincipalCreateResponse> {
+        const body: Record<string, unknown> = { name: input.name };
+        if (input.templateId) body.templateId = input.templateId;
+        if (input.scope) body.scope = input.scope;
+        if (input.defaultModelProvider) body.defaultModelProvider = input.defaultModelProvider;
+        if (input.defaultModelName) body.defaultModelName = input.defaultModelName;
+        if (input.allowedModels && input.allowedModels.length > 0) {
+            body.allowedModels = input.allowedModels;
+        }
         return request<AgentPrincipalCreateResponse>("/agent-principals", {
             method: "POST",
-            body: JSON.stringify({ name, ...(templateId ? { templateId } : {}) }),
+            body: JSON.stringify(body),
+        });
+    },
+    /** PLAN-0622：禁用 agent 主体（`204`）。禁用后新会话不可选。 */
+    disableAgentPrincipal(principalId: string): Promise<void> {
+        return request<void>(`/agent-principals/${encodeURIComponent(principalId)}/disable`, {
+            method: "POST",
         });
     },
     updateWorkspaceAgentCap(
