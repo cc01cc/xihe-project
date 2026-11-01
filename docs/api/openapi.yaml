@@ -782,6 +782,99 @@ paths:
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
       responses: { '200': { description: Stdio servers with generation/hash }, '401': { $ref: '#/components/responses/Problem' } }
+  /api/v1/sessions/{sessionId}/participants:
+    get:
+      operationId: listSessionParticipants
+      summary: List the session participants (PLAN-0623 M0 contract; wired in M1)
+      description: |
+        PLAN-0623 R2/R7: the participant list is the union of HUMAN and AGENT principals with their
+        role, order_index, wake/respond policies and read cursor. Cursors are read-only in 0623
+        (R7): the server advances them off the event stream, client reporting lands in 0624.
+        A participant view deliberately carries **no** cap snapshot — the cap is resolved live via
+        `resolveCapFor(principalId, workspaceId)` (Lead ruling 2026-11-02, D23-20 follow-up).
+      x-plan-0623: { milestone: M0, status: contract-only, implemented-in: M1 }
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          description: Participants ordered by orderIndex
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionParticipantListResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    post:
+      operationId: addSessionParticipant
+      summary: Add a member or guard participant (PRIMARY is created with the session, never here)
+      description: |
+        D23-13: the PRIMARY participant is unique, cannot be removed and cannot be transferred — a
+        second PRIMARY is rejected with 409 `PARTICIPANT_PRIMARY_EXISTS`. The default policies come
+        from R3 (MEMBER/GUARD: wake=MENTION, respond=WHEN_MENTIONED); callers may override them.
+      x-plan-0623: { milestone: M0, status: contract-only, implemented-in: M1 }
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SessionParticipantCreateRequest' }
+      responses:
+        '201':
+          description: Participant created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionParticipantView' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409':
+          description: 'PARTICIPANT_ALREADY_EXISTS | PARTICIPANT_PRIMARY_EXISTS | PARTICIPANT_ORDER_CONFLICT'
+          content:
+            application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } }
+  /api/v1/sessions/{sessionId}/participants/{participantId}:
+    patch:
+      operationId: updateSessionParticipant
+      summary: Change a participant's wake/respond policy or disable it
+      description: |
+        D23-13: policy changes are allowed, removal/transfer of the PRIMARY is not (409
+        `PARTICIPANT_PRIMARY_IMMUTABLE`). Disabling keeps the row and its cursor for audit/history
+        (`disabled_at`), which is why "remove" is a soft disable in 0623.
+      x-plan-0623: { milestone: M0, status: contract-only, implemented-in: M1 }
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string } }
+        - { in: path, name: participantId, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SessionParticipantUpdateRequest' }
+      responses:
+        '200':
+          description: Updated participant
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionParticipantView' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+    delete:
+      operationId: removeSessionParticipant
+      summary: Remove a member/guard participant (the PRIMARY is not removable)
+      x-plan-0623: { milestone: M0, status: contract-only, implemented-in: M1 }
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string } }
+        - { in: path, name: participantId, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Participant removed }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409':
+          description: 'PARTICIPANT_PRIMARY_IMMUTABLE — the PRIMARY can only be replaced by a new session'
+          content:
+            application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } }
   /api/v1/chat:
     post:
       operationId: chat
@@ -3538,7 +3631,54 @@ components:
       properties:
         runId: { type: string, format: uuid }
         mode: { type: string, enum: [resume_pending, append_user_turn] }
-    ChatRunResponse: { type: object, required: [status, origin, sessionId, runId], properties: { status: { type: string, enum: [accepted, queued, running, streaming, awaiting_approval, dispatching, cancelling, succeeded, failed, partial, ambiguous, cancelled] }, origin: { type: string, enum: [user_submission], readOnly: true, description: Public POST /chat only returns user_submission; spawn is visible through GET run status }, sessionId: { type: string }, messageId: { type: string }, runId: { type: string }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, outcome: { type: string, enum: [success, error, partial, ambiguous] }, errorCode: { type: string }, reason: { type: string } } }
+    # PLAN-0623 M0 (contract-only; wired in M1). The participant view carries no cap snapshot on
+    # purpose: 0622 collapsed the cap into resolveCapFor(principalId, workspaceId), so a stored
+    # participant snapshot would be a second source of truth (Lead ruling 2026-11-02).
+    SessionParticipantView:
+      type: object
+      required: [participantId, principalKind, principalId, role, orderIndex, wakePolicy, respondPolicy, source]
+      properties:
+        participantId: { type: string, format: uuid }
+        principalKind: { type: string, enum: [HUMAN, AGENT] }
+        principalId: { type: string, format: uuid, description: Polymorphic reference — no FK by design (R2) }
+        displayName: { type: string }
+        role: { type: string, enum: [PRIMARY, MEMBER, GUARD] }
+        orderIndex: { type: integer, description: 'R4: 10, 20, 30 …; deletes leave gaps and never renumber' }
+        wakePolicy: { type: string, enum: [ALL_MESSAGES, MENTION] }
+        respondPolicy: { type: string, enum: [ALWAYS, WHEN_MENTIONED, JUDGE, MUTED] }
+        source: { type: string, enum: [workspace, personal, instance] }
+        disabledAt: { type: [string, 'null'], format: date-time }
+        readCursor:
+          type: [object, 'null']
+          description: R7 — read-only in 0623; advanced by the server off the event stream
+          properties:
+            lastReadEventSeq: { type: integer }
+            mentionCount: { type: integer }
+            updatedAt: { type: string, format: date-time }
+    SessionParticipantListResponse:
+      type: object
+      required: [participants]
+      properties:
+        participants:
+          type: array
+          items: { $ref: '#/components/schemas/SessionParticipantView' }
+    SessionParticipantCreateRequest:
+      type: object
+      required: [principalKind, principalId]
+      properties:
+        principalKind: { type: string, enum: [HUMAN, AGENT] }
+        principalId: { type: string, format: uuid }
+        role: { type: string, enum: [MEMBER, GUARD], default: MEMBER, description: PRIMARY is created with the session (D23-13) }
+        wakePolicy: { type: string, enum: [ALL_MESSAGES, MENTION], default: MENTION }
+        respondPolicy: { type: string, enum: [ALWAYS, WHEN_MENTIONED, JUDGE, MUTED], default: WHEN_MENTIONED }
+    SessionParticipantUpdateRequest:
+      type: object
+      minProperties: 1
+      properties:
+        wakePolicy: { type: string, enum: [ALL_MESSAGES, MENTION] }
+        respondPolicy: { type: string, enum: [ALWAYS, WHEN_MENTIONED, JUDGE, MUTED] }
+        disabled: { type: boolean, description: Soft disable keeps the row and its cursor for audit/history }
+    ChatRunResponse: { type: object, required: [status, origin, sessionId, runId], properties: { agentPrincipalId: { type: [string, 'null'], readOnly: true, description: 'PLAN-0623 R1: the agent principal that responded in this run; null on runs admitted before V92' }, status: { type: string, enum: [accepted, queued, running, streaming, awaiting_approval, dispatching, cancelling, succeeded, failed, partial, ambiguous, cancelled] }, origin: { type: string, enum: [user_submission], readOnly: true, description: Public POST /chat only returns user_submission; spawn is visible through GET run status }, sessionId: { type: string }, messageId: { type: string }, runId: { type: string }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, outcome: { type: string, enum: [success, error, partial, ambiguous] }, errorCode: { type: string }, reason: { type: string } } }
     SessionRunSummary:
       type: object
       additionalProperties: false
