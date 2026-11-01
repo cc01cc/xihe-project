@@ -43,6 +43,46 @@ public class ProblemDetailsHandler {
      * one semantic keeps one status/code pair. Genuine authentication failures stay 401 and are
      * produced by the security filter chain / token authenticator, never here.</p>
      */
+    /**
+     * PLAN-0615 (BL-182): a context guard found no authenticated principal.
+     *
+     * <p>{@code @PreAuthorize} guarantees a principal, so this branch is an <b>invariant fuse</b>, not
+     * a reachable state. It answers {@code 403 FORBIDDEN} (the existing code) rather than 401: the
+     * request is authenticated, and clients read 401 as session expiry and force a logout. The warn
+     * line is the point — a tripped fuse must leave a trace (requestId + path).</p>
+     */
+    public static ResponseEntity<Map<String, Object>> missingPrincipal(String detail) {
+        warnMissingPrincipal(detail);
+        return problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", detail);
+    }
+
+    /** Service-layer twin of {@link #missingPrincipal(String)}. */
+    public static CpApiException missingPrincipalException(String detail) {
+        warnMissingPrincipal(detail);
+        return new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", detail);
+    }
+
+    private static void warnMissingPrincipal(String detail) {
+        String requestId = org.slf4j.MDC.get(com.cc01cc.p.xihe.cp.logging.RequestIdFilter.MDC_KEY);
+        String path = currentRequestPath();
+        logger.warn("[AUTH] event=context_guard_without_principal status=403 detail={} path={} requestId={}",
+                detail, path, requestId);
+    }
+
+    private static String currentRequestPath() {
+        try {
+            org.springframework.web.context.request.RequestAttributes attributes =
+                    org.springframework.web.context.request.RequestContextHolder.getRequestAttributes();
+            if (attributes instanceof org.springframework.web.context.request.ServletRequestAttributes servlet) {
+                return servlet.getRequest().getRequestURI();
+            }
+        } catch (RuntimeException unavailable) {
+            // No request scope (unit tests / async): the warn line still carries detail + requestId.
+            logger.debug("request path unavailable for missing-principal warn: {}", unavailable.getMessage());
+        }
+        return null;
+    }
+
     public static ResponseEntity<Map<String, Object>> workspaceContextRequired() {
         return problemResponse(HttpStatus.CONFLICT, "WORKSPACE_CONTEXT_REQUIRED",
                 "Workspace context is required");

@@ -150,6 +150,21 @@ class ScheduledTaskControllerTest {
                 .andExpect(jsonPath("$.status").value(400));
     }
 
+    @Test
+    void missingPrincipalAnswersForbiddenInsteadOfUnauthorized() {
+        // PLAN-0615 (BL-182): invariant fuse → 403 FORBIDDEN, not the 401 clients read as expiry.
+        TenantContext.clear();
+
+        ResponseEntity<?> response = controller.list(WORKSPACE_ID, 0, 100);
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        Map<?, ?> body = (Map<?, ?>) response.getBody();
+        assertNotNull(body);
+        assertEquals("FORBIDDEN", body.get("code"));
+        assertEquals("Authentication context is required", body.get("detail"));
+        Mockito.verifyNoInteractions(service);
+    }
+
     private static ScheduledTaskApiService.TaskView view(String status) {
         return new ScheduledTaskApiService.TaskView(TASK_ID, "cron", "* * * * *", "UTC",
                 "session_wakeup", "44444444-4444-4444-8444-444444444444", "wake up", status,

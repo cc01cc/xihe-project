@@ -66,8 +66,7 @@ public class WorkspaceJobController {
     public ResponseEntity<?> list(@PathVariable String workspaceId) {
         String userId = TenantContext.getUserId();
         if (userId == null) {
-            return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Authentication context is required");
+            return ProblemDetailsHandler.missingPrincipal("Authentication context is required");
         }
         try {
             workspaceService.requireAccessibleWorkspace(workspaceId, userId);
@@ -85,8 +84,7 @@ public class WorkspaceJobController {
             @RequestBody WorkspaceJobStartService.StartRequest request) {
         String userId = TenantContext.getUserId();
         if (userId == null) {
-            return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Authentication context is required");
+            return ProblemDetailsHandler.missingPrincipal("Authentication context is required");
         }
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
@@ -129,8 +127,7 @@ public class WorkspaceJobController {
             @RequestParam(name = "limit", required = false) Long limit) {
         String userId = TenantContext.getUserId();
         if (userId == null) {
-            return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Authentication context is required");
+            return ProblemDetailsHandler.missingPrincipal("Authentication context is required");
         }
         if (!"stdout".equals(stream) && !"stderr".equals(stream)) {
             return ProblemDetailsHandler.problemResponse(
@@ -200,8 +197,7 @@ public class WorkspaceJobController {
     public ResponseEntity<?> cancelJob(@PathVariable String workspaceId, @PathVariable String jobId) {
         String userId = TenantContext.getUserId();
         if (userId == null) {
-            return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Authentication context is required");
+            return ProblemDetailsHandler.missingPrincipal("Authentication context is required");
         }
         UUID domainJobId = parseJobId(jobId);
         if (domainJobId == null) {

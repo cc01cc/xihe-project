@@ -62,6 +62,19 @@ class PolicyRuleServiceTest {
     }
 
     @Test
+    void userLayerCreateWithoutUserContextAnswersForbidden() {
+        // PLAN-0615 (BL-182): the user-layer guard is an invariant fuse (a caller is always known
+        // when @PreAuthorize passes). It answers 403 FORBIDDEN — never the 401 that clients treat as
+        // session expiry — and the detail text is preserved.
+        TenantContext.clear();
+        CpApiException error = assertThrows(CpApiException.class,
+                () -> service.create("user", null, "ws1", false, input("read", "*", "allow", false)));
+        assertEquals(HttpStatus.FORBIDDEN, error.getStatus());
+        assertEquals("FORBIDDEN", error.getCode());
+        assertEquals("User context is required", error.getMessage());
+    }
+
+    @Test
     void lockedRulesMustBeTightening() {
         assertThrows(CpApiException.class, () -> service.create("instance", "u1", "ws1", true,
                 input("exec", "*", "allow", true)));

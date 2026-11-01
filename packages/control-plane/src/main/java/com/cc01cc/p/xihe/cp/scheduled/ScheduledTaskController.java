@@ -40,8 +40,7 @@ public class ScheduledTaskController {
             @RequestParam(name = "size", defaultValue = "100") int size) {
         String userId = TenantContext.getUserId();
         if (userId == null) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED,
-                    "AUTHORIZATION_REQUIRED", "Authentication context is required");
+            return ProblemDetailsHandler.missingPrincipal("Authentication context is required");
         }
         try {
             return ResponseEntity.ok(scheduledTaskApiService.list(workspaceId, userId, page, size));
@@ -56,8 +55,7 @@ public class ScheduledTaskController {
             @RequestBody ScheduledTaskApiService.CreateRequest request) {
         String userId = TenantContext.getUserId();
         if (userId == null) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED,
-                    "AUTHORIZATION_REQUIRED", "Authentication context is required");
+            return ProblemDetailsHandler.missingPrincipal("Authentication context is required");
         }
         try {
             return ResponseEntity.status(HttpStatus.CREATED)
@@ -72,8 +70,7 @@ public class ScheduledTaskController {
     public ResponseEntity<?> get(@PathVariable String workspaceId, @PathVariable String taskId) {
         String userId = TenantContext.getUserId();
         if (userId == null) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED,
-                    "AUTHORIZATION_REQUIRED", "Authentication context is required");
+            return ProblemDetailsHandler.missingPrincipal("Authentication context is required");
         }
         try {
             return ResponseEntity.ok(scheduledTaskApiService.detail(workspaceId, userId, taskId));
@@ -89,8 +86,7 @@ public class ScheduledTaskController {
             @RequestBody(required = false) ScheduledTaskApiService.DisposeRequest request) {
         String userId = TenantContext.getUserId();
         if (userId == null) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED,
-                    "AUTHORIZATION_REQUIRED", "Authentication context is required");
+            return ProblemDetailsHandler.missingPrincipal("Authentication context is required");
         }
         try {
             ScheduledTaskApiService.DisposeResult result = scheduledTaskApiService.delete(
@@ -107,8 +103,7 @@ public class ScheduledTaskController {
             @RequestBody(required = false) ScheduledTaskApiService.DisposeRequest request) {
         String userId = TenantContext.getUserId();
         if (userId == null) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED,
-                    "AUTHORIZATION_REQUIRED", "Authentication context is required");
+            return ProblemDetailsHandler.missingPrincipal("Authentication context is required");
         }
         try {
             return ResponseEntity.ok(scheduledTaskApiService.rerun(
@@ -124,8 +119,7 @@ public class ScheduledTaskController {
             @RequestBody(required = false) ScheduledTaskApiService.DisposeRequest request) {
         String userId = TenantContext.getUserId();
         if (userId == null) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED,
-                    "AUTHORIZATION_REQUIRED", "Authentication context is required");
+            return ProblemDetailsHandler.missingPrincipal("Authentication context is required");
         }
         try {
             ScheduledTaskApiService.DisposeResult result = scheduledTaskApiService.remove(
@@ -142,8 +136,7 @@ public class ScheduledTaskController {
             @RequestBody ScheduledTaskApiService.PostponeRequest request) {
         String userId = TenantContext.getUserId();
         if (userId == null) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED,
-                    "AUTHORIZATION_REQUIRED", "Authentication context is required");
+            return ProblemDetailsHandler.missingPrincipal("Authentication context is required");
         }
         try {
             return ResponseEntity.ok(scheduledTaskApiService.postpone(workspaceId, userId, taskId,

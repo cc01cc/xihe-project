@@ -148,10 +148,14 @@ class McpSessionStatusControllerTest {
 
     @Test
     void rejectsMissingAuthenticationContext() {
+        // PLAN-0615 (BL-182): the guard is an invariant fuse — @PreAuthorize guarantees a principal —
+        // so it answers 403 FORBIDDEN (a permission outcome) instead of the 401 clients read as
+        // "session expired" and log out on.
         TenantContext.clear();
         ResponseEntity<?> response = controller.mcpServers("ws-1");
-        assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
-        assertEquals("AUTHORIZATION_REQUIRED", ((Map<?, ?>) response.getBody()).get("code"));
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        assertEquals("FORBIDDEN", ((Map<?, ?>) response.getBody()).get("code"));
+        assertEquals("Authentication context is required", ((Map<?, ?>) response.getBody()).get("detail"));
     }
 
     private static void assertRuntimeUnavailable(ResponseEntity<?> response) {

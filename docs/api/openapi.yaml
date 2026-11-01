@@ -10,6 +10,7 @@ info:
     VIEWER writes -> 403 `WORKSPACE_READ_ONLY`; non-OWNER workspace lifecycle -> 403 `WORKSPACE_FORBIDDEN`.
     Roles: OWNER (read/write/manage), EDITOR (read/write), VIEWER (read-only); legacy ADMIN/MEMBER map to EDITOR.
     Workspace context is a request-state conflict, not an authentication failure: an authenticated caller with **no resolved workspace context** (blank start with no workspace yet, or several workspaces and none named via `X-Workspace-Id`/path) gets **409 `WORKSPACE_CONTEXT_REQUIRED`**. `401 AUTHORIZATION_REQUIRED` is reserved for missing/invalid credentials. (BL-181: the previous 401 made clients force a logout.)
+    Context guards that find **no principal** (`@PreAuthorize` already guarantees one) are invariant fuses: they answer **403 `FORBIDDEN`** and log a warning with the request id, never 401 (BL-182).
 servers:
   - url: /
 paths:
@@ -2617,6 +2618,7 @@ paths:
           description: Paged scheduled-task list
           content: { application/json: { schema: { $ref: '#/components/schemas/ScheduledTaskListPage' } } }
         '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
         '404': { description: WORKSPACE_NOT_FOUND (missing or no Workspace access), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
     post:
       operationId: createScheduledTask
@@ -2659,6 +2661,7 @@ paths:
       responses:
         '200': { description: Scheduled task detail, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduledTask' } } } }
         '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
         '404': { description: 'SCHEDULED_TASK_NOT_FOUND (foreign or missing) or WORKSPACE_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
     delete:
       operationId: deleteScheduledTask
