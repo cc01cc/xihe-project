@@ -464,10 +464,40 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
             })
             .toBe(true);
 
+        // PLAN-0621 F-01 真机证据：普通账号必须在**工作区内**才能看到 Agent 工具条。
+        // 因此先由首个账号（持 CREATE_ACCOUNT / MANAGE_WORKSPACE_AGENTS）把它邀请进工作区，
+        // 再切回普通账号观察入口 —— 否则 S5 的 UI 分支会因"无工作区"被跳过（那不是证据）。
+        const plainEmail = fresh;
+        const plainUsername = validUsername(plainEmail.split("@")[0]);
+        await page.evaluate(() => localStorage.clear());
+        await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
+        const adminToken = await tokenOf(page);
+        const createdWs = await request.post(`${CP_URL}/api/v1/workspaces`, {
+            headers: { ...bearer(adminToken), "Content-Type": "application/json" },
+            data: {
+                name: `S5 invite ws ${Date.now()}`,
+                storageMode: "direct_attach",
+                hostPath: (() => { const dir = `${process.env.XIHE_HEADED_EVIDENCE_ROOT ?? "H:/zeogit/one/.tmp/xh-headed-walkthrough"}/s5-ws-${Date.now()}`; mkdirSync(dir, { recursive: true }); return dir; })(),
+                executionMode: "windows-host",
+            },
+        });
+        expect([200, 201], await createdWs.text()).toContain(createdWs.status());
+        const s5WorkspaceId = String(((await createdWs.json()) as { id?: string }).id ?? "");
+        expect(s5WorkspaceId).toMatch(/^[0-9a-f-]{36}$/i);
+        const invited = await request.post(
+            `${CP_URL}/api/v1/workspaces/${s5WorkspaceId}/members`,
+            {
+                headers: { ...bearer(adminToken), "Content-Type": "application/json" },
+                data: { username: plainUsername, role: "EDITOR" },
+            },
+        );
+        expect([200, 201], await invited.text()).toContain(invited.status());
+
+        // 切回普通账号，并直接进入被邀请的工作区（真实用户路径：选择面 → 该工作区）。
+        await page.evaluate(() => localStorage.clear());
+        await loginViaForm(page, plainEmail, SHARED_PASSWORD);
+        await page.goto(`/workspace/${s5WorkspaceId}`, { waitUntil: "load" });
         const landing = await landOnWorkspacePicker(page);
-        if (landing === "workspace") {
-            // 已被守卫带进某个工作区（localMode 免密）；继续用当前上下文。
-        }
         await shot(page, "S5", "s5-plain-account-landing", "普通账号进入后的落点");
 
         const token = await tokenOf(page);
