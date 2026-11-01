@@ -36,6 +36,7 @@ public class SessionService {
     private final SessionBranchRepository sessionBranchRepository;
     private final MessageRepository messageRepository;
     private final WorkspaceService workspaceService;
+    private final WorkspaceBackendPolicy backendPolicy;
     private final ChatAttachmentService chatAttachmentService;
     private final ProviderConnectionService providerConnectionService;
     private final SessionPolicyState sessionPolicyState;
@@ -62,12 +63,14 @@ public class SessionService {
                           EntityManager entityManager,
                           ContextService contextService,
                           McpInvocationService mcpInvocationService,
-                          GrantDefaultService grantDefaultService) {
+                          GrantDefaultService grantDefaultService,
+                          WorkspaceBackendPolicy backendPolicy) {
         this.sessionRepository = sessionRepository;
         this.forkRequestRepository = forkRequestRepository;
         this.sessionBranchRepository = sessionBranchRepository;
         this.messageRepository = messageRepository;
         this.workspaceService = workspaceService;
+        this.backendPolicy = backendPolicy;
         this.chatAttachmentService = chatAttachmentService;
         this.providerConnectionService = providerConnectionService;
         this.sessionPolicyState = sessionPolicyState;
@@ -426,6 +429,20 @@ public class SessionService {
     }
 
     @Transactional(readOnly = true)
+    /**
+     * PLAN-0618 M1 (BL-178): chat and session creation must honour the same frozen-backend predicate as
+     * file/exec/environment operations. Without this, a send on a docker workspace reaches the Runtime
+     * and surfaces a raw transport error instead of the contract's {@code 503 BACKEND_DISABLED}.
+     *
+     * @return the workspace that passed the gate (callers that need the row can reuse it)
+     */
+    public com.cc01cc.p.xihe.cp.entity.Workspace requireBackendUsableWorkspace(String workspaceId) {
+        com.cc01cc.p.xihe.cp.entity.Workspace workspace =
+                workspaceService.requireActiveWorkspace(workspaceId);
+        backendPolicy.requireOperationAllowed(workspace);
+        return workspace;
+    }
+
     public void requireWorkspace(String userId, String workspaceId) {
         if (userId == null || userId.isBlank() || workspaceId == null || workspaceId.isBlank()) {
             throw CpApiException.workspaceContextRequired();

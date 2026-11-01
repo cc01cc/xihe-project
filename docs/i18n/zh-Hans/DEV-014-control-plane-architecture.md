@@ -168,7 +168,8 @@ flowchart LR
 - **模式切换**：`PATCH /api/v1/workspaces/{workspaceId}/execution-mode` 仅 Workspace owner/platform admin；运行中 Job → `409 WORKSPACE_BUSY`（不自动重放）；切换前重新 probe，成功后旧 execution binding 由 Runtime 终止（PLAN-0379 T3.5）。
 - **Docker 后端冻结门（PLAN-0612 M4，2026-10-31 裁定）**：开关是静态 env `XIHE_WORKSPACE_DOCKER_BACKEND`（默认 `disabled`，非法值启动失败，见 [DEV-003](DEV-003-config-management.md) §2）。`disabled` 时：
   - 创建：`POST /api/v1/workspaces` 且有效 `storageMode=managed_import`（含缺省）→ `409 BACKEND_DISABLED`，detail 指向 `direct_attach` 与 [DEV-031](DEV-031-sandbox-backend-contract.md)，**先于**任何行/execution spec 写入；
-  - 既有 docker 工作区：`POST …/materialize`、`POST …/jobs`（启动 Job）、`POST /api/v1/files/upload`、`POST /api/v1/workspaces/{id}/imports` → `503 BACKEND_DISABLED`（fail-closed，不静默回退宿主）；读面（`GET …/environment`、Job 列表/输出、import 查询、附件下载）与 `PATCH …/execution-mode`（迁移出口）、`…/cancel`、release 保持可用，避免把已有数据/清理路径一并锁死；
+  - 既有 docker 工作区：`POST …/materialize`、`POST …/jobs`（启动 Job）、`POST /api/v1/files/upload`、`POST /api/v1/workspaces/{id}/imports` → `503 BACKEND_DISABLED`
+- **chat / session 同样受该门约束（PLAN-0618 M1，BL-178）**：`POST /api/v1/sessions`、`POST /api/v1/workspaces/{workspaceId}/sessions` 与 `POST /api/v1/chat` 在写行或转发前走同一判定（`SessionService.requireBackendUsableWorkspace` → `WorkspaceBackendPolicy.requireOperationAllowed`），docker 工作区一律 `503 BACKEND_DISABLED`，不得把原始 Runtime 传输错误暴露给客户端；`direct_attach` 工作区不受影响。（fail-closed，不静默回退宿主）；读面（`GET …/environment`、Job 列表/输出、import 查询、附件下载）与 `PATCH …/execution-mode`（迁移出口）、`…/cancel`、release 保持可用，避免把已有数据/清理路径一并锁死；
   - 运行时内部不新增 docker 分支改动（2026-10-25 冻结补充）；`test:e2e:host` 显式注入 `enabled` 是唯一豁免。
 - **目录选择**：UI 复用 `GET /api/v1/workspaces/import-sources?path=`（Runtime-visible source browser），浏览器不伪造宿主绝对路径；UI 不新增相对/绝对路径限制，路径合法性由 Runtime 校验。
 
