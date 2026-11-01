@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.policy;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
@@ -98,12 +99,15 @@ class RoleAdminApiIntegrationTest extends AbstractIntegrationTest {
         assertEquals(HttpStatus.OK, response.getStatusCode(), response.getBody());
         JsonNode body = objectMapper.readTree(response.getBody());
         JsonNode atoms = body.path("atoms");
-        assertEquals(18, atoms.size(), "15 action atoms + 3 capability atoms (R2-8)");
+        // Derived, never a hard-coded count: the catalog is the union of the action atoms and the
+        // capability atoms, and PLAN-0622 D8 appended CREATE_OWN_AGENT to the action atoms.
+        assertEquals(PermissionAtomCatalog.actionAtoms().size() + PermissionAtomCatalog.capabilityAtoms().size(),
+                atoms.size(), "catalog = every action atom plus every capability atom");
         assertEquals(List.of("instance", "workspace"), texts(body.path("scopes")));
 
         Map<String, JsonNode> byName = new LinkedHashMap<>();
         atoms.forEach(atom -> byName.put(atom.path("name").asText(), atom));
-        assertEquals(List.of("read", "write", "delete", "exec", "network"),
+        assertEquals(PermissionAtomCatalog.actionAtoms().subList(0, 5),
                 texts(atoms).subList(0, 5), "action atoms keep the canonical order");
         assertEquals("instance", byName.get("MANAGE_ROLES").path("scopeClass").asText());
         assertFalse(byName.get("MANAGE_ROLES").path("capability").asBoolean());
@@ -111,8 +115,16 @@ class RoleAdminApiIntegrationTest extends AbstractIntegrationTest {
         assertTrue(byName.get("instance:admin").path("capability").asBoolean());
         assertEquals("instance", byName.get("instance:admin").path("scopeClass").asText());
         assertEquals("both", byName.get("workspace:admin").path("scopeClass").asText());
-        assertEquals(3, atoms.findValues("capability").stream()
-                .filter(JsonNode::asBoolean).count(), "exactly three capability atoms");
+        // PLAN-0622 D8: the user-tier "create your own agent" atom must be in the catalog and is
+        // instance-bindable only — a workspace binding would mean "create agents for the workspace".
+        JsonNode ownAgent = byName.get(ToolFaceRegistry.ACTION_OWN_AGENT);
+        assertNotNull(ownAgent, "D8: CREATE_OWN_AGENT is part of the catalog");
+        assertEquals("instance", ownAgent.path("scopeClass").asText(),
+                "D8: CREATE_OWN_AGENT is a user-tier atom, bindable only at the instance scope");
+        assertFalse(ownAgent.path("capability").asBoolean(),
+                "D8: it is an action atom, not a capability authority");
+        assertEquals(PermissionAtomCatalog.capabilityAtoms().size(), atoms.findValues("capability").stream()
+                .filter(JsonNode::asBoolean).count(), "exactly the catalog's capability atoms");
     }
 
     // ── role CRUD ───────────────────────────────────────────────────────────

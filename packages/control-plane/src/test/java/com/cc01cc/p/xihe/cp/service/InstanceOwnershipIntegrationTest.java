@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
+import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
+import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -321,10 +323,15 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
                 "the incoming owner holds exactly one instance tier binding (SUPER_ADMIN)");
         assertEquals(List.of("ADMIN"), instanceTierRoles(ownerId),
                 "the outgoing owner is downgraded to ADMIN, not left without a tier");
-        assertEquals(15, atomRowCount("user", UUID.fromString(targetId)),
-                "SUPER_ADMIN materializes its 15 action atoms (capability atoms stay out of grants)");
-        assertEquals(8, atomRowCount("user", UUID.fromString(ownerId)),
-                "ADMIN materializes 5 base + 3 credential atoms");
+        // Derived from the code-side role seeds (PLAN-0622 D8 appended CREATE_OWN_AGENT): a
+        // hard-coded 15/8 would rot on the next atom change, and the claim here is about *which*
+        // role materialized what, not about a magic number.
+        assertEquals(materializableSeedAtoms(SystemAccessRoleCatalog.SUPER_ADMIN),
+                atomRowCount("user", UUID.fromString(targetId)),
+                "SUPER_ADMIN materializes every action atom (capability atoms stay out of grants)");
+        assertEquals(materializableSeedAtoms(SystemAccessRoleCatalog.ADMIN),
+                atomRowCount("user", UUID.fromString(ownerId)),
+                "ADMIN materializes the user default set plus the three credential atoms");
         authzContext.invalidateAll();
         assertTrue(authzContext.isInstanceSuper(UUID.fromString(targetId)),
                 "the new owner resolves cap:instance:super");
@@ -648,6 +655,21 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
         return jdbc.queryForObject("SELECT COUNT(*) FROM grants WHERE subject_type = ?"
                 + " AND subject_id = ? AND source = 'role' AND scope_type = 'instance'",
                 Integer.class, subjectType, subjectId);
+    }
+
+    /**
+     * Action atoms of one seeded system role. Capability atoms are authorities, never grant rows
+     * (PLAN-0610 #23), so they are filtered out here — the derivation follows the same rule the
+     * materializer does instead of a hard-coded 15/8.
+     */
+    private static long materializableSeedAtoms(String roleName) {
+        return SystemAccessRoleCatalog.roleSeeds().stream()
+                .filter(seed -> roleName.equals(seed.name()))
+                .findFirst()
+                .orElseThrow()
+                .atoms().stream()
+                .filter(atom -> PermissionAtomCatalog.isActionAtom(atom.actionClass()))
+                .count();
     }
 
     private HttpHeaders authHeaders(String token) {
