@@ -39,7 +39,7 @@ import java.util.UUID;
  *   <li><b>send as</b> ({@code asParticipantId}) — only as a participant the caller is authorized
  *       for: themselves (HUMAN), or an agent principal in a session they own. Holding
  *       {@code MANAGE_WORKSPACE_AGENTS} never grants "speak on someone else's behalf"; that is
- *       impersonation ({@code PARTICIPANT_IMPERSONATION_FORBIDDEN}).</li>
+ *       speaking for someone else ({@code PARTICIPANT_CAP_DENIED}).</li>
  * </ul>
  *
  * <p>D23-13: the PRIMARY participant is unique (database partial index), cannot be removed and
@@ -228,24 +228,24 @@ public class SessionParticipantService {
             throw new CpApiException(HttpStatus.FORBIDDEN, "PARTICIPANT_DISABLED",
                     "This participant is disabled and cannot send messages");
         }
-        UUID actorUuid = parseUuid(actorId, "PARTICIPANT_IMPERSONATION_FORBIDDEN");
+        UUID actorUuid = parseUuid(actorId, "PARTICIPANT_CAP_DENIED");
         if (SessionParticipant.KIND_HUMAN.equals(row.getPrincipalKind())) {
             if (!actorUuid.equals(row.getPrincipalId())) {
                 // D23-08: speaking as another human is impersonation, not delegation.
-                throw impersonation();
+                throw capDenied();
             }
             return row;
         }
         // AGENT: the caller must own the conversation; a workspace administrator who merely added
         // the member may not speak for it.
         if (!actorId.equals(session.getUserId())) {
-            throw impersonation();
+            throw capDenied();
         }
         AgentPrincipal principal = agentPrincipalRepository.findById(row.getPrincipalId())
                 .orElseThrow(SessionParticipantService::principalNotFound);
         if ("PERSONAL".equals(principal.getScope())
                 && !actorUuid.equals(principal.getOwnerUserId())) {
-            throw impersonation();
+            throw capDenied();
         }
         if (principal.getDisabledAt() != null) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "PARTICIPANT_DISABLED",
@@ -399,8 +399,8 @@ public class SessionParticipantService {
                 "The referenced principal does not exist");
     }
 
-    private static CpApiException impersonation() {
-        return new CpApiException(HttpStatus.FORBIDDEN, "PARTICIPANT_IMPERSONATION_FORBIDDEN",
+    private static CpApiException capDenied() {
+        return new CpApiException(HttpStatus.FORBIDDEN, "PARTICIPANT_CAP_DENIED",
                 "You may only send as a participant you are authorized for");
     }
 
