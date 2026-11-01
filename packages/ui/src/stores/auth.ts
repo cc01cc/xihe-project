@@ -5,6 +5,7 @@ import {
     type ApiWorkspace,
     onAuthTokensRefreshed,
     registerForceLogout,
+    registerWorkspaceContextRequired,
 } from "../composables/api";
 import { logger, rotateAnonSessionId, clearAnonSessionId } from "../lib/logger";
 import {
@@ -423,6 +424,15 @@ export const useAuthStore = defineStore("auth", () => {
             name: "login",
             query: { redirect: window.location.pathname + window.location.search },
         });
+    });
+    // BL-181: 409 WORKSPACE_CONTEXT_REQUIRED is a recoverable state (authenticated, no workspace
+    // context). Clear the tab context so the router guard does not bounce straight back into the
+    // missing workspace, then open the picker — the account keeps its session.
+    registerWorkspaceContextRequired(() => {
+        clearTabWorkspace();
+        if (window.location.pathname !== "/workspace" && window.location.pathname !== "/login") {
+            void router.push({ name: "workspace-home" });
+        }
     });
 
     return {

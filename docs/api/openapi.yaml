@@ -9,6 +9,7 @@ info:
     Invalid header -> 400 `INVALID_WORKSPACE_ID`; non-member/deleted workspace -> 403 `WORKSPACE_FORBIDDEN`;
     VIEWER writes -> 403 `WORKSPACE_READ_ONLY`; non-OWNER workspace lifecycle -> 403 `WORKSPACE_FORBIDDEN`.
     Roles: OWNER (read/write/manage), EDITOR (read/write), VIEWER (read-only); legacy ADMIN/MEMBER map to EDITOR.
+    Workspace context is a request-state conflict, not an authentication failure: an authenticated caller with **no resolved workspace context** (blank start with no workspace yet, or several workspaces and none named via `X-Workspace-Id`/path) gets **409 `WORKSPACE_CONTEXT_REQUIRED`**. `401 AUTHORIZATION_REQUIRED` is reserved for missing/invalid credentials. (BL-181: the previous 401 made clients force a logout.)
 servers:
   - url: /
 paths:
@@ -453,6 +454,7 @@ paths:
       responses:
         '200': { description: Durable Session Follow-up queue, content: { application/json: { schema: { $ref: '#/components/schemas/FollowUpQueueSnapshot' } } } }
         '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
         '404': { $ref: '#/components/responses/Problem' }
     post:
       operationId: enqueueFollowUp
@@ -500,6 +502,7 @@ paths:
       responses:
         '200': { description: Branches in this Session, content: { application/json: { schema: { $ref: '#/components/schemas/SessionBranchListResponse' } } } }
         '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
     post:
@@ -566,6 +569,7 @@ paths:
       responses:
         '200': { description: Authorized active-child and terminal-notice response view, content: { application/json: { schema: { $ref: '#/components/schemas/SessionDerivedStateResponse' } } } }
         '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
   /api/v1/sessions/{sessionId}/compact:
@@ -839,6 +843,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ChatRunStatusResponse' }
         '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
   /api/v1/chat/runs/{runId}/attempts:
@@ -867,6 +872,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/RunTransportAttemptsResponse' }
         '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
   /api/v1/chat/runs/{runId}/trace:
@@ -907,6 +913,7 @@ paths:
               schema: { $ref: '#/components/schemas/RunTraceResponse' }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
@@ -947,6 +954,7 @@ paths:
       responses:
         '200': { description: Guidance snapshot, content: { application/json: { schema: { $ref: '#/components/schemas/GuidanceSnapshot' } } } }
         '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
   /api/v1/chat/sessions/{sessionId}/runs:
@@ -977,6 +985,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/SessionRunsResponse' }
         '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
   /api/v1/chat/sessions/{sessionId}/monitor:
@@ -1004,6 +1013,7 @@ paths:
               schema: { $ref: '#/components/schemas/SessionMonitorResponse' }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
   /api/v1/chat/approvals/{requestId}/decision:
@@ -1058,6 +1068,7 @@ paths:
                 type: array
                 items: { $ref: '#/components/schemas/PendingApprovalSummary' }
         '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
         '403': { $ref: '#/components/responses/Problem' }
   /api/v1/policy/mode:
     get:
@@ -1077,6 +1088,7 @@ paths:
               schema: { $ref: '#/components/schemas/PolicyModeState' }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
     post:
@@ -1101,6 +1113,7 @@ paths:
               schema: { $ref: '#/components/schemas/PolicyModeUpdateResponse' }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
   /api/v1/policy/domains:
@@ -1123,6 +1136,7 @@ paths:
                 type: array
                 items: { $ref: '#/components/schemas/PolicyDomainView' }
         '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
         '403': { $ref: '#/components/responses/Problem' }
   # /api/v1/policy/rules (GET/POST/DELETE + /conflicts) retired by PLAN-0407 T2.8:
   # rule adjudication and the authorization rules CRUD are gone; authorization is the grant
@@ -1155,6 +1169,7 @@ paths:
                 items: { $ref: '#/components/schemas/ToolFaceView' }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
         '403': { $ref: '#/components/responses/Problem' }
     post:
       operationId: upsertPolicyToolFace
@@ -1177,6 +1192,7 @@ paths:
               schema: { $ref: '#/components/schemas/ToolFaceView' }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
         '403': { $ref: '#/components/responses/Problem' }
   /api/v1/events:
     get:
@@ -2222,6 +2238,7 @@ paths:
                   events: { type: array, items: { $ref: '#/components/schemas/ContextEventReadView' } }
                 additionalProperties: true
         '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
         '403': { $ref: '#/components/responses/Problem' }
         '500': { $ref: '#/components/responses/Problem' }
   /internal/v1/context/{sessionId}/compact:
@@ -3034,6 +3051,9 @@ components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer }
   responses:
+    WorkspaceContextRequired:
+      description: '409 WORKSPACE_CONTEXT_REQUIRED — the caller is authenticated but no workspace context was resolved (no active workspace yet after a blank start, or several workspaces and none named via X-Workspace-Id or the path). This is a request-state conflict, never a 401: credential failures keep answering 401 AUTHORIZATION_REQUIRED.'
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
     Problem:
       description: RFC 9457 Problem Details
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }

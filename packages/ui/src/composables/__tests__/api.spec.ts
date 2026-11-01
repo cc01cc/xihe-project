@@ -6,6 +6,7 @@ import {
     normalizeApprovalRequest,
     normalizeSafePolicySummary,
     registerForceLogout,
+    registerWorkspaceContextRequired,
     workspaceJobErrorReason,
 } from "../api";
 
@@ -104,6 +105,30 @@ describe("api.login", () => {
         expect(localStorage.getItem("xihe-user")).toBeNull();
         // SPA route: the api layer never hard-navigates.
         expect(window.location.href).toBe("/chat");
+        registerForceLogout(() => undefined);
+    });
+
+    it("recovers a 409 WORKSPACE_CONTEXT_REQUIRED in the picker instead of logging out (BL-181)", async () => {
+        localStorage.setItem("xihe-token", "existing-token");
+        const logoutSpy = vi.fn<() => void>();
+        const pickerSpy = vi.fn<() => void>();
+        registerForceLogout(logoutSpy);
+        registerWorkspaceContextRequired(pickerSpy);
+
+        fetchSpy.mockResolvedValueOnce({
+            ok: false,
+            status: 409,
+            clone: () => ({
+                json: () => Promise.resolve({ code: "WORKSPACE_CONTEXT_REQUIRED" }),
+            }),
+            json: () => Promise.resolve({ code: "WORKSPACE_CONTEXT_REQUIRED" }),
+        } as unknown as Response);
+
+        await expect(api.getSessions()).rejects.toThrow();
+        expect(pickerSpy).toHaveBeenCalledTimes(1);
+        expect(logoutSpy).not.toHaveBeenCalled();
+        expect(localStorage.getItem("xihe-token")).toBe("existing-token");
+        registerWorkspaceContextRequired(() => undefined);
         registerForceLogout(() => undefined);
     });
 

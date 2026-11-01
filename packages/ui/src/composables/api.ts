@@ -1815,6 +1815,29 @@ export function onAuthTokensRefreshed(cb: (accessToken: string) => void): void {
 type ForceLogoutFn = () => void;
 let forceLogoutImpl: ForceLogoutFn | null = null;
 
+type WorkspaceContextRequiredFn = () => void;
+let workspaceContextRequiredImpl: WorkspaceContextRequiredFn | null = null;
+
+/**
+ * BL-181: CP answers `409 WORKSPACE_CONTEXT_REQUIRED` when the caller is authenticated but has no
+ * workspace context (blank start with no workspace yet, or several workspaces and none named). That
+ * is recoverable, not a session expiry: the app registers "go to the workspace picker" here so the
+ * response never reaches the 401 path (which refreshes and then force-logs-out the user).
+ */
+export function registerWorkspaceContextRequired(fn: WorkspaceContextRequiredFn): void {
+    workspaceContextRequiredImpl = fn;
+}
+
+/** Reads `code` from a problem+json body without consuming the response. */
+async function readProblemCode(res: Response): Promise<string> {
+    try {
+        const body = (await res.clone().json()) as { code?: unknown };
+        return typeof body.code === "string" ? body.code : "";
+    } catch {
+        return "";
+    }
+}
+
 /** auth store injects the SPA-route logout to avoid an api -> router import cycle. */
 export function registerForceLogout(fn: ForceLogoutFn): void {
     forceLogoutImpl = fn;
@@ -1879,6 +1902,10 @@ async function checkedFetch(path: string, options?: RequestInit): Promise<Respon
             detail: "Session expired",
             requestId: res.headers?.get("X-Request-Id") || "unknown",
         });
+    }
+    if (res.status === 409 && (await readProblemCode(res)) === "WORKSPACE_CONTEXT_REQUIRED") {
+        // BL-181: recoverable — hand off to the picker; never the 401 logout path.
+        workspaceContextRequiredImpl?.();
     }
     if (!res.ok) return apiErrorFromResponse(res);
     return res;
