@@ -178,12 +178,48 @@ class ChatAttachmentIntegrationTest extends AbstractIntegrationTest {
         assertTrue(fileRepository.findById(UUID.fromString(fileId)).isPresent());
 
         // deleteSessionAttachments takes the per-File pessimistic lock (same lock/order as an in-flight
-        // fork copy), so it must run inside a transaction; production only calls it from the
-        // session-delete transaction. The direct call here needs its own.
+        // fork copy). Since BL-180 the service owns that transaction boundary itself; this wrapper is
+        // kept on purpose as a second layer of defence (and as a guard against the boundary silently
+        // regressing) — see deleteSessionAttachments_ownsItsTransactionBoundary for the no-wrapper case.
         new org.springframework.transaction.support.TransactionTemplate(transactionManager)
                 .executeWithoutResult(status -> chatAttachmentService.deleteSessionAttachments(sessionId));
 
         assertFalse(fileRepository.findById(UUID.fromString(fileId)).isPresent());
+    }
+
+    /**
+     * BL-180 regression: {@code deleteSessionAttachments} takes a per-File pessimistic lock
+     * ({@code SELECT … FOR UPDATE}), which is only legal inside a transaction. The method used to have
+     * no transaction boundary of its own, so this call — **no outer transaction**, exactly what a new
+     * caller or a script would do — failed with "no transaction is in progress" (PLAN-0615 had to wrap
+     * the test in a TransactionTemplate to hide it). The service now owns the boundary (default
+     * {@code REQUIRED}: it joins the session-delete transaction when there is one).
+     */
+    @Test
+    void deleteSessionAttachments_ownsItsTransactionBoundary() throws IOException {
+        java.io.File tempFile = java.io.File.createTempFile("own-tx", ".txt");
+        Files.write(tempFile.toPath(), "own transaction boundary".getBytes());
+
+        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+        body.add("files", new FileSystemResource(tempFile));
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+        HttpEntity<MultiValueMap<String, Object>> request = new HttpEntity<>(body, headers);
+
+        ResponseEntity<Map> uploadResponse = restTemplate.exchange(
+                baseUrl + "/api/v1/sessions/" + sessionId + "/attachments",
+                HttpMethod.POST, request, Map.class);
+        Map<String, Object> file = (Map<String, Object>) ((List<?>) uploadResponse.getBody().get("success")).get(0);
+        String fileId = (String) file.get("id");
+        assertTrue(fileRepository.findById(UUID.fromString(fileId)).isPresent());
+
+        // Deliberately no TransactionTemplate here: the service must supply the boundary.
+        chatAttachmentService.deleteSessionAttachments(sessionId);
+
+        assertFalse(fileRepository.findById(UUID.fromString(fileId)).isPresent(),
+                "the attachment row must be gone when the service owns the transaction");
     }
 
     @Autowired

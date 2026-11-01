@@ -272,6 +272,17 @@ public class ChatAttachmentService {
         return List.copyOf(references);
     }
 
+    /**
+     * Deletes every attachment of a Session (rows, physical bytes and the empty directory).
+     *
+     * <p>BL-180: this method takes a per-File pessimistic lock ({@code findByIdForUpdate}) to share the
+     * deterministic order with an in-flight fork copy, so it must run inside a transaction. The
+     * boundary lives here (default propagation {@code REQUIRED}) instead of relying on the caller:
+     * the session-delete path already runs in a transaction and joins it, while a direct call (tests,
+     * scripts, a future caller) gets its own. {@code REQUIRES_NEW} is deliberately not used — the
+     * delete must not split into "session gone in transaction A, attachment locks in transaction B".</p>
+     */
+    @Transactional
     public void deleteSessionAttachments(String sessionId) {
         List<File> files = fileRepository.findBySessionIdOrderByIdAsc(sessionId);
         for (File candidate : files) {
