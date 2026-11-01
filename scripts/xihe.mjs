@@ -118,7 +118,7 @@ function helpText() {
     '  node scripts/xihe.mjs provider list [--scope <USER|WORKSPACE>]',
     '  node scripts/xihe.mjs session participants list --session <sessionId> [--workspace <wsId>]',
     '  node scripts/xihe.mjs session participants add --session <sessionId> --principal <principalId> --kind AGENT|HUMAN [--role MEMBER|GUARD] [--wake ALL_MESSAGES|MENTION] [--respond ALWAYS|WHEN_MENTIONED|JUDGE|MUTED]',
-    '  node scripts/xihe.mjs session participants remove --session <sessionId> --participant <participantId>',
+    '  node scripts/xihe.mjs session participants remove --session <sessionId> --participant <participantId>  (soft disable: 参与者行/游标/审计保留，非硬删除)',
     '  node scripts/xihe.mjs session participants policy --session <sessionId> --participant <participantId> [--wake …] [--respond …]',
     '  node scripts/xihe.mjs chat send --session <sessionId> --branch <branchId> --content <text> [--as <participantId>]',
     '  node scripts/xihe.mjs provider verify <id>',
