@@ -13,7 +13,7 @@
 import { pathToFileURL } from 'node:url';
 import { CliError, parseOptions } from './provider.mjs';
 import { bindingRequestBody, resolveSessionBinding } from './session-binding.mjs';
-import { runPersonalLifecycleProbe, runResourceLimitProbe } from './verify.mjs';
+import { runPersonalLifecycleProbe, runResourceLimitProbe, runWorkspaceLifecycleProbe } from './verify.mjs';
 
 function usageError(message) {
   return new CliError('INVALID_ARGUMENT', message, {}, 2);
@@ -49,7 +49,10 @@ function outcomeOf(status) {
 }
 
 function summarize({ exitCode, data, error, apiBase, workspaceId }) {
-  const a5 = data?.personal ? outcomeOf(data.personal.status) : 'n/a';
+  const a5 = data?.personal && data?.workspacePrincipal
+    ? (data.personal.status === 'PASS' && data.workspacePrincipal.status === 'PASS' ? 'pass'
+      : (data.personal.status === 'FAIL' || data.workspacePrincipal.status === 'FAIL' ? 'fail' : 'unsupported'))
+    : 'n/a';
   const a6 = data?.limit ? outcomeOf(data.limit.status) : 'n/a';
   const label = exitCode === 0 ? 'PASS'
     : exitCode === 3 ? 'SCOPE_UNSUPPORTED'
@@ -72,10 +75,11 @@ function summaryLine(summary) {
     + `  a5=${summary.a5} a6=${summary.a6}  cp=${summary.cp} ws=${summary.workspaceId} at=${summary.at}`;
 }
 
-function createClient({ apiBase, fetchImpl, token }) {
+function createClient({ apiBase, fetchImpl, token, workspaceId }) {
   return {
     async call(method, pathname, { body, timeoutMs = 10_000 } = {}) {
       const headers = { Authorization: `Bearer ${token}` };
+      if (workspaceId) headers['X-Workspace-Id'] = workspaceId;
       if (body !== undefined) headers['Content-Type'] = 'application/json';
       let response;
       try {
@@ -154,7 +158,7 @@ export async function runAgentE2E({ env, fetchImpl = fetch, options }) {
   };
 
   const token = await login({ apiBase, fetchImpl, email, password });
-  const client = createClient({ apiBase, fetchImpl, token });
+  const client = createClient({ apiBase, fetchImpl, token, workspaceId });
 
   // Gate 1: CP M1.2 (scope support). A bare 404/400 here means the contract is absent.
   const scopeProbe = await client.call('GET', '/api/v1/agent-principals?scope=PERSONAL');
@@ -173,17 +177,35 @@ export async function runAgentE2E({ env, fetchImpl = fetch, options }) {
     endpoint: 'GET /agent-principals?scope=PERSONAL',
   });
 
+  // A5a PERSONAL：来源决定可见性（V4 三源合并：未绑也可见、unbind 后仍可见）
   const personal = await runPersonalLifecycleProbe({ client, workspaceId });
-  step('A5 PERSONAL lifecycle', personal.status, personal.detail, {
+  step('A5a PERSONAL lifecycle', personal.status, personal.detail, {
     principalId: personal.principalId ?? null,
-    lifecycle: 'create/bind/list(source=personal)/unbind/list-absent',
+    lifecycle: 'create/unbound-visible(source=personal)/bind/unbind/still-visible',
   });
   if (personal.status === 'FAIL') {
-    throw new CliError(personal.code, personal.detail, { step: 'A5' }, 1);
+    throw new CliError(personal.code, personal.detail, { step: 'A5a' }, 1);
   }
   if (personal.status !== 'PASS' || !personal.principalId) {
-    step('A5 PERSONAL lifecycle', 'SKIP_PROVISIONAL', personal.code ?? 'no principalId');
+    step('A5a PERSONAL lifecycle', 'SKIP_PROVISIONAL', personal.code ?? 'no principalId');
     return { exitCode: 3, data: { kind: 'agent-e2e', steps, gate: personal.code ?? 'SCOPE_UNSUPPORTED', personal } };
+  }
+
+  // A5b WORKSPACE：绑定决定可见性（未绑不可见 → bind 后 source=workspace → unbind 后不可见）
+  const workspacePrincipal = await runWorkspaceLifecycleProbe({ client, workspaceId });
+  step('A5b WORKSPACE lifecycle', workspacePrincipal.status, workspacePrincipal.detail, {
+    principalId: workspacePrincipal.principalId ?? null,
+    lifecycle: 'create/unbound-hidden/bind(source=workspace)/unbind/hidden',
+  });
+  if (workspacePrincipal.status === 'FAIL') {
+    throw new CliError(workspacePrincipal.code, workspacePrincipal.detail, { step: 'A5b' }, 1);
+  }
+  if (workspacePrincipal.status !== 'PASS' || !workspacePrincipal.principalId) {
+    step('A5b WORKSPACE lifecycle', 'SKIP_PROVISIONAL', workspacePrincipal.code ?? 'no principalId');
+    return {
+      exitCode: 3,
+      data: { kind: 'agent-e2e', steps, gate: workspacePrincipal.code ?? 'SCOPE_UNSUPPORTED', personal, workspacePrincipal },
+    };
   }
 
   // A6 needs a bound principal + session + branch on a direct_attach workspace.
@@ -241,6 +263,7 @@ export async function runAgentE2E({ env, fetchImpl = fetch, options }) {
           steps,
           gate: limit.code ?? 'LIMIT_UNSUPPORTED',
           personal,
+          workspacePrincipal,
           session: { id: sessionId, branchId },
           limit,
         },
@@ -252,6 +275,7 @@ export async function runAgentE2E({ env, fetchImpl = fetch, options }) {
         kind: 'agent-e2e',
         steps,
         personal,
+          workspacePrincipal,
         session: { id: sessionId, branchId },
         binding: resolved.binding,
         limit,
