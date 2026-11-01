@@ -501,15 +501,21 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
         await shot(page, "S5", "s5-plain-account-landing", "普通账号进入后的落点");
 
         const token = await tokenOf(page);
+        // D21：省略 scope 已按 WORKSPACE 处理，且需要显式工作区上下文。F-01 的语义不变：
+        // 普通账号（EDITOR，无 MANAGE_WORKSPACE_AGENTS）仍应被拒；409 仅表示"缺工作区上下文"，
+        // 与 403 同属拒绝，不允许把 201 放进接受集。
         const apiAttempt = await request.post(`${CP_URL}/api/v1/agent-principals`, {
-            headers: bearer(token),
-            data: { name: `headed-f01-${Date.now()}` },
+            headers: { ...bearer(token), "X-Workspace-Id": s5WorkspaceId },
+            data: { scope: "WORKSPACE", name: `headed-f01-${Date.now()}` },
         });
+        const f01Problem = (await apiAttempt.json().catch(() => ({}))) as { code?: string };
         test.info().annotations.push({
             type: "headed-f01-api",
-            description: `POST /agent-principals → ${apiAttempt.status()}`,
+            description: `POST /agent-principals (scope=WORKSPACE) → ${apiAttempt.status()}${f01Problem.code ? ` ${f01Problem.code}` : ""}`,
         });
-        expect([201, 403], await apiAttempt.text()).toContain(apiAttempt.status());
+        expect([403, 409], `expected a denial, got ${apiAttempt.status()} ${f01Problem.code ?? ""}`).toContain(
+            apiAttempt.status(),
+        );
 
         // UI 侧：打开 Agent 管理面板，记录"入口是否隐藏 / 有没有可操作提示 / 是否直显英文 403"。
         const toolbarVisible = await page

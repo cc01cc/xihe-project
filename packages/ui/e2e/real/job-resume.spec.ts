@@ -117,7 +117,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
 
         const principalRes = await request.post(`${CP_URL}/api/v1/agent-principals`, {
             headers: bootHeaders,
-            data: { name: "JobResume Agent", templateId },
+            data: { scope: "WORKSPACE", name: "JobResume Agent", templateId },
         });
         expect(principalRes.status(), await principalRes.text()).toBe(201);
         const principalId = ((await principalRes.json()) as { principalId: string }).principalId;

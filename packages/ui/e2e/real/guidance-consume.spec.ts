@@ -68,7 +68,7 @@ async function createApprovalAgent(
     expect(templateWrite.status(), await templateWrite.text()).toBe(200);
     const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
         headers,
-        data: { name: "Guidance E2E Agent", templateId },
+        data: { scope: "WORKSPACE", name: "Guidance E2E Agent", templateId },
     });
     expect(principalResponse.status(), await principalResponse.text()).toBe(201);
     const principalId = ((await principalResponse.json()) as { principalId: string }).principalId,

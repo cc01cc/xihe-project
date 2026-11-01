@@ -385,6 +385,16 @@ export async function runResourceLimitProbe({ client, connectionId, sessionId, b
     status: 'PASS',
     detail: `429 RESOURCE_EXHAUSTED kind=${throttled.body.resourceKind} scope=${throttled.body.scope}`
       + ` retryAfterSeconds=${throttled.body.retryAfterSeconds} header=${throttled.retryAfter}；恢复限额后 chat 已受理`,
+    evidence: {
+      httpStatus: 429,
+      code: 'RESOURCE_EXHAUSTED',
+      retryAfterSeconds: throttled.body.retryAfterSeconds,
+      resourceKind: throttled.body.resourceKind,
+      scope: throttled.body.scope,
+      headerRetryAfter: throttled.retryAfter,
+      restored: true,
+      restoredChatStatus: recovered.status,
+    },
   };
 }
 
@@ -543,9 +553,10 @@ export async function runVerify({
       }
     }
     if (!state.principalId) {
+      // D21: an omitted scope is WORKSPACE; make it explicit and send the workspace context
+      // (client.call defaults workspace:true → X-Workspace-Id).
       const created = await client.call('POST', '/api/v1/agent-principals', {
-        body: { name: 'xihe-verify' },
-        workspace: false,
+        body: { name: 'xihe-verify', scope: 'WORKSPACE' },
       });
       if (![200, 201].includes(created.status) || typeof created.body?.principalId !== 'string') {
         state.principalOutcome = created.status === 0 || created.status >= 500 || [200, 201].includes(created.status)

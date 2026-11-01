@@ -3,7 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { expect } from "@playwright/test";
 import type { APIRequestContext } from "@playwright/test";
-import { seedUserGrantPermissions } from "./helpers/user-grants";
+import { seedUserGrantPermissions } from "./user-grants";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 
@@ -57,9 +57,11 @@ export async function createApprovalAgent(
             },
         });
     expect(templateWrite.status(), await templateWrite.text()).toBe(200);
+    // D21: WORKSPACE-scope principal creation requires an explicit workspace context.
+    const principalHeaders = { ...headers, "X-Workspace-Id": workspaceId };
     const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
-        headers,
-        data: { name: "Guidance E2E Agent", templateId },
+        headers: principalHeaders,
+        data: { scope: "WORKSPACE", name: "Guidance E2E Agent", templateId },
     });
     expect(principalResponse.status(), await principalResponse.text()).toBe(201);
     const principalId = ((await principalResponse.json()) as { principalId: string }).principalId,

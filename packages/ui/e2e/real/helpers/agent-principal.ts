@@ -43,6 +43,8 @@ export async function provisionWorkspaceAgentPrincipal(
     const headers = {
         Authorization: `Bearer ${auth.accessToken}`,
         "Content-Type": "application/json",
+        // D21: WORKSPACE-scope principal creation requires an explicit workspace context.
+        "X-Workspace-Id": auth.workspaceId,
     };
     // PLAN-0614: fail fast when the caller forgot `ensureWorkspace()`. Passing a null workspace
     // would seed a grant row with `resource = null`, and the real failure would surface much later
@@ -84,7 +86,7 @@ export async function provisionWorkspaceAgentPrincipal(
 
     const created = await request.post(`${CP_URL}/api/v1/agent-principals`, {
         headers,
-        data: { name, templateId },
+        data: { name, templateId, scope: "WORKSPACE" },
     });
     expect(created.status(), await created.text()).toBe(201);
     const { principalId } = (await created.json()) as { principalId: string };

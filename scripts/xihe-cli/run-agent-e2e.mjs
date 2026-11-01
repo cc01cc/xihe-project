@@ -19,6 +19,57 @@ function usageError(message) {
   return new CliError('INVALID_ARGUMENT', message, {}, 2);
 }
 
+const SENSITIVE_KEY = /token|secret|password|apikey|api_key|credential/i;
+
+/** Evidence is quoted in plans: never leak tokens/keys, and bound long strings. */
+function sanitizeEvidence(value) {
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string') {
+    return value.length > 200 ? `${value.slice(0, 200)}…` : value;
+  }
+  if (Array.isArray(value)) return value.map((item) => sanitizeEvidence(item));
+  if (typeof value === 'object') {
+    const result = {};
+    for (const [key, item] of Object.entries(value)) {
+      if (SENSITIVE_KEY.test(key)) continue;
+      result[key] = sanitizeEvidence(item);
+    }
+    return result;
+  }
+  return value;
+}
+
+/** Raw step statuses (probe vocabulary) → the three outcomes quoted in evidence. */
+function outcomeOf(status) {
+  if (status === 'PASS') return 'pass';
+  if (status === 'FAIL') return 'fail';
+  return 'unsupported';
+}
+
+function summarize({ exitCode, data, error, apiBase, workspaceId }) {
+  const a5 = data?.personal ? outcomeOf(data.personal.status) : 'n/a';
+  const a6 = data?.limit ? outcomeOf(data.limit.status) : 'n/a';
+  const label = exitCode === 0 ? 'PASS'
+    : exitCode === 3 ? 'SCOPE_UNSUPPORTED'
+      : exitCode === 4 ? 'LIMIT_UNSUPPORTED' : 'FAIL';
+  const reason = error?.message ?? data?.gate ?? null;
+  return {
+    exitCode,
+    label,
+    a5,
+    a6,
+    cp: apiBase,
+    workspaceId,
+    at: new Date().toISOString(),
+    ...(exitCode === 0 ? {} : { reason }),
+  };
+}
+
+function summaryLine(summary) {
+  return `[agent-e2e] exit=${summary.exitCode} ${summary.label}`
+    + `  a5=${summary.a5} a6=${summary.a6}  cp=${summary.cp} ws=${summary.workspaceId} at=${summary.at}`;
+}
+
 function createClient({ apiBase, fetchImpl, token }) {
   return {
     async call(method, pathname, { body, timeoutMs = 10_000 } = {}) {
@@ -88,9 +139,16 @@ export async function runAgentE2E({ env, fetchImpl = fetch, options }) {
   }
 
   const steps = [];
-  const step = (name, status, detail = null) => {
-    steps.push({ name, status, ...(detail ? { detail } : {}) });
-    return { name, status, detail };
+  const step = (name, rawStatus, detail = null, evidence = null) => {
+    const entry = {
+      name,
+      status: outcomeOf(rawStatus),
+      rawStatus,
+      ...(detail ? { detail } : {}),
+      ...(evidence ? { evidence: sanitizeEvidence(evidence) } : {}),
+    };
+    steps.push(entry);
+    return entry;
   };
 
   const token = await login({ apiBase, fetchImpl, email, password });
@@ -100,15 +158,24 @@ export async function runAgentE2E({ env, fetchImpl = fetch, options }) {
   const scopeProbe = await client.call('GET', '/api/v1/agent-principals?scope=PERSONAL');
   if (scopeProbe.status !== 200) {
     if ([400, 404, 405, 422].includes(scopeProbe.status)) {
-      step('scope support', 'SCOPE_UNSUPPORTED', `GET /agent-principals?scope=PERSONAL → HTTP ${scopeProbe.status}（CP M1.2 未交付）`);
+      step('scope support', 'SCOPE_UNSUPPORTED', `GET /agent-principals?scope=PERSONAL → HTTP ${scopeProbe.status}（CP M1.2 未交付）`, {
+        httpStatus: scopeProbe.status,
+        endpoint: 'GET /agent-principals?scope=PERSONAL',
+      });
       return { exitCode: 3, data: { kind: 'agent-e2e', steps, gate: 'SCOPE_UNSUPPORTED' } };
     }
     throw new CliError(codeOf(scopeProbe, 'SCOPE_PROBE_FAILED'), `Scope probe failed (HTTP ${scopeProbe.status}).`, {}, 1);
   }
-  step('scope support', 'PASS', 'GET /agent-principals?scope=PERSONAL → 200');
+  step('scope support', 'PASS', 'GET /agent-principals?scope=PERSONAL → 200', {
+    httpStatus: 200,
+    endpoint: 'GET /agent-principals?scope=PERSONAL',
+  });
 
   const personal = await runPersonalLifecycleProbe({ client, workspaceId });
-  step('A5 PERSONAL lifecycle', personal.status, personal.detail);
+  step('A5 PERSONAL lifecycle', personal.status, personal.detail, {
+    principalId: personal.principalId ?? null,
+    lifecycle: 'create/bind/list(source=personal)/unbind/list-absent',
+  });
   if (personal.status === 'FAIL') {
     throw new CliError(personal.code, personal.detail, { step: 'A5' }, 1);
   }
@@ -158,7 +225,8 @@ export async function runAgentE2E({ env, fetchImpl = fetch, options }) {
       sessionId,
       branchId,
     });
-    step('A6 RESOURCE_EXHAUSTED 429', limit.status, limit.detail);
+    step('A6 RESOURCE_EXHAUSTED 429', limit.status, limit.detail, limit.evidence
+      ?? { code: limit.code ?? null, connectionId: resolved.binding.connectionId });
     if (limit.status === 'FAIL') {
       throw new CliError(limit.code, limit.detail, { step: 'A6' }, 1);
     }
@@ -214,9 +282,13 @@ export async function main(argv = process.argv.slice(2), { env = process.env, fe
     else args.push(arg);
   }
   let result;
+  let apiBase = '';
+  let workspaceId = '';
   try {
     const parsed = parseOptions(args, ['--cp', '--ui-workspace', '--email', '--password-env'], []);
     if (parsed.positionals.length !== 0) throw usageError('run-agent-e2e takes no positional arguments.');
+    apiBase = String(parsed.values['--cp'] ?? '').trim().replace(/\/$/, '');
+    workspaceId = String(parsed.values['--ui-workspace'] ?? '').trim();
     result = await runAgentE2E({ env, fetchImpl, options: parsed.values });
   } catch (error) {
     const cliError = error instanceof CliError
@@ -227,10 +299,17 @@ export async function main(argv = process.argv.slice(2), { env = process.env, fe
       error: { code: cliError.code, message: cliError.message, ...(cliError.details ?? {}) },
     };
   }
+  const summary = summarize({
+    exitCode: result.exitCode,
+    data: result.data,
+    error: result.error,
+    apiBase,
+    workspaceId,
+  });
   if (json) {
     const payload = result.error
-      ? { ok: false, error: result.error }
-      : { ok: result.exitCode === 0, data: result.data };
+      ? { ok: false, summary, error: result.error }
+      : { ok: result.exitCode === 0, summary, data: result.data };
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
   } else {
     for (const stepItem of result.data?.steps ?? []) {
@@ -239,6 +318,9 @@ export async function main(argv = process.argv.slice(2), { env = process.env, fe
     if (result.error) process.stderr.write(`[${result.error.code}] ${result.error.message}\n`);
     if (result.data?.gate) process.stdout.write(`gate: ${result.data.gate}\n`);
   }
+  // 供 Lead 直接 grep/引用的一行总结（stderr：保持 --json 的 stdout 可解析）。
+  process.stderr.write(`${summaryLine(summary)}\n`);
+  if (summary.reason) process.stderr.write(`[agent-e2e] reason: ${summary.reason}\n`);
   return result.exitCode;
 }
 
