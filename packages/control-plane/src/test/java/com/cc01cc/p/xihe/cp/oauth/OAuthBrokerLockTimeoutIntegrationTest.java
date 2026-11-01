@@ -107,8 +107,7 @@ class OAuthBrokerLockTimeoutIntegrationTest extends AbstractIntegrationTest {
         assertTrue(registration.getStatusCode().is2xxSuccessful(), "registration must succeed");
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        workspaceId = workspaceFixture.memberWorkspacesOf(user.getId())
-                .stream().findFirst().orElseThrow().getId().toString();
+        workspaceId = workspaceFixture.ensureOwnedWorkspace(user.getId()).getId().toString();
 
         provider = new ProviderStub();
         serverId = UUID.randomUUID().toString();

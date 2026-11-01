@@ -490,6 +490,18 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         }
     }
 
+    /** PLAN-0614: register no longer creates a workspace; fixtures create one through the API. */
+    private String createFixtureWorkspace(String token) {
+        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(token);
+        org.springframework.http.ResponseEntity<java.util.Map> created = restTemplate.postForEntity(
+                url("/api/v1/workspaces"),
+                new org.springframework.http.HttpEntity<>(java.util.Map.of(), headers), java.util.Map.class);
+        assertEquals(201, created.getStatusCode().value(), String.valueOf(created.getBody()));
+        return (String) created.getBody().get("id");
+    }
+
     @Test
     void createWorkspaceReturnsFlatWorkspaceJson() {
         String email = "create-shape-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
@@ -499,7 +511,8 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
                 java.util.Map.class);
         assertEquals(201, registration.getStatusCode().value());
         String ownerId = userIdOf(email);
-        String existingWorkspaceId = (String) registration.getBody().get("workspaceId");
+        // PLAN-0614: register no longer provisions a workspace — the fixture creates (and later deletes) one.
+        String existingWorkspaceId = createFixtureWorkspace((String) registration.getBody().get("accessToken"));
         wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/workspaces/delete"))
                 .willReturn(aResponse().withStatus(200)));
         workspaceService.deleteWorkspace(existingWorkspaceId, ownerId);
@@ -550,7 +563,8 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
 
         assertEquals(200, response.getStatusCode().value());
         assertNotNull(response.getBody());
-        assertEquals(2, response.getBody().size());
+        // PLAN-0614: registration creates no workspace, so the fixture's explicit one is the only row.
+        assertEquals(1, response.getBody().size());
     }
 
     @Test
@@ -571,8 +585,8 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
                 java.util.Map.of("email", email, "password", TestDataFactory.PASSWORD, "name", "Workspace Import"),
                 java.util.Map.class);
         assertEquals(201, registration.getStatusCode().value());
-        String workspaceId = (String) registration.getBody().get("workspaceId");
         String token = (String) registration.getBody().get("accessToken");
+        String workspaceId = createFixtureWorkspace(token);
 
         org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
         headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
@@ -613,7 +627,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
                 java.util.Map.of("email", email, "password", TestDataFactory.PASSWORD, "name", "Env Status"),
                 java.util.Map.class);
         assertEquals(201, registration.getStatusCode().value());
-        String workspaceId = (String) registration.getBody().get("workspaceId");
+        String workspaceId = createFixtureWorkspace((String) registration.getBody().get("accessToken"));
         createdWorkspace = workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId)).orElseThrow();
         String token = (String) registration.getBody().get("accessToken");
 

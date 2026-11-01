@@ -82,8 +82,8 @@ class E2eGuidanceBarrierHttpIntegrationTest extends AbstractIntegrationTest {
         assertTrue(registration.getStatusCode().is2xxSuccessful());
         User user = users.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        workspaceId = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId))
-                .getFirst().getId().toString();
+        // PLAN-0614: register no longer creates a workspace; the fixture creates the caller's own.
+        workspaceId = workspaceFixture.ensureOwnedWorkspace(UUID.fromString(userId)).getId().toString();
         Session session = new Session(workspaceId, userId, "Barrier Session");
         session.setId(UUID.randomUUID());
         sessionId = sessions.save(session).getId().toString();

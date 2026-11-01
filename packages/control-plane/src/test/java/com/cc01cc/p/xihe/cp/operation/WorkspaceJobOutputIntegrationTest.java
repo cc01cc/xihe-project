@@ -82,8 +82,7 @@ class WorkspaceJobOutputIntegrationTest extends AbstractIntegrationTest {
         authToken = response.getBody().getAccessToken();
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        workspaceId = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId))
-                .stream().findFirst().orElseThrow().getId().toString();
+        workspaceId = workspaceFixture.ensureOwnedWorkspace(UUID.fromString(userId)).getId().toString();
 
         Session session = new Session(workspaceId, userId, "Job Output Session");
         session.setId(UUID.randomUUID());

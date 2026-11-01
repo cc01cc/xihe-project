@@ -65,6 +65,23 @@ public class WorkspaceFixture {
         return saved;
     }
 
+    /**
+     * PLAN-0614: the workspace a fixture should use for an account. Registering no longer creates a
+     * default workspace, so fixtures that need "the caller's workspace" create one explicitly on first
+     * use (WS_OWNER binding included) and then reuse it.
+     */
+    @Transactional
+    public Workspace ensureOwnedWorkspace(UUID userId) {
+        return ensureOwnedWorkspace(userId, "Fixture Workspace");
+    }
+
+    /** Same as {@link #ensureOwnedWorkspace(UUID)} with an explicit workspace name. */
+    @Transactional
+    public Workspace ensureOwnedWorkspace(UUID userId, String name) {
+        return workspaces.findActiveByMemberBinding(userId).stream().findFirst()
+                .orElseGet(() -> createOwnedWorkspace(name, userId.toString()));
+    }
+
     /** Active workspaces the subject belongs to (binding-backed replacement of the legacy join). */
     @Transactional(readOnly = true)
     public java.util.List<Workspace> memberWorkspacesOf(UUID userId) {

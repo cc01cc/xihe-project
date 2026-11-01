@@ -86,8 +86,7 @@ class ChatRunGuidanceServiceIntegrationTest extends AbstractIntegrationTest {
 
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        workspaceId = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId))
-                .stream().findFirst().orElseThrow().getId().toString();
+        workspaceId = workspaceFixture.ensureOwnedWorkspace(UUID.fromString(userId)).getId().toString();
 
         Session session = new Session(workspaceId, userId, "Guidance Probe Session");
         session.setId(UUID.randomUUID());

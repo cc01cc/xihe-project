@@ -62,7 +62,7 @@ class SessionDerivedStateIntegrationTest extends AbstractIntegrationTest {
                 AuthResponse.class);
         ownerToken = response.getBody().getAccessToken();
         owner = users.findByEmail(email).orElseThrow();
-        workspace = workspaceFixture.memberWorkspacesOf(owner.getId()).stream().findFirst().orElseThrow();
+        workspace = workspaceFixture.ensureOwnedWorkspace(owner.getId());
         if (!workspaceFixture.isMember(workspace.getId(), owner.getId())) {
             workspaceFixture.bindWorkspaceRole(workspace.getId().toString(), owner.getId().toString(), WorkspaceRole.OWNER);
         }

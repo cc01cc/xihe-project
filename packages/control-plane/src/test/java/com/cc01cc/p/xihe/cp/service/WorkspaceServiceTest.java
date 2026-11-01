@@ -90,13 +90,22 @@ class WorkspaceServiceTest {
                 "DB delete is authoritative even when Runtime cleanup fails");
     }
 
+    /**
+     * PLAN-0614 (blank start): the auth path must never create a workspace. The first read is empty
+     * and stays empty (no row appears); after an explicit creation the same read returns that
+     * workspace — the method is purely "first active workspace".
+     */
     @Test
-    void getOrCreateDefault_returnsExisting() {
+    void firstActiveWorkspace_isReadOnlyAndReturnsTheFirstExplicitWorkspace() {
         String suffix = java.util.UUID.randomUUID().toString().substring(0, 8);
         com.cc01cc.p.xihe.cp.entity.User user = userRepository.save(
                 new com.cc01cc.p.xihe.cp.entity.User("user-default-" + suffix + "@test.com", "hash", "Default"));
+        assertTrue(workspaceService.firstActiveWorkspace(user.getId().toString()).isEmpty(),
+                "a fresh account starts empty (no system-created workspace)");
+        assertTrue(workspaceService.getWorkspacesByUser(user.getId().toString()).isEmpty(),
+                "the read must not create anything");
         Workspace first = workspaceService.createWorkspace("default-test", user.getId().toString());
-        Workspace second = workspaceService.getOrCreateDefaultWorkspace(user.getId().toString());
+        Workspace second = workspaceService.firstActiveWorkspace(user.getId().toString()).orElseThrow();
         assertEquals(first.getId(), second.getId());
     }
 

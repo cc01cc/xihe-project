@@ -104,8 +104,23 @@ class ExecutionModeAuthorityTest extends AbstractH2Test {
         assertEquals(HttpStatus.CREATED, registration.getStatusCode());
         assertNotNull(registration.getBody());
         userToken = (String) registration.getBody().get("accessToken");
-        workspaceId = (String) registration.getBody().get("workspaceId");
-        assertNotNull(workspaceId, "registration provisions the owner's workspace");
+        workspaceId = createWorkspaceViaApi(userToken);
+        assertNotNull(workspaceId, "PLAN-0614: the fixture creates the workspace explicitly");
+    }
+
+    /**
+     * PLAN-0614: register/login no longer create a workspace, so fixtures that need one create it via
+     * the public API (blank body = historical managed_import default; the H2 lane enables the docker
+     * backend for fixtures).
+     */
+    private String createWorkspaceViaApi(String token) {
+        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(token);
+        ResponseEntity<Map> created = restTemplate.postForEntity(url("/api/v1/workspaces"),
+                new org.springframework.http.HttpEntity<>(Map.of(), headers), Map.class);
+        assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
+        return (String) created.getBody().get("id");
     }
 
     @Test

@@ -108,8 +108,7 @@ class BranchFailClosedMatrixIntegrationTest extends AbstractIntegrationTest {
 
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        workspaceId = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId))
-                .stream().findFirst().orElseThrow().getId().toString();
+        workspaceId = workspaceFixture.ensureOwnedWorkspace(UUID.fromString(userId)).getId().toString();
     }
 
     // ------------------------------------------------------------------

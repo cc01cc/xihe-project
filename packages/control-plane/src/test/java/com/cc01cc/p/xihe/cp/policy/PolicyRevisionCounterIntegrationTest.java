@@ -104,8 +104,7 @@ class PolicyRevisionCounterIntegrationTest extends AbstractIntegrationTest {
 
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        Workspace workspace = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId))
-                .stream().findFirst().orElseThrow();
+        Workspace workspace = workspaceFixture.ensureOwnedWorkspace(UUID.fromString(userId));
         workspaceId = workspace.getId().toString();
         workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
         TenantContext.setWorkspaceRole("OWNER");

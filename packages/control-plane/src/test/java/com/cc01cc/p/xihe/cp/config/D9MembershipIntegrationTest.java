@@ -32,6 +32,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * answers first.
  */
 class D9MembershipIntegrationTest extends AbstractIntegrationTest {
+    @Autowired private com.cc01cc.p.xihe.cp.service.WorkspaceService workspaceService;
 
     private static final String INTERNAL_TOKEN = "dev-token-not-secure";
     private static final String USER_PASSWORD = "d9-membership-pass-1";
@@ -68,9 +69,10 @@ class D9MembershipIntegrationTest extends AbstractIntegrationTest {
                         "password", USER_PASSWORD, "name", "D9 Member"), String.class);
         assertEquals(HttpStatus.CREATED, member.getStatusCode(), member.getBody());
         memberId = objectMapper.readTree(member.getBody()).path("user").path("id").asText();
-        workspaceId = jdbc.queryForObject("SELECT scope_id FROM role_bindings WHERE subject_type = 'user'"
-                + " AND subject_id = ? AND scope_type = 'workspace' LIMIT 1",
-                String.class, UUID.fromString(memberId));
+        // PLAN-0614: register no longer creates a workspace; the fixture creates the member's own.
+        workspaceId = workspaceService
+                .createWorkspace("D9 member workspace", UUID.fromString(memberId).toString())
+                .getId().toString();
 
         ResponseEntity<String> outsider = restTemplate.postForEntity(url("/api/v1/auth/register"),
                 Map.of("email", "d9-outsider-" + UUID.randomUUID() + "@test.com",

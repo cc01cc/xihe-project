@@ -92,8 +92,8 @@ class ContextEventReadContractIntegrationTest extends AbstractIntegrationTest {
         assertThat(registration.getBody()).isNotNull();
         userToken = registration.getBody().getAccessToken();
         userId = userRepository.findByEmail(email).orElseThrow().getId().toString();
-        workspaceId = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId))
-                .getFirst().getId().toString();
+        // PLAN-0614: register no longer creates a workspace; the fixture creates the caller's own.
+        workspaceId = workspaceFixture.ensureOwnedWorkspace(UUID.fromString(userId)).getId().toString();
         var session = new Session(workspaceId, userId, "Context read contract");
         session.setId(UUID.randomUUID());
         sessionId = sessionRepository.save(session).getId().toString();

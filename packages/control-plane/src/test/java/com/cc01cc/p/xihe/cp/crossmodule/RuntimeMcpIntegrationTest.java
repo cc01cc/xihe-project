@@ -82,7 +82,8 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
         super.setUp();
         token = registerAndLogin();
         String userId = jwtTokenProvider.getUserIdFromToken(token);
-        wsId = workspaceService.findCurrentWorkspace(userId).orElseThrow().getId().toString();
+        // PLAN-0614: register no longer creates a workspace; the fixture creates the caller's own.
+        wsId = workspaceService.createWorkspace("Mcp runtime workspace", userId).getId().toString();
     }
 
     private HttpEntity<String> mcpEntity(String body) {

@@ -123,15 +123,13 @@ class AuditReadIntegrationTest extends AbstractIntegrationTest {
         authToken = register(ownerEmail);
         User user = userRepository.findByEmail(ownerEmail).orElseThrow();
         userId = user.getId().toString();
-        workspaceId = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId))
-                .stream().findFirst().orElseThrow().getId().toString();
+        workspaceId = workspaceFixture.ensureOwnedWorkspace(UUID.fromString(userId)).getId().toString();
 
         String otherEmail = newEmail("audit-other");
         otherAuthToken = register(otherEmail);
         User otherUser = userRepository.findByEmail(otherEmail).orElseThrow();
         otherUserId = otherUser.getId().toString();
-        otherWorkspaceId =                 workspaceFixture.memberWorkspacesOf(UUID.fromString(otherUserId))
-                .stream().findFirst().orElseThrow().getId().toString();
+        otherWorkspaceId =                 workspaceFixture.ensureOwnedWorkspace(UUID.fromString(otherUserId)).getId().toString();
 
         Session session = new Session(workspaceId, userId, "Audit read session");
         session.setId(UUID.randomUUID());

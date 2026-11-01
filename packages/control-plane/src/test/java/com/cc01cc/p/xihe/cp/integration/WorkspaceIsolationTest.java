@@ -94,11 +94,10 @@ class WorkspaceIsolationTest {
         registerUser(emailB, password, "User B");
         userB = userRepository.findByEmail(emailB).orElseThrow();
 
-        // Registration provisions one default workspace per user; reuse those
-        // instead of creating extra workspaces (single-active-workspace policy).
-        // User A is then added to user B's workspace as MEMBER to exercise isolation.
-        ws1 = workspaceService.findCurrentWorkspace(userA.getId().toString()).orElseThrow();
-        ws2 = workspaceService.findCurrentWorkspace(userB.getId().toString()).orElseThrow();
+        // PLAN-0614: registration no longer provisions a workspace, so each user creates their own
+        // explicitly. User A is then added to user B's workspace as EDITOR to exercise isolation.
+        ws1 = workspaceFixture.ensureOwnedWorkspace(userA.getId(), "Isolation workspace A");
+        ws2 = workspaceFixture.ensureOwnedWorkspace(userB.getId(), "Isolation workspace B");
         workspaceFixture.bindWorkspaceRole(ws2.getId().toString(), userA.getId().toString(), WorkspaceRole.MEMBER);
     }
 
@@ -195,10 +194,10 @@ class WorkspaceIsolationTest {
         AuthResponse response = registerAndExtractAuth(email, TestDataFactory.PASSWORD, "Token Test");
         assertNotNull(response.getAccessToken());
         assertTrue(TestDataFactory.tokenProvider().validateToken(response.getAccessToken()));
-        // PLAN-0559: new access tokens are user-level; the response still seeds
-        // the default workspace for first entry.
+        // PLAN-0559: new access tokens are user-level. PLAN-0614 blank start: registration no longer
+        // creates a workspace either, so the response carries no workspace id at all.
         assertNull(TestDataFactory.tokenProvider().getWorkspaceIdFromToken(response.getAccessToken()));
-        assertNotNull(response.getWorkspaceId());
+        assertNull(response.getWorkspaceId(), "register never provisions a workspace (PLAN-0614 I1)");
     }
 
     @Test
@@ -223,7 +222,10 @@ class WorkspaceIsolationTest {
         String memberEmail = "matrix-member-" + suffix + "@test.com";
         AuthResponse owner = registerAndExtractAuth(ownerEmail, TestDataFactory.PASSWORD, "Matrix Owner");
         AuthResponse member = registerAndExtractAuth(memberEmail, TestDataFactory.PASSWORD, "Matrix Member");
-        String ownerWorkspace = owner.getWorkspaceId();
+        // PLAN-0614: the owner's workspace is created explicitly by the fixture.
+        String ownerWorkspace = workspaceFixture
+                .ensureOwnedWorkspace(UUID.fromString(owner.getUser().getId()), "Isolation matrix workspace")
+                .getId().toString();
         String memberId = jwtTokenProvider.getUserIdFromToken(member.getAccessToken());
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(memberId, null,

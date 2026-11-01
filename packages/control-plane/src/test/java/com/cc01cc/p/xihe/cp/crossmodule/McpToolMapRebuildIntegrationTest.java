@@ -80,7 +80,8 @@ class McpToolMapRebuildIntegrationTest extends AbstractWireMockTest {
         wireMock.resetAll();
         token = registerAndLogin();
         userId = jwtTokenProvider.getUserIdFromToken(token);
-        wsId = workspaceService.findCurrentWorkspace(userId).orElseThrow().getId().toString();
+        // PLAN-0614: register no longer creates a workspace; the fixture creates the caller's own.
+        wsId = workspaceService.createWorkspace("Tool map workspace", userId).getId().toString();
         catalogService.replaceStdioConfigs(wsId, Map.of(STDIO_SERVER, objectMapper.createObjectNode()
                 .put("command", "node")));
         Session session = new Session(wsId, userId, "PLAN-0583 tool map rebuild");

@@ -32,6 +32,8 @@ class MePermissionsIntegrationTest extends AbstractIntegrationTest {
     private AuthzContext authzContext;
     @Autowired
     private ObjectMapper objectMapper;
+    @Autowired
+    private com.cc01cc.p.xihe.cp.service.WorkspaceService workspaceService;
 
     @Test
     void authMeExposesCapabilitiesAndNoRoleString() throws Exception {
@@ -49,6 +51,8 @@ class MePermissionsIntegrationTest extends AbstractIntegrationTest {
     @Test
     void mePermissionsReturnsOwnInstanceAtomsAndWorkspaceScopes() throws Exception {
         AuthResponse registered = register("w3b-perms@test.com");
+        // PLAN-0614: registration no longer creates a workspace; the fixture creates the caller's own.
+        workspaceService.createWorkspace("Me permissions workspace", registered.getUser().getId());
         JsonNode body = getJson(registered.getAccessToken(), "/api/v1/me/permissions");
 
         assertEquals(registered.getUser().getId(), body.path("userId").asText());
@@ -78,6 +82,9 @@ class MePermissionsIntegrationTest extends AbstractIntegrationTest {
                 + " ON CONFLICT ON CONSTRAINT uq_role_bindings DO NOTHING", userId);
         authzContext.invalidateAll();
 
+        // PLAN-0614: registration no longer creates a workspace; the fixture creates one so the
+        // "instance admin administers every workspace" projection has a workspace to report.
+        workspaceService.createWorkspace("Me perms super workspace", registered.getUser().getId());
         JsonNode me = getJson(registered.getAccessToken(), "/api/v1/auth/me");
         assertTrue(me.path("capabilities").path("isInstanceAdmin").asBoolean());
         assertTrue(me.path("capabilities").path("isInstanceSuper").asBoolean());

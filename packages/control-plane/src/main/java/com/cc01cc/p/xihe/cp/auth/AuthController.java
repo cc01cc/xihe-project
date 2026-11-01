@@ -134,7 +134,7 @@ public class AuthController {
                     // registration path — no role column write exists any more.
                     grantDefaultService.ensureInstanceSuperAdmin(user);
                 }
-                return withDefaultWorkspace(user);
+                return withFirstWorkspace(user);
             });
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
         } catch (CpApiException e) {
@@ -162,7 +162,7 @@ public class AuthController {
             try {
                 User user = authService.authenticate(request);
                 loginAttemptService.recordSuccess(lease);
-                return ResponseEntity.ok(withDefaultWorkspace(user));
+                return ResponseEntity.ok(withFirstWorkspace(user));
             } finally {
                 if (throttled) {
                     loginAttemptService.releaseBcryptSlot();
@@ -195,7 +195,7 @@ public class AuthController {
             // PLAN-0559: the access token is user-level; the optional header only
             // backfills the response workspaceId for clients that still read it.
             String workspaceId = workspaceHeader == null || workspaceHeader.isBlank()
-                    ? workspaceService.getOrCreateDefaultWorkspace(user.getId().toString()).getId().toString()
+                    ? firstWorkspaceId(user.getId().toString())
                     : workspaceService.requireContextWorkspace(
                             TenantContext.normalizeWorkspaceId(workspaceHeader), user.getId().toString());
             return ResponseEntity.ok(authService.issueTokens(user, workspaceId));
@@ -220,7 +220,7 @@ public class AuthController {
         // login never widens privilege by itself.
         instanceOwnershipService.ensureAssigned(user, user.getId().toString());
         grantDefaultService.ensureInstanceSuperAdmin(user);
-        return ResponseEntity.ok(withDefaultWorkspace(user));
+        return ResponseEntity.ok(withFirstWorkspace(user));
     }
 
     /** PLAN-0526: loopback-only password reset (no old password) for lockout recovery. */
@@ -252,11 +252,23 @@ public class AuthController {
                 null);
     }
 
-    /** Entry-level default-Workspace bootstrap shared by register/login/refresh. */
-    private AuthResponse withDefaultWorkspace(User user) {
-        String workspaceId = workspaceService
-                .getOrCreateDefaultWorkspace(user.getId().toString()).getId().toString();
-        return authService.issueTokens(user, workspaceId);
+    /**
+     * PLAN-0614 (blank start, decision #2): the entry-level response carries the account's first
+     * active workspace, or {@code null} when the account has none yet.
+     *
+     * <p>Register/login/local-login/refresh all go through here, so a fresh account can authenticate
+     * (201/200) while its first screen is empty; the user then creates the first workspace explicitly.
+     * Nothing is created on the auth path any more (that was the BL-171 default workspace).</p>
+     */
+    private AuthResponse withFirstWorkspace(User user) {
+        return authService.issueTokens(user, firstWorkspaceId(user.getId().toString()));
+    }
+
+    /** The account's first active workspace id, or {@code null} (read-only, never creates). */
+    private String firstWorkspaceId(String userId) {
+        return workspaceService.firstActiveWorkspace(userId)
+                .map(workspace -> workspace.getId().toString())
+                .orElse(null);
     }
 
     private static boolean isBlank(String value) {

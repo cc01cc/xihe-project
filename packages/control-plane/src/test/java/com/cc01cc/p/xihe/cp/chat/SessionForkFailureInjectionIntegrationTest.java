@@ -110,8 +110,7 @@ class SessionForkFailureInjectionIntegrationTest extends AbstractIntegrationTest
 
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        workspaceId = workspaceFixture.memberWorkspacesOf(user.getId()).stream()
-                .findFirst().orElseThrow().getId().toString();
+        workspaceId = workspaceFixture.ensureOwnedWorkspace(user.getId()).getId().toString();
         if (!workspaceFixture.isMember(UUID.fromString(workspaceId), UUID.fromString(userId))) {
             workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
         }

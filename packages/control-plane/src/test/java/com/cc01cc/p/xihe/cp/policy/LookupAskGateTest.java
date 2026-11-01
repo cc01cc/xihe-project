@@ -156,8 +156,7 @@ class LookupAskGateTest extends AbstractIntegrationTest {
         com.cc01cc.p.xihe.cp.entity.User user = authService.registerUser(new RegisterRequest(
                 "lookup-ask-" + UUID.randomUUID() + "@test.com", "gate-test-password",
                 "Lookup ask gate"));
-        AuthResponse registered = authService.issueTokens(user, workspaceService
-                .getOrCreateDefaultWorkspace(user.getId().toString()).getId().toString());
+        AuthResponse registered = authService.issueTokens(user, workspaceService.createWorkspace("Fixture Workspace", null, user.getId().toString()).getId().toString());
         userId = registered.getUser().getId();
         workspaceId = registered.getWorkspaceId();
     }

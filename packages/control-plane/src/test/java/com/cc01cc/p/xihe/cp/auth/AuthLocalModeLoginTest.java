@@ -1,7 +1,6 @@
 package com.cc01cc.p.xihe.cp.auth;
 
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -11,6 +10,7 @@ import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -27,11 +27,10 @@ class AuthLocalModeLoginTest {
 
         User user = new User("local@test.com", "hash", "Local");
         user.setId(UUID.randomUUID());
-        Workspace workspace = new Workspace();
-        workspace.setId(UUID.randomUUID());
         when(authService.authenticate(any(LoginRequest.class))).thenReturn(user);
-        when(authService.issueTokens(any(User.class), anyString())).thenReturn(mock(AuthResponse.class));
-        when(workspaceService.getOrCreateDefaultWorkspace(anyString())).thenReturn(workspace);
+        // PLAN-0614: a fresh account has no workspace, so the entry passes a null workspaceId.
+        when(authService.issueTokens(any(User.class), nullable(String.class)))
+                .thenReturn(mock(AuthResponse.class));
         when(resolver.resolve(any())).thenReturn("127.0.0.1");
 
         LocalModeService localMode = new LocalModeService("127.0.0.1") {

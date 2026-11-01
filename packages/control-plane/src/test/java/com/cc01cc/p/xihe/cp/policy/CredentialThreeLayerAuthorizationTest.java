@@ -134,8 +134,7 @@ class CredentialThreeLayerAuthorizationTest extends AbstractIntegrationTest {
         String email = "cred-layer-" + UUID.randomUUID() + "@test.com";
         User user = authService.registerUser(
                 new RegisterRequest(email, "layer-test-password", "Layer Test"));
-        AuthResponse registered = authService.issueTokens(user, workspaceService
-                .getOrCreateDefaultWorkspace(user.getId().toString()).getId().toString());
+        AuthResponse registered = authService.issueTokens(user, workspaceService.createWorkspace("Fixture Workspace", null, user.getId().toString()).getId().toString());
         userId = user.getId().toString();
         workspaceId = UUID.fromString(registered.getWorkspaceId());
 

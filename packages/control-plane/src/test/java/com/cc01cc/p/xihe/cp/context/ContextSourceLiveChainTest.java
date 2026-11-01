@@ -85,9 +85,38 @@ class ContextSourceLiveChainTest extends AbstractH2Test {
         ResponseEntity<Map> response = cp.postForEntity(
                 DEV_CP_URL + "/api/v1/auth/register", body, Map.class);
         assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
-        String workspaceId = String.valueOf(response.getBody().get("workspaceId"));
+        // PLAN-0614: registration no longer creates a workspace; the live lane creates one explicitly.
+        Object registered = response.getBody().get("workspaceId");
+        String workspaceId = registered instanceof String value
+                ? value : createWorkspace(String.valueOf(response.getBody().get("accessToken")));
         assertThat(workspaceId).isNotBlank();
         return workspaceId;
+    }
+
+    /**
+     * PLAN-0614: the CP under test no longer creates a workspace on register, so the live lane creates
+     * one explicitly (local-mode-style direct_attach under a temp dir). Fails closed with the response
+     * body when the live CP refuses — never a silent skip of the chain below.
+     */
+    private String createWorkspace(String token) {
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.setBearerAuth(token);
+            Path hostDir = Files.createTempDirectory("plan0614-live-chain-ws-");
+            ResponseEntity<Map> created = new RestTemplate().postForEntity(
+                    DEV_CP_URL + "/api/v1/workspaces",
+                    new HttpEntity<>(Map.of("name", "Live chain workspace",
+                            "storageMode", "direct_attach",
+                            "executionMode", "windows-mxc",
+                            "hostPath", hostDir.toAbsolutePath().toString()), headers),
+                    Map.class);
+            assertThat(created.getStatusCode().value())
+                    .as("live CP workspace creation: " + created.getBody()).isEqualTo(201);
+            return String.valueOf(created.getBody().get("id"));
+        } catch (java.io.IOException e) {
+            throw new AssertionError("cannot create the live-chain workspace directory", e);
+        }
     }
 
     private void writeFile(String workspaceId, String path, String content) {

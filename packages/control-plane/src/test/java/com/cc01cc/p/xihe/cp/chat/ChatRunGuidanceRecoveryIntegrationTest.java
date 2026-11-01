@@ -74,8 +74,7 @@ class ChatRunGuidanceRecoveryIntegrationTest extends AbstractIntegrationTest {
         assertTrue(registration.getStatusCode().is2xxSuccessful());
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        workspaceId = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId))
-                .stream().findFirst().orElseThrow().getId().toString();
+        workspaceId = workspaceFixture.ensureOwnedWorkspace(UUID.fromString(userId)).getId().toString();
         Session session = new Session(workspaceId, userId, "Guidance Recovery Session");
         session.setId(UUID.randomUUID());
         sessionId = sessions.save(session).getId().toString();

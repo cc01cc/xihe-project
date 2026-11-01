@@ -113,7 +113,10 @@ class ContextToolHistoryLiveChainTest extends AbstractH2Test {
         Map<String, Object> registerBody = registration.getBody();
         assertThat(registerBody).isNotNull();
         String userToken = String.valueOf(registerBody.get("accessToken"));
-        workspaceId = String.valueOf(registerBody.get("workspaceId"));
+        // PLAN-0614: registration no longer creates a workspace; the live lane creates one explicitly.
+        Object registeredWorkspace = registerBody.get("workspaceId");
+        workspaceId = registeredWorkspace instanceof String value
+                ? value : createWorkspace(userToken);
         @SuppressWarnings("unchecked")
         Map<String, Object> user = (Map<String, Object>) registerBody.get("user");
         registrationUser = user;
@@ -262,6 +265,32 @@ class ContextToolHistoryLiveChainTest extends AbstractH2Test {
                     objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(evidence));
         } finally {
             sseEmitterManager.complete(sessionId);
+        }
+    }
+
+    /**
+     * PLAN-0614: the CP under test no longer creates a workspace on register, so the live lane creates
+     * a direct_attach workspace under its own Runtime host root and fails closed with the response body.
+     */
+    private String createWorkspace(String token) {
+        try {
+            java.nio.file.Path hostDir = Files.createDirectories(
+                    hostRoot.resolve("workspace-" + UUID.randomUUID()));
+            org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+            headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+            headers.setBearerAuth(token);
+            ResponseEntity<Map> created = restTemplate.postForEntity(url("/api/v1/workspaces"),
+                    new org.springframework.http.HttpEntity<>(Map.of(
+                            "name", "PLAN-0614 live chain workspace",
+                            "storageMode", "direct_attach",
+                            "executionMode", "windows-mxc",
+                            "hostPath", hostDir.toAbsolutePath().toString()), headers),
+                    Map.class);
+            assertThat(created.getStatusCode().value())
+                    .as("live CP workspace creation: " + created.getBody()).isEqualTo(201);
+            return String.valueOf(created.getBody().get("id"));
+        } catch (java.io.IOException e) {
+            throw new AssertionError("cannot create the live-chain workspace directory", e);
         }
     }
 

@@ -329,9 +329,11 @@ class CredentialControllerIntegrationTest extends AbstractIntegrationTest {
         assertEquals(HttpStatus.CREATED, response.getStatusCode());
         assertNotNull(response.getBody());
         token = response.getBody().getAccessToken();
-        workspaceId = response.getBody().getWorkspaceId();
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId();
+        // PLAN-0614: register no longer creates a workspace; the fixture creates the caller's own.
+        workspaceId = workspaceFixture.ensureOwnedWorkspace(user.getId(), "Credential controller workspace")
+                .getId().toString();
     }
 
     /** V64: a subject owns a single direct grant row — successive grants merge into it. */

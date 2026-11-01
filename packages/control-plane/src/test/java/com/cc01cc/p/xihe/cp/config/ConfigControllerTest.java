@@ -33,7 +33,8 @@ class ConfigControllerTest extends AbstractH2Test {
 
     private String workspaceIdFor(String token) {
         String userId = jwtTokenProvider.getUserIdFromToken(token);
-        return workspaceService.findCurrentWorkspace(userId).orElseThrow().getId().toString();
+        // PLAN-0614: register no longer creates a workspace; the fixture creates the caller's own.
+        return workspaceService.createWorkspace("Config fixture workspace", userId).getId().toString();
     }
 
     @Test

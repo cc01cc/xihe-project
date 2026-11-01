@@ -332,8 +332,7 @@ class CredentialBindingServiceIntegrationTest extends AbstractIntegrationTest {
         User user = authService.registerUser(new RegisterRequest(
                 "cred-binding-" + UUID.randomUUID() + "@test.com",
                 "binding-test-password", "Binding Test"));
-        AuthResponse registered = authService.issueTokens(user, workspaceService
-                .getOrCreateDefaultWorkspace(user.getId().toString()).getId().toString());
+        AuthResponse registered = authService.issueTokens(user, workspaceService.createWorkspace("Fixture Workspace", null, user.getId().toString()).getId().toString());
         creatorId = user.getId();
         workspaceId = registered.getWorkspaceId();
     }

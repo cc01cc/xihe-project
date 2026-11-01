@@ -30,7 +30,9 @@ class AuthControllerCredentialTest {
         User user = new User("a@test.com", "hash", "A");
         user.setId(UUID.randomUUID());
         when(authService.authenticate(any(LoginRequest.class))).thenReturn(user);
-        when(workspaceService.getOrCreateDefaultWorkspace(anyString()))
+        // PLAN-0614: the auth path no longer creates a workspace, but a workspace-layer failure
+        // still must not be counted as a credential failure (the catch ordering under test).
+        when(workspaceService.firstActiveWorkspace(anyString()))
                 .thenThrow(new CpApiException(HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "missing"));
         when(attempts.beginLogin(anyString(), anyString())).thenReturn(null);
         when(attempts.tryAcquireBcryptSlot()).thenReturn(true);

@@ -78,8 +78,7 @@ class ContextLockTimeoutIntegrationTest extends AbstractIntegrationTest {
         assertTrue(response.getStatusCode().is2xxSuccessful());
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        workspaceId = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId))
-                .stream().findFirst().orElseThrow().getId().toString();
+        workspaceId = workspaceFixture.ensureOwnedWorkspace(UUID.fromString(userId)).getId().toString();
         Session session = new Session(workspaceId, userId, "Lock Timeout Session");
         session.setId(UUID.randomUUID());
         sessionId = sessionRepository.save(session).getId().toString();

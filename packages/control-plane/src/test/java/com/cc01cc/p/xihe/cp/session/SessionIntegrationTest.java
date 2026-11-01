@@ -18,7 +18,6 @@ import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.MessageRole;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
@@ -134,13 +133,9 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
 
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        // The default workspace is created via the auth flow.
-        var defaultWorkspace = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId)).stream().findFirst();
-        workspaceId = defaultWorkspace.orElseThrow().getId().toString();
-        // Backfill membership (auth flow already inserts OWNER; ensure role is set).
-        if (!workspaceFixture.isMember(UUID.fromString(workspaceId), UUID.fromString(userId))) {
-            workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
-        }
+        // PLAN-0614: the register path no longer creates a workspace, so the fixture creates one
+        // explicitly (the session APIs under test need a real workspace + WS_OWNER binding).
+        workspaceId = workspaceFixture.ensureOwnedWorkspace(UUID.fromString(userId)).getId().toString();
 
         when(sseEmitterManager.hasEmitter(anyString())).thenReturn(true);
     }
@@ -446,6 +441,10 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
         String otherToken = restTemplate.postForEntity(baseUrl + "/api/v1/auth/login",
                 Map.of("identifier", otherEmail, "password", password), Map.class)
                 .getBody().get("accessToken").toString();
+        // PLAN-0614: the second account needs its own workspace, otherwise the tenant gate answers 401
+        // before the ownership check this test is about (existing codes only, no new ones).
+        workspaceFixture.ensureOwnedWorkspace(
+                userRepository.findByEmail(otherEmail).orElseThrow().getId(), "Other workspace");
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(otherToken);
         ResponseEntity<Map> response = restTemplate.exchange(
@@ -475,6 +474,9 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
         String otherToken = restTemplate.postForEntity(baseUrl + "/api/v1/auth/login",
                 Map.of("identifier", otherEmail, "password", TestDataFactory.PASSWORD), Map.class)
                 .getBody().get("accessToken").toString();
+        // PLAN-0614: give the other account a workspace so the ownership check (404) is reached.
+        workspaceFixture.ensureOwnedWorkspace(
+                userRepository.findByEmail(otherEmail).orElseThrow().getId(), "Events other workspace");
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(otherToken);

@@ -289,7 +289,7 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
 
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
-        Workspace ws = workspaceFixture.memberWorkspacesOf(UUID.fromString(userId)).stream().findFirst().orElseThrow();
+        Workspace ws = workspaceFixture.ensureOwnedWorkspace(UUID.fromString(userId));
         workspaceId = ws.getId().toString();
         workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
         authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId, 0);

@@ -51,6 +51,9 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
     private JdbcTemplate jdbc;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.service.WorkspaceService workspaceService;
+
+    @Autowired
     private ObjectMapper objectMapper;
 
     @Autowired
@@ -498,7 +501,10 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
         String instanceAdminToken = adminWithOwner();
         String workspaceOwnerToken = register("ws-owner@test.com");
         String workspaceOwnerId = userIdOf(workspaceOwnerToken);
-        String workspaceId = workspaceOf(workspaceOwnerId);
+        // PLAN-0614: register no longer creates a workspace; the fixture creates the owner's own.
+        String workspaceId = workspaceService
+                .createWorkspace("User admin plane workspace", workspaceOwnerId)
+                .getId().toString();
         String memberId = userIdOf(register("ws-member@test.com"));
         // PLAN-0610 W4b: membership is the WS_VIEWER binding (workspace_users is gone).
         jdbc.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"

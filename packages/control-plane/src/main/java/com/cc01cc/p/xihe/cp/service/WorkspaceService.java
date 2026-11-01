@@ -57,7 +57,6 @@ public class WorkspaceService {
 
     private final WorkspaceRepository workspaceRepository;
     private final WorkspaceMembershipService memberships;
-    private final com.cc01cc.p.xihe.cp.auth.AuthService authService;
     private final WorkspaceExecutionSpecService executionSpecService;
     private final RestTemplate restTemplate;
     private final String runtimeUrl;
@@ -69,7 +68,6 @@ public class WorkspaceService {
 
     public WorkspaceService(WorkspaceRepository workspaceRepository,
                             WorkspaceMembershipService memberships,
-                            com.cc01cc.p.xihe.cp.auth.AuthService authService,
                             WorkspaceExecutionSpecService executionSpecService,
                             @Qualifier("runtimeCleanupRestTemplate") RestTemplate restTemplate,
                             @Value("${cp.mcp.runtime-url:http://localhost:12633}") String runtimeUrl,
@@ -80,7 +78,6 @@ public class WorkspaceService {
                             AuditLogger auditLogger) {
         this.workspaceRepository = workspaceRepository;
         this.memberships = memberships;
-        this.authService = authService;
         this.executionSpecService = executionSpecService;
         this.restTemplate = restTemplate;
         this.runtimeUrl = runtimeUrl;
@@ -92,20 +89,28 @@ public class WorkspaceService {
     }
 
     /**
-     * Returns the user's first active membership, creating the default resource only when none exists.
-     * The user row lock (PLAN-0470 #25/D2a, provided by Auth's
-     * {@code lockAndConfirmUserExists}) serializes concurrent login/register
-     * responses for the same account; the lock is held until this transaction
-     * ends, same as the previous in-service findByIdForUpdate.
+     * PLAN-0614 (blank start, decision #3): the account's first active workspace, or empty.
+     *
+     * <p>This is <b>read-only</b>. The pre-0614 {@code getOrCreateDefaultWorkspace} created a
+     * {@code managed_import + docker} "Default Workspace" on first use — a workspace nobody chose a
+     * directory for, whose first chat could only fail while the docker backend is frozen (BL-171).
+     * Since 0614 a fresh account starts empty and the user creates the first workspace explicitly
+     * ({@code POST /api/v1/workspaces}), so all workspaces have an explicit creator (WS_OWNER).</p>
+     *
+     * <p>{@link #findCurrentWorkspace(String)} shares this implementation: the resolved "current"
+     * workspace and the auth-response {@code workspaceId} must never disagree.</p>
      */
-    @Transactional
-    public Workspace getOrCreateDefaultWorkspace(String userId) {
-        authService.lockAndConfirmUserExists(userId);
-        List<Workspace> existing = memberWorkspaces(UUID.fromString(userId));
-        if (!existing.isEmpty()) {
-            return existing.get(0);
+    @Transactional(readOnly = true)
+    public Optional<Workspace> firstActiveWorkspace(String userId) {
+        if (userId == null || userId.isBlank()) {
+            return Optional.empty();
         }
-        return createWorkspaceLocked("Default Workspace", null, userId);
+        try {
+            return memberWorkspaces(UUID.fromString(userId)).stream().findFirst();
+        } catch (IllegalArgumentException e) {
+            // Non-UUID subjects (legacy service token / tests) have no membership by definition.
+            return Optional.empty();
+        }
     }
 
     /** Creates an active workspace for a user; users may own multiple active workspaces. */
@@ -173,12 +178,10 @@ public class WorkspaceService {
                 normalizedIdempotencyKey, requestHash);
     }
 
+    /** The interceptor and /workspaces/current view of {@link #firstActiveWorkspace}. */
     @Transactional(readOnly = true)
     public Optional<Workspace> findCurrentWorkspace(String userId) {
-        if (userId == null || userId.isBlank()) {
-            return Optional.empty();
-        }
-        return memberWorkspaces(UUID.fromString(userId)).stream().findFirst();
+        return firstActiveWorkspace(userId);
     }
 
     @Transactional(readOnly = true)
@@ -435,17 +438,6 @@ public class WorkspaceService {
 
         logger.info("Workspace logically deleted: id={} name={}", workspaceId, workspace.getName());
         return workspace;
-    }
-
-    private Workspace createWorkspaceLocked(String name, String description, String ownerId) {
-        return createWorkspaceLocked(name, description, ownerId, "coding", DEFAULT_IMAGE,
-                DEFAULT_STORAGE_MODE, null, DEFAULT_EXECUTION_MODE, null, null);
-    }
-
-    private Workspace createWorkspaceLocked(String name, String description, String ownerId,
-            String profile, String image) {
-        return createWorkspaceLocked(name, description, ownerId, profile, image,
-                DEFAULT_STORAGE_MODE, null, DEFAULT_EXECUTION_MODE, null, null);
     }
 
     private Workspace createWorkspaceLocked(String name, String description, String ownerId,
