@@ -1,10 +1,12 @@
 package com.cc01cc.p.xihe.cp.provider;
 
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
+import com.cc01cc.p.xihe.cp.policy.CredentialUseCap;
 import com.cc01cc.p.xihe.cp.entity.ProviderCredentialLease;
 import com.cc01cc.p.xihe.cp.repository.ProviderCredentialLeaseRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -102,13 +104,47 @@ public class ProviderCredentialLeaseService {
             String model,
             Long expectedRevision,
             Duration ttl) {
+        return issue(userId, workspaceId, sessionId, runId, providerConnectionId, providerId, model,
+                expectedRevision, ttl, null, null);
+    }
+
+    /**
+     * PLAN-0622 M1.4 (K3): the agent-principal overload. It is the <b>only</b> new signature —
+     * every legacy overload keeps its shape and reaches this one with a null principal, which
+     * routes to the untouched three-argument gate (byte-equivalent to pre-0622 behaviour).
+     *
+     * <p>{@code agentCap} is the principal's frozen permission cap (the Session snapshot resolved
+     * through {@code AgentPrincipalService.resolveCapFor}); it only answers whether the principal
+     * carries {@code credential_use} for this credential. The visibility conjunction is enforced
+     * in {@code ProviderCredentialAccess} (K4), not here.</p>
+     */
+    @Transactional
+    public IssuedLease issue(
+            String userId,
+            String workspaceId,
+            String sessionId,
+            String runId,
+            String providerConnectionId,
+            String providerId,
+            String model,
+            Long expectedRevision,
+            Duration ttl,
+            String agentPrincipalId,
+            JsonNode agentCap) {
         ProviderConnection connection = requestTemplates.lockConnection(providerConnectionId);
         if (expectedRevision != null && connection.getRevision() != expectedRevision) {
             throw com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService.conflict(
                     "STALE_PROVIDER_CONNECTION", "Provider connection revision is stale");
         }
         connectionService.requireUsableForOwner(providerConnectionId, userId, workspaceId);
-        credentialAccess.requireUsable(connection.getCredentialId(), userId, workspaceId);
+        if (agentPrincipalId == null || agentPrincipalId.isBlank()) {
+            credentialAccess.requireUsable(connection.getCredentialId(), userId, workspaceId);
+        } else {
+            String credentialId = connection.getCredentialId() == null
+                    ? null : connection.getCredentialId().toString();
+            credentialAccess.requireUsableForAgentPrincipal(connection.getCredentialId(), userId, workspaceId,
+                    agentPrincipalId, CredentialUseCap.grants(agentCap, credentialId));
+        }
         // PLAN-0485 round-4 item 4: the connection's API Type operation governs
         // lease validation instead of the presence of a runId. Chat admission
         // keeps its explicit chat gate; a Run-bound embedding lease (0416) and

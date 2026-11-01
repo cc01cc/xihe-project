@@ -27,6 +27,8 @@ import java.util.UUID;
 @Service
 public class ProviderCredentialAccess {
 
+    private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(ProviderCredentialAccess.class);
+
     private final CredentialRepository credentials;
     private final CredentialEnvelope credentialEnvelope;
     private final GrantAuthorizationService grants;
@@ -52,6 +54,54 @@ public class ProviderCredentialAccess {
                     "The current principal cannot use this credential");
         }
         return credential;
+    }
+
+    /**
+     * PLAN-0622 M1.4 (design §2, K2/K4): the agent-principal arm.
+     *
+     * <p><b>Conjunction, never disjunction.</b> The three legacy arms are the primary authority and
+     * are evaluated first, unchanged. The principal's own {@code credential_use} grant only adds
+     * the case those arms do not cover, and it is vetoed when the credential must not be borrowed:
+     * another account's USER credential, or a WORKSPACE credential of a different workspace. A
+     * principal grant therefore can never spend someone else's key, and it can never widen what
+     * {@code canUse} already decided.</p>
+     *
+     * <p>Every credential in the current model is USER- or WORKSPACE-owned (V63
+     * {@code ck_credentials_owner_type}), so the arm is structurally redundant with arms ①②③ for
+     * today's data; it becomes the deciding authority the moment an instance-level owner type is
+     * introduced, which is exactly why the veto lives here and not only at the binding site. Only
+     * ids are logged (K5).</p>
+     */
+    @Transactional(readOnly = true)
+    public Credential requireUsableForAgentPrincipal(UUID credentialId, String userId, String workspaceId,
+                                                     String agentPrincipalId, boolean agentPrincipalGrantedUse) {
+        Credential credential = requireUsableShape(credentialId);
+        if (canUse(credential, userId, workspaceId)) {
+            return credential;
+        }
+        if (agentPrincipalGrantedUse && !borrowingRefused(credential, userId, workspaceId)) {
+            logger.info("[POLICY] event=credential_use_via_agent_principal principal={} credential={} workspace={}",
+                    agentPrincipalId, credential.getId(), workspaceId);
+            return credential;
+        }
+        if (agentPrincipalGrantedUse) {
+            logger.warn("[POLICY] event=credential_use_via_agent_principal_denied principal={} credential={}"
+                            + " workspace={} reason=not_borrowable",
+                    agentPrincipalId, credential.getId(), workspaceId);
+        }
+        throw new CpApiException(HttpStatus.FORBIDDEN, "CREDENTIAL_USE_DENIED",
+                "The current principal cannot use this credential");
+    }
+
+    /** K4: never borrow another account's personal key, nor another workspace's shared key. */
+    private boolean borrowingRefused(Credential credential, String userId, String workspaceId) {
+        if (Credential.OWNER_USER.equals(credential.getOwnerType())) {
+            return userId == null || !userId.equalsIgnoreCase(credential.getOwnerId());
+        }
+        if (Credential.OWNER_WORKSPACE.equals(credential.getOwnerType())) {
+            return workspaceId == null || !workspaceId.equalsIgnoreCase(credential.getOwnerId());
+        }
+        return false;
     }
 
     /** Verify/use path: authorize the actor, then decrypt the token. */
