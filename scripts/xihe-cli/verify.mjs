@@ -232,35 +232,57 @@ function isProvisionalResponse(response) {
     || (response.code !== null && PROVISIONAL_UNSUPPORTED_CODES.has(response.code));
 }
 
-/**
- * PLAN-0622 T2.3 / A5: PERSONAL agent lifecycle through the public API.
- * Provisional while the CP scope fields are not delivered (T1.x). A supported CP
- * that violates the lifecycle is a FAIL, never a skip.
- */
-export async function runPersonalLifecycleProbe({ client, workspaceId }) {
-  const name = `xihe-verify-personal-${Date.now()}`;
-  const created = await client.call('POST', '/api/v1/agent-principals', {
-    body: { name, scope: 'PERSONAL' },
-    workspace: false,
-  });
+async function listWorkspaceAgents(client, workspaceId) {
+  const listed = await client.call('GET', `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/agents`);
+  const items = Array.isArray(listed.body?.agents) ? listed.body.agents
+    : Array.isArray(listed.body) ? listed.body : [];
+  return { status: listed.status, items };
+}
+
+async function createPrincipal(client, body, { workspace = false } = {}) {
+  const created = await client.call('POST', '/api/v1/agent-principals', { body, workspace });
   if (![200, 201].includes(created.status)) {
     if (isProvisionalResponse(created)) {
       return {
-        ...provisionalProbe('SCOPE_UNSUPPORTED', `CP 未交付 PERSONAL scope（HTTP ${created.status}${created.code ? ` ${created.code}` : ''}）`),
-        principalId: null,
+        provisional: true,
+        result: provisionalProbe('SCOPE_UNSUPPORTED', `CP 未交付 scope（HTTP ${created.status}${created.code ? ` ${created.code}` : ''}）`),
       };
     }
-    return { status: 'FAIL', code: created.code ?? 'PERSONAL_CREATE_FAILED', detail: `HTTP ${created.status}`, principalId: null };
+    return { provisional: false, result: { status: 'FAIL', code: created.code ?? 'PRINCIPAL_CREATE_FAILED', detail: `HTTP ${created.status}` } };
   }
   const principalId = created.body?.principalId ?? created.body?.id ?? null;
   if (typeof principalId !== 'string' || principalId === '') {
-    return { status: 'FAIL', code: 'PERSONAL_CREATE_INVALID', detail: 'CP returned no principalId', principalId: null };
+    return { provisional: false, result: { status: 'FAIL', code: 'PRINCIPAL_CREATE_INVALID', detail: 'CP returned no principalId' } };
   }
-  if (created.body?.scope !== 'PERSONAL') {
+  return { provisional: false, result: { principalId, scope: created.body?.scope ?? null } };
+}
+
+/**
+ * A5a — PERSONAL：可见性由「来源」决定，不依赖绑定（CP V4：三源合并）。
+ *   建 → 未绑也可见 source=personal → bind → 仍可见且 source 不变 → unbind → **仍可见**。
+ */
+export async function runPersonalLifecycleProbe({ client, workspaceId }) {
+  const name = `xihe-verify-personal-${Date.now()}`;
+  const created = await createPrincipal(client, { name, scope: 'PERSONAL' });
+  if (created.result.status) return { ...created.result, principalId: null };
+  const { principalId } = created.result;
+  if (created.result.scope !== 'PERSONAL') {
     return {
-      ...provisionalProbe('SCOPE_NOT_ECHOED', `创建成功但未回显 scope（got ${created.body?.scope ?? 'missing'}）`),
+      ...provisionalProbe('SCOPE_NOT_ECHOED', `创建成功但未回显 scope（got ${created.result.scope ?? 'missing'}）`),
       principalId,
     };
+  }
+
+  const before = await listWorkspaceAgents(client, workspaceId);
+  if (before.status !== 200) {
+    return { status: 'FAIL', code: 'AGENT_LIST_FAILED', detail: `HTTP ${before.status}`, principalId };
+  }
+  const beforeRow = before.items.find((item) => item?.principalId === principalId);
+  if (!beforeRow) {
+    return { status: 'FAIL', code: 'PERSONAL_NOT_VISIBLE_UNBOUND', detail: '未绑定时列表应可见 PERSONAL（V4 三源合并）', principalId };
+  }
+  if (beforeRow.source !== 'personal') {
+    return { status: 'FAIL', code: 'PERSONAL_SOURCE_MISMATCH', detail: `未绑定时 source=${beforeRow.source ?? 'missing'}`, principalId };
   }
 
   const bindPath = `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(principalId)}`;
@@ -274,29 +296,87 @@ export async function runPersonalLifecycleProbe({ client, workspaceId }) {
     }
     return { status: 'FAIL', code: bind.code ?? 'PERSONAL_BIND_FAILED', detail: `HTTP ${bind.status}`, principalId };
   }
-
-  const listed = await client.call('GET', `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/agents`);
-  const listItems = Array.isArray(listed.body) ? listed.body
-    : Array.isArray(listed.body?.agents) ? listed.body.agents : [];
-  const row = listItems.find((item) => item?.principalId === principalId);
-  if (!row) {
-    return { status: 'FAIL', code: 'PERSONAL_NOT_VISIBLE', detail: '绑定后列表未见该 principal', principalId };
-  }
-  if (row.source !== 'personal') {
-    return { status: 'FAIL', code: 'PERSONAL_SOURCE_MISMATCH', detail: `source=${row.source ?? 'missing'}`, principalId };
+  const boundList = await listWorkspaceAgents(client, workspaceId);
+  const boundRow = boundList.items.find((item) => item?.principalId === principalId);
+  if (!boundRow || boundRow.source !== 'personal') {
+    return { status: 'FAIL', code: 'PERSONAL_BOUND_SOURCE_CHANGED', detail: `绑定后 row=${boundRow ? boundRow.source : 'missing'}`, principalId };
   }
 
   const unbind = await client.call('DELETE', bindPath);
   if (![200, 204].includes(unbind.status)) {
     return { status: 'FAIL', code: unbind.code ?? 'PERSONAL_UNBIND_FAILED', detail: `HTTP ${unbind.status}`, principalId };
   }
-  const after = await client.call('GET', `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/agents`);
-  const afterItems = Array.isArray(after.body) ? after.body
-    : Array.isArray(after.body?.agents) ? after.body.agents : [];
-  if (afterItems.some((item) => item?.principalId === principalId)) {
-    return { status: 'FAIL', code: 'PERSONAL_STILL_VISIBLE', detail: '解绑后仍出现在列表', principalId };
+  const afterList = await listWorkspaceAgents(client, workspaceId);
+  const afterRow = afterList.items.find((item) => item?.principalId === principalId);
+  if (!afterRow) {
+    return { status: 'FAIL', code: 'PERSONAL_HIDDEN_AFTER_UNBIND', detail: 'V4：解绑后 PERSONAL 仍应可见（source=personal）', principalId };
   }
-  return { status: 'PASS', detail: `created/bound/listed(source=personal)/unbound principal=${principalId}`, principalId };
+  if (afterRow.source !== 'personal') {
+    return { status: 'FAIL', code: 'PERSONAL_SOURCE_MISMATCH_AFTER_UNBIND', detail: `解绑后 source=${afterRow.source ?? 'missing'}`, principalId };
+  }
+  return {
+    status: 'PASS',
+    detail: `A5a PERSONAL：未绑可见(source=personal) → bind 后仍 personal → unbind 后仍可见 principal=${principalId}`,
+    principalId,
+    evidence: { principalId, unboundVisible: true, boundSource: 'personal', unboundSource: 'personal' },
+  };
+}
+
+/**
+ * A5b — WORKSPACE：可见性由「绑定」决定。
+ *   建 → 未绑定不可见 → bind → 可见 source=workspace → unbind → 不可见。
+ */
+export async function runWorkspaceLifecycleProbe({ client, workspaceId }) {
+  const name = `xihe-verify-workspace-${Date.now()}`;
+  const created = await createPrincipal(client, { name, scope: 'WORKSPACE' }, { workspace: true });
+  if (created.result.status) return { ...created.result, principalId: null };
+  const { principalId } = created.result;
+  if (created.result.scope !== 'WORKSPACE') {
+    return {
+      ...provisionalProbe('SCOPE_NOT_ECHOED', `创建成功但未回显 scope（got ${created.result.scope ?? 'missing'}）`),
+      principalId,
+    };
+  }
+
+  const before = await listWorkspaceAgents(client, workspaceId);
+  if (before.status !== 200) {
+    return { status: 'FAIL', code: 'AGENT_LIST_FAILED', detail: `HTTP ${before.status}`, principalId };
+  }
+  if (before.items.some((item) => item?.principalId === principalId)) {
+    return { status: 'FAIL', code: 'WORKSPACE_VISIBLE_UNBOUND', detail: '未绑定的 WORKSPACE principal 不应出现在列表', principalId };
+  }
+
+  const bindPath = `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(principalId)}`;
+  const bind = await client.call('PUT', bindPath, { body: { permissions: [] } });
+  if (![200, 204].includes(bind.status)) {
+    if (isProvisionalResponse(bind)) {
+      return { ...provisionalProbe('BIND_UNSUPPORTED', `HTTP ${bind.status}${bind.code ? ` ${bind.code}` : ''}`), principalId };
+    }
+    return { status: 'FAIL', code: bind.code ?? 'WORKSPACE_BIND_FAILED', detail: `HTTP ${bind.status}`, principalId };
+  }
+  const boundList = await listWorkspaceAgents(client, workspaceId);
+  const boundRow = boundList.items.find((item) => item?.principalId === principalId);
+  if (!boundRow) {
+    return { status: 'FAIL', code: 'WORKSPACE_NOT_VISIBLE_AFTER_BIND', detail: '绑定后列表未见该 principal', principalId };
+  }
+  if (boundRow.source !== 'workspace') {
+    return { status: 'FAIL', code: 'WORKSPACE_SOURCE_MISMATCH', detail: `source=${boundRow.source ?? 'missing'}`, principalId };
+  }
+
+  const unbind = await client.call('DELETE', bindPath);
+  if (![200, 204].includes(unbind.status)) {
+    return { status: 'FAIL', code: unbind.code ?? 'WORKSPACE_UNBIND_FAILED', detail: `HTTP ${unbind.status}`, principalId };
+  }
+  const afterList = await listWorkspaceAgents(client, workspaceId);
+  if (afterList.items.some((item) => item?.principalId === principalId)) {
+    return { status: 'FAIL', code: 'WORKSPACE_STILL_VISIBLE', detail: '解绑后 WORKSPACE principal 仍出现在列表', principalId };
+  }
+  return {
+    status: 'PASS',
+    detail: `A5b WORKSPACE：未绑不可见 → bind 后 source=workspace → unbind 后不可见 principal=${principalId}`,
+    principalId,
+    evidence: { principalId, unboundVisible: false, boundSource: 'workspace', unboundVisibleAfter: false },
+  };
 }
 
 /**
@@ -304,7 +384,7 @@ export async function runPersonalLifecycleProbe({ client, workspaceId }) {
  * with Retry-After, and the connection recovers after the limit is restored.
  * Provisional until the CP Resource Governor is delivered (T1.6).
  */
-export async function runResourceLimitProbe({ client, connectionId, sessionId, branchId }) {
+export async function runResourceLimitProbe({ client, connectionId, sessionId, branchId, chatTargets }) {
   if (!sessionId || !branchId) {
     return provisionalProbe('NO_SESSION', '没有可用于限额探测的 session/branch');
   }
@@ -326,18 +406,32 @@ export async function runResourceLimitProbe({ client, connectionId, sessionId, b
     }
     return { status: 'FAIL', code: patched.code ?? 'LIMIT_PATCH_FAILED', detail: `HTTP ${patched.status}` };
   }
-  const echoed = patched.body?.connection ?? patched.body;
-  if (echoed?.maxInflight !== 1) {
-    return provisionalProbe('LIMIT_NOT_ECHOED', 'PATCH 成功但连接视图未回显 maxInflight');
+
+  // CP 修复前：PATCH 返回 200 但连接读面不投影限额 ⇒ 限额没有持久化，governor 恒为 UNLIMITED。
+  // 这是"配置写不进去"的精确阻塞原因，不是"没观测到 429"（后者会把 CP bug 归因到用例）。
+  const reRead = await client.call('GET', '/api/v1/provider-connections');
+  const reReadList = Array.isArray(reRead.body?.connections) ? reRead.body.connections : [];
+  const reReadTarget = reReadList.find((item) => item?.id === target.id);
+  const limitEchoed = reRead.status === 200 && reReadTarget?.maxInflight === 1;
+  if (!limitEchoed) {
+    await client.call('PATCH', patchPath, { body: { maxInflight: originalLimit } });
+    return provisionalProbe(
+      'LIMIT_NOT_PERSISTED',
+      'PATCH 限额未持久化，governor 恒为 UNLIMITED（CP 修复中）',
+    );
   }
 
-  const chat = (label) => client.call('POST', '/api/v1/chat', {
-    body: { sessionId, branchId, content: `xihe verify limit probe ${label}` },
+  // 跨 session 并发（同一 connection）：会话级互斥是既有两层设计，不应由 governor 取代。
+  const targets = Array.isArray(chatTargets) && chatTargets.length > 0
+    ? chatTargets
+    : Array.from({ length: 4 }, () => ({ sessionId, branchId }));
+  const chat = (label, chatTarget = targets[0]) => client.call('POST', '/api/v1/chat', {
+    body: { sessionId: chatTarget.sessionId, branchId: chatTarget.branchId, content: `xihe verify limit probe ${label}` },
     timeoutMs: 5_000,
   });
   let results;
   try {
-    results = await Promise.all([chat('a'), chat('b'), chat('c'), chat('d')]);
+    results = await Promise.all(targets.map((chatTarget, index) => chat(`p${index}`, chatTarget)));
   } finally {
     // Restore in every outcome: a leaked maxInflight would break the stack for later runs.
     await client.call('PATCH', patchPath, { body: { maxInflight: originalLimit } });
@@ -358,15 +452,17 @@ export async function runResourceLimitProbe({ client, connectionId, sessionId, b
     && typeof result.retryAfter === 'string' && result.retryAfter !== '');
   if (!throttled) {
     const detail429 = results.find((result) => result.status === 429);
+    const sessionCount = new Set(targets.map((item) => item.sessionId)).size;
     return {
       status: 'FAIL',
       code: 'LIMIT_NOT_ENFORCED',
       detail: detail429
-        ? `429 缺契约字段（code=${detail429.code ?? 'none'}` 
+        ? `429 缺契约字段（code=${detail429.code ?? 'none'}`
           + ` retryAfterSeconds=${JSON.stringify(detail429.body?.retryAfterSeconds ?? null)}`
           + ` resourceKind=${detail429.body?.resourceKind ?? 'none'} scope=${detail429.body?.scope ?? 'none'}`
           + ` headerRetryAfter=${detail429.retryAfter ?? 'none'}）`
-        : `并发 4 次 chat 未命中 429 RESOURCE_EXHAUSTED（statuses=${results.map((item) => item.status).join(',')}）`,
+        : `跨 ${sessionCount} 个 session 并发 ${targets.length} 条 chat 未命中 429 RESOURCE_EXHAUSTED`
+          + `（statuses=${results.map((item) => item.status).join(',')}）`,
     };
   }
   const recovered = await chat('after-restore');
@@ -394,6 +490,7 @@ export async function runResourceLimitProbe({ client, connectionId, sessionId, b
       headerRetryAfter: throttled.retryAfter,
       restored: true,
       restoredChatStatus: recovered.status,
+      limitEchoed,
     },
   };
 }
@@ -675,11 +772,20 @@ export async function runVerify({
     // PLAN-0622 T2.3: A5 = PERSONAL agent lifecycle, A6 = connection limit 429.
     // While the CP track has not delivered scope/governor (M0/M1), these steps are
     // SKIP_PROVISIONAL with an actionable reason — never a fabricated PASS.
+    // PLAN-0622 T2.3：A5 拆两条（CP V4 三源合并后的语义）
+    // A5a PERSONAL：来源决定可见性（未绑也可见；unbind 后仍可见）
+    // A5b WORKSPACE：绑定决定可见性（未绑不可见；unbind 后不可见）
     const personal = await runPersonalLifecycleProbe({ client, workspaceId });
     data.personal = personal;
-    step('A5 PERSONAL lifecycle', personal.status, personal.detail);
+    step('A5a PERSONAL lifecycle', personal.status, personal.detail);
     if (personal.status === 'FAIL') {
-      failA('A5 PERSONAL lifecycle', personal.code, personal.detail);
+      failA('A5a PERSONAL lifecycle', personal.code, personal.detail);
+    }
+    const workspacePrincipal = await runWorkspaceLifecycleProbe({ client, workspaceId });
+    data.workspacePrincipal = workspacePrincipal;
+    step('A5b WORKSPACE lifecycle', workspacePrincipal.status, workspacePrincipal.detail);
+    if (workspacePrincipal.status === 'FAIL') {
+      failA('A5b WORKSPACE lifecycle', workspacePrincipal.code, workspacePrincipal.detail);
     }
 
     const limit = await runResourceLimitProbe({

@@ -1312,7 +1312,8 @@ test('verify runs the full tier-A chain plus run terminal and cleans up its sess
     assert.equal(call.headers['x-workspace-id'], 'ws-1');
   }
   const principalCall = cp.state.calls.find((item) => item.pathname === '/api/v1/agent-principals');
-  assert.equal(principalCall.headers['x-workspace-id'], undefined);
+  // D21：WORKSPACE 档创建必须带显式工作区上下文。
+  assert.equal(principalCall.headers['x-workspace-id'], 'ws-1');
 
   // PLAN-0601: the Session must carry the explicit template + connection binding, otherwise CP
   // rejects chat with 409 API_TYPE_REBIND_REQUIRED.
@@ -3113,7 +3114,7 @@ test('credential commands keep a single parseable --json envelope', async (t) =>
 });
 
 test('verify probes: PERSONAL lifecycle and limit 429 are provisional until CP delivers the contract', async () => {
-  const { runPersonalLifecycleProbe, runResourceLimitProbe } = await import('./xihe-cli/verify.mjs');
+  const { runPersonalLifecycleProbe, runResourceLimitProbe, runWorkspaceLifecycleProbe } = await import('./xihe-cli/verify.mjs');
   const calls = [];
   const fakeClient = (handler) => ({ call: async (method, pathname, options = {}) => {
     calls.push(`${method} ${pathname}`);
@@ -3136,7 +3137,8 @@ test('verify probes: PERSONAL lifecycle and limit 429 are provisional until CP d
       if (method === 'PUT' && pathname.includes('/agents/p-1')) { bindings.add('p-1'); return { status: 200, body: {}, code: null }; }
       if (method === 'DELETE' && pathname.includes('/agents/p-1')) { bindings.delete('p-1'); return { status: 204, body: null, code: null }; }
       if (method === 'GET' && pathname.endsWith('/agents')) {
-        return { status: 200, body: { agents: [...bindings].map((principalId) => ({ principalId, source: 'personal' })) }, code: null };
+        // V4：PERSONAL 未绑定也可见（来源决定可见性）
+        return { status: 200, body: { agents: [{ principalId: 'p-1', source: 'personal' }] }, code: null };
       }
       return { status: 404, body: { code: 'NOT_FOUND' }, code: 'NOT_FOUND' };
     }),
@@ -3145,6 +3147,35 @@ test('verify probes: PERSONAL lifecycle and limit 429 are provisional until CP d
   assert.equal(lifecycle.status, 'PASS', JSON.stringify(lifecycle));
   assert.equal(lifecycle.principalId, 'p-1');
 
+  // A5b WORKSPACE：绑定决定可见性（未绑不可见 → bind 后 source=workspace → unbind 后不可见）
+  const boundWorkspace = new Set();
+  const workspaceLifecycle = await runWorkspaceLifecycleProbe({
+    client: fakeClient((method, pathname) => {
+      if (method === 'POST' && pathname === '/api/v1/agent-principals') {
+        return { status: 201, body: { principalId: 'p-2', scope: 'WORKSPACE' }, code: null };
+      }
+      if (method === 'PUT' && pathname.includes('/agents/p-2')) { boundWorkspace.add('p-2'); return { status: 200, body: {}, code: null }; }
+      if (method === 'DELETE' && pathname.includes('/agents/p-2')) { boundWorkspace.delete('p-2'); return { status: 204, body: null, code: null }; }
+      if (method === 'GET' && pathname.endsWith('/agents')) {
+        return { status: 200, body: { agents: [...boundWorkspace].map((principalId) => ({ principalId, source: 'workspace' })) }, code: null };
+      }
+      return { status: 404, body: { code: 'NOT_FOUND' }, code: 'NOT_FOUND' };
+    }),
+    workspaceId: 'ws-1',
+  });
+  assert.equal(workspaceLifecycle.status, 'PASS', JSON.stringify(workspaceLifecycle));
+  assert.equal(workspaceLifecycle.principalId, 'p-2');
+
+  const workspaceUnboundVisible = await runWorkspaceLifecycleProbe({
+    client: fakeClient((method, pathname) => {
+      if (method === 'POST') return { status: 201, body: { principalId: 'p-2', scope: 'WORKSPACE' }, code: null };
+      if (method === 'GET') return { status: 200, body: { agents: [{ principalId: 'p-2', source: 'workspace' }] }, code: null };
+      return { status: 404, body: {}, code: 'NOT_FOUND' };
+    }),
+    workspaceId: 'ws-1',
+  });
+  assert.equal(workspaceUnboundVisible.status, 'FAIL');
+  assert.equal(workspaceUnboundVisible.code, 'WORKSPACE_VISIBLE_UNBOUND');
   const wrongSource = await runPersonalLifecycleProbe({
     client: fakeClient((method, pathname) => {
       if (method === 'POST') return { status: 201, body: { principalId: 'p-1', scope: 'PERSONAL' }, code: null };
@@ -3157,6 +3188,17 @@ test('verify probes: PERSONAL lifecycle and limit 429 are provisional until CP d
   assert.equal(wrongSource.status, 'FAIL');
   assert.equal(wrongSource.code, 'PERSONAL_SOURCE_MISMATCH');
 
+  const notPersisted = await runResourceLimitProbe({
+    client: fakeClient((method) => {
+      if (method === 'GET') return { status: 200, body: { connections: [{ id: 'c-1' }] }, code: null };
+      if (method === 'PATCH') return { status: 200, body: { connection: { id: 'c-1' } }, code: null };
+      return { status: 404, body: { code: 'NOT_FOUND' }, code: 'NOT_FOUND' };
+    }),
+    connectionId: 'c-1', sessionId: 's-1', branchId: 'b-1',
+  });
+  assert.equal(notPersisted.status, 'SKIP_PROVISIONAL');
+  assert.equal(notPersisted.code, 'LIMIT_NOT_PERSISTED');
+  assert.match(notPersisted.detail, /UNLIMITED/);
   const limitUnsupported = await runResourceLimitProbe({
     client: fakeClient((method, pathname) => {
       if (method === 'GET') return { status: 200, body: { connections: [{ id: 'c-1' }] }, code: null };
@@ -3172,7 +3214,7 @@ test('verify probes: PERSONAL lifecycle and limit 429 are provisional until CP d
   const trapCalls = [];
   const limited = await runResourceLimitProbe({
     client: fakeClient((method, pathname, options) => {
-      if (method === 'GET') return { status: 200, body: { connections: [{ id: 'c-1' }] }, code: null };
+      if (method === 'GET') return { status: 200, body: { connections: [{ id: 'c-1', maxInflight: patchCount >= 1 ? 1 : undefined }] }, code: null };
       if (method === 'PATCH') {
         patchCount += 1;
         trapCalls.push(options.body);
@@ -3200,7 +3242,7 @@ test('verify probes: PERSONAL lifecycle and limit 429 are provisional until CP d
   // A6 must reject a bare 429: code + retryAfterSeconds + resourceKind + scope + header.
   const bad429 = await runResourceLimitProbe({
     client: fakeClient((method, pathname, options) => {
-      if (method === 'GET') return { status: 200, body: { connections: [{ id: 'c-1' }] }, code: null };
+      if (method === 'GET') return { status: 200, body: { connections: [{ id: 'c-1', maxInflight: 1 }] }, code: null };
       if (method === 'PATCH') return { status: 200, body: { connection: { id: 'c-1', ...options.body } }, code: null };
       if (method === 'POST' && pathname === '/api/v1/chat') {
         return { status: 429, body: { code: 'RESOURCE_EXHAUSTED' }, code: 'RESOURCE_EXHAUSTED', retryAfter: '1' };
@@ -3439,7 +3481,7 @@ test('run-agent-e2e: usage 2, scope gate 3, and a full A5+A6 pass against a fake
   let chats = 0;
   let scopeMode = 'missing';
   const patches = [];
-  const state = { agents: [] };
+  const state = { agents: [], workspaceBound: false };
   const fakeFetch = async (url, init = {}) => {
     const target = new URL(url);
     const method = init.method ?? 'GET';
@@ -3456,21 +3498,28 @@ test('run-agent-e2e: usage 2, scope gate 3, and a full A5+A6 pass against a fake
         : respond(404, { code: 'NOT_FOUND' });
     }
     if (target.pathname === '/api/v1/agent-principals' && method === 'POST') {
-      return respond(201, { principalId: 'p-9', scope: body.scope, name: body.name });
+      const principalId = body.scope === 'PERSONAL' ? 'p-9' : 'p-10';
+      return respond(201, { principalId, scope: body.scope, name: body.name });
     }
     if (target.pathname === '/api/v1/workspaces/ws-1/agents' && method === 'GET') {
-      return respond(200, { agents: state.agents });
+      // V4：PERSONAL 未绑也可见；WORKSPACE 只有绑定才可见。
+      const agents = [{ principalId: 'p-9', name: 'personal', source: 'personal', permissionsSnapshot: [] }];
+      if (state.workspaceBound) agents.push({ principalId: 'p-10', name: 'workspace', source: 'workspace', permissionsSnapshot: [] });
+      return respond(200, { agents });
     }
-    if (target.pathname === '/api/v1/workspaces/ws-1/agents/p-9' && method === 'PUT') {
-      state.agents = [{ principalId: 'p-9', name: 'e2e', source: 'personal', permissionsSnapshot: [] }];
-      return respond(200, { principalId: 'p-9' });
+    if (target.pathname === '/api/v1/workspaces/ws-1/agents/p-9' && (method === 'PUT' || method === 'DELETE')) {
+      return method === 'PUT' ? respond(200, { principalId: 'p-9' }) : new Response(null, { status: 204 });
     }
-    if (target.pathname === '/api/v1/workspaces/ws-1/agents/p-9' && method === 'DELETE') {
-      state.agents = [];
+    if (target.pathname === '/api/v1/workspaces/ws-1/agents/p-10' && method === 'PUT') {
+      state.workspaceBound = true;
+      return respond(200, { principalId: 'p-10' });
+    }
+    if (target.pathname === '/api/v1/workspaces/ws-1/agents/p-10' && method === 'DELETE') {
+      state.workspaceBound = false;
       return new Response(null, { status: 204 });
     }
     if (target.pathname === '/api/v1/provider-connections' && method === 'GET') {
-      return respond(200, { connections: [{ id: 'c-1', status: 'READY', enabled: true, connectionKey: 'c-1', manualModels: ['gpt-5'] }] });
+      return respond(200, { connections: [{ id: 'c-1', status: 'READY', enabled: true, connectionKey: 'c-1', manualModels: ['gpt-5'], ...(patches.length > 0 ? { maxInflight: 1 } : {}) }] });
     }
     if (target.pathname === '/api/v1/provider-connections/c-1' && method === 'PATCH') {
       patches.push(body);
@@ -3514,10 +3563,12 @@ test('run-agent-e2e: usage 2, scope gate 3, and a full A5+A6 pass against a fake
   });
   assert.equal(pass.exitCode, 0, JSON.stringify(pass.data?.steps ?? pass.error));
   assert.equal(pass.data.personal.principalId, 'p-9');
+  assert.equal(pass.data.workspacePrincipal.principalId, 'p-10');
+  assert.equal(pass.data.workspacePrincipal.status, 'PASS');
   assert.equal(pass.data.limit.status, 'PASS');
   assert.equal(pass.data.session.id, 's-1');
   assert.equal(pass.data.limit.detail.includes('kind=CONNECTION'), true);
   assert.equal(patches.length, 2, 'set maxInflight=1 then restore');
   assert.equal(patches[0].maxInflight, 1);
-  assert.equal(pass.data.steps.at(-1).name, 'cleanup session');
+  assert.equal(pass.data.steps.at(-1).name, 'cleanup second session');
 });
