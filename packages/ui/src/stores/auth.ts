@@ -284,9 +284,9 @@ export const useAuthStore = defineStore("auth", () => {
         }
         try {
             clearWorkspaceChatForUserSwitch();
-        } catch (error) {
+        } catch (cause) {
             logger.warn("Failed to clear Workspace Chat cache during user switch", {
-                error: String(error),
+                error: String(cause),
             });
             // Preserve the existing fail-soft auth lifecycle; the cleanup failure is logged.
         }
