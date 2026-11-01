@@ -500,14 +500,6 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
                                 + "\"executionMode\":\"windows-host\",\"available\":true}")));
     }
 
-    private String tempHostPath() {
-        try {
-            return java.nio.file.Files.createTempDirectory("xihe-fixture-ws").toAbsolutePath().toString();
-        } catch (java.io.IOException cause) {
-            throw new IllegalStateException("cannot create the fixture host directory", cause);
-        }
-    }
-
     private String createFixtureWorkspace(String token) {
         stubDirectAttachProbe();
         org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
