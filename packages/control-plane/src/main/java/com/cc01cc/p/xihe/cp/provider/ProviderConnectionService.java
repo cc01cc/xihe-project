@@ -24,6 +24,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import com.cc01cc.p.xihe.cp.policy.LimitSpec;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
@@ -56,6 +57,7 @@ public class ProviderConnectionService {
     // ConfigService).
     private final org.springframework.beans.factory.ObjectProvider<com.cc01cc.p.xihe.cp.config.ConfigService> configService;
     private final HttpClient httpClient;
+    private final com.cc01cc.p.xihe.cp.repository.ProviderConnectionModelLimitRepository modelLimitRepository;
 
     public ProviderConnectionService(
             ProviderConnectionRepository repository,
@@ -67,7 +69,8 @@ public class ProviderConnectionService {
             ProviderCredentialAccess credentialAccess,
             ObjectMapper objectMapper,
             com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService requestTemplates,
-            org.springframework.beans.factory.ObjectProvider<com.cc01cc.p.xihe.cp.config.ConfigService> configService) {
+            org.springframework.beans.factory.ObjectProvider<com.cc01cc.p.xihe.cp.config.ConfigService> configService,
+            com.cc01cc.p.xihe.cp.repository.ProviderConnectionModelLimitRepository modelLimitRepository) {
         this.repository = repository;
         this.auditRepository = auditRepository;
         this.leaseRepository = leaseRepository;
@@ -78,6 +81,7 @@ public class ProviderConnectionService {
         this.objectMapper = objectMapper;
         this.requestTemplates = requestTemplates;
         this.configService = configService;
+        this.modelLimitRepository = modelLimitRepository;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
                 .followRedirects(HttpClient.Redirect.NEVER)
@@ -270,6 +274,9 @@ public class ProviderConnectionService {
             }
             connection.setLastErrorCode(null);
             connection.setLastVerifiedAt(null);
+        }
+        if (input.hasLimitChanges()) {
+            applyLimits(connection, input);
         }
         ProviderConnection saved = repository.save(connection);
         audit(saved, "UPDATED", null, saved.getStatus());
@@ -746,7 +753,60 @@ public class ProviderConnectionService {
                 operation, hasKey, null, connection.isEnabled(), connection.getStatus(),
                 connection.getLastVerifiedAt(), connection.getLastErrorCode(), connection.getRevision(),
                 connection.getModelDiscovery(), readManualModels(connection),
-                connection.getCredentialId() == null ? null : connection.getCredentialId().toString());
+                connection.getCredentialId() == null ? null : connection.getCredentialId().toString(),
+                connection.getMaxInflight(), connection.getMaxQueue(), connection.getWindowTokenBudget(),
+                connection.getWindowSeconds(), modelLimitsOf(connection.getId()));
+    }
+
+    /**
+     * PLAN-0622 M1.5 (A6 blocker): writes the resource-limit configuration. Scalars are set-only (an
+     * absent field keeps the stored value); {@code modelLimits} is <b>full replacement</b> — any list,
+     * including the empty one, replaces every row, so a caller clears them with {@code []}. Values are
+     * validated through {@link LimitSpec}, the same type the governor enforces at admission, so a
+     * stored value can never disagree with the admission rule.
+     */
+    private void applyLimits(ProviderConnection connection, ConnectionInput input) {
+        new LimitSpec(input.maxInflight(), input.maxQueue(), input.windowTokenBudget(), input.windowSeconds());
+        if (input.maxInflight() != null) {
+            connection.setMaxInflight(input.maxInflight());
+        }
+        if (input.maxQueue() != null) {
+            connection.setMaxQueue(input.maxQueue());
+        }
+        if (input.windowTokenBudget() != null) {
+            connection.setWindowTokenBudget(input.windowTokenBudget());
+        }
+        if (input.windowSeconds() != null) {
+            connection.setWindowSeconds(input.windowSeconds());
+        }
+        if (input.modelLimits() != null) {
+            modelLimitRepository.deleteAll(modelLimitRepository.findByConnectionId(connection.getId()));
+            List<com.cc01cc.p.xihe.cp.entity.ProviderConnectionModelLimit> rows = new ArrayList<>();
+            for (ModelLimitInput limit : input.modelLimits()) {
+                if (limit == null || limit.provider() == null || limit.provider().isBlank()
+                        || limit.model() == null || limit.model().isBlank()) {
+                    throw new IllegalArgumentException("modelLimits entries need a provider and a model");
+                }
+                new LimitSpec(limit.maxInflight(), null, limit.windowTokenBudget(), limit.windowSeconds());
+                com.cc01cc.p.xihe.cp.entity.ProviderConnectionModelLimit row =
+                        new com.cc01cc.p.xihe.cp.entity.ProviderConnectionModelLimit();
+                row.setConnectionId(connection.getId());
+                row.setProvider(limit.provider());
+                row.setModel(limit.model());
+                row.setMaxInflight(limit.maxInflight());
+                row.setWindowTokenBudget(limit.windowTokenBudget());
+                row.setWindowSeconds(limit.windowSeconds());
+                rows.add(row);
+            }
+            modelLimitRepository.saveAll(rows);
+        }
+    }
+
+    private List<ModelLimitView> modelLimitsOf(UUID connectionId) {
+        return modelLimitRepository.findByConnectionId(connectionId).stream()
+                .map(row -> new ModelLimitView(row.getProvider(), row.getModel(), row.getMaxInflight(),
+                        row.getWindowTokenBudget(), row.getWindowSeconds()))
+                .toList();
     }
 
     private List<String> readManualModels(ProviderConnection connection) {
@@ -777,17 +837,62 @@ public class ProviderConnectionService {
             List<String> manualModels,
             Boolean enabled,
             String connectionKey,
-            String credentialId) {
+            String credentialId,
+            Integer maxInflight,
+            Integer maxQueue,
+            Long windowTokenBudget,
+            Integer windowSeconds,
+            List<ModelLimitInput> modelLimits) {
         public ConnectionInput(String providerId, String label, String scope, String apiKey,
                                String baseUrl, String modelDiscovery, List<String> manualModels,
                                Boolean enabled, String connectionKey) {
             this(providerId, label, scope, apiKey, baseUrl, modelDiscovery, manualModels,
-                    enabled, connectionKey, null);
+                    enabled, connectionKey, null, null, null, null, null, null);
         }
 
+        /** PLAN-0622 M1.5: {@code modelLimits == null} keeps the rows; any list replaces them. */
+        public ConnectionInput(String providerId, String label, String scope, String apiKey,
+                               String baseUrl, String modelDiscovery, List<String> manualModels,
+                               Boolean enabled, String connectionKey, String credentialId,
+                               Integer maxInflight, Integer maxQueue, Long windowTokenBudget,
+                               Integer windowSeconds, List<ModelLimitInput> modelLimits) {
+            this.providerId = providerId;
+            this.label = label;
+            this.scope = scope;
+            this.apiKey = apiKey;
+            this.baseUrl = baseUrl;
+            this.modelDiscovery = modelDiscovery;
+            this.manualModels = manualModels;
+            this.enabled = enabled;
+            this.connectionKey = connectionKey;
+            this.credentialId = credentialId;
+            this.maxInflight = maxInflight;
+            this.maxQueue = maxQueue;
+            this.windowTokenBudget = windowTokenBudget;
+            this.windowSeconds = windowSeconds;
+            this.modelLimits = modelLimits;
+        }
+
+        public ConnectionInput(String providerId, String label, String scope, String apiKey,
+                               String baseUrl, String modelDiscovery, List<String> manualModels,
+                               Boolean enabled, String connectionKey, String credentialId) {
+            this(providerId, label, scope, apiKey, baseUrl, modelDiscovery, manualModels, enabled,
+                    connectionKey, credentialId, null, null, null, null, null);
+        }
+
+        /**
+         * Resource limits are deliberately <b>not</b> connectivity changes: editing them must not
+         * flip the connection back to VERIFYING or bump the revision beyond the save itself.
+         */
         public boolean hasChanges() {
             return label != null || apiKey != null || credentialId != null || baseUrl != null
                     || modelDiscovery != null || manualModels != null || enabled != null;
+        }
+
+        /** Any limit dimension supplied (scalar or model list) means the caller wants them written. */
+        public boolean hasLimitChanges() {
+            return maxInflight != null || maxQueue != null || windowTokenBudget != null
+                    || windowSeconds != null || modelLimits != null;
         }
     }
 
@@ -811,7 +916,20 @@ public class ProviderConnectionService {
             long revision,
             String modelDiscovery,
             List<String> manualModels,
-            String credentialId) {}
+            String credentialId,
+            Integer maxInflight,
+            Integer maxQueue,
+            Long windowTokenBudget,
+            Integer windowSeconds,
+            List<ModelLimitView> modelLimits) {}
+
+    /** PLAN-0622 M1.5: one per-model limit override as accepted on PATCH. */
+    public record ModelLimitInput(String provider, String model, Integer maxInflight,
+                                  Long windowTokenBudget, Integer windowSeconds) {}
+
+    /** PLAN-0622 M1.5: one per-model limit override as projected on read. */
+    public record ModelLimitView(String provider, String model, Integer maxInflight,
+                                 Long windowTokenBudget, Integer windowSeconds) {}
 
     public static final class KeyInvalidException extends IllegalArgumentException {
         public KeyInvalidException(String message) { super(message); }

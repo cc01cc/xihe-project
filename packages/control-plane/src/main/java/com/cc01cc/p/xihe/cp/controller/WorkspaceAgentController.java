@@ -98,6 +98,8 @@ public class WorkspaceAgentController {
         // PLAN-0622 M1.2: `permissions` -> `permissionsSnapshot`, plus the mandatory `source`.
         result.put("permissionsSnapshot", toValue(view.permissions()));
         result.put("source", view.source());
+        // D26: whether this row is bound to the workspace (visible-without-binding rows are false).
+        result.put("bound", view.bound());
         return result;
     }
 

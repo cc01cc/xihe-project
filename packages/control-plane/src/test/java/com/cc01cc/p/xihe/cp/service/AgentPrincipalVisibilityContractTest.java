@@ -252,6 +252,7 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
         List<Map<String, Object>> agents = listAgents(owner, workspace);
 
         assertEquals("personal", sourceOf(agents, personal), "a PERSONAL principal needs no binding to be visible");
+        assertFalse(boundOf(agents, personal), "D26: unbound personal rows must say so, or the picker offers a 403");
         assertTrue(agents.stream().allMatch(item -> item.containsKey("permissionsSnapshot")), agents.toString());
     }
 
@@ -266,6 +267,7 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
         List<Map<String, Object>> agents = listAgents(owner, workspace);
 
         assertEquals("instance", sourceOf(agents, instance));
+        assertFalse(boundOf(agents, instance), "D26: unbound instance rows must say so");
     }
 
     @Test
@@ -300,6 +302,7 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
                 .equals(String.valueOf(item.get("principalId")))).count();
         assertEquals(1, rows, "deduplicated by principal id: " + agents);
         assertEquals("personal", sourceOf(agents, personal), "source describes what it is, not that it is bound");
+        assertTrue(boundOf(agents, personal), "D26: a bound row reports bound=true");
     }
 
     @Test
@@ -344,6 +347,14 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
                 "plan0622-" + label + "-" + UUID.randomUUID() + "@test.com", "hash", label));
         users.add(user.getId());
         return user;
+    }
+
+    private boolean boundOf(List<Map<String, Object>> agents, UUID principalId) {
+        return agents.stream()
+                .filter(item -> principalId.toString().equals(String.valueOf(item.get("principalId"))))
+                .map(item -> Boolean.TRUE.equals(item.get("bound")))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("principal not listed: " + principalId));
     }
 
     private String sourceOf(List<Map<String, Object>> agents, UUID principalId) {
