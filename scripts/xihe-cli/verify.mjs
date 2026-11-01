@@ -384,7 +384,7 @@ export async function runWorkspaceLifecycleProbe({ client, workspaceId }) {
  * with Retry-After, and the connection recovers after the limit is restored.
  * Provisional until the CP Resource Governor is delivered (T1.6).
  */
-export async function runResourceLimitProbe({ client, connectionId, sessionId, branchId, chatTargets }) {
+export async function runResourceLimitProbe({ client, connectionId, sessionId, branchId, chatTargets, openSubscription }) {
   if (!sessionId || !branchId) {
     return provisionalProbe('NO_SESSION', '没有可用于限额探测的 session/branch');
   }
@@ -429,12 +429,23 @@ export async function runResourceLimitProbe({ client, connectionId, sessionId, b
     body: { sessionId: chatTarget.sessionId, branchId: chatTarget.branchId, content: `xihe verify limit probe ${label}` },
     timeoutMs: 5_000,
   });
+  // CP 要求每个 session 先有活跃 SSE 订阅才允许 POST /chat（ChatController.java:463-465
+  // `SSE_SUBSCRIPTION_REQUIRED`）——这是会话级传输前置，不是 governor；A6 必须先订阅。
+  const subscriptions = [];
   let results;
   try {
+    for (const chatTarget of targets) {
+      if (typeof openSubscription === 'function') {
+        subscriptions.push(await openSubscription(chatTarget));
+      }
+    }
     results = await Promise.all(targets.map((chatTarget, index) => chat(`p${index}`, chatTarget)));
   } finally {
     // Restore in every outcome: a leaked maxInflight would break the stack for later runs.
     await client.call('PATCH', patchPath, { body: { maxInflight: originalLimit } });
+    for (const subscription of subscriptions) {
+      try { subscription?.close?.(); } catch { /* already closed */ }
+    }
   }
   for (const result of results) {
     const runId = result.body?.runId;
@@ -453,6 +464,26 @@ export async function runResourceLimitProbe({ client, connectionId, sessionId, b
   if (!throttled) {
     const detail429 = results.find((result) => result.status === 429);
     const sessionCount = new Set(targets.map((item) => item.sessionId)).size;
+    // 诊断：chat 202 后 run 可能异步失败（governor 在 credential lease 处触发，不在 HTTP 响应里）。
+    const runOutcomes = [];
+    for (const result of results) {
+      const runId = result.body?.runId;
+      if (typeof runId !== 'string') continue;
+      let outcome = null;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const statusResponse = await client.call('GET', `/api/v1/chat/runs/${encodeURIComponent(runId)}`);
+        const body = statusResponse.body ?? {};
+        const status = body.status ?? body.run?.status ?? null;
+        const errorCode = body.errorCode ?? body.run?.errorCode ?? null;
+        if (status && ['succeeded', 'failed', 'cancelled', 'timed_out', 'terminal'].includes(String(status))) {
+          outcome = { runId, status, errorCode };
+          break;
+        }
+        if (errorCode) { outcome = { runId, status, errorCode }; break; }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      if (outcome) runOutcomes.push(outcome);
+    }
     return {
       status: 'FAIL',
       code: 'LIMIT_NOT_ENFORCED',
@@ -462,7 +493,8 @@ export async function runResourceLimitProbe({ client, connectionId, sessionId, b
           + ` resourceKind=${detail429.body?.resourceKind ?? 'none'} scope=${detail429.body?.scope ?? 'none'}`
           + ` headerRetryAfter=${detail429.retryAfter ?? 'none'}）`
         : `跨 ${sessionCount} 个 session 并发 ${targets.length} 条 chat 未命中 429 RESOURCE_EXHAUSTED`
-          + `（statuses=${results.map((item) => item.status).join(',')}）`,
+          + `（statuses=[${results.map((item) => `${item.status}${item.code ? `:${item.code}` : ''}`).join(',')}]`
+          + `，runs=${JSON.stringify(runOutcomes)}）`,
     };
   }
   const recovered = await chat('after-restore');
