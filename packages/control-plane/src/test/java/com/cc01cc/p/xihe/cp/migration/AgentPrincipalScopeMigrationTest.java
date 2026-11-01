@@ -8,6 +8,9 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
+import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
+
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -61,6 +64,12 @@ class AgentPrincipalScopeMigrationTest {
                 + "')");
         execute("INSERT INTO agent_principals (id, name, created_by_user_id) VALUES ('"
                 + LEGACY_PRINCIPAL_ID + "', 'legacy principal', '" + LEGACY_USER_ID + "')");
+        // A V89-era instance tier binding: V91 must backfill its materialized CREATE_OWN_AGENT row,
+        // otherwise existing accounts would keep the five-atom set until their next materialization.
+        execute("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type, scope_id,"
+                + " granted_by) VALUES ('" + UUID.randomUUID() + "', '"
+                + "00000000-0000-4000-8000-000000000003', 'user', '" + LEGACY_USER_ID
+                + "', 'instance', NULL, '" + LEGACY_USER_ID + "')");
 
         Flyway.configure()
                 .dataSource(url, postgres.getUsername(), postgres.getPassword())
@@ -155,6 +164,46 @@ class AgentPrincipalScopeMigrationTest {
                      + " WHERE connection_id = '" + connectionId + "'")) {
             assertTrue(rows.next());
             assertEquals(0, rows.getInt(1), "deleting the connection cascades its model limits");
+        }
+    }
+
+    @Test
+    void headSeedsMatchTheCodeSideCatalog() throws SQLException {
+        // PLAN-0622 D8 (M0.3): V91 makes the PostgreSQL seed agree with the code catalog again.
+        assertEquals(PermissionAtomCatalog.actionAtoms().size() + PermissionAtomCatalog.capabilityAtoms().size(),
+                roleAtomCount(SystemAccessRoleCatalog.SUPER_ADMIN_ID),
+                "SUPER_ADMIN carries every action atom plus the capability atoms");
+        assertEquals(10, roleAtomCount(SystemAccessRoleCatalog.ADMIN_ID),
+                "ADMIN keeps its nine action atoms (five base + three credential + CREATE_OWN_AGENT)"
+                        + " plus instance:admin");
+        assertEquals(6, roleAtomCount(SystemAccessRoleCatalog.USER_ID),
+                "USER is the five registration atoms plus CREATE_OWN_AGENT (D8)");
+        for (UUID roleId : new UUID[] {SystemAccessRoleCatalog.SUPER_ADMIN_ID,
+                SystemAccessRoleCatalog.ADMIN_ID, SystemAccessRoleCatalog.USER_ID}) {
+            assertEquals(1, scalarInt("SELECT count(*) FROM role_permissions WHERE role_id = '" + roleId
+                            + "'::uuid AND action_class = 'CREATE_OWN_AGENT'"),
+                    "CREATE_OWN_AGENT is seeded on " + roleId);
+        }
+    }
+
+    @Test
+    void v91BackfillsTheMaterializedOwnAgentAtomForExistingTierSubjects() throws SQLException {
+        assertEquals(1, scalarInt("SELECT count(*) FROM grants WHERE subject_type = 'user'"
+                        + " AND subject_id = '" + LEGACY_USER_ID + "' AND source = 'role'"
+                        + " AND scope_type = 'instance' AND scope_id IS NULL"
+                        + " AND permissions -> 0 ->> 'actionClass' = 'CREATE_OWN_AGENT'"),
+                "the pre-existing tier subject gets exactly one materialized CREATE_OWN_AGENT row");
+    }
+
+    private static int roleAtomCount(UUID roleId) throws SQLException {
+        return scalarInt("SELECT count(*) FROM role_permissions WHERE role_id = '" + roleId + "'::uuid");
+    }
+
+    private static int scalarInt(String sql) throws SQLException {
+        try (Statement statement = connection.createStatement();
+             ResultSet rows = statement.executeQuery(sql)) {
+            assertTrue(rows.next(), "scalar query returns a row: " + sql);
+            return rows.getInt(1);
         }
     }
 

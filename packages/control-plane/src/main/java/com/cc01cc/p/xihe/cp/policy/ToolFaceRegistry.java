@@ -39,6 +39,10 @@ public class ToolFaceRegistry {
     // PLAN-0610 (T1.2): the fifteenth action atom — who may create/edit access roles and
     // bindings. It is a normal action atom (evaluated through grants), not a capability atom.
     public static final String ACTION_MANAGE_ROLES = "MANAGE_ROLES";
+    // PLAN-0622 (D8, M0.3): the sixteenth action atom — a user tier action that lets an
+    // ordinary account create its own PERSONAL agent principal. It is never alias-merged with
+    // CREATE_ACCOUNT (instance tier) or MANAGE_WORKSPACE_AGENTS (workspace tier).
+    public static final String ACTION_OWN_AGENT = "CREATE_OWN_AGENT";
 
     /** PLAN-0496 #2: the credential resource namespace ({@code credential:<uuid>} / {@code credential:*}). */
     public static final String CREDENTIAL_ACTION_PREFIX = "credential_";
@@ -104,7 +108,8 @@ public class ToolFaceRegistry {
         return Set.of(ACTION_READ, ACTION_WRITE, ACTION_DELETE, ACTION_EXEC, ACTION_NETWORK,
                 ACTION_CREDENTIAL_USE, ACTION_CREDENTIAL_REVEAL, ACTION_CREDENTIAL_MANAGE,
                 ACTION_CREATE_ACCOUNT, ACTION_CREATE_TEMPLATE, ACTION_MANAGE_WORKSPACE_AGENTS, ACTION_SPAWN_AGENT,
-                ACTION_CREATE_SCHEDULED_TASK, ACTION_MANAGE_SCHEDULED_TASK, ACTION_MANAGE_ROLES);
+                ACTION_CREATE_SCHEDULED_TASK, ACTION_MANAGE_SCHEDULED_TASK, ACTION_MANAGE_ROLES,
+                ACTION_OWN_AGENT);
     }
 
     /** PLAN-0496 #2: credential-namespace action classes (the three atoms share resource rules). */

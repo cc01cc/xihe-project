@@ -71,6 +71,15 @@ public class SystemAccessRoleCatalog {
             AtomRef.wildcard(ToolFaceRegistry.ACTION_EXEC),
             AtomRef.wildcard(ToolFaceRegistry.ACTION_NETWORK));
 
+    /**
+     * PLAN-0622 D8 (M0.3): the registration default set plus the user tier action that lets an
+     * ordinary account create its own PERSONAL agent principal. Deliberately one atom — the
+     * workspace tier still needs MANAGE_WORKSPACE_AGENTS and the instance tier still needs
+     * CREATE_ACCOUNT (three independent actions, never alias-merged).
+     */
+    private static final List<AtomRef> USER_DEFAULT_ATOMS = concat(BASE_ATOMS,
+            List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_OWN_AGENT)));
+
     private final AccessRoleRepository roleRepository;
     private final AccessRolePermissionRepository permissionRepository;
 
@@ -87,14 +96,14 @@ public class SystemAccessRoleCatalog {
                         "Instance scope: every action atom plus every capability atom. Immutable.",
                         superAdminAtoms()),
                 new RoleSeed(ADMIN_ID, ADMIN, "Administrator",
-                        "Instance scope: the default action set plus the three credential atoms "
+                        "Instance scope: the user default set plus the three credential atoms "
                                 + "and instance:admin.",
-                        concat(BASE_ATOMS, CREDENTIAL_ATOMS,
+                        concat(USER_DEFAULT_ATOMS, CREDENTIAL_ATOMS,
                                 List.of(AtomRef.wildcard(PermissionAtomCatalog.CAP_INSTANCE_ADMIN)))),
                 new RoleSeed(USER_ID, USER, "User",
                         "Instance scope: the registration minimal set "
-                                + "(read/write/delete/exec/network).",
-                        BASE_ATOMS),
+                                + "(read/write/delete/exec/network) plus CREATE_OWN_AGENT.",
+                        USER_DEFAULT_ATOMS),
                 new RoleSeed(WS_OWNER_ID, WS_OWNER, "Workspace Owner",
                         "Workspace scope: editor actions plus workspace agent management "
                                 + "and workspace:admin.",

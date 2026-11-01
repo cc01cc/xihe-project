@@ -15,7 +15,9 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -306,6 +308,12 @@ class DynamicAccessRoleMigrationTest {
 
     @Test
     void v87SeedsMatchTheCodeSideCatalog() throws SQLException {
+        // This class pins the V87 target, but the code-side catalog keeps growing with later
+        // migrations (PLAN-0622 V91 adds CREATE_OWN_AGENT). The V87-shape assertion is therefore
+        // one-directional here: every row V87 seeds must still be described by the code catalog
+        // (same id <-> name, and no atom the code no longer knows). The reverse direction — the code
+        // catalog being fully seeded — belongs to the head target and is asserted by
+        // AgentPrincipalScopeMigrationTest#headSeedsMatchTheCodeSideCatalog.
         Map<UUID, String> namesById = new HashMap<>();
         try (Statement statement = connection.createStatement();
              ResultSet rs = statement.executeQuery("SELECT id, name FROM roles WHERE is_system = true")) {
@@ -318,16 +326,20 @@ class DynamicAccessRoleMigrationTest {
         for (SystemAccessRoleCatalog.RoleSeed seed : SystemAccessRoleCatalog.roleSeeds()) {
             assertEquals(seed.name(), namesById.get(seed.id()),
                     "fixed id must map to the same role name on both sides: " + seed.name());
+            Set<String> codeAtoms = new HashSet<>();
             for (SystemAccessRoleCatalog.AtomRef atom : seed.atoms()) {
-                assertEquals(1, scalarInt("SELECT count(*) FROM role_permissions WHERE role_id = '"
-                                + seed.id() + "'::uuid AND action_class = '" + atom.actionClass()
-                                + "' AND resource_pattern = '" + atom.resourcePattern() + "'"),
-                        "migration seed is missing " + seed.name() + " -> "
-                                + atom.actionClass() + "@" + atom.resourcePattern());
+                codeAtoms.add(atom.actionClass() + "@" + atom.resourcePattern());
             }
-            assertEquals(seed.atoms().size(), scalarInt("SELECT count(*) FROM role_permissions "
-                            + "WHERE role_id = '" + seed.id() + "'::uuid"),
-                    "migration must not seed extra atoms for " + seed.name());
+            try (Statement statement = connection.createStatement();
+                 ResultSet rs = statement.executeQuery("SELECT action_class, resource_pattern"
+                         + " FROM role_permissions WHERE role_id = '" + seed.id() + "'::uuid")) {
+                while (rs.next()) {
+                    String atom = rs.getString(1) + "@" + rs.getString(2);
+                    assertTrue(codeAtoms.contains(atom),
+                            "V87 seeds an atom the code catalog does not know: " + seed.name()
+                                    + " -> " + atom);
+                }
+            }
         }
     }
 

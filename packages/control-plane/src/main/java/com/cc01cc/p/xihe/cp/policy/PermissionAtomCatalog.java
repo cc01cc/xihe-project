@@ -14,7 +14,7 @@ import java.util.Set;
  * <p>Two kinds of atom exist and they are <b>not</b> interchangeable:</p>
  *
  * <ul>
- *   <li><b>Action atoms (15)</b> — the {@link ToolFaceRegistry#builtinActionClasses() built-in
+ *   <li><b>Action atoms (16)</b> — the {@link ToolFaceRegistry#builtinActionClasses() built-in
  *       action classes}. They are the only atoms that may be materialized into
  *       {@code grants.permissions}; {@code GrantIntersectionEvaluator.PermissionAtom} throws for
  *       anything else, so a non-action atom inside a grant would fail every evaluation closed.</li>
@@ -85,7 +85,9 @@ public final class PermissionAtomCatalog {
             ToolFaceRegistry.ACTION_SPAWN_AGENT,
             ToolFaceRegistry.ACTION_CREATE_SCHEDULED_TASK,
             ToolFaceRegistry.ACTION_MANAGE_SCHEDULED_TASK,
-            ToolFaceRegistry.ACTION_MANAGE_ROLES);
+            ToolFaceRegistry.ACTION_MANAGE_ROLES,
+            // PLAN-0622 D8: user tier — create one's own PERSONAL agent principal.
+            ToolFaceRegistry.ACTION_OWN_AGENT);
 
     private static final List<String> CAPABILITY_ATOM_NAMES = List.of(
             CAP_INSTANCE_SUPER, CAP_INSTANCE_ADMIN, CAP_WORKSPACE_ADMIN);
@@ -99,6 +101,9 @@ public final class PermissionAtomCatalog {
             ToolFaceRegistry.ACTION_CREATE_TEMPLATE,
             ToolFaceRegistry.ACTION_SPAWN_AGENT,
             ToolFaceRegistry.ACTION_MANAGE_ROLES,
+            // PLAN-0622 D8: "create your own agent" is a user capability; a workspace-scoped
+            // binding of it would be meaningless, so it is instance-bindable only.
+            ToolFaceRegistry.ACTION_OWN_AGENT,
             CAP_INSTANCE_SUPER,
             CAP_INSTANCE_ADMIN);
 
@@ -128,7 +133,7 @@ public final class PermissionAtomCatalog {
                 : WILDCARD;
     }
 
-    /** The 15 action atoms, in canonical order. */
+    /** The 16 action atoms, in canonical order. */
     public static List<String> actionAtoms() {
         return ACTION_ATOM_NAMES;
     }

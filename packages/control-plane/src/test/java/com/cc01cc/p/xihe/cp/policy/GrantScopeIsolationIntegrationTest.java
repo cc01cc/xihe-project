@@ -122,17 +122,19 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
                         request("credential_use", "credential:" + UUID.randomUUID(),
                                 fixture.userId(), fixture.workspaceA())),
                 "the instance USER role carries no credential atom");
-        assertEquals(5, grantRepository.findScopedGrants("user", fixture.userId(),
+        // PLAN-0622 D8: the USER default set is the five registration atoms plus
+        // CREATE_OWN_AGENT (an ordinary account may create its own PERSONAL agent).
+        assertEquals(6, grantRepository.findScopedGrants("user", fixture.userId(),
                         GrantSources.EVALUATION_SOURCES, fixture.workspaceB()).stream()
                         .filter(row -> AccessScope.INSTANCE.equals(row.getScopeType()))
                         .count(),
-                "one row per USER atom, all instance-scoped");
+                "one row per USER action atom, all instance-scoped");
     }
 
     @Test
     void superAdminInstanceBindingMaterializesAllActionAtomsButNoCapabilityAtoms() {
         Fixture fixture = fixture("capability");
-        // Decision #27: SUPER_ADMIN is an instance role and all 15 action atoms are bindable in
+        // Decision #27: SUPER_ADMIN is an instance role and all 16 action atoms are bindable in
         // the instance scope (only the 3 capability atoms are filtered out of the materialization).
         UUID superRoleId = accessRoleRepository.findByName(SystemAccessRoleCatalog.SUPER_ADMIN)
                 .orElseThrow().getId();

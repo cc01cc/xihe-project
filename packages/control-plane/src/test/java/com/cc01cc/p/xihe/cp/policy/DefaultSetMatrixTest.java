@@ -42,7 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code source='default'} row, it is the union of {@code source='role'} rows (one row per atom,
  * V87 {@code uq_grants_role_atom}) produced by {@link RoleGrantMaterializer}. Capability atoms are
  * part of the role definition and are <b>not</b> materialized (design #23), which is why ADMIN's
- * eight action atoms and not nine appear in {@code grants}.</p>
+ * nine action atoms and not ten appear in {@code grants}.</p>
  *
  * <p>Deliberately NOT duplicated here: bootstrap idempotency and concurrency
  * ({@code GrantDefaultBootstrapIntegrationTest}), scope isolation
@@ -52,16 +52,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class DefaultSetMatrixTest extends AbstractIntegrationTest {
 
-    /** spec §4.1 USER row / evidence matrix USER column: five allow rows, credential deny. */
+    /**
+     * spec §4.1 USER row / evidence matrix USER column, extended by PLAN-0622 D8: the five allow
+     * rows plus CREATE_OWN_AGENT (an ordinary account may create its own PERSONAL agent principal).
+     * credential atoms stay denied.
+     */
     private static final Set<String> USER_MATRIX = Set.of(
-            "read", "write", "delete", "exec", "network");
+            "read", "write", "delete", "exec", "network", "CREATE_OWN_AGENT");
 
     /**
      * spec §4.1 ADMIN row / evidence matrix full-allow column: five rows plus the
      * PLAN-0496 three credential atoms (the legacy single `credential` word retired).
      */
     private static final Set<String> ADMIN_MATRIX = Set.of(
-            "read", "write", "delete", "exec", "network",
+            "read", "write", "delete", "exec", "network", "CREATE_OWN_AGENT",
             "credential_use", "credential_reveal", "credential_manage");
 
     /** spec §2.1: vocabulary members that never enter a built-in default set. */
@@ -202,13 +206,13 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
                 "spec §2.1: even the full-allow ADMIN set denies SPAWN_AGENT (无 grant 在 approval 之前拒绝)");
     }
 
-    /** PLAN-0610 W1b T1.9: the bootstrap admin holds SUPER_ADMIN (all 15 action atoms). */
+    /** PLAN-0610 W1b T1.9: the bootstrap admin holds SUPER_ADMIN (all 16 action atoms). */
     @Test
     void seededAdminIsSuperAdminWithEveryActionAtom() {
         User admin = userRepository.findByEmail("admin@xihe.local").orElseThrow();
         assertEquals(new LinkedHashSet<>(PermissionAtomCatalog.actionAtoms()),
                 materializedAtoms("user", admin.getId()),
-                "SUPER_ADMIN materializes all 15 action atoms");
+                "SUPER_ADMIN materializes all 16 action atoms");
         assertTrue(authzContext.isInstanceSuper(admin.getId()),
                 "and resolves cap:instance:super from the seeded binding");
     }
