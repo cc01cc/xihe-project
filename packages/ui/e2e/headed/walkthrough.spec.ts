@@ -499,6 +499,16 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
                 .catch(() => false);
             dialogText =
                 (await page.getByTestId("workspace-agent-management-dialog").innerText()) ?? "";
+            // F-01（M3 修后口径）：没有 CREATE_ACCOUNT 的账号在**点击之前**就该看到结果——
+            // 就地提示 + 指向 /settings/roles 的链接，且填好名字后按钮仍然禁用（不是"点了才 403"）。
+            await expect(page.getByTestId("agent-create-forbidden-hint")).toBeVisible({
+                timeout: 20000,
+            });
+            const grantLink = page.getByTestId("agent-grant-panel-link");
+            await expect(grantLink).toBeVisible();
+            await expect(grantLink).toHaveAttribute("href", "/settings/roles");
+            await page.getByTestId("agent-principal-name").fill(`headed-plain-${Date.now()}`);
+            await expect(page.getByTestId("agent-principal-create")).toBeDisabled();
             await shot(page, "S5b", "s5b-agent-dialog-plain-account", "普通账号的 Agent 管理面板");
         }
         test.info().annotations.push({
@@ -507,6 +517,8 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
                 toolbarVisible,
                 createVisible,
                 dialogTextLength: dialogText.length,
+                // 该账号没有工作区时工具条不出现，UI 断言分支不会执行 —— 显式标注，避免被当成证据。
+                uiCoverage: toolbarVisible ? "covered" : "未覆盖（账号无工作区，工具条不可见）",
             }),
         });
         // 记录事实，不做产品判断（定性在 evidence/findings.md 的 F-01）。
