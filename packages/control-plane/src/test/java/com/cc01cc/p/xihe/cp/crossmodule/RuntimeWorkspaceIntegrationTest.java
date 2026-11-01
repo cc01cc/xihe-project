@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.crossmodule;
 
+import org.junit.jupiter.api.Tag;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
@@ -362,6 +363,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
                 workspaceJobHistoryRepository.findByJobIdOrderBySequenceAsc(jobId).getLast().getEventType());
     }
 
+    @Tag("docker-frozen")
     @Test
     void materializeProxiesToRuntimeAndReturns202() {
         String ownerId = UUID.randomUUID().toString();
@@ -398,7 +400,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
                 urlEqualTo("/internal/v1/runtime/workspaces/" + target + "/materialize")));
     }
 
-    @Test
+        @Test
     void materializeRejectsForeignWorkspaceWith404() {
         String token = registerAndLogin();
         org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
@@ -412,6 +414,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         assertEquals("WORKSPACE_NOT_FOUND", response.getBody().get("code"));
     }
 
+    @Tag("docker-frozen")
     @Test
     void materializePassesThroughRuntime409WorkspaceDestroying() {
         // PLAN-0345 T2.4b (decision #11): the destroying-conflict must reach the
@@ -451,6 +454,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         assertEquals("WORKSPACE_DESTROYING", response.getBody().get("code"));
     }
 
+    @Tag("docker-frozen")
     @Test
     void materializeReturns502WhenRuntimeUnreachable() {
         String ownerId = UUID.randomUUID().toString();
@@ -589,7 +593,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         assertEquals(1, response.getBody().size());
     }
 
-    @Test
+        @Test
     void workspaceImportCanBeQueuedWithoutSession() {
         wireMock.resetAll();
         wireMock.stubFor(post(urlPathMatching("/internal/v1/runtime/workspaces/.*/imports"))
@@ -641,7 +645,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         assertEquals("cancelled", cancelled.getBody().get("status"));
     }
 
-    @Test
+        @Test
     void environmentUsesPerWorkspaceStatusInsteadOfGlobalHeartbeat() {
         String email = "env-status-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
         org.springframework.http.ResponseEntity<java.util.Map> registration = restTemplate.postForEntity(

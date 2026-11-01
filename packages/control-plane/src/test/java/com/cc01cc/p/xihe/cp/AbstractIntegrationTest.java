@@ -26,7 +26,7 @@ import java.io.IOException;
 // a system property, which outranks application-test.properties; an inlined test property outranks
 // both. The frozen-by-default contract itself is asserted by WorkspaceBackendPolicyTest.
 @org.springframework.test.context.TestPropertySource(
-        properties = "XIHE_WORKSPACE_DOCKER_BACKEND=enabled")
+        properties = "XIHE_WORKSPACE_DOCKER_BACKEND=disabled")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 public abstract class AbstractIntegrationTest {
 

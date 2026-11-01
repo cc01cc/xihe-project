@@ -1,6 +1,7 @@
 import { generateE2EPassword } from "./helpers/password";
 import { test, expect } from "@playwright/test";
 import { ensureWorkspace } from "./helpers/workspace";
+import { dockerFrozenIncluded, dockerFrozenReason } from "./helpers/docker-frozen";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
@@ -18,6 +19,12 @@ const FIXTURE_SCRIPT = [
 
 test.describe("@host MCP — stdio session (PLAN-0347)", () => {
     test("stdio tools/list is visible but public user calls fail closed", async ({ request }) => {
+        test.skip(
+            !dockerFrozenIncluded,
+            dockerFrozenReason(
+                "a stdio MCP server is exec'd inside the workspace sandbox: tools/list is visible to the owner while public-user calls fail closed",
+            ),
+        );
         const register = await request.post(`${CP_URL}/api/v1/auth/register`, {
             data: {
                 email: `mcp-session-${Date.now()}@test.com`,

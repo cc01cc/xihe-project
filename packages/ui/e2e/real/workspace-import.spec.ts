@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
 import { ensureWorkspace } from "./helpers/workspace";
+import { dockerFrozenIncluded, dockerFrozenReason } from "./helpers/docker-frozen";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
@@ -143,6 +144,12 @@ test.describe("@host Workspace import", () => {
         page,
         request,
     }) => {
+        test.skip(
+            !dockerFrozenIncluded,
+            dockerFrozenReason(
+                "the managed import pipeline imports a Runtime-visible source directory without creating a Session",
+            ),
+        );
         const user = await registerUser(request, "basic");
         seedPage(page, user);
         const dialog = await startImportFrom(page, user, sourceDir);
@@ -151,6 +158,12 @@ test.describe("@host Workspace import", () => {
     });
 
     test("copies the source tree into the managed workspace", async ({ page, request }) => {
+        test.skip(
+            !dockerFrozenIncluded,
+            dockerFrozenReason(
+                "the managed import pipeline copies the source tree into the managed workspace",
+            ),
+        );
         const user = await registerUser(request, "copy");
         seedPage(page, user);
         const dialog = await startImportFrom(page, user, sourceDir);
@@ -165,6 +178,10 @@ test.describe("@host Workspace import", () => {
     });
 
     test("recovers an in-flight import after a reload", async ({ page, request }) => {
+        test.skip(
+            !dockerFrozenIncluded,
+            dockerFrozenReason("an in-flight managed import is recovered after a page reload"),
+        );
         const user = await registerUser(request, "recover");
         seedPage(page, user);
         const bulkDir = fs.mkdtempSync(path.join(os.tmpdir(), "xihe-import-bulk-"));
@@ -196,6 +213,12 @@ test.describe("@host Workspace import", () => {
     });
 
     test("cancels a running import from the dialog", async ({ page, request }) => {
+        test.skip(
+            !dockerFrozenIncluded,
+            dockerFrozenReason(
+                "a running managed import can be cancelled from the dialog and the workspace reaches the cancelled state",
+            ),
+        );
         const user = await registerUser(request, "cancel");
         seedPage(page, user);
         const bulkDir = fs.mkdtempSync(path.join(os.tmpdir(), "xihe-import-cancel-"));

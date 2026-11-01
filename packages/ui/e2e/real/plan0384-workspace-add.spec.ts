@@ -4,6 +4,7 @@ import { generateE2EPassword } from "./helpers/password";
 import { actionableErrors, collectPageErrors } from "./helpers/console";
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { dockerFrozenIncluded, dockerFrozenReason } from "./helpers/docker-frozen";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan0384-add-workspace");
@@ -352,16 +353,6 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
                 })
             ).status(),
         ).toBe(400);
-        // managed import must not receive hostPath.
-        expect(
-            (
-                await create({
-                    name: "managed-path",
-                    storageMode: "managed_import",
-                    hostPath: addDir,
-                })
-            ).status(),
-        ).toBe(400);
         // Windows modes must not receive profile.
         expect(
             (
@@ -374,17 +365,6 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
                 })
             ).status(),
         ).toBe(400);
-        // managed_import + windows mode is not a valid v1 combination.
-        expect(
-            (
-                await create({
-                    name: "managed-win",
-                    storageMode: "managed_import",
-                    executionMode: "windows-host",
-                })
-            ).status(),
-        ).toBe(400);
-
         // Replaying the same Idempotency-Key must not create a second workspace.
         const key = `plan0384-idem-${Date.now()}`;
         const body = {
@@ -402,6 +382,52 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
             second = await create(body, key);
         expect([200, 201]).toContain(second.status());
         expect(String((await second.json()).id ?? "")).toBe(firstId);
+    });
+
+    // PLAN-0618：`managed_import`（docker）的两个字段校验分支。
+    // 后端冻结时 `WorkspaceController.create` 在**字段校验之前**先返回 409 BACKEND_DISABLED
+    // （`WorkspaceController.java:98-100` 的 `requireCreationAllowed()` 先于 hostPath/profile 校验），
+    // 所以期望 400 的这两条只在 docker 后端启用时才成立 ⇒ case 级冻结，解冻时随后端一起恢复。
+    test("create API validates managed_import field combinations", async ({ request }) => {
+        test.skip(
+            !dockerFrozenIncluded,
+            dockerFrozenReason(
+                "managed_import creation field validation: hostPath is rejected, and managed_import + windows execution mode is refused as an invalid v1 combination",
+            ),
+        );
+        const headers = {
+            Authorization: `Bearer ${sharedAuth}`,
+            "Content-Type": "application/json",
+        };
+        const create = (body: Record<string, unknown>) =>
+            request.post(`${CP_URL}/api/v1/workspaces`, {
+                headers: {
+                    ...headers,
+                    "Idempotency-Key": `plan0384-managed-${Date.now()}-${Math.random()}`,
+                },
+                data: body,
+            });
+
+        // managed import must not receive hostPath.
+        expect(
+            (
+                await create({
+                    name: "managed-path",
+                    storageMode: "managed_import",
+                    hostPath: addDir,
+                })
+            ).status(),
+        ).toBe(400);
+        // managed_import + windows mode is not a valid v1 combination.
+        expect(
+            (
+                await create({
+                    name: "managed-win",
+                    storageMode: "managed_import",
+                    executionMode: "windows-host",
+                })
+            ).status(),
+        ).toBe(400);
     });
 
     test("execution-mode switch is refused for a non-member", async ({ request }) => {

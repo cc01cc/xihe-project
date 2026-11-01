@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.operation;
 
+import org.junit.jupiter.api.Tag;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
@@ -148,6 +149,7 @@ class WorkspaceJobCancelIntegrationTest extends AbstractIntegrationTest {
         return jobHistory.findByJobIdOrderBySequenceAsc(jobId);
     }
 
+    @Tag("docker-frozen")
     @Test
     void cancelsRunningJobArchivesTerminalStateAndHistory() {
         String jobId = UUID.randomUUID().toString();

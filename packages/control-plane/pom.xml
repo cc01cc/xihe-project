@@ -17,6 +17,8 @@
     <packaging>jar</packaging>
     
     <properties>
+        <!-- PLAN-0618: the single switch for frozen docker tests (default: excluded). -->
+        <docker.frozen.excludedGroups>docker-frozen</docker.frozen.excludedGroups>
         <java.version>25</java.version>
         <springdoc.version>3.1.0</springdoc.version>
         <resilience4j.version>2.4.0</resilience4j.version>
@@ -232,6 +234,16 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- PLAN-0618: docker-frozen tests are excluded by default (frozen backend) but kept in
+                         the tree; -Dgroups=docker-frozen restores them. Inventory:
+                         plans/PLAN-0618-XH-docker-freeze-complete/evidence/m3-frozen-tests.md -->
+                    <excludedGroups>${docker.frozen.excludedGroups}</excludedGroups>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

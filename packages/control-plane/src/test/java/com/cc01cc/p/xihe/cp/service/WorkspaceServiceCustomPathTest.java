@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import org.junit.jupiter.api.Tag;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,6 +21,7 @@ class WorkspaceServiceCustomPathTest {
     @Autowired
     private WorkspaceService workspaceService;
 
+    @Tag("docker-frozen")
     @Test
     void createWorkspace_persistsAndIsDiscoverable() {
         String userId = UUID.randomUUID().toString();
