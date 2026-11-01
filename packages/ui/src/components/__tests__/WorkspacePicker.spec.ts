@@ -1,39 +1,57 @@
 /**
- * BL-172：选择面的回归护栏。
+ * 选择面：BL-172 回归护栏 + PLAN-0614 M2（空态可操作）。
  *
- * 旧实现的 `onMounted` 在"tab 上下文已存在"时 `router.replace(...)` 后**直接 return**，
- * 而 `loading` 的唯一复位点在那条路径后面的 `finally` 里 ⇒ 一旦弹回选择面（WorkspaceView 收到
- * 400 WORKSPACE_CONTEXT_CONFLICT / 409 WORKSPACE_CONTEXT_REQUIRED 后按 PLAN-0608 C′ 回选择面），
- * 页面就永久停在"正在加载工作区…"，且没有任何可点击的条目 —— 而 `GET /workspaces` 其实完全正常。
+ * BL-172：旧 `onMounted` 在"tab 上下文已存在"时 `router.replace(...)` 后**直接 return**，而
+ * `loading` 的唯一复位点在那条路径后面的 `finally` 里 ⇒ 弹回选择面后永久停在"正在加载工作区…"。
  *
- * 这里把"tab 上下文指向一个打不开的工作区"这个场景固化成用例：最终必须落到列表（或错误），
- * 不能停在 loading。
+ * PLAN-0614 M2：注册不再自动建工作区 ⇒ 空态必须可操作（「创建你的第一个工作区」→ 既有创建
+ * 对话框 → 建成后刷新列表并进入新工作区）。这里把"空态 → 建 → 进入"整条链固化成用例。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 
-const replace = vi.fn<(to: unknown) => Promise<void>>();
-const push = vi.fn<(to: unknown) => Promise<void>>();
-const listWorkspaces = vi.fn<() => Promise<unknown[]>>();
-
-vi.mock<typeof import("vue-router")>("vue-router", () => ({
-    useRouter: () => ({ replace, push }),
+const mocks = vi.hoisted(() => ({
+    replace: vi.fn<(to: unknown) => Promise<void>>(),
+    push: vi.fn<(to: unknown) => Promise<void>>(),
+    listWorkspaces: vi.fn<() => Promise<unknown[]>>(),
+    writeTabWorkspace: vi.fn<(ws: unknown) => void>(),
+    clearTabWorkspace: vi.fn<() => void>(),
+    tabWorkspaceId: { value: null as string | null },
 }));
+
+vi.mock(
+    "vue-router",
+    () =>
+        ({
+            useRouter: () => ({ replace: mocks.replace, push: mocks.push }),
+            // 选择面静态 import 了创建对话框 → 其依赖链会加载 `stores/auth` → `router/index.ts`，
+            // 那里在模块求值时调用 `createRouter`/`createWebHistory`，所以 mock 必须提供最小实现。
+            createRouter: () => ({
+                beforeEach: () => undefined,
+                push: async () => undefined,
+                replace: async () => undefined,
+                currentRoute: { value: {} },
+            }),
+            createWebHistory: () => ({}),
+        }) as unknown as typeof import("vue-router"),
+);
 
 vi.mock("../../composables/api", async () => {
     const actual =
         await vi.importActual<typeof import("../../composables/api")>("../../composables/api");
     return {
         ...actual,
-        api: { listWorkspaces: (...args: unknown[]) => listWorkspaces(...args) },
+        api: { listWorkspaces: () => mocks.listWorkspaces() },
     };
 });
 
 vi.mock<typeof import("../../lib/workspaceContext")>("../../lib/workspaceContext", () => ({
-    readTabWorkspaceId: () => "11111111-1111-1111-1111-111111111111",
-    writeTabWorkspace: vi.fn<(ws: unknown) => void>(),
-    clearTabWorkspace: vi.fn<() => void>(),
+    readTabWorkspaceId: () => mocks.tabWorkspaceId.value,
+    readTabWorkspace: () =>
+        mocks.tabWorkspaceId.value ? { id: mocks.tabWorkspaceId.value, name: "Chosen" } : null,
+    writeTabWorkspace: (ws: unknown) => mocks.writeTabWorkspace(ws),
+    clearTabWorkspace: () => mocks.clearTabWorkspace(),
 }));
 
 vi.mock<typeof import("vue-i18n")>("vue-i18n", () => ({
@@ -41,47 +59,105 @@ vi.mock<typeof import("vue-i18n")>("vue-i18n", () => ({
 }));
 
 import WorkspacePicker from "../WorkspacePicker.vue";
-import { clearTabWorkspace } from "../../lib/workspaceContext";
 
-describe("WorkspacePicker (BL-172)", () => {
+/** 用桩替换真实创建对话框：只暴露 open / close / created 三个契约点。 */
+const CreateDialogStub = {
+    name: "WorkspaceCreateDialog",
+    props: { open: { type: Boolean, default: false } },
+    emits: ["close", "created"],
+    template: '<div data-testid="create-dialog-stub" :data-open="String(open)" />',
+};
+
+function mountPicker() {
+    return mount(WorkspacePicker, {
+        global: { stubs: { WorkspaceCreateDialog: CreateDialogStub } },
+    });
+}
+
+const NEW_ID = "33333333-3333-3333-3333-333333333333";
+
+describe("WorkspacePicker", () => {
     beforeEach(() => {
         setActivePinia(createPinia());
-        replace.mockReset().mockResolvedValue(undefined);
-        push.mockReset().mockResolvedValue(undefined);
-        listWorkspaces.mockReset();
-        vi.mocked(clearTabWorkspace).mockReset();
+        mocks.replace.mockReset().mockResolvedValue(undefined);
+        mocks.push.mockReset().mockResolvedValue(undefined);
+        mocks.listWorkspaces.mockReset();
+        mocks.writeTabWorkspace.mockReset();
+        mocks.clearTabWorkspace.mockReset();
+        mocks.tabWorkspaceId.value = null;
     });
 
-    it("clears the stale tab context before redirecting to it", async () => {
-        listWorkspaces.mockResolvedValue([]);
-        mount(WorkspacePicker);
+    it("BL-172: 清掉过期 tab 上下文后再重定向", async () => {
+        mocks.tabWorkspaceId.value = "11111111-1111-1111-1111-111111111111";
+        mocks.listWorkspaces.mockResolvedValue([]);
+
+        mountPicker();
         await flushPromises();
 
-        expect(clearTabWorkspace).toHaveBeenCalled();
-        expect(replace).toHaveBeenCalledWith({
+        expect(mocks.clearTabWorkspace).toHaveBeenCalled();
+        expect(mocks.replace).toHaveBeenCalledWith({
             name: "workspace",
             params: { workspaceId: "11111111-1111-1111-1111-111111111111" },
         });
     });
 
-    it("falls back to the workspace list instead of a permanent loading state", async () => {
-        // The redirect target is unusable (bounce), so onMounted must continue and load.
-        replace.mockRejectedValueOnce(new Error("bounced"));
-        listWorkspaces.mockResolvedValue([
-            { id: "22222222-2222-2222-2222-222222222222", name: "Second" },
-        ]);
+    it("BL-172: 重定向失败时退回列表，不留在 loading", async () => {
+        mocks.tabWorkspaceId.value = "11111111-1111-1111-1111-111111111111";
+        mocks.replace.mockRejectedValueOnce(new Error("bounced"));
+        mocks.listWorkspaces.mockResolvedValue([{ id: NEW_ID, name: "Second" }]);
 
-        const wrapper = mount(WorkspacePicker);
+        const wrapper = mountPicker();
         await flushPromises();
 
-        expect(listWorkspaces).toHaveBeenCalled();
+        expect(mocks.listWorkspaces).toHaveBeenCalled();
         expect(wrapper.get('[data-testid="workspace-picker"]').text()).not.toContain(
             "workspacePicker.loading",
         );
-        expect(
-            wrapper
-                .find('[data-testid="workspace-picker-item-22222222-2222-2222-2222-222222222222"]')
-                .exists(),
-        ).toBe(true);
+        expect(wrapper.find(`[data-testid="workspace-picker-item-${NEW_ID}"]`).exists()).toBe(true);
+    });
+
+    // ── PLAN-0614 M2 ─────────────────────────────────────────────────────────
+    it("T3.5-①: 无工作区时渲染空态引导，点击打开创建对话框", async () => {
+        mocks.listWorkspaces.mockResolvedValue([]);
+
+        const wrapper = mountPicker();
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="workspace-picker-empty"]').exists()).toBe(true);
+        const createButton = wrapper.get('[data-testid="workspace-picker-create"]');
+        expect(createButton.text()).toBe("workspacePicker.createFirst");
+        expect(wrapper.get('[data-testid="create-dialog-stub"]').attributes("data-open")).toBe(
+            "false",
+        );
+
+        await createButton.trigger("click");
+
+        expect(wrapper.get('[data-testid="create-dialog-stub"]').attributes("data-open")).toBe(
+            "true",
+        );
+    });
+
+    it("T3.5-③: 空态创建成功后刷新列表并进入新工作区", async () => {
+        mocks.listWorkspaces
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([
+                { id: NEW_ID, name: "My First Workspace", workspaceRole: "OWNER" },
+            ]);
+
+        const wrapper = mountPicker();
+        await flushPromises();
+
+        wrapper.getComponent(CreateDialogStub).vm.$emit("created", NEW_ID);
+        await flushPromises();
+
+        // 列表被重新拉取（第二次），并写入了 tab 上下文且导航到新工作区。
+        expect(mocks.listWorkspaces).toHaveBeenCalledTimes(2);
+        expect(mocks.writeTabWorkspace).toHaveBeenCalledWith(
+            expect.objectContaining({ id: NEW_ID, name: "My First Workspace" }),
+        );
+        expect(mocks.push).toHaveBeenCalledWith({
+            name: "workspace",
+            params: { workspaceId: NEW_ID },
+        });
     });
 });

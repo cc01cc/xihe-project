@@ -132,7 +132,7 @@ export interface ApiAuthUser {
     email: string;
     username?: string;
     name?: string;
-    workspaceId?: string;
+    workspaceId?: string | null;
     capabilities?: ApiUserCapabilities;
 }
 
@@ -2023,8 +2023,10 @@ export const api = {
             accessToken: string;
             refreshToken: string;
             user: ApiAuthUser;
-            workspaceId?: string;
-            workspace?: ApiWorkspace;
+            // PLAN-0614: CP returns null when the account has no workspace (registration no longer creates one).
+
+            workspaceId?: string | null;
+            workspace?: ApiWorkspace | null;
         }>("/auth/login", {
             method: "POST",
             body: JSON.stringify({ identifier, password }),
@@ -2043,8 +2045,10 @@ export const api = {
             accessToken: string;
             refreshToken: string;
             user: ApiAuthUser;
-            workspaceId?: string;
-            workspace?: ApiWorkspace;
+            // PLAN-0614: CP returns null when the account has no workspace (registration no longer creates one).
+
+            workspaceId?: string | null;
+            workspace?: ApiWorkspace | null;
         }>("/auth/register", {
             method: "POST",
             body: JSON.stringify(body),
@@ -2063,8 +2067,10 @@ export const api = {
             accessToken: string;
             refreshToken: string;
             user: ApiAuthUser;
-            workspaceId?: string;
-            workspace?: ApiWorkspace;
+            // PLAN-0614: CP returns null when the account has no workspace (registration no longer creates one).
+
+            workspaceId?: string | null;
+            workspace?: ApiWorkspace | null;
         }>("/auth/local-login", { method: "POST" });
     },
     localPasswordReset(newPassword: string) {

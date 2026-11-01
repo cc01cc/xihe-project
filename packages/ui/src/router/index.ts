@@ -3,10 +3,12 @@ import { api } from "../composables/api";
 import { logger } from "../lib/logger";
 import {
     migrateLegacyWorkspace,
+    readTabWorkspace,
     readTabWorkspaceId,
     writeTabWorkspace,
     writeTabWorkspaceId,
 } from "../lib/workspaceContext";
+import { resolveLocalModeLanding } from "../lib/workspaceLanding";
 
 const router = createRouter({
     history: createWebHistory(),
@@ -185,17 +187,22 @@ router.beforeEach(async (to) => {
         }
         if (bootstrap.localMode) {
             try {
+                // PLAN-0614 决策 #5 / BL-173：落点优先级 = 已有 tab 上下文（记住上次选择）→
+                // localLogin 返回的第一个活跃工作区 → 都没有则停在选择面（空态可操作）。
+                // 以前这里无条件用登录响应覆盖 tab 上下文，用户在本页签选过的工作区会被顶掉。
+                const tabBeforeLogin = readTabWorkspace();
                 const res = await api.localLogin();
                 localStorage.setItem("xihe-token", res.accessToken);
                 localStorage.setItem("xihe-user", JSON.stringify(res.user));
-                if (res.workspace) {
-                    writeTabWorkspace(res.workspace);
-                } else if (res.workspaceId) {
-                    writeTabWorkspace({
-                        id: res.workspaceId,
-                        name: "Default Workspace",
-                    });
-                }
+                const landing = resolveLocalModeLanding({
+                    tabWorkspace: tabBeforeLogin,
+                    loginWorkspace: res.workspace,
+                    loginWorkspaceId: res.workspaceId,
+                    fallbackName: "Default Workspace",
+                });
+                // PLAN-0614：只有拿到工作区才写 tab 上下文；没有工作区时不写（空态由选择面呈现）。
+                // 这是 0608 I6 的已文档化例外（localMode 免密自动登录有意写入）。
+                if (landing) writeTabWorkspace(landing);
                 // PLAN-0611: the guard writes localStorage, but the Pinia store may already exist
                 // (`main.ts` mounts the app before the initial navigation resolves), so its
                 // in-memory token/user would stay "signed out" — `isAuthenticated`/`isAdmin` false
@@ -208,10 +215,7 @@ router.beforeEach(async (to) => {
                     useAuthStore().adoptGuardSession(
                         res.accessToken,
                         res.user,
-                        res.workspace ??
-                            (res.workspaceId
-                                ? { id: res.workspaceId, name: "Default Workspace" }
-                                : null),
+                        landing,
                         res.refreshToken,
                     );
                 } catch (error) {
