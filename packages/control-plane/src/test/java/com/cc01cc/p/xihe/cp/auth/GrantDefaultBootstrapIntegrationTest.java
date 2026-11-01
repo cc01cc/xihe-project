@@ -10,12 +10,15 @@ import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.files.ChatAttachmentService;
 import com.cc01cc.p.xihe.cp.files.dto.BatchUploadResult;
+import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.GrantAuthorizationService;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.policy.GrantSources;
+import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
 import com.cc01cc.p.xihe.cp.policy.PolicyContext;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
 import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.ToolShape;
 import com.cc01cc.p.xihe.cp.service.ImportService;
 import com.cc01cc.p.xihe.cp.repository.AuditLogRepository;
@@ -65,6 +68,27 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </ul>
  */
 class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
+
+    /**
+     * spec §4.1 USER row: the five allow classes. PLAN-0622 D8 appended exactly one atom —
+     * {@code CREATE_OWN_AGENT} (an ordinary account may create its <b>own</b> PERSONAL agent) —
+     * so the expectation is expressed as "the five plus that one", never as a bare literal count.
+     */
+    private static final List<String> USER_ALLOW_ATOMS = List.of(
+            ToolFaceRegistry.ACTION_READ, ToolFaceRegistry.ACTION_WRITE,
+            ToolFaceRegistry.ACTION_DELETE, ToolFaceRegistry.ACTION_EXEC,
+            ToolFaceRegistry.ACTION_NETWORK);
+
+    /** D8: the user-tier atom that lets an account create its own PERSONAL agent principal. */
+    private static final String OWN_AGENT_ATOM = ToolFaceRegistry.ACTION_OWN_AGENT;
+
+    private static final Set<String> USER_DEFAULT_ATOMS = userDefaultAtoms();
+
+    private static Set<String> userDefaultAtoms() {
+        Set<String> atoms = new LinkedHashSet<>(USER_ALLOW_ATOMS);
+        atoms.add(OWN_AGENT_ATOM);
+        return Set.copyOf(atoms);
+    }
 
     @Autowired
     private WorkspaceFixture workspaceFixture;
@@ -178,18 +202,30 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         User user = userRepository.findById(UUID.fromString(userId)).orElseThrow();
         User seededAdmin = userRepository.findByEmail("admin@xihe.local").orElseThrow();
 
-        // PLAN-0610 W1b T1.9: DataSeeder now seeds the SUPER_ADMIN instance binding (invariant I1),
-        // so the bootstrap admin materializes SUPER_ADMIN's 15 action atoms, not ADMIN's 8.
-        assertEquals(15, roleAtoms("user", seededAdmin.getId()).size(),
-                "the seeded admin owns SUPER_ADMIN: 15 action atoms materialized");
-        assertEquals(15, roleRows("user", seededAdmin.getId()).size(),
+        // PLAN-0610 W1b T1.9: DataSeeder seeds the SUPER_ADMIN instance binding (invariant I1), so
+        // the bootstrap admin materializes every action atom of the vocabulary — 16 after PLAN-0622
+        // D8 appended CREATE_OWN_AGENT — instead of ADMIN's nine.
+        Set<String> seededAdminAtoms = roleAtoms("user", seededAdmin.getId());
+        List<AuthorizationGrant> seededAdminRows = roleRows("user", seededAdmin.getId());
+        assertEquals(new LinkedHashSet<>(PermissionAtomCatalog.actionAtoms()), seededAdminAtoms,
+                "the seeded admin owns SUPER_ADMIN: every action atom of the vocabulary, "
+                        + "not a hard-coded count");
+        assertTrue(seededAdminAtoms.contains(OWN_AGENT_ATOM),
+                "PLAN-0622 D8: CREATE_OWN_AGENT is an action atom, so SUPER_ADMIN carries it");
+        assertEquals(PermissionAtomCatalog.actionAtoms().size(), seededAdminRows.size(),
                 "one materialized row per action atom; capability atoms are never rows");
 
         Session session = sessionService.create(userId, workspaceId, "Grant test Session", null, null);
         sessionId = session.getId().toString();
 
-        assertEquals(5, roleAtoms("user", user.getId()).size(), "USER default excludes credential");
-        assertEquals(5, roleRows("user", user.getId()).size(), "one row per USER atom");
+        Set<String> userAtoms = roleAtoms("user", user.getId());
+        assertEquals(USER_DEFAULT_ATOMS, userAtoms,
+                "PLAN-0622 D8: the USER default is the five allow classes plus CREATE_OWN_AGENT "
+                        + "(an account may create its own PERSONAL agent); credential atoms stay out");
+        assertTrue(userAtoms.containsAll(USER_ALLOW_ATOMS),
+                "D8 appended exactly one atom: the five allow classes are still materialized");
+        assertEquals(USER_DEFAULT_ATOMS.size(), roleRows("user", user.getId()).size(),
+                "one instance-tier row per USER atom (six after D8)");
         assertEquals(0, grantRepository.findBySubjectTypeAndSubjectId("agent", session.getId()).size(),
                 "Session creation no longer materializes a Session-subject Agent default (PLAN-0374 T2.7)");
         assertEquals("read", roleRows("user", user.getId()).get(0).getReadState());
@@ -213,12 +249,13 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
                 .orElseThrow();
         grantIds.add(agentDefault.getId());
         assertEquals("read", agentDefault.getReadState());
-        assertEquals(5, agentDefault.getPermissions().size(),
-                "round-2 P1-1: the frozen Agent snapshot keeps the whole atom array in one row");
+        assertEquals(USER_DEFAULT_ATOMS.size(), agentDefault.getPermissions().size(),
+                "round-2 P1-1: the frozen Agent snapshot keeps the whole USER atom array in one row "
+                        + "(six after D8, not five)");
         assertEquals("instance", agentDefault.getScopeType());
         assertEquals(1L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
                 "agent", session.getId(), GrantSources.AGENT_DEFAULT));
-        assertEquals(5L, roleRows("user", user.getId()).size(),
+        assertEquals((long) USER_DEFAULT_ATOMS.size(), roleRows("user", user.getId()).size(),
                 "one instance-tier row per USER atom (the WS_OWNER workspace rows are a different tier)");
         assertEquals(auditsBeforeSecondEnsure, auditRows(userId, MATERIALIZED_ACTION).size(),
                 "a second ensureUserDefault with an unchanged set writes no further audit row");
@@ -234,15 +271,34 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         userId = registered.getUser().getId();
         workspaceId = registered.getWorkspaceId();
 
-        assertEquals(5, roleAtoms("user", UUID.fromString(userId)).size(),
-                "the materialized USER set carries the five action classes only");
+        Set<String> userAtoms = roleAtoms("user", UUID.fromString(userId));
+        assertEquals(USER_DEFAULT_ATOMS, userAtoms,
+                "the materialized USER set carries the five allow classes plus CREATE_OWN_AGENT (D8)");
         roleRows("user", UUID.fromString(userId)).forEach(row -> grantIds.add(row.getId()));
 
-        for (String actionClass : List.of("read", "write", "delete", "exec", "network")) {
+        // PLAN-0622 D8 scope contract: CREATE_OWN_AGENT is a *user-tier* capability (create your
+        // OWN agent), not a workspace-instance management atom. It is therefore instance-bindable
+        // only — a workspace-scoped binding would mean "create agents for the workspace" — and the
+        // USER set still does not carry the tier-creation atoms.
+        PermissionAtomCatalog.Atom ownAgentAtom = PermissionAtomCatalog.atom(OWN_AGENT_ATOM);
+        assertEquals("instance", ownAgentAtom.scopeClass(),
+                "D8: CREATE_OWN_AGENT is declared with scope_class=instance (user tier), not 'both'");
+        assertFalse(ownAgentAtom.bindableIn(AccessScope.WORKSPACE),
+                "D8: a workspace binding of CREATE_OWN_AGENT is rejected (ROLE_SCOPE_MISMATCH)");
+        for (String tierCreation : List.of(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS,
+                ToolFaceRegistry.ACTION_CREATE_ACCOUNT)) {
+            assertFalse(userAtoms.contains(tierCreation),
+                    "D8 does not widen tier creation: " + tierCreation
+                            + " still needs its own atom (WORKSPACE/INSTANCE-scope principals)");
+        }
+
+        for (String actionClass : USER_ALLOW_ATOMS) {
             assertTrue(grantAuthorizationService.allowsUserOnly(
                             request(actionClass, "notes/today.md")),
                     "the minimal set covers " + actionClass + " on the registrant's own workspace");
         }
+        assertTrue(grantAuthorizationService.allowsUserOnly(request(OWN_AGENT_ATOM, "*")),
+                "D8: CREATE_OWN_AGENT evaluates allow for the registrant (own PERSONAL agent)");
         assertFalse(grantAuthorizationService.allowsUserOnly(
                         request("credential_use", "credential:" + UUID.randomUUID())),
                 "credential is outside the minimal set (zero over-privilege, PLAN-0496 atoms)");
@@ -390,8 +446,11 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         assertEquals(1L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
                 "agent", session.getId(), GrantSources.AGENT_DEFAULT),
                 "concurrent ensures keep exactly one frozen Agent snapshot");
-        assertEquals(5L, roleRows("user", user.getId()).size(),
-                "concurrent ensures keep exactly one instance-tier row per atom (uq_grants_role_atom)");
+        assertEquals((long) USER_DEFAULT_ATOMS.size(), roleRows("user", user.getId()).size(),
+                "concurrent ensures keep exactly one instance-tier row per atom (uq_grants_role_atom); "
+                        + "six after PLAN-0622 D8 added CREATE_OWN_AGENT");
+        assertTrue(roleAtoms("user", user.getId()).contains(OWN_AGENT_ATOM),
+                "the extra row is the CREATE_OWN_AGENT atom, not a duplicated base atom");
         // The grants were wiped above, so the first ensure re-creates the instance set (one audit
         // row); the concurrent second ensure changes nothing (no further row).
         assertEquals(materializationAuditsBefore + 1, auditRows(userId, MATERIALIZED_ACTION).size(),
