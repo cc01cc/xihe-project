@@ -11,6 +11,7 @@ vi.mock("../../../composables/api", () => ({
         problem: { code: string; detail?: string };
         constructor(problem: { code: string; detail?: string }) {
             super(problem.detail ?? problem.code);
+            this.name = "ApiError";
             this.problem = problem;
         }
     },

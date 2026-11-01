@@ -38,7 +38,7 @@ vi.mock("../../../../composables/api", async (importOriginal) => {
             problem: { code: string };
             constructor(code: string) {
                 super(code);
-                this.name = "ApiError";
+                this.name = "MockApiError";
                 this.problem = { code };
             }
         },

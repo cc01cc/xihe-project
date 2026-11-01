@@ -21,7 +21,7 @@ vi.mock("../../../../composables/api", async (importOriginal) => {
             problem: { code: string; detail?: string };
             constructor(code: string) {
                 super("CREATE_ACCOUNT permission is required");
-                this.name = "ApiError";
+                this.name = "MockApiError";
                 this.problem = { code, detail: "CREATE_ACCOUNT permission is required" };
             }
         },

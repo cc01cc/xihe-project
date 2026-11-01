@@ -124,7 +124,7 @@ describe("api.login", () => {
             json: () => Promise.resolve({ code: "WORKSPACE_CONTEXT_REQUIRED" }),
         } as unknown as Response);
 
-        await expect(api.getSessions()).rejects.toThrow();
+        await expect(api.getSessions()).rejects.toThrow(/API error 409/);
         expect(pickerSpy).toHaveBeenCalledTimes(1);
         expect(logoutSpy).not.toHaveBeenCalled();
         expect(localStorage.getItem("xihe-token")).toBe("existing-token");
