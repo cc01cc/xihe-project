@@ -160,6 +160,7 @@ flowchart LR
 
 ## 8b. Workspace 创建、目录选择与执行模式（PLAN-0379/0384）
 
+- **删除（BL-174）**：`DELETE /api/v1/workspaces/{workspaceId}` 的授权是**能力判定**，不再是"仅 owner"：调用者是该工作区 `WS_OWNER`，或持 `cap:workspace:admin`（该工作区作用域、instance 作用域或 `cap:instance:admin`）。`WS_OWNER` 的原子集本就含 `workspace:admin`，故并集等价于"持该工作区管理能力"；**内容原子 `delete` 不构成删除工作区的凭据**（`WS_EDITOR` 可删文件，但删除工作区返回 `403 WORKSPACE_FORBIDDEN`）。自定义角色需要删工作区时授 `workspace:admin`。工作区不存在仍是 `404 WORKSPACE_NOT_FOUND`（不被 403 覆盖）。删除仍为软删（`deleted_at`），WorkspaceStorage 不删，Runtime 通知保持 after-commit best-effort；审计 `workspace_deleted` 追加 `actor` / `owner` / `crossOwner`（actor≠owner 时为 true），使跨归属的管理性删除与 owner 自助删除可区分。路由的角色门（`WorkspaceWriteGuard`）对该路由为 `SERVICE_CHECKED`：由 service 单点判，避免拦截器与 service 两套判决。
 - **创建**：`POST /api/v1/workspaces` 接受 `storageMode`（`managed_import`/`direct_attach`）、`executionMode`、`hostPath`（仅 direct-attach）与 `Idempotency-Key`。v1 矩阵由既有契约固定：`managed_import` 仅 `docker`（Docker 线暂缓，仅文件导入可用）；`direct_attach` 仅 `windows-mxc`/`windows-host` 且必带 `hostPath`；`profile`/`image` 仅 docker。direct-attach 在落库前先经 Runtime probe，probe 失败不落库。
 - **创建前能力预检**：`POST /api/v1/workspaces/capabilities/preflight`（USER/ADMIN）入参 `{storageMode: direct_attach, hostPath, executionMode}`，经 CP 复用 Runtime `capabilities/direct-attach/probe` 返回 `BackendCapabilitySnapshot` + `checkedAt`。Runtime 可达时 `available:false`（含 `reason`，如 `MXC_EXECUTABLE_MISSING`）仍是 200；Runtime 不可达/非法响应 → `502 RUNTIME_UNAVAILABLE`。CP 不缓存、不硬编码后端可用性。
 - **能力 reason 保真**：`environment.capability` 与预检都保留 Runtime 返回的具体 `reason`（不再折叠为 `DIRECT_ATTACH_UNAVAILABLE`），UI 据此显示不可用原因。

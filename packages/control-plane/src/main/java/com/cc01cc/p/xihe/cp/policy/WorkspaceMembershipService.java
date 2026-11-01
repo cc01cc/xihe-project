@@ -109,7 +109,7 @@ public class WorkspaceMembershipService {
                         workspaceId)
                 .stream()
                 .filter(binding -> userId.equals(binding.getSubjectId()))
-                .map(binding -> ROLE_BY_NAME.get(roleNames.get(binding.getRoleId())))
+                .map(binding -> workspaceRoleOf(roleNames, binding))
                 .filter(Objects::nonNull)
                 .findFirst();
     }
@@ -142,8 +142,7 @@ public class WorkspaceMembershipService {
                 .findBySubjectTypeAndScopeTypeAndScopeId(SUBJECT_USER, AccessScope.WORKSPACE,
                         workspaceId)
                 .stream()
-                .filter(binding -> WorkspaceRole.OWNER
-                        == ROLE_BY_NAME.get(roleNames.get(binding.getRoleId())))
+                .filter(binding -> WorkspaceRole.OWNER == workspaceRoleOf(roleNames, binding))
                 .min(Comparator.comparing(AccessRoleBinding::getGrantedAt))
                 .map(AccessRoleBinding::getSubjectId);
     }
@@ -166,7 +165,7 @@ public class WorkspaceMembershipService {
         List<WorkspaceRoleRef> refs = new ArrayList<>();
         for (AccessRoleBinding binding : bindings.findBySubjectTypeAndSubjectIdAndScopeType(
                 SUBJECT_USER, userId, AccessScope.WORKSPACE)) {
-            WorkspaceRole role = ROLE_BY_NAME.get(roleNames.get(binding.getRoleId()));
+            WorkspaceRole role = workspaceRoleOf(roleNames, binding);
             if (role != null) {
                 refs.add(new WorkspaceRoleRef(binding.getScopeId(), role));
             }
@@ -272,6 +271,21 @@ public class WorkspaceMembershipService {
             case "VIEWER" -> SystemAccessRoleCatalog.WS_VIEWER;
             default -> SystemAccessRoleCatalog.WS_EDITOR;
         };
+    }
+
+    /**
+     * The workspace role of a binding, or {@code null} when its role is not a workspace system role.
+     *
+     * <p>A workspace-scope binding of a <b>custom</b> role is legal (that is how a role with extra
+     * atoms is granted at workspace scope), so the role-name map has no entry for it; looking the name
+     * up in {@code Map.of(...)} with a null key used to throw NPE on every membership read of such a
+     * workspace. Custom-role bindings are not workspace memberships — their atoms are evaluated by
+     * {@link GrantAuthorizationService} — so they simply do not project a workspace role.</p>
+     */
+    private static WorkspaceRole workspaceRoleOf(Map<UUID, String> roleNames,
+            AccessRoleBinding binding) {
+        String roleName = roleNames.get(binding.getRoleId());
+        return roleName == null ? null : ROLE_BY_NAME.get(roleName);
     }
 
     private Map<UUID, String> roleNamesById() {

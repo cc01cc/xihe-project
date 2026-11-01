@@ -14,7 +14,15 @@ public final class WorkspaceWriteGuard {
     public enum Requirement {
         READ,
         WRITE,
-        MANAGE
+        MANAGE,
+        /**
+         * BL-174: the endpoint authorizes on its own (capability-based) and the coarse role gate must
+         * not veto it. Used by {@code DELETE /api/v1/workspaces/{id}}, where ownership is only one of
+         * three acceptable capabilities — grading it with {@link #MANAGE} would reject an instance
+         * administrator or a workspace-scoped {@code delete} atom holder that
+         * {@code WorkspaceService#deleteWorkspace} deliberately admits.
+         */
+        SERVICE_CHECKED
     }
 
     private WorkspaceWriteGuard() {
@@ -37,6 +45,10 @@ public final class WorkspaceWriteGuard {
             // callers never reach the controller.
             return Requirement.READ;
         }
+        if (isWorkspaceDelete(verb, path)) {
+            // BL-174: see Requirement#SERVICE_CHECKED.
+            return Requirement.SERVICE_CHECKED;
+        }
         if (isOwnerOnly(verb, path)) {
             return Requirement.MANAGE;
         }
@@ -52,6 +64,9 @@ public final class WorkspaceWriteGuard {
     }
 
     public static boolean allows(String canonicalRole, Requirement requirement) {
+        if (requirement == Requirement.SERVICE_CHECKED) {
+            return true;
+        }
         if (requirement == Requirement.READ) {
             return canonicalRole != null;
         }
@@ -61,9 +76,14 @@ public final class WorkspaceWriteGuard {
         return WorkspaceRole.canManage(canonicalRole);
     }
 
+    /** BL-174: {@code DELETE /api/v1/workspaces/{id}} — authorized by {@code WorkspaceService}. */
+    private static boolean isWorkspaceDelete(String verb, String path) {
+        return "DELETE".equals(verb) && path.matches("^/api/v1/workspaces/[^/]+$");
+    }
+
     private static boolean isOwnerOnly(String verb, String path) {
-        if ("PATCH".equals(verb) || "DELETE".equals(verb)) {
-            // /api/v1/workspaces/{id} (rename/delete)
+        if ("PATCH".equals(verb)) {
+            // /api/v1/workspaces/{id} (rename)
             if (path.matches("^/api/v1/workspaces/[^/]+$")) {
                 return true;
             }

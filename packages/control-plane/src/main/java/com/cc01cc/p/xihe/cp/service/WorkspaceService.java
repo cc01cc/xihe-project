@@ -8,6 +8,7 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.event.WorkspaceEventManager;
 import com.cc01cc.p.xihe.cp.operation.JobStateService;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
+import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.WorkspaceMembershipService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -65,6 +66,7 @@ public class WorkspaceService {
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
     private final WorkspaceEventManager workspaceEventManager;
     private final AuditLogger auditLogger;
+    private final AuthzContext authzContext;
 
     public WorkspaceService(WorkspaceRepository workspaceRepository,
                             WorkspaceMembershipService memberships,
@@ -75,7 +77,8 @@ public class WorkspaceService {
                             JobStateService jobStateService,
                             com.fasterxml.jackson.databind.ObjectMapper objectMapper,
                             WorkspaceEventManager workspaceEventManager,
-                            AuditLogger auditLogger) {
+                            AuditLogger auditLogger,
+                            AuthzContext authzContext) {
         this.workspaceRepository = workspaceRepository;
         this.memberships = memberships;
         this.executionSpecService = executionSpecService;
@@ -86,6 +89,7 @@ public class WorkspaceService {
         this.objectMapper = objectMapper;
         this.workspaceEventManager = workspaceEventManager;
         this.auditLogger = auditLogger;
+        this.authzContext = authzContext;
     }
 
     /**
@@ -385,16 +389,50 @@ public class WorkspaceService {
         return workspace;
     }
 
+    /**
+     * BL-174: logical delete is authorized by <b>capability</b>, not by ownership alone.
+     *
+     * <p>Two sufficient conditions (user decision 2026-11-01, "方案 A"; narrowed the same day):</p>
+     * <ol>
+     *   <li>the caller is the workspace's {@code WS_OWNER} (pre-BL-174 behaviour);</li>
+     *   <li>the caller administers the workspace — {@code cap:workspace:admin} at instance scope or at
+     *       this workspace's scope, or {@code cap:instance:admin}
+     *       ({@link AuthzContext#canWorkspaceAdmin(UUID, UUID)}).</li>
+     * </ol>
+     *
+     * <p>In practice this union is "holds {@code cap:workspace:admin} for this workspace": the
+     * {@code WS_OWNER} role's atom set already contains {@code workspace:admin}. A role that needs to
+     * delete a workspace is therefore given the <b>workspace administration capability</b> — never the
+     * content {@code delete} atom.</p>
+     *
+     * <p><b>Why the content atom is not accepted (v2 narrowing):</b> {@code delete} is a content
+     * operation atom (delete a file, delete a tool product). Accepting it here let every
+     * {@code WS_EDITOR} member — whose atoms are read/write/delete/exec — delete the whole workspace,
+     * which is a worse regression than the original defect. Workspace lifecycle is a
+     * workspace-administration question, not a content question.</p>
+     *
+     * <p>Why: the pre-BL-174 gate was owner-only, so an instance super administrator (and any
+     * operator holding only the admin capability) got 404 on a workspace whose sandbox had to be
+     * cleaned up — the only remaining path was editing the database directly, which loses this API's
+     * audit trail and the Runtime notification.</p>
+     *
+     * <p>Denial keeps the existing {@code 403 WORKSPACE_FORBIDDEN} contract (no new error code). The
+     * audit row records {@code actor} / {@code owner} / {@code crossOwner} so a cross-owner
+     * administrative delete is distinguishable from an owner's self-service delete. The delete itself
+     * is unchanged: soft delete ({@code deleted_at}), WorkspaceStorage untouched, Runtime notification
+     * after commit, best-effort.</p>
+     */
     @Transactional
-    public Workspace deleteWorkspace(String workspaceId, String ownerId) {
+    public Workspace deleteWorkspace(String workspaceId, String actorId) {
         Workspace workspace = workspaceRepository.findByIdForUpdate(UUID.fromString(workspaceId))
                 .orElseThrow(() -> new CpApiException(
                         org.springframework.http.HttpStatus.NOT_FOUND,
                         "WORKSPACE_NOT_FOUND",
                         "Workspace not found"));
-        ensureOwner(workspace, ownerId);
+        authorizeWorkspaceDelete(workspace, actorId);
         workspace.setDeletedAt(Instant.now());
         workspaceRepository.save(workspace);
+        recordWorkspaceDeleted(workspace, actorId);
 
         // Runtime owns the ephemeral Sandbox. WorkspaceStorage remains untouched.
         // STO-1: the Runtime notification must not run inside the delete
@@ -713,10 +751,44 @@ public class WorkspaceService {
         return normalized;
     }
 
+    /** BL-174: owner ∪ workspace administration ({@code cap:workspace:admin}). */
+    private void authorizeWorkspaceDelete(Workspace workspace, String actorId) {
+        UUID actor = parseSubjectOrNull(actorId);
+        if (actor != null
+                && (memberships.isOwner(workspace.getId(), actor)
+                        || authzContext.canWorkspaceAdmin(actor, workspace.getId()))) {
+            return;
+        }
+        throw new CpApiException(
+                org.springframework.http.HttpStatus.FORBIDDEN,
+                "WORKSPACE_FORBIDDEN",
+                "Workspace delete requires ownership or workspace administration");
+    }
+
+    /** BL-174 audit: who deleted whose workspace (no request body or secret is recorded). */
+    private void recordWorkspaceDeleted(Workspace workspace, String actorId) {
+        String owner = memberships.ownerOf(workspace.getId()).map(UUID::toString).orElse(null);
+        boolean crossOwner = owner != null && !owner.equals(actorId);
+        auditLogger.recordDurableChange(actorId, workspace.getId().toString(), "workspace_deleted",
+                "workspace", workspace.getId().toString(),
+                "actor=" + (actorId == null ? "unknown" : actorId)
+                        + " owner=" + (owner == null ? "none" : owner)
+                        + " crossOwner=" + crossOwner);
+    }
+
+    private static UUID parseSubjectOrNull(String subjectId) {
+        try {
+            return subjectId == null ? null : UUID.fromString(subjectId);
+        } catch (IllegalArgumentException invalidSubject) {
+            return null;
+        }
+    }
+
     /**
      * PLAN-0610 W4b: ownership is the {@code WS_OWNER} binding (V89 dropped
      * {@code workspaces.owner_id}). A malformed or unknown subject is the same 404 as "not the
-     * owner" so existence never leaks.
+     * owner" so existence never leaks. Still used by the update path; delete now uses
+     * {@link #authorizeWorkspaceDelete(Workspace, String)} (BL-174).
      */
     private void ensureOwner(Workspace workspace, String ownerId) {
         UUID actor;

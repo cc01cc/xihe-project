@@ -35,8 +35,11 @@ class WorkspaceWriteGuardTest {
     void workspaceLifecycleRequiresOwner() {
         assertEquals(WorkspaceWriteGuard.Requirement.MANAGE,
                 WorkspaceWriteGuard.requirement("PATCH", "/api/v1/workspaces/abc"));
-        assertEquals(WorkspaceWriteGuard.Requirement.MANAGE,
+        // BL-174: workspace delete is capability-based, so the service authorizes it and the coarse
+        // role gate must not veto an instance admin / workspace-scoped delete atom holder.
+        assertEquals(WorkspaceWriteGuard.Requirement.SERVICE_CHECKED,
                 WorkspaceWriteGuard.requirement("DELETE", "/api/v1/workspaces/abc"));
+        assertTrue(WorkspaceWriteGuard.allows(null, WorkspaceWriteGuard.Requirement.SERVICE_CHECKED));
         assertEquals(WorkspaceWriteGuard.Requirement.MANAGE,
                 WorkspaceWriteGuard.requirement("PATCH", "/api/v1/workspaces/abc/execution-mode"));
         assertEquals(WorkspaceWriteGuard.Requirement.MANAGE,
