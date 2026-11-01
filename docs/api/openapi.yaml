@@ -74,12 +74,17 @@ paths:
   /api/v1/workspaces/{workspaceId}/agents:
     get:
       operationId: listWorkspaceAgents
-      summary: List Agent principals bound to a Workspace
-      description: Workspace members may read binding metadata and this Workspace's permission caps; prompts and provider secrets are never returned.
+      summary: List the Agent principals a Workspace can use (three sources)
+      description: |
+        PLAN-0622 M1.2: merges the three sources a Workspace member may use — the
+        Workspace's own bindings (`source=workspace`), the caller's own PERSONAL
+        principals (`source=personal`) and instance-wide INSTANCE principals
+        (`source=instance`, usable without a binding). Non-members get 403
+        WORKSPACE_FORBIDDEN; prompts and provider secrets are never returned.
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }]
       responses:
-        '200': { description: Workspace Agent bindings, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentView' } } } } }
+        '200': { description: Agent principals usable in this Workspace, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceAgentListResponse' } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
@@ -212,25 +217,63 @@ paths:
   /api/v1/workspace-imports/{importId}/cancel:
     post: { operationId: cancelWorkspaceImport, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: importId, required: true, schema: { type: string } }], responses: { '200': { description: Import cancellation state }, '404': { $ref: '#/components/responses/Problem' } } }
   /api/v1/agent-principals:
+    get:
+      operationId: listAgentPrincipals
+      summary: List Agent principals by sharing scope
+      description: |
+        PLAN-0622 M1.2: PERSONAL returns only the caller's own principals,
+        WORKSPACE requires `workspaceId` and membership (returns that Workspace's
+        bound principals), INSTANCE requires instance administration and returns
+        every instance principal. `scope` is optional; omitting it returns the
+        caller-usable union for the given workspace context.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: scope, required: false, schema: { type: string, enum: [PERSONAL, WORKSPACE, INSTANCE] } }
+        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Agent principals, content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalListResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
     post:
       operationId: createAgentPrincipal
       summary: Create an Agent principal from a readable template snapshot
-      description: Requires the independent human CREATE_ACCOUNT grant. Resolves an optional template only from caller-readable config layers, freezes the snapshot and grants in one transaction, and does not create a Workspace binding.
+      description: |
+        PLAN-0622 M1: creation is split by sharing scope and each tier keeps its own
+        independent action (never alias-merged, default deny) — `PERSONAL` requires
+        the user-tier `CREATE_OWN_AGENT`, `WORKSPACE` requires
+        `MANAGE_WORKSPACE_AGENTS` on that Workspace, `INSTANCE` requires the
+        instance-tier `CREATE_ACCOUNT`. `scope` defaults to `WORKSPACE`. Resolves an
+        optional template only from caller-readable config layers, freezes the
+        snapshot and grants in one transaction, and does not create a Workspace
+        binding.
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [name]
-              properties:
-                name: { type: string, minLength: 1 }
-                templateId: { type: [string, 'null'], format: uuid }
+        content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalCreateRequest' } } }
       responses:
         '201': { description: Created Agent principal, content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalCreateView' } } } }
         '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /api/v1/agent-principals/{principalId}/disable:
+    post:
+      operationId: disableAgentPrincipal
+      summary: Disable an Agent principal (bodies are never hard-deleted)
+      description: |
+        PLAN-0622 M1: disabling is terminal for new Sessions and writes the durable
+        audit `agent_principal_disabled`; the row itself is never deleted (FK
+        ON DELETE RESTRICT keeps historical references intact). A PERSONAL
+        principal may be disabled by its owner, a Workspace-bound principal by a
+        holder of `MANAGE_WORKSPACE_AGENTS` on that Workspace, and an INSTANCE
+        principal by instance administration.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: principalId, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '204': { description: Principal disabled }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
@@ -1482,7 +1525,7 @@ paths:
     post:
       operationId: redeemProviderCredentialLease
       summary: Redeem a short-lived provider credential lease
-      description: Service-to-service only. The response contains an in-memory credential and must never be logged or returned to a browser.
+      description: 'Service-to-service only. The response contains an in-memory credential and must never be logged or returned to a browser. PLAN-0622 — admission is gated by the resource governor (connection/model inflight, queue depth, window token budget); an over-limit request is refused fast with 429 RESOURCE_EXHAUSTED + Retry-After, and the lease is released on every terminal path.'
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -1495,6 +1538,7 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/ResourceExhausted' }
   /internal/v1/credentials/rotation/status:
     get:
       operationId: getCredentialRotationStatus
@@ -3072,6 +3116,16 @@ components:
           description: Always no-store for a throttle response
           schema: { type: string, enum: [no-store] }
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
+    ResourceExhausted:
+      description: 'RESOURCE_EXHAUSTED — the resource governor refused admission (connection/model concurrency, queue depth or window token budget). Fast refusal, never a queue wait and never a 503: the backend is healthy, the caller is over its limit. Retry after the Retry-After delay or use another connection.'
+      headers:
+        Retry-After:
+          description: Seconds before the caller should retry
+          schema: { type: integer, minimum: 1 }
+        Cache-Control:
+          description: Always no-store for a throttle response
+          schema: { type: string, enum: [no-store] }
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/ResourceExhaustedProblem' } } }
   schemas:
     UserCapabilities:
       type: object
@@ -3264,9 +3318,16 @@ components:
     WorkspaceCreateRequest: { type: object, required: [name, storageMode], properties: { name: { type: string }, description: { type: [string, 'null'] }, profile: { type: string, enum: [strict, coding, isolated], default: coding, description: 'Docker-only sandbox profile (requires the frozen docker backend).' }, image: { type: string, description: 'Docker-only allowlisted image (requires the frozen docker backend).' }, storageMode: { type: string, enum: [managed_import, direct_attach], description: 'Required. The docker backend is frozen, so the only usable value is direct_attach (with hostPath + executionMode windows-mxc|windows-host); managed_import is rejected with 409 BACKEND_DISABLED while the backend stays frozen and is kept only for the future thaw.' }, hostPath: { type: string, description: 'Required for direct_attach; Runtime validates the absolute directory. This request field is never echoed to ordinary members.' }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] } } }
     WorkspaceUpdateRequest: { type: object, properties: { name: { type: string }, description: { type: [string, 'null'] } } }
     WorkspaceAgentPermission: { type: object, additionalProperties: false, required: [actionClass], properties: { actionClass: { type: string }, resource: { type: string, default: '*' } } }
-    WorkspaceAgentView: { type: object, required: [principalId, name, createdAt, permissions], properties: { principalId: { type: string, format: uuid }, name: { type: string }, templateId: { type: [string, 'null'] }, templateName: { type: [string, 'null'] }, createdAt: { type: string, format: date-time }, permissions: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentPermission' } } } }
+    WorkspaceAgentView: { type: object, required: [principalId, name, createdAt, source, permissionsSnapshot], properties: { principalId: { type: string, format: uuid }, name: { type: string }, templateId: { type: [string, 'null'] }, templateName: { type: [string, 'null'] }, createdAt: { type: string, format: date-time }, source: { type: string, enum: [workspace, personal, instance], description: 'PLAN-0622: the sharing tier that makes this principal usable in this Workspace.' }, permissionsSnapshot: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentPermission' }, description: 'Frozen cap stored on the Workspace binding; empty for personal/instance sources, whose cap resolves per run.' } } }
+    WorkspaceAgentListResponse: { type: object, required: [agents], properties: { agents: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentView' } } } }
+    AgentModelRef: { type: object, additionalProperties: false, required: [provider, model], properties: { provider: { type: string, minLength: 1 }, model: { type: string, minLength: 1 } } }
+    AgentPrincipalCreateRequest: { type: object, additionalProperties: false, required: [name], properties: { name: { type: string, minLength: 1 }, templateId: { type: [string, 'null'], format: uuid }, scope: { type: string, enum: [PERSONAL, WORKSPACE, INSTANCE], default: WORKSPACE, description: 'PLAN-0622 tier; each tier has its own creation action (CREATE_OWN_AGENT / MANAGE_WORKSPACE_AGENTS / CREATE_ACCOUNT).' }, defaultModelProvider: { type: [string, 'null'], description: 'Model intent only; the principal never holds a provider connection.' }, defaultModelName: { type: [string, 'null'] }, allowedModels: { type: [array, 'null'], items: { $ref: '#/components/schemas/AgentModelRef' }, description: 'null = unrestricted.' } } }
+    AgentPrincipalCreateView: { type: object, required: [principalId, createdAt, scope, ownerUserId, defaultModelProvider, defaultModelName, allowedModels], properties: { principalId: { type: string, format: uuid }, templateId: { type: [string, 'null'], format: uuid }, templateName: { type: [string, 'null'] }, scope: { type: string, enum: [PERSONAL, WORKSPACE, INSTANCE] }, ownerUserId: { type: [string, 'null'], format: uuid, description: 'The PERSONAL owner; null for WORKSPACE/INSTANCE.' }, defaultModelProvider: { type: [string, 'null'] }, defaultModelName: { type: [string, 'null'] }, allowedModels: { type: [array, 'null'], items: { $ref: '#/components/schemas/AgentModelRef' } }, createdAt: { type: string, format: date-time } } }
+    AgentPrincipalView: { type: object, required: [principalId, name, createdAt, scope, ownerUserId, defaultModelProvider, defaultModelName, allowedModels], properties: { principalId: { type: string, format: uuid }, name: { type: string }, templateId: { type: [string, 'null'], format: uuid }, templateName: { type: [string, 'null'] }, scope: { type: string, enum: [PERSONAL, WORKSPACE, INSTANCE] }, ownerUserId: { type: [string, 'null'], format: uuid }, defaultModelProvider: { type: [string, 'null'] }, defaultModelName: { type: [string, 'null'] }, allowedModels: { type: [array, 'null'], items: { $ref: '#/components/schemas/AgentModelRef' } }, createdAt: { type: string, format: date-time }, disabledAt: { type: [string, 'null'], format: date-time } } }
+    AgentPrincipalListResponse: { type: object, required: [principals], properties: { principals: { type: array, items: { $ref: '#/components/schemas/AgentPrincipalView' } } } }
+    ModelLimit: { type: object, additionalProperties: false, required: [provider, model], properties: { provider: { type: string, minLength: 1 }, model: { type: string, minLength: 1 }, maxInflight: { type: [integer, 'null'], minimum: 1, description: 'null = inherit the connection limit.' }, windowTokenBudget: { type: [integer, 'null'], format: int64, minimum: 1 }, windowSeconds: { type: [integer, 'null'], minimum: 1 } } }
+    ResourceExhaustedProblem: { type: object, allOf: [{ $ref: '#/components/schemas/ProblemDetails' }, { type: object, required: [code, retryAfterSeconds], properties: { code: { type: string, enum: [RESOURCE_EXHAUSTED] }, retryAfterSeconds: { type: integer, minimum: 1, description: 'Mirrors the Retry-After header.' }, resourceKind: { type: string, enum: [CONNECTION, MODEL, FILE_WRITE, PROCESS, JOB, MCP], description: 'PLAN-0622: which resource class refused admission.' }, scope: { type: string, description: 'Resource key scope (for example connection:<uuid> or workspace:<uuid>/server:<id>).' } } }] }
     WorkspaceAgentCapView: { type: object, required: [principalId, workspaceId, permissions], properties: { principalId: { type: string, format: uuid }, workspaceId: { type: string, format: uuid }, permissions: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentPermission' } } } }
-    AgentPrincipalCreateView: { type: object, required: [principalId, createdAt], properties: { principalId: { type: string, format: uuid }, templateId: { type: [string, 'null'], format: uuid }, templateName: { type: [string, 'null'] }, createdAt: { type: string, format: date-time } } }
     AgentTemplateListView: { type: object, required: [layer, workspaceId, templates], properties: { layer: { type: string, enum: [instance, user, workspace] }, workspaceId: { type: [string, 'null'], format: uuid, description: Present only for the workspace layer; null for instance/user layers. }, templates: { type: array, description: 'Raw agent-templates.templates[] entries of exactly one layer, returned as stored. Roles and secret-like fields are never part of this response.', items: { type: object, additionalProperties: false, required: [id, name, description, systemPrompt, toolMode, roleId], properties: { id: { type: string, format: uuid }, name: { type: string }, description: { type: string }, systemPrompt: { type: string }, toolMode: { type: string, enum: [none, workspace] }, provider: { type: string }, model: { type: string }, roleId: { type: string, format: uuid } } } } } }
     CheckpointChangedFile:
        type: object
@@ -4112,6 +4173,11 @@ components:
           lastVerifiedAt: { type: [string, 'null'], format: date-time, readOnly: true }
           lastErrorCode: { type: [string, 'null'], readOnly: true }
           revision: { type: integer, minimum: 1, readOnly: true }
+          maxInflight: { type: [integer, 'null'], minimum: 1, description: 'PLAN-0622 resource governor: concurrent lease ceiling; null = unlimited.' }
+          maxQueue: { type: [integer, 'null'], minimum: 0, description: 'Reserved queue depth for this connection; admission never blocks, over-limit is refused with 429 RESOURCE_EXHAUSTED.' }
+          windowTokenBudget: { type: [integer, 'null'], format: int64, minimum: 1, description: 'Token budget per windowSeconds for this connection.' }
+          windowSeconds: { type: [integer, 'null'], minimum: 1 }
+          modelLimits: { type: array, items: { $ref: '#/components/schemas/ModelLimit' }, description: 'Per-model overrides; an entry inherits the omitted connection-level value.' }
     ProviderConnectionCreateRequest:
        type: object
        required: [providerId, label, connectionKey]
@@ -4151,6 +4217,11 @@ components:
          enabled: { type: boolean }
          modelDiscovery: { type: [string, 'null'], enum: [remote-models, litellm-catalog, curated, manual] }
          manualModels: { type: array, items: { type: string }, maxItems: 256 }
+         maxInflight: { type: [integer, 'null'], minimum: 1, description: 'PLAN-0622: concurrent lease ceiling; null clears the limit.' }
+         maxQueue: { type: [integer, 'null'], minimum: 0, description: 'PLAN-0622: reserved queue depth; null clears it.' }
+         windowTokenBudget: { type: [integer, 'null'], format: int64, minimum: 1, description: 'PLAN-0622: token budget per windowSeconds; null clears it.' }
+         windowSeconds: { type: [integer, 'null'], minimum: 1 }
+         modelLimits: { type: array, items: { $ref: '#/components/schemas/ModelLimit' }, description: 'PLAN-0622: full replacement of the per-model overrides; an empty array clears them.' }
     ProviderConnectionVerifyResponse:
        type: object
        required: [connection, models]

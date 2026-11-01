@@ -482,4 +482,104 @@ class OpenApiYamlContractTest {
                     "403 must name both WORKSPACE_FORBIDDEN and WORKSPACE_READ_ONLY: " + forbiddenText);
         }
     }
+
+    /**
+     * PLAN-0622 M0.1/T0.4: the agent-principal three-tier scope, the merged workspace-agent list,
+     * the provider-connection resource limits and the {@code RESOURCE_EXHAUSTED} 429 shape are
+     * contracted in the same wave as the implementation (contract frozen in task-46 §2; the field
+     * names below are shared with the CLI and UI tracks and must not be renamed).
+     */
+    @Test
+    void openApiContainsAgentPrincipalScopeAndResourceGovernorContracts() throws Exception {
+        Path contract = Path.of("..", "..", "docs", "api", "openapi.yaml");
+        String raw = Files.readString(contract);
+        try (InputStream input = Files.newInputStream(contract)) {
+            Map<?, ?> document = (Map<?, ?>) new Yaml().load(input);
+            Map<?, ?> paths = (Map<?, ?>) document.get("paths");
+            Map<?, ?> schemas = (Map<?, ?>) ((Map<?, ?>) document.get("components")).get("schemas");
+            Map<?, ?> responses = (Map<?, ?>) ((Map<?, ?>) document.get("components")).get("responses");
+
+            // 1: create + scoped list + disable routes.
+            Map<?, ?> principals = (Map<?, ?>) paths.get("/api/v1/agent-principals");
+            assertInstanceOf(Map.class, principals, "agent-principals collection is contracted");
+            assertTrue(principals.containsKey("post"), "create is contracted");
+            assertTrue(principals.containsKey("get"), "the scoped list is contracted (M1.2)");
+            List<?> listParams = (List<?>) ((Map<?, ?>) principals.get("get")).get("parameters");
+            for (String name : List.of("scope", "workspaceId")) {
+                assertTrue(listParams.stream().anyMatch(candidate -> "query".equals(((Map<?, ?>) candidate).get("in"))
+                                && name.equals(((Map<?, ?>) candidate).get("name"))),
+                        "scoped list must carry the " + name + " query parameter");
+            }
+            Map<?, ?> disable = (Map<?, ?>) paths.get("/api/v1/agent-principals/{principalId}/disable");
+            assertInstanceOf(Map.class, disable, "disable route is contracted");
+            Map<?, ?> disableResponses = (Map<?, ?>) ((Map<?, ?>) disable.get("post")).get("responses");
+            assertTrue(disableResponses.containsKey("204"), "disable answers 204");
+
+            // 2: the create request carries the frozen scope / model-intent fields.
+            Map<?, ?> createProps = (Map<?, ?>) ((Map<?, ?>) schemas.get("AgentPrincipalCreateRequest"))
+                    .get("properties");
+            for (String field : List.of("name", "templateId", "scope", "defaultModelProvider",
+                    "defaultModelName", "allowedModels")) {
+                assertTrue(createProps.containsKey(field), "create request must carry " + field);
+            }
+
+            // 3: both principal views carry scope/owner/model intent with the three-tier enum.
+            for (String schemaName : List.of("AgentPrincipalCreateView", "AgentPrincipalView")) {
+                Map<?, ?> view = (Map<?, ?>) schemas.get(schemaName);
+                assertInstanceOf(Map.class, view, schemaName + " is contracted");
+                Map<?, ?> properties = (Map<?, ?>) view.get("properties");
+                for (String field : List.of("principalId", "scope", "ownerUserId", "defaultModelProvider",
+                        "defaultModelName", "allowedModels")) {
+                    assertTrue(properties.containsKey(field), schemaName + " must carry " + field);
+                }
+                String scope = String.valueOf(properties.get("scope"));
+                assertTrue(scope.contains("PERSONAL") && scope.contains("WORKSPACE") && scope.contains("INSTANCE"),
+                        schemaName + ".scope must be the three tiers: " + scope);
+            }
+
+            // 4: the workspace agent list is a three-source envelope carrying source + the snapshot.
+            Map<?, ?> list = (Map<?, ?>) schemas.get("WorkspaceAgentListResponse");
+            assertInstanceOf(Map.class, list, "WorkspaceAgentListResponse is contracted");
+            assertTrue(((Map<?, ?>) list.get("properties")).containsKey("agents"),
+                    "the list is delivered as {agents:[...]}");
+            Map<?, ?> agentProps = (Map<?, ?>) ((Map<?, ?>) schemas.get("WorkspaceAgentView")).get("properties");
+            for (String field : List.of("principalId", "name", "templateId", "templateName", "createdAt",
+                    "source", "permissionsSnapshot")) {
+                assertTrue(agentProps.containsKey(field), "WorkspaceAgentView must carry " + field);
+            }
+            String source = String.valueOf(agentProps.get("source"));
+            assertTrue(source.contains("workspace") && source.contains("personal") && source.contains("instance"),
+                    "WorkspaceAgentView.source must be the three tiers: " + source);
+
+            // 5: connection-level and model-level resource limits.
+            Map<?, ?> updateProps = (Map<?, ?>) ((Map<?, ?>) schemas.get("ProviderConnectionUpdateRequest"))
+                    .get("properties");
+            Map<?, ?> connectionProps = (Map<?, ?>) ((Map<?, ?>) schemas.get("ProviderConnection"))
+                    .get("properties");
+            for (String field : List.of("maxInflight", "maxQueue", "windowTokenBudget", "windowSeconds",
+                    "modelLimits")) {
+                assertTrue(updateProps.containsKey(field), "connection update must carry " + field);
+                assertTrue(connectionProps.containsKey(field), "ProviderConnection must carry " + field);
+            }
+            Map<?, ?> modelLimitProps = (Map<?, ?>) ((Map<?, ?>) schemas.get("ModelLimit")).get("properties");
+            for (String field : List.of("provider", "model", "maxInflight", "windowTokenBudget",
+                    "windowSeconds")) {
+                assertTrue(modelLimitProps.containsKey(field), "ModelLimit must carry " + field);
+            }
+
+            // 6: RESOURCE_EXHAUSTED 429 (Retry-After) is one shared response and the lease path declares it.
+            Map<?, ?> exhausted = (Map<?, ?>) responses.get("ResourceExhausted");
+            assertInstanceOf(Map.class, exhausted, "ResourceExhausted response is contracted");
+            assertTrue(((Map<?, ?>) exhausted.get("headers")).containsKey("Retry-After"),
+                    "RESOURCE_EXHAUSTED carries Retry-After");
+            assertTrue(String.valueOf(schemas.get("ResourceExhaustedProblem")).contains("RESOURCE_EXHAUSTED"),
+                    "the 429 body names the RESOURCE_EXHAUSTED code");
+            Map<?, ?> leasePost = (Map<?, ?>) ((Map<?, ?>) paths.get("/internal/v1/provider-leases/redeem")).get("post");
+            assertTrue(((Map<?, ?>) leasePost.get("responses")).containsKey("429"),
+                    "the lease admission path declares the 429 refusal");
+
+            // 7: the new user-tier action is named in the contract text.
+            assertTrue(raw.contains("CREATE_OWN_AGENT"), "CREATE_OWN_AGENT must be named in the contract");
+        }
+    }
 }
