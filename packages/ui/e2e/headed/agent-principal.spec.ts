@@ -656,13 +656,24 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
                 .catch(() => "");
         await expect(exhausted).toBeVisible({ timeout: 30000 });
         await expect(hint).toBeVisible({ timeout: 20000 });
-        await expect(hint).toHaveText(/换连接|稍后重试|another connection|retry later/i);
+
+        // hint 的**语义**是"告诉用户在哪里换连接、换完可以再试"，不是某个固定短语。
+        // 真实文案（i18n `chat.resourceExhaustedHint`）：「也可以在上方模型/连接选择器里换一个连接后再试。」
+        // 旧正则 /换连接/ 匹配不到 —— 中文写的是「换一个连接」，不是「换连接」；这是 spec 写死措辞的错。
+        await expect(hint).toHaveText(/换一个连接|选择器|another connection|switch/i);
+        await expect(hint).toHaveText(/再试|重试|retry/i);
 
         // 本地化：不得把 CP 的英文 code 原文展示给用户。
         expect(bubbleText, "raw RESOURCE_EXHAUSTED must not be shown").not.toContain(
             "RESOURCE_EXHAUSTED",
         );
-        await expect(exhausted).toHaveText(/并发已满|concurrent|重试/i);
+        // exhausted 的语义：① 说清**哪个资源**满了 —— 必须是本地化后的资源名（`chat.resourceKindConnection`
+        // = 「连接」/「Connection」），而不是 CP 的 SNAKE_CASE；② 给出等待秒数（mock 是 2 秒）。
+        await expect(exhausted).toHaveText(/连接|connection/i);
+        await expect(exhausted).toHaveText(/并发已满|capacity is full/i);
+        await expect(exhausted).toHaveText(/2/);
+        // 准入 429 没有 run，但 `message-retry-button` 的条件是 `error && retryable`
+        //（`MessageItem.vue` 的 canRetry），与 run 无关 ⇒ 这条断言不是放宽：它必须存在。
         await expect(page.getByTestId("message-retry-button")).toBeVisible({ timeout: 20000 });
         await shot(page, {
             id: "S4",
